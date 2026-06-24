@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ title }}</h1>
+  <form method="get" class="toolbar">
+    <input type="search" name="q" value="{{ q }}" placeholder="Поиск…">
+    <select name="show">
+      <option value="active" {% if show == 'active' %}selected{% endif %}>Только активные</option>
+      <option value="all" {% if show == 'all' %}selected{% endif %}>Все</option>
+    </select>
+    <button type="submit">Найти</button>
+    {% if can_manage %}
+      <a class="btn btn--primary" href="{% url create_url %}">Добавить</a>
+    {% endif %}
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+        <th>Статус</th>
+        {% if can_manage %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
+          <td>
+            {% if row.obj.is_active %}
+              Активна
+            {% else %}
+              Отключена
+            {% endif %}
+          </td>
+          {% if can_manage %}
+            <td>
+              <a href="{% url edit_url row.obj.pk %}">Изменить</a>
+              <form method="post"
+                    action="{% url toggle_url row.obj.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">
+                  {% if row.obj.is_active %}
+                    Деактивировать
+                  {% else %}
+                    Активировать
+                  {% endif %}
+                </button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

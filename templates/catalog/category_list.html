@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Категории — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Категории</h1>
+  <form method="get" class="toolbar">
+    <select name="show">
+      <option value="active" {% if show == 'active' %}selected{% endif %}>Только активные</option>
+      <option value="all" {% if show == 'all' %}selected{% endif %}>Все</option>
+    </select>
+    <button type="submit">Показать</button>
+    {% if can_manage %}
+      <a class="btn btn--primary" href="{% url 'category_create' %}">Добавить</a>
+    {% endif %}
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Название</th>
+        <th>Статус</th>
+        {% if can_manage %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>
+            <span style="padding-left: {{ row.indent }}px">{{ row.obj.name }}</span>
+          </td>
+          <td>
+            {% if row.obj.is_active %}
+              Активна
+            {% else %}
+              Отключена
+            {% endif %}
+          </td>
+          {% if can_manage %}
+            <td>
+              <a href="{% url 'category_edit' row.obj.pk %}">Изменить</a>
+              <form method="post"
+                    action="{% url 'category_toggle' row.obj.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">
+                  {% if row.obj.is_active %}
+                    Деактивировать
+                  {% else %}
+                    Активировать
+                  {% endif %}
+                </button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

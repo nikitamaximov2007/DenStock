@@ -109,3 +109,7 @@ body.app {
 .form input[type="text"], .form input[type="password"] { padding: 10px 12px; font-size: 16px;
   border: 1px solid var(--line); border-radius: 8px; min-width: 280px; }
 .messages { margin-bottom: 12px; }
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar input, .toolbar select, .toolbar button { padding: 8px 10px; font-size: 15px;
+  border: 1px solid var(--line); border-radius: 8px; }
+.tile a { font-size: 18px; text-decoration: none; color: var(--accent); }

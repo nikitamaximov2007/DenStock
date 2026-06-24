@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Справочники — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Справочники</h1>
+  <div class="tiles">
+    <div class="tile">
+      <a href="{% url 'category_list' %}">Категории</a>
+    </div>
+    <div class="tile">
+      <a href="{% url 'manufacturer_list' %}">Производители</a>
+    </div>
+    <div class="tile">
+      <a href="{% url 'unit_list' %}">Единицы измерения</a>
+    </div>
+    <div class="tile">
+      <a href="{% url 'vehicletype_list' %}">Виды техники</a>
+    </div>
+    <div class="tile">
+      <a href="{% url 'vehiclemake_list' %}">Марки техники</a>
+    </div>
+    <div class="tile">
+      <a href="{% url 'vehiclemodel_list' %}">Модели техники</a>
+    </div>
+    <div class="tile">
+      <a href="{% url 'supplier_list' %}">Поставщики</a>
+    </div>
+  </div>
+{% endblock %}
