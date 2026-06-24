@@ -28,6 +28,10 @@ class ManageDirectoriesMixin(CapabilityRequiredMixin):
     required_capability = roles.MANAGE_DIRECTORIES
 
 
+class ManageWarehouseMixin(CapabilityRequiredMixin):
+    required_capability = roles.MANAGE_WAREHOUSE_STRUCTURE
+
+
 def capability_required(capability: str):
     def decorator(view_func):
         @wraps(view_func)

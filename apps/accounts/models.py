@@ -65,6 +65,10 @@ class User(AbstractUser):
         return self.has_capability(roles.MANAGE_DIRECTORIES)
 
     @property
+    def can_manage_warehouse(self) -> bool:
+        return self.has_capability(roles.MANAGE_WAREHOUSE_STRUCTURE)
+
+    @property
     def can_view_finance(self) -> bool:
         return self.has_capability(roles.VIEW_FINANCE)
 
