@@ -1,7 +1,4 @@
-{# Переиспользуемый статус-блок: цвет + текст + иконка (не только цвет/эмодзи).
-   Использование:
-   {% include "partials/_status_block.html" with kind="success" text="Успешно" %}
-   kind ∈ success | error | warning #}
+{# Статус-блок: цвет + текст + иконка. Параметры: kind = success|error|warning, text = строка. #}
 <div class="status status--{{ kind|default:'info' }}" role="status">
   <span class="status__icon" aria-hidden="true">
     {% if kind == 'success' %}

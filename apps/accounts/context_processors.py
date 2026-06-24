@@ -1,0 +1,24 @@
+"""Прокидываем возможности и навигацию в шаблоны (единый источник для меню)."""
+from django.urls import reverse
+
+
+def _nav_items(user):
+    """Пункты меню, видимые пользователю. stub=True — заглушка будущего слоя."""
+    items = [{"label": "Главная", "url": reverse("dashboard"), "stub": False}]
+    items.append({"label": "Поиск детали", "url": None, "stub": True})
+    if user.is_storekeeper or user.is_admin:
+        items.append({"label": "Поступление", "url": None, "stub": True})
+    if user.is_seller or user.is_admin:
+        items.append({"label": "Продажа", "url": None, "stub": True})
+    if user.can_view_finance:
+        items.append({"label": "Статистика", "url": None, "stub": True})
+    if user.can_manage_users:
+        items.append({"label": "Пользователи", "url": reverse("user_list"), "stub": False})
+    return items
+
+
+def navigation(request):
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return {"nav_items": [], "caps": set()}
+    return {"nav_items": _nav_items(user), "caps": user.capabilities}

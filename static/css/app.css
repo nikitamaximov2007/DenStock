@@ -95,3 +95,17 @@ body.app {
 .status--error .status__icon { background: var(--err-fg); }
 .status--warning { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
 .status--warning .status__icon { background: var(--warn-fg); }
+
+/* Таблицы и формы (минимум для экранов пользователей) */
+.table { width: 100%; border-collapse: collapse; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.table th, .table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.table th { background: var(--bg); font-size: 14px; color: var(--muted); }
+.inline-form { display: inline; margin-left: 8px; }
+.inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
+  border-radius: 6px; background: #fff; }
+.form p { margin: 10px 0; }
+.form label { display: inline-block; margin-bottom: 4px; color: var(--muted); }
+.form input[type="text"], .form input[type="password"] { padding: 10px 12px; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 8px; min-width: 280px; }
+.messages { margin-bottom: 12px; }

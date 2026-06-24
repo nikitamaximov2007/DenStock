@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Пользователи — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Пользователи</h1>
+  <p>
+    <a class="btn btn--primary" href="{% url 'user_create' %}">Добавить пользователя</a>
+  </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Логин</th>
+        <th>ФИО</th>
+        <th>Роли</th>
+        <th>Статус</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.full_name }}</td>
+          <td>{{ u.role_names|join:", " }}</td>
+          <td>
+            {% if u.is_active %}
+              Активен
+            {% else %}
+              Отключён
+            {% endif %}
+          </td>
+          <td>
+            <a href="{% url 'user_edit' u.pk %}">Изменить</a>
+            {% if u != request.user %}
+              <form method="post"
+                    action="{% url 'user_toggle' u.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">
+                  {% if u.is_active %}
+                    Деактивировать
+                  {% else %}
+                    Активировать
+                  {% endif %}
+                </button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

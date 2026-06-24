@@ -27,16 +27,26 @@
       </header>
       <div class="layout">
         <nav class="sidebar" aria-label="Навигация">
-          {# Пункты-заглушки. Реальные разделы и роль-зависимость — со Слоя 2. #}
           <ul>
-            <li><a href="{% url 'dashboard' %}">Главная</a></li>
-            <li><span class="sidebar__soon">Поиск детали</span></li>
-            <li><span class="sidebar__soon">Поступление</span></li>
-            <li><span class="sidebar__soon">Продажа</span></li>
-            <li><span class="sidebar__soon">Инвентаризация</span></li>
+            {% for item in nav_items %}
+              <li>
+                {% if item.stub %}
+                  <span class="sidebar__soon">{{ item.label }}</span>
+                {% else %}
+                  <a href="{{ item.url }}">{{ item.label }}</a>
+                {% endif %}
+              </li>
+            {% endfor %}
           </ul>
         </nav>
         <main class="content">
+          {% if messages %}
+            <div class="messages">
+              {% for message in messages %}
+                {% include "partials/_status_block.html" with kind=message.tags text=message %}
+              {% endfor %}
+            </div>
+          {% endif %}
           {% block content %}{% endblock %}
         </main>
       </div>
