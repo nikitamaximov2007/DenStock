@@ -80,3 +80,38 @@ class StockLotEditForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["location"].queryset = _storage_locations()
+
+
+# --- Слой 10: перемещение и корректировка через движения ---------------------
+
+
+class MoveItemForm(forms.Form):
+    """Перемещение экземпляра в другую ячейку."""
+
+    to_location = forms.ModelChoiceField(queryset=_storage_locations(), label="Куда")
+    comment = forms.CharField(max_length=255, required=False, label="Комментарий")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["to_location"].queryset = _storage_locations()
+
+
+class MoveLotForm(forms.Form):
+    """Перемещение лота целиком в другую ячейку."""
+
+    to_location = forms.ModelChoiceField(queryset=_storage_locations(), label="Куда")
+    comment = forms.CharField(max_length=255, required=False, label="Комментарий")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["to_location"].queryset = _storage_locations()
+
+
+class AdjustLotForm(forms.Form):
+    """Корректировка количества лота на ±. Комментарий (причина) обязателен."""
+
+    delta = forms.DecimalField(
+        max_digits=12, decimal_places=3, label="Изменение (±)",
+        help_text="Положительное — приход, отрицательное — расход.",
+    )
+    comment = forms.CharField(max_length=255, required=True, label="Причина")

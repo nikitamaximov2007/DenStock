@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Остатки — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Остатки</h1>
+  <p class="muted">Кэш текущих остатков (пересобирается из лотов и экземпляров). Только чтение.</p>
+  <form method="get" class="toolbar">
+    <select name="part">
+      <option value="">Все детали</option>
+      {% for p in parts %}
+        <option value="{{ p.pk }}"
+                {% if f_part == p.pk|stringformat:'s' %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+    <select name="batch">
+      <option value="">Все партии</option>
+      {% for b in batches %}
+        <option value="{{ b.pk }}"
+                {% if f_batch == b.pk|stringformat:'s' %}selected{% endif %}>{{ b.number }}</option>
+      {% endfor %}
+    </select>
+    <select name="location">
+      <option value="">Все места</option>
+      {% for loc in locations %}
+        <option value="{{ loc.pk }}"
+                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.code }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Фильтр</button>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Ячейка</th>
+        <th>Партия</th>
+        <th>Физически</th>
+        <th>Доступно</th>
+        <th>Карантин</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in balances %}
+        <tr>
+          <td>{{ b.part_type }}</td>
+          <td>{{ b.location.code }}</td>
+          <td>{{ b.batch.number }}</td>
+          <td>{{ b.quantity_physical }}</td>
+          <td>{{ b.quantity_available }}</td>
+          <td>{{ b.quantity_quarantine }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="muted">Остатков нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

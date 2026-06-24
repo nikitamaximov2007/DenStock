@@ -207,6 +207,10 @@
       </tbody>
     </table>
   {% endif %}
-  <h2>Остатки</h2>
-  {% include "partials/_status_block.html" with kind="info" text="BatchLine — документ партии, не остаток. Остатки появятся на следующих слоях." %}
+  {% if batch.cost_finalized %}
+    <h2>Остатки</h2>
+    <p>
+      <a href="{% url 'balance_list' %}?batch={{ batch.pk }}">Остатки этой партии по ячейкам →</a>
+    </p>
+  {% endif %}
 {% endblock %}

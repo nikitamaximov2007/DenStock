@@ -46,6 +46,22 @@
       </tr>
     </tbody>
   </table>
+  {% if can_manage %}
+    <div class="toolbar">
+      {% if lot.status == "receiving" %}
+        <form method="post"
+              action="{% url 'lot_receive' lot.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <button type="submit">Принять</button>
+        </form>
+      {% endif %}
+      {% if lot.status == "receiving" or lot.status == "available" or lot.status == "quarantine" %}
+        <a href="{% url 'lot_move' lot.pk %}">Переместить</a>
+        <a href="{% url 'lot_adjust' lot.pk %}">Корректировка</a>
+      {% endif %}
+    </div>
+  {% endif %}
   {% if can_manage and next_statuses %}
     <div class="toolbar">
       <span>Сменить статус:</span>
@@ -60,4 +76,43 @@
       {% endfor %}
     </div>
   {% endif %}
+  <h2>Журнал движений</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Тип</th>
+        <th>Кол-во</th>
+        <th>Откуда → Куда</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in movements %}
+        <tr>
+          <td>
+            <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
+          </td>
+          <td>{{ m.get_movement_type_display }}</td>
+          <td>{{ m.quantity }}</td>
+          <td>
+            {% if m.from_location %}
+              {{ m.from_location.code }}
+            {% else %}
+              —
+            {% endif %}
+            →
+            {% if m.to_location %}
+              {{ m.to_location.code }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="4" class="muted">Движений нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 {% endblock %}

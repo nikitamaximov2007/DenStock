@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ title }}</h1>
+  <p class="muted">Текущее количество: {{ lot.quantity }} · ячейка {{ lot.location.code }}</p>
+  <p>
+    <a href="{{ back_url }}">← Назад</a>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Применить</button>
+  </form>
+{% endblock %}

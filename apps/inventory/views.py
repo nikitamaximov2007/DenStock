@@ -1,6 +1,7 @@
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -11,6 +12,9 @@ from apps.procurement.models import Batch, BatchLine
 from apps.warehouse.models import StorageLocation
 
 from .forms import (
+    AdjustLotForm,
+    MoveItemForm,
+    MoveLotForm,
     PartItemBulkForm,
     PartItemCreateForm,
     PartItemEditForm,
@@ -18,11 +22,16 @@ from .forms import (
     StockLotEditForm,
     StockLotQuickForm,
 )
-from .models import PartItem, StockLot
+from .models import PartItem, StockBalance, StockLot, StockMovement
 from .services import (
     InventoryError,
+    adjust_stock_lot_quantity,
     create_part_items,
     create_stock_lot,
+    move_part_item,
+    move_stock_lot,
+    receive_part_item,
+    receive_stock_lot,
     remaining_qty,
     update_stock_lot,
 )
@@ -103,6 +112,16 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
         ctx["can_manage"] = self.request.user.can_manage_inventory
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, PartItem.Status(s).label) for s in allowed]
+        ctx["movements"] = self.object.movements.select_related(
+            "from_location", "to_location", "created_by"
+        )[:10]
+        if (
+            self.request.user.can_manage_inventory
+            and self.object.status == PartItem.Status.RECEIVING
+        ):
+            ctx["receive_locations"] = StorageLocation.objects.filter(
+                storage_allowed=True, is_active=True
+            )
         return ctx
 
 
@@ -245,6 +264,9 @@ class StockLotDetailView(InventoryViewMixin, DetailView):
         ctx["can_manage"] = self.request.user.can_manage_inventory
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, StockLot.Status(s).label) for s in allowed]
+        ctx["movements"] = self.object.movements.select_related(
+            "from_location", "to_location", "created_by"
+        )[:10]
         return ctx
 
 
@@ -344,3 +366,196 @@ def lot_status_change(request, pk):
     else:
         messages.error(request, "Недопустимый переход статуса.")
     return redirect("lot_detail", pk=pk)
+
+
+# --- Слой 10: журнал движений, остатки, приёмка/перемещение/корректировка ----
+
+
+class MovementListView(InventoryViewMixin, ListView):
+    model = StockMovement
+    template_name = "inventory/movement_list.html"
+    context_object_name = "movements"
+    paginate_by = 50
+
+    def get_queryset(self):
+        qs = StockMovement.objects.select_related(
+            "part_type", "stock_lot", "part_item", "batch",
+            "from_location", "to_location", "created_by",
+        )
+        mtype = self.request.GET.get("type")
+        part = self.request.GET.get("part")
+        batch = self.request.GET.get("batch")
+        location = self.request.GET.get("location")
+        if mtype:
+            qs = qs.filter(movement_type=mtype)
+        if part:
+            qs = qs.filter(part_type_id=part)
+        if batch:
+            qs = qs.filter(batch_id=batch)
+        if location:
+            qs = qs.filter(Q(from_location_id=location) | Q(to_location_id=location))
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["show_costs"] = self.request.user.can_view_purchase_cost
+        ctx["types"] = StockMovement.MovementType.choices
+        ctx["parts"] = PartType.objects.filter(movements__isnull=False).distinct()
+        ctx["batches"] = Batch.objects.filter(movements__isnull=False).distinct()
+        ctx["locations"] = StorageLocation.objects.filter(
+            Q(movements_out__isnull=False) | Q(movements_in__isnull=False)
+        ).distinct()
+        ctx["f_type"] = self.request.GET.get("type", "")
+        ctx["f_part"] = self.request.GET.get("part", "")
+        ctx["f_batch"] = self.request.GET.get("batch", "")
+        ctx["f_location"] = self.request.GET.get("location", "")
+        return ctx
+
+
+class MovementDetailView(InventoryViewMixin, DetailView):
+    model = StockMovement
+    template_name = "inventory/movement_detail.html"
+    context_object_name = "movement"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["show_costs"] = self.request.user.can_view_purchase_cost
+        return ctx
+
+
+class BalanceListView(InventoryViewMixin, ListView):
+    model = StockBalance
+    template_name = "inventory/balance_list.html"
+    context_object_name = "balances"
+    paginate_by = 50
+
+    def get_queryset(self):
+        qs = StockBalance.objects.select_related("part_type", "location", "batch")
+        part = self.request.GET.get("part")
+        batch = self.request.GET.get("batch")
+        location = self.request.GET.get("location")
+        if part:
+            qs = qs.filter(part_type_id=part)
+        if batch:
+            qs = qs.filter(batch_id=batch)
+        if location:
+            qs = qs.filter(location_id=location)
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["parts"] = PartType.objects.filter(balances__isnull=False).distinct()
+        ctx["batches"] = Batch.objects.filter(balances__isnull=False).distinct()
+        ctx["locations"] = StorageLocation.objects.filter(balances__isnull=False).distinct()
+        ctx["f_part"] = self.request.GET.get("part", "")
+        ctx["f_batch"] = self.request.GET.get("batch", "")
+        ctx["f_location"] = self.request.GET.get("location", "")
+        return ctx
+
+
+@require_POST
+def item_receive(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    item = get_object_or_404(PartItem, pk=pk)
+    loc_id = request.POST.get("to_location")
+    to_location = get_object_or_404(StorageLocation, pk=loc_id) if loc_id else None
+    try:
+        receive_part_item(item, to_location=to_location, by=request.user)
+    except InventoryError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Экземпляр принят в ячейку.")
+    return redirect("item_detail", pk=pk)
+
+
+def item_move(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    item = get_object_or_404(PartItem, pk=pk)
+    if request.method == "POST":
+        form = MoveItemForm(request.POST)
+        if form.is_valid():
+            try:
+                move_part_item(
+                    item, form.cleaned_data["to_location"],
+                    by=request.user, comment=form.cleaned_data["comment"],
+                )
+            except InventoryError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Экземпляр перемещён.")
+                return redirect("item_detail", pk=pk)
+    else:
+        form = MoveItemForm()
+    return render(
+        request, "inventory/move_form.html",
+        {"form": form, "title": f"Переместить экземпляр {item.internal_number}",
+         "back_url": reverse("item_detail", args=[pk])},
+    )
+
+
+@require_POST
+def lot_receive(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    lot = get_object_or_404(StockLot, pk=pk)
+    try:
+        receive_stock_lot(lot, by=request.user)
+    except InventoryError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Лот принят.")
+    return redirect("lot_detail", pk=pk)
+
+
+def lot_move(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    lot = get_object_or_404(StockLot, pk=pk)
+    if request.method == "POST":
+        form = MoveLotForm(request.POST)
+        if form.is_valid():
+            try:
+                move_stock_lot(
+                    lot, form.cleaned_data["to_location"],
+                    by=request.user, comment=form.cleaned_data["comment"],
+                )
+            except InventoryError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Лот перемещён.")
+                return redirect("lot_detail", pk=pk)
+    else:
+        form = MoveLotForm()
+    return render(
+        request, "inventory/move_form.html",
+        {"form": form, "title": f"Переместить лот {lot.pk}",
+         "back_url": reverse("lot_detail", args=[pk])},
+    )
+
+
+def lot_adjust(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    lot = get_object_or_404(StockLot, pk=pk)
+    if request.method == "POST":
+        form = AdjustLotForm(request.POST)
+        if form.is_valid():
+            try:
+                adjust_stock_lot_quantity(
+                    lot, form.cleaned_data["delta"],
+                    by=request.user, comment=form.cleaned_data["comment"],
+                )
+            except InventoryError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Количество скорректировано.")
+                return redirect("lot_detail", pk=pk)
+    else:
+        form = AdjustLotForm()
+    return render(
+        request, "inventory/adjust_form.html",
+        {"form": form, "lot": lot, "title": f"Корректировка лота {lot.pk}",
+         "back_url": reverse("lot_detail", args=[pk])},
+    )

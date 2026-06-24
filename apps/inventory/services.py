@@ -6,11 +6,13 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import DecimalField, Q, Sum, Value
+from django.db.models.functions import Coalesce
 
 from apps.procurement.models import BatchLine
+from apps.warehouse.models import StorageLocation
 
-from .models import NumberSequence, PartItem, StockLot
+from .models import NumberSequence, PartItem, StockBalance, StockLot, StockMovement
 
 
 class InventoryError(Exception):
@@ -182,4 +184,365 @@ def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> St
     lot.note = note
     lot.save(update_fields=["location", "quantity", "note", "updated_at"])
     return lot
+
+
+# --- Слой 10: журнал движений (StockMovement) и кэш остатков (StockBalance) ---
+
+DEC0 = Value(Decimal("0"), output_field=DecimalField(max_digits=12, decimal_places=3))
+
+# Статусы, считающиеся «физически присутствует в ячейке» (Слой 10).
+# reserved/repair добавятся, когда появятся их производители (Слои 15/17).
+ITEM_PHYSICAL_STATUSES = (
+    PartItem.Status.RECEIVING,
+    PartItem.Status.AVAILABLE,
+    PartItem.Status.QUARANTINE,
+)
+LOT_PHYSICAL_STATUSES = (
+    StockLot.Status.RECEIVING,
+    StockLot.Status.AVAILABLE,
+    StockLot.Status.QUARANTINE,
+)
+
+
+def _record_movement(
+    obj,
+    movement_type,
+    quantity,
+    *,
+    from_location=None,
+    to_location=None,
+    by=None,
+    comment="",
+) -> StockMovement:
+    """Единая точка создания движения: источник копируется из объекта.
+
+    `total_cost_rub` считается в `StockMovement.save()` (= unit_cost × quantity).
+    """
+    if isinstance(obj, PartItem):
+        part_item, stock_lot = obj, None
+        unit_cost = obj.landed_cost_rub
+    else:
+        part_item, stock_lot = None, obj
+        unit_cost = obj.landed_unit_cost_rub
+    return StockMovement.objects.create(
+        movement_type=movement_type,
+        part_type=obj.part_type,
+        part_item=part_item,
+        stock_lot=stock_lot,
+        batch=obj.batch,
+        batch_line=obj.batch_line,
+        from_location=from_location,
+        to_location=to_location,
+        quantity=Decimal(quantity),
+        unit_cost_rub=unit_cost,
+        created_by=by,
+        comment=comment,
+    )
+
+
+def _compute_balance(batch_line, location) -> dict | None:
+    """Эталонные количества для (строка партии × ячейка) из первички.
+
+    Возвращает None, если физического остатка нет (строки кэша быть не должно).
+    """
+    part = batch_line.part_type
+    if part.tracking_mode == part.TrackingMode.BULK:
+        agg = StockLot.objects.filter(
+            batch_line=batch_line, location=location, status__in=LOT_PHYSICAL_STATUSES,
+        ).aggregate(
+            physical=Coalesce(Sum("quantity"), DEC0),
+            quarantine=Coalesce(
+                Sum("quantity", filter=Q(status=StockLot.Status.QUARANTINE)), DEC0
+            ),
+        )
+        physical, quarantine = agg["physical"], agg["quarantine"]
+    else:
+        base = PartItem.objects.filter(batch_line=batch_line, current_location=location)
+        physical = Decimal(base.filter(status__in=ITEM_PHYSICAL_STATUSES).count())
+        quarantine = Decimal(base.filter(status=PartItem.Status.QUARANTINE).count())
+    if physical == 0:
+        return None
+    return {
+        "part_type": part,
+        "batch": batch_line.batch,
+        "physical": physical,
+        "quarantine": quarantine,
+        "available": physical - quarantine,
+    }
+
+
+def _refresh_balance(batch_line, location) -> str:
+    """Освежить одну строку кэша из первички (или удалить, если остатка нет)."""
+    data = _compute_balance(batch_line, location)
+    if data is None:
+        deleted, _ = StockBalance.objects.filter(
+            batch_line=batch_line, location=location
+        ).delete()
+        return "deleted" if deleted else "noop"
+    _, created = StockBalance.objects.update_or_create(
+        batch_line=batch_line,
+        location=location,
+        defaults={
+            "part_type": data["part_type"],
+            "batch": data["batch"],
+            "quantity_physical": data["physical"],
+            "quantity_available": data["available"],
+            "quantity_quarantine": data["quarantine"],
+            "quantity_reserved": Decimal("0"),
+            "quantity_in_repair": Decimal("0"),
+        },
+    )
+    return "created" if created else "updated"
+
+
+@transaction.atomic
+def receive_part_item(item: PartItem, *, to_location=None, by=None, comment="") -> PartItem:
+    """Провести экземпляр в ячейку: receiving → available, записать движение."""
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    if item.status != PartItem.Status.RECEIVING:
+        raise InventoryError("Экземпляр уже проведён (не на приёмке).")
+    location = to_location or item.current_location
+    if location is None:
+        raise InventoryError("Не указана ячейка приёмки.")
+    if not location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    item.current_location = location
+    item.status = PartItem.Status.AVAILABLE
+    item.save(update_fields=["current_location", "status", "updated_at"])
+    _record_movement(
+        item, StockMovement.MovementType.RECEIVE_ITEM, Decimal("1"),
+        to_location=location, by=by, comment=comment,
+    )
+    _refresh_balance(item.batch_line, location)
+    return item
+
+
+@transaction.atomic
+def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
+    """Провести лот: receiving → available, записать движение (qty = lot.quantity)."""
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if lot.status != StockLot.Status.RECEIVING:
+        raise InventoryError("Лот уже проведён (не на приёмке).")
+    if not lot.location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    lot.status = StockLot.Status.AVAILABLE
+    lot.save(update_fields=["status", "updated_at"])
+    _record_movement(
+        lot, StockMovement.MovementType.RECEIVE_LOT, lot.quantity,
+        to_location=lot.location, by=by, comment=comment,
+    )
+    _refresh_balance(lot.batch_line, lot.location)
+    return lot
+
+
+@transaction.atomic
+def move_part_item(item: PartItem, to_location, *, by=None, comment="") -> PartItem:
+    """Перенести экземпляр в другую ячейку (статус не меняется)."""
+    if to_location is None or not to_location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    if item.status not in ITEM_PHYSICAL_STATUSES:
+        raise InventoryError("Экземпляр в недопустимом статусе для перемещения.")
+    from_location = item.current_location
+    if from_location is None:
+        raise InventoryError("Экземпляр не размещён — сначала проведите приёмку.")
+    if from_location.pk == to_location.pk:
+        raise InventoryError("Экземпляр уже в этой ячейке.")
+    item.current_location = to_location
+    item.save(update_fields=["current_location", "updated_at"])
+    _record_movement(
+        item, StockMovement.MovementType.MOVE_ITEM, Decimal("1"),
+        from_location=from_location, to_location=to_location, by=by, comment=comment,
+    )
+    _refresh_balance(item.batch_line, from_location)
+    _refresh_balance(item.batch_line, to_location)
+    return item
+
+
+@transaction.atomic
+def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockLot:
+    """Перенести лот целиком (частичное перемещение/слияние — будущий слой)."""
+    if to_location is None or not to_location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if lot.status not in LOT_PHYSICAL_STATUSES:
+        raise InventoryError("Лот в недопустимом статусе для перемещения.")
+    from_location = lot.location
+    if from_location.pk == to_location.pk:
+        raise InventoryError("Лот уже в этой ячейке.")
+    clash = (
+        StockLot.objects.filter(batch_line=lot.batch_line, location=to_location)
+        .exclude(pk=lot.pk)
+        .exists()
+    )
+    if clash:
+        raise InventoryError(
+            "В этой ячейке уже есть лот этой строки; слияние лотов — будущий слой."
+        )
+    lot.location = to_location
+    lot.save(update_fields=["location", "updated_at"])
+    _record_movement(
+        lot, StockMovement.MovementType.MOVE_LOT, lot.quantity,
+        from_location=from_location, to_location=to_location, by=by, comment=comment,
+    )
+    _refresh_balance(lot.batch_line, from_location)
+    _refresh_balance(lot.batch_line, to_location)
+    return lot
+
+
+@transaction.atomic
+def adjust_stock_lot_quantity(lot: StockLot, delta, *, by=None, comment="") -> StockLot:
+    """Скорректировать количество лота на delta (±). При нуле — статус depleted."""
+    delta = Decimal(delta)
+    if delta == 0:
+        raise InventoryError("Изменение количества не может быть нулевым.")
+    if not comment or not comment.strip():
+        raise InventoryError("Для корректировки обязателен комментарий.")
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if lot.status not in LOT_PHYSICAL_STATUSES:
+        raise InventoryError("Лот в недопустимом статусе для корректировки.")
+    new_qty = lot.quantity + delta
+    if new_qty < 0:
+        raise InventoryError(
+            f"Корректировка уводит количество в минус: остаток {lot.quantity}, дельта {delta}."
+        )
+    if delta > 0:
+        movement_type = StockMovement.MovementType.ADJUST_IN
+        from_location, to_location = None, lot.location
+    else:
+        movement_type = StockMovement.MovementType.ADJUST_OUT
+        from_location, to_location = lot.location, None
+    lot.quantity = new_qty
+    if new_qty == 0:
+        lot.status = StockLot.Status.DEPLETED
+    lot.save(update_fields=["quantity", "status", "updated_at"])
+    _record_movement(
+        lot, movement_type, abs(delta),
+        from_location=from_location, to_location=to_location, by=by, comment=comment,
+    )
+    _refresh_balance(lot.batch_line, lot.location)
+    return lot
+
+
+# --- Пересборка и сверка кэша остатков ---------------------------------------
+
+
+def _primary_pairs() -> set[tuple[int, int]]:
+    """Пары (batch_line_id, location_id) c физической первичкой."""
+    pairs: set[tuple[int, int]] = set()
+    pairs.update(
+        StockLot.objects.filter(status__in=LOT_PHYSICAL_STATUSES).values_list(
+            "batch_line_id", "location_id"
+        )
+    )
+    pairs.update(
+        PartItem.objects.filter(
+            status__in=ITEM_PHYSICAL_STATUSES, current_location__isnull=False
+        ).values_list("batch_line_id", "current_location_id")
+    )
+    return pairs
+
+
+def _line_loc_maps(keys):
+    """Кэш объектов BatchLine/StorageLocation по id для набора пар."""
+    lines = {
+        bl.pk: bl
+        for bl in BatchLine.objects.filter(pk__in={k[0] for k in keys}).select_related(
+            "part_type", "batch"
+        )
+    }
+    locations = {
+        loc.pk: loc for loc in StorageLocation.objects.filter(pk__in={k[1] for k in keys})
+    }
+    return lines, locations
+
+
+@transaction.atomic
+def rebuild_stock_balance() -> dict:
+    """Полностью пересобрать кэш остатков из первички. Возвращает счётчики."""
+    counts = {"created": 0, "updated": 0, "deleted": 0}
+    pairs = _primary_pairs()
+    existing = set(StockBalance.objects.values_list("batch_line_id", "location_id"))
+    for bl_id, loc_id in existing - pairs:
+        deleted, _ = StockBalance.objects.filter(
+            batch_line_id=bl_id, location_id=loc_id
+        ).delete()
+        if deleted:
+            counts["deleted"] += 1
+    if not pairs:
+        return counts
+    lines, locations = _line_loc_maps(pairs)
+    for bl_id, loc_id in pairs:
+        action = _refresh_balance(lines[bl_id], locations[loc_id])
+        if action in counts:
+            counts[action] += 1
+    return counts
+
+
+def check_stock_balance() -> list[str]:
+    """Сверить кэш с первичкой. Возвращает список расхождений (без правок)."""
+    problems: list[str] = []
+    pairs = _primary_pairs()
+    existing = {
+        (b.batch_line_id, b.location_id): b
+        for b in StockBalance.objects.select_related("part_type", "location")
+    }
+    keys = pairs | set(existing.keys())
+    if not keys:
+        return problems
+    lines, locations = _line_loc_maps(keys)
+    for bl_id, loc_id in sorted(keys):
+        ideal = _compute_balance(lines[bl_id], locations[loc_id])
+        actual = existing.get((bl_id, loc_id))
+        label = f"{lines[bl_id]} @ {locations[loc_id].code}"
+        if ideal is None:
+            if actual is not None:
+                problems.append(f"{label}: лишняя строка кэша (физического остатка нет)")
+            continue
+        if actual is None:
+            problems.append(f"{label}: нет строки кэша (ожидается physical={ideal['physical']})")
+            continue
+        if (
+            actual.quantity_physical != ideal["physical"]
+            or actual.quantity_available != ideal["available"]
+            or actual.quantity_quarantine != ideal["quarantine"]
+        ):
+            problems.append(
+                f"{label}: кэш physical={actual.quantity_physical}/"
+                f"avail={actual.quantity_available}/quar={actual.quantity_quarantine}, "
+                f"эталон physical={ideal['physical']}/avail={ideal['available']}/"
+                f"quar={ideal['quarantine']}"
+            )
+    return problems
+
+
+@transaction.atomic
+def backfill_opening_movements(*, by=None) -> int:
+    """Создать открывающее движение для первички без движений. Идемпотентна.
+
+    Не меняет статусы/количества — только пишет историю. Корректный баланс
+    обеспечивает `rebuild_stock_balance`, эта команда необязательна.
+    """
+    created = 0
+    items = PartItem.objects.filter(
+        status__in=ITEM_PHYSICAL_STATUSES,
+        current_location__isnull=False,
+        movements__isnull=True,
+    ).select_related("part_type", "batch", "batch_line", "current_location")
+    for item in items:
+        _record_movement(
+            item, StockMovement.MovementType.RECEIVE_ITEM, Decimal("1"),
+            to_location=item.current_location, by=by, comment="Открывающий остаток",
+        )
+        created += 1
+    lots = StockLot.objects.filter(
+        status__in=LOT_PHYSICAL_STATUSES, movements__isnull=True
+    ).select_related("part_type", "batch", "batch_line", "location")
+    for lot in lots:
+        _record_movement(
+            lot, StockMovement.MovementType.RECEIVE_LOT, lot.quantity,
+            to_location=lot.location, by=by, comment="Открывающий остаток",
+        )
+        created += 1
+    return created
 

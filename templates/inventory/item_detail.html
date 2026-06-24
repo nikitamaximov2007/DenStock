@@ -52,6 +52,27 @@
       </tr>
     </tbody>
   </table>
+  {% if can_manage %}
+    <div class="toolbar">
+      {% if item.status == "receiving" %}
+        <form method="post"
+              action="{% url 'item_receive' item.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <select name="to_location">
+            {% for loc in receive_locations %}
+              <option value="{{ loc.pk }}"
+                      {% if item.current_location_id == loc.pk %}selected{% endif %}>{{ loc.code }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Принять в ячейку</button>
+        </form>
+      {% endif %}
+      {% if item.current_location %}
+        <a href="{% url 'item_move' item.pk %}">Переместить</a>
+      {% endif %}
+    </div>
+  {% endif %}
   {% if can_manage and next_statuses %}
     <div class="toolbar">
       <span>Сменить статус:</span>
@@ -66,4 +87,43 @@
       {% endfor %}
     </div>
   {% endif %}
+  <h2>Журнал движений</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Тип</th>
+        <th>Кол-во</th>
+        <th>Откуда → Куда</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in movements %}
+        <tr>
+          <td>
+            <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
+          </td>
+          <td>{{ m.get_movement_type_display }}</td>
+          <td>{{ m.quantity }}</td>
+          <td>
+            {% if m.from_location %}
+              {{ m.from_location.code }}
+            {% else %}
+              —
+            {% endif %}
+            →
+            {% if m.to_location %}
+              {{ m.to_location.code }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="4" class="muted">Движений нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 {% endblock %}

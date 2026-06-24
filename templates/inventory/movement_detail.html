@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Движение #{{ movement.pk }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Движение #{{ movement.pk }}</h1>
+  <p>
+    <a href="{% url 'movement_list' %}">← К журналу движений</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Тип</th>
+        <td>{{ movement.get_movement_type_display }}</td>
+      </tr>
+      <tr>
+        <th>Дата</th>
+        <td>{{ movement.created_at|date:"d.m.Y H:i" }}</td>
+      </tr>
+      <tr>
+        <th>Деталь</th>
+        <td>{{ movement.part_type }}</td>
+      </tr>
+      <tr>
+        <th>Объект</th>
+        <td>
+          {% if movement.stock_lot_id %}
+            <a href="{% url 'lot_detail' movement.stock_lot_id %}">лот #{{ movement.stock_lot_id }}</a>
+          {% elif movement.part_item_id %}
+            <a href="{% url 'item_detail' movement.part_item_id %}">{{ movement.part_item.internal_number }}</a>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Количество</th>
+        <td>{{ movement.quantity }}</td>
+      </tr>
+      <tr>
+        <th>Откуда</th>
+        <td>
+          {% if movement.from_location %}
+            {{ movement.from_location.full_path }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Куда</th>
+        <td>
+          {% if movement.to_location %}
+            {{ movement.to_location.full_path }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Партия</th>
+        <td>
+          {% if movement.batch_id %}
+            <a href="{% url 'batch_detail' movement.batch_id %}">{{ movement.batch.number }}</a>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Себестоимость за ед.</th>
+          <td>{{ movement.unit_cost_rub }} ₽</td>
+        </tr>
+        <tr>
+          <th>Себестоимость движения</th>
+          <td>{{ movement.total_cost_rub }} ₽</td>
+        </tr>
+      {% endif %}
+      <tr>
+        <th>Кто провёл</th>
+        <td>{{ movement.created_by|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ movement.comment|default:"—" }}</td>
+      </tr>
+    </tbody>
+  </table>
+{% endblock %}

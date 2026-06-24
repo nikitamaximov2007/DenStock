@@ -177,11 +177,17 @@ def test_initial_quantity_frozen_on_edit(refs, admin):
     assert lot.initial_quantity == Decimal("10.000")  # не изменилось
 
 
-def test_no_movement_or_balance_models():
-    import apps.inventory.models as inv
+def test_stocklot_creation_does_not_journal(refs, admin):
+    # Слой 9 создаёт «черновик» лота без ledger: движения и баланс наполняет
+    # только Слой 10 (через сервисы приёмки/перемещения и rebuild). Раньше этот
+    # тест проверял отсутствие самих классов StockMovement/StockBalance как
+    # прокси; теперь — по сути: создание лота не пишет ни движения, ни баланса.
+    from apps.inventory.models import StockBalance, StockMovement
 
-    assert not hasattr(inv, "StockMovement")
-    assert not hasattr(inv, "StockBalance")
+    line = _finalized_line(refs, admin)
+    lot = create_stock_lot(line, refs["loc1"], Decimal("4"))
+    assert StockMovement.objects.filter(stock_lot=lot).count() == 0
+    assert not StockBalance.objects.filter(batch_line=line).exists()
 
 
 # --- Экраны и права ----------------------------------------------------------
