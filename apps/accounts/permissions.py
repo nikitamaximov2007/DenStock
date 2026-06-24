@@ -36,6 +36,10 @@ class ManagePartsMixin(CapabilityRequiredMixin):
     required_capability = roles.MANAGE_PARTS_CATALOG
 
 
+class ManageBatchesMixin(CapabilityRequiredMixin):
+    required_capability = roles.MANAGE_BATCHES
+
+
 def capability_required(capability: str):
     def decorator(view_func):
         @wraps(view_func)

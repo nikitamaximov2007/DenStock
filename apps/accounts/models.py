@@ -73,6 +73,10 @@ class User(AbstractUser):
         return self.has_capability(roles.MANAGE_PARTS_CATALOG)
 
     @property
+    def can_manage_batches(self) -> bool:
+        return self.has_capability(roles.MANAGE_BATCHES)
+
+    @property
     def can_view_finance(self) -> bool:
         return self.has_capability(roles.VIEW_FINANCE)
 

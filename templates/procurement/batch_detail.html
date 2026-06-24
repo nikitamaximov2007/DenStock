@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}{{ batch.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Партия {{ batch.number }}</h1>
+  <p>
+    <a href="{% url 'batch_list' %}">← К списку партий</a>
+    {% if can_manage %}· <a href="{% url 'batch_edit' batch.pk %}">Изменить</a>{% endif %}
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Поставщик</th>
+        <td>{{ batch.supplier }}</td>
+      </tr>
+      <tr>
+        <th>Статус</th>
+        <td>{{ batch.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Страна</th>
+        <td>{{ batch.country|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Валюта</th>
+        <td>{{ batch.currency }}</td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Курс</th>
+          <td>{{ batch.exchange_rate }}</td>
+        </tr>
+        <tr>
+          <th>Сумма товаров</th>
+          <td>{{ batch.goods_total }}</td>
+        </tr>
+        <tr>
+          <th>Доставка / Таможня / Комиссии / Прочие</th>
+          <td>{{ batch.shipping_cost }} / {{ batch.customs_cost }} / {{ batch.commission_cost }} / {{ batch.other_cost }}</td>
+        </tr>
+        <tr>
+          <th>Доп. расходы всего</th>
+          <td>{{ batch.total_extra_cost }}</td>
+        </tr>
+      {% endif %}
+      <tr>
+        <th>Заказ / Счёт</th>
+        <td>{{ batch.order_number|default:"—" }} / {{ batch.invoice_number|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Доступна к продаже</th>
+        <td>
+          {% if batch.is_available_for_sale %}
+            да
+          {% else %}
+            нет (себестоимость не зафиксирована)
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  {% if can_manage and next_statuses %}
+    <div class="toolbar">
+      <span>Сменить статус:</span>
+      {% for value, label in next_statuses %}
+        <form method="post"
+              action="{% url 'batch_status_change' batch.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="status" value="{{ value }}">
+          <button type="submit">→ {{ label }}</button>
+        </form>
+      {% endfor %}
+    </div>
+  {% endif %}
+  <h2>Строки поступления</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Кол-во</th>
+        {% if show_costs %}
+          <th>Цена за ед.</th>
+          <th>Итого (₽)</th>
+        {% endif %}
+        {% if can_manage %}
+          <th></th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>{{ line.quantity }}</td>
+          {% if show_costs %}
+            <td>{{ line.unit_cost_currency }} {{ batch.currency }} / {{ line.unit_cost_rub }} ₽</td>
+            <td>{{ line.total_cost_rub }} ₽</td>
+          {% endif %}
+          {% if can_manage %}
+            <td>
+              {% if batch.lines_editable %}
+                <a href="{% url 'batch_line_edit' line.pk %}">Изменить</a>
+              {% endif %}
+              {% if batch.lines_deletable %}
+                <form method="post"
+                      action="{% url 'batch_line_delete' line.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit">×</button>
+                </form>
+              {% endif %}
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="5" class="muted">Строк нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if can_manage and batch.lines_editable %}
+    <a class="btn btn--primary" href="{% url 'batch_line_add' batch.pk %}">Добавить строку</a>
+  {% endif %}
+  <h2>Остатки</h2>
+  {% include "partials/_status_block.html" with kind="info" text="BatchLine — документ партии, не остаток. Остатки появятся на следующих слоях." %}
+{% endblock %}
