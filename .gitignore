@@ -1,0 +1,41 @@
+# Python / Django
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+.python-version
+
+# Django runtime
+*.log
+db.sqlite3
+db.sqlite3-journal
+/staticfiles/
+/mediafiles/
+/media/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Backups (database dumps, label PDFs кэш)
+/backups/
+*.dump
+*.sql.gz
+
+# Docker
+*.pid
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
