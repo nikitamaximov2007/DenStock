@@ -1,0 +1,6 @@
+# Локально: слушаем :80 и проксируем на Django.
+# На VPS: задайте CADDY_SITE_ADDRESS=ваш-домен — Caddy включит авто-HTTPS.
+{$CADDY_SITE_ADDRESS::80} {
+	encode gzip
+	reverse_proxy web:8000
+}

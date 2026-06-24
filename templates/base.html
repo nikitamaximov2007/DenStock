@@ -1,0 +1,49 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}DenStock — складской учёт{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  </head>
+  <body class="app">
+    {% if user.is_authenticated %}
+      <header class="topbar">
+        <div class="topbar__brand">DenStock</div>
+        <input class="topbar__search"
+               type="search"
+               placeholder="Поиск детали…"
+               aria-label="Поиск детали"
+               disabled>
+        {% include "partials/_scan_field.html" %}
+        <div class="topbar__user">
+          <span>{{ user }}</span>
+          <form action="{% url 'logout' %}" method="post" class="topbar__logout">
+            {% csrf_token %}
+            <button type="submit">Выйти</button>
+          </form>
+        </div>
+      </header>
+      <div class="layout">
+        <nav class="sidebar" aria-label="Навигация">
+          {# Пункты-заглушки. Реальные разделы и роль-зависимость — со Слоя 2. #}
+          <ul>
+            <li><a href="{% url 'dashboard' %}">Главная</a></li>
+            <li><span class="sidebar__soon">Поиск детали</span></li>
+            <li><span class="sidebar__soon">Поступление</span></li>
+            <li><span class="sidebar__soon">Продажа</span></li>
+            <li><span class="sidebar__soon">Инвентаризация</span></li>
+          </ul>
+        </nav>
+        <main class="content">
+          {% block content %}{% endblock %}
+        </main>
+      </div>
+    {% else %}
+      <main class="content content--centered">
+        {% block anon_content %}{% endblock %}
+      </main>
+    {% endif %}
+  </body>
+</html>

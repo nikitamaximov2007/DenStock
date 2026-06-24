@@ -6,25 +6,73 @@
 > Главная задача: во время звонка клиента за несколько секунд найти нужную
 > запчасть и увидеть её количество, стоимость и точное местоположение на складе.
 
-## Документация
+Стек: **Django + HTMX + Tailwind + PostgreSQL**, запуск через **Docker Compose**.
+Подробности — в [docs/design/](docs/design/README.md).
 
-- [Техническое задание (ТЗ v1.0)](docs/requirements/ТЗ-v1.0.md) — канонические требования.
-- Дизайн-документ и план реализации — в `docs/superpowers/specs/` (в работе).
+## Требования
 
-## Зафиксированные решения
+- Docker Desktop (Windows/Mac) или Docker Engine + Compose (Linux).
 
-| Тема | Решение |
-|---|---|
-| Тип приложения | Веб-приложение, серверный рендеринг |
-| Стек | Django + HTMX + Tailwind + PostgreSQL |
-| Запуск | Docker Compose (одна команда), ярлык «в один клик» |
-| Развёртывание | Локально на складе сейчас; переносимо на облачный VPS позже без изменений кода |
-| Сопровождение | Нетехнический владелец — приоритет на «просто работает» |
-| Язык / валюта | Русский интерфейс, рубль как основная валюта |
-| Источник истины об остатках | Неизменяемый журнал движений; текущие балансы пересчитываются из него |
-| Внутренние штрихкоды | Генерация кодов + печать листа этикеток в PDF |
+## Быстрый старт
+
+```bash
+cp .env.example .env          # заполнить секреты (ключ, пароли)
+docker compose up -d --build  # поднять db + web + proxy
+```
+
+Открыть в браузере: <http://localhost>.
+В Windows можно просто запустить ярлык **`Старт.bat`**.
+
+Первичный администратор создаётся автоматически из переменных
+`DJANGO_SUPERUSER_*` в `.env` при первом запуске.
+
+## Команды
+
+```bash
+# Запуск / остановка
+docker compose up -d --build
+docker compose down
+
+# Миграции
+docker compose exec web python manage.py migrate
+docker compose exec web python manage.py makemigrations
+
+# Создать пользователя вручную
+docker compose exec web python manage.py createsuperuser
+
+# Тесты и линтеры (нужны dev-зависимости: pip install ".[dev]")
+docker compose exec web pytest
+docker compose exec web ruff check .
+docker compose exec web djlint templates --check
+```
+
+Локальный запуск без Docker (для разработки/тестов, на SQLite):
+
+```bash
+python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
+pip install ".[dev]"
+python manage.py migrate
+python manage.py runserver
+pytest
+```
+
+## Структура проекта
+
+```
+config/        — Django-проект (настройки base/dev/prod/test, urls, wsgi/asgi)
+apps/accounts  — кастомная модель пользователя
+apps/core      — layout, главная, healthcheck
+templates/     — базовые шаблоны и партиалы
+static/        — статика (скелетный app.css; Tailwind — на UI-слоях)
+docker/        — Dockerfile, entrypoint, Caddy
+docs/          — требования (ТЗ), дизайн, планы реализации
+tests/         — pytest
+```
 
 ## Статус
 
-Этап проектирования. Код ещё не пишется — сначала утверждается дизайн-документ,
-затем пошаговый план реализации.
+Реализуется по вертикальным слоям (см.
+[docs/design/05-roadmap.md](docs/design/05-roadmap.md)). Текущий слой: **1 —
+каркас**. Резервное копирование и запуск «в один клик» — на более поздних слоях.
+
+Здоровье приложения: `GET /healthz/` → `{"status":"ok","db":"ok"}`.

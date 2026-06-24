@@ -1,0 +1,97 @@
+/* DenStock — минимальный скелетный стиль Слоя 1.
+   Без декоративного дизайна: только читаемый рабочий каркас.
+   Компонентные стили на Tailwind подключаются на UI-слоях. */
+
+* { box-sizing: border-box; }
+
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --line: #d8dce2;
+  --text: #1c2430;
+  --muted: #6b7280;
+  --accent: #1f6feb;
+  --ok-bg: #e7f6ec; --ok-fg: #1a7f37; --ok-line: #b7e0c4;
+  --err-bg: #fdeaea; --err-fg: #b42318; --err-line: #f3b9b4;
+  --warn-bg: #fdf6e3; --warn-fg: #9a6700; --warn-line: #f1dca0;
+}
+
+body.app {
+  margin: 0;
+  font-family: system-ui, "Segoe UI", Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* Верхняя панель */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.topbar__brand { font-weight: 700; font-size: 20px; }
+.topbar__search { flex: 1; max-width: 480px; padding: 10px 12px; font-size: 16px;
+  border: 1px solid var(--line); border-radius: 8px; }
+.topbar__user { display: flex; align-items: center; gap: 12px; }
+.topbar__logout button { padding: 8px 14px; font-size: 15px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+
+/* Поле сканера (заглушка) */
+.scanfield { display: flex; align-items: center; gap: 8px; }
+.scanfield__label { font-size: 13px; color: var(--muted); }
+.scanfield__input { padding: 8px 10px; font-size: 15px;
+  border: 1px dashed var(--line); border-radius: 8px; min-width: 200px; }
+
+/* Раскладка */
+.layout { display: flex; min-height: calc(100vh - 57px); }
+.sidebar { width: 220px; background: var(--panel); border-right: 1px solid var(--line);
+  padding: 12px; }
+.sidebar ul { list-style: none; margin: 0; padding: 0; }
+.sidebar li { margin: 4px 0; }
+.sidebar a { display: block; padding: 10px 12px; border-radius: 8px;
+  text-decoration: none; color: var(--text); }
+.sidebar a:hover { background: var(--bg); }
+.sidebar__soon { display: block; padding: 10px 12px; color: var(--muted); }
+.content { flex: 1; padding: 24px; }
+.content--centered { display: flex; align-items: center; justify-content: center; }
+
+/* Плитки-скелет */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px; margin-top: 16px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px; }
+.tile__label { color: var(--muted); font-size: 14px; }
+.tile__value { font-size: 28px; font-weight: 700; margin-top: 6px; }
+
+.page-title { margin: 0 0 8px; }
+.muted { color: var(--muted); }
+
+/* Кнопки */
+.btn { display: inline-block; padding: 12px 18px; font-size: 16px; border-radius: 8px;
+  border: 1px solid var(--line); background: #fff; cursor: pointer; }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Вход */
+.login { width: 320px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 24px; }
+.login__title { margin: 0; }
+.login__subtitle { margin: 4px 0 16px; color: var(--muted); }
+.login__form { display: flex; flex-direction: column; gap: 8px; }
+.login__form input { padding: 10px 12px; font-size: 16px; border: 1px solid var(--line);
+  border-radius: 8px; }
+.login__form button { margin-top: 8px; }
+
+/* Статус-блок: цвет + текст + иконка */
+.status { display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border-radius: 8px; border: 1px solid var(--line); margin: 8px 0; font-weight: 600; }
+.status__icon { display: inline-flex; width: 22px; height: 22px; align-items: center;
+  justify-content: center; border-radius: 50%; font-size: 14px; color: #fff; }
+.status--success { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-line); }
+.status--success .status__icon { background: var(--ok-fg); }
+.status--error { background: var(--err-bg); color: var(--err-fg); border-color: var(--err-line); }
+.status--error .status__icon { background: var(--err-fg); }
+.status--warning { background: var(--warn-bg); color: var(--warn-fg); border-color: var(--warn-line); }
+.status--warning .status__icon { background: var(--warn-fg); }

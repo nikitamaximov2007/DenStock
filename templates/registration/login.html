@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Вход — DenStock{% endblock %}
+{% block anon_content %}
+  <div class="login">
+    <h1 class="login__title">DenStock</h1>
+    <p class="login__subtitle">Складской учёт запчастей</p>
+    {% if form.errors %}
+      {% include "partials/_status_block.html" with kind="error" text="Неверный логин или пароль" %}
+    {% endif %}
+    <form method="post" class="login__form">
+      {% csrf_token %}
+      <label for="id_username">Логин</label>
+      {{ form.username }}
+      <label for="id_password">Пароль</label>
+      {{ form.password }}
+      <button type="submit" class="btn btn--primary">Войти</button>
+    </form>
+  </div>
+{% endblock %}

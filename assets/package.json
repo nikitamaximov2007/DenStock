@@ -1,0 +1,12 @@
+{
+  "name": "denstock-assets",
+  "private": true,
+  "description": "Сборка Tailwind CSS для UI-слоёв DenStock (подключается, когда начинаются компонентные экраны).",
+  "scripts": {
+    "build": "tailwindcss -i ./src.css -o ../static/css/tailwind.css --minify",
+    "watch": "tailwindcss -i ./src.css -o ../static/css/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}

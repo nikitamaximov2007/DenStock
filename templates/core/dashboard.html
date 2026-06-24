@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Главная — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Главная</h1>
+  <p class="muted">Вы вошли как <strong>{{ user }}</strong>.</p>
+  {# Рабочий скелет. Плитки наполняются данными на последующих слоях
+     (остатки — слой 10, продажи/прибыль — слой 16, 21). #}
+  <section class="tiles" aria-label="Сводка (скелет)">
+    <div class="tile">
+      <div class="tile__label">Всего запчастей</div>
+      <div class="tile__value muted">—</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Доступно</div>
+      <div class="tile__value muted">—</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Продажи сегодня</div>
+      <div class="tile__value muted">—</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Прибыль за период</div>
+      <div class="tile__value muted">—</div>
+    </div>
+  </section>
+{% endblock %}
