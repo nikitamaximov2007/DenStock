@@ -1,7 +1,6 @@
 from decimal import Decimal
 
 import pytest
-from django.conf import settings
 from django.contrib.auth.models import Group
 from django.urls import reverse
 
@@ -112,10 +111,13 @@ def test_line_total_uses_decimal(refs):
 
 
 def test_batchline_does_not_create_stock(refs):
+    from apps.inventory.models import PartItem
+
     batch = _make_batch(refs)
     _make_line(batch, refs["part"])
-    # Приложений остатков ещё нет — строка не превращается в склад.
-    assert not any("inventory" in app for app in settings.INSTALLED_APPS)
+    # Строка партии сама по себе не создаёт физических экземпляров/остатка
+    # (экземпляры появляются только явным действием на Слое 8).
+    assert PartItem.objects.count() == 0
 
 
 def test_cost_finalized_default_false(refs):

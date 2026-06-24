@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ title }}</h1>
+  {% if line %}
+    <p class="muted">
+      Партия {{ line.batch.number }} · {{ line.part_type }} · количество {{ line.quantity|floatformat:0 }}
+    </p>
+  {% endif %}
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать</button>
+  </form>
+{% endblock %}

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Экземпляры — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Экземпляры деталей</h1>
+  <form method="get" class="toolbar">
+    <select name="status">
+      <option value="">Все статусы</option>
+      {% for value, label in statuses %}
+        <option value="{{ value }}" {% if f_status == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="part">
+      <option value="">Все детали</option>
+      {% for p in parts %}
+        <option value="{{ p.pk }}"
+                {% if f_part == p.pk|stringformat:'s' %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+    <select name="batch">
+      <option value="">Все партии</option>
+      {% for b in batches %}
+        <option value="{{ b.pk }}"
+                {% if f_batch == b.pk|stringformat:'s' %}selected{% endif %}>{{ b.number }}</option>
+      {% endfor %}
+    </select>
+    <select name="location">
+      <option value="">Все места</option>
+      {% for loc in locations %}
+        <option value="{{ loc.pk }}"
+                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.code }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Фильтр</button>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Номер</th>
+        <th>Деталь</th>
+        <th>Статус</th>
+        <th>Серийник</th>
+        <th>Место</th>
+        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in items %}
+        <tr>
+          <td>
+            <a href="{% url 'item_detail' item.pk %}">{{ item.internal_number }}</a>
+          </td>
+          <td>{{ item.part_type }}</td>
+          <td>{{ item.get_status_display }}</td>
+          <td>{{ item.serial_number|default:"—" }}</td>
+          <td>
+            {% if item.current_location %}
+              {{ item.current_location.code }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          {% if show_costs %}<td>{{ item.landed_cost_rub }}</td>{% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="muted">Экземпляров нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

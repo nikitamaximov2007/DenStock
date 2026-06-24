@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}{{ item.internal_number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Экземпляр {{ item.internal_number }}</h1>
+  <p>
+    <a href="{% url 'item_list' %}">← К списку экземпляров</a>
+    {% if can_manage %}· <a href="{% url 'item_edit' item.pk %}">Изменить</a>{% endif %}
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Деталь</th>
+        <td>{{ item.part_type }}</td>
+      </tr>
+      <tr>
+        <th>Штрихкод</th>
+        <td>{{ item.internal_barcode }}</td>
+      </tr>
+      <tr>
+        <th>Статус</th>
+        <td>{{ item.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Серийный номер</th>
+        <td>{{ item.serial_number|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Место</th>
+        <td>
+          {% if item.current_location %}
+            {{ item.current_location.full_path }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Партия</th>
+        <td>
+          <a href="{% url 'batch_detail' item.batch_id %}">{{ item.batch.number }}</a>
+        </td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Себестоимость</th>
+          <td>{{ item.landed_cost_rub }} ₽</td>
+        </tr>
+      {% endif %}
+      <tr>
+        <th>Примечание</th>
+        <td>{{ item.note|default:"—" }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if can_manage and next_statuses %}
+    <div class="toolbar">
+      <span>Сменить статус:</span>
+      {% for value, label in next_statuses %}
+        <form method="post"
+              action="{% url 'item_status_change' item.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="status" value="{{ value }}">
+          <button type="submit">→ {{ label }}</button>
+        </form>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock %}

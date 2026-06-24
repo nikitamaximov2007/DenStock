@@ -139,6 +139,40 @@
   {% if can_manage and batch.lines_editable %}
     <a class="btn btn--primary" href="{% url 'batch_line_add' batch.pk %}">Добавить строку</a>
   {% endif %}
+  {% if batch.cost_finalized %}
+    <h2>Экземпляры</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th>Создано</th>
+          {% if can_manage_inventory %}
+            <th></th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+          {% if line.part_type.tracking_mode == "serial" %}
+            <tr>
+              <td>{{ line.part_type }}</td>
+              <td>{{ line.items_made }} из {{ line.quantity|floatformat:0 }}</td>
+              {% if can_manage_inventory %}
+                <td>
+                  {% if line.items_made < line.quantity %}
+                    <a href="{% url 'item_create' line.pk %}">＋ экземпляр</a>
+                    <a href="{% url 'item_bulk_create' line.pk %}">＋ несколько</a>
+                  {% else %}
+                    <span class="muted">готово</span>
+                  {% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
   <h2>Остатки</h2>
   {% include "partials/_status_block.html" with kind="info" text="BatchLine — документ партии, не остаток. Остатки появятся на следующих слоях." %}
 {% endblock %}

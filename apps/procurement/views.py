@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
+from django.db.models import Count
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -65,7 +66,10 @@ class BatchDetailView(BatchAccessMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_batches
-        ctx["lines"] = self.object.lines.select_related("part_type")
+        ctx["can_manage_inventory"] = self.request.user.can_manage_inventory
+        ctx["lines"] = self.object.lines.select_related("part_type").annotate(
+            items_made=Count("items")
+        )
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, Batch.Status(s).label) for s in allowed]
         return ctx
