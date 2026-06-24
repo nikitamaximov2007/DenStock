@@ -119,3 +119,86 @@ class PartItem(models.Model):
 
     def can_transition_to(self, new_status: str) -> bool:
         return new_status in self.ALLOWED_TRANSITIONS.get(self.status, [])
+
+
+class StockLot(models.Model):
+    """Количественный складской лот: количество bulk-детали в конкретной ячейке.
+
+    Создаётся из финансово закрытой строки партии (Слой 9). Это ещё не ledger:
+    `StockMovement`/`StockBalance` появятся на Слое 10. `quantity` — текущее
+    количество лота; `initial_quantity` фиксируется при создании и далее не
+    меняется (станет осмысленным с приходом движений).
+    """
+
+    class Status(models.TextChoices):
+        RECEIVING = "receiving", "На приёмке"
+        AVAILABLE = "available", "Доступен"
+        QUARANTINE = "quarantine", "Карантин"
+        WRITTEN_OFF = "written_off", "Списан"
+
+    # Ручные переходы Слоя 9. written_off выставляется Слоем 19 через движения.
+    ALLOWED_TRANSITIONS = {
+        Status.RECEIVING: [Status.AVAILABLE, Status.QUARANTINE],
+        Status.AVAILABLE: [Status.QUARANTINE],
+        Status.QUARANTINE: [Status.AVAILABLE],
+    }
+
+    part_type = models.ForeignKey(
+        "catalog.PartType", verbose_name="Деталь",
+        on_delete=models.PROTECT, related_name="stock_lots",
+    )
+    batch = models.ForeignKey(
+        "procurement.Batch", verbose_name="Партия",
+        on_delete=models.PROTECT, related_name="stock_lots",
+    )
+    batch_line = models.ForeignKey(
+        "procurement.BatchLine", verbose_name="Строка партии",
+        on_delete=models.PROTECT, related_name="lots",
+    )
+    location = models.ForeignKey(
+        "warehouse.StorageLocation", verbose_name="Место",
+        on_delete=models.PROTECT, related_name="stock_lots",
+    )
+    quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
+    initial_quantity = models.DecimalField(
+        "Исходное количество", max_digits=12, decimal_places=3, editable=False
+    )
+    landed_unit_cost_rub = models.DecimalField(
+        "Себестоимость за ед. (₽)", max_digits=12, decimal_places=2, editable=False, default=0
+    )
+    status = models.CharField(
+        "Статус", max_length=20, choices=Status.choices, default=Status.RECEIVING
+    )
+    note = models.CharField("Примечание", max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Складской лот"
+        verbose_name_plural = "Складские лоты"
+        ordering = ["-created_at"]
+        constraints = [
+            # Один лот на пару «строка партии × ячейка»; разные ячейки — разные лоты.
+            models.UniqueConstraint(
+                fields=["batch_line", "location"], name="uniq_stocklot_line_location"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=0), name="stocklot_quantity_non_negative"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(initial_quantity__gte=0),
+                name="stocklot_initial_non_negative",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.part_type} × {self.quantity} @ {self.location.code}"
+
+    def clean(self) -> None:
+        if self.location_id and not self.location.can_hold_stock():
+            raise ValidationError(
+                {"location": "Это место не предназначено для хранения остатка."}
+            )
+
+    def can_transition_to(self, new_status: str) -> bool:
+        return new_status in self.ALLOWED_TRANSITIONS.get(self.status, [])

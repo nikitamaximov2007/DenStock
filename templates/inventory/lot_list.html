@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Лоты — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Количественные лоты</h1>
+  <form method="get" class="toolbar">
+    <select name="status">
+      <option value="">Все статусы</option>
+      {% for value, label in statuses %}
+        <option value="{{ value }}" {% if f_status == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <select name="part">
+      <option value="">Все детали</option>
+      {% for p in parts %}
+        <option value="{{ p.pk }}"
+                {% if f_part == p.pk|stringformat:'s' %}selected{% endif %}>{{ p }}</option>
+      {% endfor %}
+    </select>
+    <select name="batch">
+      <option value="">Все партии</option>
+      {% for b in batches %}
+        <option value="{{ b.pk }}"
+                {% if f_batch == b.pk|stringformat:'s' %}selected{% endif %}>{{ b.number }}</option>
+      {% endfor %}
+    </select>
+    <select name="location">
+      <option value="">Все места</option>
+      {% for loc in locations %}
+        <option value="{{ loc.pk }}"
+                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.code }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Фильтр</button>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Ячейка</th>
+        <th>Количество</th>
+        <th>Статус</th>
+        <th>Партия</th>
+        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for lot in lots %}
+        <tr>
+          <td>
+            <a href="{% url 'lot_detail' lot.pk %}">{{ lot.part_type }}</a>
+          </td>
+          <td>{{ lot.location.code }}</td>
+          <td>{{ lot.quantity }}</td>
+          <td>{{ lot.get_status_display }}</td>
+          <td>{{ lot.batch.number }}</td>
+          {% if show_costs %}<td>{{ lot.landed_unit_cost_rub }}</td>{% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="muted">Лотов нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

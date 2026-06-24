@@ -173,6 +173,40 @@
       </tbody>
     </table>
   {% endif %}
+  {% if batch.cost_finalized %}
+    <h2>Количественные лоты</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th>Распределено</th>
+          {% if can_manage_inventory %}
+            <th></th>
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+          {% if line.part_type.tracking_mode == "bulk" %}
+            <tr>
+              <td>{{ line.part_type }}</td>
+              <td>{{ line.lots_qty|floatformat:3 }} из {{ line.quantity|floatformat:3 }}</td>
+              {% if can_manage_inventory %}
+                <td>
+                  {% if line.lots_qty < line.quantity %}
+                    <a href="{% url 'lot_create' line.pk %}">＋ лот</a>
+                    <a href="{% url 'lot_create_remaining' line.pk %}">＋ остаток</a>
+                  {% else %}
+                    <span class="muted">распределено</span>
+                  {% endif %}
+                </td>
+              {% endif %}
+            </tr>
+          {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
   <h2>Остатки</h2>
   {% include "partials/_status_block.html" with kind="info" text="BatchLine — документ партии, не остаток. Остатки появятся на следующих слоях." %}
 {% endblock %}

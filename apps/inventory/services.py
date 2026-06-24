@@ -3,11 +3,14 @@
 Создаёт физические экземпляры из строки уже финансово закрытой партии. Без
 складских движений (`StockMovement`/`StockBalance` — Слой 10) и без сканера.
 """
+from decimal import Decimal
+
 from django.db import transaction
+from django.db.models import Sum
 
 from apps.procurement.models import BatchLine
 
-from .models import NumberSequence, PartItem
+from .models import NumberSequence, PartItem, StockLot
 
 
 class InventoryError(Exception):
@@ -82,3 +85,101 @@ def create_part_items(
         item.save()
         items.append(item)
     return items
+
+
+# --- Количественные лоты (StockLot) -----------------------------------------
+
+
+def distributed_qty(line: BatchLine) -> Decimal:
+    """Сколько количества строки уже распределено по лотам."""
+    agg = StockLot.objects.filter(batch_line=line).aggregate(s=Sum("quantity"))
+    return agg["s"] or Decimal("0")
+
+
+def remaining_qty(line: BatchLine) -> Decimal:
+    """Нераспределённый остаток строки."""
+    return line.quantity - distributed_qty(line)
+
+
+def _validate_bulk_line(line: BatchLine) -> None:
+    part = line.part_type
+    if part.tracking_mode != part.TrackingMode.BULK:
+        raise InventoryError("Лоты создаются только для количественных деталей.")
+    if not line.batch.cost_finalized:
+        raise InventoryError(
+            "Себестоимость партии не зафиксирована — создание лотов запрещено."
+        )
+
+
+@transaction.atomic
+def create_stock_lot(line: BatchLine, location, quantity, *, note: str = "") -> StockLot:
+    """Создать количественный лот из строки партии в конкретной ячейке."""
+    _validate_bulk_line(line)
+    quantity = Decimal(quantity)
+    if quantity <= 0:
+        raise InventoryError("Количество должно быть больше нуля.")
+    if location is None or not location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+
+    # Блокируем строку, чтобы лимит соблюдался при параллельных запросах.
+    line = BatchLine.objects.select_for_update().get(pk=line.pk)
+    already = (
+        StockLot.objects.filter(batch_line=line).aggregate(s=Sum("quantity"))["s"]
+        or Decimal("0")
+    )
+    if already + quantity > line.quantity:
+        raise InventoryError(
+            f"Нельзя распределить {quantity}: остаток строки {line.quantity - already}."
+        )
+    if StockLot.objects.filter(batch_line=line, location=location).exists():
+        raise InventoryError("Лот для этой строки в данной ячейке уже существует.")
+
+    lot = StockLot(
+        part_type=line.part_type,
+        batch=line.batch,
+        batch_line=line,
+        location=location,
+        quantity=quantity,
+        initial_quantity=quantity,
+        landed_unit_cost_rub=line.landed_unit_cost_rub,
+        note=note,
+    )
+    lot.save()
+    return lot
+
+
+@transaction.atomic
+def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> StockLot:
+    """Правка лота до появления движений: место/количество/примечание.
+
+    `initial_quantity` при правке не меняется (фиксируется при создании).
+    """
+    quantity = Decimal(quantity)
+    if quantity <= 0:
+        raise InventoryError("Количество должно быть больше нуля.")
+    if location is None or not location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+
+    line = BatchLine.objects.select_for_update().get(pk=lot.batch_line_id)
+    others = (
+        StockLot.objects.filter(batch_line=line).exclude(pk=lot.pk)
+        .aggregate(s=Sum("quantity"))["s"]
+        or Decimal("0")
+    )
+    if others + quantity > line.quantity:
+        raise InventoryError(
+            f"Нельзя установить {quantity}: остаток строки {line.quantity - others}."
+        )
+    if (
+        StockLot.objects.filter(batch_line=line, location=location)
+        .exclude(pk=lot.pk)
+        .exists()
+    ):
+        raise InventoryError("Лот для этой строки в данной ячейке уже существует.")
+
+    lot.location = location
+    lot.quantity = quantity
+    lot.note = note
+    lot.save(update_fields=["location", "quantity", "note", "updated_at"])
+    return lot
+

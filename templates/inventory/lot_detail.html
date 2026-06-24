@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Лот {{ lot.pk }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Лот {{ lot.part_type }}</h1>
+  <p>
+    <a href="{% url 'lot_list' %}">← К списку лотов</a>
+    {% if can_manage %}· <a href="{% url 'lot_edit' lot.pk %}">Изменить</a>{% endif %}
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Деталь</th>
+        <td>{{ lot.part_type }}</td>
+      </tr>
+      <tr>
+        <th>Ячейка</th>
+        <td>{{ lot.location.full_path }}</td>
+      </tr>
+      <tr>
+        <th>Количество</th>
+        <td>{{ lot.quantity }}</td>
+      </tr>
+      <tr>
+        <th>Исходное количество</th>
+        <td>{{ lot.initial_quantity }}</td>
+      </tr>
+      <tr>
+        <th>Статус</th>
+        <td>{{ lot.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Партия</th>
+        <td>
+          <a href="{% url 'batch_detail' lot.batch_id %}">{{ lot.batch.number }}</a>
+        </td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Себестоимость за ед.</th>
+          <td>{{ lot.landed_unit_cost_rub }} ₽</td>
+        </tr>
+      {% endif %}
+      <tr>
+        <th>Примечание</th>
+        <td>{{ lot.note|default:"—" }}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if can_manage and next_statuses %}
+    <div class="toolbar">
+      <span>Сменить статус:</span>
+      {% for value, label in next_statuses %}
+        <form method="post"
+              action="{% url 'lot_status_change' lot.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="status" value="{{ value }}">
+          <button type="submit">→ {{ label }}</button>
+        </form>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endblock %}

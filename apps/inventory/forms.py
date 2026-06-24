@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 
 from apps.warehouse.models import StorageLocation
@@ -39,3 +41,42 @@ class PartItemEditForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["current_location"].queryset = _storage_locations()
+
+
+class StockLotCreateForm(forms.Form):
+    """Создание количественного лота из строки партии."""
+
+    location = forms.ModelChoiceField(queryset=_storage_locations(), label="Место хранения")
+    quantity = forms.DecimalField(
+        min_value=Decimal("0.001"), max_digits=12, decimal_places=3, label="Количество"
+    )
+    note = forms.CharField(max_length=255, required=False, label="Примечание")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["location"].queryset = _storage_locations()
+
+
+class StockLotQuickForm(forms.Form):
+    """Быстрый лот на весь оставшийся остаток строки (количество — автоматически)."""
+
+    location = forms.ModelChoiceField(queryset=_storage_locations(), label="Место хранения")
+    note = forms.CharField(max_length=255, required=False, label="Примечание")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["location"].queryset = _storage_locations()
+
+
+class StockLotEditForm(forms.Form):
+    """Правка лота: место, количество, примечание (статус — отдельным действием)."""
+
+    location = forms.ModelChoiceField(queryset=_storage_locations(), label="Место хранения")
+    quantity = forms.DecimalField(
+        min_value=Decimal("0.001"), max_digits=12, decimal_places=3, label="Количество"
+    )
+    note = forms.CharField(max_length=255, required=False, label="Примечание")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["location"].queryset = _storage_locations()
