@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}{{ part.name }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ part.name }}</h1>
+  <p>
+    <a href="{% url 'part_list' %}">← К списку деталей</a>
+    {% if can_manage %}
+      · <a href="{% url 'part_edit' part.pk %}">Изменить</a>
+      <form method="post"
+            action="{% url 'part_toggle' part.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit">
+          {% if part.is_active %}
+            Деактивировать
+          {% else %}
+            Активировать
+          {% endif %}
+        </button>
+      </form>
+    {% endif %}
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Категория</th>
+        <td>{{ part.category }}</td>
+      </tr>
+      <tr>
+        <th>Производитель</th>
+        <td>{{ part.manufacturer|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Единица</th>
+        <td>{{ part.unit }}</td>
+      </tr>
+      <tr>
+        <th>Режим учёта</th>
+        <td>{{ part.get_tracking_mode_display }}</td>
+      </tr>
+      <tr>
+        <th>Рекомендуемая цена</th>
+        <td>{{ part.recommended_price|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Минимальная цена</th>
+        <td>{{ part.min_price|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Минимальный остаток</th>
+        <td>{{ part.min_stock_level }}</td>
+      </tr>
+      <tr>
+        <th>Статус</th>
+        <td>
+          {% if part.is_active %}
+            Активна
+          {% else %}
+            Отключена
+          {% endif %}
+        </td>
+      </tr>
+      {% if part.description %}
+        <tr>
+          <th>Описание</th>
+          <td>{{ part.description }}</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <h2>Номера</h2>
+  <ul>
+    {% for n in numbers %}
+      <li>
+        {{ n.value }} — {{ n.get_kind_display }}
+        {% if n.is_primary %} (основной){% endif %}
+        {% if can_manage %}
+          <form method="post"
+                action="{% url 'part_number_delete' n.pk %}"
+                class="inline-form">
+            {% csrf_token %}
+            <button type="submit">×</button>
+          </form>
+        {% endif %}
+      </li>
+    {% empty %}
+      <li class="muted">Нет номеров.</li>
+    {% endfor %}
+  </ul>
+  {% if can_manage %}
+    <form method="post"
+          action="{% url 'part_number_add' part.pk %}"
+          class="toolbar">
+      {% csrf_token %}
+      {{ number_form.as_p }}
+      <button type="submit" class="btn">Добавить номер</button>
+    </form>
+  {% endif %}
+  <h2>Заводские штрихкоды</h2>
+  <ul>
+    {% for b in barcodes %}
+      <li>
+        {{ b.value }}
+        {% if can_manage %}
+          <form method="post"
+                action="{% url 'part_barcode_delete' b.pk %}"
+                class="inline-form">
+            {% csrf_token %}
+            <button type="submit">×</button>
+          </form>
+        {% endif %}
+      </li>
+    {% empty %}
+      <li class="muted">Нет штрихкодов.</li>
+    {% endfor %}
+  </ul>
+  {% if can_manage %}
+    <form method="post"
+          action="{% url 'part_barcode_add' part.pk %}"
+          class="toolbar">
+      {% csrf_token %}
+      {{ barcode_form.as_p }}
+      <button type="submit" class="btn">Добавить штрихкод</button>
+    </form>
+  {% endif %}
+  <h2>Совместимость с техникой</h2>
+  <ul>
+    {% for c in compatibilities %}
+      <li>
+        {{ c.vehicle_model }}
+        {% if c.year_from or c.year_to %}({{ c.year_from|default:"…" }}–{{ c.year_to|default:"…" }}){% endif %}
+        {% if can_manage %}
+          <form method="post"
+                action="{% url 'part_compat_delete' c.pk %}"
+                class="inline-form">
+            {% csrf_token %}
+            <button type="submit">×</button>
+          </form>
+        {% endif %}
+      </li>
+    {% empty %}
+      <li class="muted">Совместимость не указана.</li>
+    {% endfor %}
+  </ul>
+  {% if can_manage %}
+    <form method="post"
+          action="{% url 'part_compat_add' part.pk %}"
+          class="toolbar">
+      {% csrf_token %}
+      {{ compat_form.as_p }}
+      <button type="submit" class="btn">Добавить совместимость</button>
+    </form>
+  {% endif %}
+  <h2>Остатки</h2>
+  {% include "partials/_status_block.html" with kind="info" text="Остатки появятся в следующих слоях." %}
+{% endblock %}

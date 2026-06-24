@@ -6,6 +6,7 @@ def _nav_items(user):
     """Пункты меню, видимые пользователю. stub=True — заглушка будущего слоя."""
     items = [{"label": "Главная", "url": reverse("dashboard"), "stub": False}]
     items.append({"label": "Поиск детали", "url": None, "stub": True})
+    items.append({"label": "Детали", "url": reverse("part_list"), "stub": False})
     items.append({"label": "Справочники", "url": reverse("directory_index"), "stub": False})
     items.append({"label": "Склад", "url": reverse("warehouse_index"), "stub": False})
     if user.is_storekeeper or user.is_admin:

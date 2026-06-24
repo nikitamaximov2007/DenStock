@@ -32,6 +32,10 @@ class ManageWarehouseMixin(CapabilityRequiredMixin):
     required_capability = roles.MANAGE_WAREHOUSE_STRUCTURE
 
 
+class ManagePartsMixin(CapabilityRequiredMixin):
+    required_capability = roles.MANAGE_PARTS_CATALOG
+
+
 def capability_required(capability: str):
     def decorator(view_func):
         @wraps(view_func)

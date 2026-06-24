@@ -1,6 +1,17 @@
 from django.contrib import admin
 
-from .models import Category, Manufacturer, Unit, VehicleMake, VehicleModel, VehicleType
+from .models import (
+    Category,
+    Manufacturer,
+    PartBarcode,
+    PartCompatibility,
+    PartNumber,
+    PartType,
+    Unit,
+    VehicleMake,
+    VehicleModel,
+    VehicleType,
+)
 
 
 @admin.register(Category)
@@ -41,3 +52,26 @@ class VehicleModelAdmin(admin.ModelAdmin):
     list_display = ("name", "vehicle_make", "year_from", "year_to", "is_active")
     list_filter = ("is_active",)
     search_fields = ("name",)
+
+
+class PartNumberInline(admin.TabularInline):
+    model = PartNumber
+    extra = 0
+
+
+class PartBarcodeInline(admin.TabularInline):
+    model = PartBarcode
+    extra = 0
+
+
+class PartCompatibilityInline(admin.TabularInline):
+    model = PartCompatibility
+    extra = 0
+
+
+@admin.register(PartType)
+class PartTypeAdmin(admin.ModelAdmin):
+    list_display = ("name", "category", "manufacturer", "tracking_mode", "is_active")
+    list_filter = ("tracking_mode", "is_active", "category")
+    search_fields = ("name",)
+    inlines = [PartNumberInline, PartBarcodeInline, PartCompatibilityInline]

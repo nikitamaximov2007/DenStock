@@ -1,5 +1,12 @@
+import re
+
 from django.core.exceptions import ValidationError
 from django.db import models
+
+
+def normalize_number(value: str) -> str:
+    """Нормализация номера для поиска: без пробелов/дефисов/разделителей, в верхнем регистре."""
+    return re.sub(r"[\s\-_./]", "", value or "").upper()
 
 
 class Dictionary(models.Model):
@@ -138,3 +145,135 @@ class VehicleModel(Dictionary):
 
     def __str__(self) -> str:
         return f"{self.vehicle_make.name} {self.name}"
+
+
+class PartType(Dictionary):
+    """Карточка вида детали (НЕ физический экземпляр и НЕ остаток).
+
+    Закупочной себестоимости здесь нет — она появится в партиях и остатках
+    (слои 6–12). Цены продажи (рекомендуемая/минимальная) — справочные.
+    """
+
+    class TrackingMode(models.TextChoices):
+        SERIAL = "serial", "Поштучный"
+        BULK = "bulk", "Количественный"
+
+    name = models.CharField("Название", max_length=200)
+    category = models.ForeignKey(
+        Category, verbose_name="Категория", on_delete=models.PROTECT, related_name="parts"
+    )
+    manufacturer = models.ForeignKey(
+        Manufacturer,
+        verbose_name="Производитель",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="parts",
+    )
+    unit = models.ForeignKey(
+        Unit, verbose_name="Единица", on_delete=models.PROTECT, related_name="parts"
+    )
+    tracking_mode = models.CharField(
+        "Режим учёта", max_length=10, choices=TrackingMode.choices, default=TrackingMode.SERIAL
+    )
+    description = models.TextField("Описание", blank=True)
+    recommended_price = models.DecimalField(
+        "Рекомендуемая цена", max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    min_price = models.DecimalField(
+        "Минимальная цена", max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    min_stock_level = models.DecimalField(
+        "Минимальный остаток", max_digits=12, decimal_places=3, default=0
+    )
+
+    class Meta:
+        verbose_name = "Вид детали"
+        verbose_name_plural = "Виды деталей"
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def clean(self) -> None:
+        # Минимальная цена не может быть выше рекомендуемой, если заданы обе.
+        if (
+            self.recommended_price is not None
+            and self.min_price is not None
+            and self.min_price > self.recommended_price
+        ):
+            raise ValidationError(
+                {"min_price": "Минимальная цена не может быть больше рекомендуемой."}
+            )
+
+    def can_change_tracking_mode(self) -> bool:
+        """TODO (слои 9–12): запретить смену режима, если по детали уже есть
+        остатки/экземпляры. Сейчас остатков нет — всегда True."""
+        return True
+
+
+class PartNumber(models.Model):
+    class Kind(models.TextChoices):
+        OEM = "oem", "OEM"
+        ARTICLE = "article", "Артикул"
+        ANALOG = "analog", "Аналог"
+        INTERNAL_REF = "internal_ref", "Внутренний справочный"
+
+    part = models.ForeignKey(PartType, on_delete=models.CASCADE, related_name="numbers")
+    value = models.CharField("Значение", max_length=100)
+    normalized_value = models.CharField(max_length=100, editable=False, db_index=True)
+    kind = models.CharField("Тип", max_length=20, choices=Kind.choices, default=Kind.OEM)
+    is_primary = models.BooleanField("Основной", default=False)
+    note = models.CharField("Примечание", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "Номер детали"
+        verbose_name_plural = "Номера детали"
+        ordering = ["kind", "value"]
+
+    def __str__(self) -> str:
+        return f"{self.value} ({self.get_kind_display()})"
+
+    def save(self, *args, **kwargs):
+        self.normalized_value = normalize_number(self.value)
+        super().save(*args, **kwargs)
+
+
+class PartBarcode(models.Model):
+    part = models.ForeignKey(PartType, on_delete=models.CASCADE, related_name="barcodes")
+    value = models.CharField("Штрихкод", max_length=100, unique=True)
+    note = models.CharField("Примечание", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "Заводской штрихкод"
+        verbose_name_plural = "Заводские штрихкоды"
+        ordering = ["value"]
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class PartCompatibility(models.Model):
+    part = models.ForeignKey(PartType, on_delete=models.CASCADE, related_name="compatibilities")
+    vehicle_model = models.ForeignKey(
+        VehicleModel,
+        verbose_name="Модель техники",
+        on_delete=models.PROTECT,
+        related_name="compatibilities",
+    )
+    year_from = models.IntegerField("Год с", null=True, blank=True)
+    year_to = models.IntegerField("Год по", null=True, blank=True)
+    note = models.CharField("Комментарий", max_length=255, blank=True)
+
+    class Meta:
+        verbose_name = "Совместимость"
+        verbose_name_plural = "Совместимость"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["part", "vehicle_model", "year_from", "year_to"],
+                name="uniq_part_model_years",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.part} ↔ {self.vehicle_model}"

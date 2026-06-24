@@ -1,6 +1,17 @@
 from django import forms
 
-from .models import Category, Manufacturer, Unit, VehicleMake, VehicleModel, VehicleType
+from .models import (
+    Category,
+    Manufacturer,
+    PartBarcode,
+    PartCompatibility,
+    PartNumber,
+    PartType,
+    Unit,
+    VehicleMake,
+    VehicleModel,
+    VehicleType,
+)
 
 
 class CategoryForm(forms.ModelForm):
@@ -37,3 +48,37 @@ class VehicleModelForm(forms.ModelForm):
     class Meta:
         model = VehicleModel
         fields = ["vehicle_make", "name", "year_from", "year_to"]
+
+
+class PartTypeForm(forms.ModelForm):
+    class Meta:
+        model = PartType
+        fields = [
+            "name",
+            "category",
+            "manufacturer",
+            "unit",
+            "tracking_mode",
+            "description",
+            "recommended_price",
+            "min_price",
+            "min_stock_level",
+        ]
+
+
+class PartNumberForm(forms.ModelForm):
+    class Meta:
+        model = PartNumber
+        fields = ["value", "kind", "is_primary", "note"]
+
+
+class PartBarcodeForm(forms.ModelForm):
+    class Meta:
+        model = PartBarcode
+        fields = ["value", "note"]
+
+
+class PartCompatibilityForm(forms.ModelForm):
+    class Meta:
+        model = PartCompatibility
+        fields = ["vehicle_model", "year_from", "year_to", "note"]
