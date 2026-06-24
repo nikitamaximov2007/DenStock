@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Расчёт себестоимости — {{ batch.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Расчёт себестоимости — партия {{ batch.number }}</h1>
+  <p>
+    <a href="{% url 'batch_detail' batch.pk %}">← К партии</a>
+  </p>
+  {% include "partials/_status_block.html" with kind="info" text="Предпросмотр без сохранения. Проверьте распределение и нажмите «Зафиксировать», чтобы заморозить себестоимость." %}
+  {% if show_costs %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>Метод распределения</th>
+          <td>{{ method_label }}</td>
+        </tr>
+        <tr>
+          <th>Сумма товаров</th>
+          <td>{{ base_total }} ₽</td>
+        </tr>
+        <tr>
+          <th>Накладные расходы</th>
+          <td>{{ computed.extra }} ₽</td>
+        </tr>
+        <tr>
+          <th>Итоговая себестоимость партии</th>
+          <td>
+            <strong>{{ grand_total }} ₽</strong>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <h2>Распределение по строкам</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th>Кол-во</th>
+          <th>База (₽)</th>
+          <th>Доля расходов (₽)</th>
+          <th>Себестоимость (₽)</th>
+          <th>За ед. (₽)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in computed.lines %}
+          <tr>
+            <td>{{ row.line.part_type }}</td>
+            <td>{{ row.line.quantity }}</td>
+            <td>{{ row.line.total_cost_rub }}</td>
+            <td>{{ row.allocated }}</td>
+            <td>{{ row.landed_total }}</td>
+            <td>{{ row.landed_unit }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  <div class="toolbar">
+    <form method="post"
+          action="{% url 'batch_cost_finalize' batch.pk %}"
+          class="inline-form">
+      {% csrf_token %}
+      <button type="submit" class="btn btn--primary">Зафиксировать себестоимость</button>
+    </form>
+    <a class="btn" href="{% url 'batch_detail' batch.pk %}">Отмена</a>
+  </div>
+{% endblock %}

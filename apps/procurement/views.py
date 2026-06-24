@@ -1,7 +1,9 @@
+from decimal import Decimal
+
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
@@ -10,6 +12,7 @@ from apps.accounts.permissions import ManageBatchesMixin
 
 from .forms import BatchForm, BatchLineForm
 from .models import Batch, BatchLine
+from .services import LandedCostError, compute_landed_cost, finalize_cost
 
 
 def _can_see_batches(user) -> bool:
@@ -92,6 +95,13 @@ class BatchUpdateView(ManageBatchesMixin, UpdateView):
     form_class = BatchForm
     template_name = "procurement/batch_form.html"
 
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if not self.object.costs_editable:
+            messages.error(request, "Себестоимость зафиксирована — партию изменять нельзя.")
+            return redirect("batch_detail", pk=self.object.pk)
+        return super().post(request, *args, **kwargs)
+
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["title"] = "Редактирование партии"
@@ -114,6 +124,49 @@ def batch_status_change(request, pk):
         messages.success(request, f"Статус партии: {batch.get_status_display()}.")
     else:
         messages.error(request, "Недопустимый переход статуса.")
+    return redirect("batch_detail", pk=pk)
+
+
+def cost_preview(request, pk):
+    """Предпросмотр распределения landed cost без сохранения (защита от случайной фиксации)."""
+    if not request.user.can_manage_batches:
+        raise PermissionDenied
+    batch = get_object_or_404(Batch, pk=pk)
+    if batch.status != Batch.Status.ACCEPTED:
+        messages.error(request, "Рассчитать себестоимость можно только для принятой партии.")
+        return redirect("batch_detail", pk=pk)
+    try:
+        computed = compute_landed_cost(batch)
+    except LandedCostError as exc:
+        messages.error(request, str(exc))
+        return redirect("batch_detail", pk=pk)
+    base_total = sum((row["line"].total_cost_rub for row in computed["lines"]), Decimal("0"))
+    grand_total = base_total + computed["extra"]
+    return render(
+        request,
+        "procurement/cost_preview.html",
+        {
+            "batch": batch,
+            "computed": computed,
+            "method_label": Batch.AllocationMethod(computed["method"]).label,
+            "base_total": base_total,
+            "grand_total": grand_total,
+            "show_costs": request.user.can_view_purchase_cost,
+        },
+    )
+
+
+@require_POST
+def cost_finalize(request, pk):
+    if not request.user.can_manage_batches:
+        raise PermissionDenied
+    batch = get_object_or_404(Batch, pk=pk)
+    try:
+        finalize_cost(batch, request.user)
+    except LandedCostError as exc:
+        messages.error(request, str(exc))
+        return redirect("batch_detail", pk=pk)
+    messages.success(request, "Себестоимость рассчитана и зафиксирована.")
     return redirect("batch_detail", pk=pk)
 
 

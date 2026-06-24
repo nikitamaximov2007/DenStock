@@ -43,7 +43,13 @@ class Batch(models.Model):
         CLOSED = "closed", "Закрыта"
         CANCELED = "canceled", "Отменена"
 
+    class AllocationMethod(models.TextChoices):
+        BY_VALUE = "by_value", "По стоимости"
+        BY_QUANTITY = "by_quantity", "По количеству"
+
     # Разрешённые переходы на этом слое (без cost_calculated/closed).
+    # Переход accepted → cost_calculated выполняется отдельным действием
+    # «Рассчитать себестоимость» (services.finalize_cost), а не сменой статуса.
     ALLOWED_TRANSITIONS = {
         Status.DRAFT: [Status.ORDERED, Status.CANCELED],
         Status.ORDERED: [Status.IN_TRANSIT, Status.CANCELED],
@@ -79,6 +85,17 @@ class Batch(models.Model):
     total_extra_cost = models.DecimalField(
         "Сумма доп. расходов", max_digits=14, decimal_places=2, default=0
     )
+    cost_allocation_method = models.CharField(
+        "Метод распределения", max_length=20,
+        choices=AllocationMethod.choices, default=AllocationMethod.BY_VALUE,
+    )
+    cost_finalized_at = models.DateTimeField(
+        "Себестоимость зафиксирована (когда)", null=True, blank=True
+    )
+    cost_finalized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+", verbose_name="Кто зафиксировал",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="+",
@@ -107,8 +124,14 @@ class Batch(models.Model):
 
     @property
     def is_available_for_sale(self) -> bool:
-        # На этом слое всегда False: cost_finalized не выставляется (Слой 7).
+        # Истинно только после фиксации себестоимости (Слой 7). Продаж и
+        # остатков ещё нет — это только индикатор готовности партии.
         return self.cost_finalized
+
+    @property
+    def costs_editable(self) -> bool:
+        # Расходы партии можно править до фиксации себестоимости.
+        return not self.cost_finalized
 
     @property
     def lines_editable(self) -> bool:
@@ -146,6 +169,17 @@ class BatchLine(models.Model):
     )
     total_cost_rub = models.DecimalField(
         "Итого (₽)", max_digits=14, decimal_places=2, editable=False, default=0
+    )
+    # Себестоимость с накладными (landed cost) — заполняется на Слое 7 при
+    # фиксации; до фиксации хранит нули.
+    allocated_overhead_rub = models.DecimalField(
+        "Доля доп. расходов (₽)", max_digits=14, decimal_places=2, editable=False, default=0
+    )
+    landed_unit_cost_rub = models.DecimalField(
+        "Себестоимость за ед. (₽)", max_digits=12, decimal_places=2, editable=False, default=0
+    )
+    landed_total_cost_rub = models.DecimalField(
+        "Себестоимость строки (₽)", max_digits=14, decimal_places=2, editable=False, default=0
     )
     note = models.CharField("Примечание", max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
