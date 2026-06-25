@@ -1,12 +1,23 @@
 from datetime import timedelta
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import connection
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+
+from apps.inventory.models import PartItem, StockLot, StockMovement
+from apps.inventory.services import (
+    InventoryError,
+    move_part_item,
+    move_stock_lot,
+    receive_part_item,
+    receive_stock_lot,
+)
+from apps.warehouse.models import StorageLocation
 
 from .models import UnresolvedScan
 from .scanner import resolve_scan
@@ -96,3 +107,215 @@ def healthz(request: HttpRequest) -> JsonResponse:
 
     payload = {"status": "ok", "db": "ok" if db_ok else "down"}
     return JsonResponse(payload, status=200 if db_ok else 503)
+
+
+# --- Слой 12: приёмка и размещение через сканер ------------------------------
+
+_HISTORY_TYPES = [
+    StockMovement.MovementType.RECEIVE_ITEM,
+    StockMovement.MovementType.RECEIVE_LOT,
+    StockMovement.MovementType.MOVE_ITEM,
+    StockMovement.MovementType.MOVE_LOT,
+]
+
+
+def _int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_operation(request: HttpRequest):
+    """Перечитать объект/ячейку из hidden-полей по ID.
+
+    Hidden-полям доверять нельзя: объект и ячейка ВСЕГДА перечитываются из БД,
+    статус/тип/доступность проверяются позже (`_confirm_operation`).
+    """
+    kind = request.POST.get("object_kind", "")
+    obj = None
+    obj_id = _int(request.POST.get("object_id"))
+    if obj_id is not None:
+        if kind == "part_item":
+            obj = (
+                PartItem.objects.filter(pk=obj_id)
+                .select_related("part_type", "current_location").first()
+            )
+        elif kind == "stock_lot":
+            obj = (
+                StockLot.objects.filter(pk=obj_id)
+                .select_related("part_type", "location").first()
+            )
+    if obj is None:
+        kind = ""
+    loc_id = _int(request.POST.get("location_id"))
+    location = (
+        StorageLocation.objects.filter(pk=loc_id).first() if loc_id is not None else None
+    )
+    return kind, obj, location
+
+
+def _wrong_object_message(result) -> str:
+    if result.type == "location":
+        return "Сначала отсканируйте деталь, потом ячейку."
+    if result.type == "part_type":
+        return (
+            "Это вид детали, а не конкретный экземпляр. Отсканируйте экземпляр "
+            "(ITEM:/DS-…) или серийный номер."
+        )
+    if result.type == "batch":
+        return "Это партия, а не экземпляр."
+    return "Ожидается экземпляр детали."
+
+
+def _confirm_operation(request: HttpRequest, kind: str, obj, location) -> str:
+    """Жёсткая проверка перед вызовом сервиса. Возвращает текст ошибки или "".
+
+    Сервер не доверяет hidden-полям: объект/ячейка уже перечитаны из БД
+    (`_load_operation`); здесь проверяем существование, тип, статус, ячейку и
+    `can_hold_stock()`, и только потом вызываем сервис Слоя 10. View сам ledger
+    не трогает — ни `StockMovement`, ни `StockBalance`.
+    """
+    if obj is None:
+        return "Не выбран объект для приёмки."
+    if location is None:
+        return "Не отсканирована ячейка."
+    if not location.can_hold_stock():
+        return "Ячейка не предназначена для хранения остатка (неактивна или запрещена)."
+    try:
+        if kind == "part_item":
+            if obj.status == PartItem.Status.RECEIVING:
+                receive_part_item(obj, to_location=location, by=request.user)
+                messages.success(
+                    request, f"Экземпляр {obj.internal_number} принят в {location.code}."
+                )
+            elif obj.status == PartItem.Status.AVAILABLE:
+                move_part_item(obj, location, by=request.user)
+                messages.success(
+                    request, f"Экземпляр {obj.internal_number} перемещён в {location.code}."
+                )
+            else:
+                return "Экземпляр в недопустимом статусе для приёмки/перемещения."
+        elif kind == "stock_lot":
+            if obj.status == StockLot.Status.RECEIVING:
+                if obj.location_id != location.pk:
+                    return (
+                        f"Лот создан для ячейки {obj.location.code}; "
+                        f"отсканирована {location.code}."
+                    )
+                receive_stock_lot(obj, by=request.user)
+                messages.success(request, f"Лот #{obj.pk} принят в {location.code}.")
+            elif obj.status == StockLot.Status.AVAILABLE:
+                move_stock_lot(obj, location, by=request.user)
+                messages.success(request, f"Лот #{obj.pk} перемещён в {location.code}.")
+            else:
+                return "Лот в недопустимом статусе."
+        else:
+            return "Не выбран объект для приёмки."
+    except InventoryError as exc:
+        return str(exc)
+    return ""
+
+
+@login_required
+def scanner_receiving(request: HttpRequest) -> HttpResponse:
+    """Экран приёмки/размещения сканером. View только оркеструет; складские
+    изменения идут исключительно через сервисы Слоя 10."""
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+
+    kind, obj, location = "", None, None
+    candidates: list = []
+    error = ""
+
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        if action == "reset":
+            return redirect("scanner_receiving")
+
+        kind, obj, location = _load_operation(request)
+
+        if action == "select_lot":
+            lot = (
+                StockLot.objects.filter(
+                    pk=_int(request.POST.get("lot_id")), status=StockLot.Status.RECEIVING
+                ).select_related("part_type", "location").first()
+            )
+            if lot is None:
+                error = "Лот не найден или уже не на приёмке."
+                kind, obj, location = "", None, None
+            else:
+                kind, obj, location = "stock_lot", lot, None
+
+        elif action == "select_candidate":
+            cand_id = _int(request.POST.get("candidate_id"))
+            picked = (
+                PartItem.objects.filter(pk=cand_id).select_related("part_type").first()
+                if cand_id is not None else None
+            )
+            if picked is None:
+                error = "Экземпляр не найден."
+            else:
+                kind, obj, location = "part_item", picked, None
+
+        elif action == "scan":
+            code = (request.POST.get("code") or "").strip()
+            if not code:
+                error = "Пустой код."
+            elif obj is None:
+                result = resolve_scan(code, user=request.user)
+                if result.status == "unknown":
+                    _record_unresolved(request, code)
+                    error = "Код не распознан."
+                elif result.status == "ambiguous":
+                    candidates = result.candidates
+                    error = "Уточните, какой экземпляр разместить."
+                elif result.type == "part_item":
+                    kind = "part_item"
+                    obj = PartItem.objects.select_related(
+                        "part_type", "current_location"
+                    ).get(pk=result.id)
+                else:
+                    error = _wrong_object_message(result)
+            else:
+                result = resolve_scan(code, user=request.user)
+                if result.status == "unknown":
+                    _record_unresolved(request, code)
+                    error = "Код не распознан."
+                elif result.type == "location":
+                    location = StorageLocation.objects.get(pk=result.id)
+                else:
+                    error = "Ожидается ячейка (LOC:/код)."
+
+        elif action == "confirm":
+            error = _confirm_operation(request, kind, obj, location)
+            if not error:
+                return redirect("scanner_receiving")  # успех → messages + PRG
+
+    if obj is None:
+        step = "scan_object"
+    elif location is None:
+        step = "scan_location"
+    else:
+        step = "confirm"
+
+    ctx = {
+        "object": obj,
+        "object_kind": kind,
+        "location": location,
+        "step": step,
+        "candidates": candidates,
+        "error": error,
+        "receiving_lots": (
+            StockLot.objects.filter(status=StockLot.Status.RECEIVING)
+            .select_related("part_type", "batch", "location")
+            .order_by("-created_at")[:50]
+        ),
+        "history": (
+            StockMovement.objects.filter(
+                created_by=request.user, movement_type__in=_HISTORY_TYPES
+            ).select_related("part_type", "to_location")[:10]
+        ),
+        "show_costs": request.user.can_view_purchase_cost,
+    }
+    return render(request, "core/receiving.html", ctx)

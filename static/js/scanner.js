@@ -94,5 +94,9 @@
     if (pageInput) {
       pageInput.focus(); // автофокус на странице сканера
     }
+    var receivingInput = document.getElementById("receiving-scan-input");
+    if (receivingInput) {
+      receivingInput.focus(); // автофокус на экране приёмки после перезагрузки
+    }
   });
 })();

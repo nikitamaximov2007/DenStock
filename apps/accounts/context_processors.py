@@ -15,6 +15,10 @@ def _nav_items(user):
         items.append({"label": "Лоты", "url": reverse("lot_list"), "stub": False})
         items.append({"label": "Движения", "url": reverse("movement_list"), "stub": False})
         items.append({"label": "Остатки", "url": reverse("balance_list"), "stub": False})
+    if user.can_manage_inventory:
+        items.append(
+            {"label": "Приёмка сканером", "url": reverse("scanner_receiving"), "stub": False}
+        )
     items.append({"label": "Справочники", "url": reverse("directory_index"), "stub": False})
     items.append({"label": "Склад", "url": reverse("warehouse_index"), "stub": False})
     if user.is_storekeeper or user.is_admin:

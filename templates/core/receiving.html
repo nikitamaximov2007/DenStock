@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Приёмка сканером — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Приёмка сканером</h1>
+  {% if error %}
+    {% include "partials/_status_block.html" with kind="error" text=error %}
+  {% endif %}
+  <p class="muted">
+    Шаг:
+    {% if step == "scan_object" %}
+      1 — сканируйте деталь
+    {% elif step == "scan_location" %}
+      2 — сканируйте ячейку
+    {% else %}
+      3 — подтвердите
+    {% endif %}
+  </p>
+  {% if object %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>Объект</th>
+          <td>
+            {% if object_kind == "part_item" %}
+              Экземпляр {{ object.internal_number }} · {{ object.part_type }}
+              ({{ object.get_status_display }})
+            {% else %}
+              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity }}
+              ({{ object.get_status_display }})
+            {% endif %}
+          </td>
+        </tr>
+        {% if location %}
+          <tr>
+            <th>Ячейка</th>
+            <td>{{ location.code }} — {{ location.name }}</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  {% endif %}
+  {% if step == "confirm" %}
+    <form method="post" class="form">
+      {% csrf_token %}
+      <input type="hidden" name="object_kind" value="{{ object_kind }}">
+      <input type="hidden" name="object_id" value="{{ object.pk }}">
+      <input type="hidden" name="location_id" value="{{ location.pk }}">
+      <button type="submit" name="action" value="confirm" class="btn btn--primary">Подтвердить</button>
+      <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
+    </form>
+  {% else %}
+    <form method="post" class="form">
+      {% csrf_token %}
+      {% if object %}
+        <input type="hidden" name="object_kind" value="{{ object_kind }}">
+        <input type="hidden" name="object_id" value="{{ object.pk }}">
+      {% endif %}
+      <input id="receiving-scan-input"
+             name="code"
+             type="text"
+             class="scanner-page__input"
+             placeholder="{% if step == 'scan_object' %}Отсканируйте деталь…{% else %}Отсканируйте ячейку…{% endif %}"
+             autocomplete="off"
+             autofocus>
+      <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
+      {% if object %}
+        <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
+      {% endif %}
+    </form>
+  {% endif %}
+  {% if candidates %}
+    <ul class="scanner-candidates">
+      {% for c in candidates %}
+        <li>
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="candidate_kind" value="{{ c.type }}">
+            <input type="hidden" name="candidate_id" value="{{ c.id }}">
+            <button type="submit" name="action" value="select_candidate">{{ c.label }}</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if step == "scan_object" %}
+    <h2>Лоты на приёмке</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th>Кол-во</th>
+          <th>Партия</th>
+          <th>Ячейка</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for lot in receiving_lots %}
+          <tr>
+            <td>{{ lot.part_type }}</td>
+            <td>{{ lot.quantity }}</td>
+            <td>{{ lot.batch.number }}</td>
+            <td>{{ lot.location.code }}</td>
+            <td>
+              <form method="post" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="lot_id" value="{{ lot.pk }}">
+                <button type="submit" name="action" value="select_lot">Разместить</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="muted">Лотов на приёмке нет.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  <h2>Последние операции</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Тип</th>
+        <th>Деталь</th>
+        <th>Куда</th>
+        {% if show_costs %}
+          <th>Сумма (₽)</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in history %}
+        <tr>
+          <td>{{ m.created_at|date:"d.m.Y H:i" }}</td>
+          <td>{{ m.get_movement_type_display }}</td>
+          <td>{{ m.part_type }}</td>
+          <td>
+            {% if m.to_location %}
+              {{ m.to_location.code }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          {% if show_costs %}
+            <td>{{ m.total_cost_rub }}</td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="{% if show_costs %}5{% else %}4{% endif %}" class="muted">Операций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
