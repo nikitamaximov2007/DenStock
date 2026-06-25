@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Сканер — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Сканер</h1>
+  <p class="muted">Отсканируйте код — система определит, что это (экземпляр, ячейка, партия, вид детали).</p>
+  <form method="post" class="form scanner-page">
+    {% csrf_token %}
+    <input type="hidden" name="context" value="scanner">
+    <input id="scanner-page-input"
+           name="code"
+           type="text"
+           class="scanner-page__input"
+           placeholder="Отсканируйте код…"
+           autocomplete="off"
+           autofocus
+           value="{{ code }}">
+    <button type="submit" class="btn btn--primary">Проверить</button>
+  </form>
+  {% if result %}
+    {% if result.status == "found" %}
+      {% include "partials/_status_block.html" with kind="success" text=result.label %}
+      <p>
+        <a class="btn" href="{{ result.url }}">Открыть</a>
+      </p>
+    {% elif result.status == "ambiguous" %}
+      {% include "partials/_status_block.html" with kind="warning" text=result.message %}
+      <ul class="scanner-candidates">
+        {% for c in result.candidates %}
+          <li>
+            <a href="{{ c.url }}">{{ c.label }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      {% include "partials/_status_block.html" with kind="error" text=result.message %}
+    {% endif %}
+  {% endif %}
+{% endblock %}

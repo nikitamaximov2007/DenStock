@@ -1,10 +1,17 @@
-{# Поле сканера — заглушка на Слое 1. Реальный резолв кода — на Слое 11. #}
-<div class="scanfield" role="group" aria-label="Поле сканирования">
+{# Поле сканера в топбаре (Слой 11): Enter -> резолв через scanner.js. #}
+<div class="scanfield"
+     role="group"
+     aria-label="Поле сканирования"
+     data-scan-resolve-url="{% url 'scanner_resolve' %}"
+     data-scan-csrf="{{ csrf_token }}">
   <label class="scanfield__label" for="scan-input">Сканер</label>
   <input id="scan-input"
          class="scanfield__input"
          type="text"
          placeholder="Отсканируйте код…"
-         autocomplete="off"
-         disabled>
+         autocomplete="off">
+  <div id="scan-topbar-result"
+       class="scanfield__result"
+       role="status"
+       aria-live="polite"></div>
 </div>

@@ -6,6 +6,7 @@ def _nav_items(user):
     """Пункты меню, видимые пользователю. stub=True — заглушка будущего слоя."""
     items = [{"label": "Главная", "url": reverse("dashboard"), "stub": False}]
     items.append({"label": "Поиск детали", "url": None, "stub": True})
+    items.append({"label": "Сканер", "url": reverse("scanner"), "stub": False})
     items.append({"label": "Детали", "url": reverse("part_list"), "stub": False})
     if user.can_manage_batches or user.can_view_purchase_cost or user.is_storekeeper:
         items.append({"label": "Партии", "url": reverse("batch_list"), "stub": False})
@@ -22,6 +23,10 @@ def _nav_items(user):
         items.append({"label": "Продажа", "url": None, "stub": True})
     if user.can_view_finance:
         items.append({"label": "Статистика", "url": None, "stub": True})
+    if user.is_admin or user.is_manager:
+        items.append(
+            {"label": "Нераспознанные", "url": reverse("unresolved_list"), "stub": False}
+        )
     if user.can_manage_users:
         items.append({"label": "Пользователи", "url": reverse("user_list"), "stub": False})
     return items
