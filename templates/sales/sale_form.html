@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Новая продажа — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Новая продажа</h1>
+  <p>
+    <a href="{% url 'sale_list' %}">← К продажам</a>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать черновик</button>
+  </form>
+  <p class="muted">
+    После создания добавьте позиции (экземпляр или количество из лота), укажите цены
+    и проведите продажу. Проведение списывает остаток и фиксирует выручку/прибыль.
+  </p>
+{% endblock %}

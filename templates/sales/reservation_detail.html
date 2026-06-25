@@ -55,6 +55,17 @@
     </div>
   {% endif %}
 
+  {% if can_sell and reservation.status == "active" %}
+    <div class="toolbar">
+      <form method="post"
+            action="{% url 'sale_from_reservation' reservation.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Продать из резерва</button>
+      </form>
+    </div>
+  {% endif %}
+
   <h2>Позиции</h2>
   <table class="table">
     <thead>

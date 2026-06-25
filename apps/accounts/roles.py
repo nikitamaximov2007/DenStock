@@ -23,6 +23,7 @@ MANAGE_PARTS_CATALOG = "manage_parts_catalog"
 MANAGE_BATCHES = "manage_batches"
 MANAGE_INVENTORY = "manage_inventory"
 MANAGE_RESERVATIONS = "manage_reservations"
+MANAGE_SALES = "manage_sales"
 VIEW_FINANCE = "can_view_finance"
 VIEW_PURCHASE_COST = "can_view_purchase_cost"
 EDIT = "can_edit"
@@ -31,8 +32,8 @@ CONFIRM_ADJUSTMENTS = "can_confirm_adjustments"
 ALL_CAPABILITIES = frozenset(
     {
         MANAGE_USERS, MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG,
-        MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, VIEW_FINANCE, VIEW_PURCHASE_COST,
-        EDIT, CONFIRM_ADJUSTMENTS,
+        MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, VIEW_FINANCE,
+        VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
     }
 )
 
@@ -40,19 +41,19 @@ ALL_CAPABILITIES = frozenset(
 ROLE_CAPABILITIES = {
     ADMIN: {
         MANAGE_USERS, MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG,
-        MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, VIEW_FINANCE, VIEW_PURCHASE_COST,
-        EDIT, CONFIRM_ADJUSTMENTS,
+        MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, VIEW_FINANCE,
+        VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
     },
     MANAGER: {
         MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG, MANAGE_BATCHES,
-        MANAGE_INVENTORY, MANAGE_RESERVATIONS, VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT,
-        CONFIRM_ADJUSTMENTS,
+        MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, VIEW_FINANCE, VIEW_PURCHASE_COST,
+        EDIT, CONFIRM_ADJUSTMENTS,
     },
     # Кладовщик ведёт приёмку: создаёт/правит экземпляры, но закупочных сумм не видит.
-    # Бронь под клиента — коммерческое действие продавца, кладовщику не выдаём.
+    # Бронь и продажа под клиента — коммерческие действия продавца, кладовщику не выдаём.
     STOREKEEPER: {MANAGE_INVENTORY, EDIT},
-    # Продавец/Мастер создаёт и отменяет резервы под клиента.
-    SELLER: {EDIT, MANAGE_RESERVATIONS},
+    # Продавец/Мастер создаёт резервы и проводит продажи под клиента.
+    SELLER: {EDIT, MANAGE_RESERVATIONS, MANAGE_SALES},
     VIEWER: {VIEW_FINANCE, VIEW_PURCHASE_COST},  # просмотр без редактирования
 }
 

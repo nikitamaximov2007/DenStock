@@ -23,12 +23,11 @@ def _nav_items(user):
             {"label": "Перемещение", "url": reverse("scanner_move"), "stub": False}
         )
     items.append({"label": "Резервы", "url": reverse("reservation_list"), "stub": False})
+    items.append({"label": "Продажи", "url": reverse("sale_list"), "stub": False})
     items.append({"label": "Справочники", "url": reverse("directory_index"), "stub": False})
     items.append({"label": "Склад", "url": reverse("warehouse_index"), "stub": False})
     if user.is_storekeeper or user.is_admin:
         items.append({"label": "Поступление", "url": None, "stub": True})
-    if user.is_seller or user.is_admin:
-        items.append({"label": "Продажа", "url": None, "stub": True})
     if user.can_view_finance:
         items.append({"label": "Статистика", "url": None, "stub": True})
     if user.is_admin or user.is_manager:

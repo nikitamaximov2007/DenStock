@@ -2,7 +2,7 @@ from django import forms
 
 from apps.inventory.models import StockLot
 
-from .models import Reservation
+from .models import Reservation, Sale
 
 
 class ReservationForm(forms.ModelForm):
@@ -33,6 +33,39 @@ class AddLotForm(forms.Form):
     lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
     quantity = forms.DecimalField(
         label="Количество", max_digits=12, decimal_places=3, min_value=0.001
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["lot"].queryset = (
+            StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
+            .select_related("part_type", "location")
+            .order_by("part_type__name", "location__code")
+        )
+
+
+class SaleForm(forms.ModelForm):
+    class Meta:
+        model = Sale
+        fields = ["customer_name", "customer_phone", "comment"]
+
+
+class AddSaleItemForm(forms.Form):
+    code = forms.CharField(
+        label="Экземпляр (внутр. номер / штрихкод / серийник)", max_length=100
+    )
+    unit_price = forms.DecimalField(
+        label="Цена продажи за ед. (₽)", max_digits=12, decimal_places=2, min_value=0
+    )
+
+
+class AddSaleLotForm(forms.Form):
+    lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
+    quantity = forms.DecimalField(
+        label="Количество", max_digits=12, decimal_places=3, min_value=0.001
+    )
+    unit_price = forms.DecimalField(
+        label="Цена продажи за ед. (₽)", max_digits=12, decimal_places=2, min_value=0
     )
 
     def __init__(self, *args, **kwargs):

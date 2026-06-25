@@ -233,10 +233,14 @@ def _record_movement(
     to_location=None,
     by=None,
     comment="",
+    document_type="",
+    document_id=None,
 ) -> StockMovement:
     """Единая точка создания движения: источник копируется из объекта.
 
     `total_cost_rub` считается в `StockMovement.save()` (= unit_cost × quantity).
+    `document_type`/`document_id` связывают движение с документом-источником
+    (например, продажей: `document_type="sale"`, `document_id=Sale.id`).
     """
     if isinstance(obj, PartItem):
         part_item, stock_lot = obj, None
@@ -257,6 +261,8 @@ def _record_movement(
         unit_cost_rub=unit_cost,
         created_by=by,
         comment=comment,
+        document_type=document_type,
+        document_id=document_id,
     )
 
 
@@ -454,6 +460,59 @@ def adjust_stock_lot_quantity(lot: StockLot, delta, *, by=None, comment="") -> S
     _record_movement(
         lot, movement_type, abs(delta),
         from_location=from_location, to_location=to_location, by=by, comment=comment,
+    )
+    _refresh_balance(lot.batch_line, lot.location)
+    return lot
+
+
+# --- Слой 16: расход при продаже (физика + ledger, без знания о резервах) -----
+
+
+@transaction.atomic
+def sell_part_item(item, *, by=None, document_id=None, comment="") -> PartItem:
+    """Списать экземпляр при продаже: available → sold, движение SALE_ITEM.
+
+    Чисто складская операция: проверяет только физический статус, не знает о
+    резервах (резерв-проверки делает apps.sales перед вызовом). `current_location`
+    сохраняется как последняя известная ячейка (аудит); статус `sold` исключает
+    экземпляр из physical/available.
+    """
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    if item.status != PartItem.Status.AVAILABLE:
+        raise InventoryError("Продать можно только доступный экземпляр.")
+    from_location = item.current_location
+    item.status = PartItem.Status.SOLD
+    item.save(update_fields=["status", "updated_at"])
+    _record_movement(
+        item, StockMovement.MovementType.SALE_ITEM, Decimal("1"),
+        from_location=from_location, to_location=None, by=by,
+        comment=comment, document_type="sale", document_id=document_id,
+    )
+    if from_location is not None:
+        _refresh_balance(item.batch_line, from_location)
+    return item
+
+
+@transaction.atomic
+def sell_stock_lot(lot, quantity, *, by=None, document_id=None, comment="") -> StockLot:
+    """Списать количество из лота при продаже: quantity↓, depleted при нуле,
+    движение SALE_LOT. Частичная продажа разрешена; лот не дробится."""
+    quantity = Decimal(quantity)
+    if quantity <= 0:
+        raise InventoryError("Количество продажи должно быть больше нуля.")
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if lot.status != StockLot.Status.AVAILABLE:
+        raise InventoryError("Продать можно только доступный лот.")
+    if quantity > lot.quantity:
+        raise InventoryError(f"Нельзя продать {quantity}: в лоте {lot.quantity}.")
+    lot.quantity = lot.quantity - quantity
+    if lot.quantity == 0:
+        lot.status = StockLot.Status.DEPLETED
+    lot.save(update_fields=["quantity", "status", "updated_at"])
+    _record_movement(
+        lot, StockMovement.MovementType.SALE_LOT, quantity,
+        from_location=lot.location, to_location=None, by=by,
+        comment=comment, document_type="sale", document_id=document_id,
     )
     _refresh_balance(lot.batch_line, lot.location)
     return lot

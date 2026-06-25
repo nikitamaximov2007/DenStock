@@ -53,6 +53,11 @@
         Ячейки: {{ row.locations|join:", "|default:"—" }} · Партии:
         {{ row.batches|join:", "|default:"—" }}
       </p>
+      {% if can_sell %}
+        <p>
+          <a href="{% url 'sale_create' %}">Продать</a>
+        </p>
+      {% endif %}
       {% if can_view_inventory %}
         {% if row.items %}
           <table class="table">

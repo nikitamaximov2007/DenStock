@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Продажа {{ sale.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Продажа {{ sale.number }}</h1>
+  <p>
+    <a href="{% url 'sale_list' %}">← К продажам</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Статус</th>
+        <td>{{ sale.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Клиент</th>
+        <td>{{ sale.customer_name }}</td>
+      </tr>
+      <tr>
+        <th>Телефон</th>
+        <td>{{ sale.customer_phone|default:"—" }}</td>
+      </tr>
+      {% if sale.reservation %}
+        <tr>
+          <th>Из резерва</th>
+          <td>
+            <a href="{% url 'reservation_detail' sale.reservation.pk %}">{{ sale.reservation.number }}</a>
+          </td>
+        </tr>
+      {% endif %}
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ sale.comment|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Проведена</th>
+        <td>
+          {% if sale.sold_at %}
+            {{ sale.sold_at|date:"d.m.Y H:i" }} · {{ sale.sold_by|default:"—" }}
+          {% else %}
+            — (черновик)
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Позиции</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Что</th>
+        <th>Кол-во</th>
+        <th>Цена (₽)</th>
+        <th>Сумма (₽)</th>
+        {% if show_costs %}
+          <th>Себестоимость (₽)</th>
+          <th>Прибыль (₽)</th>
+        {% endif %}
+        {% if can_sell and is_draft %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>
+            {% if line.part_item %}
+              Экземпляр {{ line.part_item.internal_number }}
+            {% else %}
+              Лот #{{ line.stock_lot.pk }}
+            {% endif %}
+          </td>
+          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>
+            {{ line.unit_price }}
+            {% if line.part_type.min_price and line.unit_price < line.part_type.min_price %}
+              <span class="muted">(ниже мин. {{ line.part_type.min_price }})</span>
+            {% endif %}
+          </td>
+          <td>{{ line.total_price }}</td>
+          {% if show_costs %}
+            <td>{{ line.total_cost_rub }}</td>
+            <td>{{ line.profit_rub }}</td>
+          {% endif %}
+          {% if can_sell and is_draft %}
+            <td>
+              <form method="post"
+                    action="{% url 'sale_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="8" class="muted">Позиций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Выручка</th>
+        <td>{{ sale.revenue_total }} ₽</td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Себестоимость</th>
+          <td>{{ sale.cost_total }} ₽</td>
+        </tr>
+        <tr>
+          <th>Прибыль</th>
+          <td>{{ sale.profit_total }} ₽</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+
+  {% if can_sell and is_draft %}
+    <div class="toolbar">
+      <form method="post" action="{% url 'sale_complete' sale.pk %}" class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Провести продажу</button>
+      </form>
+    </div>
+
+    <h2>Добавить позицию</h2>
+    <form method="post" action="{% url 'sale_add_item' sale.pk %}" class="form">
+      {% csrf_token %}
+      {{ add_item_form.as_p }}
+      <button type="submit">Добавить экземпляр</button>
+    </form>
+    <form method="post" action="{% url 'sale_add_lot' sale.pk %}" class="form">
+      {% csrf_token %}
+      {{ add_lot_form.as_p }}
+      <button type="submit">Добавить из лота</button>
+    </form>
+    <p class="muted">
+      Проведение продажи списывает остаток (создаёт складское движение расхода) и
+      замораживает себестоимость и прибыль. Отмена проведённой продажи — будущий слой.
+    </p>
+  {% endif %}
+{% endblock %}
