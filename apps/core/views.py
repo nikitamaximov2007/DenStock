@@ -21,6 +21,7 @@ from apps.warehouse.models import StorageLocation
 
 from .models import UnresolvedScan
 from .scanner import resolve_scan
+from .search import search_parts
 
 
 @login_required
@@ -107,6 +108,44 @@ def healthz(request: HttpRequest) -> JsonResponse:
 
     payload = {"status": "ok", "db": "ok" if db_ok else "down"}
     return JsonResponse(payload, status=200 if db_ok else 503)
+
+
+# --- Слой 13: быстрый поиск детали (read-only) -------------------------------
+
+
+@login_required
+def search_page(request: HttpRequest) -> HttpResponse:
+    """Быстрый read-only поиск детали с наличием. Ничего не пишет.
+
+    Разворот экземпляров/лотов (со ссылками на item/lot_detail) показываем только
+    инвентарь-видящим ролям; у Продавца/Мастера эти карточки дали бы 403.
+    """
+    q = request.GET.get("q", "").strip()
+    rows = search_parts(q)
+    can_view_inventory = request.user.can_manage_inventory or request.user.is_viewer
+    if can_view_inventory:
+        for row in rows:
+            part = row.part
+            if part.tracking_mode == part.TrackingMode.SERIAL:
+                row.items = list(
+                    PartItem.objects.filter(part_type=part)
+                    .select_related("current_location", "batch")
+                    .order_by("internal_number")[:20]
+                )
+            else:
+                row.lots = list(
+                    StockLot.objects.filter(part_type=part)
+                    .select_related("location", "batch", "batch_line")
+                    .order_by("-created_at")[:20]
+                )
+    ctx = {
+        "q": q,
+        "rows": rows,
+        "show_costs": request.user.can_view_purchase_cost,
+        "can_view_inventory": can_view_inventory,
+        "too_short": 0 < len(q) < 2,
+    }
+    return render(request, "core/search.html", ctx)
 
 
 # --- Слой 12: приёмка и размещение через сканер ------------------------------

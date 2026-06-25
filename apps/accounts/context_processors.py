@@ -5,7 +5,7 @@ from django.urls import reverse
 def _nav_items(user):
     """Пункты меню, видимые пользователю. stub=True — заглушка будущего слоя."""
     items = [{"label": "Главная", "url": reverse("dashboard"), "stub": False}]
-    items.append({"label": "Поиск детали", "url": None, "stub": True})
+    items.append({"label": "Поиск детали", "url": reverse("part_search"), "stub": False})
     items.append({"label": "Сканер", "url": reverse("scanner"), "stub": False})
     items.append({"label": "Детали", "url": reverse("part_list"), "stub": False})
     if user.can_manage_batches or user.can_view_purchase_cost or user.is_storekeeper:

@@ -11,11 +11,15 @@
     {% if user.is_authenticated %}
       <header class="topbar">
         <div class="topbar__brand">DenStock</div>
-        <input class="topbar__search"
-               type="search"
-               placeholder="Поиск детали…"
-               aria-label="Поиск детали"
-               disabled>
+        <form class="topbar__searchform"
+              method="get"
+              action="{% url 'part_search' %}">
+          <input class="topbar__search"
+                 type="search"
+                 name="q"
+                 placeholder="Поиск детали…"
+                 aria-label="Поиск детали">
+        </form>
         {% include "partials/_scan_field.html" %}
         <div class="topbar__user">
           <span>{{ user }}</span>

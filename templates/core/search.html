@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Быстрый поиск — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Быстрый поиск детали</h1>
+  <form method="get"
+        class="form search-form"
+        action="{% url 'part_search' %}">
+    <input id="search-input"
+           name="q"
+           type="text"
+           class="scanner-page__input"
+           placeholder="Название, OEM, штрихкод, серийник, внутр. номер, техника…"
+           autocomplete="off"
+           autofocus
+           value="{{ q }}">
+    <button type="submit" class="btn btn--primary">Найти</button>
+  </form>
+  {% if too_short %}
+    {% include "partials/_status_block.html" with kind="info" text="Введите минимум 2 символа." %}
+  {% elif q and not rows %}
+    {% include "partials/_status_block.html" with kind="warning" text="Ничего не найдено по запросу." %}
+  {% endif %}
+  {% for row in rows %}
+    <div class="search-result">
+      <h2>
+        <a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a>
+      </h2>
+      <p class="muted">
+        {{ row.part.category }}
+        {% if row.part.manufacturer %}· {{ row.part.manufacturer }}{% endif %}
+        · {{ row.part.get_tracking_mode_display }}
+        {% with nums=row.part.numbers.all %}
+          {% if nums %}
+            ·
+            {% for n in nums|slice:":3" %}
+              {{ n.value }}
+              {% if not forloop.last %},{% endif %}
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+      </p>
+      <p class="search-result__avail">
+        Доступно: <strong>{{ row.available|floatformat:"-3" }}</strong> · всего:
+        {{ row.physical|floatformat:"-3" }}
+        {% if row.receiving %}· на приёмке: {{ row.receiving|floatformat:"-3" }}{% endif %}
+      </p>
+      <p>
+        Цена продажи: рек. {{ row.part.recommended_price|default:"—" }} · мин.
+        {{ row.part.min_price|default:"—" }}
+      </p>
+      <p>
+        Ячейки: {{ row.locations|join:", "|default:"—" }} · Партии:
+        {{ row.batches|join:", "|default:"—" }}
+      </p>
+      {% if can_view_inventory %}
+        {% if row.items %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Экземпляр</th>
+                <th>Статус</th>
+                <th>Ячейка</th>
+                <th>Партия</th>
+                <th>Серийный</th>
+                {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in row.items %}
+                <tr>
+                  <td>
+                    <a href="{% url 'item_detail' it.pk %}">{{ it.internal_number }}</a>
+                  </td>
+                  <td>{{ it.get_status_display }}</td>
+                  <td>
+                    {% if it.current_location %}
+                      {{ it.current_location.code }}
+                    {% else %}
+                      —
+                    {% endif %}
+                  </td>
+                  <td>{{ it.batch.number }}</td>
+                  <td>{{ it.serial_number|default:"—" }}</td>
+                  {% if show_costs %}<td>{{ it.landed_cost_rub }}</td>{% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+        {% if row.lots %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Лот</th>
+                <th>Кол-во</th>
+                <th>Статус</th>
+                <th>Ячейка</th>
+                <th>Партия</th>
+                {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for lot in row.lots %}
+                <tr>
+                  <td>
+                    <a href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
+                  </td>
+                  <td>{{ lot.quantity|floatformat:"-3" }}</td>
+                  <td>{{ lot.get_status_display }}</td>
+                  <td>{{ lot.location.code }}</td>
+                  <td>{{ lot.batch.number }}</td>
+                  {% if show_costs %}<td>{{ lot.landed_unit_cost_rub }}</td>{% endif %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endblock %}
