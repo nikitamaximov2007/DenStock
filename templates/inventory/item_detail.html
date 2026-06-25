@@ -71,6 +71,9 @@
       {% if item.current_location %}
         <a href="{% url 'item_move' item.pk %}">Переместить</a>
       {% endif %}
+      {% if item.status == "available" or item.status == "quarantine" %}
+        <a href="{% url 'scanner_move' %}?item={{ item.pk }}">Переместить сканером</a>
+      {% endif %}
     </div>
   {% endif %}
   {% if can_manage and next_statuses %}

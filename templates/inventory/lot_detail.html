@@ -60,6 +60,9 @@
         <a href="{% url 'lot_move' lot.pk %}">Переместить</a>
         <a href="{% url 'lot_adjust' lot.pk %}">Корректировка</a>
       {% endif %}
+      {% if lot.status == "available" or lot.status == "quarantine" %}
+        <a href="{% url 'scanner_move' %}?lot={{ lot.pk }}">Переместить сканером</a>
+      {% endif %}
     </div>
   {% endif %}
   {% if can_manage and next_statuses %}
