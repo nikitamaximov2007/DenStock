@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Резервы — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Резервы</h1>
+  {% if can_manage %}
+    <p>
+      <a class="btn btn--primary" href="{% url 'reservation_create' %}">Создать резерв</a>
+    </p>
+  {% endif %}
+  <form method="get" class="form">
+    <label>
+      Статус:
+      <select name="status" onchange="this.form.submit()">
+        <option value="">Все</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript>
+      <button type="submit">Показать</button>
+    </noscript>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Номер</th>
+        <th>Статус</th>
+        <th>Клиент</th>
+        <th>Телефон</th>
+        <th>Действует до</th>
+        <th>Создан</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in reservations %}
+        <tr>
+          <td>
+            <a href="{% url 'reservation_detail' r.pk %}">{{ r.number }}</a>
+          </td>
+          <td>{{ r.get_status_display }}</td>
+          <td>{{ r.customer_name }}</td>
+          <td>{{ r.customer_phone|default:"—" }}</td>
+          <td>
+            {% if r.expires_at %}
+              {{ r.expires_at|date:"d.m.Y H:i" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ r.created_at|date:"d.m.Y H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="muted">Резервов нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

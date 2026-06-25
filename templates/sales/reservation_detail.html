@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Резерв {{ reservation.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Резерв {{ reservation.number }}</h1>
+  <p>
+    <a href="{% url 'reservation_list' %}">← К резервам</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Статус</th>
+        <td>{{ reservation.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Клиент</th>
+        <td>{{ reservation.customer_name }}</td>
+      </tr>
+      <tr>
+        <th>Телефон</th>
+        <td>{{ reservation.customer_phone|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Действует до</th>
+        <td>
+          {% if reservation.expires_at %}
+            {{ reservation.expires_at|date:"d.m.Y H:i" }}
+          {% else %}
+            бессрочно
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ reservation.comment|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Создан</th>
+        <td>{{ reservation.created_at|date:"d.m.Y H:i" }} · {{ reservation.created_by|default:"—" }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {% if can_manage and is_open %}
+    <div class="toolbar">
+      {% if reservation.status == "draft" %}
+        <form method="post" action="{% url 'reservation_activate' reservation.pk %}" class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--primary">Активировать</button>
+        </form>
+      {% endif %}
+      <form method="post" action="{% url 'reservation_cancel' reservation.pk %}" class="inline-form">
+        {% csrf_token %}
+        <button type="submit">Отменить</button>
+      </form>
+    </div>
+  {% endif %}
+
+  <h2>Позиции</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Что</th>
+        <th>Кол-во</th>
+        <th>Ячейка</th>
+        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+        {% if can_manage and is_open %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>
+            {% if line.part_item %}
+              Экземпляр {{ line.part_item.internal_number }}
+            {% else %}
+              Лот #{{ line.stock_lot.pk }}
+            {% endif %}
+          </td>
+          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>
+            {% if line.part_item %}
+              {{ line.part_item.current_location.code|default:"—" }}
+            {% else %}
+              {{ line.stock_lot.location.code }}
+            {% endif %}
+          </td>
+          {% if show_costs %}
+            <td>
+              {% if line.part_item %}
+                {{ line.part_item.landed_cost_rub }}
+              {% else %}
+                {{ line.stock_lot.landed_unit_cost_rub }}
+              {% endif %}
+            </td>
+          {% endif %}
+          {% if can_manage and is_open %}
+            <td>
+              <form method="post"
+                    action="{% url 'reservation_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="5" class="muted">Позиций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if can_manage and is_open %}
+    <h2>Добавить позицию</h2>
+    <form method="post" action="{% url 'reservation_add_item' reservation.pk %}" class="form">
+      {% csrf_token %}
+      {{ add_item_form.as_p }}
+      <button type="submit">Добавить экземпляр</button>
+    </form>
+    <form method="post" action="{% url 'reservation_add_lot' reservation.pk %}" class="form">
+      {% csrf_token %}
+      {{ add_lot_form.as_p }}
+      <button type="submit">Добавить из лота</button>
+    </form>
+    <p class="muted">
+      Резерв уменьшает доступность, но не двигает деталь: физический остаток и ячейка
+      не меняются, складское движение не создаётся.
+    </p>
+  {% endif %}
+{% endblock %}

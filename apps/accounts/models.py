@@ -81,6 +81,10 @@ class User(AbstractUser):
         return self.has_capability(roles.MANAGE_INVENTORY)
 
     @property
+    def can_manage_reservations(self) -> bool:
+        return self.has_capability(roles.MANAGE_RESERVATIONS)
+
+    @property
     def can_view_finance(self) -> bool:
         return self.has_capability(roles.VIEW_FINANCE)
 

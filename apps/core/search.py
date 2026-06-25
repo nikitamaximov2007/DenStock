@@ -37,6 +37,7 @@ class PartSearchRow:
     part: PartType
     physical: object = Decimal("0")
     available: object = Decimal("0")
+    reserved: object = Decimal("0")
     receiving: object = Decimal("0")
     locations: list = field(default_factory=list)
     batches: list = field(default_factory=list)
@@ -94,7 +95,11 @@ def search_parts(query: str) -> list[PartSearchRow]:
         r["part_type_id"]: r
         for r in StockBalance.objects.filter(part_type_id__in=part_ids)
         .values("part_type_id")
-        .annotate(physical=Sum("quantity_physical"), available=Sum("quantity_available"))
+        .annotate(
+            physical=Sum("quantity_physical"),
+            available=Sum("quantity_available"),
+            reserved=Sum("quantity_reserved"),
+        )
     }
     bal_locs: dict[int, set] = defaultdict(set)
     bal_batches: dict[int, set] = defaultdict(set)
@@ -118,19 +123,24 @@ def search_parts(query: str) -> list[PartSearchRow]:
         if pid in balance:
             phys = balance[pid]["physical"] or Decimal("0")
             avail = balance[pid]["available"] or Decimal("0")
+            resv = balance[pid]["reserved"] or Decimal("0")
             locs = sorted(c for c in bal_locs[pid] if c)
             batches = sorted(b for b in bal_batches[pid] if b)
             source = "balance"
         else:
+            # Резерв держит только физически присутствующий остаток, у которого
+            # есть строки кэша; в первичном fallback резерв = 0 (так core не
+            # импортирует sales).
             data = prim.get(pid, {})
             phys = data.get("physical", Decimal("0"))
             avail = data.get("available", Decimal("0"))
+            resv = Decimal("0")
             locs = sorted(data.get("locations", set()))
             batches = sorted(data.get("batches", set()))
             source = "primary"
         rows.append(
             PartSearchRow(
-                part=part, physical=phys, available=avail,
+                part=part, physical=phys, available=avail, reserved=resv,
                 receiving=receiving.get(pid, Decimal("0")),
                 locations=locs, batches=batches, source=source,
             )

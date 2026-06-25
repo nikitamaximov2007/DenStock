@@ -22,6 +22,7 @@ def _nav_items(user):
         items.append(
             {"label": "Перемещение", "url": reverse("scanner_move"), "stub": False}
         )
+    items.append({"label": "Резервы", "url": reverse("reservation_list"), "stub": False})
     items.append({"label": "Справочники", "url": reverse("directory_index"), "stub": False})
     items.append({"label": "Склад", "url": reverse("warehouse_index"), "stub": False})
     if user.is_storekeeper or user.is_admin:

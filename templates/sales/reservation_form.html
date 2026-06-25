@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Новый резерв — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Новый резерв</h1>
+  <p>
+    <a href="{% url 'reservation_list' %}">← К резервам</a>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать черновик</button>
+  </form>
+  <p class="muted">
+    После создания добавьте позиции (экземпляр или количество из лота) и активируйте
+    резерв — только активный резерв удерживает остаток.
+  </p>
+{% endblock %}

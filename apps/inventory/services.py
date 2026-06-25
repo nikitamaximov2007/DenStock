@@ -203,6 +203,26 @@ LOT_PHYSICAL_STATUSES = (
     StockLot.Status.QUARANTINE,
 )
 
+# --- Слой 15: провайдер «зарезервировано» (инверсия зависимости) -------------
+# inventory НЕ импортирует apps.sales. Приложение sales в AppConfig.ready()
+# регистрирует функцию reserved_for(batch_line, location) -> Decimal через
+# set_reserved_provider. До регистрации (или если sales не установлен) резерв = 0,
+# и поведение инвентаря не меняется. Хук вызывается при КАЖДОМ пересчёте строки
+# кэша, поэтому move_*/receive_*/adjust_*/rebuild не затирают quantity_reserved.
+_reserved_provider = None
+
+
+def set_reserved_provider(provider) -> None:
+    """Зарегистрировать callable(batch_line, location) -> Decimal."""
+    global _reserved_provider
+    _reserved_provider = provider
+
+
+def _reserved_for(batch_line, location) -> Decimal:
+    if _reserved_provider is None:
+        return Decimal("0")
+    return _reserved_provider(batch_line, location)
+
 
 def _record_movement(
     obj,
@@ -262,12 +282,17 @@ def _compute_balance(batch_line, location) -> dict | None:
         quarantine = Decimal(base.filter(status=PartItem.Status.QUARANTINE).count())
     if physical == 0:
         return None
+    # Активный резерв приходит из apps.sales через провайдер (Слой 15); reserved
+    # уменьшает доступность, но не физический остаток. Источник истины по резерву
+    # — ReservationLine, здесь это лишь кэш.
+    reserved = _reserved_for(batch_line, location)
     return {
         "part_type": part,
         "batch": batch_line.batch,
         "physical": physical,
         "quarantine": quarantine,
-        "available": physical - quarantine,
+        "reserved": reserved,
+        "available": physical - quarantine - reserved,
     }
 
 
@@ -288,11 +313,21 @@ def _refresh_balance(batch_line, location) -> str:
             "quantity_physical": data["physical"],
             "quantity_available": data["available"],
             "quantity_quarantine": data["quarantine"],
-            "quantity_reserved": Decimal("0"),
+            "quantity_reserved": data["reserved"],
             "quantity_in_repair": Decimal("0"),
         },
     )
     return "created" if created else "updated"
+
+
+def recompute_balance_row(batch_line, location) -> str:
+    """Публичная точка пересчёта одной строки кэша из первички.
+
+    Используется apps.sales после изменения брони (резерв сам ledger не трогает —
+    ни `StockMovement`, ни прямой записи в `StockBalance`). Вызывается внутри
+    транзакции сервиса-инициатора.
+    """
+    return _refresh_balance(batch_line, location)
 
 
 @transaction.atomic
@@ -506,12 +541,14 @@ def check_stock_balance() -> list[str]:
             actual.quantity_physical != ideal["physical"]
             or actual.quantity_available != ideal["available"]
             or actual.quantity_quarantine != ideal["quarantine"]
+            or actual.quantity_reserved != ideal["reserved"]
         ):
             problems.append(
                 f"{label}: кэш physical={actual.quantity_physical}/"
-                f"avail={actual.quantity_available}/quar={actual.quantity_quarantine}, "
+                f"avail={actual.quantity_available}/quar={actual.quantity_quarantine}/"
+                f"resv={actual.quantity_reserved}, "
                 f"эталон physical={ideal['physical']}/avail={ideal['available']}/"
-                f"quar={ideal['quarantine']}"
+                f"quar={ideal['quarantine']}/resv={ideal['reserved']}"
             )
     return problems
 

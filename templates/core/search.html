@@ -42,6 +42,7 @@
       <p class="search-result__avail">
         Доступно: <strong>{{ row.available|floatformat:"-3" }}</strong> · всего:
         {{ row.physical|floatformat:"-3" }}
+        {% if row.reserved %}· зарезервировано: {{ row.reserved|floatformat:"-3" }}{% endif %}
         {% if row.receiving %}· на приёмке: {{ row.receiving|floatformat:"-3" }}{% endif %}
       </p>
       <p>
