@@ -465,28 +465,38 @@ def adjust_stock_lot_quantity(lot: StockLot, delta, *, by=None, comment="") -> S
     return lot
 
 
-# --- Слой 16: расход при продаже (физика + ledger, без знания о резервах) -----
+# --- Расход со склада: общий механизм для продажи (Слой 16) и выдачи в --------
+# --- ремонт (Слой 17). Физика + ledger, без знания о резервах. ----------------
+#
+# Продажа и выдача в ремонт — это один и тот же складской расход (экземпляр
+# уходит из available, лот уменьшается, пишется расходное движение), различаются
+# лишь целевым статусом, типом движения и документом-источником. Поэтому общая
+# механика вынесена в приватные `_consume_*`, а `sell_*`/`issue_*` — тонкие
+# обёртки. Резерв-проверки делает вызывающий слой (apps.sales/apps.repairs) ДО
+# вызова — здесь только физический статус.
 
 
 @transaction.atomic
-def sell_part_item(item, *, by=None, document_id=None, comment="") -> PartItem:
-    """Списать экземпляр при продаже: available → sold, движение SALE_ITEM.
+def _consume_part_item(
+    item, *, new_status, movement_type, document_type, unavailable_msg,
+    by=None, document_id=None, comment="",
+) -> PartItem:
+    """Списать экземпляр со склада: available → new_status, расходное движение.
 
-    Чисто складская операция: проверяет только физический статус, не знает о
-    резервах (резерв-проверки делает apps.sales перед вызовом). `current_location`
-    сохраняется как последняя известная ячейка (аудит); статус `sold` исключает
-    экземпляр из physical/available.
+    `current_location` сохраняется как последняя известная ячейка (аудит); любой
+    из терминальных статусов (`sold`/`installed`) исключает экземпляр из
+    physical/available.
     """
     item = PartItem.objects.select_for_update().get(pk=item.pk)
     if item.status != PartItem.Status.AVAILABLE:
-        raise InventoryError("Продать можно только доступный экземпляр.")
+        raise InventoryError(unavailable_msg)
     from_location = item.current_location
-    item.status = PartItem.Status.SOLD
+    item.status = new_status
     item.save(update_fields=["status", "updated_at"])
     _record_movement(
-        item, StockMovement.MovementType.SALE_ITEM, Decimal("1"),
+        item, movement_type, Decimal("1"),
         from_location=from_location, to_location=None, by=by,
-        comment=comment, document_type="sale", document_id=document_id,
+        comment=comment, document_type=document_type, document_id=document_id,
     )
     if from_location is not None:
         _refresh_balance(item.batch_line, from_location)
@@ -494,28 +504,90 @@ def sell_part_item(item, *, by=None, document_id=None, comment="") -> PartItem:
 
 
 @transaction.atomic
-def sell_stock_lot(lot, quantity, *, by=None, document_id=None, comment="") -> StockLot:
-    """Списать количество из лота при продаже: quantity↓, depleted при нуле,
-    движение SALE_LOT. Частичная продажа разрешена; лот не дробится."""
+def _consume_stock_lot(
+    lot, quantity, *, movement_type, document_type,
+    positive_msg, unavailable_msg, over_msg,
+    by=None, document_id=None, comment="",
+) -> StockLot:
+    """Списать количество из лота: quantity↓, depleted при нуле, расходное
+    движение. Частичный расход разрешён; лот не дробится."""
     quantity = Decimal(quantity)
     if quantity <= 0:
-        raise InventoryError("Количество продажи должно быть больше нуля.")
+        raise InventoryError(positive_msg)
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
     if lot.status != StockLot.Status.AVAILABLE:
-        raise InventoryError("Продать можно только доступный лот.")
+        raise InventoryError(unavailable_msg)
     if quantity > lot.quantity:
-        raise InventoryError(f"Нельзя продать {quantity}: в лоте {lot.quantity}.")
+        raise InventoryError(over_msg.format(quantity=quantity, in_lot=lot.quantity))
     lot.quantity = lot.quantity - quantity
     if lot.quantity == 0:
         lot.status = StockLot.Status.DEPLETED
     lot.save(update_fields=["quantity", "status", "updated_at"])
     _record_movement(
-        lot, StockMovement.MovementType.SALE_LOT, quantity,
+        lot, movement_type, quantity,
         from_location=lot.location, to_location=None, by=by,
-        comment=comment, document_type="sale", document_id=document_id,
+        comment=comment, document_type=document_type, document_id=document_id,
     )
     _refresh_balance(lot.batch_line, lot.location)
     return lot
+
+
+# --- Слой 16: расход при продаже ---------------------------------------------
+
+
+def sell_part_item(item, *, by=None, document_id=None, comment="") -> PartItem:
+    """Списать экземпляр при продаже: available → sold, движение SALE_ITEM."""
+    return _consume_part_item(
+        item, new_status=PartItem.Status.SOLD,
+        movement_type=StockMovement.MovementType.SALE_ITEM, document_type="sale",
+        unavailable_msg="Продать можно только доступный экземпляр.",
+        by=by, document_id=document_id, comment=comment,
+    )
+
+
+def sell_stock_lot(lot, quantity, *, by=None, document_id=None, comment="") -> StockLot:
+    """Списать количество из лота при продаже: quantity↓, depleted при нуле,
+    движение SALE_LOT."""
+    return _consume_stock_lot(
+        lot, quantity, movement_type=StockMovement.MovementType.SALE_LOT,
+        document_type="sale",
+        positive_msg="Количество продажи должно быть больше нуля.",
+        unavailable_msg="Продать можно только доступный лот.",
+        over_msg="Нельзя продать {quantity}: в лоте {in_lot}.",
+        by=by, document_id=document_id, comment=comment,
+    )
+
+
+# --- Слой 17: расход при выдаче в ремонт / установке --------------------------
+#
+# Выдача в ремонт — окончательный складской расход (не временная передача
+# мастеру): экземпляр становится `installed`, лот уменьшается. Источник-документ
+# — RepairOrder (`document_type="repair_order"`). Сервисы не знают о ремонтном
+# приложении и о резервах (проверки делает apps.repairs до вызова).
+
+
+def issue_part_item(item, *, by=None, document_id=None, comment="") -> PartItem:
+    """Выдать экземпляр в ремонт: available → installed, движение ISSUE_ITEM."""
+    return _consume_part_item(
+        item, new_status=PartItem.Status.INSTALLED,
+        movement_type=StockMovement.MovementType.ISSUE_ITEM,
+        document_type="repair_order",
+        unavailable_msg="Выдать можно только доступный экземпляр.",
+        by=by, document_id=document_id, comment=comment,
+    )
+
+
+def issue_stock_lot(lot, quantity, *, by=None, document_id=None, comment="") -> StockLot:
+    """Выдать количество из лота в ремонт: quantity↓, depleted при нуле,
+    движение ISSUE_LOT. Частичная выдача разрешена; лот не дробится."""
+    return _consume_stock_lot(
+        lot, quantity, movement_type=StockMovement.MovementType.ISSUE_LOT,
+        document_type="repair_order",
+        positive_msg="Количество выдачи должно быть больше нуля.",
+        unavailable_msg="Выдать можно только доступный лот.",
+        over_msg="Нельзя выдать {quantity}: в лоте {in_lot}.",
+        by=by, document_id=document_id, comment=comment,
+    )
 
 
 # --- Пересборка и сверка кэша остатков ---------------------------------------

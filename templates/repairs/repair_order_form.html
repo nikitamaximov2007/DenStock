@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Новый ремонтный заказ — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Новый ремонтный заказ</h1>
+  <p>
+    <a href="{% url 'repair_order_list' %}">← К ремонтным заказам</a>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать черновик</button>
+  </form>
+  <p class="muted">
+    После создания добавьте позиции (экземпляр или количество из лота) и проведите
+    заказ. Проведение выдаёт детали в ремонт: списывает остаток и фиксирует
+    себестоимость. Это складской расход, а не продажа или оплата.
+  </p>
+{% endblock %}

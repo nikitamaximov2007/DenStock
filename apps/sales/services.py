@@ -86,6 +86,23 @@ def _item_actively_reserved(item, *, exclude=None) -> bool:
     return qs.exists()
 
 
+# --- Public API резерва для других потоков (Слой 17: выдача в ремонт) ---------
+#
+# apps.repairs не должен знать внутреннюю модель брони — он лишь спрашивает «эта
+# деталь/лот зарезервированы активной бронью?». Эти обёртки дают стабильную точку
+# доступа; зависимость repairs → sales ациклична (sales про repairs не знает).
+
+
+def is_part_item_reserved(item) -> bool:
+    """Зарезервирован ли экземпляр активной бронью (для выдачи в ремонт)."""
+    return _item_actively_reserved(item)
+
+
+def active_reserved_for_lot(lot) -> Decimal:
+    """Сколько количества лота держат активные брони (для выдачи в ремонт)."""
+    return _active_reserved_for_lot(lot)
+
+
 # --- Пересчёт затронутых строк кэша ------------------------------------------
 
 

@@ -142,6 +142,8 @@ class StockMovement(models.Model):
         ADJUST_OUT = "adjust_out", "Корректировка −"
         SALE_ITEM = "sale_item", "Продажа экземпляра"
         SALE_LOT = "sale_lot", "Продажа лота"
+        ISSUE_ITEM = "issue_item", "Выдача экземпляра в ремонт"
+        ISSUE_LOT = "issue_lot", "Выдача лота в ремонт"
 
     movement_type = models.CharField(
         "Тип движения", max_length=20, choices=MovementType.choices

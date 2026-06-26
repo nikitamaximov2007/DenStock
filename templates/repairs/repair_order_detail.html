@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Ремонт {{ order.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Ремонтный заказ {{ order.number }}</h1>
+  <p>
+    <a href="{% url 'repair_order_list' %}">← К ремонтным заказам</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Статус</th>
+        <td>{{ order.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Клиент</th>
+        <td>{{ order.customer_name }}</td>
+      </tr>
+      <tr>
+        <th>Телефон</th>
+        <td>{{ order.customer_phone|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Техника</th>
+        <td>
+          {{ order.vehicle_type|default:"" }}
+          {{ order.vehicle_make }} {{ order.vehicle_model }}
+          {% if order.vehicle_identifier %}· {{ order.vehicle_identifier }}{% endif %}
+          {% if not order.vehicle_type and not order.vehicle_make and not order.vehicle_model and not order.vehicle_identifier %}
+            —
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Что ремонтируем</th>
+        <td>{{ order.problem_description|default:"—"|linebreaksbr }}</td>
+      </tr>
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ order.comment|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Проведён</th>
+        <td>
+          {% if order.completed_at %}
+            {{ order.completed_at|date:"d.m.Y H:i" }}
+          {% else %}
+            — (черновик)
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>Выданные детали</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Что</th>
+        <th>Кол-во</th>
+        {% if show_costs %}
+          <th>Себестоимость за ед. (₽)</th>
+          <th>Себестоимость строки (₽)</th>
+        {% endif %}
+        {% if can_manage and is_draft %}
+          <th></th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>
+            {% if line.part_item %}
+              Экземпляр {{ line.part_item.internal_number }}
+            {% else %}
+              Лот #{{ line.stock_lot.pk }}
+            {% endif %}
+          </td>
+          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          {% if show_costs %}
+            <td>{{ line.unit_cost_rub }}</td>
+            <td>{{ line.total_cost_rub }}</td>
+          {% endif %}
+          {% if can_manage and is_draft %}
+            <td>
+              <form method="post"
+                    action="{% url 'repair_order_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="muted">Позиций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if show_costs %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>Себестоимость выданного</th>
+          <td>{{ order.cost_total }} ₽</td>
+        </tr>
+      </tbody>
+    </table>
+  {% endif %}
+  {% if can_manage and is_draft %}
+    <div class="toolbar">
+      <form method="post"
+            action="{% url 'repair_order_complete' order.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Провести (выдать в ремонт)</button>
+      </form>
+      <form method="post"
+            action="{% url 'repair_order_cancel' order.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit">Отменить заказ</button>
+      </form>
+    </div>
+    <h2>Добавить позицию</h2>
+    <form method="post"
+          action="{% url 'repair_order_add_item' order.pk %}"
+          class="form">
+      {% csrf_token %}
+      {{ add_item_form.as_p }}
+      <button type="submit">Добавить экземпляр</button>
+    </form>
+    <form method="post"
+          action="{% url 'repair_order_add_lot' order.pk %}"
+          class="form">
+      {% csrf_token %}
+      {{ add_lot_form.as_p }}
+      <button type="submit">Добавить из лота</button>
+    </form>
+    <p class="muted">
+      Проведение выдаёт детали в ремонт: списывает остаток (создаёт складское
+      движение расхода), переводит экземпляр в «Установлен» и замораживает
+      себестоимость. Это не продажа и не оплата. Возврат установленной детали —
+      будущий слой.
+    </p>
+  {% endif %}
+{% endblock %}
