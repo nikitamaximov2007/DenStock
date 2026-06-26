@@ -4,6 +4,9 @@
   <h1 class="page-title">Продажа {{ sale.number }}</h1>
   <p>
     <a href="{% url 'sale_list' %}">← К продажам</a>
+    {% if can_return and sale.status == "completed" %}
+      · <a href="{% url 'return_create' %}?source=sale&id={{ sale.pk }}">Оформить возврат</a>
+    {% endif %}
   </p>
   <table class="table">
     <tbody>
@@ -43,7 +46,6 @@
       </tr>
     </tbody>
   </table>
-
   <h2>Позиции</h2>
   <table class="table">
     <thead>
@@ -57,7 +59,9 @@
           <th>Себестоимость (₽)</th>
           <th>Прибыль (₽)</th>
         {% endif %}
-        {% if can_sell and is_draft %}<th></th>{% endif %}
+        {% if can_sell and is_draft %}
+          <th></th>
+        {% endif %}
       </tr>
     </thead>
     <tbody>
@@ -101,7 +105,6 @@
       {% endfor %}
     </tbody>
   </table>
-
   <table class="table">
     <tbody>
       <tr>
@@ -120,15 +123,15 @@
       {% endif %}
     </tbody>
   </table>
-
   {% if can_sell and is_draft %}
     <div class="toolbar">
-      <form method="post" action="{% url 'sale_complete' sale.pk %}" class="inline-form">
+      <form method="post"
+            action="{% url 'sale_complete' sale.pk %}"
+            class="inline-form">
         {% csrf_token %}
         <button type="submit" class="btn btn--primary">Провести продажу</button>
       </form>
     </div>
-
     <h2>Добавить позицию</h2>
     <form method="post" action="{% url 'sale_add_item' sale.pk %}" class="form">
       {% csrf_token %}

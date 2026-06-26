@@ -87,6 +87,7 @@ def repair_order_detail(request, pk):
             "order": order,
             "lines": lines,
             "can_manage": request.user.can_manage_repairs,
+            "can_return": request.user.can_manage_returns,
             "is_draft": is_draft,
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddRepairItemForm(),

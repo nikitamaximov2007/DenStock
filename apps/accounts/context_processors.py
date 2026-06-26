@@ -25,6 +25,7 @@ def _nav_items(user):
     items.append({"label": "Резервы", "url": reverse("reservation_list"), "stub": False})
     items.append({"label": "Продажи", "url": reverse("sale_list"), "stub": False})
     items.append({"label": "Ремонт", "url": reverse("repair_order_list"), "stub": False})
+    items.append({"label": "Возвраты", "url": reverse("return_list"), "stub": False})
     items.append({"label": "Справочники", "url": reverse("directory_index"), "stub": False})
     items.append({"label": "Склад", "url": reverse("warehouse_index"), "stub": False})
     if user.is_storekeeper or user.is_admin:

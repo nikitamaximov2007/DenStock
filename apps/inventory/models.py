@@ -144,6 +144,8 @@ class StockMovement(models.Model):
         SALE_LOT = "sale_lot", "Продажа лота"
         ISSUE_ITEM = "issue_item", "Выдача экземпляра в ремонт"
         ISSUE_LOT = "issue_lot", "Выдача лота в ремонт"
+        RETURN_ITEM = "return_item", "Возврат экземпляра на склад"
+        RETURN_LOT = "return_lot", "Возврат лота на склад"
 
     movement_type = models.CharField(
         "Тип движения", max_length=20, choices=MovementType.choices

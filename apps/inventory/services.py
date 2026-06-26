@@ -590,6 +590,97 @@ def issue_stock_lot(lot, quantity, *, by=None, document_id=None, comment="") -> 
     )
 
 
+# --- Слой 18: возврат на склад (физическое обратное поступление) --------------
+#
+# Инверс расхода Слоёв 16/17: деталь возвращается на полку (PartItem снова
+# физический / StockLot.quantity растёт), пишется приходное движение RETURN_*.
+# Сервисы источник-агностичны: им передают готовые to_location/restock_status/
+# unit_cost — бизнес-проверки (источник, «не больше проданного») делает
+# apps.returns ДО вызова. Это НЕ денежный refund — только физика склада.
+
+_RESTOCK_STATUSES = (PartItem.Status.AVAILABLE, PartItem.Status.QUARANTINE)
+
+
+@transaction.atomic
+def return_part_item(item, to_location, *, restock_status, by=None,
+                     document_id=None, comment="") -> PartItem:
+    """Вернуть экземпляр на склад: sold/installed → restock_status (available/
+    quarantine), движение RETURN_ITEM. `current_location` ставится в ячейку возврата.
+    """
+    if restock_status not in _RESTOCK_STATUSES:
+        raise InventoryError("Недопустимое состояние возврата (ожидается available/quarantine).")
+    if to_location is None or not to_location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    if item.status not in (PartItem.Status.SOLD, PartItem.Status.INSTALLED):
+        raise InventoryError("Вернуть можно только проданный или выданный экземпляр.")
+    item.status = restock_status
+    item.current_location = to_location
+    item.save(update_fields=["status", "current_location", "updated_at"])
+    _record_movement(
+        item, StockMovement.MovementType.RETURN_ITEM, Decimal("1"),
+        from_location=None, to_location=to_location, by=by,
+        comment=comment, document_type="stock_return", document_id=document_id,
+    )
+    _refresh_balance(item.batch_line, to_location)
+    return item
+
+
+@transaction.atomic
+def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_rub,
+                              restock_status, by=None, document_id=None, comment="") -> StockLot:
+    """Вернуть количество в лот ячейки `to_location` по правилу «найти/оживить/
+    создать» под UniqueConstraint(batch_line, location):
+
+    - нет лота в ячейке → создаём новый;
+    - лот `depleted` → оживляем (quantity += возврат, status → restock_status);
+    - лот того же физического статуса → доливаем;
+    - лот другого физического/терминального статуса → ошибка (без смешивания).
+
+    Движение RETURN_LOT. Лот не дробим.
+    """
+    quantity = Decimal(quantity)
+    if quantity <= 0:
+        raise InventoryError("Количество возврата должно быть больше нуля.")
+    if restock_status not in (StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE):
+        raise InventoryError("Недопустимое состояние возврата (ожидается available/quarantine).")
+    if to_location is None or not to_location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    lot = (
+        StockLot.objects.select_for_update()
+        .filter(batch_line=batch_line, location=to_location)
+        .first()
+    )
+    if lot is None:
+        lot = StockLot.objects.create(
+            part_type=batch_line.part_type, batch=batch_line.batch, batch_line=batch_line,
+            location=to_location, quantity=quantity, initial_quantity=quantity,
+            landed_unit_cost_rub=unit_cost_rub, status=restock_status,
+        )
+    else:
+        if lot.status == StockLot.Status.DEPLETED or lot.status == restock_status:
+            lot.quantity = lot.quantity + quantity
+            lot.status = restock_status
+            lot.save(update_fields=["quantity", "status", "updated_at"])
+        elif lot.status in LOT_PHYSICAL_STATUSES:
+            raise InventoryError(
+                f"В ячейке {to_location.code} уже есть лот этой строки в статусе "
+                f"«{lot.get_status_display()}»; выберите другую ячейку или согласуйте статус."
+            )
+        else:
+            raise InventoryError(
+                f"В ячейке {to_location.code} лот этой строки в статусе "
+                f"«{lot.get_status_display()}» — возврат недоступен."
+            )
+    _record_movement(
+        lot, StockMovement.MovementType.RETURN_LOT, quantity,
+        from_location=None, to_location=to_location, by=by,
+        comment=comment, document_type="stock_return", document_id=document_id,
+    )
+    _refresh_balance(batch_line, to_location)
+    return lot
+
+
 # --- Пересборка и сверка кэша остатков ---------------------------------------
 
 

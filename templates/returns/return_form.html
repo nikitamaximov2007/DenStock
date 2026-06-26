@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Новый возврат — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Оформить возврат на склад</h1>
+  <p>
+    <a href="{% url 'return_list' %}">← К возвратам</a>
+  </p>
+  <p>
+    Источник:
+    <strong>
+      {% if source_key == "sale" %}
+        Продажа {{ source.number }}
+      {% else %}
+        Ремонтный заказ {{ source.number }}
+      {% endif %}
+    </strong>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    <input type="hidden" name="source" value="{{ source_key }}">
+    <input type="hidden" name="id" value="{{ source.pk }}">
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать черновик</button>
+  </form>
+  <p class="muted">
+    После создания добавьте позиции из источника, выберите ячейку и состояние
+    (по умолчанию карантин) и проведите возврат. Возврат восстанавливает физический
+    остаток и создаёт складское движение прихода. Это не возврат денег: финансовые
+    итоги продажи/ремонта и их статус не меняются.
+  </p>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Возвраты — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Возвраты на склад</h1>
+  <form method="get" class="form">
+    <label>
+      Статус:
+      <select name="status" onchange="this.form.submit()">
+        <option value="">Все</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript>
+      <button type="submit">Показать</button>
+    </noscript>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Номер</th>
+        <th>Статус</th>
+        <th>Источник</th>
+        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+        <th>Проведён</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in returns %}
+        <tr>
+          <td>
+            <a href="{% url 'return_detail' r.pk %}">{{ r.number }}</a>
+          </td>
+          <td>{{ r.get_status_display }}</td>
+          <td>{{ r.get_source_type_display }} #{{ r.source_id }}</td>
+          {% if show_costs %}<td>{{ r.cost_total }}</td>{% endif %}
+          <td>
+            {% if r.completed_at %}
+              {{ r.completed_at|date:"d.m.Y H:i" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="5" class="muted">Возвратов нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">
+    Возврат оформляется из карточки продажи или ремонтного заказа кнопкой
+    «Оформить возврат».
+  </p>
+{% endblock %}

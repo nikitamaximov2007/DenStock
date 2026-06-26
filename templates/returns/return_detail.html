@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Возврат {{ ret.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Возврат {{ ret.number }}</h1>
+  <p>
+    <a href="{% url 'return_list' %}">← К возвратам</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Статус</th>
+        <td>{{ ret.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Источник</th>
+        <td>
+          {% if ret.source_type == "sale" %}
+            <a href="{% url 'sale_detail' ret.source_id %}">
+              {% if source %}
+                Продажа {{ source.number }}
+              {% else %}
+                Продажа #{{ ret.source_id }}
+              {% endif %}
+            </a>
+          {% else %}
+            <a href="{% url 'repair_order_detail' ret.source_id %}">
+              {% if source %}
+                Ремонт {{ source.number }}
+              {% else %}
+                Ремонт #{{ ret.source_id }}
+              {% endif %}
+            </a>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Причина</th>
+        <td>{{ ret.reason|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ ret.comment|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Проведён</th>
+        <td>
+          {% if ret.completed_at %}
+            {{ ret.completed_at|date:"d.m.Y H:i" }}
+          {% else %}
+            — (черновик)
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>Позиции возврата</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Что</th>
+        <th>Кол-во</th>
+        <th>Ячейка</th>
+        <th>Состояние</th>
+        {% if show_costs %}<th>Себестоимость строки (₽)</th>{% endif %}
+        {% if can_manage and is_draft %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>
+            {% if line.part_item %}
+              Экземпляр {{ line.part_item.internal_number }}
+            {% else %}
+              Лот #{{ line.stock_lot.pk }}
+            {% endif %}
+          </td>
+          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>{{ line.to_location.code }}</td>
+          <td>{{ line.get_restock_status_display }}</td>
+          {% if show_costs %}<td>{{ line.total_cost_rub }}</td>{% endif %}
+          {% if can_manage and is_draft %}
+            <td>
+              <form method="post"
+                    action="{% url 'return_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="7" class="muted">Позиций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if show_costs %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>Себестоимость возвращённого</th>
+          <td>{{ ret.cost_total }} ₽</td>
+        </tr>
+      </tbody>
+    </table>
+  {% endif %}
+  {% if can_manage and is_draft %}
+    <div class="toolbar">
+      <form method="post"
+            action="{% url 'return_complete' ret.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Провести возврат</button>
+      </form>
+    </div>
+    <h2>Добавить из источника</h2>
+    {% if source_rows %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Деталь</th>
+            <th>Что</th>
+            <th>Доступно к возврату</th>
+            <th>Возврат</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in source_rows %}
+            <tr>
+              <td>{{ row.line.part_type }}</td>
+              <td>
+                {% if row.line.part_item %}
+                  Экземпляр {{ row.line.part_item.internal_number }}
+                {% else %}
+                  Лот #{{ row.line.stock_lot.pk }}
+                {% endif %}
+              </td>
+              <td>{{ row.returnable|floatformat:"-3" }}</td>
+              <td>
+                <form method="post"
+                      action="{% url 'return_add_line' ret.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="source_line_id" value="{{ row.line.pk }}">
+                  {% if row.is_item %}
+                    <input type="hidden" name="quantity" value="1">
+                  {% else %}
+                    <input type="number"
+                           name="quantity"
+                           step="0.001"
+                           min="0.001"
+                           max="{{ row.returnable|floatformat:'-3' }}"
+                           value="{{ row.returnable|floatformat:'-3' }}"
+                           required>
+                  {% endif %}
+                  <select name="to_location" required>
+                    <option value="">Ячейка…</option>
+                    {% for loc in locations %}
+                      <option value="{{ loc.pk }}">{{ loc.code }}</option>
+                    {% endfor %}
+                  </select>
+                  <select name="restock_status">
+                    {% for value, label in restock_choices %}
+                      <option value="{{ value }}" {% if value == "quarantine" %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit">Вернуть</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">
+        По умолчанию деталь возвращается в карантин (требует проверки). «Доступен»
+        выбирайте, только если деталь проверена. Проведение возврата восстанавливает
+        физический остаток и создаёт движение прихода; это не возврат денег.
+      </p>
+    {% else %}
+      <p class="muted">Нет позиций, доступных к возврату по этому источнику.</p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

@@ -93,6 +93,10 @@ class User(AbstractUser):
         return self.has_capability(roles.MANAGE_REPAIRS)
 
     @property
+    def can_manage_returns(self) -> bool:
+        return self.has_capability(roles.MANAGE_RETURNS)
+
+    @property
     def can_view_finance(self) -> bool:
         return self.has_capability(roles.VIEW_FINANCE)
 

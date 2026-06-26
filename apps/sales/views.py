@@ -256,6 +256,7 @@ def sale_detail(request, pk):
             "sale": sale,
             "lines": lines,
             "can_sell": request.user.can_manage_sales,
+            "can_return": request.user.can_manage_returns,
             "is_draft": is_draft,
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
