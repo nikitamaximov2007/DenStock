@@ -145,6 +145,7 @@ def search_page(request: HttpRequest) -> HttpResponse:
         "can_view_inventory": can_view_inventory,
         "can_sell": request.user.can_manage_sales,
         "can_repair": request.user.can_manage_repairs,
+        "can_write_off": request.user.can_manage_write_offs,
         "too_short": 0 < len(q) < 2,
     }
     return render(request, "core/search.html", ctx)

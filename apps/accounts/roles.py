@@ -26,6 +26,7 @@ MANAGE_RESERVATIONS = "manage_reservations"
 MANAGE_SALES = "manage_sales"
 MANAGE_REPAIRS = "manage_repairs"
 MANAGE_RETURNS = "manage_returns"
+MANAGE_WRITE_OFFS = "manage_write_offs"
 VIEW_FINANCE = "can_view_finance"
 VIEW_PURCHASE_COST = "can_view_purchase_cost"
 EDIT = "can_edit"
@@ -35,7 +36,8 @@ ALL_CAPABILITIES = frozenset(
     {
         MANAGE_USERS, MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG,
         MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS,
-        MANAGE_RETURNS, VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
+        MANAGE_RETURNS, MANAGE_WRITE_OFFS, VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT,
+        CONFIRM_ADJUSTMENTS,
     }
 )
 
@@ -44,17 +46,18 @@ ROLE_CAPABILITIES = {
     ADMIN: {
         MANAGE_USERS, MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG,
         MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS,
-        MANAGE_RETURNS, VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
+        MANAGE_RETURNS, MANAGE_WRITE_OFFS, VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT,
+        CONFIRM_ADJUSTMENTS,
     },
     MANAGER: {
         MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG, MANAGE_BATCHES,
         MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS, MANAGE_RETURNS,
-        VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
+        MANAGE_WRITE_OFFS, VIEW_FINANCE, VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
     },
     # Кладовщик ведёт приёмку: создаёт/правит экземпляры, но закупочных сумм не видит.
     # Бронь и продажа под клиента — коммерческие действия продавца, кладовщику не выдаём.
-    # Выдача в ремонт и возврат на склад — складские действия, кладовщику даём.
-    STOREKEEPER: {MANAGE_INVENTORY, MANAGE_REPAIRS, MANAGE_RETURNS, EDIT},
+    # Выдача в ремонт, возврат на склад и списание — складские действия, кладовщику даём.
+    STOREKEEPER: {MANAGE_INVENTORY, MANAGE_REPAIRS, MANAGE_RETURNS, MANAGE_WRITE_OFFS, EDIT},
     # Продавец/Мастер создаёт резервы, проводит продажи и ставит детали в ремонт.
     # Возврат на склад НЕ даём (чтобы не было скрытой отмены продажи) — только просмотр.
     SELLER: {EDIT, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS},

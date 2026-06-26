@@ -53,11 +53,13 @@
         Ячейки: {{ row.locations|join:", "|default:"—" }} · Партии:
         {{ row.batches|join:", "|default:"—" }}
       </p>
-      {% if can_sell or can_repair %}
+      {% if can_sell or can_repair or can_write_off %}
         <p>
           {% if can_sell %}<a href="{% url 'sale_create' %}">Продать</a>{% endif %}
           {% if can_sell and can_repair %}·{% endif %}
           {% if can_repair %}<a href="{% url 'repair_order_create' %}">Выдать в ремонт</a>{% endif %}
+          {% if can_write_off and can_sell or can_write_off and can_repair %}·{% endif %}
+          {% if can_write_off %}<a href="{% url 'write_off_create' %}">Списать</a>{% endif %}
         </p>
       {% endif %}
       {% if can_view_inventory %}

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Списание {{ doc.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Списание {{ doc.number }}</h1>
+  <p>
+    <a href="{% url 'write_off_list' %}">← К списаниям</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Статус</th>
+        <td>{{ doc.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Причина</th>
+        <td>{{ doc.get_reason_display }}</td>
+      </tr>
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ doc.comment|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Проведён</th>
+        <td>
+          {% if doc.completed_at %}
+            {{ doc.completed_at|date:"d.m.Y H:i" }}
+          {% else %}
+            — (черновик)
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>Списанные позиции</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Что</th>
+        <th>Кол-во</th>
+        {% if show_costs %}
+          <th>Себестоимость за ед. (₽)</th>
+          <th>Себестоимость строки (₽)</th>
+        {% endif %}
+        {% if can_manage and is_draft %}
+          <th></th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>
+            {% if line.part_item %}
+              Экземпляр {{ line.part_item.internal_number }}
+            {% else %}
+              Лот #{{ line.stock_lot.pk }}
+            {% endif %}
+          </td>
+          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          {% if show_costs %}
+            <td>{{ line.unit_cost_rub }}</td>
+            <td>{{ line.total_cost_rub }}</td>
+          {% endif %}
+          {% if can_manage and is_draft %}
+            <td>
+              <form method="post"
+                    action="{% url 'write_off_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="muted">Позиций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if show_costs %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>Себестоимость списанного</th>
+          <td>{{ doc.cost_total }} ₽</td>
+        </tr>
+      </tbody>
+    </table>
+  {% endif %}
+  {% if can_manage and is_draft %}
+    <div class="toolbar">
+      <form method="post"
+            action="{% url 'write_off_complete' doc.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Провести (списать)</button>
+      </form>
+      <form method="post"
+            action="{% url 'write_off_cancel' doc.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit">Отменить документ</button>
+      </form>
+    </div>
+    <h2>Добавить позицию</h2>
+    <form method="post"
+          action="{% url 'write_off_add_item' doc.pk %}"
+          class="form">
+      {% csrf_token %}
+      {{ add_item_form.as_p }}
+      <button type="submit">Добавить экземпляр</button>
+    </form>
+    <form method="post"
+          action="{% url 'write_off_add_lot' doc.pk %}"
+          class="form">
+      {% csrf_token %}
+      {{ add_lot_form.as_p }}
+      <button type="submit">Добавить из лота</button>
+    </form>
+    <p class="muted">
+      Проведение списывает остаток: создаёт складское движение расхода, переводит
+      экземпляр в «Списан» (лот — уменьшает, при полном списании «Списан») и
+      замораживает себестоимость потерь. Это не продажа, не возврат и не
+      инвентаризация. Зарезервированное списать нельзя — сначала снимите бронь.
+    </p>
+  {% endif %}
+{% endblock %}

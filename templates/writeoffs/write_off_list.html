@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Списания — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Списания</h1>
+  {% if can_manage %}
+    <p>
+      <a class="btn btn--primary" href="{% url 'write_off_create' %}">Создать списание</a>
+    </p>
+  {% endif %}
+  <form method="get" class="form">
+    <label>
+      Статус:
+      <select name="status" onchange="this.form.submit()">
+        <option value="">Все</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript>
+      <button type="submit">Показать</button>
+    </noscript>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Номер</th>
+        <th>Статус</th>
+        <th>Причина</th>
+        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+        <th>Проведён</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in documents %}
+        <tr>
+          <td>
+            <a href="{% url 'write_off_detail' d.pk %}">{{ d.number }}</a>
+          </td>
+          <td>{{ d.get_status_display }}</td>
+          <td>{{ d.get_reason_display }}</td>
+          {% if show_costs %}<td>{{ d.cost_total }}</td>{% endif %}
+          <td>
+            {% if d.completed_at %}
+              {{ d.completed_at|date:"d.m.Y H:i" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="5" class="muted">Списаний нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

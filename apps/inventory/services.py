@@ -479,16 +479,18 @@ def adjust_stock_lot_quantity(lot: StockLot, delta, *, by=None, comment="") -> S
 @transaction.atomic
 def _consume_part_item(
     item, *, new_status, movement_type, document_type, unavailable_msg,
+    allowed_statuses=(PartItem.Status.AVAILABLE,),
     by=None, document_id=None, comment="",
 ) -> PartItem:
-    """Списать экземпляр со склада: available → new_status, расходное движение.
+    """Списать экземпляр со склада: allowed_statuses → new_status, расходное движение.
 
     `current_location` сохраняется как последняя известная ячейка (аудит); любой
-    из терминальных статусов (`sold`/`installed`) исключает экземпляр из
-    physical/available.
+    из терминальных статусов (`sold`/`installed`/`written_off`) исключает экземпляр
+    из physical/available. `allowed_statuses` — какие исходные статусы допустимы
+    (продажа/выдача — только `available`; списание — ещё и `quarantine`).
     """
     item = PartItem.objects.select_for_update().get(pk=item.pk)
-    if item.status != PartItem.Status.AVAILABLE:
+    if item.status not in allowed_statuses:
         raise InventoryError(unavailable_msg)
     from_location = item.current_location
     item.status = new_status
@@ -507,21 +509,26 @@ def _consume_part_item(
 def _consume_stock_lot(
     lot, quantity, *, movement_type, document_type,
     positive_msg, unavailable_msg, over_msg,
+    allowed_statuses=(StockLot.Status.AVAILABLE,),
+    zero_status=StockLot.Status.DEPLETED,
     by=None, document_id=None, comment="",
 ) -> StockLot:
-    """Списать количество из лота: quantity↓, depleted при нуле, расходное
-    движение. Частичный расход разрешён; лот не дробится."""
+    """Списать количество из лота: quantity↓, при нуле → zero_status, расходное
+    движение. Частичный расход разрешён; лот не дробится. `allowed_statuses` —
+    допустимые исходные статусы (продажа/выдача — `available`; списание — ещё и
+    `quarantine`). `zero_status` — статус при полном расходе (продажа/выдача —
+    `depleted`; списание — `written_off`)."""
     quantity = Decimal(quantity)
     if quantity <= 0:
         raise InventoryError(positive_msg)
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
-    if lot.status != StockLot.Status.AVAILABLE:
+    if lot.status not in allowed_statuses:
         raise InventoryError(unavailable_msg)
     if quantity > lot.quantity:
         raise InventoryError(over_msg.format(quantity=quantity, in_lot=lot.quantity))
     lot.quantity = lot.quantity - quantity
     if lot.quantity == 0:
-        lot.status = StockLot.Status.DEPLETED
+        lot.status = zero_status
     lot.save(update_fields=["quantity", "status", "updated_at"])
     _record_movement(
         lot, movement_type, quantity,
@@ -586,6 +593,42 @@ def issue_stock_lot(lot, quantity, *, by=None, document_id=None, comment="") -> 
         positive_msg="Количество выдачи должно быть больше нуля.",
         unavailable_msg="Выдать можно только доступный лот.",
         over_msg="Нельзя выдать {quantity}: в лоте {in_lot}.",
+        by=by, document_id=document_id, comment=comment,
+    )
+
+
+# --- Слой 19: документированное списание (брак/потеря/утилизация) -------------
+#
+# Списание — тот же складской расход, что продажа/выдача, но: допускает исходный
+# `quarantine` (брак/карантин — главные кандидаты), лот при нуле → `written_off`
+# (а не depleted), документ-источник — WriteOffDocument. Сервисы источник-
+# агностичны и не знают о резервах (проверки делает apps.writeoffs до вызова).
+
+
+def write_off_part_item(item, *, by=None, document_id=None, comment="") -> PartItem:
+    """Списать экземпляр: available/quarantine → written_off, движение WRITE_OFF_ITEM."""
+    return _consume_part_item(
+        item, new_status=PartItem.Status.WRITTEN_OFF,
+        movement_type=StockMovement.MovementType.WRITE_OFF_ITEM, document_type="write_off",
+        allowed_statuses=(PartItem.Status.AVAILABLE, PartItem.Status.QUARANTINE),
+        unavailable_msg="Списать можно только доступный или карантинный экземпляр.",
+        by=by, document_id=document_id, comment=comment,
+    )
+
+
+def write_off_stock_lot_quantity(
+    lot, quantity, *, by=None, document_id=None, comment=""
+) -> StockLot:
+    """Списать количество из лота: quantity↓, при полном списании → written_off
+    (не depleted), движение WRITE_OFF_LOT. Частичное списание разрешено."""
+    return _consume_stock_lot(
+        lot, quantity, movement_type=StockMovement.MovementType.WRITE_OFF_LOT,
+        document_type="write_off",
+        allowed_statuses=(StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE),
+        zero_status=StockLot.Status.WRITTEN_OFF,
+        positive_msg="Количество списания должно быть больше нуля.",
+        unavailable_msg="Списать можно только доступный или карантинный лот.",
+        over_msg="Нельзя списать {quantity}: в лоте {in_lot}.",
         by=by, document_id=document_id, comment=comment,
     )
 

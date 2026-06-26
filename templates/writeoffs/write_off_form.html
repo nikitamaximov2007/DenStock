@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Новое списание — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Новое списание</h1>
+  <p>
+    <a href="{% url 'write_off_list' %}">← К списаниям</a>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать черновик</button>
+  </form>
+  <p class="muted">
+    После создания добавьте позиции (экземпляр или количество из лота) и проведите
+    списание. Проведение уменьшает остаток и фиксирует причину и себестоимость
+    потерь. Это складское выбытие, а не продажа, возврат или инвентаризация.
+  </p>
+{% endblock %}
