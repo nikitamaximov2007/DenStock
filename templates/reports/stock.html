@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Остатки — Отчёты — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Текущие остатки</h1>
+  <p>
+    <a href="{% url 'reports_dashboard' %}">← К отчётам за период</a>
+  </p>
+  <p class="muted">Срез на текущий момент (по кэшу остатков StockBalance).</p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Деталей с остатком</th>
+        <td>{{ stock.part_types_with_stock }}</td>
+      </tr>
+      <tr>
+        <th>Доступно (всего)</th>
+        <td>{{ stock.total_available|floatformat:"-3" }}</td>
+      </tr>
+      <tr>
+        <th>Зарезервировано (всего)</th>
+        <td>{{ stock.total_reserved|floatformat:"-3" }}</td>
+      </tr>
+      <tr>
+        <th>В карантине (всего)</th>
+        <td>{{ stock.total_quarantine|floatformat:"-3" }}</td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>По ячейкам</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Ячейка</th>
+        <th>Доступно</th>
+        <th>Зарезервировано</th>
+        <th>Карантин</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in stock.by_location %}
+        <tr>
+          <td>{{ row.location }}</td>
+          <td>{{ row.available|floatformat:"-3" }}</td>
+          <td>{{ row.reserved|floatformat:"-3" }}</td>
+          <td>{{ row.quarantine|floatformat:"-3" }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="4" class="muted">Остатков нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h2>Низкие остатки</h2>
+  <p class="muted">Доступное меньше минимального остатка детали.</p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Доступно</th>
+        <th>Минимум</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in low_stock %}
+        <tr>
+          <td>{{ row.part_type }}</td>
+          <td>{{ row.available|floatformat:"-3" }}</td>
+          <td>{{ row.min_stock_level|floatformat:"-3" }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="3" class="muted">Низких остатков нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

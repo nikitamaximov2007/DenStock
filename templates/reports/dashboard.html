@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Отчёты — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Отчёты за период</h1>
+  <p>
+    <a href="{% url 'reports_stock' %}">Остатки и низкие остатки →</a>
+  </p>
+  <form method="get" class="form">
+    <span>Быстро:</span>
+    {% for value, label in presets %}
+      <a href="?preset={{ value }}"
+         {% if period.preset == value %}class="muted"{% endif %}>{{ label }}</a>
+    {% endfor %}
+    <label>
+      С
+      <input type="date"
+             name="date_from"
+             value="{{ period.date_from|date:'Y-m-d' }}">
+    </label>
+    <label>
+      По
+      <input type="date" name="date_to" value="{{ period.date_to|date:'Y-m-d' }}">
+    </label>
+    <button type="submit">Показать</button>
+  </form>
+  <p class="muted">
+    Период: {{ period.date_from|date:"d.m.Y" }} — {{ period.date_to|date:"d.m.Y" }}
+    (по моменту проведения; только проведённые документы).
+  </p>
+  <h2>Продажи</h2>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Проведённых продаж</th>
+        <td>{{ report.sales.count }}</td>
+      </tr>
+      <tr>
+        <th>Строк продаж</th>
+        <td>{{ report.sales.line_count }}</td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Выручка</th>
+          <td>{{ report.sales.revenue }} ₽</td>
+        </tr>
+        <tr>
+          <th>Себестоимость</th>
+          <td>{{ report.sales.cost }} ₽</td>
+        </tr>
+        <tr>
+          <th>Валовая прибыль</th>
+          <td>{{ report.sales.profit }} ₽</td>
+        </tr>
+      {% else %}
+        <tr>
+          <td colspan="2" class="muted">Финансовые показатели скрыты.</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <div class="report-columns">
+    <div>
+      {% if show_costs %}
+        <h3>Топ деталей по выручке</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Деталь</th>
+              <th>Выручка (₽)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.sales.top_by_revenue %}
+              <tr>
+                <td>{{ row.part_type }}</td>
+                <td>{{ row.value }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="2" class="muted">Нет данных.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Топ деталей по количеству</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Деталь</th>
+            <th>Кол-во</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.sales.top_by_quantity %}
+            <tr>
+              <td>{{ row.part_type }}</td>
+              <td>{{ row.value|floatformat:"-3" }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="2" class="muted">Нет данных.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <h2>Выдачи в ремонт</h2>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Проведённых заказов</th>
+        <td>{{ report.repairs.count }}</td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Себестоимость выданного</th>
+          <td>{{ report.repairs.issued_cost }} ₽</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <h2>Возвраты на склад</h2>
+  <p class="muted">
+    Возврат на склад — это не возврат денег. На выручку не влияет (финансовое сторно —
+    будущий слой); показано отдельно.
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Документов возврата</th>
+        <td>{{ report.returns.count }}</td>
+      </tr>
+      <tr>
+        <th>Возвращено (кол-во)</th>
+        <td>{{ report.returns.quantity|floatformat:"-3" }}</td>
+      </tr>
+      {% if show_costs %}
+        <tr>
+          <th>Себестоимость возвращённого</th>
+          <td>{{ report.returns.cost }} ₽</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <h2>Списания</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Причина</th>
+        <th>Документов</th>
+        {% if show_costs %}
+          <th>Себестоимость (₽)</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in report.writeoffs.by_reason %}
+        <tr>
+          <td>{{ row.reason }}</td>
+          <td>{{ row.count }}</td>
+          {% if show_costs %}
+            <td>{{ row.cost }}</td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="3" class="muted">Списаний нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <h2>Корректировки (инвентаризация)</h2>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Проведённых инвентаризаций</th>
+        <td>{{ report.adjustments.count }}</td>
+      </tr>
+      <tr>
+        <th>Оприходовано (ADJUST +)</th>
+        <td>
+          {{ report.adjustments.adjust_in_qty|floatformat:"-3" }}
+          {% if show_costs %}· {{ report.adjustments.adjust_in_cost }} ₽{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Списано сверкой (ADJUST −)</th>
+        <td>
+          {{ report.adjustments.adjust_out_qty|floatformat:"-3" }}
+          {% if show_costs %}· {{ report.adjustments.adjust_out_cost }} ₽{% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+{% endblock %}

@@ -44,6 +44,7 @@ LOCAL_APPS = [
     "apps.returns",
     "apps.writeoffs",
     "apps.stocktaking",
+    "apps.reports",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS
