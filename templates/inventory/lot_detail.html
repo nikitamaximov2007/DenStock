@@ -5,6 +5,9 @@
   <p>
     <a href="{% url 'lot_list' %}">← К списку лотов</a>
     {% if can_manage %}· <a href="{% url 'lot_edit' lot.pk %}">Изменить</a>{% endif %}
+    {% if can_stocktake %}
+      · <a href="{% url 'inventory_count_create' %}?location={{ lot.location.pk }}">Инвентаризировать</a>
+    {% endif %}
   </p>
   <table class="table">
     <tbody>

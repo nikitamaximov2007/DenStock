@@ -101,6 +101,10 @@ class User(AbstractUser):
         return self.has_capability(roles.MANAGE_WRITE_OFFS)
 
     @property
+    def can_manage_stocktaking(self) -> bool:
+        return self.has_capability(roles.MANAGE_STOCKTAKING)
+
+    @property
     def can_view_finance(self) -> bool:
         return self.has_capability(roles.VIEW_FINANCE)
 

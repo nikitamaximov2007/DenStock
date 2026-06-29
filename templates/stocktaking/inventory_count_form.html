@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Новая инвентаризация — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Новая инвентаризация</h1>
+  <p>
+    <a href="{% url 'inventory_count_list' %}">← К инвентаризациям</a>
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Создать черновик</button>
+  </form>
+  <p class="muted">
+    После создания добавьте лоты, введите фактическое количество и проведите
+    инвентаризацию. Проведение приводит остаток лота к факту: при расхождении создаёт
+    движение корректировки (ADJUST +/−). Это сверка факта с системой, а не списание,
+    возврат или продажа.
+  </p>
+{% endblock %}

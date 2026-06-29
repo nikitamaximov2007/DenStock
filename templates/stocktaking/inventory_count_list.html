@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Инвентаризация — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Инвентаризация</h1>
+  {% if can_manage %}
+    <p>
+      <a class="btn btn--primary" href="{% url 'inventory_count_create' %}">Создать инвентаризацию</a>
+    </p>
+  {% endif %}
+  <form method="get" class="form">
+    <label>
+      Статус:
+      <select name="status" onchange="this.form.submit()">
+        <option value="">Все</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript>
+      <button type="submit">Показать</button>
+    </noscript>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Номер</th>
+        <th>Статус</th>
+        <th>Ячейка</th>
+        <th>Проведена</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in documents %}
+        <tr>
+          <td>
+            <a href="{% url 'inventory_count_detail' d.pk %}">{{ d.number }}</a>
+          </td>
+          <td>{{ d.get_status_display }}</td>
+          <td>{{ d.scope_location.code|default:"—" }}</td>
+          <td>
+            {% if d.completed_at %}
+              {{ d.completed_at|date:"d.m.Y H:i" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="4" class="muted">Инвентаризаций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

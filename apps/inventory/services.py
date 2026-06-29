@@ -432,8 +432,16 @@ def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockL
 
 
 @transaction.atomic
-def adjust_stock_lot_quantity(lot: StockLot, delta, *, by=None, comment="") -> StockLot:
-    """Скорректировать количество лота на delta (±). При нуле — статус depleted."""
+def adjust_stock_lot_quantity(
+    lot: StockLot, delta, *, by=None, comment="", document_type="", document_id=None
+) -> StockMovement:
+    """Скорректировать количество лота на delta (±). При нуле — статус depleted.
+
+    Возвращает созданное движение ADJUST_IN/ADJUST_OUT (нужно вызывающим, напр.
+    инвентаризации Слоя 20, чтобы сослаться на него из строки документа).
+    `document_type`/`document_id` (опц.) привязывают движение к документу-источнику
+    (напр. `"inventory_count"`); по умолчанию None — ручная корректировка без документа.
+    """
     delta = Decimal(delta)
     if delta == 0:
         raise InventoryError("Изменение количества не может быть нулевым.")
@@ -457,12 +465,13 @@ def adjust_stock_lot_quantity(lot: StockLot, delta, *, by=None, comment="") -> S
     if new_qty == 0:
         lot.status = StockLot.Status.DEPLETED
     lot.save(update_fields=["quantity", "status", "updated_at"])
-    _record_movement(
+    movement = _record_movement(
         lot, movement_type, abs(delta),
         from_location=from_location, to_location=to_location, by=by, comment=comment,
+        document_type=document_type, document_id=document_id,
     )
     _refresh_balance(lot.batch_line, lot.location)
-    return lot
+    return movement
 
 
 # --- Расход со склада: общий механизм для продажи (Слой 16) и выдачи в --------

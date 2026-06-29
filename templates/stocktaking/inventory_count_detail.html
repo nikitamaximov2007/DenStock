@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Инвентаризация {{ doc.number }} — DenStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Инвентаризация {{ doc.number }}</h1>
+  <p>
+    <a href="{% url 'inventory_count_list' %}">← К инвентаризациям</a>
+  </p>
+  <table class="table">
+    <tbody>
+      <tr>
+        <th>Статус</th>
+        <td>{{ doc.get_status_display }}</td>
+      </tr>
+      <tr>
+        <th>Ячейка</th>
+        <td>{{ doc.scope_location.code|default:"— (вся выборка)" }}</td>
+      </tr>
+      <tr>
+        <th>Комментарий</th>
+        <td>{{ doc.comment|default:"—" }}</td>
+      </tr>
+      <tr>
+        <th>Проведена</th>
+        <td>
+          {% if doc.completed_at %}
+            {{ doc.completed_at|date:"d.m.Y H:i" }}
+          {% else %}
+            — (черновик)
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <h2>Позиции</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Лот / ячейка</th>
+        <th>Системное</th>
+        <th>Факт</th>
+        <th>Расхождение</th>
+        {% if show_costs %}<th>Себестоимость за ед. (₽)</th>{% endif %}
+        {% if not is_draft %}<th>Корректировка</th>{% endif %}
+        {% if can_manage and is_draft %}<th></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.part_type }}</td>
+          <td>Лот #{{ line.stock_lot_id }} · {{ line.location.code }}</td>
+          <td>{{ line.expected_quantity|floatformat:"-3" }}</td>
+          <td>
+            {% if can_manage and is_draft %}
+              <form method="post"
+                    action="{% url 'inventory_count_set_count' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <input type="number"
+                       name="counted"
+                       step="0.001"
+                       min="0"
+                       value="{{ line.counted_quantity|default_if_none:'' }}"
+                       required>
+                <button type="submit">OK</button>
+              </form>
+            {% else %}
+              {{ line.counted_quantity|default_if_none:"—"|floatformat:"-3" }}
+            {% endif %}
+          </td>
+          <td>
+            {% if line.difference is None %}
+              —
+            {% else %}
+              {{ line.difference|floatformat:"-3" }}
+            {% endif %}
+          </td>
+          {% if show_costs %}<td>{{ line.unit_cost_rub }}</td>{% endif %}
+          {% if not is_draft %}
+            <td>
+              {% if line.adjustment %}
+                {{ line.adjustment.get_movement_type_display }}
+                ({{ line.adjustment.quantity|floatformat:"-3" }})
+              {% else %}
+                без изменений
+              {% endif %}
+            </td>
+          {% endif %}
+          {% if can_manage and is_draft %}
+            <td>
+              <form method="post"
+                    action="{% url 'inventory_count_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="8" class="muted">Позиций нет.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if can_manage and is_draft %}
+    <div class="toolbar">
+      <form method="post"
+            action="{% url 'inventory_count_complete' doc.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Провести инвентаризацию</button>
+      </form>
+      <form method="post"
+            action="{% url 'inventory_count_cancel' doc.pk %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit">Отменить документ</button>
+      </form>
+    </div>
+    <h2>Добавить лот</h2>
+    <form method="post"
+          action="{% url 'inventory_count_add_lot' doc.pk %}"
+          class="form">
+      {% csrf_token %}
+      {{ add_lot_form.as_p }}
+      <button type="submit">Добавить лот</button>
+    </form>
+    <p class="muted">
+      Введите фактическое количество по каждому лоту и проведите. При расхождении
+      система создаёт корректировку (ADJUST +/−) и приводит остаток к факту; при
+      совпадении движение не создаётся. Нельзя свести лот ниже забронированного.
+    </p>
+  {% endif %}
+{% endblock %}
