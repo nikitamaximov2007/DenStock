@@ -46,6 +46,7 @@ LOCAL_APPS = [
     "apps.stocktaking",
     "apps.reports",
     "apps.labels",
+    "apps.operations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS
@@ -117,6 +118,10 @@ STORAGES = {
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "mediafiles"
+
+# --- Эксплуатация (Слой 25) -------------------------------------------------
+# Каталог резервных копий (БД + media). Не коммитится (см. .gitignore).
+BACKUP_ROOT = Path(env("BACKUP_ROOT", default=str(BASE_DIR / "backups")))
 
 # --- Аутентификация (маршруты) ---------------------------------------------
 LOGIN_URL = "login"

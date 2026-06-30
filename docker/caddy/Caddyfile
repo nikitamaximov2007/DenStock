@@ -2,5 +2,16 @@
 # На VPS: задайте CADDY_SITE_ADDRESS=ваш-домен — Caddy включит авто-HTTPS.
 {$CADDY_SITE_ADDRESS::80} {
 	encode gzip
-	reverse_proxy web:8000
+
+	# Слой 25: статичная отдача загруженных media-файлов из общего тома (read-only).
+	# /media/part-items/… → /srv/media/part-items/…
+	handle_path /media/* {
+		root * /srv/media
+		file_server
+	}
+
+	# Остальное — в Django.
+	handle {
+		reverse_proxy web:8000
+	}
 }

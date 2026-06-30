@@ -24,6 +24,9 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    volumes:
+      - media:/app/mediafiles          # загруженные фото сохраняются между пересборками
+      - ./backups:/app/backups         # бэкапы видны на хосте (Слой 25)
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
       interval: 15s
@@ -42,11 +45,13 @@ services:
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - media:/srv/media:ro            # Caddy отдаёт /media/* из этого тома (Слой 25)
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
 
 volumes:
   pgdata:
+  media:
   caddy_data:
   caddy_config:

@@ -9,6 +9,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# Клиент PostgreSQL (pg_dump/pg_restore) для команд резервного копирования (Слой 25).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 # Сначала зависимости — для кэширования слоёв.
 COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
