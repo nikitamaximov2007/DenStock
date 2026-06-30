@@ -27,7 +27,10 @@
     Период: {{ period.date_from|date:"d.m.Y" }} — {{ period.date_to|date:"d.m.Y" }}
     (по моменту проведения; только проведённые документы).
   </p>
-  <h2>Продажи</h2>
+  <h2>
+    Продажи
+    <a href="{% url 'reports_export_sales' %}?{{ period_qs }}">CSV</a>
+  </h2>
   <table class="table">
     <tbody>
       <tr>
@@ -108,7 +111,10 @@
       </table>
     </div>
   </div>
-  <h2>Выдачи в ремонт</h2>
+  <h2>
+    Выдачи в ремонт
+    <a href="{% url 'reports_export_repairs' %}?{{ period_qs }}">CSV</a>
+  </h2>
   <table class="table">
     <tbody>
       <tr>
@@ -123,7 +129,10 @@
       {% endif %}
     </tbody>
   </table>
-  <h2>Возвраты на склад</h2>
+  <h2>
+    Возвраты на склад
+    <a href="{% url 'reports_export_returns' %}?{{ period_qs }}">CSV</a>
+  </h2>
   <p class="muted">
     Возврат на склад — это не возврат денег. На выручку не влияет (финансовое сторно —
     будущий слой); показано отдельно.
@@ -146,7 +155,10 @@
       {% endif %}
     </tbody>
   </table>
-  <h2>Списания</h2>
+  <h2>
+    Списания
+    <a href="{% url 'reports_export_writeoffs' %}?{{ period_qs }}">CSV</a>
+  </h2>
   <table class="table">
     <thead>
       <tr>
@@ -173,7 +185,10 @@
       {% endfor %}
     </tbody>
   </table>
-  <h2>Корректировки (инвентаризация)</h2>
+  <h2>
+    Корректировки (инвентаризация)
+    <a href="{% url 'reports_export_stocktaking' %}?{{ period_qs }}">CSV</a>
+  </h2>
   <table class="table">
     <tbody>
       <tr>

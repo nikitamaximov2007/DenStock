@@ -6,6 +6,11 @@
     <a href="{% url 'reports_dashboard' %}">← К отчётам за период</a>
   </p>
   <p class="muted">Срез на текущий момент (по кэшу остатков StockBalance).</p>
+  <p>
+    <a href="{% url 'reports_export_stock' %}">Экспорт остатков (CSV)</a>
+    ·
+    <a href="{% url 'reports_export_low_stock' %}">Экспорт низких остатков (CSV)</a>
+  </p>
   <table class="table">
     <tbody>
       <tr>
