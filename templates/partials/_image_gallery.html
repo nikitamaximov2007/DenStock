@@ -17,7 +17,7 @@
 {% if images %}
   <div class="photo-gallery">
     {% for img in images %}
-      <figure class="photo-thumb">
+      <figure class="photo-thumb{% if img.is_primary %} photo-thumb--primary{% endif %}">
         <img src="{{ img.image.url }}"
              alt="{{ img.caption|default:'Фото' }}"
              loading="lazy">
