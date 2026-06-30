@@ -6,9 +6,11 @@ from django.core.exceptions import PermissionDenied
 from django.db import connection
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.catalog.models import PartType
 from apps.inventory.models import PartItem, StockLot, StockMovement
 from apps.inventory.services import (
     InventoryError,
@@ -17,6 +19,13 @@ from apps.inventory.services import (
     receive_part_item,
     receive_stock_lot,
 )
+from apps.reports.services import (
+    get_low_stock_report,
+    get_sales_report,
+    get_stock_report,
+    resolve_period,
+)
+from apps.sales.models import Reservation
 from apps.warehouse.models import StorageLocation
 
 from .models import UnresolvedScan
@@ -24,10 +33,58 @@ from .scanner import resolve_scan
 from .search import search_parts
 
 
+def _dashboard_actions(user) -> list[dict]:
+    """Быстрые действия — только те, на которые у пользователя есть право."""
+    actions = [{"label": "Поиск детали", "url": reverse("part_search"), "primary": True}]
+    if user.can_manage_inventory:
+        actions.append({"label": "Приёмка сканером", "url": reverse("scanner_receiving")})
+        actions.append({"label": "Перемещение", "url": reverse("scanner_move")})
+    if user.can_manage_sales:
+        actions.append({"label": "Новая продажа", "url": reverse("sale_create")})
+    if user.can_manage_reservations:
+        actions.append({"label": "Новый резерв", "url": reverse("reservation_create")})
+    if user.can_manage_parts:
+        actions.append({"label": "Добавить деталь", "url": reverse("part_create")})
+    if user.can_manage_batches:
+        actions.append({"label": "Создать партию", "url": reverse("batch_create")})
+    if user.can_view_reports:
+        actions.append({"label": "Отчёты", "url": reverse("reports_dashboard")})
+    return actions
+
+
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
-    """Рабочий скелет главной панели (наполняется на последующих слоях)."""
-    return render(request, "core/dashboard.html")
+    """Главная панель: read-only сводка из сервисов отчётов + быстрые действия.
+
+    Ничего не пишет — только читает `get_*_report()` Слоя 21 и простые счётчики.
+    Финансы показываются лишь под `can_view_purchase_cost`; KPI/«требует внимания» —
+    под `can_view_reports`; действия — по capability пользователя.
+    """
+    user = request.user
+    ctx = {"actions": _dashboard_actions(user)}
+    if user.can_view_reports:
+        stock = get_stock_report()
+        low = get_low_stock_report()
+        part_types = PartType.objects.count()
+        ctx.update(
+            {
+                "has_reports": True,
+                "kpi_part_types": part_types,
+                "kpi_part_types_stock": stock.part_types_with_stock,
+                "kpi_available": stock.total_available,
+                "kpi_quarantine": stock.total_quarantine,
+                "kpi_low_stock": len(low),
+                "kpi_active_reservations": Reservation.objects.filter(
+                    status=Reservation.Status.ACTIVE
+                ).count(),
+                "low_rows": low[:8],
+                "catalog_empty": part_types == 0,
+                "stock_empty": stock.part_types_with_stock == 0,
+            }
+        )
+        if user.can_view_purchase_cost:
+            ctx["sales_month"] = get_sales_report(resolve_period({"preset": "month"}))
+    return render(request, "core/dashboard.html", ctx)
 
 
 # --- Слой 11: единый резолв сканера ------------------------------------------

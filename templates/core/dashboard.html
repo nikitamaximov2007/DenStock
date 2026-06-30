@@ -1,25 +1,128 @@
 {% extends "base.html" %}
 {% block title %}Главная — DenStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Главная</h1>
-  <p class="muted">Вы вошли как <strong>{{ user }}</strong>.</p>
-  {# Рабочий скелет. Плитки наполняются данными на последующих слоях. #}
-  <section class="tiles" aria-label="Сводка (скелет)">
-    <div class="tile">
-      <div class="tile__label">Всего запчастей</div>
-      <div class="tile__value muted">—</div>
+  <div class="page-header">
+    <h1 class="page-title">Главная</h1>
+  </div>
+  <p class="muted">
+    Вы вошли как <strong>{{ user }}</strong>.
+  </p>
+  {% if has_reports %}
+    <section class="tiles" aria-label="Показатели склада">
+      <div class="tile">
+        <div class="tile__label">Видов деталей</div>
+        <div class="tile__value">{{ kpi_part_types }}</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Видов на складе</div>
+        <div class="tile__value">{{ kpi_part_types_stock }}</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Доступно, ед.</div>
+        <div class="tile__value num">{{ kpi_available|floatformat:"-3" }}</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Активных резервов</div>
+        <div class="tile__value">{{ kpi_active_reservations }}</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Низкие остатки</div>
+        <div class="tile__value">
+          {% if kpi_low_stock %}
+            <span class="pill pill--danger">{{ kpi_low_stock }}</span>
+          {% else %}
+            <span class="pill pill--muted">0</span>
+          {% endif %}
+        </div>
+      </div>
+      {% if sales_month %}
+        <div class="tile">
+          <div class="tile__label">Продажи за месяц</div>
+          <div class="tile__value">{{ sales_month.count }}</div>
+        </div>
+        <div class="tile">
+          <div class="tile__label">Выручка за месяц, ₽</div>
+          <div class="tile__value num">{{ sales_month.revenue }}</div>
+        </div>
+      {% endif %}
+    </section>
+    {% if catalog_empty %}
+      <div class="empty">
+        <p class="empty__title">Деталей пока нет</p>
+        <p class="empty__text">Начните с добавления первой детали в каталог.</p>
+        {% if user.can_manage_parts %}
+          <div class="empty__actions">
+            <a class="btn btn--primary" href="{% url 'part_create' %}">Добавить деталь</a>
+          </div>
+        {% endif %}
+      </div>
+    {% elif stock_empty %}
+      <div class="empty">
+        <p class="empty__title">На складе пока пусто</p>
+        <p class="empty__text">Детали есть в каталоге — примите их на склад.</p>
+        {% if user.can_manage_inventory %}
+          <div class="empty__actions">
+            <a class="btn btn--primary" href="{% url 'scanner_receiving' %}">Приёмка на склад</a>
+          </div>
+        {% endif %}
+      </div>
+    {% else %}
+      <div class="card">
+        <div class="card__header">
+          <h2 class="card__title">Требует внимания</h2>
+          <a href="{% url 'reports_stock' %}">Все остатки →</a>
+        </div>
+        <div class="card__body">
+          {% if low_rows %}
+            <p class="muted">Низкие остатки (доступно меньше минимума):</p>
+            <table class="table table--compact">
+              <thead>
+                <tr>
+                  <th>Деталь</th>
+                  <th class="num">Доступно</th>
+                  <th class="num">Минимум</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in low_rows %}
+                  <tr>
+                    <td>{{ r.part_type }}</td>
+                    <td class="num">{{ r.available|floatformat:"-3" }}</td>
+                    <td class="num">{{ r.min_stock_level|floatformat:"-3" }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% endif %}
+          {% if kpi_quarantine %}
+            <p>
+              В карантине: <span class="num">{{ kpi_quarantine|floatformat:"-3" }}</span> ед.
+              (требуют проверки).
+            </p>
+          {% endif %}
+          {% if not low_rows and not kpi_quarantine %}
+            <div class="empty">
+              <p class="empty__title">Всё в порядке</p>
+              <p class="empty__text">Низких остатков и карантина нет.</p>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="muted">Выберите действие ниже или воспользуйтесь поиском детали.</p>
+  {% endif %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Быстрые действия</h2>
     </div>
-    <div class="tile">
-      <div class="tile__label">Доступно</div>
-      <div class="tile__value muted">—</div>
+    <div class="card__body">
+      <div class="page-header__actions">
+        {% for a in actions %}
+          <a class="btn {% if a.primary %}btn--primary{% else %}btn--secondary{% endif %}"
+             href="{{ a.url }}">{{ a.label }}</a>
+        {% endfor %}
+      </div>
     </div>
-    <div class="tile">
-      <div class="tile__label">Продажи сегодня</div>
-      <div class="tile__value muted">—</div>
-    </div>
-    <div class="tile">
-      <div class="tile__label">Прибыль за период</div>
-      <div class="tile__value muted">—</div>
-    </div>
-  </section>
+  </div>
 {% endblock %}
