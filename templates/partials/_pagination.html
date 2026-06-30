@@ -1,0 +1,22 @@
+{% comment %}
+  Постраничная навигация для ListView. Контекст: page_obj, is_paginated (Django
+  добавляет их при paginate_by). Текущие GET-фильтры сохраняются встроенным тегом
+  {% querystring %} (Django 5.1+) — он клонирует request.GET и меняет только page.
+  Без JS и без нового CSS: переиспользует .toolbar/.btn--small/.btn--secondary/.muted.
+{% endcomment %}
+{% if is_paginated %}
+  <nav class="toolbar" aria-label="Постраничная навигация">
+    {% if page_obj.has_previous %}
+      <a class="btn btn--small btn--secondary"
+         href="{% querystring page=page_obj.previous_page_number %}">← Назад</a>
+    {% endif %}
+    <span class="muted">
+      Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}
+      ({{ page_obj.paginator.count }} всего)
+    </span>
+    {% if page_obj.has_next %}
+      <a class="btn btn--small btn--secondary"
+         href="{% querystring page=page_obj.next_page_number %}">Вперёд →</a>
+    {% endif %}
+  </nav>
+{% endif %}

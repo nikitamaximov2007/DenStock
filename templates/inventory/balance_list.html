@@ -27,32 +27,36 @@
     </select>
     <button type="submit">Фильтр</button>
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Деталь</th>
-        <th>Ячейка</th>
-        <th>Партия</th>
-        <th>Физически</th>
-        <th>Доступно</th>
-        <th>Карантин</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for b in balances %}
+  {% if balances %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>{{ b.part_type }}</td>
-          <td>{{ b.location.code }}</td>
-          <td>{{ b.batch.number }}</td>
-          <td>{{ b.quantity_physical }}</td>
-          <td>{{ b.quantity_available }}</td>
-          <td>{{ b.quantity_quarantine }}</td>
+          <th>Деталь</th>
+          <th>Ячейка</th>
+          <th>Партия</th>
+          <th class="num--qty">Физически</th>
+          <th class="num--qty">Доступно</th>
+          <th class="num--qty">Карантин</th>
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="6" class="muted">Остатков нет.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for b in balances %}
+          <tr>
+            <td>{{ b.part_type }}</td>
+            <td>{{ b.location.code }}</td>
+            <td>{{ b.batch.number }}</td>
+            <td class="num--qty">{{ b.quantity_physical }}</td>
+            <td class="num--qty">{{ b.quantity_available }}</td>
+            <td class="num--qty">{{ b.quantity_quarantine }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "partials/_pagination.html" %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Остатков нет</p>
+      <p class="empty__text">Измените фильтры — кэш остатков пока пуст.</p>
+    </div>
+  {% endif %}
 {% endblock %}

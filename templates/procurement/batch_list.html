@@ -15,32 +15,36 @@
       <a class="btn btn--primary" href="{% url 'batch_create' %}">Новая партия</a>
     {% endif %}
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Номер</th>
-        <th>Поставщик</th>
-        <th>Статус</th>
-        <th>Прибытие</th>
-        {% if show_costs %}<th>Доп. расходы</th>{% endif %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for b in batches %}
+  {% if batches %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>
-            <a href="{% url 'batch_detail' b.pk %}">{{ b.number }}</a>
-          </td>
-          <td>{{ b.supplier }}</td>
-          <td>{{ b.get_status_display }}</td>
-          <td>{{ b.arrived_at|default:"—" }}</td>
-          {% if show_costs %}<td>{{ b.total_extra_cost }} {{ b.currency }}</td>{% endif %}
+          <th>Номер</th>
+          <th>Поставщик</th>
+          <th>Статус</th>
+          <th>Прибытие</th>
+          {% if show_costs %}<th class="num--money">Доп. расходы</th>{% endif %}
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="5" class="muted">Партий нет.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for b in batches %}
+          <tr>
+            <td>
+              <a href="{% url 'batch_detail' b.pk %}">{{ b.number }}</a>
+            </td>
+            <td>{{ b.supplier }}</td>
+            <td>{{ b.get_status_display }}</td>
+            <td>{{ b.arrived_at|default:"—" }}</td>
+            {% if show_costs %}<td class="num--money">{{ b.total_extra_cost }} {{ b.currency }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "partials/_pagination.html" %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Партий нет</p>
+      <p class="empty__text">Измените фильтры или создайте новую партию.</p>
+    </div>
+  {% endif %}
 {% endblock %}

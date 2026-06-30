@@ -32,56 +32,60 @@
     </select>
     <button type="submit">Фильтр</button>
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Дата</th>
-        <th>Тип</th>
-        <th>Деталь</th>
-        <th>Объект</th>
-        <th>Кол-во</th>
-        <th>Откуда → Куда</th>
-        <th>Кто</th>
-        {% if show_costs %}<th>Сумма (₽)</th>{% endif %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for m in movements %}
+  {% if movements %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>
-            <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
-          </td>
-          <td>{{ m.get_movement_type_display }}</td>
-          <td>{{ m.part_type }}</td>
-          <td>
-            {% if m.stock_lot_id %}
-              лот #{{ m.stock_lot_id }}
-            {% elif m.part_item_id %}
-              {{ m.part_item.internal_number }}
-            {% endif %}
-          </td>
-          <td>{{ m.quantity }}</td>
-          <td>
-            {% if m.from_location %}
-              {{ m.from_location.code }}
-            {% else %}
-              —
-            {% endif %}
-            →
-            {% if m.to_location %}
-              {{ m.to_location.code }}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td>{{ m.created_by|default:"—" }}</td>
-          {% if show_costs %}<td>{{ m.total_cost_rub }}</td>{% endif %}
+          <th>Дата</th>
+          <th>Тип</th>
+          <th>Деталь</th>
+          <th>Объект</th>
+          <th class="num--qty">Кол-во</th>
+          <th>Откуда → Куда</th>
+          <th>Кто</th>
+          {% if show_costs %}<th class="num--money">Сумма (₽)</th>{% endif %}
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="8" class="muted">Движений нет.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for m in movements %}
+          <tr>
+            <td>
+              <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
+            </td>
+            <td>{{ m.get_movement_type_display }}</td>
+            <td>{{ m.part_type }}</td>
+            <td>
+              {% if m.stock_lot_id %}
+                лот #{{ m.stock_lot_id }}
+              {% elif m.part_item_id %}
+                {{ m.part_item.internal_number }}
+              {% endif %}
+            </td>
+            <td class="num--qty">{{ m.quantity }}</td>
+            <td>
+              {% if m.from_location %}
+                {{ m.from_location.code }}
+              {% else %}
+                —
+              {% endif %}
+              →
+              {% if m.to_location %}
+                {{ m.to_location.code }}
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>{{ m.created_by|default:"—" }}</td>
+            {% if show_costs %}<td class="num--money">{{ m.total_cost_rub }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "partials/_pagination.html" %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Движений нет</p>
+      <p class="empty__text">Измените фильтры — здесь отображается журнал складских движений.</p>
+    </div>
+  {% endif %}
 {% endblock %}

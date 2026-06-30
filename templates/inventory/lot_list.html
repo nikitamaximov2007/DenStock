@@ -32,34 +32,38 @@
     </select>
     <button type="submit">Фильтр</button>
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Деталь</th>
-        <th>Ячейка</th>
-        <th>Количество</th>
-        <th>Статус</th>
-        <th>Партия</th>
-        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for lot in lots %}
+  {% if lots %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>
-            <a href="{% url 'lot_detail' lot.pk %}">{{ lot.part_type }}</a>
-          </td>
-          <td>{{ lot.location.code }}</td>
-          <td>{{ lot.quantity }}</td>
-          <td>{{ lot.get_status_display }}</td>
-          <td>{{ lot.batch.number }}</td>
-          {% if show_costs %}<td>{{ lot.landed_unit_cost_rub }}</td>{% endif %}
+          <th>Деталь</th>
+          <th>Ячейка</th>
+          <th class="num--qty">Количество</th>
+          <th>Статус</th>
+          <th>Партия</th>
+          {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="6" class="muted">Лотов нет.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for lot in lots %}
+          <tr>
+            <td>
+              <a href="{% url 'lot_detail' lot.pk %}">{{ lot.part_type }}</a>
+            </td>
+            <td>{{ lot.location.code }}</td>
+            <td class="num--qty">{{ lot.quantity }}</td>
+            <td>{{ lot.get_status_display }}</td>
+            <td>{{ lot.batch.number }}</td>
+            {% if show_costs %}<td class="num--money">{{ lot.landed_unit_cost_rub }}</td>{% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "partials/_pagination.html" %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Лотов нет</p>
+      <p class="empty__text">Измените фильтры или создайте лот при приёмке партии.</p>
+    </div>
+  {% endif %}
 {% endblock %}

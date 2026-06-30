@@ -16,40 +16,44 @@
       <a class="btn btn--primary" href="{% url 'part_create' %}">Добавить деталь</a>
     {% endif %}
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Название</th>
-        <th>Категория</th>
-        <th>Производитель</th>
-        <th>Учёт</th>
-        <th>Реком. цена</th>
-        <th>Статус</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for part in object_list %}
+  {% if object_list %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>
-            <a href="{% url 'part_detail' part.pk %}">{{ part.name }}</a>
-          </td>
-          <td>{{ part.category }}</td>
-          <td>{{ part.manufacturer|default:"—" }}</td>
-          <td>{{ part.get_tracking_mode_display }}</td>
-          <td>{{ part.recommended_price|default:"—" }}</td>
-          <td>
-            {% if part.is_active %}
-              Активна
-            {% else %}
-              Отключена
-            {% endif %}
-          </td>
+          <th>Название</th>
+          <th>Категория</th>
+          <th>Производитель</th>
+          <th>Учёт</th>
+          <th class="num--money">Реком. цена</th>
+          <th>Статус</th>
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="6" class="muted">Ничего не найдено.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for part in object_list %}
+          <tr>
+            <td>
+              <a href="{% url 'part_detail' part.pk %}">{{ part.name }}</a>
+            </td>
+            <td>{{ part.category }}</td>
+            <td>{{ part.manufacturer|default:"—" }}</td>
+            <td>{{ part.get_tracking_mode_display }}</td>
+            <td class="num--money">{{ part.recommended_price|default:"—" }}</td>
+            <td>
+              {% if part.is_active %}
+                Активна
+              {% else %}
+                Отключена
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "partials/_pagination.html" %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Ничего не найдено</p>
+      <p class="empty__text">Измените запрос или добавьте новую деталь.</p>
+    </div>
+  {% endif %}
 {% endblock %}
