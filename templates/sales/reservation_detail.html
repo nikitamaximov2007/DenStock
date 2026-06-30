@@ -39,22 +39,24 @@
       </tr>
     </tbody>
   </table>
-
   {% if can_manage and is_open %}
     <div class="toolbar">
       {% if reservation.status == "draft" %}
-        <form method="post" action="{% url 'reservation_activate' reservation.pk %}" class="inline-form">
+        <form method="post"
+              action="{% url 'reservation_activate' reservation.pk %}"
+              class="inline-form">
           {% csrf_token %}
           <button type="submit" class="btn btn--primary">Активировать</button>
         </form>
       {% endif %}
-      <form method="post" action="{% url 'reservation_cancel' reservation.pk %}" class="inline-form">
+      <form method="post"
+            action="{% url 'reservation_cancel' reservation.pk %}"
+            class="inline-form">
         {% csrf_token %}
         <button type="submit">Отменить</button>
       </form>
     </div>
   {% endif %}
-
   {% if can_sell and reservation.status == "active" %}
     <div class="toolbar">
       <form method="post"
@@ -65,7 +67,6 @@
       </form>
     </div>
   {% endif %}
-
   <h2>Позиции</h2>
   <table class="table">
     <thead>
@@ -124,15 +125,18 @@
       {% endfor %}
     </tbody>
   </table>
-
   {% if can_manage and is_open %}
     <h2>Добавить позицию</h2>
-    <form method="post" action="{% url 'reservation_add_item' reservation.pk %}" class="form">
+    <form method="post"
+          action="{% url 'reservation_add_item' reservation.pk %}"
+          class="form">
       {% csrf_token %}
       {{ add_item_form.as_p }}
       <button type="submit">Добавить экземпляр</button>
     </form>
-    <form method="post" action="{% url 'reservation_add_lot' reservation.pk %}" class="form">
+    <form method="post"
+          action="{% url 'reservation_add_lot' reservation.pk %}"
+          class="form">
       {% csrf_token %}
       {{ add_lot_form.as_p }}
       <button type="submit">Добавить из лота</button>

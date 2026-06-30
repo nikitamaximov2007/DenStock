@@ -37,7 +37,11 @@
           <th>Текущая ячейка</th>
           <td>
             {% if object_kind == "part_item" %}
-              {% if object.current_location %}{{ object.current_location.code }}{% else %}—{% endif %}
+              {% if object.current_location %}
+                {{ object.current_location.code }}
+              {% else %}
+                —
+              {% endif %}
             {% else %}
               {{ object.location.code }}
             {% endif %}
@@ -150,9 +154,17 @@
           <td>{{ m.get_movement_type_display }}</td>
           <td>{{ m.part_type }}</td>
           <td>
-            {% if m.from_location %}{{ m.from_location.code }}{% else %}—{% endif %}
+            {% if m.from_location %}
+              {{ m.from_location.code }}
+            {% else %}
+              —
+            {% endif %}
             →
-            {% if m.to_location %}{{ m.to_location.code }}{% else %}—{% endif %}
+            {% if m.to_location %}
+              {{ m.to_location.code }}
+            {% else %}
+              —
+            {% endif %}
           </td>
           {% if show_costs %}
             <td>{{ m.total_cost_rub }}</td>
