@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
@@ -8,6 +9,8 @@ from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, ListView, UpdateView
 
 from apps.catalog.models import PartType
+from apps.core.forms import ImageUploadForm
+from apps.core.images import add_image, deactivate_image, set_primary
 from apps.procurement.models import Batch, BatchLine
 from apps.warehouse.models import StorageLocation
 
@@ -22,7 +25,7 @@ from .forms import (
     StockLotEditForm,
     StockLotQuickForm,
 )
-from .models import PartItem, StockBalance, StockLot, StockMovement
+from .models import PartItem, PartItemImage, StockBalance, StockLot, StockMovement
 from .services import (
     InventoryError,
     adjust_stock_lot_quantity,
@@ -111,11 +114,22 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
         ctx["can_print_labels"] = self.request.user.can_print_labels
+        ctx["can_manage_images"] = self.request.user.can_manage_images
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, PartItem.Status(s).label) for s in allowed]
         ctx["movements"] = self.object.movements.select_related(
             "from_location", "to_location", "created_by"
         )[:10]
+        images = list(self.object.images.filter(is_active=True))
+        ctx["images"] = images
+        primary = next((i for i in images if i.is_primary), None)
+        # Если у экземпляра своих фото нет — показываем типовое фото вида (с пометкой).
+        if primary is None:
+            primary = self.object.part_type.images.filter(
+                is_active=True, is_primary=True
+            ).first()
+            ctx["primary_is_type_fallback"] = primary is not None
+        ctx["primary_image"] = primary
         if (
             self.request.user.can_manage_inventory
             and self.object.status == PartItem.Status.RECEIVING
@@ -212,6 +226,52 @@ def item_status_change(request, pk):
     else:
         messages.error(request, "Недопустимый переход статуса.")
     return redirect("item_detail", pk=pk)
+
+
+# --- Слой 24: фотографии экземпляра (информационный слой, без складской физики) ---
+
+
+def _require_images(request) -> None:
+    if not request.user.can_manage_images:
+        raise PermissionDenied
+
+
+@login_required
+@require_POST
+def item_image_add(request, pk):
+    _require_images(request)
+    item = get_object_or_404(PartItem, pk=pk)
+    form = ImageUploadForm(request.POST, request.FILES)
+    if form.is_valid():
+        add_image(
+            item.images, image=form.cleaned_data["image"],
+            caption=form.cleaned_data["caption"], by=request.user,
+        )
+        messages.success(request, "Фото добавлено.")
+    else:
+        messages.error(request, "; ".join(form.errors.get("image", ["Не удалось загрузить фото."])))
+    return redirect("item_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def item_image_primary(request, pk):
+    _require_images(request)
+    image = get_object_or_404(PartItemImage, pk=pk)
+    set_primary(image)
+    messages.success(request, "Главное фото обновлено.")
+    return redirect("item_detail", pk=image.part_item_id)
+
+
+@login_required
+@require_POST
+def item_image_delete(request, pk):
+    _require_images(request)
+    image = get_object_or_404(PartItemImage, pk=pk)
+    item_pk = image.part_item_id
+    deactivate_image(image)
+    messages.success(request, "Фото удалено.")
+    return redirect("item_detail", pk=item_pk)
 
 
 # --- Количественные лоты (StockLot) -----------------------------------------

@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
@@ -8,9 +9,18 @@ from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
 from apps.accounts.permissions import ManagePartsMixin
+from apps.core.forms import ImageUploadForm
+from apps.core.images import add_image, deactivate_image, set_primary
 
 from .forms import PartBarcodeForm, PartCompatibilityForm, PartNumberForm, PartTypeForm
-from .models import PartBarcode, PartCompatibility, PartNumber, PartType, normalize_number
+from .models import (
+    PartBarcode,
+    PartCompatibility,
+    PartNumber,
+    PartType,
+    PartTypeImage,
+    normalize_number,
+)
 
 
 class PartTypeListView(LoginRequiredMixin, ListView):
@@ -46,9 +56,13 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["can_manage"] = self.request.user.can_manage_parts
         ctx["can_print_labels"] = self.request.user.can_print_labels
+        ctx["can_manage_images"] = self.request.user.can_manage_images
         ctx["numbers"] = self.object.numbers.all()
         ctx["barcodes"] = self.object.barcodes.all()
         ctx["compatibilities"] = self.object.compatibilities.select_related("vehicle_model")
+        images = self.object.images.filter(is_active=True)
+        ctx["images"] = images
+        ctx["primary_image"] = next((i for i in images if i.is_primary), None)
         if ctx["can_manage"]:
             ctx["number_form"] = PartNumberForm()
             ctx["barcode_form"] = PartBarcodeForm()
@@ -159,4 +173,50 @@ def compat_delete(request, pk):
     part_pk = compat.part_id
     compat.delete()
     messages.success(request, "Совместимость удалена.")
+    return redirect("part_detail", pk=part_pk)
+
+
+# --- Слой 24: фотографии вида детали (информационный слой, без складской физики) ---
+
+
+def _require_images(request) -> None:
+    if not request.user.can_manage_images:
+        raise PermissionDenied
+
+
+@login_required
+@require_POST
+def part_image_add(request, pk):
+    _require_images(request)
+    part = get_object_or_404(PartType, pk=pk)
+    form = ImageUploadForm(request.POST, request.FILES)
+    if form.is_valid():
+        add_image(
+            part.images, image=form.cleaned_data["image"],
+            caption=form.cleaned_data["caption"], by=request.user,
+        )
+        messages.success(request, "Фото добавлено.")
+    else:
+        messages.error(request, "; ".join(form.errors.get("image", ["Не удалось загрузить фото."])))
+    return redirect("part_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def part_image_primary(request, pk):
+    _require_images(request)
+    image = get_object_or_404(PartTypeImage, pk=pk)
+    set_primary(image)
+    messages.success(request, "Главное фото обновлено.")
+    return redirect("part_detail", pk=image.part_id)
+
+
+@login_required
+@require_POST
+def part_image_delete(request, pk):
+    _require_images(request)
+    image = get_object_or_404(PartTypeImage, pk=pk)
+    part_pk = image.part_id
+    deactivate_image(image)
+    messages.success(request, "Фото удалено.")
     return redirect("part_detail", pk=part_pk)

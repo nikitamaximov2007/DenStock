@@ -93,6 +93,7 @@
       {% endfor %}
     </div>
   {% endif %}
+  {% include "partials/_image_gallery.html" with images=images primary_image=primary_image can_manage_images=can_manage_images add_url="item_image_add" primary_url="item_image_primary" delete_url="item_image_delete" owner_pk=item.pk type_fallback=primary_is_type_fallback %}
   <h2>Журнал движений</h2>
   <table class="table">
     <thead>

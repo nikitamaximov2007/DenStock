@@ -3,6 +3,8 @@ import re
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from apps.core.models import BaseImage
+
 
 def normalize_number(value: str) -> str:
     """Нормализация номера для поиска: без пробелов/дефисов/разделителей, в верхнем регистре."""
@@ -251,6 +253,35 @@ class PartBarcode(models.Model):
 
     def __str__(self) -> str:
         return self.value
+
+
+class PartTypeImage(BaseImage):
+    """Слой 24 — типовое фото вида детали (иллюстрация каталога)."""
+
+    upload_folder = "part-types"
+
+    part = models.ForeignKey(PartType, on_delete=models.CASCADE, related_name="images")
+
+    class Meta(BaseImage.Meta):
+        abstract = False
+        verbose_name = "Фото вида детали"
+        verbose_name_plural = "Фото видов деталей"
+        constraints = [
+            # Не более одного активного главного фото на вид детали.
+            models.UniqueConstraint(
+                fields=["part"],
+                condition=models.Q(is_primary=True, is_active=True),
+                name="uniq_parttypeimage_primary_active",
+            ),
+        ]
+
+    @property
+    def owner_id(self):
+        return self.part_id
+
+    @property
+    def siblings(self):
+        return PartTypeImage.objects.filter(part_id=self.part_id)
 
 
 class PartCompatibility(models.Model):

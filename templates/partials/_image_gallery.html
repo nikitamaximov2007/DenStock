@@ -1,0 +1,64 @@
+{% comment %}
+  Слой 24 — блок фотографий. Параметры (через include ... with):
+    images, primary_image, can_manage_images,
+    add_url / primary_url / delete_url — имена маршрутов,
+    owner_pk — pk владельца (для add_url),
+    type_fallback — primary_image взят из типового фото вида (для PartItem).
+{% endcomment %}
+<h2>Фотографии</h2>
+{% if primary_image %}
+  <div class="photo-primary">
+    <img src="{{ primary_image.image.url }}"
+         alt="{{ primary_image.caption|default:'Фото' }}"
+         loading="lazy">
+    {% if type_fallback %}<p class="muted">Типовое фото вида детали.</p>{% endif %}
+  </div>
+{% endif %}
+{% if images %}
+  <div class="photo-gallery">
+    {% for img in images %}
+      <figure class="photo-thumb">
+        <img src="{{ img.image.url }}"
+             alt="{{ img.caption|default:'Фото' }}"
+             loading="lazy">
+        {% if img.caption %}<figcaption>{{ img.caption }}</figcaption>{% endif %}
+        {% if can_manage_images %}
+          <div class="photo-actions">
+            {% if img.is_primary %}
+              <span class="badge">Основное</span>
+            {% else %}
+              <form method="post"
+                    action="{% url primary_url img.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Сделать основным</button>
+              </form>
+            {% endif %}
+            <form method="post"
+                  action="{% url delete_url img.pk %}"
+                  class="inline-form">
+              {% csrf_token %}
+              <button type="submit">Удалить</button>
+            </form>
+          </div>
+        {% endif %}
+      </figure>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">Фотографий нет.</p>
+{% endif %}
+{% if can_manage_images %}
+  <form method="post"
+        action="{% url add_url owner_pk %}"
+        enctype="multipart/form-data"
+        class="form">
+    {% csrf_token %}
+    <input type="file" name="image" accept=".jpg,.jpeg,.png,.webp" required>
+    <input type="text"
+           name="caption"
+           maxlength="255"
+           placeholder="Подпись (необязательно)">
+    <button type="submit">Добавить фото</button>
+  </form>
+{% endif %}

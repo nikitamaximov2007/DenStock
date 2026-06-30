@@ -154,6 +154,7 @@
       <button type="submit" class="btn">Добавить совместимость</button>
     </form>
   {% endif %}
+  {% include "partials/_image_gallery.html" with images=images primary_image=primary_image can_manage_images=can_manage_images add_url="part_image_add" primary_url="part_image_primary" delete_url="part_image_delete" owner_pk=part.pk %}
   <h2>Остатки</h2>
   {% include "partials/_status_block.html" with kind="info" text="Остатки появятся в следующих слоях." %}
 {% endblock %}

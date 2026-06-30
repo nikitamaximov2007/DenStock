@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 
+from apps.core.models import BaseImage
 from apps.procurement.models import money
 
 
@@ -122,6 +123,37 @@ class PartItem(models.Model):
 
     def can_transition_to(self, new_status: str) -> bool:
         return new_status in self.ALLOWED_TRANSITIONS.get(self.status, [])
+
+
+class PartItemImage(BaseImage):
+    """Слой 24 — фото конкретного экземпляра: состояние, маркировка, дефект, комплектация."""
+
+    upload_folder = "part-items"
+
+    part_item = models.ForeignKey(
+        "inventory.PartItem", on_delete=models.CASCADE, related_name="images"
+    )
+
+    class Meta(BaseImage.Meta):
+        abstract = False
+        verbose_name = "Фото экземпляра"
+        verbose_name_plural = "Фото экземпляров"
+        constraints = [
+            # Не более одного активного главного фото на экземпляр.
+            models.UniqueConstraint(
+                fields=["part_item"],
+                condition=models.Q(is_primary=True, is_active=True),
+                name="uniq_partitemimage_primary_active",
+            ),
+        ]
+
+    @property
+    def owner_id(self):
+        return self.part_item_id
+
+    @property
+    def siblings(self):
+        return PartItemImage.objects.filter(part_item_id=self.part_item_id)
 
 
 class StockMovement(models.Model):

@@ -12,6 +12,10 @@ urlpatterns = [
     path("<int:pk>/status/", views.item_status_change, name="item_status_change"),
     path("<int:pk>/receive/", views.item_receive, name="item_receive"),
     path("<int:pk>/move/", views.item_move, name="item_move"),
+    # Слой 24: фотографии экземпляра
+    path("<int:pk>/images/add/", views.item_image_add, name="item_image_add"),
+    path("images/<int:pk>/primary/", views.item_image_primary, name="item_image_primary"),
+    path("images/<int:pk>/delete/", views.item_image_delete, name="item_image_delete"),
     path("from-line/<int:line_pk>/", views.item_create, name="item_create"),
     path("from-line/<int:line_pk>/bulk/", views.item_bulk_create, name="item_bulk_create"),
     path("lots/", views.StockLotListView.as_view(), name="lot_list"),

@@ -125,5 +125,9 @@ class User(AbstractUser):
         return self.has_capability(roles.PRINT_LABELS)
 
     @property
+    def can_manage_images(self) -> bool:
+        return self.has_capability(roles.MANAGE_IMAGES)
+
+    @property
     def can_confirm_adjustments(self) -> bool:
         return self.has_capability(roles.CONFIRM_ADJUSTMENTS)

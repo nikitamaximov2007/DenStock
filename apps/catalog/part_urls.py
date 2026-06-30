@@ -14,4 +14,8 @@ urlpatterns = [
     path("numbers/<int:pk>/delete/", part_views.number_delete, name="part_number_delete"),
     path("barcodes/<int:pk>/delete/", part_views.barcode_delete, name="part_barcode_delete"),
     path("compat/<int:pk>/delete/", part_views.compat_delete, name="part_compat_delete"),
+    # Слой 24: фотографии вида детали
+    path("<int:pk>/images/add/", part_views.part_image_add, name="part_image_add"),
+    path("images/<int:pk>/primary/", part_views.part_image_primary, name="part_image_primary"),
+    path("images/<int:pk>/delete/", part_views.part_image_delete, name="part_image_delete"),
 ]

@@ -1,6 +1,47 @@
 from django.conf import settings
 from django.db import models
 
+from .files import image_upload_to
+
+
+class BaseImage(models.Model):
+    """Слой 24 — абстрактная база для фотографий (без таблицы).
+
+    Конкретные `PartTypeImage`/`PartItemImage` добавляют FK на владельца и задают
+    `upload_folder`/`owner_id`/`siblings`. Это информационный слой: записи и файлы в
+    media, но никакой складской физики (см. сервисы в `apps.core.images`).
+    """
+
+    upload_folder = "images"  # переопределяется наследником (part-types / part-items)
+
+    image = models.FileField("Файл", upload_to=image_upload_to)
+    caption = models.CharField("Подпись", max_length=255, blank=True)
+    is_primary = models.BooleanField("Главное фото", default=False)
+    sort_order = models.PositiveIntegerField("Порядок", default=0)
+    is_active = models.BooleanField("Активно", default=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто загрузил",
+        on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="%(app_label)s_%(class)s_uploads",  # обязателен для abstract
+    )
+    uploaded_at = models.DateTimeField("Загружено", auto_now_add=True)
+
+    class Meta:
+        abstract = True
+        ordering = ["sort_order", "uploaded_at"]
+
+    def __str__(self) -> str:
+        return self.caption or f"{self._meta.verbose_name} #{self.pk}"
+
+    @property
+    def owner_id(self):  # noqa: A003 — используется в image_upload_to
+        raise NotImplementedError
+
+    @property
+    def siblings(self):
+        """Queryset изображений того же владельца (для primary-логики)."""
+        raise NotImplementedError
+
 
 class UnresolvedScan(models.Model):
     """Журнал нераспознанных сканов (Слой 11).
