@@ -5,6 +5,9 @@
   <p>
     <a href="{% url 'item_list' %}">← К списку экземпляров</a>
     {% if can_manage %}· <a href="{% url 'item_edit' item.pk %}">Изменить</a>{% endif %}
+    {% if can_print_labels %}
+      · <a href="{% url 'label_item' item.pk %}" target="_blank">Печать этикетки</a>
+    {% endif %}
   </p>
   <table class="table">
     <tbody>

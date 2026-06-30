@@ -33,13 +33,15 @@ VIEW_FINANCE = "can_view_finance"
 VIEW_PURCHASE_COST = "can_view_purchase_cost"
 EDIT = "can_edit"
 CONFIRM_ADJUSTMENTS = "can_confirm_adjustments"
+# Слой 23: печать складских этикеток (read-only представление существующих кодов).
+PRINT_LABELS = "print_labels"
 
 ALL_CAPABILITIES = frozenset(
     {
         MANAGE_USERS, MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG,
         MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS,
         MANAGE_RETURNS, MANAGE_WRITE_OFFS, MANAGE_STOCKTAKING, VIEW_REPORTS, VIEW_FINANCE,
-        VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
+        VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS, PRINT_LABELS,
     }
 )
 
@@ -49,21 +51,22 @@ ROLE_CAPABILITIES = {
         MANAGE_USERS, MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG,
         MANAGE_BATCHES, MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS,
         MANAGE_RETURNS, MANAGE_WRITE_OFFS, MANAGE_STOCKTAKING, VIEW_REPORTS, VIEW_FINANCE,
-        VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS,
+        VIEW_PURCHASE_COST, EDIT, CONFIRM_ADJUSTMENTS, PRINT_LABELS,
     },
     MANAGER: {
         MANAGE_DIRECTORIES, MANAGE_WAREHOUSE_STRUCTURE, MANAGE_PARTS_CATALOG, MANAGE_BATCHES,
         MANAGE_INVENTORY, MANAGE_RESERVATIONS, MANAGE_SALES, MANAGE_REPAIRS, MANAGE_RETURNS,
         MANAGE_WRITE_OFFS, MANAGE_STOCKTAKING, VIEW_REPORTS, VIEW_FINANCE, VIEW_PURCHASE_COST,
-        EDIT, CONFIRM_ADJUSTMENTS,
+        EDIT, CONFIRM_ADJUSTMENTS, PRINT_LABELS,
     },
     # Кладовщик ведёт приёмку: создаёт/правит экземпляры, но закупочных сумм не видит.
     # Бронь и продажа под клиента — коммерческие действия продавца, кладовщику не выдаём.
     # Выдача в ремонт, возврат, списание и инвентаризация — складские действия, даём.
     # Отчёты видит, но без денежных сумм (нет VIEW_PURCHASE_COST) — складская аналитика.
+    # Печать этикеток (Слой 23) — продолжение приёмки/размещения, поэтому выдаём.
     STOREKEEPER: {
         MANAGE_INVENTORY, MANAGE_REPAIRS, MANAGE_RETURNS, MANAGE_WRITE_OFFS,
-        MANAGE_STOCKTAKING, VIEW_REPORTS, EDIT,
+        MANAGE_STOCKTAKING, VIEW_REPORTS, EDIT, PRINT_LABELS,
     },
     # Продавец/Мастер создаёт резервы, проводит продажи и ставит детали в ремонт.
     # Возврат на склад НЕ даём (чтобы не было скрытой отмены продажи) — только просмотр.

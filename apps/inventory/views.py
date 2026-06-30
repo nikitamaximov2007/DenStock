@@ -110,6 +110,7 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
+        ctx["can_print_labels"] = self.request.user.can_print_labels
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, PartItem.Status(s).label) for s in allowed]
         ctx["movements"] = self.object.movements.select_related(

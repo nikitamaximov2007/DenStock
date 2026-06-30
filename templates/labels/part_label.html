@@ -1,0 +1,26 @@
+{% extends "labels/base_label.html" %}
+{% block title %}Этикетки видов деталей — DenStock{% endblock %}
+{% block labels %}
+  {% for p in parts %}
+    <div class="label">
+      {% if p.barcode_svg %}
+        <div class="label__barcode">{{ p.barcode_svg|safe }}</div>
+        <div class="label__code">{{ p.barcode }}</div>
+      {% endif %}
+      <div class="label__title">{{ p.name }}</div>
+      <div class="label__rows">
+        {% if p.primary_number %}
+          <div>Номер: {{ p.primary_number }}</div>
+        {% endif %}
+        {% if p.manufacturer %}
+          <div>{{ p.manufacturer }}</div>
+        {% endif %}
+        {% if p.category %}
+          <div>{{ p.category }}</div>
+        {% endif %}
+      </div>
+    </div>
+  {% empty %}
+    <p class="labels-empty">Нет видов деталей для печати.</p>
+  {% endfor %}
+{% endblock %}

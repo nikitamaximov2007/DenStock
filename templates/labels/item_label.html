@@ -1,0 +1,22 @@
+{% extends "labels/base_label.html" %}
+{% block title %}Этикетки экземпляров — DenStock{% endblock %}
+{% block labels %}
+  {% for it in items %}
+    <div class="label">
+      {% if it.barcode_svg %}
+        <div class="label__barcode">{{ it.barcode_svg|safe }}</div>
+      {% endif %}
+      <div class="label__code">{{ it.internal_barcode }}</div>
+      <div class="label__title">{{ it.part_name }}</div>
+      <div class="label__rows">
+        <div>№ {{ it.internal_number }}</div>
+        {% if it.primary_number %}<div>Номер: {{ it.primary_number }}</div>{% endif %}
+        <div>Партия: {{ it.batch_number }}</div>
+        {% if it.location %}<div>Ячейка: {{ it.location }}</div>{% endif %}
+        {% if it.serial_number %}<div>S/N: {{ it.serial_number }}</div>{% endif %}
+      </div>
+    </div>
+  {% empty %}
+    <p class="labels-empty">Нет экземпляров для печати.</p>
+  {% endfor %}
+{% endblock %}

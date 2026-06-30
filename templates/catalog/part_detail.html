@@ -19,6 +19,9 @@
         </button>
       </form>
     {% endif %}
+    {% if can_print_labels %}
+      · <a href="{% url 'label_part' part.pk %}" target="_blank">Печать этикетки</a>
+    {% endif %}
   </p>
   <table class="table">
     <tbody>

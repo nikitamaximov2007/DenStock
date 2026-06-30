@@ -59,6 +59,7 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["can_manage"] = self.request.user.can_manage_warehouse
+        ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["children"] = self.object.children.all()
         return ctx
 

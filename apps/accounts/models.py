@@ -121,5 +121,9 @@ class User(AbstractUser):
         return self.has_capability(roles.EDIT)
 
     @property
+    def can_print_labels(self) -> bool:
+        return self.has_capability(roles.PRINT_LABELS)
+
+    @property
     def can_confirm_adjustments(self) -> bool:
         return self.has_capability(roles.CONFIRM_ADJUSTMENTS)

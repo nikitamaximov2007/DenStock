@@ -106,6 +106,15 @@ def test_viewer_cannot_edit(make_user):
     assert viewer.can_view_finance is True
 
 
+def test_print_labels_capability_by_role(make_user):
+    # Слой 23: печать этикеток — Админ/Руководитель/Кладовщик; Продавец и Наблюдатель — нет.
+    assert make_user("a", is_superuser=True).can_print_labels is True
+    assert make_user("m", role=roles.MANAGER).can_print_labels is True
+    assert make_user("s", role=roles.STOREKEEPER).can_print_labels is True
+    assert make_user("p", role=roles.SELLER).can_print_labels is False
+    assert make_user("v", role=roles.VIEWER).can_print_labels is False
+
+
 def test_admin_cannot_deactivate_self(make_user, client):
     admin = make_user("super", is_superuser=True)
     client.login(username="super", password=PASSWORD)

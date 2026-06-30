@@ -1,0 +1,23 @@
+{% extends "labels/base_label.html" %}
+{% block title %}Этикетки ячеек — DenStock{% endblock %}
+{% block labels %}
+  {% for loc in locations %}
+    <div class="label">
+      {% if loc.barcode_svg %}
+        <div class="label__barcode">{{ loc.barcode_svg|safe }}</div>
+      {% endif %}
+      <div class="label__code">{{ loc.barcode }}</div>
+      <div class="label__title">{{ loc.code }}</div>
+      <div class="label__rows">
+        <div>{{ loc.full_path }}</div>
+        <div>Уровень: {{ loc.level }}</div>
+        <div>
+          Назначение: {{ loc.purpose }}
+          {% if not loc.is_active %}· неактивна{% endif %}
+        </div>
+      </div>
+    </div>
+  {% empty %}
+    <p class="labels-empty">Нет ячеек для печати.</p>
+  {% endfor %}
+{% endblock %}

@@ -45,6 +45,7 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["can_manage"] = self.request.user.can_manage_parts
+        ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["numbers"] = self.object.numbers.all()
         ctx["barcodes"] = self.object.barcodes.all()
         ctx["compatibilities"] = self.object.compatibilities.select_related("vehicle_model")
