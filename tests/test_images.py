@@ -243,6 +243,19 @@ def test_item_card_shows_primary_image(client, make_user, data):
     assert "/media/part-items/" in html
 
 
+def test_gallery_has_interactive_markup(client, make_user, data):
+    # UI: разметка для vanilla-JS переключения просмотра (без изменения is_primary).
+    _login(client, make_user, roles.MANAGER)
+    client.post(reverse("part_image_add", args=[data["part"].pk]), {"image": png("a.png")})
+    client.post(reverse("part_image_add", args=[data["part"].pk]), {"image": png("b.png")})
+    html = client.get(reverse("part_detail", args=[data["part"].pk])).content.decode()
+    assert "data-image-gallery" in html
+    assert "data-gallery-main" in html
+    assert "data-gallery-thumb" in html
+    assert "photo-thumb__view" in html
+    assert "image_gallery.js" in html  # скрипт подключён
+
+
 # --- Read-only относительно склада -------------------------------------------
 
 
