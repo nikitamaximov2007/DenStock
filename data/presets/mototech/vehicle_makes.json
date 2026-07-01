@@ -1,0 +1,7 @@
+[
+  {"name": "Ski-Doo", "vehicle_type": "Снегоход"},
+  {"name": "Lynx", "vehicle_type": "Снегоход"},
+  {"name": "Yamaha", "vehicle_type": "Снегоход"},
+  {"name": "Sea-Doo", "vehicle_type": "Гидроцикл"},
+  {"name": "Can-Am", "vehicle_type": "Квадроцикл"}
+]

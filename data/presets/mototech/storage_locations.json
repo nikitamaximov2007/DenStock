@@ -1,0 +1,7 @@
+[
+  {"code": "PRESET-ENG", "name": "Двигатели в сборе", "level": "zone"},
+  {"code": "PRESET-CPG", "name": "Поршневые / ЦПГ", "level": "zone"},
+  {"code": "PRESET-ELEC", "name": "Электрика / магнето", "level": "zone"},
+  {"code": "PRESET-OIL", "name": "Расходники (масла, сальники)", "level": "zone"},
+  {"code": "PRESET-TRACK", "name": "Гусеницы / склизы", "level": "zone"}
+]

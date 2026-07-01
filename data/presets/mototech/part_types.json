@@ -1,0 +1,15 @@
+[
+  {"name": "Двигатель Rotax 900 ACE", "category": "Двигатель", "unit": "Штука", "manufacturer": "Rotax", "tracking_mode": "serial"},
+  {"name": "Двигатель Rotax 1004", "category": "Двигатель", "unit": "Штука", "manufacturer": "Rotax", "tracking_mode": "serial"},
+  {"name": "Двигатель Rotax 1203", "category": "Двигатель", "unit": "Штука", "manufacturer": "Rotax", "tracking_mode": "serial"},
+  {"name": "Магнето", "category": "Магнето и электрика", "unit": "Штука", "tracking_mode": "serial"},
+  {"name": "Коллектор", "category": "Коллекторы", "unit": "Штука", "tracking_mode": "serial"},
+  {"name": "Вариатор", "category": "Вариатор", "unit": "Штука", "tracking_mode": "serial"},
+  {"name": "Коленвал", "category": "Коленвал", "unit": "Штука", "tracking_mode": "serial"},
+  {"name": "Поршневая группа", "category": "Поршневая группа", "unit": "Комплект", "tracking_mode": "bulk"},
+  {"name": "Клапан", "category": "Клапаны", "unit": "Штука", "tracking_mode": "bulk"},
+  {"name": "Подшипник", "category": "Подшипники", "unit": "Штука", "tracking_mode": "bulk"},
+  {"name": "Сальник", "category": "Сальники и прокладки", "unit": "Штука", "tracking_mode": "bulk"},
+  {"name": "Прокладка", "category": "Сальники и прокладки", "unit": "Штука", "tracking_mode": "bulk"},
+  {"name": "Масло", "category": "Масла и жидкости", "unit": "Литр", "tracking_mode": "bulk"}
+]

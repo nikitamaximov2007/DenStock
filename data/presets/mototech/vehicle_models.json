@@ -1,0 +1,11 @@
+[
+  {"name": "Summit", "vehicle_make": "Ski-Doo"},
+  {"name": "Summit Expert 850", "vehicle_make": "Ski-Doo"},
+  {"name": "Renegade 1200", "vehicle_make": "Ski-Doo"},
+  {"name": "VK540", "vehicle_make": "Yamaha"},
+  {"name": "RXP-X 300", "vehicle_make": "Sea-Doo"},
+  {"name": "RXP 255", "vehicle_make": "Sea-Doo"},
+  {"name": "Outlander XMR", "vehicle_make": "Can-Am"},
+  {"name": "Outlander Backcountry", "vehicle_make": "Can-Am"},
+  {"name": "Commander", "vehicle_make": "Can-Am"}
+]
