@@ -23,6 +23,14 @@ db.sqlite3-journal
 .env
 .env.*
 !.env.example
+!tools/research/.env.research.example
+
+# Research collector (local, do not commit)
+research_inputs/
+.env.research.local
+*.session
+*.session-journal
+tools/research/.sessions/
 
 # Backups (database dumps, label PDFs кэш)
 /backups/
