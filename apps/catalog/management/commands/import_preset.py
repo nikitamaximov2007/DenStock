@@ -5,6 +5,10 @@ Category, PartType, StorageLocation, Supplier) из data/presets/<preset>/*.json
 подтверждённые термины из docs/research/01. Команда ОПЦИОНАЛЬНА и НЕ создаёт остатки:
 никаких Batch/StockLot/PartItem/StockMovement/StockBalance. Идемпотентна (re-run без дублей).
 `--dry-run` ничего не пишет в БД.
+
+Совместимость (v1.1.6, compatibility.json): импортируются ТОЛЬКО записи со `status=active`
+и только если PartType и VehicleModel уже существуют. `deferred` не импортируются (только
+счётчик); отсутствующие сущности → `missing` (не создаём их на лету).
 """
 import json
 from pathlib import Path
@@ -16,6 +20,7 @@ from django.db import transaction
 from apps.catalog.models import (
     Category,
     Manufacturer,
+    PartCompatibility,
     PartType,
     Unit,
     VehicleMake,
@@ -57,6 +62,8 @@ class Command(BaseCommand):
             self._section(base, "part_types.json", self._import_part_types)
             self._section(base, "storage_locations.json", self._import_storage_locations)
             self._section(base, "suppliers.json", self._import_suppliers)
+            # Совместимость — после part_types и vehicle_models (нужны для резолва).
+            self._section(base, "compatibility.json", self._import_compatibility)
             self._reference_synonyms(base)
             if self._dry:
                 transaction.set_rollback(True)  # dry-run: откатываем всё
@@ -79,7 +86,9 @@ class Command(BaseCommand):
         importer(data)
 
     def _mark(self, section: str, key: str) -> None:
-        stats = self._stats.setdefault(section, {"created": 0, "existing": 0, "deferred": 0})
+        stats = self._stats.setdefault(
+            section, {"created": 0, "existing": 0, "deferred": 0, "missing": 0}
+        )
         stats[key] += 1
 
     def _upsert(self, section: str, model, natural: dict, defaults: dict | None = None) -> None:
@@ -164,6 +173,43 @@ class Command(BaseCommand):
             self._upsert("suppliers", Supplier, {"name": row["name"]},
                          {"comment": row.get("comment", ""), "country": row.get("country", "")})
 
+    # --- совместимость (только active, без создания сущностей на лету) --------
+
+    def _resolve_part_type(self, name):
+        if not name:
+            return None
+        return PartType.objects.filter(name=name).first()
+
+    def _resolve_vehicle_model(self, make_name, model_name):
+        if not model_name:
+            return None
+        qs = VehicleModel.objects.filter(name=model_name)
+        if make_name:
+            qs = qs.filter(vehicle_make__name=make_name)
+        return qs.first()
+
+    def _import_compatibility(self, data) -> None:
+        for row in data:
+            if row.get("status") != "active":
+                self._mark("compatibility", "deferred")  # deferred НЕ импортируем
+                continue
+            part = self._resolve_part_type(row.get("part_type"))
+            model = self._resolve_vehicle_model(row.get("vehicle_make"), row.get("vehicle_model"))
+            if part is None or model is None:
+                self._mark("compatibility", "missing")
+                self.stdout.write(self.style.WARNING(
+                    f"  отсутствует [compatibility]: "
+                    f"{row.get('part_type')} ↔ {row.get('vehicle_model')} — "
+                    f"нет PartType/VehicleModel, связь не создана"
+                ))
+                continue
+            self._upsert(
+                "compatibility", PartCompatibility,
+                {"part": part, "vehicle_model": model,
+                 "year_from": row.get("year_from"), "year_to": row.get("year_to")},
+                {"note": (row.get("note") or "")[:255]},
+            )
+
     def _reference_synonyms(self, base: Path) -> None:
         path = base / "search_synonyms.json"
         if not path.exists():
@@ -186,5 +232,6 @@ class Command(BaseCommand):
         for section, stats in self._stats.items():
             self.stdout.write(
                 f"  {section}: {verb}={stats['created']}, "
-                f"существует={stats['existing']}, отложено={stats['deferred']}"
+                f"существует={stats['existing']}, отложено={stats['deferred']}, "
+                f"отсутствует={stats['missing']}"
             )

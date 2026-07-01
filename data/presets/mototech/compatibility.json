@@ -1,0 +1,109 @@
+[
+  {
+    "part_type": "Двигатель Rotax 1203",
+    "vehicle_make": "Ski-Doo",
+    "vehicle_model": "Renegade 1200",
+    "year_from": null,
+    "year_to": null,
+    "status": "active",
+    "evidence": "docs/research/01; Telegram 2296/2295: «Renegade 1200 с движком Rotax 1203»",
+    "note": "Двигатель модели (подтверждено research)"
+  },
+
+  {
+    "part_type": "Магнето",
+    "vehicle_make": "Ski-Doo",
+    "vehicle_model": "Summit Expert 850",
+    "status": "deferred",
+    "evidence": "видео «Summit Expert 850 сгорело магнето»; PartType «Магнето» generic, без номера",
+    "note": "Нужен конкретный номер магнето перед активацией"
+  },
+  {
+    "part_type": "Коллектор",
+    "vehicle_make": null,
+    "vehicle_model": "Rotax 900 ACE (двигатель, не модель техники)",
+    "status": "deferred",
+    "evidence": "видео «непоменянные коллекторы» в контексте 900 ACE; 900 ACE — двигатель, модель не названа",
+    "note": "Нет чистой VehicleModel; нужен номер коллектора"
+  },
+  {
+    "part_type": "Двигатель (код не назван)",
+    "vehicle_make": "Sea-Doo",
+    "vehicle_model": "RXP-X 300",
+    "status": "deferred",
+    "evidence": "видео «гидроцикл RXP-X 300 с разобранным двигателем»; код двигателя не назван",
+    "note": "Уточнить двигатель RXP-X 300"
+  },
+  {
+    "part_type": "Двигатель (код не назван)",
+    "vehicle_make": "Sea-Doo",
+    "vehicle_model": "RXP 255",
+    "status": "deferred",
+    "evidence": "пост «RXP 255 10 лет простоя»; деталь/двигатель не назван",
+    "note": "Уточнить двигатель RXP 255"
+  },
+  {
+    "part_type": "Детали (не названы)",
+    "vehicle_make": "Can-Am",
+    "vehicle_model": "Outlander XMR",
+    "status": "deferred",
+    "evidence": "пост 2298: техника на продажу; связей деталь↔модель нет",
+    "note": "Нужны ли детали Outlander на складе"
+  },
+  {
+    "part_type": "Детали (не названы)",
+    "vehicle_make": "Can-Am",
+    "vehicle_model": "Outlander Backcountry",
+    "status": "deferred",
+    "evidence": "пост 2298: техника на продажу; связей деталь↔модель нет",
+    "note": "Нужны ли детали"
+  },
+  {
+    "part_type": "Детали (не названы)",
+    "vehicle_make": "Can-Am",
+    "vehicle_model": "Commander",
+    "status": "deferred",
+    "evidence": "пост 2291 «Пермский COMMANDER»; связей с деталями нет",
+    "note": "Уточнить"
+  },
+  {
+    "part_type": "Узлы (не названы)",
+    "vehicle_make": "Yamaha",
+    "vehicle_model": "VK540",
+    "status": "deferred",
+    "evidence": "VK540 подтверждён как модель, но связей деталь↔VK540 в research нет",
+    "note": "Какие узлы VK540 ведёте"
+  },
+  {
+    "part_type": "Подшипник",
+    "vehicle_make": null,
+    "vehicle_model": "(без номера/спецификации)",
+    "status": "deferred",
+    "evidence": "расходник без номера/размера — «универсальность» только на словах",
+    "note": "Не связывать без номера/спецификации"
+  },
+  {
+    "part_type": "Сальник",
+    "vehicle_make": null,
+    "vehicle_model": "(без номера/спецификации)",
+    "status": "deferred",
+    "evidence": "расходник без номера",
+    "note": "Не связывать без номера/спецификации"
+  },
+  {
+    "part_type": "Клапан",
+    "vehicle_make": null,
+    "vehicle_model": "(без номера/спецификации)",
+    "status": "deferred",
+    "evidence": "расходник без номера",
+    "note": "Не связывать без номера/спецификации"
+  },
+  {
+    "part_type": "Масло",
+    "vehicle_make": null,
+    "vehicle_model": "(универсальный расходник)",
+    "status": "deferred",
+    "evidence": "расходник без спецификации применимости",
+    "note": "Не связывать по бренду"
+  }
+]
