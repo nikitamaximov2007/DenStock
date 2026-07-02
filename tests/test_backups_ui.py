@@ -286,3 +286,34 @@ def test_manifest_view_shows_type(make_user, client, backups_root):
         reverse("operations:backup_manifest", args=["2026-06-30_12-00-00"])
     ).content.decode()
     assert "Ручной" in html
+
+
+# --- v1.1.8B: offsite status рендерится безопасно -----------------------------
+
+
+def _write_offsite(root, data):
+    (Path(root) / "offsite_status.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_offsite_status_ok(make_user, client, backups_root):
+    _write_offsite(backups_root, {
+        "status": "ok", "checked_at": "2026-07-02T03:00:00Z", "target": "remote:denstock-backups",
+    })
+    _admin(make_user, client)
+    html = client.get(reverse("operations:backups")).content.decode()
+    assert "отправлено" in html
+    assert "remote:denstock-backups" in html
+
+
+def test_offsite_status_failed_does_not_break(make_user, client, backups_root):
+    _write_offsite(backups_root, {"status": "failed", "message": "rclone ошибка"})
+    _admin(make_user, client)
+    resp = client.get(reverse("operations:backups"))
+    assert resp.status_code == 200
+    assert "ошибка" in resp.content.decode()
+
+
+def test_offsite_status_not_configured_file(make_user, client, backups_root):
+    _write_offsite(backups_root, {"status": "not_configured", "offsite_enabled": False})
+    _admin(make_user, client)
+    assert "не настроено" in client.get(reverse("operations:backups")).content.decode()

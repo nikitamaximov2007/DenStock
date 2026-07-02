@@ -34,17 +34,21 @@
       {% endif %}
       <p>
         Offsite-синхронизация:
-        {% if offsite %}
-          {% if offsite.error %}
-            <span class="pill pill--danger">{{ offsite.error }}</span>
-          {% else %}
-            <span class="pill pill--success">{{ offsite.synced_at|default:"есть статус" }}</span>
-            {% if offsite.destination %}· {{ offsite.destination }}{% endif %}
-          {% endif %}
+        {% if not offsite %}
+          <span class="pill pill--muted">не настроено</span>
+        {% elif offsite.error %}
+          <span class="pill pill--danger">{{ offsite.error }}</span>
+        {% elif offsite.status == "ok" %}
+          <span class="pill pill--success">отправлено</span>
+          {% if offsite.checked_at %}· {{ offsite.checked_at }}{% endif %}
+          {% if offsite.target %}· {{ offsite.target }}{% endif %}
+        {% elif offsite.status == "failed" %}
+          <span class="pill pill--danger">ошибка</span>
+          {% if offsite.message %}· {{ offsite.message }}{% endif %}
         {% else %}
           <span class="pill pill--muted">не настроено</span>
-          <span class="muted">(offsite — отдельный слой, см. docs/plans/35)</span>
         {% endif %}
+        <span class="muted">(offsite настраивается на сервере — см. docs/operations/scheduled-offsite-backups.md)</span>
       </p>
     </div>
   </div>

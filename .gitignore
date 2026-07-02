@@ -24,6 +24,7 @@ db.sqlite3-journal
 .env.*
 !.env.example
 !tools/research/.env.research.example
+!.env.backup.example
 
 # Research collector (local, do not commit)
 research_inputs/
