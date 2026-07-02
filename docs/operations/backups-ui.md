@@ -9,13 +9,30 @@
 - **Список** локальных backup-run из `BACKUP_ROOT` (`backups/<timestamp>/`): наличие `manifest.json`,
   `db.dump`/`db.sqlite3`, `media.tar.gz`, размеры файлов, поля manifest (created_at/engine/version/
   git_commit).
-- **«Создать полный бэкап»** (POST, CSRF) — вызывает существующий `apps/operations/backup.backup_all()`
-  (та же логика, что CLI `backup_all`). Операция может занять время.
+- **«Экспорт бэкапа»** (синяя primary-кнопка, POST, CSRF) — создаёт **ручной** локальный бэкап
+  текущего состояния через существующий `apps/operations/backup.backup_all(trigger="manual")`.
+  Операция может занять время.
 - **Manifest** и **Скачать** — просмотр манифеста и выгрузка файлов **только** из конкретного
   backup-run (разрешены `manifest.json`, `db.dump`, `db.sqlite3`, `media.tar.gz`; защита от path
   traversal).
 - **Статус offsite** — read-only: если есть `backups/offsite_status.json`, показывается; иначе
   «не настроено».
+
+## Типы бэкапов (manifest `type`)
+
+В `manifest.json` есть поле **`type`** (v1.1.8A). В списке и в manifest-view показывается бейджем:
+
+| `type` | Бейдж | Смысл |
+|---|---|---|
+| `manual` | Ручной | создан человеком через «Экспорт бэкапа» или `backup_all` |
+| `automatic` | Автоматический | создан планировщиком: `backup_all --trigger automatic` (для будущего scheduled-скрипта, этап B) |
+| `pre_restore` | Перед восстановлением | аварийный снимок перед restore (будущий restore-wizard, этап C) |
+| `uploaded` | Загруженный | залит файлом (будущий импорт, этап C) |
+| нет поля | Legacy | старый бэкап без поля `type` (не ошибка) |
+| иное | Неизвестный тип | значение вне списка |
+
+CLI уже поддерживает `python manage.py backup_all --trigger automatic` — это задел для
+scheduled-скрипта (этап B). Реально в этом слое UI создаёт только `manual`.
 
 ## Почему локального бэкапа недостаточно
 

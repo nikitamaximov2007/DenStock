@@ -18,6 +18,32 @@ from . import backup
 # Единственные файлы, которые вообще можно отдать из backup-run.
 ALLOWED_FILES = ("manifest.json", "db.dump", "db.sqlite3", "media.tar.gz")
 
+# Читабельные подписи и pill-стиль для manifest["type"].
+TYPE_LABELS = {
+    "manual": "Ручной",
+    "automatic": "Автоматический",
+    "pre_restore": "Перед восстановлением",
+    "uploaded": "Загруженный",
+}
+TYPE_PILLS = {
+    "manual": "pill--info",
+    "automatic": "pill--success",
+    "pre_restore": "pill--warning",
+    "uploaded": "pill--muted",
+}
+
+
+def _type_label(manifest) -> str:
+    if not manifest or not manifest.get("type"):
+        return "Legacy"
+    return TYPE_LABELS.get(manifest["type"], "Неизвестный тип")
+
+
+def _type_pill(manifest) -> str:
+    if not manifest or not manifest.get("type"):
+        return "pill--muted"
+    return TYPE_PILLS.get(manifest["type"], "pill--muted")
+
 
 def _require_admin(request) -> None:
     """Раздел только для owner/admin (superuser или роль «Администратор»)."""
@@ -57,6 +83,8 @@ def _run_info(run_dir) -> dict:
         "has_manifest": manifest is not None,
         "manifest": manifest or {},
         "manifest_error": manifest_error,
+        "type_label": _type_label(manifest),
+        "type_pill": _type_pill(manifest),
     }
 
 
@@ -99,7 +127,7 @@ def backups_list(request):
 def backup_create(request):
     _require_admin(request)
     try:
-        run = backup.backup_all()  # та же логика, что CLI backup_all; НЕ restore
+        run = backup.backup_all(trigger="manual")  # ручной экспорт; НЕ restore
     except backup.OperationsError as exc:
         messages.error(request, f"Не удалось создать бэкап: {exc}")
     else:
@@ -116,7 +144,14 @@ def backup_manifest(request, run_id):
     return render(
         request,
         "operations/backup_manifest.html",
-        {"run_id": run_id, "manifest": manifest, "error": error, "file_status": file_status},
+        {
+            "run_id": run_id,
+            "manifest": manifest,
+            "error": error,
+            "file_status": file_status,
+            "type_label": _type_label(manifest),
+            "type_pill": _type_pill(manifest),
+        },
     )
 
 

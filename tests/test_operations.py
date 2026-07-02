@@ -121,9 +121,22 @@ def test_backup_all_structure_and_manifest(tmp_path):
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["engine"] == "sqlite"
     assert manifest["db_file"] == "db.sqlite3"
+    assert manifest["type"] == "manual"  # дефолтный trigger
     # Секреты в манифест не попадают.
     assert "secret" not in json.dumps(manifest).lower()
     assert "password" not in json.dumps(manifest).lower()
+
+
+def test_backup_all_trigger_automatic(tmp_path):
+    db = _make_db_file(tmp_path / "src.sqlite3")
+    media = tmp_path / "media"
+    media.mkdir()
+    run = backup.backup_all(
+        root=tmp_path / "backups", settings_dict=_sqlite_settings(db),
+        media_root=media, trigger="automatic",
+    )
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["type"] == "automatic"
 
 
 def test_prune_keeps_last_n(tmp_path):

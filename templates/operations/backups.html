@@ -4,15 +4,18 @@
   <div class="page-header">
     <h1 class="page-title">Локальные бэкапы</h1>
     <div class="page-header__actions">
-      <form method="post"
-            action="{% url 'operations:backup_create' %}"
-            class="inline-form">
+      <form method="post" action="{% url 'operations:backup_create' %}">
         {% csrf_token %}
-        <button type="submit" class="btn btn--primary">Создать полный бэкап</button>
+        <button type="submit" class="btn btn--primary">Экспорт бэкапа</button>
       </form>
     </div>
   </div>
+  <p class="muted">
+    «Экспорт бэкапа» создаёт локальный ручной бэкап текущего состояния. Для защиты от смерти
+    сервера нужна offsite-копия (см. ниже).
+  </p>
   {% include "partials/_status_block.html" with kind="warning" text="Локальный бэкап НЕ заменяет offsite. При смерти сервера/диска локальные копии теряются вместе с ним — для disaster recovery нужен внешний (offsite) бэкап. Создание бэкапа может занять время." %}
+  {% include "partials/_status_block.html" with kind="info" text="Импорт/восстановление будет реализован отдельным безопасным мастером. Сейчас восстановление выполняется через CLI (см. инструкцию ниже)." %}
   <div class="card">
     <div class="card__header">
       <h2 class="card__title">Статус</h2>
@@ -50,6 +53,7 @@
       <thead>
         <tr>
           <th>Бэкап</th>
+          <th>Тип</th>
           <th>Создан</th>
           <th>Движок</th>
           <th>Файлы</th>
@@ -63,6 +67,9 @@
             <td>
               {{ r.run_id }}
               {% if not r.has_manifest %}<span class="pill pill--warning">без manifest</span>{% endif %}
+            </td>
+            <td>
+              <span class="pill {{ r.type_pill }}">{{ r.type_label }}</span>
             </td>
             <td>{{ r.manifest.created_at|default:"—" }}</td>
             <td>{{ r.manifest.engine|default:"—" }}</td>

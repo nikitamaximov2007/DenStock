@@ -40,20 +40,21 @@ def backups_root(settings, tmp_path):
     return root
 
 
-def _make_run(root, run_id="2026-06-30_12-00-00", manifest=True, files=("db.dump", "media.tar.gz")):
+def _make_run(root, run_id="2026-06-30_12-00-00", manifest=True,
+              files=("db.dump", "media.tar.gz"), backup_type="manual"):
     run = Path(root) / run_id
     run.mkdir(parents=True, exist_ok=True)
     for name in files:
         (run / name).write_bytes(b"backup-bytes")
     if manifest:
-        (run / "manifest.json").write_text(
-            json.dumps({
-                "created_at": "2026-06-30T12:00:00", "engine": "sqlite",
-                "db_file": "db.dump", "media_file": "media.tar.gz",
-                "version": "0.1.0", "git_commit": "abc1234",
-            }),
-            encoding="utf-8",
-        )
+        data = {
+            "created_at": "2026-06-30T12:00:00", "engine": "sqlite",
+            "db_file": "db.dump", "media_file": "media.tar.gz",
+            "version": "0.1.0", "git_commit": "abc1234",
+        }
+        if backup_type is not None:  # None → legacy manifest без поля type
+            data["type"] = backup_type
+        (run / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
     return run
 
 
@@ -135,10 +136,11 @@ def test_missing_manifest_handled(make_user, client, backups_root):
 
 
 def test_create_calls_backup_all(make_user, client, backups_root, monkeypatch):
-    called = {"backup": False, "restore": False}
+    called = {"backup": False, "restore": False, "trigger": None}
 
-    def fake_backup_all():
+    def fake_backup_all(**kwargs):
         called["backup"] = True
+        called["trigger"] = kwargs.get("trigger")
         return _make_run(backups_root, run_id="2026-07-01_00-00-00")
 
     def boom(*a, **k):
@@ -154,6 +156,7 @@ def test_create_calls_backup_all(make_user, client, backups_root, monkeypatch):
     assert resp.status_code == 302  # redirect на список
     assert called["backup"] is True
     assert called["restore"] is False
+    assert called["trigger"] == "manual"  # web-экспорт помечает бэкап как manual
 
 
 def test_create_is_post_only(make_user, client, backups_root):
@@ -222,7 +225,7 @@ def test_no_web_restore_url():
 
 
 def test_backup_ui_does_not_touch_stock(make_user, client, backups_root, monkeypatch):
-    monkeypatch.setattr(backup_mod, "backup_all", lambda: _make_run(backups_root, "r1"))
+    monkeypatch.setattr(backup_mod, "backup_all", lambda **kw: _make_run(backups_root, "r1"))
     _admin(make_user, client)
     mv = StockMovement.objects.count()
     bal = StockBalance.objects.count()
@@ -239,3 +242,47 @@ def test_backup_ui_does_not_touch_stock(make_user, client, backups_root, monkeyp
 def test_backups_gitignored():
     text = (Path(backup_mod.settings.BASE_DIR) / ".gitignore").read_text(encoding="utf-8")
     assert "/backups/" in text
+
+
+# --- v1.1.8A: экспорт-кнопка + типы бэкапа -----------------------------------
+
+
+def test_export_button_is_primary(make_user, client, backups_root):
+    _admin(make_user, client)
+    html = client.get(reverse("operations:backups")).content.decode()
+    assert "Экспорт бэкапа" in html
+    assert "btn--primary" in html
+
+
+def test_type_badges_render(make_user, client, backups_root):
+    _make_run(backups_root, "r_manual", backup_type="manual")
+    _make_run(backups_root, "r_auto", backup_type="automatic")
+    _make_run(backups_root, "r_pre", backup_type="pre_restore")
+    _make_run(backups_root, "r_up", backup_type="uploaded")
+    _make_run(backups_root, "r_legacy", backup_type=None)
+    _make_run(backups_root, "r_weird", backup_type="weird")
+    _admin(make_user, client)
+    html = client.get(reverse("operations:backups")).content.decode()
+    assert "Ручной" in html
+    assert "Автоматический" in html
+    assert "Перед восстановлением" in html
+    assert "Загруженный" in html
+    assert "Legacy" in html
+    assert "Неизвестный тип" in html
+
+
+def test_legacy_manifest_does_not_break_list(make_user, client, backups_root):
+    _make_run(backups_root, "r_legacy", backup_type=None)
+    _admin(make_user, client)
+    resp = client.get(reverse("operations:backups"))
+    assert resp.status_code == 200
+    assert "Legacy" in resp.content.decode()
+
+
+def test_manifest_view_shows_type(make_user, client, backups_root):
+    _make_run(backups_root, "2026-06-30_12-00-00", backup_type="manual")
+    _admin(make_user, client)
+    html = client.get(
+        reverse("operations:backup_manifest", args=["2026-06-30_12-00-00"])
+    ).content.decode()
+    assert "Ручной" in html

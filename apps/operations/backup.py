@@ -102,14 +102,26 @@ def backup_db(dest_dir, *, settings_dict=None) -> Path:
     raise OperationsError(f"Неизвестный движок БД: {engine}")
 
 
-def backup_all(*, root=None, keep_last=None, settings_dict=None, media_root=None) -> Path:
-    """Полный бэкап: db + media + manifest.json в одном каталоге рана."""
+# Тип бэкапа (пишется в manifest["type"]). manual — ручной экспорт из UI/CLI.
+BACKUP_TYPES = ("manual", "automatic", "pre_restore", "uploaded")
+
+
+def backup_all(
+    *, root=None, keep_last=None, settings_dict=None, media_root=None, trigger="manual"
+) -> Path:
+    """Полный бэкап: db + media + manifest.json в одном каталоге рана.
+
+    `trigger` — источник бэкапа (пишется в manifest как поле `type`): manual (ручной,
+    по умолчанию) / automatic (планировщик) / pre_restore (перед восстановлением) /
+    uploaded (загруженный). Структура db/media не меняется.
+    """
     s = settings_dict or connection.settings_dict
     run = new_run_dir(root)
     db_path = backup_db(run, settings_dict=s)
     media_path = backup_media(run, media_root=media_root)
     manifest = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "type": trigger,
         "engine": _engine_name(s["ENGINE"]),
         "db_file": db_path.name if db_path else None,
         "media_file": media_path.name if media_path else None,
