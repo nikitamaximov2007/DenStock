@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Manifest {{ run_id }} — DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Manifest — {{ run_id }}</h1>
+  </div>
+  <p>
+    <a href="{% url 'operations:backups' %}">← К бэкапам</a>
+  </p>
+  {% if error %}
+    {% include "partials/_status_block.html" with kind="error" text=error %}
+  {% endif %}
+  {% if manifest %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>created_at</th>
+          <td>{{ manifest.created_at|default:"—" }}</td>
+        </tr>
+        <tr>
+          <th>engine</th>
+          <td>{{ manifest.engine|default:"—" }}</td>
+        </tr>
+        <tr>
+          <th>db_file</th>
+          <td>{{ manifest.db_file|default:"—" }}</td>
+        </tr>
+        <tr>
+          <th>media_file</th>
+          <td>{{ manifest.media_file|default:"—" }}</td>
+        </tr>
+        <tr>
+          <th>version</th>
+          <td>{{ manifest.version|default:"—" }}</td>
+        </tr>
+        <tr>
+          <th>git_commit</th>
+          <td>{{ manifest.git_commit|default:"—" }}</td>
+        </tr>
+      </tbody>
+    </table>
+  {% endif %}
+  <h2>Файлы бэкапа</h2>
+  <ul>
+    {% for f in file_status %}
+      <li>
+        {{ f.name }}:
+        {% if f.present %}
+          <span class="pill pill--success">найден</span>
+        {% else %}
+          <span class="pill pill--muted">нет</span>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+{% endblock %}

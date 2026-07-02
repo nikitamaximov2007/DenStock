@@ -44,6 +44,8 @@ def _nav_items(user):
         )
     if user.can_manage_users:
         items.append({"label": "Пользователи", "url": reverse("user_list"), "stub": False})
+    if user.is_admin:
+        items.append({"label": "Бэкапы", "url": reverse("operations:backups"), "stub": False})
     return items
 
 

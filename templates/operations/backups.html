@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Бэкапы — DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Локальные бэкапы</h1>
+    <div class="page-header__actions">
+      <form method="post"
+            action="{% url 'operations:backup_create' %}"
+            class="inline-form">
+        {% csrf_token %}
+        <button type="submit" class="btn btn--primary">Создать полный бэкап</button>
+      </form>
+    </div>
+  </div>
+  {% include "partials/_status_block.html" with kind="warning" text="Локальный бэкап НЕ заменяет offsite. При смерти сервера/диска локальные копии теряются вместе с ним — для disaster recovery нужен внешний (offsite) бэкап. Создание бэкапа может занять время." %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Статус</h2>
+    </div>
+    <div class="card__body">
+      <p class="muted">
+        Каталог бэкапов: <code>{{ backup_root }}</code>
+      </p>
+      {% if last_run %}
+        <p>
+          Последний локальный бэкап: <strong>{{ last_run.run_id }}</strong>
+          {% if last_run.manifest.created_at %}· {{ last_run.manifest.created_at }}{% endif %}
+        </p>
+      {% else %}
+        <p class="muted">Локальных бэкапов пока нет.</p>
+      {% endif %}
+      <p>
+        Offsite-синхронизация:
+        {% if offsite %}
+          {% if offsite.error %}
+            <span class="pill pill--danger">{{ offsite.error }}</span>
+          {% else %}
+            <span class="pill pill--success">{{ offsite.synced_at|default:"есть статус" }}</span>
+            {% if offsite.destination %}· {{ offsite.destination }}{% endif %}
+          {% endif %}
+        {% else %}
+          <span class="pill pill--muted">не настроено</span>
+          <span class="muted">(offsite — отдельный слой, см. docs/plans/35)</span>
+        {% endif %}
+      </p>
+    </div>
+  </div>
+  {% if runs %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Бэкап</th>
+          <th>Создан</th>
+          <th>Движок</th>
+          <th>Файлы</th>
+          <th>Версия / commit</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs %}
+          <tr>
+            <td>
+              {{ r.run_id }}
+              {% if not r.has_manifest %}<span class="pill pill--warning">без manifest</span>{% endif %}
+            </td>
+            <td>{{ r.manifest.created_at|default:"—" }}</td>
+            <td>{{ r.manifest.engine|default:"—" }}</td>
+            <td>
+              {% for f in r.files %}
+                <a href="{% url 'operations:backup_download' r.run_id f.name %}">{{ f.name }}</a>
+                <span class="muted">({{ f.size }} б)</span>
+                {% if not forloop.last %}<br>{% endif %}
+              {% empty %}
+                <span class="muted">нет файлов</span>
+              {% endfor %}
+            </td>
+            <td>{{ r.manifest.version|default:"—" }} / {{ r.manifest.git_commit|default:"—" }}</td>
+            <td class="table__actions">
+              <a class="btn btn--small btn--secondary"
+                 href="{% url 'operations:backup_manifest' r.run_id %}">Manifest</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Бэкапов пока нет</p>
+      <p class="empty__text">Нажмите «Создать полный бэкап» или настройте автоматический бэкап на сервере.</p>
+    </div>
+  {% endif %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Как восстановить на новом сервере (только CLI)</h2>
+    </div>
+    <div class="card__body">
+      <p class="muted">
+        Web-восстановление специально отсутствует: оно может затереть текущую БД/media и
+        оборвать сессии. Restore — только через CLI под <code>--yes</code>.
+      </p>
+      <ol>
+        <li>Поднять новый VPS; установить Docker и Git.</li>
+        <li><code>git clone</code> проекта.</li>
+        <li>Создать <code>.env</code> (секреты — заново, не из бэкапа).</li>
+        <li><code>docker compose up -d --build</code>.</li>
+        <li>Положить бэкап в <code>backups/&lt;run_id&gt;/</code>.</li>
+        <li><code>docker compose exec web python manage.py restore_db backups/&lt;run_id&gt;/db.dump --yes</code></li>
+        <li><code>docker compose exec web python manage.py restore_media backups/&lt;run_id&gt;/media.tar.gz --yes</code></li>
+        <li><code>docker compose exec web python manage.py ops_check</code></li>
+        <li>Проверить: вход, фото (<code>/media/</code>), справочники/остатки/движения.</li>
+      </ol>
+    </div>
+  </div>
+{% endblock %}
