@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Возврат {{ ret.number }} — DenStock{% endblock %}
+{% block title %}Возврат {{ ret.number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Возврат {{ ret.number }}</h1>
   <p>
@@ -35,11 +35,11 @@
       </tr>
       <tr>
         <th>Причина</th>
-        <td>{{ ret.reason|default:"—" }}</td>
+        <td>{{ ret.reason|default:"·" }}</td>
       </tr>
       <tr>
         <th>Комментарий</th>
-        <td>{{ ret.comment|default:"—" }}</td>
+        <td>{{ ret.comment|default:"·" }}</td>
       </tr>
       <tr>
         <th>Проведён</th>
@@ -47,7 +47,7 @@
           {% if ret.completed_at %}
             {{ ret.completed_at|date:"d.m.Y H:i" }}
           {% else %}
-            — (черновик)
+            · (черновик)
           {% endif %}
         </td>
       </tr>

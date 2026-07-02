@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Расчёт себестоимости — {{ batch.number }} — DenStock{% endblock %}
+{% block title %}Расчёт себестоимости · {{ batch.number }} · DenStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Расчёт себестоимости — партия {{ batch.number }}</h1>
+  <h1 class="page-title">Расчёт себестоимости · партия {{ batch.number }}</h1>
   <p>
     <a href="{% url 'batch_detail' batch.pk %}">← К партии</a>
   </p>

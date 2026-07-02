@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ item.internal_number }} — DenStock{% endblock %}
+{% block title %}{{ item.internal_number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Экземпляр {{ item.internal_number }}</h1>
   <p>
@@ -25,7 +25,7 @@
       </tr>
       <tr>
         <th>Серийный номер</th>
-        <td>{{ item.serial_number|default:"—" }}</td>
+        <td>{{ item.serial_number|default:"·" }}</td>
       </tr>
       <tr>
         <th>Место</th>
@@ -33,7 +33,7 @@
           {% if item.current_location %}
             {{ item.current_location.full_path }}
           {% else %}
-            —
+            ·
           {% endif %}
         </td>
       </tr>
@@ -51,7 +51,7 @@
       {% endif %}
       <tr>
         <th>Примечание</th>
-        <td>{{ item.note|default:"—" }}</td>
+        <td>{{ item.note|default:"·" }}</td>
       </tr>
     </tbody>
   </table>
@@ -116,13 +116,13 @@
             {% if m.from_location %}
               {{ m.from_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
             →
             {% if m.to_location %}
               {{ m.to_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

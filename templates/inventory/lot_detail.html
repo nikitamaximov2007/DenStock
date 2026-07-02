@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Лот {{ lot.pk }} — DenStock{% endblock %}
+{% block title %}Лот {{ lot.pk }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Лот {{ lot.part_type }}</h1>
   <p>
@@ -45,7 +45,7 @@
       {% endif %}
       <tr>
         <th>Примечание</th>
-        <td>{{ lot.note|default:"—" }}</td>
+        <td>{{ lot.note|default:"·" }}</td>
       </tr>
     </tbody>
   </table>
@@ -104,13 +104,13 @@
             {% if m.from_location %}
               {{ m.from_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
             →
             {% if m.to_location %}
               {{ m.to_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

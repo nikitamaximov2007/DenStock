@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Продажа {{ sale.number }} — DenStock{% endblock %}
+{% block title %}Продажа {{ sale.number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Продажа {{ sale.number }}</h1>
   <p>
@@ -20,7 +20,7 @@
       </tr>
       <tr>
         <th>Телефон</th>
-        <td>{{ sale.customer_phone|default:"—" }}</td>
+        <td>{{ sale.customer_phone|default:"·" }}</td>
       </tr>
       {% if sale.reservation %}
         <tr>
@@ -32,15 +32,15 @@
       {% endif %}
       <tr>
         <th>Комментарий</th>
-        <td>{{ sale.comment|default:"—" }}</td>
+        <td>{{ sale.comment|default:"·" }}</td>
       </tr>
       <tr>
         <th>Проведена</th>
         <td>
           {% if sale.sold_at %}
-            {{ sale.sold_at|date:"d.m.Y H:i" }} · {{ sale.sold_by|default:"—" }}
+            {{ sale.sold_at|date:"d.m.Y H:i" }} · {{ sale.sold_by|default:"·" }}
           {% else %}
-            — (черновик)
+            · (черновик)
           {% endif %}
         </td>
       </tr>
@@ -145,7 +145,7 @@
     </form>
     <p class="muted">
       Проведение продажи списывает остаток (создаёт складское движение расхода) и
-      замораживает себестоимость и прибыль. Отмена проведённой продажи — будущий слой.
+      замораживает себестоимость и прибыль. Отмена проведённой продажи: будущий слой.
     </p>
   {% endif %}
 {% endblock %}

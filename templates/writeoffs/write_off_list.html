@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Списания — DenStock{% endblock %}
+{% block title %}Списания · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Списания</h1>
   {% if can_manage %}
@@ -44,7 +44,7 @@
             {% if d.completed_at %}
               {{ d.completed_at|date:"d.m.Y H:i" }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

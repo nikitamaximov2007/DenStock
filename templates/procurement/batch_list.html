@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Партии — DenStock{% endblock %}
+{% block title %}Партии · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Партии</h1>
   <form method="get" class="toolbar">
@@ -34,7 +34,7 @@
             </td>
             <td>{{ b.supplier }}</td>
             <td>{{ b.get_status_display }}</td>
-            <td>{{ b.arrived_at|default:"—" }}</td>
+            <td>{{ b.arrived_at|default:"·" }}</td>
             {% if show_costs %}<td class="num--money">{{ b.total_extra_cost }} {{ b.currency }}</td>{% endif %}
           </tr>
         {% endfor %}

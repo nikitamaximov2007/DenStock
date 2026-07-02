@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Главная — DenStock{% endblock %}
+{% block title %}Главная · DenStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Главная</h1>
@@ -59,7 +59,7 @@
     {% elif stock_empty %}
       <div class="empty">
         <p class="empty__title">На складе пока пусто</p>
-        <p class="empty__text">Детали есть в каталоге — примите их на склад.</p>
+        <p class="empty__text">Детали есть в каталоге: примите их на склад.</p>
         {% if user.can_manage_inventory %}
           <div class="empty__actions">
             <a class="btn btn--primary" href="{% url 'scanner_receiving' %}">Приёмка на склад</a>

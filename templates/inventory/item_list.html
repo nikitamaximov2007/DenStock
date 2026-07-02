@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Экземпляры — DenStock{% endblock %}
+{% block title %}Экземпляры · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Экземпляры деталей</h1>
   <form method="get" class="toolbar">
@@ -52,12 +52,12 @@
             </td>
             <td>{{ item.part_type }}</td>
             <td>{{ item.get_status_display }}</td>
-            <td>{{ item.serial_number|default:"—" }}</td>
+            <td>{{ item.serial_number|default:"·" }}</td>
             <td>
               {% if item.current_location %}
                 {{ item.current_location.code }}
               {% else %}
-                —
+                ·
               {% endif %}
             </td>
             {% if show_costs %}<td class="num--money">{{ item.landed_cost_rub }}</td>{% endif %}

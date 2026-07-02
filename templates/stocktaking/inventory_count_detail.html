@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Инвентаризация {{ doc.number }} — DenStock{% endblock %}
+{% block title %}Инвентаризация {{ doc.number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Инвентаризация {{ doc.number }}</h1>
   <p>
@@ -13,11 +13,11 @@
       </tr>
       <tr>
         <th>Ячейка</th>
-        <td>{{ doc.scope_location.code|default:"— (вся выборка)" }}</td>
+        <td>{{ doc.scope_location.code|default:"· (вся выборка)" }}</td>
       </tr>
       <tr>
         <th>Комментарий</th>
-        <td>{{ doc.comment|default:"—" }}</td>
+        <td>{{ doc.comment|default:"·" }}</td>
       </tr>
       <tr>
         <th>Проведена</th>
@@ -25,7 +25,7 @@
           {% if doc.completed_at %}
             {{ doc.completed_at|date:"d.m.Y H:i" }}
           {% else %}
-            — (черновик)
+            · (черновик)
           {% endif %}
         </td>
       </tr>
@@ -66,12 +66,12 @@
                 <button type="submit">OK</button>
               </form>
             {% else %}
-              {{ line.counted_quantity|default_if_none:"—"|floatformat:"-3" }}
+              {{ line.counted_quantity|default_if_none:"·"|floatformat:"-3" }}
             {% endif %}
           </td>
           <td>
             {% if line.difference is None %}
-              —
+              ·
             {% else %}
               {{ line.difference|floatformat:"-3" }}
             {% endif %}

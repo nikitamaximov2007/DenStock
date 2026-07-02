@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Приёмка сканером — DenStock{% endblock %}
+{% block title %}Приёмка сканером · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Приёмка сканером</h1>
   {% if error %}
@@ -8,11 +8,11 @@
   <p class="muted">
     Шаг:
     {% if step == "scan_object" %}
-      1 — сканируйте деталь
+      1 · сканируйте деталь
     {% elif step == "scan_location" %}
-      2 — сканируйте ячейку
+      2 · сканируйте ячейку
     {% else %}
-      3 — подтвердите
+      3 · подтвердите
     {% endif %}
   </p>
   {% if object %}
@@ -33,7 +33,7 @@
         {% if location %}
           <tr>
             <th>Ячейка</th>
-            <td>{{ location.code }} — {{ location.name }}</td>
+            <td>{{ location.code }} · {{ location.name }}</td>
           </tr>
         {% endif %}
       </tbody>
@@ -140,7 +140,7 @@
             {% if m.to_location %}
               {{ m.to_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
           {% if show_costs %}

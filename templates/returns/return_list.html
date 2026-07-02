@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Возвраты — DenStock{% endblock %}
+{% block title %}Возвраты · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Возвраты на склад</h1>
   <form method="get" class="form">
@@ -39,7 +39,7 @@
             {% if r.completed_at %}
               {{ r.completed_at|date:"d.m.Y H:i" }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

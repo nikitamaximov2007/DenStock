@@ -23,40 +23,100 @@ body.app {
   background: var(--bg);
 }
 
+/* ===========================================================================
+   App shell (v1.2 UI-polish): собранный деловой каркас — topbar + сайдбар с
+   разделами/иконками/активным пунктом + мобильное меню. Один синий акцент,
+   спокойные границы, мягкие тени. Без декоративных эффектов.
+   =========================================================================== */
+:root {
+  --topbar-h: 56px;
+  --sidebar-w: 252px;
+  --nav-active-bg: var(--info-bg);
+  --accent-ring: rgba(31, 111, 235, 0.14);
+  --link-quiet: #33507a;
+}
+
+/* Общий стиль inline-иконок из спрайта (символы содержат только геометрию). */
+.icon { fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+
 /* Верхняя панель */
 .topbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 40;
+  display: flex; align-items: center; gap: 16px;
+  height: var(--topbar-h); padding: 0 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
 }
-.topbar__brand { font-weight: 700; font-size: 20px; }
-.topbar__search { flex: 1; max-width: 480px; padding: 10px 12px; font-size: 16px;
+.topbar__menu { display: none; }
+.topbar__brand { display: inline-flex; align-items: center; gap: 10px;
+  text-decoration: none; color: var(--text); font-weight: 700; }
+.topbar__mark { display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--accent); color: #fff; font-weight: 800; font-size: 16px; }
+.topbar__wordmark { font-size: 18px; letter-spacing: -0.01em; }
+.topbar__searchform { position: relative; flex: 1; max-width: 460px; }
+.topbar__searchicon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
+.topbar__search { width: 100%; padding: 9px 12px 9px 36px; font-size: 15px;
+  color: var(--text); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; }
-.topbar__user { display: flex; align-items: center; gap: 12px; }
-.topbar__logout button { padding: 8px 14px; font-size: 15px; cursor: pointer;
-  border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.topbar__search:focus { background: var(--panel); border-color: var(--accent);
+  outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
+.topbar__user { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.topbar__username { color: var(--muted); font-size: 14px; max-width: 160px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Поле сканера (заглушка) */
+/* Поле сканера в топбаре */
 .scanfield { display: flex; align-items: center; gap: 8px; }
 .scanfield__label { font-size: 13px; color: var(--muted); }
-.scanfield__input { padding: 8px 10px; font-size: 15px;
-  border: 1px dashed var(--line); border-radius: 8px; min-width: 200px; }
+.scanfield__input { padding: 8px 10px; font-size: 15px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; min-width: 180px; }
+.scanfield__input:focus { background: var(--panel); border-color: var(--accent); outline: none; }
 
-/* Раскладка */
-.layout { display: flex; min-height: calc(100vh - 57px); }
-.sidebar { width: 220px; background: var(--panel); border-right: 1px solid var(--line);
-  padding: 12px; }
-.sidebar ul { list-style: none; margin: 0; padding: 0; }
-.sidebar li { margin: 4px 0; }
-.sidebar a { display: block; padding: 10px 12px; border-radius: 8px;
-  text-decoration: none; color: var(--text); }
-.sidebar a:hover { background: var(--bg); }
-.sidebar__soon { display: block; padding: 10px 12px; color: var(--muted); }
-.content { flex: 1; padding: 24px; }
-.content--centered { display: flex; align-items: center; justify-content: center; }
+/* Раскладка: закреплённый сайдбар + контент */
+.layout { display: flex; align-items: flex-start; }
+.sidebar { flex: 0 0 var(--sidebar-w); width: var(--sidebar-w);
+  position: sticky; top: var(--topbar-h); height: calc(100vh - var(--topbar-h));
+  overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line);
+  padding: 10px 10px 24px; }
+.content { flex: 1 1 auto; min-width: 0; padding: 24px 28px; }
+.content--centered { min-height: 100vh; display: flex; align-items: center;
+  justify-content: center; padding: 24px; }
+
+/* Навигация: разделы (details/summary — сворачиваются) */
+.nav__group { margin: 0; }
+.nav__group + .nav__group { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.nav__group-title { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 10px 12px 6px; cursor: pointer; list-style: none;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); user-select: none; }
+.nav__group-title::-webkit-details-marker { display: none; }
+.nav__group-title:hover { color: var(--text); }
+.nav__chevron { width: 14px; height: 14px; color: var(--muted);
+  transition: transform .15s ease; transform: rotate(-90deg); }
+.nav__group[open] > .nav__group-title .nav__chevron { transform: none; }
+.nav__list { list-style: none; margin: 0; padding: 0; }
+.nav__list li { margin: 1px 0; }
+.nav__link { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border-radius: 8px; text-decoration: none; color: var(--text);
+  font-size: 14px; font-weight: 500; }
+.nav__icon { flex: 0 0 auto; width: 18px; height: 18px; color: var(--muted); }
+.nav__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav__link:hover { background: var(--bg); }
+.nav__link:hover .nav__icon { color: var(--text); }
+.nav__link.is-active { background: var(--nav-active-bg); color: var(--accent); font-weight: 600; }
+.nav__link.is-active .nav__icon { color: var(--accent); }
+.nav__link--soon { color: var(--muted); cursor: default; }
+.nav__soon { margin-left: auto; font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; }
+
+/* Мобильный бэкдроп (виден только при открытом меню на мобильном) */
+.nav-backdrop { display: none; }
+
+/* Спокойные текстовые ссылки в контенте (не «википедийная» ярко-синяя) */
+.content a:not([class]) { color: var(--link-quiet); font-weight: 500; text-decoration: none; }
+.content a:not([class]):hover { color: var(--accent); text-decoration: underline; }
 
 /* Плитки-скелет */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -253,19 +313,39 @@ th.num, td.num, .table th.num, .table td.num,
 .search-result__avail { font-size: 15px; margin: 8px 0; }
 .search-result__avail strong { font-size: 18px; color: var(--ok-fg); }
 
-/* --- Адаптивный базовый слой (не полный mobile-редизайн) --- */
+/* --- Адаптив --- */
 @media (max-width: 1024px) {
-  .sidebar { width: 188px; }
-  .content { padding: 16px; }
+  :root { --sidebar-w: 216px; }
+  .content { padding: 20px; }
   .form-grid--2 { grid-template-columns: 1fr; }
 }
-@media (max-width: 640px) {
-  .layout { flex-direction: column; min-height: auto; }
-  .sidebar { width: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .sidebar ul { display: flex; flex-wrap: wrap; gap: 4px; }
-  .topbar { flex-wrap: wrap; }
-  .content { padding: 12px; }
-  .scanner-page__input { min-width: 0; width: 100%; }
+
+/* Мобильный: сайдбар превращается в выезжающую панель по кнопке «Меню».
+   Открытие — pure-CSS через #nav-toggle:checked (работает и без JS). */
+@media (max-width: 900px) {
+  .topbar { gap: 10px; }
+  .topbar__menu { display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; margin-left: -6px; border-radius: 8px;
+    color: var(--text); cursor: pointer; }
+  .topbar__menu:hover { background: var(--bg); }
+  .topbar__menu .icon { width: 22px; height: 22px; }
+  .scanfield { display: none; }
+  .topbar__username { display: none; }
+  .layout { display: block; }
+  .sidebar { position: fixed; top: 0; left: 0; z-index: 60;
+    width: 288px; max-width: 84vw; height: 100vh; padding-top: 16px;
+    box-shadow: var(--shadow-md); transform: translateX(-100%); transition: transform .2s ease; }
+  .nav-toggle:checked ~ .layout .sidebar { transform: none; }
+  .nav-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(16, 24, 40, 0.44); }
+  .nav-toggle:checked ~ .layout .nav-backdrop { display: block; }
+  .content { padding: 16px; }
   /* Широкие таблицы не ломают раскладку — горизонтальный скролл. */
-  .table { display: block; overflow-x: auto; white-space: nowrap; }
+  .table { display: block; overflow-x: auto; }
+}
+
+@media (max-width: 560px) {
+  .content { padding: 14px; }
+  .topbar__wordmark { display: none; }
+  .scanner-page__input { min-width: 0; width: 100%; }
+  .table { white-space: nowrap; }
 }

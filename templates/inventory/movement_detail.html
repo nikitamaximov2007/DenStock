@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Движение #{{ movement.pk }} — DenStock{% endblock %}
+{% block title %}Движение #{{ movement.pk }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Движение #{{ movement.pk }}</h1>
   <p>
@@ -39,7 +39,7 @@
           {% if movement.from_location %}
             {{ movement.from_location.full_path }}
           {% else %}
-            —
+            ·
           {% endif %}
         </td>
       </tr>
@@ -49,7 +49,7 @@
           {% if movement.to_location %}
             {{ movement.to_location.full_path }}
           {% else %}
-            —
+            ·
           {% endif %}
         </td>
       </tr>
@@ -59,7 +59,7 @@
           {% if movement.batch_id %}
             <a href="{% url 'batch_detail' movement.batch_id %}">{{ movement.batch.number }}</a>
           {% else %}
-            —
+            ·
           {% endif %}
         </td>
       </tr>
@@ -75,11 +75,11 @@
       {% endif %}
       <tr>
         <th>Кто провёл</th>
-        <td>{{ movement.created_by|default:"—" }}</td>
+        <td>{{ movement.created_by|default:"·" }}</td>
       </tr>
       <tr>
         <th>Комментарий</th>
-        <td>{{ movement.comment|default:"—" }}</td>
+        <td>{{ movement.comment|default:"·" }}</td>
       </tr>
     </tbody>
   </table>

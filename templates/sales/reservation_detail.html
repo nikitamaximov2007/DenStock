@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Резерв {{ reservation.number }} — DenStock{% endblock %}
+{% block title %}Резерв {{ reservation.number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Резерв {{ reservation.number }}</h1>
   <p>
@@ -17,7 +17,7 @@
       </tr>
       <tr>
         <th>Телефон</th>
-        <td>{{ reservation.customer_phone|default:"—" }}</td>
+        <td>{{ reservation.customer_phone|default:"·" }}</td>
       </tr>
       <tr>
         <th>Действует до</th>
@@ -31,11 +31,11 @@
       </tr>
       <tr>
         <th>Комментарий</th>
-        <td>{{ reservation.comment|default:"—" }}</td>
+        <td>{{ reservation.comment|default:"·" }}</td>
       </tr>
       <tr>
         <th>Создан</th>
-        <td>{{ reservation.created_at|date:"d.m.Y H:i" }} · {{ reservation.created_by|default:"—" }}</td>
+        <td>{{ reservation.created_at|date:"d.m.Y H:i" }} · {{ reservation.created_by|default:"·" }}</td>
       </tr>
     </tbody>
   </table>
@@ -93,7 +93,7 @@
           <td>{{ line.quantity|floatformat:"-3" }}</td>
           <td>
             {% if line.part_item %}
-              {{ line.part_item.current_location.code|default:"—" }}
+              {{ line.part_item.current_location.code|default:"·" }}
             {% else %}
               {{ line.stock_lot.location.code }}
             {% endif %}

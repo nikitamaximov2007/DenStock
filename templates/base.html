@@ -4,16 +4,34 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}DenStock — складской учёт{% endblock %}</title>
+    <title>{% block title %}DenStock · складской учёт{% endblock %}</title>
     <link rel="stylesheet" href="{% static 'css/app.css' %}">
   </head>
   <body class="app">
     {% if user.is_authenticated %}
+      {% include "partials/_icon_sprite.html" %}
+      <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden>
       <header class="topbar">
-        <div class="topbar__brand">DenStock</div>
+        <label class="topbar__menu"
+               for="nav-toggle"
+               role="button"
+               tabindex="0"
+               aria-label="Открыть меню">
+          <svg class="icon" aria-hidden="true">
+            <use href="#i-menu"></use>
+          </svg>
+        </label>
+        <a class="topbar__brand" href="{% url 'dashboard' %}">
+          <span class="topbar__mark" aria-hidden="true">D</span>
+          <span class="topbar__wordmark">DenStock</span>
+        </a>
         <form class="topbar__searchform"
               method="get"
-              action="{% url 'part_search' %}">
+              action="{% url 'part_search' %}"
+              role="search">
+          <svg class="topbar__searchicon icon" aria-hidden="true">
+            <use href="#i-search"></use>
+          </svg>
           <input class="topbar__search"
                  type="search"
                  name="q"
@@ -22,28 +40,52 @@
         </form>
         {% include "partials/_scan_field.html" %}
         <div class="topbar__user">
-          <span>{{ user }}</span>
+          <span class="topbar__username">{{ user }}</span>
           <form action="{% url 'logout' %}" method="post" class="topbar__logout">
             {% csrf_token %}
-            <button type="submit">Выйти</button>
+            <button type="submit" class="btn btn--secondary btn--small">Выйти</button>
           </form>
         </div>
       </header>
       <div class="layout">
-        <nav class="sidebar" aria-label="Навигация">
-          <ul>
-            {% for item in nav_items %}
-              <li>
-                {% if item.stub %}
-                  <span class="sidebar__soon">{{ item.label }}</span>
-                {% else %}
-                  <a href="{{ item.url }}">{{ item.label }}</a>
-                {% endif %}
-              </li>
-            {% endfor %}
-          </ul>
+        <label class="nav-backdrop" for="nav-toggle" aria-hidden="true"></label>
+        <nav class="sidebar" id="app-sidebar" aria-label="Разделы">
+          {% for group in nav_groups %}
+            <details class="nav__group" data-nav-group="{{ forloop.counter }}" open>
+              <summary class="nav__group-title">
+                <span>{{ group.title }}</span>
+                <svg class="nav__chevron icon" aria-hidden="true">
+                  <use href="#i-chevron"></use>
+                </svg>
+              </summary>
+              <ul class="nav__list">
+                {% for item in group.items %}
+                  <li>
+                    {% if item.stub %}
+                      <span class="nav__link nav__link--soon">
+                        <svg class="nav__icon icon" aria-hidden="true">
+                          <use href="#i-{{ item.icon }}"></use>
+                        </svg>
+                        <span class="nav__label">{{ item.label }}</span>
+                        <span class="nav__soon">скоро</span>
+                      </span>
+                    {% else %}
+                      <a class="nav__link{% if item.active %} is-active{% endif %}"
+                         href="{{ item.url }}"
+                         {% if item.active %}aria-current="page"{% endif %}>
+                        <svg class="nav__icon icon" aria-hidden="true">
+                          <use href="#i-{{ item.icon }}"></use>
+                        </svg>
+                        <span class="nav__label">{{ item.label }}</span>
+                      </a>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            </details>
+          {% endfor %}
         </nav>
-        <main class="content">
+        <main class="content" id="content">
           {% if messages %}
             <div class="messages">
               {% for message in messages %}
@@ -54,6 +96,7 @@
           {% block content %}{% endblock %}
         </main>
       </div>
+      <script defer src="{% static 'js/app_shell.js' %}"></script>
       <script defer src="{% static 'js/scanner.js' %}"></script>
       <script defer src="{% static 'js/image_gallery.js' %}"></script>
     {% else %}

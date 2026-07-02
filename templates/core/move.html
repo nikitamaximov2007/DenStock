@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Перемещение сканером — DenStock{% endblock %}
+{% block title %}Перемещение сканером · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Перемещение сканером</h1>
   {% if error %}
@@ -11,11 +11,11 @@
   <p class="muted">
     Шаг:
     {% if step == "scan_object" %}
-      1 — сканируйте деталь
+      1 · сканируйте деталь
     {% elif step == "scan_location" %}
-      2 — сканируйте новую ячейку
+      2 · сканируйте новую ячейку
     {% else %}
-      3 — подтвердите
+      3 · подтвердите
     {% endif %}
   </p>
   {% if object %}
@@ -29,7 +29,7 @@
               ({{ object.get_status_display }})
             {% else %}
               Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity }}
-              ({{ object.get_status_display }}) — перемещается целиком
+              ({{ object.get_status_display }}), перемещается целиком
             {% endif %}
           </td>
         </tr>
@@ -40,7 +40,7 @@
               {% if object.current_location %}
                 {{ object.current_location.code }}
               {% else %}
-                —
+                ·
               {% endif %}
             {% else %}
               {{ object.location.code }}
@@ -50,7 +50,7 @@
         {% if location %}
           <tr>
             <th>Новая ячейка</th>
-            <td>{{ location.code }} — {{ location.name }}</td>
+            <td>{{ location.code }} · {{ location.name }}</td>
           </tr>
         {% endif %}
       </tbody>
@@ -157,13 +157,13 @@
             {% if m.from_location %}
               {{ m.from_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
             →
             {% if m.to_location %}
               {{ m.to_location.code }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
           {% if show_costs %}

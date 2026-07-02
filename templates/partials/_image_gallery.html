@@ -1,9 +1,9 @@
 {% comment %}
-  Слой 24 — блок фотографий. Параметры (через include ... with):
+  Слой 24 · блок фотографий. Параметры (через include ... with):
     images, primary_image, can_manage_images,
-    add_url / primary_url / delete_url — имена маршрутов,
-    owner_pk — pk владельца (для add_url),
-    type_fallback — primary_image взят из типового фото вида (для PartItem).
+    add_url / primary_url / delete_url · имена маршрутов,
+    owner_pk · pk владельца (для add_url),
+    type_fallback · primary_image взят из типового фото вида (для PartItem).
   UI: клик по миниатюре меняет ТОЛЬКО просмотр (static/js/image_gallery.js);
   is_primary в БД меняет отдельная кнопка «Сделать основным». Без JS блок остаётся
   рабочим: основное фото и превью видны, формы действуют.

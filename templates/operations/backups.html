@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Бэкапы — DenStock{% endblock %}
+{% block title %}Бэкапы · DenStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Локальные бэкапы</h1>
@@ -14,7 +14,7 @@
     «Экспорт бэкапа» создаёт локальный ручной бэкап текущего состояния. Для защиты от смерти
     сервера нужна offsite-копия (см. ниже).
   </p>
-  {% include "partials/_status_block.html" with kind="warning" text="Локальный бэкап НЕ заменяет offsite. При смерти сервера/диска локальные копии теряются вместе с ним — для disaster recovery нужен внешний (offsite) бэкап. Создание бэкапа может занять время." %}
+  {% include "partials/_status_block.html" with kind="warning" text="Локальный бэкап НЕ заменяет offsite. При смерти сервера/диска локальные копии теряются вместе с ним. Для disaster recovery нужен внешний (offsite) бэкап. Создание бэкапа может занять время." %}
   {% include "partials/_status_block.html" with kind="info" text="Импорт/восстановление будет реализован отдельным безопасным мастером. Сейчас восстановление выполняется через CLI (см. инструкцию ниже)." %}
   <div class="card">
     <div class="card__header">
@@ -48,7 +48,7 @@
         {% else %}
           <span class="pill pill--muted">не настроено</span>
         {% endif %}
-        <span class="muted">(offsite настраивается на сервере — см. docs/operations/scheduled-offsite-backups.md)</span>
+        <span class="muted">(offsite настраивается на сервере, см. docs/operations/scheduled-offsite-backups.md)</span>
       </p>
     </div>
   </div>
@@ -75,8 +75,8 @@
             <td>
               <span class="pill {{ r.type_pill }}">{{ r.type_label }}</span>
             </td>
-            <td>{{ r.manifest.created_at|default:"—" }}</td>
-            <td>{{ r.manifest.engine|default:"—" }}</td>
+            <td>{{ r.manifest.created_at|default:"·" }}</td>
+            <td>{{ r.manifest.engine|default:"·" }}</td>
             <td>
               {% for f in r.files %}
                 <a href="{% url 'operations:backup_download' r.run_id f.name %}">{{ f.name }}</a>
@@ -86,7 +86,7 @@
                 <span class="muted">нет файлов</span>
               {% endfor %}
             </td>
-            <td>{{ r.manifest.version|default:"—" }} / {{ r.manifest.git_commit|default:"—" }}</td>
+            <td>{{ r.manifest.version|default:"·" }} / {{ r.manifest.git_commit|default:"·" }}</td>
             <td class="table__actions">
               <a class="btn btn--small btn--secondary"
                  href="{% url 'operations:backup_manifest' r.run_id %}">Manifest</a>
@@ -108,12 +108,12 @@
     <div class="card__body">
       <p class="muted">
         Web-восстановление специально отсутствует: оно может затереть текущую БД/media и
-        оборвать сессии. Restore — только через CLI под <code>--yes</code>.
+        оборвать сессии. Restore выполняется только через CLI под <code>--yes</code>.
       </p>
       <ol>
         <li>Поднять новый VPS; установить Docker и Git.</li>
         <li><code>git clone</code> проекта.</li>
-        <li>Создать <code>.env</code> (секреты — заново, не из бэкапа).</li>
+        <li>Создать <code>.env</code> (секреты новые, не из бэкапа).</li>
         <li><code>docker compose up -d --build</code>.</li>
         <li>Положить бэкап в <code>backups/&lt;run_id&gt;/</code>.</li>
         <li><code>docker compose exec web python manage.py restore_db backups/&lt;run_id&gt;/db.dump --yes</code></li>

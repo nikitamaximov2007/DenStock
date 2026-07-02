@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Отчёты — DenStock{% endblock %}
+{% block title %}Отчёты · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Отчёты за период</h1>
   <p>
@@ -24,7 +24,7 @@
     <button type="submit">Показать</button>
   </form>
   <p class="muted">
-    Период: {{ period.date_from|date:"d.m.Y" }} — {{ period.date_to|date:"d.m.Y" }}
+    Период: {{ period.date_from|date:"d.m.Y" }} · {{ period.date_to|date:"d.m.Y" }}
     (по моменту проведения; только проведённые документы).
   </p>
   <h2>
@@ -134,8 +134,8 @@
     <a href="{% url 'reports_export_returns' %}?{{ period_qs }}">CSV</a>
   </h2>
   <p class="muted">
-    Возврат на склад — это не возврат денег. На выручку не влияет (финансовое сторно —
-    будущий слой); показано отдельно.
+    Возврат на склад: это не возврат денег. На выручку не влияет (финансовое сторно
+    будет отдельным слоем); показано отдельно.
   </p>
   <table class="table">
     <tbody>

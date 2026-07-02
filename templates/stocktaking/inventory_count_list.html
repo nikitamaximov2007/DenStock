@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Инвентаризация — DenStock{% endblock %}
+{% block title %}Инвентаризация · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Инвентаризация</h1>
   {% if can_manage %}
@@ -37,12 +37,12 @@
             <a href="{% url 'inventory_count_detail' d.pk %}">{{ d.number }}</a>
           </td>
           <td>{{ d.get_status_display }}</td>
-          <td>{{ d.scope_location.code|default:"—" }}</td>
+          <td>{{ d.scope_location.code|default:"·" }}</td>
           <td>
             {% if d.completed_at %}
               {{ d.completed_at|date:"d.m.Y H:i" }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

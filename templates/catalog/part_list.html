@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Детали — DenStock{% endblock %}
+{% block title %}Детали · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Виды деталей</h1>
   <form method="get" class="toolbar">
@@ -35,9 +35,9 @@
               <a href="{% url 'part_detail' part.pk %}">{{ part.name }}</a>
             </td>
             <td>{{ part.category }}</td>
-            <td>{{ part.manufacturer|default:"—" }}</td>
+            <td>{{ part.manufacturer|default:"·" }}</td>
             <td>{{ part.get_tracking_mode_display }}</td>
-            <td class="num--money">{{ part.recommended_price|default:"—" }}</td>
+            <td class="num--money">{{ part.recommended_price|default:"·" }}</td>
             <td>
               {% if part.is_active %}
                 Активна

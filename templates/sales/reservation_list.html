@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Резервы — DenStock{% endblock %}
+{% block title %}Резервы · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Резервы</h1>
   {% if can_manage %}
@@ -40,12 +40,12 @@
           </td>
           <td>{{ r.get_status_display }}</td>
           <td>{{ r.customer_name }}</td>
-          <td>{{ r.customer_phone|default:"—" }}</td>
+          <td>{{ r.customer_phone|default:"·" }}</td>
           <td>
             {% if r.expires_at %}
               {{ r.expires_at|date:"d.m.Y H:i" }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
           <td>{{ r.created_at|date:"d.m.Y H:i" }}</td>

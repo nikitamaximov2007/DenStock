@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Ремонт — DenStock{% endblock %}
+{% block title %}Ремонт · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Ремонтные заказы</h1>
   {% if can_manage %}
@@ -43,14 +43,14 @@
           <td>
             {{ o.vehicle_type|default:"" }}
             {{ o.vehicle_make }} {{ o.vehicle_model }}
-            {% if not o.vehicle_type and not o.vehicle_make and not o.vehicle_model %}—{% endif %}
+            {% if not o.vehicle_type and not o.vehicle_make and not o.vehicle_model %}·{% endif %}
           </td>
           {% if show_costs %}<td>{{ o.cost_total }}</td>{% endif %}
           <td>
             {% if o.completed_at %}
               {{ o.completed_at|date:"d.m.Y H:i" }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Ремонт {{ order.number }} — DenStock{% endblock %}
+{% block title %}Ремонт {{ order.number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Ремонтный заказ {{ order.number }}</h1>
   <p>
@@ -20,7 +20,7 @@
       </tr>
       <tr>
         <th>Телефон</th>
-        <td>{{ order.customer_phone|default:"—" }}</td>
+        <td>{{ order.customer_phone|default:"·" }}</td>
       </tr>
       <tr>
         <th>Техника</th>
@@ -29,17 +29,17 @@
           {{ order.vehicle_make }} {{ order.vehicle_model }}
           {% if order.vehicle_identifier %}· {{ order.vehicle_identifier }}{% endif %}
           {% if not order.vehicle_type and not order.vehicle_make and not order.vehicle_model and not order.vehicle_identifier %}
-            —
+            ·
           {% endif %}
         </td>
       </tr>
       <tr>
         <th>Что ремонтируем</th>
-        <td>{{ order.problem_description|default:"—"|linebreaksbr }}</td>
+        <td>{{ order.problem_description|default:"·"|linebreaksbr }}</td>
       </tr>
       <tr>
         <th>Комментарий</th>
-        <td>{{ order.comment|default:"—" }}</td>
+        <td>{{ order.comment|default:"·" }}</td>
       </tr>
       <tr>
         <th>Проведён</th>
@@ -47,7 +47,7 @@
           {% if order.completed_at %}
             {{ order.completed_at|date:"d.m.Y H:i" }}
           {% else %}
-            — (черновик)
+            · (черновик)
           {% endif %}
         </td>
       </tr>
@@ -146,7 +146,7 @@
     <p class="muted">
       Проведение выдаёт детали в ремонт: списывает остаток (создаёт складское
       движение расхода), переводит экземпляр в «Установлен» и замораживает
-      себестоимость. Это не продажа и не оплата. Возврат установленной детали —
+      себестоимость. Это не продажа и не оплата. Возврат установленной детали ·
       будущий слой.
     </p>
   {% endif %}

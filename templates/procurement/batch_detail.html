@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ batch.number }} — DenStock{% endblock %}
+{% block title %}{{ batch.number }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Партия {{ batch.number }}</h1>
   <p>
@@ -18,7 +18,7 @@
       </tr>
       <tr>
         <th>Страна</th>
-        <td>{{ batch.country|default:"—" }}</td>
+        <td>{{ batch.country|default:"·" }}</td>
       </tr>
       <tr>
         <th>Валюта</th>
@@ -44,7 +44,7 @@
       {% endif %}
       <tr>
         <th>Заказ / Счёт</th>
-        <td>{{ batch.order_number|default:"—" }} / {{ batch.invoice_number|default:"—" }}</td>
+        <td>{{ batch.order_number|default:"·" }} / {{ batch.invoice_number|default:"·" }}</td>
       </tr>
       <tr>
         <th>Доступна к продаже</th>

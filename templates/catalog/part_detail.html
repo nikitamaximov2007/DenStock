@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ part.name }} — DenStock{% endblock %}
+{% block title %}{{ part.name }} · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">{{ part.name }}</h1>
   <p>
@@ -31,7 +31,7 @@
       </tr>
       <tr>
         <th>Производитель</th>
-        <td>{{ part.manufacturer|default:"—" }}</td>
+        <td>{{ part.manufacturer|default:"·" }}</td>
       </tr>
       <tr>
         <th>Единица</th>
@@ -43,11 +43,11 @@
       </tr>
       <tr>
         <th>Рекомендуемая цена</th>
-        <td>{{ part.recommended_price|default:"—" }}</td>
+        <td>{{ part.recommended_price|default:"·" }}</td>
       </tr>
       <tr>
         <th>Минимальная цена</th>
-        <td>{{ part.min_price|default:"—" }}</td>
+        <td>{{ part.min_price|default:"·" }}</td>
       </tr>
       <tr>
         <th>Минимальный остаток</th>
@@ -75,7 +75,7 @@
   <ul>
     {% for n in numbers %}
       <li>
-        {{ n.value }} — {{ n.get_kind_display }}
+        {{ n.value }} · {{ n.get_kind_display }}
         {% if n.is_primary %} (основной){% endif %}
         {% if can_manage %}
           <form method="post"

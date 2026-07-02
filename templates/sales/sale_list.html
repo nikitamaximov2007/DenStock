@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Продажи — DenStock{% endblock %}
+{% block title %}Продажи · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Продажи</h1>
   {% if can_sell %}
@@ -46,7 +46,7 @@
             {% if s.sold_at %}
               {{ s.sold_at|date:"d.m.Y H:i" }}
             {% else %}
-              —
+              ·
             {% endif %}
           </td>
         </tr>

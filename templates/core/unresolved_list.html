@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Нераспознанные сканы — DenStock{% endblock %}
+{% block title %}Нераспознанные сканы · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Нераспознанные сканы</h1>
   <p class="muted">Коды, которые сканер не сопоставил с объектом. Закрываются разбором (привязкой к детали).</p>
@@ -18,10 +18,10 @@
       {% for s in scans %}
         <tr>
           <td>{{ s.raw_value }}</td>
-          <td>{{ s.normalized_value|default:"—" }}</td>
+          <td>{{ s.normalized_value|default:"·" }}</td>
           <td>{{ s.created_at|date:"d.m.Y H:i" }}</td>
-          <td>{{ s.user|default:"—" }}</td>
-          <td>{{ s.context|default:"—" }}</td>
+          <td>{{ s.user|default:"·" }}</td>
+          <td>{{ s.context|default:"·" }}</td>
           <td>
             {% if s.resolved %}
               да

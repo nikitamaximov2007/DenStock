@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Сканер — DenStock{% endblock %}
+{% block title %}Сканер · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Сканер</h1>
-  <p class="muted">Отсканируйте код — система определит, что это (экземпляр, ячейка, партия, вид детали).</p>
+  <p class="muted">Отсканируйте код: система определит, что это (экземпляр, ячейка, партия, вид детали).</p>
   <form method="post" class="form scanner-page">
     {% csrf_token %}
     <input type="hidden" name="context" value="scanner">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Движения — DenStock{% endblock %}
+{% block title %}Движения · DenStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Журнал движений</h1>
   <form method="get" class="toolbar">
@@ -66,16 +66,16 @@
               {% if m.from_location %}
                 {{ m.from_location.code }}
               {% else %}
-                —
+                ·
               {% endif %}
               →
               {% if m.to_location %}
                 {{ m.to_location.code }}
               {% else %}
-                —
+                ·
               {% endif %}
             </td>
-            <td>{{ m.created_by|default:"—" }}</td>
+            <td>{{ m.created_by|default:"·" }}</td>
             {% if show_costs %}<td class="num--money">{{ m.total_cost_rub }}</td>{% endif %}
           </tr>
         {% endfor %}
@@ -85,7 +85,7 @@
   {% else %}
     <div class="empty">
       <p class="empty__title">Движений нет</p>
-      <p class="empty__text">Измените фильтры — здесь отображается журнал складских движений.</p>
+      <p class="empty__text">Измените фильтры: здесь отображается журнал складских движений.</p>
     </div>
   {% endif %}
 {% endblock %}
