@@ -1,21 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Сканер · DenStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Сканер</h1>
-  <p class="muted">Отсканируйте код: система определит, что это (экземпляр, ячейка, партия, вид детали).</p>
-  <form method="post" class="form scanner-page">
-    {% csrf_token %}
-    <input type="hidden" name="context" value="scanner">
-    <input id="scanner-page-input"
-           name="code"
-           type="text"
-           class="scanner-page__input"
-           placeholder="Отсканируйте код…"
-           autocomplete="off"
-           autofocus
-           value="{{ code }}">
-    <button type="submit" class="btn btn--primary">Проверить</button>
-  </form>
+  <div class="page-header">
+    <h1 class="page-title">Сканер</h1>
+  </div>
+  <div class="action-panel">
+    <form method="post" class="scanner-page">
+      {% csrf_token %}
+      <input type="hidden" name="context" value="scanner">
+      <input id="scanner-page-input"
+             name="code"
+             type="text"
+             class="scanner-page__input"
+             placeholder="Отсканируйте код…"
+             autocomplete="off"
+             autofocus
+             value="{{ code }}">
+      <button type="submit" class="btn btn--primary">Проверить</button>
+    </form>
+    <p class="action-panel__hint">Отсканируйте код: система определит, что это (экземпляр, ячейка, партия, вид детали).</p>
+  </div>
   {% if result %}
     {% if result.status == "found" %}
       {% include "partials/_status_block.html" with kind="success" text=result.label %}

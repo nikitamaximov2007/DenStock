@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Возвраты · DenStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Возвраты на склад</h1>
-  <form method="get" class="form">
+  <div class="page-header">
+    <h1 class="page-title">Возвраты на склад</h1>
+  </div>
+  <p class="page-subtitle">Возврат оформляется из карточки продажи или ремонтного заказа кнопкой «Оформить возврат».</p>
+  <form method="get" class="filter-toolbar">
     <label>
-      Статус:
+      Статус
       <select name="status" onchange="this.form.submit()">
         <option value="">Все</option>
         {% for value, label in statuses %}
@@ -16,42 +19,38 @@
       <button type="submit">Показать</button>
     </noscript>
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Номер</th>
-        <th>Статус</th>
-        <th>Источник</th>
-        {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
-        <th>Проведён</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for r in returns %}
+  {% if returns %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>
-            <a href="{% url 'return_detail' r.pk %}">{{ r.number }}</a>
-          </td>
-          <td>{{ r.get_status_display }}</td>
-          <td>{{ r.get_source_type_display }} #{{ r.source_id }}</td>
-          {% if show_costs %}<td>{{ r.cost_total }}</td>{% endif %}
-          <td>
-            {% if r.completed_at %}
-              {{ r.completed_at|date:"d.m.Y H:i" }}
-            {% else %}
-              ·
-            {% endif %}
-          </td>
+          <th>Номер</th>
+          <th>Статус</th>
+          <th>Источник</th>
+          {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
+          <th>Проведён</th>
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="5" class="muted">Возвратов нет.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="muted">
-    Возврат оформляется из карточки продажи или ремонтного заказа кнопкой
-    «Оформить возврат».
-  </p>
+      </thead>
+      <tbody>
+        {% for r in returns %}
+          <tr>
+            <td>
+              <a href="{% url 'return_detail' r.pk %}">{{ r.number }}</a>
+            </td>
+            <td>{{ r.get_status_display }}</td>
+            <td>{{ r.get_source_type_display }} #{{ r.source_id }}</td>
+            {% if show_costs %}<td class="num--money">{{ r.cost_total }}</td>{% endif %}
+            <td>
+              {% if r.completed_at %}
+                {{ r.completed_at|ru_dt }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="undo" title="Возвратов нет" text="Возвраты появятся здесь после оформления из карточки продажи или ремонтного заказа." %}
+  {% endif %}
 {% endblock %}

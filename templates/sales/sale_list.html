@@ -1,15 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Продажи · DenStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Продажи</h1>
-  {% if can_sell %}
-    <p>
-      <a class="btn btn--primary" href="{% url 'sale_create' %}">Создать продажу</a>
-    </p>
-  {% endif %}
-  <form method="get" class="form">
+  <div class="page-header">
+    <h1 class="page-title">Продажи</h1>
+    {% if can_sell %}
+      <div class="page-actions">
+        <a class="btn btn--primary" href="{% url 'sale_create' %}">Создать продажу</a>
+      </div>
+    {% endif %}
+  </div>
+  <form method="get" class="filter-toolbar">
     <label>
-      Статус:
+      Статус
       <select name="status" onchange="this.form.submit()">
         <option value="">Все</option>
         {% for value, label in statuses %}
@@ -21,40 +23,43 @@
       <button type="submit">Показать</button>
     </noscript>
   </form>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Номер</th>
-        <th>Статус</th>
-        <th>Клиент</th>
-        <th>Выручка (₽)</th>
-        {% if show_costs %}<th>Прибыль (₽)</th>{% endif %}
-        <th>Проведена</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for s in sales %}
+  {% if sales %}
+    <table class="table">
+      <thead>
         <tr>
-          <td>
-            <a href="{% url 'sale_detail' s.pk %}">{{ s.number }}</a>
-          </td>
-          <td>{{ s.get_status_display }}</td>
-          <td>{{ s.customer_name }}</td>
-          <td>{{ s.revenue_total }}</td>
-          {% if show_costs %}<td>{{ s.profit_total }}</td>{% endif %}
-          <td>
-            {% if s.sold_at %}
-              {{ s.sold_at|date:"d.m.Y H:i" }}
-            {% else %}
-              ·
-            {% endif %}
-          </td>
+          <th>Номер</th>
+          <th>Статус</th>
+          <th>Клиент</th>
+          <th class="num--money">Выручка (₽)</th>
+          {% if show_costs %}<th class="num--money">Прибыль (₽)</th>{% endif %}
+          <th>Проведена</th>
         </tr>
-      {% empty %}
-        <tr>
-          <td colspan="6" class="muted">Продаж нет.</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        {% for s in sales %}
+          <tr>
+            <td>
+              <a href="{% url 'sale_detail' s.pk %}">{{ s.number }}</a>
+            </td>
+            <td>{{ s.get_status_display }}</td>
+            <td>{{ s.customer_name }}</td>
+            <td class="num--money">{{ s.revenue_total }}</td>
+            {% if show_costs %}<td class="num--money">{{ s.profit_total }}</td>{% endif %}
+            <td>
+              {% if s.sold_at %}
+                {{ s.sold_at|ru_dt }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% if can_sell %}
+      {% url 'sale_create' as create_url %}
+    {% endif %}
+    {% include "partials/_empty_state.html" with icon="cart" title="Продаж нет" text="Измените фильтр статуса или оформите новую продажу." action_url=create_url action_label="Создать продажу" %}
+  {% endif %}
 {% endblock %}

@@ -61,9 +61,9 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    <div class="empty">
-      <p class="empty__title">Лотов нет</p>
-      <p class="empty__text">Измените фильтры или создайте лот при приёмке партии.</p>
-    </div>
+    {% if user.can_manage_inventory %}
+      {% url 'scanner_receiving' as create_url %}
+    {% endif %}
+    {% include "partials/_empty_state.html" with icon="layers" title="Лотов нет" text="Измените фильтры или создайте лот при приёмке партии на склад." action_url=create_url action_label="Приёмка на склад" %}
   {% endif %}
 {% endblock %}

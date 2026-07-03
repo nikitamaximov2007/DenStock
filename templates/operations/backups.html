@@ -26,32 +26,63 @@
       </p>
       {% if last_run %}
         <p>
-          Последний локальный бэкап: <strong>{{ last_run.run_id }}</strong>
-          {% if last_run.manifest.created_at %}· {{ last_run.manifest.created_at }}{% endif %}
+          Последний локальный бэкап:
+          <span class="code-pill">{{ last_run.run_id }}</span>
+          {% if last_run.manifest.created_at %}
+            <span class="muted">· {{ last_run.manifest.created_at|ru_dts }}</span>
+          {% endif %}
         </p>
       {% else %}
         <p class="muted">Локальных бэкапов пока нет.</p>
       {% endif %}
-      <p>
-        Offsite-синхронизация:
-        {% if not offsite %}
-          <span class="pill pill--muted">не настроено</span>
-        {% elif offsite.error %}
-          <span class="pill pill--danger">{{ offsite.error }}</span>
-        {% elif offsite.status == "ok" %}
-          <span class="pill pill--success">отправлено</span>
-          {% if offsite.checked_at %}· {{ offsite.checked_at }}{% endif %}
-          {% if offsite.target %}· {{ offsite.target }}{% endif %}
-        {% elif offsite.status == "failed" %}
-          <span class="pill pill--danger">ошибка</span>
-          {% if offsite.message %}· {{ offsite.message }}{% endif %}
-        {% else %}
-          <span class="pill pill--muted">не настроено</span>
-        {% endif %}
-        <span class="muted">(offsite настраивается на сервере, см. docs/operations/scheduled-offsite-backups.md)</span>
-      </p>
     </div>
   </div>
+  {% if not offsite %}
+    <div class="status-card status-card--muted">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite не настроено</p>
+        <p class="status-card__meta">
+          Настраивается на сервере (rclone + cron). Локальные копии не защищают от смерти
+          диска: нужен внешний бэкап. См. docs/operations/scheduled-offsite-backups.md
+        </p>
+      </div>
+    </div>
+  {% elif offsite.error %}
+    <div class="status-card status-card--danger">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite: ошибка проверки</p>
+        <p class="status-card__meta">{{ offsite.error }}</p>
+      </div>
+    </div>
+  {% elif offsite.status == "ok" %}
+    <div class="status-card status-card--ok">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite: отправлено</p>
+        <p class="status-card__meta">
+          {% if offsite.checked_at %}Проверено {{ offsite.checked_at|ru_dts }}{% endif %}
+          {% if offsite.target %}· {{ offsite.target }}{% endif %}
+        </p>
+      </div>
+    </div>
+  {% elif offsite.status == "failed" %}
+    <div class="status-card status-card--danger">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite: ошибка отправки</p>
+        <p class="status-card__meta">{{ offsite.message|default:"Проверьте лог и настройки rclone на сервере." }}</p>
+      </div>
+    </div>
+  {% else %}
+    <div class="status-card status-card--muted">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite не настроено</p>
+      </div>
+    </div>
+  {% endif %}
   {% if runs %}
     <table class="table">
       <thead>
@@ -69,14 +100,26 @@
         {% for r in runs %}
           <tr>
             <td>
-              {{ r.run_id }}
+              <span class="code-pill">{{ r.run_id }}</span>
               {% if not r.has_manifest %}<span class="pill pill--warning">без manifest</span>{% endif %}
             </td>
             <td>
               <span class="pill {{ r.type_pill }}">{{ r.type_label }}</span>
             </td>
-            <td>{{ r.manifest.created_at|default:"·" }}</td>
-            <td>{{ r.manifest.engine|default:"·" }}</td>
+            <td>
+              {% if r.manifest.created_at %}
+                {{ r.manifest.created_at|ru_dts }}
+              {% else %}
+                {{ r.run_id|ru_dts }}
+              {% endif %}
+            </td>
+            <td>
+              {% if r.manifest.engine %}
+                <span class="code-pill">{{ r.manifest.engine }}</span>
+              {% else %}
+                ·
+              {% endif %}
+            </td>
             <td>
               {% for f in r.files %}
                 <a href="{% url 'operations:backup_download' r.run_id f.name %}">{{ f.name }}</a>
@@ -86,7 +129,19 @@
                 <span class="muted">нет файлов</span>
               {% endfor %}
             </td>
-            <td>{{ r.manifest.version|default:"·" }} / {{ r.manifest.git_commit|default:"·" }}</td>
+            <td>
+              {% if r.manifest.version %}
+                <span class="code-pill">{{ r.manifest.version }}</span>
+              {% else %}
+                ·
+              {% endif %}
+              /
+              {% if r.manifest.git_commit %}
+                <span class="code-pill">{{ r.manifest.git_commit }}</span>
+              {% else %}
+                ·
+              {% endif %}
+            </td>
             <td class="table__actions">
               <a class="btn btn--small btn--secondary"
                  href="{% url 'operations:backup_manifest' r.run_id %}">Manifest</a>
@@ -96,10 +151,7 @@
       </tbody>
     </table>
   {% else %}
-    <div class="empty">
-      <p class="empty__title">Бэкапов пока нет</p>
-      <p class="empty__text">Нажмите «Создать полный бэкап» или настройте автоматический бэкап на сервере.</p>
-    </div>
+    {% include "partials/_empty_state.html" with icon="database" title="Бэкапов пока нет" text="Нажмите «Экспорт бэкапа» выше или настройте автоматический бэкап на сервере." %}
   {% endif %}
   <div class="card">
     <div class="card__header">

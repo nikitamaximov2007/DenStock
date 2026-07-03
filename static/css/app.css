@@ -349,3 +349,126 @@ th.num, td.num, .table th.num, .table td.num,
   .scanner-page__input { min-width: 0; width: 100%; }
   .table { white-space: nowrap; }
 }
+
+/* ===========================================================================
+   v1.2.1 — Product-grade screens: единый filter-toolbar, таблицы, empty-states,
+   кнопки без подчёркивания, code-pill, status-card, action-panel, segmented.
+   Только аддитивные/уточняющие правила поверх дизайн-фундамента.
+   =========================================================================== */
+
+/* --- Кнопки: единый вид для <a>/<button>, без подчёркивания --- */
+.btn { text-decoration: none; font-weight: 500; line-height: 1.2;
+  transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease; }
+.btn:hover, .btn:focus { text-decoration: none; }
+.btn--primary:hover { background: #1a5fd0; border-color: #1a5fd0; }
+.btn--primary:active { background: #184fb0; border-color: #184fb0; }
+.btn--secondary:hover { background: var(--bg); border-color: #c4cad3; }
+.btn--danger:hover { filter: none; background: #9f1e14; border-color: #9f1e14; }
+
+/* --- Заголовок страницы --- */
+.page-subtitle { margin: -4px 0 16px; color: var(--muted); font-size: 14px; max-width: 72ch; }
+.page-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* --- Filter toolbar: единый продуктовый ряд фильтров ---
+   Работает и для существующих .toolbar / .form (фильтры списков). */
+.filter-toolbar, form.toolbar {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px;
+  padding: 12px 14px; margin: 0 0 16px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.filter-toolbar label, form.toolbar label {
+  display: inline-flex; flex-direction: column; gap: 4px;
+  margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.filter-toolbar .filter-spacer { margin-left: auto; }
+.filter-field { display: flex; flex-direction: column; gap: 4px; }
+.filter-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+/* Единый вид полей ввода в фильтрах (и селектов в обычных формах) */
+.filter-toolbar input, .filter-toolbar select, .filter-toolbar button, .filter-toolbar .btn,
+form.toolbar input, form.toolbar select, form.toolbar button, form.toolbar .btn {
+  height: 38px; font-size: 14px; }
+.filter-toolbar input, .filter-toolbar select,
+form.toolbar input, form.toolbar select {
+  padding: 0 12px; color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-md); }
+.filter-toolbar .btn, form.toolbar .btn {
+  display: inline-flex; align-items: center; padding-top: 0; padding-bottom: 0; }
+.filter-toolbar button:not(.btn), form.toolbar button:not(.btn) {
+  padding: 0 16px; color: var(--text); background: var(--panel); cursor: pointer;
+  border: 1px solid var(--line); border-radius: var(--radius-md); font-weight: 500; }
+.filter-toolbar button:not(.btn):hover, form.toolbar button:not(.btn):hover { background: var(--bg); }
+.filter-toolbar input:focus, .filter-toolbar select:focus,
+form.toolbar input:focus, form.toolbar select:focus {
+  border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
+
+/* Кастомная стрелка у select (убираем «нативный» вид) */
+.filter-toolbar select, form.toolbar select, .form select {
+  appearance: none; -webkit-appearance: none; padding-right: 32px;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='2 4.5 6 8.5 10 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; }
+.form select { height: 40px; border: 1px solid var(--line); border-radius: var(--radius-md);
+  background-color: var(--panel); padding: 0 32px 0 12px; }
+
+/* --- Таблицы: продуктовый вид (усиление базового .table) --- */
+.table { box-shadow: var(--shadow-sm); }
+.table thead th { background: #fbfcfd; text-transform: uppercase; letter-spacing: 0.04em;
+  font-size: 11.5px; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--border); }
+.table th, .table td { padding: 11px 14px; }
+.table tbody tr:last-child td { border-bottom: 0; }
+.table-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden; margin: 0 0 16px; }
+.table-card > .table, .table-card .table { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
+.table-card__header { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.table-card__title { margin: 0; font-size: 15px; font-weight: 700; }
+
+/* --- Empty state: спокойный, с нейтральным маркером --- */
+.empty { background: var(--surface); border: 1px solid var(--border); padding: 40px 20px; }
+.empty__icon { display: inline-flex; align-items: center; justify-content: center;
+  width: 46px; height: 46px; margin: 0 auto 14px; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+.empty__icon .icon { width: 22px; height: 22px; }
+
+/* --- Code pill: технические коды (PRESET-ENG, run_id, коммит) --- */
+.code-pill { display: inline-block; padding: 1px 7px; border-radius: 6px;
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace; font-size: 12.5px;
+  color: var(--text); background: var(--bg); border: 1px solid var(--line); white-space: nowrap; }
+
+/* --- Status card (offsite и т.п.) --- */
+.status-card { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px;
+  margin: 0 0 16px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+.status-card__dot { flex: 0 0 auto; width: 10px; height: 10px; margin-top: 5px;
+  border-radius: 50%; background: var(--muted); }
+.status-card--ok .status-card__dot { background: var(--ok-fg); }
+.status-card--danger .status-card__dot { background: var(--danger); }
+.status-card__body { flex: 1 1 auto; min-width: 0; }
+.status-card__title { margin: 0 0 2px; font-weight: 600; }
+.status-card__meta { margin: 0; font-size: 13px; color: var(--muted); word-break: break-word; }
+
+/* --- Action panel (сканер / поиск) --- */
+.action-panel { background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 16px; margin: 0 0 16px; }
+.action-panel .search-form, .action-panel .scanner-page { margin: 0; }
+.action-panel__hint { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+
+/* --- Segmented control (пресеты периода в отчётах) --- */
+.segmented { display: inline-flex; padding: 3px; gap: 2px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: var(--radius-md); }
+.segmented a { padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500;
+  color: var(--muted); text-decoration: none; }
+.segmented a:hover { color: var(--text); }
+.segmented a.is-active { background: var(--panel); color: var(--accent);
+  box-shadow: var(--shadow-sm); font-weight: 600; }
+
+/* --- Сетка колонок отчётов --- */
+.report-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+
+@media (max-width: 760px) {
+  .report-columns { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .filter-toolbar, form.toolbar { padding: 12px; }
+  .filter-toolbar label, form.toolbar label,
+  .filter-toolbar input, .filter-toolbar select, .filter-toolbar .btn, .filter-toolbar button,
+  form.toolbar input, form.toolbar select, form.toolbar .btn, form.toolbar button { width: 100%; }
+}

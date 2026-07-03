@@ -34,7 +34,7 @@
             </td>
             <td>{{ b.supplier }}</td>
             <td>{{ b.get_status_display }}</td>
-            <td>{{ b.arrived_at|default:"·" }}</td>
+            <td>{{ b.arrived_at|ru_date|default:"·" }}</td>
             {% if show_costs %}<td class="num--money">{{ b.total_extra_cost }} {{ b.currency }}</td>{% endif %}
           </tr>
         {% endfor %}
@@ -42,9 +42,9 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    <div class="empty">
-      <p class="empty__title">Партий нет</p>
-      <p class="empty__text">Измените фильтры или создайте новую партию.</p>
-    </div>
+    {% if can_manage %}
+      {% url 'batch_create' as create_url %}
+    {% endif %}
+    {% include "partials/_empty_state.html" with icon="layers" title="Партий нет" text="Измените фильтры или создайте новую партию поступления." action_url=create_url action_label="Новая партия" %}
   {% endif %}
 {% endblock %}

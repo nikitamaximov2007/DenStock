@@ -77,6 +77,8 @@ TEMPLATES = [
                 "django.contrib.messages.context_processors.messages",
                 "apps.accounts.context_processors.navigation",
             ],
+            # Русский формат дат в UI доступен во всех шаблонах без {% load %}.
+            "builtins": ["apps.core.templatetags.ru_dates"],
         },
     },
 ]

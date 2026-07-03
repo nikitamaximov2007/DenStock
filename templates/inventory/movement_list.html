@@ -83,9 +83,6 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    <div class="empty">
-      <p class="empty__title">Движений нет</p>
-      <p class="empty__text">Измените фильтры: здесь отображается журнал складских движений.</p>
-    </div>
+    {% include "partials/_empty_state.html" with icon="swap" title="Движений нет" text="Измените фильтры. Здесь отображается журнал складских движений: приёмка, перемещения, продажи, списания." %}
   {% endif %}
 {% endblock %}

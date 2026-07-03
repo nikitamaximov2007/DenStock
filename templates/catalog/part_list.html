@@ -51,9 +51,9 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    <div class="empty">
-      <p class="empty__title">Ничего не найдено</p>
-      <p class="empty__text">Измените запрос или добавьте новую деталь.</p>
-    </div>
+    {% if can_manage %}
+      {% url 'part_create' as create_url %}
+    {% endif %}
+    {% include "partials/_empty_state.html" with icon="box" title="Ничего не найдено" text="Измените запрос или добавьте новую деталь в каталог." action_url=create_url action_label="Добавить деталь" %}
   {% endif %}
 {% endblock %}

@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Отчёты · DenStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Отчёты за период</h1>
-  <p>
-    <a href="{% url 'reports_stock' %}">Остатки и низкие остатки →</a>
-  </p>
-  <form method="get" class="form">
-    <span>Быстро:</span>
-    {% for value, label in presets %}
-      <a href="?preset={{ value }}"
-         {% if period.preset == value %}class="muted"{% endif %}>{{ label }}</a>
-    {% endfor %}
+  <div class="page-header">
+    <h1 class="page-title">Отчёты за период</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_stock' %}">Остатки и низкие остатки</a>
+    </div>
+  </div>
+  <form method="get" class="filter-toolbar">
+    <div class="filter-field">
+      <span class="filter-label">Быстрый период</span>
+      <div class="segmented">
+        {% for value, label in presets %}
+          <a href="?preset={{ value }}"
+             class="{% if period.preset == value %}is-active{% endif %}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
     <label>
       С
       <input type="date"
@@ -21,46 +28,46 @@
       По
       <input type="date" name="date_to" value="{{ period.date_to|date:'Y-m-d' }}">
     </label>
-    <button type="submit">Показать</button>
+    <button type="submit" class="btn btn--secondary">Показать</button>
   </form>
-  <p class="muted">
-    Период: {{ period.date_from|date:"d.m.Y" }} · {{ period.date_to|date:"d.m.Y" }}
+  <p class="page-subtitle">
+    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}
     (по моменту проведения; только проведённые документы).
   </p>
-  <h2>
-    Продажи
-    <a href="{% url 'reports_export_sales' %}?{{ period_qs }}">CSV</a>
-  </h2>
-  <table class="table">
-    <tbody>
-      <tr>
-        <th>Проведённых продаж</th>
-        <td>{{ report.sales.count }}</td>
-      </tr>
-      <tr>
-        <th>Строк продаж</th>
-        <td>{{ report.sales.line_count }}</td>
-      </tr>
-      {% if show_costs %}
-        <tr>
-          <th>Выручка</th>
-          <td>{{ report.sales.revenue }} ₽</td>
-        </tr>
-        <tr>
-          <th>Себестоимость</th>
-          <td>{{ report.sales.cost }} ₽</td>
-        </tr>
-        <tr>
-          <th>Валовая прибыль</th>
-          <td>{{ report.sales.profit }} ₽</td>
-        </tr>
-      {% else %}
-        <tr>
-          <td colspan="2" class="muted">Финансовые показатели скрыты.</td>
-        </tr>
-      {% endif %}
-    </tbody>
-  </table>
+  <div class="page-header">
+    <h2 class="page-title">Продажи</h2>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_export_sales' %}?{{ period_qs }}">Экспорт CSV</a>
+    </div>
+  </div>
+  <section class="tiles" aria-label="Показатели продаж">
+    <div class="tile">
+      <div class="tile__label">Проведённых продаж</div>
+      <div class="tile__value">{{ report.sales.count }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Строк продаж</div>
+      <div class="tile__value">{{ report.sales.line_count }}</div>
+    </div>
+    {% if show_costs %}
+      <div class="tile">
+        <div class="tile__label">Выручка, ₽</div>
+        <div class="tile__value num">{{ report.sales.revenue }}</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Себестоимость, ₽</div>
+        <div class="tile__value num">{{ report.sales.cost }}</div>
+      </div>
+      <div class="tile">
+        <div class="tile__label">Валовая прибыль, ₽</div>
+        <div class="tile__value num">{{ report.sales.profit }}</div>
+      </div>
+    {% endif %}
+  </section>
+  {% if not show_costs %}
+    <p class="muted">Финансовые показатели скрыты для вашей роли.</p>
+  {% endif %}
   <div class="report-columns">
     <div>
       {% if show_costs %}
@@ -69,18 +76,18 @@
           <thead>
             <tr>
               <th>Деталь</th>
-              <th>Выручка (₽)</th>
+              <th class="num--money">Выручка (₽)</th>
             </tr>
           </thead>
           <tbody>
             {% for row in report.sales.top_by_revenue %}
               <tr>
                 <td>{{ row.part_type }}</td>
-                <td>{{ row.value }}</td>
+                <td class="num--money">{{ row.value }}</td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="2" class="muted">Нет данных.</td>
+                <td colspan="2" class="muted">Нет данных за период.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -93,47 +100,53 @@
         <thead>
           <tr>
             <th>Деталь</th>
-            <th>Кол-во</th>
+            <th class="num--qty">Кол-во</th>
           </tr>
         </thead>
         <tbody>
           {% for row in report.sales.top_by_quantity %}
             <tr>
               <td>{{ row.part_type }}</td>
-              <td>{{ row.value|floatformat:"-3" }}</td>
+              <td class="num--qty">{{ row.value|floatformat:"-3" }}</td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan="2" class="muted">Нет данных.</td>
+              <td colspan="2" class="muted">Нет данных за период.</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
-  <h2>
-    Выдачи в ремонт
-    <a href="{% url 'reports_export_repairs' %}?{{ period_qs }}">CSV</a>
-  </h2>
+  <div class="page-header">
+    <h2 class="page-title">Выдачи в ремонт</h2>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_export_repairs' %}?{{ period_qs }}">Экспорт CSV</a>
+    </div>
+  </div>
   <table class="table">
     <tbody>
       <tr>
         <th>Проведённых заказов</th>
-        <td>{{ report.repairs.count }}</td>
+        <td class="num">{{ report.repairs.count }}</td>
       </tr>
       {% if show_costs %}
         <tr>
           <th>Себестоимость выданного</th>
-          <td>{{ report.repairs.issued_cost }} ₽</td>
+          <td class="num--money">{{ report.repairs.issued_cost }} ₽</td>
         </tr>
       {% endif %}
     </tbody>
   </table>
-  <h2>
-    Возвраты на склад
-    <a href="{% url 'reports_export_returns' %}?{{ period_qs }}">CSV</a>
-  </h2>
-  <p class="muted">
+  <div class="page-header">
+    <h2 class="page-title">Возвраты на склад</h2>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_export_returns' %}?{{ period_qs }}">Экспорт CSV</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
     Возврат на склад: это не возврат денег. На выручку не влияет (финансовое сторно
     будет отдельным слоем); показано отдельно.
   </p>
@@ -141,31 +154,34 @@
     <tbody>
       <tr>
         <th>Документов возврата</th>
-        <td>{{ report.returns.count }}</td>
+        <td class="num">{{ report.returns.count }}</td>
       </tr>
       <tr>
         <th>Возвращено (кол-во)</th>
-        <td>{{ report.returns.quantity|floatformat:"-3" }}</td>
+        <td class="num--qty">{{ report.returns.quantity|floatformat:"-3" }}</td>
       </tr>
       {% if show_costs %}
         <tr>
           <th>Себестоимость возвращённого</th>
-          <td>{{ report.returns.cost }} ₽</td>
+          <td class="num--money">{{ report.returns.cost }} ₽</td>
         </tr>
       {% endif %}
     </tbody>
   </table>
-  <h2>
-    Списания
-    <a href="{% url 'reports_export_writeoffs' %}?{{ period_qs }}">CSV</a>
-  </h2>
+  <div class="page-header">
+    <h2 class="page-title">Списания</h2>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_export_writeoffs' %}?{{ period_qs }}">Экспорт CSV</a>
+    </div>
+  </div>
   <table class="table">
     <thead>
       <tr>
         <th>Причина</th>
-        <th>Документов</th>
+        <th class="num">Документов</th>
         {% if show_costs %}
-          <th>Себестоимость (₽)</th>
+          <th class="num--money">Себестоимость (₽)</th>
         {% endif %}
       </tr>
     </thead>
@@ -173,27 +189,30 @@
       {% for row in report.writeoffs.by_reason %}
         <tr>
           <td>{{ row.reason }}</td>
-          <td>{{ row.count }}</td>
+          <td class="num">{{ row.count }}</td>
           {% if show_costs %}
-            <td>{{ row.cost }}</td>
+            <td class="num--money">{{ row.cost }}</td>
           {% endif %}
         </tr>
       {% empty %}
         <tr>
-          <td colspan="3" class="muted">Списаний нет.</td>
+          <td colspan="3" class="muted">Списаний за период нет.</td>
         </tr>
       {% endfor %}
     </tbody>
   </table>
-  <h2>
-    Корректировки (инвентаризация)
-    <a href="{% url 'reports_export_stocktaking' %}?{{ period_qs }}">CSV</a>
-  </h2>
+  <div class="page-header">
+    <h2 class="page-title">Корректировки (инвентаризация)</h2>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_export_stocktaking' %}?{{ period_qs }}">Экспорт CSV</a>
+    </div>
+  </div>
   <table class="table">
     <tbody>
       <tr>
         <th>Проведённых инвентаризаций</th>
-        <td>{{ report.adjustments.count }}</td>
+        <td class="num">{{ report.adjustments.count }}</td>
       </tr>
       <tr>
         <th>Оприходовано (ADJUST +)</th>

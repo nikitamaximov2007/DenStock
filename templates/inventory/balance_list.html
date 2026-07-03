@@ -54,9 +54,6 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    <div class="empty">
-      <p class="empty__title">Остатков нет</p>
-      <p class="empty__text">Измените фильтры: кэш остатков пока пуст.</p>
-    </div>
+    {% include "partials/_empty_state.html" with icon="gauge" title="Остатков нет" text="Измените фильтры или примите детали на склад. Кэш остатков пересобирается из лотов и экземпляров." %}
   {% endif %}
 {% endblock %}

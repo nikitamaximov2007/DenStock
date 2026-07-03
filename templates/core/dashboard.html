@@ -47,30 +47,21 @@
       {% endif %}
     </section>
     {% if catalog_empty %}
-      <div class="empty">
-        <p class="empty__title">Деталей пока нет</p>
-        <p class="empty__text">Начните с добавления первой детали в каталог.</p>
-        {% if user.can_manage_parts %}
-          <div class="empty__actions">
-            <a class="btn btn--primary" href="{% url 'part_create' %}">Добавить деталь</a>
-          </div>
-        {% endif %}
-      </div>
+      {% if user.can_manage_parts %}
+        {% url 'part_create' as create_url %}
+      {% endif %}
+      {% include "partials/_empty_state.html" with icon="box" title="Деталей пока нет" text="Начните с добавления первой детали в каталог." action_url=create_url action_label="Добавить деталь" %}
     {% elif stock_empty %}
-      <div class="empty">
-        <p class="empty__title">На складе пока пусто</p>
-        <p class="empty__text">Детали есть в каталоге: примите их на склад.</p>
-        {% if user.can_manage_inventory %}
-          <div class="empty__actions">
-            <a class="btn btn--primary" href="{% url 'scanner_receiving' %}">Приёмка на склад</a>
-          </div>
-        {% endif %}
-      </div>
+      {% if user.can_manage_inventory %}
+        {% url 'scanner_receiving' as recv_url %}
+      {% endif %}
+      {% include "partials/_empty_state.html" with icon="warehouse" title="На складе пока пусто" text="Детали есть в каталоге: примите их на склад через приёмку." action_url=recv_url action_label="Приёмка на склад" %}
     {% else %}
       <div class="card">
         <div class="card__header">
           <h2 class="card__title">Требует внимания</h2>
-          <a href="{% url 'reports_stock' %}">Все остатки →</a>
+          <a class="btn btn--small btn--secondary"
+             href="{% url 'reports_stock' %}">Все остатки</a>
         </div>
         <div class="card__body">
           {% if low_rows %}
@@ -101,10 +92,7 @@
             </p>
           {% endif %}
           {% if not low_rows and not kpi_quarantine %}
-            <div class="empty">
-              <p class="empty__title">Всё в порядке</p>
-              <p class="empty__text">Низких остатков и карантина нет.</p>
-            </div>
+            {% include "partials/_empty_state.html" with icon="gauge" title="Всё в порядке" text="Низких остатков и карантина нет." %}
           {% endif %}
         </div>
       </div>
