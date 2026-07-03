@@ -9,7 +9,7 @@
       </div>
     {% endif %}
   </div>
-  <form method="get" class="filter-toolbar">
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
     <label>
       Статус
       <select name="status" onchange="this.form.submit()">
@@ -60,6 +60,6 @@
     {% if can_sell %}
       {% url 'sale_create' as create_url %}
     {% endif %}
-    {% include "partials/_empty_state.html" with icon="cart" title="Продаж нет" text="Измените фильтр статуса или оформите новую продажу." action_url=create_url action_label="Создать продажу" %}
+    {% include "partials/_empty_state.html" with icon="cart" title="Продаж нет" text="Измените фильтр статуса или оформите новую продажу." action_url=create_url action_label="Создать продажу" compact=1 %}
   {% endif %}
 {% endblock %}

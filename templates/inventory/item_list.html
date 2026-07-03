@@ -70,6 +70,6 @@
     {% if user.can_manage_inventory %}
       {% url 'scanner_receiving' as create_url %}
     {% endif %}
-    {% include "partials/_empty_state.html" with icon="grid" title="Экземпляров нет" text="Измените фильтры или примите детали на склад через приёмку." action_url=create_url action_label="Приёмка на склад" %}
+    {% include "partials/_empty_state.html" with icon="grid" title="Экземпляров нет" text="Измените фильтры или примите детали на склад через приёмку." action_url=create_url action_label="Приёмка на склад" compact=1 %}
   {% endif %}
 {% endblock %}

@@ -43,6 +43,6 @@
       </tbody>
     </table>
   {% else %}
-    {% include "partials/_empty_state.html" with icon="alert" title="Нераспознанных сканов нет" text="Все отсканированные коды сопоставлены с объектами. Здесь появятся коды, которые сканер не смог распознать." %}
+    {% include "partials/_empty_state.html" with icon="alert" title="Нераспознанных сканов нет" text="Все отсканированные коды сопоставлены с объектами. Здесь появятся коды, которые сканер не смог распознать." compact=1 %}
   {% endif %}
 {% endblock %}

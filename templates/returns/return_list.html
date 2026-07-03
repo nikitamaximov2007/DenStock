@@ -5,7 +5,7 @@
     <h1 class="page-title">Возвраты на склад</h1>
   </div>
   <p class="page-subtitle">Возврат оформляется из карточки продажи или ремонтного заказа кнопкой «Оформить возврат».</p>
-  <form method="get" class="filter-toolbar">
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
     <label>
       Статус
       <select name="status" onchange="this.form.submit()">
@@ -51,6 +51,6 @@
       </tbody>
     </table>
   {% else %}
-    {% include "partials/_empty_state.html" with icon="undo" title="Возвратов нет" text="Возвраты появятся здесь после оформления из карточки продажи или ремонтного заказа." %}
+    {% include "partials/_empty_state.html" with icon="undo" title="Возвратов нет" text="Возвраты появятся здесь после оформления из карточки продажи или ремонтного заказа." compact=1 %}
   {% endif %}
 {% endblock %}

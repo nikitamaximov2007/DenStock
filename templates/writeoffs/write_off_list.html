@@ -9,7 +9,7 @@
       </div>
     {% endif %}
   </div>
-  <form method="get" class="filter-toolbar">
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
     <label>
       Статус
       <select name="status" onchange="this.form.submit()">
@@ -58,6 +58,6 @@
     {% if can_manage %}
       {% url 'write_off_create' as create_url %}
     {% endif %}
-    {% include "partials/_empty_state.html" with icon="trash" title="Списаний нет" text="Измените фильтр статуса или создайте документ списания." action_url=create_url action_label="Создать списание" %}
+    {% include "partials/_empty_state.html" with icon="trash" title="Списаний нет" text="Измените фильтр статуса или создайте документ списания." action_url=create_url action_label="Создать списание" compact=1 %}
   {% endif %}
 {% endblock %}

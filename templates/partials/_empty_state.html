@@ -4,9 +4,10 @@
     title        : заголовок;
     text         : поясняющий текст «что делать дальше»;
     action_url   : ссылка главного действия (показывать только когда действие доступно);
-    action_label : подпись кнопки действия.
+    action_label : подпись кнопки действия;
+    compact      : True для компактной высоты (простые списки).
 {% endcomment %}
-<div class="empty">
+<div class="empty{% if compact %} empty--compact{% endif %}">
   {% if icon %}
     <span class="empty__icon">
       <svg class="icon" aria-hidden="true">

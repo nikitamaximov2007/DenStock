@@ -8,7 +8,7 @@
     Вы вошли как <strong>{{ user }}</strong>.
   </p>
   {% if has_reports %}
-    <section class="tiles" aria-label="Показатели склада">
+    <section class="tiles dashboard-section" aria-label="Показатели склада">
       <div class="tile">
         <div class="tile__label">Видов деталей</div>
         <div class="tile__value">{{ kpi_part_types }}</div>
@@ -46,70 +46,74 @@
         </div>
       {% endif %}
     </section>
-    {% if catalog_empty %}
-      {% if user.can_manage_parts %}
-        {% url 'part_create' as create_url %}
-      {% endif %}
-      {% include "partials/_empty_state.html" with icon="box" title="Деталей пока нет" text="Начните с добавления первой детали в каталог." action_url=create_url action_label="Добавить деталь" %}
-    {% elif stock_empty %}
-      {% if user.can_manage_inventory %}
-        {% url 'scanner_receiving' as recv_url %}
-      {% endif %}
-      {% include "partials/_empty_state.html" with icon="warehouse" title="На складе пока пусто" text="Детали есть в каталоге: примите их на склад через приёмку." action_url=recv_url action_label="Приёмка на склад" %}
-    {% else %}
-      <div class="card">
-        <div class="card__header">
-          <h2 class="card__title">Требует внимания</h2>
-          <a class="btn btn--small btn--secondary"
-             href="{% url 'reports_stock' %}">Все остатки</a>
-        </div>
-        <div class="card__body">
-          {% if low_rows %}
-            <p class="muted">Низкие остатки (доступно меньше минимума):</p>
-            <table class="table table--compact">
-              <thead>
-                <tr>
-                  <th>Деталь</th>
-                  <th class="num">Доступно</th>
-                  <th class="num">Минимум</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for r in low_rows %}
+    <div class="dashboard-section">
+      {% if catalog_empty %}
+        {% if user.can_manage_parts %}
+          {% url 'part_create' as create_url %}
+        {% endif %}
+        {% include "partials/_empty_state.html" with icon="box" title="Деталей пока нет" text="Начните с добавления первой детали в каталог." action_url=create_url action_label="Добавить деталь" %}
+      {% elif stock_empty %}
+        {% if user.can_manage_inventory %}
+          {% url 'scanner_receiving' as recv_url %}
+        {% endif %}
+        {% include "partials/_empty_state.html" with icon="warehouse" title="На складе пока пусто" text="Детали есть в каталоге: примите их на склад через приёмку." action_url=recv_url action_label="Приёмка на склад" %}
+      {% else %}
+        <div class="card">
+          <div class="card__header">
+            <h2 class="card__title">Требует внимания</h2>
+            <a class="btn btn--small btn--secondary"
+               href="{% url 'reports_stock' %}">Все остатки</a>
+          </div>
+          <div class="card__body">
+            {% if low_rows %}
+              <p class="muted">Низкие остатки (доступно меньше минимума):</p>
+              <table class="table table--compact">
+                <thead>
                   <tr>
-                    <td>{{ r.part_type }}</td>
-                    <td class="num">{{ r.available|floatformat:"-3" }}</td>
-                    <td class="num">{{ r.min_stock_level|floatformat:"-3" }}</td>
+                    <th>Деталь</th>
+                    <th class="num">Доступно</th>
+                    <th class="num">Минимум</th>
                   </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          {% endif %}
-          {% if kpi_quarantine %}
-            <p>
-              В карантине: <span class="num">{{ kpi_quarantine|floatformat:"-3" }}</span> ед.
-              (требуют проверки).
-            </p>
-          {% endif %}
-          {% if not low_rows and not kpi_quarantine %}
-            {% include "partials/_empty_state.html" with icon="gauge" title="Всё в порядке" text="Низких остатков и карантина нет." %}
-          {% endif %}
+                </thead>
+                <tbody>
+                  {% for r in low_rows %}
+                    <tr>
+                      <td>{{ r.part_type }}</td>
+                      <td class="num">{{ r.available|floatformat:"-3" }}</td>
+                      <td class="num">{{ r.min_stock_level|floatformat:"-3" }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            {% endif %}
+            {% if kpi_quarantine %}
+              <p>
+                В карантине: <span class="num">{{ kpi_quarantine|floatformat:"-3" }}</span> ед.
+                (требуют проверки).
+              </p>
+            {% endif %}
+            {% if not low_rows and not kpi_quarantine %}
+              {% include "partials/_empty_state.html" with icon="gauge" title="Всё в порядке" text="Низких остатков и карантина нет." compact=1 %}
+            {% endif %}
+          </div>
         </div>
-      </div>
-    {% endif %}
+      {% endif %}
+    </div>
   {% else %}
     <p class="muted">Выберите действие ниже или воспользуйтесь поиском детали.</p>
   {% endif %}
-  <div class="card">
-    <div class="card__header">
-      <h2 class="card__title">Быстрые действия</h2>
-    </div>
-    <div class="card__body">
-      <div class="page-header__actions">
-        {% for a in actions %}
-          <a class="btn {% if a.primary %}btn--primary{% else %}btn--secondary{% endif %}"
-             href="{{ a.url }}">{{ a.label }}</a>
-        {% endfor %}
+  <div class="dashboard-section">
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Быстрые действия</h2>
+      </div>
+      <div class="card__body">
+        <div class="quick-actions">
+          {% for a in actions %}
+            <a class="btn {% if a.primary %}btn--primary{% else %}btn--secondary{% endif %}"
+               href="{{ a.url }}">{{ a.label }}</a>
+          {% endfor %}
+        </div>
       </div>
     </div>
   </div>

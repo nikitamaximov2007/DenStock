@@ -9,7 +9,7 @@
       </div>
     {% endif %}
   </div>
-  <form method="get" class="filter-toolbar">
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
     <label>
       Статус
       <select name="status" onchange="this.form.submit()">
@@ -56,6 +56,6 @@
     {% if can_manage %}
       {% url 'inventory_count_create' as create_url %}
     {% endif %}
-    {% include "partials/_empty_state.html" with icon="clipboard" title="Инвентаризаций нет" text="Измените фильтр статуса или создайте новую инвентаризацию по ячейке." action_url=create_url action_label="Создать инвентаризацию" %}
+    {% include "partials/_empty_state.html" with icon="clipboard" title="Инвентаризаций нет" text="Измените фильтр статуса или создайте новую инвентаризацию по ячейке." action_url=create_url action_label="Создать инвентаризацию" compact=1 %}
   {% endif %}
 {% endblock %}

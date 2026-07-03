@@ -83,6 +83,6 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    {% include "partials/_empty_state.html" with icon="swap" title="Движений нет" text="Измените фильтры. Здесь отображается журнал складских движений: приёмка, перемещения, продажи, списания." %}
+    {% include "partials/_empty_state.html" with icon="swap" title="Движений нет" text="Измените фильтры. Здесь отображается журнал складских движений: приёмка, перемещения, продажи, списания." compact=1 %}
   {% endif %}
 {% endblock %}

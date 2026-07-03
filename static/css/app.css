@@ -472,3 +472,40 @@ form.toolbar input:focus, form.toolbar select:focus {
   .filter-toolbar input, .filter-toolbar select, .filter-toolbar .btn, .filter-toolbar button,
   form.toolbar input, form.toolbar select, form.toolbar .btn, form.toolbar button { width: 100%; }
 }
+
+/* ===========================================================================
+   v1.2.2 — Вертикальный ритм и компактность (без нового стиля).
+   Крупные секции: 24-32px; внутренние подблоки: 12-20px.
+   =========================================================================== */
+
+/* Dashboard: крупные секции читаются как отдельные группы. */
+.dashboard-section { margin-bottom: 28px; }
+.dashboard-section:last-child { margin-bottom: 0; }
+.dashboard-section > .card:last-child,
+.dashboard-section > .empty:last-child { margin-bottom: 0; }
+.quick-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Reports: отделяем аналитические секции друг от друга. */
+.reports-section { margin-top: 28px; }
+.report-columns { margin-top: 16px; }
+
+/* Компактный filter-toolbar для страниц с 1-2 фильтрами:
+   не растягивается в пустую белую полосу. */
+.filter-toolbar--compact { display: inline-flex; width: auto; max-width: 100%; padding: 10px 12px; }
+
+/* Компактный empty-state для простых списков (баланс воздуха). */
+.empty { padding: 30px 20px; }
+.empty--compact { padding: 20px; }
+.empty--compact .empty__icon { width: 40px; height: 40px; margin-bottom: 10px; }
+.empty--compact .empty__title { font-size: 15px; }
+.empty--compact .empty__text { margin-bottom: 10px; }
+
+/* Action panel: поле и кнопка одной высоты, спокойная подсказка. */
+.action-panel .search-form, .action-panel .scanner-page { align-items: stretch; }
+
+@media (max-width: 560px) {
+  .dashboard-section { margin-bottom: 20px; }
+  .reports-section { margin-top: 20px; }
+  /* На узком экране компактный toolbar снова во всю ширину. */
+  .filter-toolbar--compact { display: flex; width: 100%; }
+}

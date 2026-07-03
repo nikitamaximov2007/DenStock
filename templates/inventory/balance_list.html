@@ -54,6 +54,6 @@
     </table>
     {% include "partials/_pagination.html" %}
   {% else %}
-    {% include "partials/_empty_state.html" with icon="gauge" title="Остатков нет" text="Измените фильтры или примите детали на склад. Кэш остатков пересобирается из лотов и экземпляров." %}
+    {% include "partials/_empty_state.html" with icon="gauge" title="Остатков нет" text="Измените фильтры или примите детали на склад. Кэш остатков пересобирается из лотов и экземпляров." compact=1 %}
   {% endif %}
 {% endblock %}

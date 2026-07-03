@@ -45,6 +45,6 @@
     {% if can_manage %}
       {% url 'batch_create' as create_url %}
     {% endif %}
-    {% include "partials/_empty_state.html" with icon="layers" title="Партий нет" text="Измените фильтры или создайте новую партию поступления." action_url=create_url action_label="Новая партия" %}
+    {% include "partials/_empty_state.html" with icon="layers" title="Партий нет" text="Измените фильтры или создайте новую партию поступления." action_url=create_url action_label="Новая партия" compact=1 %}
   {% endif %}
 {% endblock %}
