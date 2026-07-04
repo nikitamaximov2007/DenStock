@@ -123,6 +123,13 @@ docker compose exec web python manage.py ops_check
 - **Забыли пароль администратора** — `docker compose exec web python manage.py changepassword <user>`.
 - **Проверка состояния** — `docker compose exec web python manage.py ops_check`.
 
+## Документация для пользователей
+
+- [Инструкция пользователя](docs/user-guide/denstock-user-manual.md): все разделы, сценарии, ошибки, глоссарий.
+- [Быстрый старт](docs/user-guide/quick-start.md): запуск склада с нуля за 8 шагов.
+- [Чеклист запуска](docs/user-guide/launch-checklist.md): что проверить перед реальной работой.
+- [База знаний для ChatGPT](docs/user-guide/denstock-chatgpt-context.md): файл для загрузки в ChatGPT-ассистента.
+
 ## Production / Operations docs
 
 - [Production deploy runbook](docs/operations/production-deploy-runbook.md) — пошаговый деплой на VPS.
