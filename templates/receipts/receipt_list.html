@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Поступления · DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Поступления</h1>
+    <div class="page-actions">
+      <a class="btn btn--primary" href="{% url 'receipt_create' %}">Новое поступление</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Документ прихода поставки: несколько позиций, себестоимость и ячейки. Черновик не
+    влияет на склад; остатки и движения появляются после проведения.
+  </p>
+  <form method="get" class="filter-toolbar">
+    <label>
+      Статус
+      <select name="status" onchange="this.form.submit()">
+        <option value="">Все</option>
+        {% for value, label in statuses %}
+          <option value="{{ value }}" {% if value == status %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Поиск
+      <input type="search"
+             name="q"
+             value="{{ q }}"
+             placeholder="Номер, поставщик, комментарий…">
+    </label>
+    <button type="submit">Найти</button>
+  </form>
+  {% if receipts %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Номер</th>
+          <th>Дата</th>
+          <th>Поставщик</th>
+          <th>Статус</th>
+          <th class="num">Позиций</th>
+          {% if show_costs %}<th class="num--money">Сумма (₽)</th>{% endif %}
+          <th>Создал</th>
+          <th>Проведено</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in receipts %}
+          <tr>
+            <td>
+              <a href="{% url 'receipt_detail' r.pk %}">{{ r.number }}</a>
+            </td>
+            <td>{{ r.received_at|ru_date|default:"·" }}</td>
+            <td>{{ r.supplier|default:"·" }}</td>
+            <td>
+              {% if r.status == "posted" %}
+                <span class="pill pill--success">{{ r.get_status_display }}</span>
+              {% else %}
+                <span class="pill pill--muted">{{ r.get_status_display }}</span>
+              {% endif %}
+            </td>
+            <td class="num">{{ r.line_count }}</td>
+            {% if show_costs %}<td class="num--money">{{ r.cost_total|default:"0.00" }}</td>{% endif %}
+            <td>{{ r.created_by|default:"·" }}</td>
+            <td>
+              {% if r.posted_at %}
+                {{ r.posted_at|ru_dt }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% url 'receipt_create' as create_url %}
+    {% include "partials/_empty_state.html" with icon="inbox" title="Поступлений пока нет" text="Создайте первый документ прихода: позиции, себестоимость и ячейки в одном месте." action_url=create_url action_label="Новое поступление" compact=1 %}
+  {% endif %}
+{% endblock %}

@@ -5,6 +5,7 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
@@ -82,6 +83,12 @@ class PartTypeCreateView(ManagePartsMixin, CreateView):
 
     def get_success_url(self):
         messages.success(self.request, "Деталь создана.")
+        # Layer 28: возврат в вызвавший экран (например, черновик поступления)
+        # с pk созданной детали. Только безопасные relative-URL.
+        nxt = self.request.GET.get("next") or ""
+        if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts=None):
+            sep = "&" if "?" in nxt else "?"
+            return f"{nxt}{sep}new_part={self.object.pk}"
         return reverse("part_detail", args=[self.object.pk])
 
 

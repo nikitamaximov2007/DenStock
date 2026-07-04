@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block title %}Поступление {{ receipt.number }} · DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Поступление {{ receipt.number }}</h1>
+    <div class="page-actions">
+      {% if is_draft %}
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'receipt_edit' receipt.pk %}">Шапка</a>
+      {% endif %}
+      <a class="btn btn--small btn--secondary" href="{% url 'receipt_list' %}">К списку</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    {% if is_draft %}
+      <span class="pill pill--muted">Черновик</span>
+      Черновик не влияет на склад: остатки и движения появятся после проведения.
+    {% else %}
+      <span class="pill pill--success">Проведено</span>
+      {% if receipt.posted_at %}{{ receipt.posted_at|ru_dt }}{% endif %}
+      {% if receipt.posted_by %}· {{ receipt.posted_by }}{% endif %}
+      · документ только для чтения.
+    {% endif %}
+  </p>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Документ</h2>
+    </div>
+    <div class="card__body">
+      <p>
+        Поставщик: <strong>{{ receipt.supplier|default:"не выбран" }}</strong>
+        · Дата: {{ receipt.received_at|ru_date|default:"·" }}
+        · Создал: {{ receipt.created_by|default:"·" }}
+      </p>
+      {% if receipt.comment %}<p class="muted">{{ receipt.comment }}</p>{% endif %}
+      <p class="muted">
+        Позиций: {{ totals.lines }} · Количество: {{ totals.quantity|floatformat:"-3" }}
+        {% if show_costs %}· Сумма себестоимости: {{ totals.cost }} ₽{% endif %}
+      </p>
+    </div>
+  </div>
+  {% if lines %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th>Учёт</th>
+          <th class="num--qty">Кол-во</th>
+          <th class="num--money">Цена за ед. (₽)</th>
+          <th class="num--money">Сумма (₽)</th>
+          <th>Ячейка</th>
+          <th>Комментарий</th>
+          {% if is_draft %}<th></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+          <tr>
+            <td>
+              <a href="{% url 'part_detail' line.part_type_id %}">{{ line.part_type }}</a>
+            </td>
+            <td>{{ line.part_type.get_tracking_mode_display }}</td>
+            <td class="num--qty">{{ line.quantity|floatformat:"-3" }}</td>
+            <td class="num--money">{{ line.unit_cost_rub }}</td>
+            <td class="num--money">{{ line.total_cost_rub|floatformat:2 }}</td>
+            <td>
+              <span class="code-pill">{{ line.location.code }}</span>
+            </td>
+            <td>{{ line.comment|default:"·" }}</td>
+            {% if is_draft %}
+              <td class="table__actions">
+                <a class="btn btn--small btn--secondary"
+                   href="{% url 'receipt_line_edit' line.pk %}">Изменить</a>
+                <form method="post"
+                      action="{% url 'receipt_remove_line' line.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit">Удалить</button>
+                </form>
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="inbox" title="Позиций пока нет" text="Добавьте позиции: деталь, количество, себестоимость и ячейку хранения." compact=1 %}
+  {% endif %}
+  {% if is_draft %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Добавить позицию</h2>
+        {% if can_manage_parts %}
+          <a class="btn btn--small btn--secondary"
+             href="{% url 'part_create' %}?next={% url 'receipt_detail' receipt.pk %}">+ Новая деталь</a>
+        {% endif %}
+      </div>
+      <div class="card__body">
+        <form method="post"
+              action="{% url 'receipt_add_line' receipt.pk %}"
+              class="form">
+          {% csrf_token %}
+          <div class="form-grid form-grid--2">{{ line_form.as_p }}</div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn--secondary">Добавить позицию</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Проведение</h2>
+      </div>
+      <div class="card__body">
+        <p class="muted">
+          Проведение создаст партию, зафиксирует себестоимость и поставит позиции на
+          склад (экземпляры или лоты) с движениями прихода. Провести можно один раз;
+          после проведения документ станет только для чтения.
+        </p>
+        <form method="post" action="{% url 'receipt_post' receipt.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--primary">Провести поступление</button>
+        </form>
+      </div>
+    </div>
+  {% else %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Создано при проведении</h2>
+      </div>
+      <div class="card__body">
+        <p>
+          Партия:
+          {% if receipt.batch %}
+            <a href="{% url 'batch_detail' receipt.batch_id %}">{{ receipt.batch.number }}</a>
+            <span class="pill pill--success">себестоимость зафиксирована</span>
+          {% else %}
+            ·
+          {% endif %}
+          · Движений: {{ movement_count }}
+          {% if receipt.batch %}
+            (<a href="{% url 'movement_list' %}?batch={{ receipt.batch_id }}">журнал</a>)
+          {% endif %}
+        </p>
+        {% if created_items %}
+          <h3>Экземпляры ({{ created_items|length }})</h3>
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>Номер</th>
+                <th>Деталь</th>
+                <th>Статус</th>
+                <th>Ячейка</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in created_items %}
+                <tr>
+                  <td>
+                    <a href="{% url 'item_detail' item.pk %}">{{ item.internal_number }}</a>
+                  </td>
+                  <td>{{ item.part_type }}</td>
+                  <td>{{ item.get_status_display }}</td>
+                  <td>
+                    {% if item.current_location %}
+                      <span class="code-pill">{{ item.current_location.code }}</span>
+                    {% else %}
+                      ·
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+        {% if created_lots %}
+          <h3>Лоты ({{ created_lots|length }})</h3>
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>Лот</th>
+                <th>Деталь</th>
+                <th class="num--qty">Кол-во</th>
+                <th>Статус</th>
+                <th>Ячейка</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for lot in created_lots %}
+                <tr>
+                  <td>
+                    <a href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
+                  </td>
+                  <td>{{ lot.part_type }}</td>
+                  <td class="num--qty">{{ lot.quantity|floatformat:"-3" }}</td>
+                  <td>{{ lot.get_status_display }}</td>
+                  <td>
+                    <span class="code-pill">{{ lot.location.code }}</span>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

@@ -22,6 +22,8 @@ ADMIN_PAGES = [
     "scanner",
     "part_list",
     "batch_list",
+    "receipt_list",
+    "receipt_create",
     "item_list",
     "lot_list",
     "movement_list",
@@ -91,13 +93,12 @@ def test_desktop_sidebar_groups_open(admin_client):
     assert open_groups >= groups  # каждая группа раскрыта
 
 
-def test_soon_items_remain_stubs(admin_client):
-    """«Поступление» остаётся заглушкой; «Статистика» с Layer 27 — активная ссылка."""
+def test_no_stub_items_left(admin_client):
+    """С Layer 28 в меню не осталось заглушек: все пункты — активные ссылки."""
     html = admin_client.get(reverse("dashboard")).content.decode()
-    assert "Поступление" in html
-    assert "скоро" in html
-    assert "nav__link--soon" in html
-    assert 'href="/statistics/"' in html  # Статистика активирована
+    assert "nav__link--soon" not in html
+    assert 'href="/statistics/"' in html  # Статистика (Layer 27)
+    assert 'href="/receipts/"' in html  # Поступление (Layer 28)
 
 
 def test_backups_ui_has_no_web_restore(admin_client):

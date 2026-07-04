@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+    {% if back_url_pk %}
+      <div class="page-actions">
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'receipt_detail' back_url_pk %}">К поступлению</a>
+      </div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">{{ submit_label|default:"Сохранить" }}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

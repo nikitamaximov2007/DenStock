@@ -35,6 +35,8 @@ def _nav_items(user):
         add({"label": "Остатки", "url": reverse("balance_list"), "stub": False,
              "icon": "gauge", "group": "Склад"})
     if user.can_manage_inventory:
+        add({"label": "Поступление", "url": reverse("receipt_list"), "stub": False,
+             "icon": "inbox", "group": "Склад"})
         add({"label": "Приёмка сканером", "url": reverse("scanner_receiving"), "stub": False,
              "icon": "inbox", "group": "Склад"})
         add({"label": "Перемещение", "url": reverse("scanner_move"), "stub": False,
@@ -58,9 +60,6 @@ def _nav_items(user):
          "icon": "book", "group": "Каталог"})
     add({"label": "Склад", "url": reverse("warehouse_index"), "stub": False,
          "icon": "warehouse", "group": "Склад"})
-    if user.is_storekeeper or user.is_admin:
-        add({"label": "Поступление", "url": None, "stub": True,
-             "icon": "inbox", "group": "Администрирование"})
     if user.can_view_finance:
         add({"label": "Статистика", "url": reverse("statistics_dashboard"), "stub": False,
              "icon": "gauge", "group": "Аналитика"})
