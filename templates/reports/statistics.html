@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block title %}Статистика · DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Статистика склада</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'reports_dashboard' %}">Отчёты за период</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Текущее состояние склада и подсказки: сколько денег лежит, что ходовое, что залежалось,
+    что заканчивается. Отчёты показывают операции за период, статистика: срез сейчас.
+  </p>
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
+    <div class="filter-field">
+      <span class="filter-label">Период (ходовые, активность, залежавшиеся)</span>
+      <div class="segmented">
+        {% for value, label in presets %}
+          <a href="?period={{ value }}"
+             class="{% if period.preset == value %}is-active{% endif %}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  </form>
+  <section class="tiles dashboard-section"
+           aria-label="Ключевые показатели склада">
+    <div class="tile">
+      <div class="tile__label">Стоимость склада, ₽</div>
+      <div class="tile__value num">{{ stats.kpi.stock_cost }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Потенциальная выручка, ₽</div>
+      <div class="tile__value num">{{ stats.kpi.potential_revenue }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Видов на складе</div>
+      <div class="tile__value">{{ stats.kpi.part_types_with_stock }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Доступно, ед.</div>
+      <div class="tile__value num">{{ stats.kpi.total_available|floatformat:"-3" }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Активных резервов</div>
+      <div class="tile__value">{{ stats.kpi.active_reservations }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Низкие остатки</div>
+      <div class="tile__value">
+        {% if stats.kpi.low_stock_count %}
+          <span class="pill pill--danger">{{ stats.kpi.low_stock_count }}</span>
+        {% else %}
+          <span class="pill pill--muted">0</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Без движения</div>
+      <div class="tile__value">
+        {% if stats.kpi.stale_count %}
+          <span class="pill pill--warning">{{ stats.kpi.stale_count }}</span>
+        {% else %}
+          <span class="pill pill--muted">0</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Ячеек с товаром</div>
+      <div class="tile__value">{{ stats.kpi.locations_with_stock }}</div>
+    </div>
+  </section>
+  <div class="page-header reports-section">
+    <h2 class="page-title">Деньги в складе</h2>
+  </div>
+  {% if stats.kpi.stock_cost > 0 or stats.top_parts_by_value %}
+    <div class="report-columns">
+      <div>
+        <h3>Стоимость по категориям</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Категория</th>
+              <th class="num--money">Стоимость (₽)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in stats.value_by_category %}
+              <tr>
+                <td>{{ row.name }}</td>
+                <td class="num--money">{{ row.value }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="2" class="muted">Нет оценённых остатков.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Топ деталей по стоимости остатка</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Деталь</th>
+              <th class="num--money">Стоимость (₽)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in stats.top_parts_by_value %}
+              <tr>
+                <td>
+                  <a href="{% url 'part_detail' row.pk %}">{{ row.name }}</a>
+                </td>
+                <td class="num--money">{{ row.value }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="2" class="muted">Нет оценённых остатков.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% if stats.kpi.unvalued_count %}
+      <p class="muted">
+        Не оценено (без себестоимости): {{ stats.kpi.unvalued_count }} поз.
+        Стоимость склада посчитана только по оценённым остаткам.
+      </p>
+    {% endif %}
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="database" title="Оценённых остатков нет" text="Стоимость появится после приёмки партий с финализированной себестоимостью." compact=1 %}
+  {% endif %}
+  <div class="page-header reports-section">
+    <h2 class="page-title">Низкие остатки</h2>
+  </div>
+  {% if stats.low_stock %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th class="num--qty">Доступно</th>
+          <th class="num--qty">Минимум</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.low_stock %}
+          <tr>
+            <td>
+              <a href="{% url 'part_detail' row.pk %}">{{ row.name }}</a>
+            </td>
+            <td class="num--qty">{{ row.available|floatformat:"-3" }}</td>
+            <td class="num--qty">{{ row.min_stock_level|floatformat:"-3" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="gauge" title="Низких остатков нет" text="Детали с заданным минимумом остатка в норме. Минимум задаётся в карточке детали." compact=1 %}
+  {% endif %}
+  <div class="page-header reports-section">
+    <h2 class="page-title">Залежавшиеся позиции</h2>
+  </div>
+  <p class="page-subtitle">
+    Есть остаток, но нет движений
+    {% if period.days %}
+      дольше {{ period.days }} дней.
+    {% else %}
+      дольше 90 дней.
+    {% endif %}
+  </p>
+  {% if stats.stale %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th class="num--qty">Доступно</th>
+          <th class="num--money">Стоимость (₽)</th>
+          <th>Последнее движение</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.stale %}
+          <tr>
+            <td>
+              <a href="{% url 'part_detail' row.pk %}">{{ row.name }}</a>
+            </td>
+            <td class="num--qty">{{ row.available|floatformat:"-3" }}</td>
+            <td class="num--money">{{ row.value }}</td>
+            <td>
+              {% if row.last_movement %}
+                {{ row.last_movement|ru_dt }}
+              {% else %}
+                <span class="pill pill--muted">движений не было</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="swap" title="Залежавшихся позиций нет" text="Все остатки двигались за выбранный порог. Мёртвый склад появится здесь." compact=1 %}
+  {% endif %}
+  <div class="page-header reports-section">
+    <h2 class="page-title">Ходовые позиции</h2>
+    <span class="muted">за период: {{ period.label }}</span>
+  </div>
+  {% if stats.movers %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Деталь</th>
+          <th class="num--qty">Продано</th>
+          <th class="num--money">Выручка (₽)</th>
+          <th class="num--money">Прибыль (₽)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.movers %}
+          <tr>
+            <td>{{ row.name }}</td>
+            <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+            <td class="num--money">{{ row.revenue }}</td>
+            <td class="num--money">{{ row.profit }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="cart" title="Продаж за период нет" text="Ходовые позиции появятся после проведённых продаж за выбранный период." compact=1 %}
+  {% endif %}
+  <div class="page-header reports-section">
+    <h2 class="page-title">Резервы, требующие внимания</h2>
+  </div>
+  {% if stats.attention_reservations %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Номер</th>
+          <th>Клиент</th>
+          <th>Телефон</th>
+          <th>Действует до</th>
+          <th>Состояние</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in stats.attention_reservations %}
+          <tr>
+            <td>
+              <a href="{% url 'reservation_detail' row.reservation.pk %}">{{ row.reservation.number }}</a>
+            </td>
+            <td>{{ row.reservation.customer_name }}</td>
+            <td>{{ row.reservation.customer_phone|default:"·" }}</td>
+            <td>
+              {% if row.reservation.expires_at %}
+                {{ row.reservation.expires_at|ru_dt }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+            <td>
+              {% if row.expired %}
+                <span class="pill pill--danger">просрочен</span>
+              {% elif row.expiring_soon %}
+                <span class="pill pill--warning">истекает</span>
+              {% else %}
+                <span class="pill pill--success">активен</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="bookmark" title="Активных резервов нет" text="Здесь появятся активные резервы: просроченные и истекающие будут подсвечены." compact=1 %}
+  {% endif %}
+  <div class="page-header reports-section">
+    <h2 class="page-title">Активность склада</h2>
+    <span class="muted">за период: {{ period.label }}</span>
+  </div>
+  {% if stats.activity_total %}
+    <table class="table table--compact">
+      <tbody>
+        {% for row in stats.activity %}
+          <tr>
+            <th>{{ row.label }}</th>
+            <td class="num">{{ row.count }}</td>
+          </tr>
+        {% endfor %}
+        <tr>
+          <th>Всего движений</th>
+          <td class="num">
+            <strong>{{ stats.activity_total }}</strong>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="swap" title="Движений за период нет" text="Активность появится после приёмок, перемещений, продаж и списаний." compact=1 %}
+  {% endif %}
+{% endblock %}

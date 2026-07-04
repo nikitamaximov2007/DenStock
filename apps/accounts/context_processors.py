@@ -62,8 +62,8 @@ def _nav_items(user):
         add({"label": "Поступление", "url": None, "stub": True,
              "icon": "inbox", "group": "Администрирование"})
     if user.can_view_finance:
-        add({"label": "Статистика", "url": None, "stub": True,
-             "icon": "chart", "group": "Аналитика"})
+        add({"label": "Статистика", "url": reverse("statistics_dashboard"), "stub": False,
+             "icon": "gauge", "group": "Аналитика"})
     if user.is_admin or user.is_manager:
         add({"label": "Нераспознанные", "url": reverse("unresolved_list"), "stub": False,
              "icon": "alert", "group": "Администрирование"})

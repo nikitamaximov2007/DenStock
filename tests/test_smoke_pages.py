@@ -36,6 +36,7 @@ ADMIN_PAGES = [
     "inventory_count_list",
     "reports_dashboard",
     "reports_stock",
+    "statistics_dashboard",
     "directory_index",
     "category_list",
     "manufacturer_list",
@@ -91,12 +92,12 @@ def test_desktop_sidebar_groups_open(admin_client):
 
 
 def test_soon_items_remain_stubs(admin_client):
-    """Серые пункты присутствуют, но без перехода (метка «скоро»)."""
+    """«Поступление» остаётся заглушкой; «Статистика» с Layer 27 — активная ссылка."""
     html = admin_client.get(reverse("dashboard")).content.decode()
     assert "Поступление" in html
-    assert "Статистика" in html
     assert "скоро" in html
     assert "nav__link--soon" in html
+    assert 'href="/statistics/"' in html  # Статистика активирована
 
 
 def test_backups_ui_has_no_web_restore(admin_client):

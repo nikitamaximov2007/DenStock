@@ -21,6 +21,7 @@ from .services import (
     get_writeoffs_report,
     resolve_period,
 )
+from .statistics import STATS_PRESETS, get_statistics, resolve_stats_period
 
 _PRESETS = [("today", "Сегодня"), ("7", "7 дней"), ("30", "30 дней"), ("month", "Месяц")]
 
@@ -28,6 +29,29 @@ _PRESETS = [("today", "Сегодня"), ("7", "7 дней"), ("30", "30 дне�
 def _require_reports(request) -> None:
     if not request.user.can_view_reports:
         raise PermissionDenied
+
+
+def _require_finance(request) -> None:
+    if not request.user.can_view_finance:
+        raise PermissionDenied
+
+
+# --- Layer 27: «Статистика» — срез состояния склада (read-only) ----------------
+
+
+@login_required
+def statistics_dashboard(request):
+    _require_finance(request)
+    period = resolve_stats_period(request.GET)
+    return render(
+        request,
+        "reports/statistics.html",
+        {
+            "stats": get_statistics(period),
+            "period": period,
+            "presets": STATS_PRESETS,
+        },
+    )
 
 
 @login_required
