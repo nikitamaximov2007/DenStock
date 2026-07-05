@@ -1,7 +1,10 @@
 """v1.1.7 — Backup UI (owner/admin only, read-only + создание локального бэкапа).
 
-Web-restore специально отсутствует. Скачивание — только разрешённые файлы из backup-run
-(защита от path traversal). Складская логика не затрагивается.
+Скачивание — только разрешённые файлы из backup-run (защита от path traversal).
+Складская логика не затрагивается. С Layer 30 существует защищённое веб-
+восстановление, но ТОЛЬКО для allowlist-владельца при включённом флаге
+(tests/test_web_restore.py); для обычных админов и остальных ролей web-restore
+по-прежнему отсутствует — это и проверяют тесты ниже.
 """
 import json
 from pathlib import Path
@@ -216,6 +219,8 @@ def test_offsite_not_configured(make_user, client, backups_root):
 
 
 def test_no_web_restore_url():
+    """Массовых restore-эндпоинтов нет. Защищённый operations:backup_restore
+    (Layer 30) существует, но гейтится флагом+allowlist — см. test_web_restore."""
     for name in ("operations:restore_db", "operations:restore_media", "operations:restore"):
         with pytest.raises(NoReverseMatch):
             reverse(name)

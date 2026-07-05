@@ -60,7 +60,10 @@ def test_chatgpt_context_is_honest():
     text = CHATGPT.read_text(encoding="utf-8")
     # Ключевые ограничения, которые ассистент не должен «изобретать».
     assert "Отмены проведённой продажи нет" in text
-    assert "Восстановления/загрузки/импорта в веб-интерфейсе НЕТ" in text
+    # Layer 30: web-restore есть ТОЛЬКО у allowlist-владельца; upload нет ни у кого.
+    assert "Аварийное восстановление" in text
+    assert "ПОДТВЕРЖДАЮ" in text
+    assert "pre-restore" in text
     assert "Не выдумывай функции" in text
     # Карта ролей присутствует.
     for role in ("Администратор", "Руководитель", "Кладовщик", "Продавец", "Наблюдатель"):

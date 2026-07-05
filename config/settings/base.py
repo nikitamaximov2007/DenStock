@@ -126,6 +126,18 @@ MEDIA_ROOT = BASE_DIR / "mediafiles"
 # Каталог резервных копий (БД + media). Не коммитится (см. .gitignore).
 BACKUP_ROOT = Path(env("BACKUP_ROOT", default=str(BASE_DIR / "backups")))
 
+# --- Layer 30: аварийное веб-восстановление ----------------------------------
+# По умолчанию ВЫКЛЮЧЕНО. Даже при включённом флаге restore видит только
+# администратор из allowlist (email или username). Никаких секретов в Git:
+# значения задаются через .env на сервере.
+DENSTOCK_ENABLE_WEB_RESTORE = env.bool("DENSTOCK_ENABLE_WEB_RESTORE", default=False)
+DENSTOCK_RESTORE_ALLOWED_EMAILS = env.list(
+    "DENSTOCK_RESTORE_ALLOWED_EMAILS", default=["nikita.maximov2007@gmail.com"]
+)
+DENSTOCK_RESTORE_ALLOWED_USERNAMES = env.list(
+    "DENSTOCK_RESTORE_ALLOWED_USERNAMES", default=[]
+)
+
 # --- Аутентификация (маршруты) ---------------------------------------------
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "dashboard"

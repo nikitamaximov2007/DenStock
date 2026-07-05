@@ -102,7 +102,9 @@ def test_no_stub_items_left(admin_client):
 
 
 def test_backups_ui_has_no_web_restore(admin_client):
-    """В UI бэкапов нет web-восстановления/загрузки/импорта (только CLI-инструкция)."""
+    """Для ОБЫЧНОГО администратора (без allowlist, флаг выключен) в UI бэкапов
+    нет восстановления/загрузки/импорта. Защищённый restore для allowlist-
+    владельца проверяется в tests/test_web_restore.py."""
     html = admin_client.get(reverse("operations:backups")).content.decode()
     lowered = html.lower()
     assert 'type="file"' not in lowered  # нет формы загрузки бэкапа

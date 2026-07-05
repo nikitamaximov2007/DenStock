@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Результат восстановления · DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Результат восстановления</h1>
+  </div>
+  {% if job.status == "completed" %}
+    <div class="status-card status-card--ok">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Восстановление завершено</p>
+        <p class="status-card__meta">
+          Бэкап {{ job.run_id }} восстановлен. Pre-restore копия прежних данных:
+          {{ job.pre_restore_run_id }}.
+        </p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Что проверить сейчас</h2>
+      </div>
+      <div class="card__body">
+        <ol>
+          <li>Войти заново (сессии сброшены восстановлением).</li>
+          <li>Проверить Главную.</li>
+          <li>Проверить Остатки.</li>
+          <li>Проверить Движения.</li>
+          <li>Проверить Статистику.</li>
+          <li>Создать новый бэкап в разделе «Бэкапы».</li>
+        </ol>
+        <a class="btn btn--primary" href="{% url 'login' %}">Войти заново</a>
+      </div>
+    </div>
+  {% else %}
+    <div class="status-card status-card--danger">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Восстановление НЕ выполнено</p>
+        <p class="status-card__meta">{{ job.error }}</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__body">
+        {% if job.pre_restore_run_id %}
+          <p>
+            Pre-restore бэкап текущих данных создан:
+            <span class="code-pill">{{ job.pre_restore_run_id }}</span>.
+            Если база пострадала, восстановите его по runbook
+            (docs/operations/restore-runbook.md).
+          </p>
+        {% else %}
+          <p class="muted">Ошибка произошла до изменения данных: текущая база не тронута.</p>
+        {% endif %}
+        <a class="btn btn--secondary" href="{% url 'operations:backups' %}">К бэкапам</a>
+      </div>
+    </div>
+  {% endif %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Журнал операции</h2>
+    </div>
+    <div class="card__body">
+      <pre class="muted" style="white-space: pre-wrap">{{ job.log }}</pre>
+    </div>
+  </div>
+{% endblock %}

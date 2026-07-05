@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Восстановление {{ run_id }} · DenStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Восстановление из бэкапа</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'operations:backups' %}">К бэкапам</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Бэкап: <span class="code-pill">{{ run_id }}</span>
+    {% if report.manifest.created_at %}· создан {{ report.manifest.created_at|ru_dts }}{% endif %}
+  </p>
+  <div class="status-card status-card--danger">
+    <span class="status-card__dot"></span>
+    <div class="status-card__body">
+      <p class="status-card__title">Это перезапишет текущую базу и файлы media</p>
+      <p class="status-card__meta">
+        Все данные, введённые после даты бэкапа, исчезнут из системы (останутся
+        только в pre-restore бэкапе). Перед восстановлением система автоматически
+        создаст pre-restore бэкап текущего состояния; без него восстановление не
+        запустится. После операции проверьте вход, Главную, Остатки, Движения,
+        Статистику и создайте новый бэкап.
+      </p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Проверка бэкапа</h2>
+    </div>
+    <div class="card__body">
+      <table class="table table--compact">
+        <tbody>
+          {% for label, state in report.checks %}
+            <tr>
+              <td>{{ label }}</td>
+              <td class="table__actions">
+                {% if state == "ok" %}
+                  <span class="pill pill--success">ок</span>
+                {% elif state == "warn" %}
+                  <span class="pill pill--warning">внимание</span>
+                {% else %}
+                  <span class="pill pill--danger">ошибка</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if report.ok %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Подтверждение восстановления</h2>
+      </div>
+      <div class="card__body">
+        <p class="muted">
+          Что произойдёт по шагам: 1) pre-restore бэкап текущих данных;
+          2) восстановление базы из «{{ report.db_file }}»;
+          {% if report.media_file %}
+            3) восстановление media из «{{ report.media_file }}»;
+          {% else %}
+            3) media в бэкапе нет, файлы не трогаются;
+          {% endif %}
+          4) применение миграций. Операция занимает время: не закрывайте страницу.
+        </p>
+        <form method="post" class="form">
+          {% csrf_token %}
+          <div class="field">
+            <label class="field__label" for="confirm-phrase">
+              Введите слово {{ confirm_phrase }} (заглавными), чтобы разрешить запуск
+            </label>
+            <input id="confirm-phrase"
+                   name="confirm_phrase"
+                   type="text"
+                   autocomplete="off"
+                   placeholder="{{ confirm_phrase }}">
+          </div>
+          <div class="field">
+            <label>
+              <input type="checkbox" name="accept_risk">
+              Я понимаю, что текущие данные будут перезаписаны
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn--danger">Восстановить из этого бэкапа</button>
+            <a class="btn btn--secondary" href="{% url 'operations:backups' %}">Отмена</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% else %}
+    {% include "partials/_status_block.html" with kind="error" text="Бэкап не прошёл проверку: восстановление из него запрещено. Выберите другой бэкап или разберитесь с ошибками выше." %}
+  {% endif %}
+{% endblock %}

@@ -153,6 +153,134 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="database" title="Бэкапов пока нет" text="Нажмите «Экспорт бэкапа» выше или настройте автоматический бэкап на сервере." compact=1 %}
   {% endif %}
+  {% if can_restore %}
+    <div class="page-header reports-section">
+      <h2 class="page-title">Аварийное восстановление</h2>
+    </div>
+    <div class="status-card status-card--danger">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Опасная зона: восстановление перезапишет текущие данные</p>
+        <p class="status-card__meta">
+          Восстановление заменит текущую базу и файлы media содержимым выбранного
+          бэкапа. Перед запуском система обязательно создаст pre-restore бэкап
+          текущего состояния. Раздел виден только владельцу из allowlist;
+          запуск требует проверки бэкапа и фразы {{ "ПОДТВЕРЖДАЮ" }}.
+        </p>
+      </div>
+    </div>
+    {% if runs %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Бэкап</th>
+            <th>Дата</th>
+            <th>Тип</th>
+            <th class="num">Размер, б</th>
+            <th>Manifest</th>
+            <th>БД</th>
+            <th>Media</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in runs %}
+            <tr>
+              <td>
+                <span class="code-pill">{{ r.run_id }}</span>
+                {% if r.is_old %}<span class="pill pill--warning">старый</span>{% endif %}
+              </td>
+              <td>
+                {% if r.manifest.created_at %}
+                  {{ r.manifest.created_at|ru_dts }}
+                {% else %}
+                  {{ r.run_id|ru_dts }}
+                {% endif %}
+              </td>
+              <td>
+                <span class="pill {{ r.type_pill }}">{{ r.type_label }}</span>
+              </td>
+              <td class="num">{{ r.total_size }}</td>
+              <td>
+                {% if r.has_manifest %}
+                  <span class="pill pill--success">есть</span>
+                {% else %}
+                  <span class="pill pill--danger">нет</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.has_db %}
+                  <span class="pill pill--success">есть</span>
+                {% else %}
+                  <span class="pill pill--danger">нет</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.has_media %}
+                  <span class="pill pill--success">есть</span>
+                {% else %}
+                  <span class="pill pill--muted">нет</span>
+                {% endif %}
+              </td>
+              <td class="table__actions">
+                <a class="btn btn--small btn--secondary"
+                   href="{% url 'operations:backup_restore' r.run_id %}">Проверить бэкап</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Локальных бэкапов нет: восстанавливать нечего.</p>
+    {% endif %}
+    {% if restore_jobs %}
+      <div class="card">
+        <div class="card__header">
+          <h2 class="card__title">Журнал восстановлений</h2>
+        </div>
+        <div class="card__body">
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>Когда</th>
+                <th>Кто</th>
+                <th>Бэкап</th>
+                <th>Pre-restore</th>
+                <th>Статус</th>
+                <th>Ошибка</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for job in restore_jobs %}
+                <tr>
+                  <td>{{ job.finished_at|ru_dts|default:"·" }}</td>
+                  <td>{{ job.started_by_username|default:"·" }}</td>
+                  <td>
+                    <span class="code-pill">{{ job.run_id }}</span>
+                  </td>
+                  <td>
+                    {% if job.pre_restore_run_id %}
+                      <span class="code-pill">{{ job.pre_restore_run_id }}</span>
+                    {% else %}
+                      ·
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if job.status == "completed" %}
+                      <span class="pill pill--success">{{ job.get_status_display }}</span>
+                    {% else %}
+                      <span class="pill pill--danger">{{ job.get_status_display }}</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ job.error|default:"·" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
   <div class="card">
     <div class="card__header">
       <h2 class="card__title">Как восстановить на новом сервере (только CLI)</h2>

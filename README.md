@@ -134,6 +134,7 @@ docker compose exec web python manage.py ops_check
 
 - [Production deploy runbook](docs/operations/production-deploy-runbook.md) — пошаговый деплой на VPS.
 - [Post-deploy checklist](docs/operations/post-deploy-checklist.md) — что проверить после деплоя.
+- [Restore runbook](docs/operations/restore-runbook.md): восстановление из бэкапа (CLI + защищённый веб-restore).
 - [Scheduled + offsite backups](docs/operations/scheduled-offsite-backups.md) — cron/systemd + rclone.
 - [Backup UI](docs/operations/backups-ui.md) — раздел «Бэкапы» в интерфейсе.
 - [Инцидент: pg_restore transaction_timeout](docs/operations/incidents/2026-07-02-pg-restore-transaction-timeout.md)
