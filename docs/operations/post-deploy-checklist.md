@@ -1,4 +1,4 @@
-# Post-deploy checklist (DenStock)
+# Post-deploy checklist (DenisStock)
 
 Пройти после деплоя/восстановления на VPS. Подробности — в
 [production-deploy-runbook.md](production-deploy-runbook.md).

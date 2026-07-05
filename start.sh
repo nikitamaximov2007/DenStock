@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "=== Запуск DenStock ==="
+echo "=== Запуск DenisStock ==="
 docker compose up -d --build
-echo "DenStock запущен: http://localhost"
+echo "DenisStock запущен: http://localhost"

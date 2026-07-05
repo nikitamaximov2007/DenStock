@@ -12,7 +12,7 @@ healthcheck-эндпоинтом, настроенными линтерами/ф
 ## Структура папок (после Слоя 1)
 
 ```
-DenStock/
+DenisStock/
 ├─ docker-compose.yml
 ├─ .env.example                # шаблон переменных окружения
 ├─ .dockerignore

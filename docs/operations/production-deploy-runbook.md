@@ -1,6 +1,6 @@
-# Production deploy runbook (DenStock)
+# Production deploy runbook (DenisStock)
 
-Пошаговый деплой DenStock на чистый VPS + восстановление данных и бэкапы. **Без секретов.**
+Пошаговый деплой DenisStock на чистый VPS + восстановление данных и бэкапы. **Без секретов.**
 Секреты (пароли, ключи, `.env`, rclone-конфиг) создаются на сервере и **никогда не коммитятся**.
 
 > Тестовый сервер (для справки): VDSina, Ubuntu 24.04, `/opt/denstock`, TZ `Europe/Moscow`,

@@ -68,7 +68,7 @@ rclone lsd remote:     # проверить доступ
 
 **cron (ежедневно 03:00):**
 ```cron
-0 3 * * * cd /path/to/DenStock && /bin/bash scripts/operations/backup_offsite.sh >> /var/log/denstock-backup.log 2>&1
+0 3 * * * cd /path/to/DenisStock && /bin/bash scripts/operations/backup_offsite.sh >> /var/log/denstock-backup.log 2>&1
 ```
 
 **systemd service + timer:**
@@ -76,7 +76,7 @@ rclone lsd remote:     # проверить доступ
 # /etc/systemd/system/denstock-backup.service
 [Service]
 Type=oneshot
-WorkingDirectory=/path/to/DenStock
+WorkingDirectory=/path/to/DenisStock
 ExecStart=/bin/bash scripts/operations/backup_offsite.sh
 ```
 ```ini

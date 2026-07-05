@@ -1,4 +1,4 @@
-"""ASGI-точка входа DenStock."""
+"""ASGI-точка входа DenisStock."""
 import os
 
 from django.core.asgi import get_asgi_application

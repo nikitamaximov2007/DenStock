@@ -11,7 +11,7 @@
 Выполнение синхронное и осознанно НЕ в транзакции Django: восстановление
 PostgreSQL делает существующий pg_restore-путь (apps/operations/backup.py),
 тот же, что в CLI-runbook, где web-контейнер продолжает работать. Оценка
-риска: база DenStock маленькая (минуты недопустимого простоя не возникают),
+риска: база DenisStock маленькая (минуты недопустимого простоя не возникают),
 перед restore соединения Django закрываются, а откат при неудаче — вручную
 из pre-restore бэкапа (путь пишется в журнал до начала restore). Журнал
 дублируется в файл `<BACKUP_ROOT>/restore.log`, потому что строки БД
@@ -119,8 +119,8 @@ def verify_backup(run_id: str) -> VerifyReport:
 
     known_keys = {"created_at", "engine", "db_file"}
     report.check(
-        "Бэкап принадлежит DenStock", known_keys <= set(manifest),
-        error="в manifest нет обязательных полей DenStock (created_at/engine/db_file)",
+        "Бэкап принадлежит DenisStock", known_keys <= set(manifest),
+        error="в manifest нет обязательных полей DenisStock (created_at/engine/db_file)",
     )
 
     db_name = manifest.get("db_file") or ""

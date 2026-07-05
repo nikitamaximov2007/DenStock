@@ -1,4 +1,4 @@
-# DenStock: быстрый старт
+# DenisStock: быстрый старт
 
 Самый короткий путь от пустой системы до работающего склада. Подробности
 по каждому шагу: [denstock-user-manual.md](denstock-user-manual.md).

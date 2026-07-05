@@ -1,4 +1,4 @@
-"""WSGI-точка входа DenStock."""
+"""WSGI-точка входа DenisStock."""
 import os
 
 from django.core.wsgi import get_wsgi_application

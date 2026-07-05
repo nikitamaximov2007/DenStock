@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Командная утилита Django для DenStock."""
+"""Командная утилита Django для DenisStock."""
 import os
 import sys
 
