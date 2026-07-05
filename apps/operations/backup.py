@@ -148,6 +148,31 @@ def prune_old_runs(root, keep_last: int) -> list[Path]:
 
 # --- Restore -----------------------------------------------------------------
 
+# Известная безвредная несовместимость: pg_dump 17 пишет в дамп
+# "SET transaction_timeout = 0", а PostgreSQL 16 такого параметра не знает
+# (инцидент 2026-07-02, план 37). Настройка не влияет на данные дампа.
+_KNOWN_HARMLESS_RESTORE_ERROR = (
+    'unrecognized configuration parameter "transaction_timeout"'
+)
+
+
+def pg_restore_error_filter(stderr: str) -> tuple[list[str], list[str]]:
+    """Разделить stderr pg_restore на фатальные и известные безвредные ошибки.
+
+    Возвращает (fatal, harmless). Толерантность СТРОГО к одному известному
+    случаю: пропущенный `SET transaction_timeout` из дампа, сделанного клиентом
+    новее сервера. ЛЮБАЯ другая ошибка pg_restore остаётся фатальной.
+    """
+    fatal, harmless = [], []
+    for line in (stderr or "").splitlines():
+        if "pg_restore: error:" not in line:
+            continue
+        if _KNOWN_HARMLESS_RESTORE_ERROR in line:
+            harmless.append(line.strip())
+        else:
+            fatal.append(line.strip())
+    return fatal, harmless
+
 
 def restore_media(archive, *, media_root=None) -> None:
     """Распаковать `media.tar.gz` в media root (перезапись). Только из доверенного бэкапа."""
@@ -160,8 +185,14 @@ def restore_media(archive, *, media_root=None) -> None:
         tar.extractall(media_root, filter="data")  # data-фильтр против path traversal
 
 
-def restore_db(source, *, settings_dict=None) -> None:
-    """Восстановить БД из дампа. Postgres → pg_restore --clean; SQLite → копия файла."""
+def restore_db(source, *, settings_dict=None) -> list[str]:
+    """Восстановить БД из дампа. Postgres → pg_restore --clean; SQLite → копия файла.
+
+    Возвращает список предупреждений (пустой при чистом восстановлении).
+    Единственная толерантность: известная безвредная ошибка про
+    `transaction_timeout` из старых дампов (см. pg_restore_error_filter);
+    в этом случае восстановление считается успешным с предупреждением.
+    """
     s = settings_dict or connection.settings_dict
     source = Path(source)
     if not source.exists():
@@ -174,7 +205,7 @@ def restore_db(source, *, settings_dict=None) -> None:
             raise OperationsError("Невозможно восстановить в SQLite :memory:.")
         connection.close()
         shutil.copy2(source, name)
-        return
+        return []
 
     if "postgresql" in engine:
         if shutil.which("pg_restore") is None:
@@ -187,8 +218,21 @@ def restore_db(source, *, settings_dict=None) -> None:
             "-d", str(s.get("NAME") or ""),
             str(source),
         ]
-        _run(cmd, s.get("PASSWORD"))
-        return
+        env = {**os.environ}
+        if s.get("PASSWORD"):
+            env["PGPASSWORD"] = str(s["PASSWORD"])
+        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        if result.returncode == 0:
+            return []
+        fatal, harmless = pg_restore_error_filter(result.stderr)
+        if fatal or not harmless:
+            raise OperationsError(
+                f"pg_restore завершился с ошибкой: {result.stderr or result.returncode}"
+            )
+        return [
+            "пропущен SET transaction_timeout: дамп сделан клиентом PostgreSQL "
+            "новее сервера; на данные не влияет (план 37)"
+        ]
 
     raise OperationsError(f"Неизвестный движок БД: {engine}")
 

@@ -17,7 +17,9 @@ class Command(BaseCommand):
                 "Повторите команду с флагом --yes для подтверждения."
             )
         try:
-            backup.restore_db(options["source"])
+            warnings = backup.restore_db(options["source"])
         except backup.OperationsError as exc:
             raise CommandError(str(exc)) from exc
+        for warning in warnings:
+            self.stdout.write(self.style.WARNING(f"Предупреждение: {warning}"))
         self.stdout.write(self.style.SUCCESS("БД восстановлена из бэкапа."))

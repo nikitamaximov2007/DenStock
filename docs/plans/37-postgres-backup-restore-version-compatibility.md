@@ -1,6 +1,12 @@
 # План 37 — Совместимость версий PostgreSQL для backup/restore
 
-**Статус:** ПЛАН (реализацию не начинаем без «go»). Только проектирование. Устраняет technical
+**Статус: РЕАЛИЗОВАНО (Layer 30 hotfix, 2026-07-05).** Выбран вариант A + D:
+пин `postgresql-client-16` в `docker/Dockerfile` (PGDG-репозиторий) + surface
+предупреждений в `restore_db` (толерантность СТРОГО к известной ошибке
+`transaction_timeout`; остальные ошибки фатальны). `verify_backup` предупреждает
+заранее. Тесты: `tests/test_restore_compat.py`. Ниже: исходный план.
+
+Устраняет technical
 debt из [инцидента 2026-07-02](../operations/incidents/2026-07-02-pg-restore-transaction-timeout.md):
 `pg_restore` предупреждает `unrecognized configuration parameter "transaction_timeout"` из-за
 **несовпадения версий client (17) и server (16)**.

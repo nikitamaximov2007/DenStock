@@ -1,7 +1,13 @@
 # Инцидент: pg_restore `transaction_timeout` (2026-07-02)
 
-**Статус:** данные восстановлены; **technical debt** — требует исправления (см.
-[plan 37](../../plans/37-postgres-backup-restore-version-compatibility.md)). Severity: low
+**Статус: УСТРАНЕНО (Layer 30 hotfix, 2026-07-05).** Реализован
+[plan 37](../../plans/37-postgres-backup-restore-version-compatibility.md):
+в web-образ пинуется `postgresql-client-16` (новые дампы без
+`transaction_timeout`), `restore_db` толерантен строго к этой одной известной
+ошибке для старых дампов (любая другая ошибка pg_restore фатальна),
+`verify_backup` предупреждает заранее. См. [restore-runbook](../restore-runbook.md), раздел 3.
+
+Исходная запись (для истории). Severity: low
 (данные не потеряны), но опасно оставлять «errors ignored» в disaster-recovery-пути.
 
 ## Что произошло

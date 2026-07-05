@@ -132,6 +132,22 @@ def verify_backup(run_id: str) -> VerifyReport:
     ):
         report.db_file = db_name
 
+    # Известная несовместимость версий: pg_dump 17 пишет SET transaction_timeout,
+    # PostgreSQL 16 его не знает. Restore обрабатывает это автоматически, но
+    # честно предупреждаем заранее (сканируем начало дампа: SET-команды в TOC).
+    if report.db_file and report.db_file.endswith(".dump"):
+        try:
+            with (run_dir / report.db_file).open("rb") as fh:
+                head = fh.read(131072)
+        except OSError:
+            head = b""
+        if b"transaction_timeout" in head:
+            report.check(
+                "Совместимость дампа", False,
+                warn="дамп содержит SET transaction_timeout (создан клиентом новее "
+                     "сервера); restore пропустит его автоматически",
+            )
+
     media_name = manifest.get("media_file")
     if media_name:
         media_path = run_dir / media_name
@@ -267,7 +283,8 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
     _file_log(log)  # фиксируем след ДО перезаписи базы
     try:
         connections.close_all()  # не держим соединения во время pg_restore
-        backup.restore_db(db_path)
+        for warning in backup.restore_db(db_path) or []:
+            log.append(f"предупреждение: {warning}")
         if media_path is not None:
             backup.restore_media(media_path)
         log.append("шаг 4/4: применение миграций (migrated)")

@@ -282,7 +282,9 @@ def test_pre_restore_backup_called_before_restore(backups_root, make_user, monke
         backup_mod, "backup_all",
         lambda **kw: order.append("pre_backup") or pre_dir,
     )
-    monkeypatch.setattr(restore_mod.backup, "restore_db", lambda p: order.append("db"))
+    monkeypatch.setattr(
+        restore_mod.backup, "restore_db", lambda p: order.append("db") or []
+    )
     monkeypatch.setattr(restore_mod.backup, "restore_media", lambda p: order.append("media"))
     monkeypatch.setattr(restore_mod, "call_command", lambda *a, **kw: order.append("migrate"))
 
