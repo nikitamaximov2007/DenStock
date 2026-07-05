@@ -1,11 +1,15 @@
 # Инцидент: pg_restore `transaction_timeout` (2026-07-02)
 
-**Статус: УСТРАНЕНО (Layer 30 hotfix, 2026-07-05).** Реализован
+**Статус: УСТРАНЕНО (Layer 30 hotfix + hotfix 2, 2026-07-05).** Реализован
 [plan 37](../../plans/37-postgres-backup-restore-version-compatibility.md):
 в web-образ пинуется `postgresql-client-16` (новые дампы без
 `transaction_timeout`), `restore_db` толерантен строго к этой одной известной
 ошибке для старых дампов (любая другая ошибка pg_restore фатальна),
-`verify_backup` предупреждает заранее. См. [restore-runbook](../restore-runbook.md), раздел 3.
+`verify_backup` предупреждает заранее. Hotfix 2: старые custom-архивы
+pg_dump 17 (формат 1.16) pg_restore 16 не читает вовсе («unsupported version
+(1.16) in file header»), поэтому в образе стоит и `postgresql-client-17`, а
+restore автоматически делает fallback на него строго по этой ошибке.
+См. [restore-runbook](../restore-runbook.md), раздел 3.
 
 Исходная запись (для истории). Severity: low
 (данные не потеряны), но опасно оставлять «errors ignored» в disaster-recovery-пути.

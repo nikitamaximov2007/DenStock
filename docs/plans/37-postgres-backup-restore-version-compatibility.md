@@ -1,10 +1,15 @@
 # План 37 — Совместимость версий PostgreSQL для backup/restore
 
-**Статус: РЕАЛИЗОВАНО (Layer 30 hotfix, 2026-07-05).** Выбран вариант A + D:
-пин `postgresql-client-16` в `docker/Dockerfile` (PGDG-репозиторий) + surface
+**Статус: РЕАЛИЗОВАНО (Layer 30 hotfix + hotfix 2, 2026-07-05).** Выбран
+вариант A + D: пин `postgresql-client-16` в `docker/Dockerfile` (PGDG) + surface
 предупреждений в `restore_db` (толерантность СТРОГО к известной ошибке
 `transaction_timeout`; остальные ошибки фатальны). `verify_backup` предупреждает
-заранее. Тесты: `tests/test_restore_compat.py`. Ниже: исходный план.
+заранее. Hotfix 2: pg_restore 16 не читает custom-архивы pg_dump 17
+(формат 1.16, «unsupported version (1.16) in file header»), поэтому дампы
+делаются явным `/usr/lib/postgresql/16/bin/pg_dump`, а restore при этой
+единственной ошибке делает fallback на `/usr/lib/postgresql/17/bin/pg_restore`
+(клиент 17 тоже стоит в образе). Тесты: `tests/test_restore_compat.py`.
+Ниже: исходный план.
 
 Устраняет technical
 debt из [инцидента 2026-07-02](../operations/incidents/2026-07-02-pg-restore-transaction-timeout.md):

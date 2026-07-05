@@ -103,18 +103,34 @@ Pre-restore бэкап хранит состояние ДО восстановл
 восстанавливались. Причина: дамп сделан клиентом pg_dump 17, а сервер
 PostgreSQL 16 не знает параметр `transaction_timeout` (появился в 17).
 
-Исправлено (hotfix Layer 30):
+Дополнительный симптом (hotfix 2): после пина клиента 16 старый архив,
+созданный pg_dump 17, перестал открываться вовсе:
+`pg_restore: error: unsupported version (1.16) in file header`. Причина:
+custom-архив pg_dump 17 имеет формат 1.16, а pg_restore 16 читает только
+форматы до 1.15. То есть старые архивы 17 может прочитать только pg_restore 17.
 
-- **Новые дампы чистые:** web-образ ставит `postgresql-client-16` из
-  PGDG-репозитория (та же major-версия, что сервер `postgres:16`), поэтому
-  pg_dump больше не пишет `SET transaction_timeout`. После обновления
-  пересоберите образ: `docker compose build web`.
-- **Старые дампы восстанавливаются чисто:** `restore_db` (CLI и веб-restore)
-  распознаёт СТРОГО эту единственную известную безвредную ошибку pg_restore
-  и завершается успешно с предупреждением. Любая другая ошибка pg_restore
-  по-прежнему фатальна: ничего лишнего не глотается.
-- **verify_backup предупреждает заранее**, если дамп содержит
-  `SET transaction_timeout` (сканирует начало файла, read-only).
+Исправлено (hotfix Layer 30 + hotfix 2):
+
+- **Новые дампы чистые:** web-образ ставит `postgresql-client-16` из PGDG
+  (та же major-версия, что сервер `postgres:16`); `backup_all`/`backup_db`
+  вызывают явный `/usr/lib/postgresql/16/bin/pg_dump`. Такие дампы не
+  содержат `SET transaction_timeout` и читаются pg_restore 16.
+- **Старые архивы pg_dump 17 восстанавливаются через fallback:** в образе
+  стоит и `postgresql-client-17`. `restore_db` сначала запускает
+  `/usr/lib/postgresql/16/bin/pg_restore`; если stderr содержит ровно
+  «unsupported version (1.16) in file header», повторяет восстановление
+  клиентом `/usr/lib/postgresql/17/bin/pg_restore` и пишет предупреждение.
+- **transaction_timeout остаётся честным предупреждением:** если
+  единственная ошибка restore (в т.ч. после fallback) - пропущенный
+  `SET transaction_timeout`, restore завершается успешно с предупреждением.
+  ЛЮБАЯ другая ошибка pg_restore фатальна: это не «ignore all errors».
+- **verify_backup предупреждает заранее:** определяет формат архива по
+  заголовку (PGDMP + версия формата; 1.16 = нужен fallback pg_restore 17)
+  и наличие `SET transaction_timeout` в дампе. Read-only.
+- **ops_check показывает фактические пути и версии** pg_dump/pg_restore
+  (включая fallback-клиент 17), а не просто «доступны».
+
+После обновления пересоберите образ: `docker compose build web`.
 
 ## 4. Известные ограничения
 

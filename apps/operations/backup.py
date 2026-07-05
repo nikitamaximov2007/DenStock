@@ -47,6 +47,28 @@ def _engine_name(engine: str) -> str:
     return engine
 
 
+# --- Клиенты PostgreSQL (явные версии, план 37 + hotfix 2) ---------------------
+
+# Debian/PGDG кладёт клиентов по versioned-путям. Unversioned PATH — только
+# запасной вариант для dev-окружений без пакетов Debian.
+PG_BIN_TEMPLATE = "/usr/lib/postgresql/{version}/bin/{name}"
+BACKUP_PG_VERSION = 16  # дампы делаем клиентом major-версии сервера (postgres:16)
+RESTORE_PG_VERSION = 16  # восстановление начинаем клиентом сервера
+RESTORE_FALLBACK_PG_VERSION = 17  # умеет читать архивы pg_dump 17 (формат 1.16)
+
+# pg_restore 16 не читает custom-архивы pg_dump 17 (заголовок формата 1.16).
+UNSUPPORTED_ARCHIVE_MARKER = "unsupported version (1.16) in file header"
+
+
+def pg_binary(name: str, version: int | None = None) -> str | None:
+    """Путь клиента нужной major-версии; иначе unversioned из PATH (dev)."""
+    if version is not None:
+        explicit = Path(PG_BIN_TEMPLATE.format(version=version, name=name))
+        if explicit.exists():
+            return str(explicit)
+    return shutil.which(name)
+
+
 # --- Backup ------------------------------------------------------------------
 
 
@@ -83,14 +105,15 @@ def backup_db(dest_dir, *, settings_dict=None) -> Path:
         return dest
 
     if "postgresql" in engine:
-        if shutil.which("pg_dump") is None:
+        pg_dump = pg_binary("pg_dump", BACKUP_PG_VERSION)
+        if pg_dump is None:
             raise OperationsError(
-                "pg_dump недоступен. Установите postgresql-client "
+                "pg_dump недоступен. Установите postgresql-client-16 "
                 "(или выполните бэкап из сервиса db)."
             )
         dest = dest_dir / "db.dump"
         cmd = [
-            "pg_dump", "-Fc", "-f", str(dest),
+            pg_dump, "-Fc", "-f", str(dest),
             "-h", str(s.get("HOST") or "localhost"),
             "-p", str(s.get("PORT") or "5432"),
             "-U", str(s.get("USER") or ""),
@@ -208,31 +231,57 @@ def restore_db(source, *, settings_dict=None) -> list[str]:
         return []
 
     if "postgresql" in engine:
-        if shutil.which("pg_restore") is None:
-            raise OperationsError("pg_restore недоступен. Установите postgresql-client.")
-        cmd = [
-            "pg_restore", "--clean", "--if-exists", "--no-owner",
-            "-h", str(s.get("HOST") or "localhost"),
-            "-p", str(s.get("PORT") or "5432"),
-            "-U", str(s.get("USER") or ""),
-            "-d", str(s.get("NAME") or ""),
-            str(source),
-        ]
+        primary = pg_binary("pg_restore", RESTORE_PG_VERSION)
+        if primary is None:
+            raise OperationsError(
+                "pg_restore недоступен. Установите postgresql-client-16."
+            )
+
+        def _cmd(binary: str) -> list:
+            return [
+                binary, "--clean", "--if-exists", "--no-owner",
+                "-h", str(s.get("HOST") or "localhost"),
+                "-p", str(s.get("PORT") or "5432"),
+                "-U", str(s.get("USER") or ""),
+                "-d", str(s.get("NAME") or ""),
+                str(source),
+            ]
+
         env = {**os.environ}
         if s.get("PASSWORD"):
             env["PGPASSWORD"] = str(s["PASSWORD"])
-        result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+
+        warnings: list[str] = []
+        result = subprocess.run(_cmd(primary), env=env, capture_output=True, text=True)
+        if result.returncode != 0 and UNSUPPORTED_ARCHIVE_MARKER in (result.stderr or ""):
+            # Старый архив pg_dump 17 (формат 1.16): pg_restore 16 его не читает.
+            # Единственный fallback: pg_restore 17 (стоит в образе рядом с 16).
+            fallback = pg_binary("pg_restore", RESTORE_FALLBACK_PG_VERSION)
+            if fallback is None or fallback == primary:
+                raise OperationsError(
+                    "Архив создан pg_dump 17 (формат 1.16): pg_restore 16 его не "
+                    "читает. Установите postgresql-client-17 (в актуальном "
+                    "web-образе он есть) и повторите."
+                )
+            warnings.append(
+                "старый архив pg_dump 17 (формат 1.16): восстановление выполнено "
+                "клиентом pg_restore 17"
+            )
+            result = subprocess.run(
+                _cmd(fallback), env=env, capture_output=True, text=True
+            )
         if result.returncode == 0:
-            return []
+            return warnings
         fatal, harmless = pg_restore_error_filter(result.stderr)
         if fatal or not harmless:
             raise OperationsError(
                 f"pg_restore завершился с ошибкой: {result.stderr or result.returncode}"
             )
-        return [
+        warnings.append(
             "пропущен SET transaction_timeout: дамп сделан клиентом PostgreSQL "
             "новее сервера; на данные не влияет (план 37)"
-        ]
+        )
+        return warnings
 
     raise OperationsError(f"Неизвестный движок БД: {engine}")
 

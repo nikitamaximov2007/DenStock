@@ -190,7 +190,11 @@ def test_ops_check_reports_media_and_backup(db, settings, tmp_path):
 def test_ops_check_flags_missing_pg_dump(db, settings, tmp_path, monkeypatch):
     settings.MEDIA_ROOT = str(tmp_path / "media")
     settings.BACKUP_ROOT = tmp_path / "backups"
-    monkeypatch.setattr(checks.shutil, "which", lambda _name: None)
+    # Нет ни versioned-клиентов, ни unversioned в PATH.
+    monkeypatch.setattr(
+        backup, "PG_BIN_TEMPLATE", str(tmp_path / "none" / "{version}" / "{name}")
+    )
+    monkeypatch.setattr(backup.shutil, "which", lambda _name: None)
     results = checks.run_checks(settings_dict=_postgres_settings())
     pg = next(r for r in results if r.name == "Клиенты PostgreSQL")
     assert pg.level == checks.FAIL

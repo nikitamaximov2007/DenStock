@@ -3,7 +3,7 @@
 Отдельно от `/healthz/` (который остаётся лёгким app+DB): здесь — проверки, которые
 делать на каждый HTTP-healthcheck не нужно (запись на диск, наличие клиентов БД).
 """
-import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +11,17 @@ from django.conf import settings
 from django.db import connection
 
 from . import backup
+
+
+def _client_version(binary: str) -> str:
+    """Строка версии клиента, например «pg_dump (PostgreSQL) 16.4»."""
+    try:
+        out = subprocess.run(
+            [binary, "--version"], capture_output=True, text=True, check=True
+        )
+        return out.stdout.strip() or "версия неизвестна"
+    except Exception:  # noqa: BLE001 — версия информационная
+        return "версия неизвестна"
 
 OK = "ok"
 WARN = "warn"
@@ -62,16 +73,37 @@ def run_checks(settings_dict=None) -> list[CheckResult]:
     else:
         results.append(CheckResult("BACKUP_ROOT", FAIL, f"{backup_dir} недоступен на запись"))
 
-    # 4. Клиенты БД (только для PostgreSQL).
+    # 4. Клиенты БД (только для PostgreSQL): фактические пути и версии.
     if "postgresql" in s["ENGINE"]:
-        missing = [t for t in ("pg_dump", "pg_restore") if shutil.which(t) is None]
-        if missing:
+        pg_dump = backup.pg_binary("pg_dump", backup.BACKUP_PG_VERSION)
+        pg_restore = backup.pg_binary("pg_restore", backup.RESTORE_PG_VERSION)
+        fallback = backup.pg_binary("pg_restore", backup.RESTORE_FALLBACK_PG_VERSION)
+        if pg_dump is None or pg_restore is None:
+            missing = [
+                name for name, binary in (("pg_dump", pg_dump), ("pg_restore", pg_restore))
+                if binary is None
+            ]
             results.append(
                 CheckResult("Клиенты PostgreSQL", FAIL,
-                            f"не найдены: {', '.join(missing)} — установите postgresql-client")
+                            f"не найдены: {', '.join(missing)} — установите postgresql-client-16")
             )
         else:
-            results.append(CheckResult("Клиенты PostgreSQL", OK, "pg_dump/pg_restore доступны"))
+            message = (
+                f"pg_dump: {pg_dump} ({_client_version(pg_dump)}); "
+                f"pg_restore: {pg_restore} ({_client_version(pg_restore)})"
+            )
+            if fallback and fallback != pg_restore:
+                message += (
+                    f"; fallback для старых архивов: {fallback} "
+                    f"({_client_version(fallback)})"
+                )
+                results.append(CheckResult("Клиенты PostgreSQL", OK, message))
+            else:
+                message += (
+                    "; fallback pg_restore 17 не найден "
+                    "(старые архивы pg_dump 17 не восстановятся)"
+                )
+                results.append(CheckResult("Клиенты PostgreSQL", WARN, message))
     else:
         results.append(CheckResult("Клиенты PostgreSQL", OK, "SQLite — pg_dump не требуется"))
 

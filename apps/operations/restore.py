@@ -132,15 +132,24 @@ def verify_backup(run_id: str) -> VerifyReport:
     ):
         report.db_file = db_name
 
-    # Известная несовместимость версий: pg_dump 17 пишет SET transaction_timeout,
-    # PostgreSQL 16 его не знает. Restore обрабатывает это автоматически, но
-    # честно предупреждаем заранее (сканируем начало дампа: SET-команды в TOC).
+    # Известные несовместимости версий (план 37 + hotfix 2). Read-only.
     if report.db_file and report.db_file.endswith(".dump"):
         try:
             with (run_dir / report.db_file).open("rb") as fh:
                 head = fh.read(131072)
         except OSError:
             head = b""
+        # Формат custom-архива: "PGDMP" + vmaj + vmin (по байту). Архивы
+        # pg_dump 17 имеют формат 1.16: pg_restore 16 их не открывает.
+        if head.startswith(b"PGDMP") and len(head) >= 7 and (head[5], head[6]) >= (1, 16):
+            fallback = backup.pg_binary("pg_restore", backup.RESTORE_FALLBACK_PG_VERSION)
+            note = (
+                f"архив формата {head[5]}.{head[6]} (pg_dump 17): pg_restore 16 его "
+                "не читает, восстановление автоматически использует pg_restore 17"
+            )
+            if fallback is None:
+                note += "; ВНИМАНИЕ: pg_restore 17 в этом окружении не найден"
+            report.check("Формат архива", False, warn=note)
         if b"transaction_timeout" in head:
             report.check(
                 "Совместимость дампа", False,

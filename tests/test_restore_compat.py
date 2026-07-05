@@ -181,7 +181,127 @@ def test_web_restore_logs_transaction_timeout_warning(
     assert "transaction_timeout" in job.log
 
 
-# --- Dockerfile: клиент = сервер (16) ------------------------------------------------
+# --- Hotfix 2: старые архивы pg_dump 17 (формат 1.16) --------------------------------
+
+UNSUPPORTED_STDERR = "pg_restore: error: unsupported version (1.16) in file header\n"
+
+
+@pytest.fixture
+def pg_bins(tmp_path, monkeypatch):
+    """Явные versioned-клиенты 16 и 17; unversioned PATH пуст (запрещён)."""
+    for version in (16, 17):
+        d = tmp_path / "pg" / str(version)
+        d.mkdir(parents=True)
+        (d / "pg_dump").write_text("")
+        (d / "pg_restore").write_text("")
+    monkeypatch.setattr(
+        backup_mod, "PG_BIN_TEMPLATE", str(tmp_path / "pg" / "{version}" / "{name}")
+    )
+    monkeypatch.setattr(backup_mod.shutil, "which", lambda name: None)
+    return tmp_path / "pg"
+
+
+class _RunRecorder:
+    """Подменяет subprocess.run: пишет команды, отдаёт заготовленные результаты."""
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.commands = []
+
+    def __call__(self, cmd, **kwargs):
+        self.commands.append(list(cmd))
+        return self.results.pop(0)
+
+
+def test_backup_db_uses_pg_dump_16_explicitly(pg_bins, tmp_path, monkeypatch):
+    recorder = _RunRecorder([_completed(0)])
+    monkeypatch.setattr(backup_mod.subprocess, "run", recorder)
+    backup_mod.backup_db(tmp_path / "out", settings_dict=PG_SETTINGS)
+    assert recorder.commands[0][0] == str(pg_bins / "16" / "pg_dump")
+
+
+def test_restore_uses_versioned_pg_restore_16_first(pg_bins, dump_file, monkeypatch):
+    recorder = _RunRecorder([_completed(0)])
+    monkeypatch.setattr(backup_mod.subprocess, "run", recorder)
+    assert restore_db(dump_file, settings_dict=PG_SETTINGS) == []
+    assert recorder.commands[0][0] == str(pg_bins / "16" / "pg_restore")
+
+
+def test_unsupported_archive_falls_back_to_pg_restore_17(pg_bins, dump_file, monkeypatch):
+    recorder = _RunRecorder([_completed(1, UNSUPPORTED_STDERR), _completed(0)])
+    monkeypatch.setattr(backup_mod.subprocess, "run", recorder)
+    warnings = restore_db(dump_file, settings_dict=PG_SETTINGS)
+    assert recorder.commands[0][0] == str(pg_bins / "16" / "pg_restore")
+    assert recorder.commands[1][0] == str(pg_bins / "17" / "pg_restore")
+    assert len(warnings) == 1 and "pg_restore 17" in warnings[0]
+
+
+def test_fallback_plus_transaction_timeout_is_warning(pg_bins, dump_file, monkeypatch):
+    recorder = _RunRecorder([_completed(1, UNSUPPORTED_STDERR), _completed(1, KNOWN_STDERR)])
+    monkeypatch.setattr(backup_mod.subprocess, "run", recorder)
+    warnings = restore_db(dump_file, settings_dict=PG_SETTINGS)
+    assert len(warnings) == 2
+    assert "pg_restore 17" in warnings[0]
+    assert "transaction_timeout" in warnings[1]
+
+
+def test_fallback_other_error_stays_fatal(pg_bins, dump_file, monkeypatch):
+    recorder = _RunRecorder([_completed(1, UNSUPPORTED_STDERR), _completed(1, OTHER_STDERR)])
+    monkeypatch.setattr(backup_mod.subprocess, "run", recorder)
+    with pytest.raises(OperationsError):
+        restore_db(dump_file, settings_dict=PG_SETTINGS)
+
+
+def test_unsupported_archive_without_client17_is_clear_error(
+    tmp_path, dump_file, monkeypatch
+):
+    d16 = tmp_path / "pg" / "16"
+    d16.mkdir(parents=True)
+    (d16 / "pg_restore").write_text("")  # клиента 17 нет
+    monkeypatch.setattr(
+        backup_mod, "PG_BIN_TEMPLATE", str(tmp_path / "pg" / "{version}" / "{name}")
+    )
+    monkeypatch.setattr(backup_mod.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        backup_mod.subprocess, "run",
+        _RunRecorder([_completed(1, UNSUPPORTED_STDERR)]),
+    )
+    with pytest.raises(OperationsError, match="postgresql-client-17"):
+        restore_db(dump_file, settings_dict=PG_SETTINGS)
+
+
+def test_ops_check_reports_client_paths_and_versions(pg_bins, db, settings, tmp_path, monkeypatch):
+    from apps.operations import checks
+
+    settings.MEDIA_ROOT = str(tmp_path / "media")
+    settings.BACKUP_ROOT = tmp_path / "backups"
+    monkeypatch.setattr(checks, "_client_version", lambda b: "pg (PostgreSQL) x.y")
+    results = checks.run_checks(settings_dict=PG_SETTINGS)
+    pg = next(r for r in results if r.name == "Клиенты PostgreSQL")
+    assert pg.level == checks.OK
+    assert str(pg_bins / "16" / "pg_dump") in pg.message
+    assert str(pg_bins / "16" / "pg_restore") in pg.message
+    assert str(pg_bins / "17" / "pg_restore") in pg.message
+    assert "PostgreSQL" in pg.message  # версии, не просто «доступны»
+
+
+def test_verify_warns_on_pg17_archive_header(backups_root):
+    # Заголовок custom-архива pg_dump 17: "PGDMP" + vmaj=1, vmin=16.
+    _make_run(backups_root, db_bytes=b"PGDMP" + bytes([1, 16, 1]) + b"rest-of-dump")
+    report = verify_backup("2026-07-05_07-13-35")
+    assert report.ok  # предупреждение, не ошибка: fallback восстановит
+    assert any("pg_restore 17" in w for w in report.warnings)
+
+
+def test_verify_quiet_on_pg16_archive_header(backups_root):
+    # Архив pg_dump 16 (формат 1.15): предупреждения о формате нет.
+    _make_run(backups_root, db_bytes=b"PGDMP" + bytes([1, 15, 0]) + b"rest-of-dump")
+    report = verify_backup("2026-07-05_07-13-35")
+    assert report.ok
+    assert not any("pg_restore 17" in w for w in report.warnings)
+
+
+# --- Dockerfile: оба клиента (16 для дампов, 17 для старых архивов) ------------------
 
 
 def test_dockerfile_pins_postgresql_client_16():
@@ -189,5 +309,6 @@ def test_dockerfile_pins_postgresql_client_16():
         encoding="utf-8"
     )
     assert "postgresql-client-16" in text
-    # Unversioned пакет больше не ставится (иначе снова приедет клиент 17).
+    assert "postgresql-client-17" in text  # чтение старых архивов pg_dump 17
+    # Unversioned пакет больше не ставится (иначе снова приедет клиент 17 в PATH).
     assert "postgresql-client \\" not in text
