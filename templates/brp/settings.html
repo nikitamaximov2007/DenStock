@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Настройки цен BRP · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Настройки цен BRP</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary" href="{% url 'brp_search' %}">К BRP-каталогу</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Цена клиента считается из розницы BRP в долларах БЕЗ округления:
+    цена = розница USD x курс x (1 + наценка / 100). Пример: 99.99 $ при курсе 105
+    и наценке 40% = 14698.53 ₽. Изменение настроек влияет только на будущие
+    расчёты: у уже добавленных деталей курс и наценка зафиксированы.
+  </p>
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        <div class="field">
+          <label class="field__label" for="brp-rate">Курс расчёта (₽ за $)</label>
+          <input id="brp-rate"
+                 name="brp_usd_rate"
+                 type="text"
+                 inputmode="decimal"
+                 value="{{ pricing.brp_usd_rate|floatformat:'-4' }}">
+        </div>
+        <div class="field">
+          <label class="field__label" for="brp-markup">Наценка, %</label>
+          <input id="brp-markup"
+                 name="brp_markup_percent"
+                 type="text"
+                 inputmode="decimal"
+                 value="{{ pricing.brp_markup_percent|floatformat:'-2' }}">
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Сохранить</button>
+        </div>
+      </form>
+      <p class="muted">
+        Обновлено: {{ pricing.updated_at|ru_dt }}
+        {% if pricing.updated_by %}· {{ pricing.updated_by }}{% endif %}
+      </p>
+    </div>
+  </div>
+{% endblock %}

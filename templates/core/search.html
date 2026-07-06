@@ -22,8 +22,41 @@
   </div>
   {% if too_short %}
     {% include "partials/_status_block.html" with kind="info" text="Введите минимум 2 символа." %}
-  {% elif q and not rows %}
+  {% elif q and not rows and not brp_hits %}
     {% include "partials/_status_block.html" with kind="warning" text="Ничего не найдено по запросу." %}
+  {% endif %}
+  {% if brp_hits %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Найдено в BRP-каталоге</h2>
+        <span class="pill pill--info">справочник, не остаток</span>
+      </div>
+      <div class="card__body">
+        <table class="table table--compact">
+          <tbody>
+            {% for brp in brp_hits %}
+              <tr>
+                <td>
+                  <span class="code-pill">{{ brp.material_no }}</span>
+                </td>
+                <td>{{ brp.part_desc|default:"·" }}</td>
+                <td>
+                  {% if brp.brp_status %}
+                    <span class="pill pill--muted" title="{{ brp.status_label }}">{{ brp.brp_status }}</span>
+                  {% else %}
+                    ·
+                  {% endif %}
+                </td>
+                <td class="table__actions">
+                  <a class="btn btn--small btn--secondary"
+                     href="/brp/?q={{ brp.material_no }}">Открыть в BRP-каталоге</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
   {% endif %}
   {% for row in rows %}
     <div class="search-result">

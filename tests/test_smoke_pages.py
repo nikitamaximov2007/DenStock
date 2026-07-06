@@ -21,6 +21,8 @@ ADMIN_PAGES = [
     "part_search",
     "scanner",
     "part_list",
+    "brp_search",
+    "brp_settings",
     "batch_list",
     "receipt_list",
     "receipt_create",

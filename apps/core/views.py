@@ -4,13 +4,15 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import connection
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from apps.catalog.models import PartType
+from apps.brp.models import BrpCatalogPart
+from apps.catalog.models import PartType, normalize_number
 from apps.inventory.models import PartItem, StockLot, StockMovement
 from apps.inventory.services import (
     InventoryError,
@@ -195,9 +197,25 @@ def search_page(request: HttpRequest) -> HttpResponse:
                     .select_related("location", "batch", "batch_line")
                     .order_by("-created_at")[:20]
                 )
+    # Layer 31: fallback в BRP-справочник. Склад ищем первым; позиции BRP —
+    # только подсказка (справочник, не остаток), действия — на странице /brp/.
+    brp_hits = []
+    if len(q) >= 2:
+        norm = normalize_number(q)
+        number_q = Q(pk=None)
+        if norm:
+            number_q = (
+                Q(material_no_norm=norm)
+                | Q(replacement_no_1_norm=norm)
+                | Q(replacement_no_2_norm=norm)
+            )
+        if not rows and len(q) >= 3:
+            number_q = number_q | Q(part_desc__icontains=q)
+        brp_hits = list(BrpCatalogPart.objects.filter(number_q)[:5])
     ctx = {
         "q": q,
         "rows": rows,
+        "brp_hits": brp_hits,
         "show_costs": request.user.can_view_purchase_cost,
         "can_view_inventory": can_view_inventory,
         "can_sell": request.user.can_manage_sales,
