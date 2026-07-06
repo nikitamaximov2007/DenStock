@@ -8,7 +8,7 @@
 """
 from django.db import transaction
 
-from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.procurement.models import money
 from apps.receipts.models import Receipt
 from apps.receipts.services import create_receipt
@@ -64,10 +64,12 @@ def promote_to_warehouse(
     category, _ = Category.objects.get_or_create(
         name=BRP_CATEGORY_NAME, parent=None, defaults={"sort_order": 0}
     )
+    manufacturer, _ = Manufacturer.objects.get_or_create(name=BRP_CATEGORY_NAME)
     name = brp_part.part_desc or f"BRP {brp_part.material_no}"
     part = PartType.objects.create(
         name=name[:200],
         category=category,
+        manufacturer=manufacturer,
         unit=_default_unit(),
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=money(final) if final is not None else None,

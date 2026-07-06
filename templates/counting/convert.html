@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Завершение пересчёта {{ session.full_address }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Завершение пересчёта</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'counting_detail' session.pk %}">Назад к сканированию</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Адрес: <span class="code-pill">{{ session.full_address }}</span>
+    · Позиций: {{ counters.unique }} · Сканов: {{ counters.total_scans }}
+  </p>
+  {% include "partials/_status_block.html" with kind="warning" text="Режим: первичный ввод ячейки. Проведение ДОБАВИТ остаток по этому адресу. Не проводите одну и ту же ячейку дважды: остаток удвоится. Сверочный пересчёт (зафиксировать факт) появится отдельным слоем." %}
+  {% if unknown_count %}
+    {% include "partials/_status_block.html" with kind="error" text="Есть неразобранные позиции. Вернитесь к сканированию, привяжите их к складу или BRP-каталогу либо удалите. Пока они есть, документ создать нельзя." %}
+  {% endif %}
+  {% if lines %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Номер</th>
+          <th>Название</th>
+          <th>Источник</th>
+          <th class="num--qty">Количество</th>
+          <th>Ячейка</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+          <tr>
+            <td>
+              <span class="code-pill">{{ line.scanned_value }}</span>
+            </td>
+            <td>{{ line.display_name }}</td>
+            <td>
+              {% if line.source == "warehouse" %}
+                <span class="pill pill--success">На складе</span>
+              {% elif line.source == "brp_catalog" %}
+                <span class="pill pill--info">BRP-каталог</span>
+              {% else %}
+                <span class="pill pill--danger">Неизвестно</span>
+              {% endif %}
+            </td>
+            <td class="num--qty">{{ line.quantity_counted|floatformat:"-3" }}</td>
+            <td>
+              <span class="code-pill">{{ session.full_address }}</span>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  {% if session.status == "draft" %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Создать черновик документа</h2>
+      </div>
+      <div class="card__body">
+        <p class="muted">
+          Позиции из BRP-каталога станут складскими карточками автоматически (с
+          номерами и рассчитанной ценой). Черновик документа склад НЕ меняет.
+        </p>
+        <form method="post"
+              action="{% url 'counting_convert' session.pk %}"
+              class="form">
+          {% csrf_token %}
+          <div class="field">
+            <label class="field__label" for="unit-cost">Себестоимость за единицу (₽), по желанию</label>
+            <input id="unit-cost"
+                   name="unit_cost"
+                   type="text"
+                   inputmode="decimal"
+                   value="0">
+          </div>
+          <div class="form-actions">
+            <button type="submit"
+                    class="btn btn--primary"
+                    {% if unknown_count %}disabled{% endif %}>Создать черновик документа</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% elif session.status == "converted" %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Проведение инвентаризации</h2>
+      </div>
+      <div class="card__body">
+        <p>
+          Черновик документа создан:
+          <a href="{% url 'receipt_detail' session.converted_receipt_id %}">{{ session.converted_receipt.number }}</a>.
+          Проверьте позиции. Проведение запишет остаток по адресу
+          <span class="code-pill">{{ session.full_address }}</span>.
+        </p>
+        <form method="post" action="{% url 'counting_post' session.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--primary">Провести инвентаризацию</button>
+        </form>
+      </div>
+    </div>
+  {% elif session.status == "posted" %}
+    <div class="status-card status-card--ok">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Инвентаризация проведена</p>
+        <p class="status-card__meta">
+          Остаток записан по адресу {{ session.full_address }}. Документ:
+          <a href="{% url 'receipt_detail' session.converted_receipt_id %}">{{ session.converted_receipt.number }}</a>.
+        </p>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

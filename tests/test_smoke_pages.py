@@ -23,6 +23,8 @@ ADMIN_PAGES = [
     "part_list",
     "brp_search",
     "brp_settings",
+    "counting_list",
+    "counting_new",
     "batch_list",
     "receipt_list",
     "receipt_create",

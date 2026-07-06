@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Пересчёт {{ session.full_address }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Инвентаризация ячейки</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'counting_list' %}">К списку</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Адрес: <span class="code-pill">{{ session.full_address }}</span>
+    {% if session.is_draft %}
+      <span class="pill pill--info">{{ session.get_status_display }}</span>
+    {% elif session.status == "posted" %}
+      <span class="pill pill--success">{{ session.get_status_display }}</span>
+    {% else %}
+      <span class="pill pill--muted">{{ session.get_status_display }}</span>
+    {% endif %}
+  </p>
+  {% if is_draft %}
+    <div class="action-panel">
+      <form method="post"
+            action="{% url 'counting_scan' session.pk %}"
+            class="search-form">
+        {% csrf_token %}
+        <input id="scan"
+               name="code"
+               type="text"
+               class="scanner-page__input"
+               placeholder="Сканируйте номер или штрихкод"
+               autocomplete="off"
+               autofocus>
+        <button type="submit" class="btn btn--primary">Добавить скан</button>
+      </form>
+      <p class="action-panel__hint">
+        Пикайте все детали из этой ячейки подряд. Одинаковые номера будут сложены
+        автоматически. Сканер работает как клавиатура: скан и Enter. Сортировать
+        детали заранее не нужно.
+      </p>
+    </div>
+  {% endif %}
+  <section class="tiles dashboard-section" aria-label="Итоги пересчёта">
+    <div class="tile">
+      <div class="tile__label">Всего сканов</div>
+      <div class="tile__value">{{ counters.total_scans }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Уникальных номеров</div>
+      <div class="tile__value">{{ counters.unique }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Найдено в складе</div>
+      <div class="tile__value">{{ counters.warehouse }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Найдено в BRP</div>
+      <div class="tile__value">{{ counters.brp }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Неизвестных</div>
+      <div class="tile__value">
+        {% if counters.unknown %}
+          <span class="pill pill--danger">{{ counters.unknown }}</span>
+        {% else %}
+          <span class="pill pill--muted">0</span>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+  {% if is_draft %}
+    <div class="page-header">
+      <div class="page-actions">
+        <form method="post"
+              action="{% url 'counting_undo' session.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--small btn--secondary">Отменить последний скан</button>
+        </form>
+        <a class="btn btn--small btn--primary"
+           href="{% url 'counting_convert' session.pk %}">Завершить пересчёт</a>
+        <form method="post"
+              action="{% url 'counting_cancel' session.pk %}"
+              class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--small btn--danger">Отменить сессию</button>
+        </form>
+      </div>
+    </div>
+  {% elif session.converted_receipt %}
+    <p>
+      Документ инвентаризации:
+      <a href="{% url 'receipt_detail' session.converted_receipt_id %}">{{ session.converted_receipt.number }}</a>
+      {% if session.status == "posted" %}<span class="pill pill--success">проведено</span>{% endif %}
+    </p>
+  {% endif %}
+  {% if lines %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Номер</th>
+          <th>Название</th>
+          <th>Источник</th>
+          <th class="num--qty">Количество</th>
+          <th class="num--money">Цена клиента (₽)</th>
+          <th>Статус</th>
+          {% if is_draft %}<th></th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+          <tr>
+            <td>
+              <span class="code-pill">{{ line.scanned_value }}</span>
+            </td>
+            <td>
+              {% if line.warehouse_part %}
+                <a href="{% url 'part_detail' line.warehouse_part_id %}">{{ line.display_name }}</a>
+              {% else %}
+                {{ line.display_name }}
+              {% endif %}
+            </td>
+            <td>
+              {% if line.source == "warehouse" %}
+                <span class="pill pill--success">На складе</span>
+              {% elif line.source == "brp_catalog" %}
+                <span class="pill pill--info">BRP-каталог</span>
+              {% else %}
+                <span class="pill pill--danger">Неизвестно</span>
+              {% endif %}
+            </td>
+            <td class="num--qty">
+              {% if is_draft %}
+                <form method="post"
+                      action="{% url 'counting_line_qty' line.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <input name="quantity"
+                         type="text"
+                         inputmode="decimal"
+                         value="{{ line.quantity_counted|floatformat:'-3' }}"
+                         style="width: 5rem">
+                  <button type="submit">OK</button>
+                </form>
+              {% else %}
+                {{ line.quantity_counted|floatformat:"-3" }}
+              {% endif %}
+            </td>
+            <td class="num--money">
+              {% if line.final_customer_price_rub is not None %}
+                {{ line.final_customer_price_rub|floatformat:"-2" }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+            <td>
+              {% if line.needs_review %}
+                <span class="pill pill--warning">Требует разбора</span>
+              {% else %}
+                <span class="pill pill--success">Готово</span>
+              {% endif %}
+            </td>
+            {% if is_draft %}
+              <td class="table__actions">
+                {% if line.needs_review %}
+                  <form method="post"
+                        action="{% url 'counting_line_resolve' line.pk %}"
+                        class="inline-form">
+                    {% csrf_token %}
+                    <input name="code" type="text" placeholder="номер" style="width: 6rem">
+                    <button type="submit">Разобрать</button>
+                  </form>
+                {% endif %}
+                <form method="post"
+                      action="{% url 'counting_line_remove' line.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit">Удалить</button>
+                </form>
+              </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="scan" title="Пока ничего не отсканировано" text="Поставьте курсор в поле сканера и пикайте детали из этой ячейки." compact=1 %}
+  {% endif %}
+{% endblock %}

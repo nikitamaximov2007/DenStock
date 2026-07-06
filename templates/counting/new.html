@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Новый пересчёт · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Новый пересчёт ячейки</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'counting_list' %}">К списку</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Укажите точное место хранения. Полный адрес соберётся автоматически, например
+    B-S01-L02-D03-C08 (ящик), A-S02-L01-K04-C02 (контейнер), D-S01-L04 (полка).
+    Если такого места ещё нет, оно будет создано; если есть, используется существующее.
+  </p>
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        <div class="form-grid form-grid--2">{{ form.as_p }}</div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Начать пересчёт</button>
+        </div>
+      </form>
+      <p class="muted">
+        Тип места: ящик (D), контейнер (K), коробка (X), полка. Для ящика,
+        контейнера и коробки укажите номер; ячейка внутри указывается по желанию.
+      </p>
+    </div>
+  </div>
+{% endblock %}

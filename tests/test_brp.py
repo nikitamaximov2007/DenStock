@@ -311,13 +311,13 @@ def test_search_warehouse_first_then_brp(client, make_user, imported, admin):
     assert "На складе" in html  # блок склада присутствует
     assert part.name in html
     # Позиция BRP помечена как уже добавленная (кнопки продвижения нет).
-    assert "Добавить в склад" not in html
+    assert "Создать карточку" not in html
 
 
 def test_brp_preview_when_not_in_warehouse(client, make_user, imported):
     _login(client, make_user, superuser=True)
     html = client.get(reverse("brp_search") + "?q=353589").content.decode()
-    assert "Добавить в склад" in html
+    assert "Создать карточку" in html
     assert "Учесть наличие" in html
     assert "LIQ" in html  # статус показан
 

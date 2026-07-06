@@ -41,6 +41,7 @@ LOCAL_APPS = [
     "apps.inventory",
     "apps.receipts",
     "apps.brp",
+    "apps.counting",
     "apps.sales",
     "apps.repairs",
     "apps.returns",
