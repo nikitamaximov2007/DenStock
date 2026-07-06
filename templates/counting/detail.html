@@ -94,6 +94,30 @@
       {% if session.status == "posted" %}<span class="pill pill--success">проведено</span>{% endif %}
     </p>
   {% endif %}
+  <div class="card">
+    <div class="card__body">
+      <form method="post"
+            action="{% url 'counting_comment' session.pk %}"
+            class="form">
+        {% csrf_token %}
+        <div class="field">
+          <label class="field__label" for="cell-comment">Описание ячейки</label>
+          <textarea id="cell-comment"
+                    name="comment"
+                    rows="2"
+                    maxlength="255"
+                    placeholder="Например: Роллеры вариатора, отсортированы после пересчёта">{{ session.comment }}</textarea>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--small btn--secondary">Сохранить описание</button>
+        </div>
+      </form>
+      <p class="muted">
+        Описание - только заметка о содержимом ячейки: его можно менять в любой
+        момент, на остатки и сканы оно не влияет.
+      </p>
+    </div>
+  </div>
   {% if lines %}
     <table class="table">
       <thead>
@@ -148,7 +172,7 @@
             </td>
             <td class="num--money">
               {% if line.final_customer_price_rub is not None %}
-                {{ line.final_customer_price_rub|floatformat:"-2" }}
+                {{ line.final_customer_price_rub|floatformat:"0" }}
               {% else %}
                 ·
               {% endif %}
@@ -186,4 +210,5 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="scan" title="Пока ничего не отсканировано" text="Поставьте курсор в поле сканера и пикайте детали из этой ячейки." compact=1 %}
   {% endif %}
+  {% include "counting/_address_legend.html" %}
 {% endblock %}

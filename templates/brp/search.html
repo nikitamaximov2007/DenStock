@@ -37,6 +37,14 @@
       Сканер работает как клавиатура: отсканируйте номер и нажмите Enter. Сначала
       ищем на складе, затем в справочнике BRP.
     </p>
+    <p class="action-panel__hint">
+      <strong>Легенда статусов BRP:</strong>
+      OBS - снято с производства (obsolete) ·
+      USE - была замена номера (use) ·
+      VIN - винтажный склад, будет доставка 25$ (vintage) ·
+      LIQ - последние остатки у завода (liquidation) ·
+      UCP - статус уточняется, расшифровки в файле BRP нет
+    </p>
   </div>
   {% if searched %}
     {% if warehouse_rows %}
@@ -76,7 +84,13 @@
                   ·
                 {% endfor %}
               </td>
-              <td class="num--money">{{ row.part.recommended_price|default:"·" }}</td>
+              <td class="num--money">
+                {% if row.part.recommended_price is not None %}
+                  {{ row.part.recommended_price|floatformat:"0" }}
+                {% else %}
+                  ·
+                {% endif %}
+              </td>
               <td>
                 {% if row.link %}
                   <span class="code-pill">{{ row.link.brp_part.material_no }}</span>
@@ -123,7 +137,7 @@
               <td class="num--money">{{ row.brp.retail_price_usd|default:"·" }}</td>
               <td class="num--money">
                 {% if row.customer_price is not None %}
-                  {{ row.customer_price|floatformat:"-6" }}
+                  {{ row.customer_price|floatformat:"0" }}
                 {% else %}
                   ·
                 {% endif %}

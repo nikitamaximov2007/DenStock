@@ -31,6 +31,7 @@
       <thead>
         <tr>
           <th>Адрес</th>
+          <th>Описание</th>
           <th>Статус</th>
           <th class="num">Позиций</th>
           <th class="num">Сканов</th>
@@ -46,6 +47,7 @@
                 <span class="code-pill">{{ s.full_address }}</span>
               </a>
             </td>
+            <td>{{ s.comment|truncatechars:60|default:"·" }}</td>
             <td>
               {% if s.status == "posted" %}
                 <span class="pill pill--success">{{ s.get_status_display }}</span>

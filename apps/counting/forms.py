@@ -1,14 +1,17 @@
-"""Layer 32 — формы: выбор адреса ячейки (через единый compose_address)."""
+"""Layer 32 — формы: выбор адреса ячейки (через единый compose_address).
+
+Hotfix 32.1: зоны из формы убраны (склад — одна комната, навигация по номеру
+стеллажа). Коробка и контейнер — одна буква B; старые адреса с зоной/K/X
+остаются валидными, но новые так не создаются.
+"""
 from django import forms
 
 from apps.warehouse.addresses import AddressError, compose_address, get_or_create_location
 
 PLACE_TYPE_CHOICES = [
-    ("drawer", "Ящик"),
-    ("container", "Контейнер"),
-    ("box", "Коробка"),
-    ("shelf", "Полка"),
-    ("open_shelf", "Открытая полка"),
+    ("drawer", "Выдвижной ящик (D)"),
+    ("box", "Коробка или контейнер (B)"),
+    ("shelf", "Полка (без ящика)"),
 ]
 KIND_NEEDS_NUMBER = {"drawer", "container", "box"}
 
@@ -16,15 +19,14 @@ KIND_NEEDS_NUMBER = {"drawer", "container", "box"}
 class CountingStartForm(forms.Form):
     """Выбор точного места хранения. Полный адрес собирает compose_address."""
 
-    zone_code = forms.CharField(label="Зона", max_length=8)
-    rack_number = forms.IntegerField(label="Стеллаж", min_value=1)
-    level_number = forms.IntegerField(label="Уровень", min_value=1)
+    rack_number = forms.IntegerField(label="Стеллаж (S)", min_value=1)
+    level_number = forms.IntegerField(label="Уровень снизу вверх (L)", min_value=1)
     place_type = forms.ChoiceField(label="Тип места", choices=PLACE_TYPE_CHOICES)
     place_number = forms.IntegerField(
-        label="Номер ящика/контейнера", min_value=1, required=False
+        label="Номер ящика/коробки", min_value=1, required=False
     )
-    cell_number = forms.IntegerField(label="Ячейка", min_value=1, required=False)
-    comment = forms.CharField(label="Комментарий", max_length=255, required=False)
+    cell_number = forms.IntegerField(label="Ячейка (C)", min_value=1, required=False)
+    comment = forms.CharField(label="Описание ячейки", max_length=255, required=False)
 
     def clean(self):
         cleaned = super().clean()
@@ -37,7 +39,7 @@ class CountingStartForm(forms.Form):
             return cleaned
         try:
             address = compose_address(
-                cleaned["zone_code"],
+                "",
                 cleaned["rack_number"],
                 cleaned["level_number"],
                 kind=kind,

@@ -126,6 +126,22 @@ def counting_scan(request, pk):
 
 @login_required
 @require_POST
+def counting_comment(request, pk):
+    """Сохранить описание ячейки. Только метаданные: склад и сканы не трогает.
+
+    Разрешено в любом статусе: полезное описание («Роллеры вариатора»)
+    появляется уже после разбора ячейки, в том числе после проведения.
+    """
+    session = get_object_or_404(InventoryCountingSession, pk=pk)
+    _require_manage(request)
+    session.comment = (request.POST.get("comment") or "").strip()
+    session.save(update_fields=["comment", "updated_at"])
+    messages.success(request, "Описание ячейки сохранено.")
+    return redirect("counting_detail", pk=pk)
+
+
+@login_required
+@require_POST
 def counting_undo(request, pk):
     session = get_object_or_404(InventoryCountingSession, pk=pk)
     _require_manage(request)

@@ -179,18 +179,30 @@ def test_import_command_output(db, sample_file, capsys):
 # --- Цены -----------------------------------------------------------------------
 
 
-def test_price_formula_exact_no_rounding():
+def test_price_rounded_to_whole_rubles():
+    """Hotfix 32.1: цена клиента в целых рублях (ROUND_HALF_UP, без копеек)."""
     assert customer_price_rub(Decimal("100"), 105, 40) == Decimal("14700")
+    assert customer_price_rub(Decimal("7.39"), 105, 40) == Decimal("1086")  # 1086.33
+    assert customer_price_rub(Decimal("9.03"), 105, 40) == Decimal("1327")  # 1327.41
     result = customer_price_rub(Decimal("99.99"), 105, 40)
-    assert result == Decimal("14698.53")
+    assert result == Decimal("14699")  # 14698.53 -> вверх
     assert isinstance(result, Decimal)
 
 
 def test_price_formula_configurable():
     assert customer_price_rub(Decimal("10"), 90, 25) == Decimal("1125")
+    # 10 * 100.5 * 1.125 = 1130.625 -> 1131 (половина копейки вверх).
     assert customer_price_rub(Decimal("10"), Decimal("100.5"), Decimal("12.5")) == (
-        Decimal("10") * Decimal("100.5") * Decimal("1.125")
+        Decimal("1131")
     )
+
+
+def test_price_rounding_keeps_usd_sources(db):
+    """Округляется только итог: исходная розница USD не меняется."""
+    brp = _brp()
+    customer_price_rub(brp.retail_price_usd, 105, 40)
+    brp.refresh_from_db()
+    assert brp.retail_price_usd == Decimal("99.99")
 
 
 def test_price_none_without_retail():
@@ -233,15 +245,15 @@ def test_promote_creates_card_without_stock(db, refs, admin):
     part = promote_to_warehouse(brp, by=admin)
     assert part.name == "BELT DRIVE"
     assert part.tracking_mode == PartType.TrackingMode.BULK
-    assert part.recommended_price == Decimal("14698.53")
+    assert part.recommended_price == Decimal("14699")  # целые рубли, без копеек
     numbers = set(PartNumber.objects.filter(part=part).values_list("value", flat=True))
     assert numbers == {"219800345", "417300571"}
     link = BrpPartLink.objects.get(part=part)
     assert link.brp_retail_price_usd == Decimal("99.99")
     assert link.usd_rate_used == Decimal("105")
     assert link.markup_percent_used == Decimal("40")
-    assert link.calculated_customer_price_rub == Decimal("14698.53")
-    assert link.final_customer_price_rub == Decimal("14698.53")
+    assert link.calculated_customer_price_rub == Decimal("14699")
+    assert link.final_customer_price_rub == Decimal("14699")
     assert link.price_source == BrpPartLink.PriceSource.CALCULATED
     after = _stock_snapshot()
     assert after["balances"] == before["balances"]  # остатков НЕ появилось
@@ -266,7 +278,7 @@ def test_manual_price_keeps_sources(db, refs, admin):
     assert link.final_customer_price_rub == Decimal("15000")
     # Исходники не потеряны: и USD, и рассчитанная цена сохранены.
     assert link.brp_retail_price_usd == Decimal("99.99")
-    assert link.calculated_customer_price_rub == Decimal("14698.53")
+    assert link.calculated_customer_price_rub == Decimal("14699")
 
 
 def test_settings_change_affects_future_not_past(db, refs, admin):
@@ -278,9 +290,10 @@ def test_settings_change_affects_future_not_past(db, refs, admin):
     new_part = promote_to_warehouse(_brp("222"), by=admin)
     old_link, new_link = old_part.brp_link, new_part.brp_link
     assert old_link.usd_rate_used == Decimal("105")  # история не изменилась
-    assert old_link.calculated_customer_price_rub == Decimal("14698.53")
+    assert old_link.calculated_customer_price_rub == Decimal("14699")
     assert new_link.usd_rate_used == Decimal("90")
-    assert new_link.calculated_customer_price_rub == Decimal("99.99") * 90 * Decimal("1.5")
+    # 99.99 * 90 * 1.5 = 13498.65 -> 13499 (целые рубли).
+    assert new_link.calculated_customer_price_rub == Decimal("13499")
 
 
 # --- Поиск -----------------------------------------------------------------------
@@ -420,29 +433,65 @@ def test_settings_page_gated_and_saves(client, make_user, db):
 
 
 def test_address_for_drawer():
-    address = compose_address("B", 1, 2, kind="drawer", unit_no=3, cell_no=8)
-    assert address == "B-S01-L02-D03-C08"
+    # Новый формат по умолчанию: без зоны.
+    assert compose_address("", 1, 2, kind="drawer", unit_no=3, cell_no=8) == "S01-L02-D03-C08"
 
 
-def test_address_for_container():
-    address = compose_address("A", 2, 1, kind="container", unit_no=4, cell_no=2)
-    assert address == "A-S02-L01-K04-C02"
+def test_address_for_box_or_container():
+    # Коробка и контейнер — одна буква B (K и X для новых адресов не используются).
+    assert compose_address("", 2, 1, kind="container", unit_no=4, cell_no=2) == "S02-L01-B04-C02"
+    assert compose_address("", 2, 1, kind="box", unit_no=4, cell_no=2) == "S02-L01-B04-C02"
 
 
 def test_address_for_open_shelf():
-    assert compose_address("D", 1, 4) == "D-S01-L04"
+    assert compose_address("", 4, 2) == "S04-L02"
+    assert compose_address("", 3, 1, kind="box", unit_no=2) == "S03-L01-B02"
+
+
+def test_address_legacy_zone_still_works():
+    # Старые адреса с зоной остаются собираемыми и валидными.
+    assert compose_address("A", 1, 2, kind="drawer", unit_no=1, cell_no=1) == "A-S01-L02-D01-C01"
     assert compose_address("d", 1, 4, kind="shelf") == "D-S01-L04"
+
+
+def test_address_legacy_codes_remain_searchable(db):
+    # Легаси-коды K/X/зоны в базе читаются и переиспользуются как раньше.
+    from apps.warehouse.addresses import get_or_create_location
+
+    for code in ("A-S01-L02-D01-C01", "S01-L02-K01-C01", "S01-L02-X01-C01"):
+        created = get_or_create_location(code)
+        assert get_or_create_location(code).pk == created.pk
+        assert StorageLocation.objects.filter(code=code).count() == 1
 
 
 def test_address_validation():
     with pytest.raises(AddressError):
-        compose_address("", 1, 1)
+        compose_address("", 0, 1)
     with pytest.raises(AddressError):
-        compose_address("A", 0, 1)
+        compose_address("", 1, 1, kind="drawer")  # ящик без номера
     with pytest.raises(AddressError):
-        compose_address("A", 1, 1, kind="drawer")  # ящик без номера
-    with pytest.raises(AddressError):
-        compose_address("A", 1, 1, cell_no=5)  # ячейка вне ящика/контейнера
+        compose_address("", 1, 1, cell_no=5)  # ячейка вне ящика/контейнера
+
+
+def test_brp_status_legend_visible(client, make_user, db):
+    """Hotfix 32.1: легенда статусов BRP видна на странице каталога."""
+    _login(client, make_user, superuser=True)
+    html = client.get(reverse("brp_search")).content.decode()
+    assert "Легенда статусов BRP" in html
+    assert "OBS - снято с производства (obsolete)" in html
+    assert "USE - была замена номера (use)" in html
+    assert "VIN - винтажный склад, будет доставка 25$ (vintage)" in html
+    assert "LIQ - последние остатки у завода (liquidation)" in html
+    assert "UCP - статус уточняется" in html
+
+
+def test_brp_price_shown_without_kopecks(client, make_user, imported):
+    """Hotfix 32.1: в каталоге цена клиента без копеек (целые рубли)."""
+    _login(client, make_user, superuser=True)
+    # 353589: 9.03 * 105 * 1.40 = 1327.41 -> 1327.
+    html = client.get(reverse("brp_search") + "?q=353589").content.decode()
+    assert "1327" in html
+    assert "1327,41" not in html and "1327.41" not in html
 
 
 # --- Гигиена --------------------------------------------------------------------------

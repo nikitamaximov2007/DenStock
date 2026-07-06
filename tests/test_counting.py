@@ -94,6 +94,8 @@ def _stock_snapshot():
 
 
 def test_address_composed_and_reused(db):
+    # Новый формат без зоны (по умолчанию) и легаси-формат с зоной.
+    assert compose_address("", 1, 2, kind="drawer", unit_no=3, cell_no=8) == "S01-L02-D03-C08"
     assert compose_address("B", 1, 2, kind="drawer", unit_no=3, cell_no=8) == "B-S01-L02-D03-C08"
     loc1 = get_or_create_location("B-S01-L02-D03-C08")
     loc2 = get_or_create_location("B-S01-L02-D03-C08")
@@ -162,7 +164,7 @@ def test_brp_material_and_replacement_match(refs, location, admin):
     assert r1.brp_catalog_part == refs["brp_main"]
     r2 = record_scan(session, "290420", by=admin)  # replacement_no_2
     assert r2.brp_catalog_part == refs["brp_repl2"]
-    assert m.final_customer_price_rub == Decimal("14698.53")  # 99.99*105*1.4 без округления
+    assert m.final_customer_price_rub == Decimal("14699")  # 14698.53 -> целые рубли
 
 
 def test_unknown_line_created(refs, location, admin):
@@ -195,7 +197,7 @@ def test_convert_autocreates_brp_card_with_price_snapshot(refs, location, admin)
     link = BrpPartLink.objects.get(brp_part=refs["brp_main"])
     assert link.usd_rate_used == Decimal("105")
     assert link.markup_percent_used == Decimal("40")
-    assert link.calculated_customer_price_rub == Decimal("14698.53")  # без округления
+    assert link.calculated_customer_price_rub == Decimal("14699")  # целые рубли
     line = session.lines.get()
     assert line.source == "warehouse"  # после конвертации привязана к складу
     assert line.warehouse_part == link.part
@@ -302,17 +304,72 @@ def test_scan_endpoint_enter_handling(client, make_user, refs, location):
     assert session.lines.get().brp_catalog_part == refs["brp_main"]
 
 
-def test_new_session_creates_location(client, make_user, refs):
+def test_new_session_creates_location_without_zone(client, make_user, refs):
+    """Hotfix 32.1: зона не требуется, адрес собирается без неё, коробка = B."""
     _login(client, make_user, superuser=True, name="boss")
     resp = client.post(
         reverse("counting_new"),
         {
-            "zone_code": "Q", "rack_number": "1", "level_number": "1",
+            "rack_number": "1", "level_number": "1",
             "place_type": "box", "place_number": "1", "cell_number": "3", "comment": "",
         },
     )
     assert resp.status_code == 302
-    assert StorageLocation.objects.filter(code="Q-S01-L01-X01-C03").exists()
+    assert StorageLocation.objects.filter(code="S01-L01-B01-C03").exists()
+
+
+def test_new_page_shows_address_legend(client, make_user, db):
+    _login(client, make_user, superuser=True, name="boss")
+    html = client.get(reverse("counting_new")).content.decode()
+    assert "Легенда адреса склада" in html
+    assert "S - стеллаж (shelving unit)" in html
+    assert "L - уровень, снизу вверх (level)" in html
+    assert "D - выдвижной ящик (drawer)" in html
+    assert "B - коробка или контейнер (box/bin)" in html
+    assert "C - ячейка внутри ящика или контейнера (cell/compartment)" in html
+    assert "S01-L02-D03-C08" in html
+    assert "S02-L01-B04-C02" in html
+    assert "S04-L02" in html
+
+
+def test_comment_editable_and_safe(client, make_user, refs, location):
+    """Hotfix 32.1: описание ячейки редактируется и не трогает ни склад, ни сканы."""
+    _login(client, make_user, superuser=True, name="boss")
+    session = InventoryCountingSession.objects.create(
+        storage_location=location, full_address=location.code, title="t",
+    )
+    record_scan(session, "700700")
+    before = _stock_snapshot()
+    events_before = InventoryScanEvent.objects.filter(session=session).count()
+    resp = client.post(
+        reverse("counting_comment", args=[session.pk]),
+        {"comment": "Роллеры вариатора, отсортированы после пересчёта"},
+    )
+    assert resp.status_code == 302
+    session.refresh_from_db()
+    assert session.comment == "Роллеры вариатора, отсортированы после пересчёта"
+    assert _stock_snapshot() == before  # склад не тронут
+    assert InventoryScanEvent.objects.filter(session=session).count() == events_before
+    assert session.lines.get().scan_count == 1  # количество не изменилось
+    # Видно на странице сессии и в списке.
+    assert "Роллеры вариатора" in client.get(
+        reverse("counting_detail", args=[session.pk])
+    ).content.decode()
+    assert "Роллеры вариатора" in client.get(reverse("counting_list")).content.decode()
+
+
+def test_comment_editable_after_posting(client, make_user, refs, location, admin):
+    """Описание — метаданные: правится и после проведения, остатки не меняются."""
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    before = _stock_snapshot()
+    client.post(reverse("counting_comment", args=[session.pk]), {"comment": "Подшипники"})
+    session.refresh_from_db()
+    assert session.comment == "Подшипники"
+    assert session.status == InventoryCountingSession.Status.POSTED
+    assert _stock_snapshot() == before
 
 
 def test_full_flow_via_views(client, make_user, refs, location):

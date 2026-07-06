@@ -8,6 +8,7 @@ urlpatterns = [
     path("counting/<int:pk>/", views.counting_detail, name="counting_detail"),
     path("counting/<int:pk>/scan/", views.counting_scan, name="counting_scan"),
     path("counting/<int:pk>/undo/", views.counting_undo, name="counting_undo"),
+    path("counting/<int:pk>/comment/", views.counting_comment, name="counting_comment"),
     path("counting/<int:pk>/convert/", views.counting_convert, name="counting_convert"),
     path("counting/<int:pk>/post/", views.counting_post, name="counting_post"),
     path("counting/<int:pk>/cancel/", views.counting_cancel, name="counting_cancel"),
