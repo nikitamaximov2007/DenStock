@@ -9,11 +9,11 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db.models import Count, DecimalField, F, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
 
 from .forms import CountingStartForm
@@ -24,8 +24,10 @@ from .services import (
     cancel_session,
     convert_to_receipt,
     delete_session,
+    find_brp_by_number,
     post_session,
     record_scan,
+    refresh_draft_prices,
     remove_line,
     resolve_unknown_to_brp,
     resolve_unknown_to_part,
@@ -46,12 +48,20 @@ def counting_list(request):
     status = request.GET.get("status", "")
     qs = InventoryCountingSession.objects.select_related(
         "storage_location", "created_by", "converted_receipt"
+    ).annotate(
+        # Агрегаты по ОДНОЙ связи lines: без дублирования строк в join.
+        unique_total=Count("lines"),
+        scans_total=Sum("lines__scan_count"),
+        quantity_total=Sum("lines__quantity_counted"),
+        value_total=Sum(
+            F("lines__quantity_counted") * F("lines__final_customer_price_rub"),
+            output_field=DecimalField(max_digits=32, decimal_places=9),
+        ),
     )
     if status:
         qs = qs.filter(status=status)
     sessions = list(qs[:100])
     for session in sessions:
-        session.counter_data = session.counters()
         session.can_be_deleted = can_delete_session(session)
     return render(
         request,
@@ -91,6 +101,9 @@ def counting_detail(request, pk):
         InventoryCountingSession.objects.select_related("storage_location", "converted_receipt"),
         pk=pk,
     )
+    # Черновик освежает снимки цен по текущему BRP-каталогу: после реимпорта
+    # прайса исправленные цены видны без повторного сканирования ячейки.
+    refresh_draft_prices(session)
     lines = session.lines.select_related("warehouse_part", "brp_catalog_part")
     return render(
         request,
@@ -203,11 +216,7 @@ def counting_line_resolve(request, pk):
             resolve_unknown_to_part(line, PartType.objects.get(pk=part_id))
             messages.success(request, "Строка привязана к складской карточке.")
         else:
-            brp = BrpCatalogPart.objects.filter(
-                material_no_norm=norm
-            ).first() or BrpCatalogPart.objects.filter(
-                replacement_no_1_norm=norm
-            ).first() or BrpCatalogPart.objects.filter(replacement_no_2_norm=norm).first()
+            brp = find_brp_by_number(norm)
             if brp:
                 resolve_unknown_to_brp(line, brp)
                 messages.success(request, "Строка привязана к BRP-каталогу.")
@@ -226,6 +235,7 @@ def counting_convert(request, pk):
         InventoryCountingSession.objects.select_related("storage_location", "converted_receipt"),
         pk=pk,
     )
+    refresh_draft_prices(session)  # обзор и конвертация видят актуальные цены
     lines = session.lines.select_related("warehouse_part", "brp_catalog_part")
     unknown_count = sum(1 for line in lines if line.needs_review)
     if request.method == "POST":

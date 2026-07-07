@@ -1,8 +1,19 @@
-"""Layer 31 — импорт дилерского прайса BRP из Excel в справочник.
+"""Layer 31/32.3 — импорт дилерского прайса BRP из Excel в справочник.
 
 СТРОГО справочник: импорт не создаёт остатков, движений, поступлений и не
 удаляет складские карточки. Идемпотентен: повторный запуск обновляет только
 изменившиеся строки. 127 тысяч строк обрабатываются чанками через bulk-операции.
+
+Дубликаты Material_No (hotfix 32.3): в файле встречаются повторы одного
+номера, где у одной строки розница 0, а у другой — реальная цена. Правило
+выбора лучшей строки детерминировано:
+1) предпочесть строку с retail_price_usd > 0;
+2) при равенстве — строку с wholesale_price_usd > 0;
+3) при полном равенстве — первую по порядку в файле;
+4) если у всех дубликатов розница 0, остаётся 0.
+Повторный импорт того же файла ЧИНИТ существующие записи с нулевой ценой:
+логика «пропустить без изменений» сравнивает выбранную лучшую строку с базой
+и обновляет отличающиеся записи (счётчик zero_price_repaired).
 
 Формат файла (проверен на реальном прайсе):
 - первый лист; строка 1 — заголовки; строка 2 — примечания (пустая в колонках
@@ -12,6 +23,10 @@
 - колонки правее H (легенда статусов) игнорируются;
 - Material_No хранится СТРОКОЙ (ведущие нули не теряются), пробелы обрезаются,
   пустые ячейки нормализуются.
+
+Файл читается в два прохода, чтобы не держать 127k строк в памяти:
+проход 1 выбирает номер лучшей строки на каждый Material_No, проход 2
+обрабатывает только выбранные строки чанками.
 """
 from collections import Counter
 from dataclasses import dataclass, field
@@ -26,6 +41,7 @@ from .models import BrpCatalogPart
 
 CHUNK_SIZE = 1000
 DATA_COLUMNS = 8  # A..H
+ZERO = Decimal("0")
 
 # Поля, которые синхронизируются из файла при обновлении существующей строки.
 SYNC_FIELDS = (
@@ -53,6 +69,8 @@ class ImportSummary:
     skipped_unchanged: int = 0
     skipped_empty: int = 0
     duplicates: int = 0
+    duplicates_price_resolved: int = 0  # дубликат выиграл по правилу ненулевой цены
+    zero_price_repaired: int = 0  # записи базы, где нулевая розница стала ненулевой
     unique_materials: int = 0
     with_retail_price: int = 0
     with_wholesale_price: int = 0
@@ -94,6 +112,21 @@ def _row_dict(cells, row_no: int) -> dict:
     }
 
 
+def _price_score(row: dict) -> tuple[int, int]:
+    """Ранг строки для выбора среди дубликатов: только Decimal, без float.
+
+    (розница > 0, оптовая > 0); лексикографическое сравнение кортежей даёт
+    правило «сначала ненулевая розница, затем ненулевая оптовая». Побеждает
+    строго больший ранг, при равенстве остаётся более ранняя строка файла.
+    """
+    retail = row["retail_price_usd"]
+    wholesale = row["wholesale_price_usd"]
+    return (
+        1 if retail is not None and retail > ZERO else 0,
+        1 if wholesale is not None and wholesale > ZERO else 0,
+    )
+
+
 def _differs(obj: BrpCatalogPart, row: dict) -> bool:
     return any(getattr(obj, name) != row[name] for name in SYNC_FIELDS)
 
@@ -126,6 +159,12 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
             to_create.append(obj)
             summary.created += 1
         elif _differs(obj, row):
+            old_retail = obj.retail_price_usd
+            new_retail = row["retail_price_usd"]
+            if (old_retail is None or old_retail == ZERO) and (
+                new_retail is not None and new_retail > ZERO
+            ):
+                summary.zero_price_repaired += 1
             _apply(obj, row, source_file=source_file, batch=batch)
             to_update.append(obj)
             summary.updated += 1
@@ -140,39 +179,69 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
             )
 
 
-def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> ImportSummary:
-    """Разобрать Excel и синхронизировать справочник. dry-run ничего не пишет."""
+def _open_worksheet(path: Path, sheet: str | None):
     import openpyxl
 
-    path = Path(path)
-    if not path.exists():
-        raise BrpImportError(f"Файл не найден: {path}")
     try:
         workbook = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     except Exception as exc:  # noqa: BLE001 — любой битый xlsx -> понятная ошибка
         raise BrpImportError(f"Не удалось открыть Excel: {exc}") from exc
+    worksheet = workbook[sheet] if sheet else workbook[workbook.sheetnames[0]]
+    return workbook, worksheet
 
+
+def _select_best_rows(worksheet, summary: ImportSummary) -> dict[str, int]:
+    """Проход 1: для каждого Material_No выбрать номер лучшей строки файла."""
+    best: dict[str, tuple[tuple[int, int], int]] = {}
+    for row_no, cells in enumerate(
+        worksheet.iter_rows(min_row=2, values_only=True), start=2
+    ):
+        summary.total_rows_scanned += 1
+        row = _row_dict(cells, row_no)
+        material = row["material_no"]
+        if not material:
+            summary.skipped_empty += 1
+            continue
+        score = _price_score(row)
+        kept = best.get(material)
+        if kept is None:
+            best[material] = (score, row_no)
+            continue
+        summary.duplicates += 1
+        if score > kept[0]:  # строго лучше по цене: дубликат побеждает
+            best[material] = (score, row_no)
+            summary.duplicates_price_resolved += 1
+    return {material: row_no for material, (_score, row_no) in best.items()}
+
+
+def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> ImportSummary:
+    """Разобрать Excel и синхронизировать справочник. dry-run ничего не пишет."""
+    path = Path(path)
+    if not path.exists():
+        raise BrpImportError(f"Файл не найден: {path}")
+
+    summary = ImportSummary(mode="commit" if commit else "dry-run")
+    batch = timezone.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    # Проход 1: выбор лучших строк (в памяти только номера строк и ранги).
+    workbook, worksheet = _open_worksheet(path, sheet)
     try:
-        worksheet = workbook[sheet] if sheet else workbook[workbook.sheetnames[0]]
-        summary = ImportSummary(mode="commit" if commit else "dry-run")
-        batch = timezone.now().strftime("%Y-%m-%d_%H-%M-%S")
-        seen: set[str] = set()
-        chunk: list[dict] = []
+        selected_rows = _select_best_rows(worksheet, summary)
+    finally:
+        workbook.close()
+    summary.unique_materials = len(selected_rows)
+    winners = set(selected_rows.values())
 
-        # Строка 1 — заголовки; примечания и пустые строки отсеются по
-        # пустому Material_No (строка 2 пуста в колонках данных).
+    # Проход 2: обработать только выбранные строки, чанками.
+    workbook, worksheet = _open_worksheet(path, sheet)
+    try:
+        chunk: list[dict] = []
         for row_no, cells in enumerate(
             worksheet.iter_rows(min_row=2, values_only=True), start=2
         ):
-            summary.total_rows_scanned += 1
+            if row_no not in winners:
+                continue
             row = _row_dict(cells, row_no)
-            if not row["material_no"]:
-                summary.skipped_empty += 1
-                continue
-            if row["material_no"] in seen:
-                summary.duplicates += 1
-                continue
-            seen.add(row["material_no"])
             summary.data_rows += 1
             if row["brp_status"]:
                 summary.status_counts[row["brp_status"]] += 1
@@ -189,7 +258,6 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
                 chunk = []
         if chunk:
             _flush(chunk, summary, commit=commit, source_file=path.name, batch=batch)
-        summary.unique_materials = len(seen)
         return summary
     finally:
         workbook.close()

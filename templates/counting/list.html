@@ -34,6 +34,8 @@
           <th>Описание</th>
           <th>Статус</th>
           <th class="num">Позиций</th>
+          <th class="num">Деталей</th>
+          <th class="num--money">Стоимость</th>
           <th class="num">Сканов</th>
           <th>Начал</th>
           <th>Создано</th>
@@ -58,8 +60,10 @@
                 <span class="pill pill--info">{{ s.get_status_display }}</span>
               {% endif %}
             </td>
-            <td class="num">{{ s.counter_data.unique }}</td>
-            <td class="num">{{ s.counter_data.total_scans }}</td>
+            <td class="num">{{ s.unique_total }}</td>
+            <td class="num">{{ s.quantity_total|default:0|floatformat:"-3" }}</td>
+            <td class="num--money">{{ s.value_total|default:0|floatformat:"0" }} ₽</td>
+            <td class="num">{{ s.scans_total|default:0 }}</td>
             <td>{{ s.created_by|default:"·" }}</td>
             <td>{{ s.created_at|ru_dt }}</td>
             <td class="table__actions">

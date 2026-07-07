@@ -136,9 +136,87 @@ def test_commit_parses_all_fields(db, sample_file):
     assert old.retail_price_usd == Decimal("0")
 
 
-def test_duplicate_material_first_wins(imported):
+def test_duplicate_material_first_wins_on_price_tie(imported):
+    # Обе строки 324816 с ненулевой розницей: ранги равны, побеждает первая.
     part = BrpCatalogPart.objects.get(material_no="324816")
     assert part.part_desc == "SCREW"  # первая строка, не "SCREW DUPLICATE"
+
+
+# --- Дубликаты Material_No: предпочтение ненулевой цены (hotfix 32.3) -----------------
+
+DUP_417_ROWS = [
+    # Реальный кейс: первая строка с нулевой розницей, дубликат с настоящей ценой.
+    ["417224916", "ROLLER ZERO", 2020, None, 0, 0, None, None],
+    ["417224916", "ROLLER PULLEY EXT", 2025, None, 35.99, 28.15, None, None],
+]
+
+
+def test_duplicate_prefers_nonzero_retail(db, tmp_path):
+    summary = import_catalog(_make_xlsx(tmp_path, DUP_417_ROWS), commit=True)
+    assert summary.duplicates == 1
+    assert summary.duplicates_price_resolved == 1
+    part = BrpCatalogPart.objects.get(material_no="417224916")
+    assert part.retail_price_usd == Decimal("35.99")
+    assert part.wholesale_price_usd == Decimal("28.15")
+    assert part.part_desc == "ROLLER PULLEY EXT"
+    # 35.99 * 105 * 1.40 = 5290.53 -> 5291 ₽ (целые рубли).
+    assert customer_price_rub(part.retail_price_usd, 105, 40) == Decimal("5291")
+
+
+def test_duplicate_wholesale_tiebreak(db, tmp_path):
+    rows = [
+        ["555001", "NO PRICES", 2020, None, 0, 0, None, None],
+        ["555001", "WHOLESALE ONLY", 2025, None, 0, 12.5, None, None],
+    ]
+    summary = import_catalog(_make_xlsx(tmp_path, rows), commit=True)
+    assert summary.duplicates_price_resolved == 1
+    part = BrpCatalogPart.objects.get(material_no="555001")
+    assert part.part_desc == "WHOLESALE ONLY"  # розница у обеих 0 -> решает оптовая
+    assert part.retail_price_usd == Decimal("0")
+
+
+def test_duplicate_all_zero_keeps_zero(db, tmp_path):
+    rows = [
+        ["555002", "ZERO A", 2020, None, 0, 0, None, None],
+        ["555002", "ZERO B", 2025, None, 0, 0, None, None],
+    ]
+    summary = import_catalog(_make_xlsx(tmp_path, rows), commit=True)
+    assert summary.duplicates_price_resolved == 0
+    part = BrpCatalogPart.objects.get(material_no="555002")
+    assert part.part_desc == "ZERO A"  # детерминированно: первая строка
+    assert part.retail_price_usd == Decimal("0")
+
+
+def test_reimport_repairs_zero_price_record(db, tmp_path):
+    # В базе запись со старого импорта «первая строка побеждает»: цена 0.
+    BrpCatalogPart.objects.create(
+        material_no="417224916", part_desc="ROLLER ZERO",
+        retail_price_usd=Decimal("0"), wholesale_price_usd=Decimal("0"),
+    )
+    path = _make_xlsx(tmp_path, DUP_417_ROWS)
+    # Dry-run сообщает, что запись будет обновлена, но ничего не пишет.
+    dry = import_catalog(path, commit=False)
+    assert dry.updated == 1
+    assert dry.zero_price_repaired == 1
+    assert BrpCatalogPart.objects.get(material_no="417224916").retail_price_usd == Decimal("0")
+    # Commit реально чинит запись.
+    summary = import_catalog(path, commit=True)
+    assert summary.updated == 1
+    assert summary.zero_price_repaired == 1
+    part = BrpCatalogPart.objects.get(material_no="417224916")
+    assert part.retail_price_usd == Decimal("35.99")
+    # Повторный импорт стабилен: уже выбранная ненулевая строка не меняется.
+    again = import_catalog(path, commit=True)
+    assert again.updated == 0
+    assert again.skipped_unchanged == 1
+
+
+def test_brp_search_shows_repaired_price(client, make_user, db, tmp_path):
+    import_catalog(_make_xlsx(tmp_path, DUP_417_ROWS), commit=True)
+    _login(client, make_user, superuser=True)
+    html = client.get(reverse("brp_search") + "?q=417224916").content.decode()
+    assert "ROLLER PULLEY EXT" in html
+    assert "5291" in html  # не 0: выбрана строка с настоящей розницей
 
 
 def test_reimport_is_idempotent(db, sample_file):

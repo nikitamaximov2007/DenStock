@@ -25,6 +25,9 @@ from apps.counting.services import (
     delete_session,
     post_session,
     record_scan,
+    refresh_draft_prices,
+    remove_line,
+    set_line_quantity,
     start_session,
     undo_last_scan,
 )
@@ -392,6 +395,137 @@ def test_full_flow_via_views(client, make_user, refs, location):
     assert session.status == InventoryCountingSession.Status.POSTED
     balance = StockBalance.objects.get(part_type=refs["wh"], location=location)
     assert balance.quantity_available == Decimal("2")
+
+
+# --- Итоги ячейки: Деталей и Стоимость (hotfix 32.3) --------------------------------
+
+
+def test_empty_draft_totals_are_zero(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    c = session.counters()
+    assert c["total_quantity"] == Decimal("0")
+    assert c["total_value"] == Decimal("0")
+
+
+def test_totals_follow_scans_and_manual_quantity(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "219800345", by=admin)  # цена клиента 14699
+    c = session.counters()
+    assert c["total_quantity"] == Decimal("1")
+    assert c["total_value"] == Decimal("14699")
+    record_scan(session, "219800345", by=admin)
+    c = session.counters()
+    assert c["total_quantity"] == Decimal("2")
+    assert c["total_value"] == Decimal("29398")
+    # Отпикали одну заводскую упаковку и вручную поставили 13 штук.
+    line.refresh_from_db()
+    set_line_quantity(line, 13)
+    c = session.counters()
+    assert c["total_scans"] == 2  # сканы остаются сырыми сканами
+    assert c["unique"] == 1  # позиций
+    assert c["total_quantity"] == Decimal("13")  # деталей
+    assert c["total_value"] == Decimal("13") * Decimal("14699")  # 191087
+
+
+def test_totals_sum_multiple_lines_and_line_removal(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    line1 = record_scan(session, "219800345", by=admin)  # 14699
+    line2 = record_scan(session, "503190", by=admin)  # 10 * 105 * 1.4 = 1470
+    record_scan(session, "NO-SUCH-999", by=admin)  # неизвестная: цены нет
+    set_line_quantity(line1, 13)
+    c = session.counters()
+    assert c["total_quantity"] == Decimal("15")  # 13 + 1 + 1
+    assert c["total_value"] == Decimal("13") * Decimal("14699") + Decimal("1470")
+    remove_line(line2)
+    c = session.counters()
+    assert c["total_quantity"] == Decimal("14")
+    assert c["total_value"] == Decimal("13") * Decimal("14699")
+
+
+def test_spec_example_5291_times_13(refs, location, admin):
+    BrpCatalogPart.objects.create(
+        material_no="417224916", part_desc="ROLLER PULLEY EXT",
+        retail_price_usd=Decimal("35.99"), wholesale_price_usd=Decimal("28.15"),
+    )
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "417224916", by=admin)
+    assert line.final_customer_price_rub == Decimal("5291")  # 5290.53 -> 5291
+    set_line_quantity(line, 13)
+    assert session.counters()["total_value"] == Decimal("68783")  # 13 * 5291
+
+
+def test_detail_page_shows_totals_without_warehouse_tile(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "219800345", by=admin)
+    # Ручная правка количества через форму строки: редирект обратно.
+    resp = client.post(
+        reverse("counting_line_qty", args=[line.pk]), {"quantity": "13"}, follow=True
+    )
+    html = resp.content.decode()
+    assert "Всего деталей в ячейке" in html
+    assert "Стоимость ячейки" in html
+    assert "191087" in html  # 13 * 14699: итог обновился после правки
+    assert "13" in html
+    # «Найдено в складе» убрано из сводки, источник в таблице строк остался.
+    assert "Найдено в складе" not in html
+    assert "BRP-каталог" in html
+    assert "Найдено в BRP" in html
+
+
+def test_list_page_shows_details_and_value_columns(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "219800345", by=admin)
+    set_line_quantity(line, 13)
+    html = client.get(reverse("counting_list")).content.decode()
+    assert "Деталей" in html
+    assert "Стоимость" in html
+    assert "191087" in html
+    assert "Сканов" in html  # сырые сканы отдельной колонкой
+
+
+# --- Черновик подхватывает исправленные цены BRP (hotfix 32.3) ----------------------
+
+
+def test_draft_refreshes_corrected_brp_price(client, make_user, refs, location, admin):
+    """Реимпорт прайса починил нулевую цену: черновик показывает её БЕЗ пересканирования."""
+    brp = BrpCatalogPart.objects.create(
+        material_no="417224916", part_desc="ROLLER ZERO", retail_price_usd=Decimal("0"),
+    )
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "417224916", by=admin)
+    set_line_quantity(line, 13)
+    assert line.final_customer_price_rub == Decimal("0")  # старый нулевой снимок
+    # Реимпорт BRP исправил запись каталога.
+    brp.part_desc = "ROLLER PULLEY EXT"
+    brp.retail_price_usd = Decimal("35.99")
+    brp.save()
+    before = _stock_snapshot()
+    assert refresh_draft_prices(session) == 1
+    line.refresh_from_db()
+    assert line.final_customer_price_rub == Decimal("5291")
+    assert session.counters()["total_value"] == Decimal("68783")  # 13 * 5291
+    assert _stock_snapshot() == before  # освежение цен склад не трогает
+    # Страница сессии показывает исправленную цену (refresh зовётся во view).
+    client.login(username="admin", password=PASSWORD)
+    html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+    assert "5291" in html
+    assert "68783" in html
+
+
+def test_posted_session_prices_not_refreshed(refs, location, admin):
+    """Проведённые сессии — история: смена цен каталога их не переписывает."""
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "219800345", by=admin)  # снимок 14699
+    post_session(session, by=admin)
+    refs["brp_main"].retail_price_usd = Decimal("199.99")
+    refs["brp_main"].save()
+    before = _stock_snapshot()
+    assert refresh_draft_prices(session) == 0
+    line.refresh_from_db()
+    assert line.final_customer_price_rub == Decimal("14699")  # снимок цел
+    assert _stock_snapshot() == before
 
 
 # --- Удаление черновика (hotfix 32.2) -----------------------------------------------

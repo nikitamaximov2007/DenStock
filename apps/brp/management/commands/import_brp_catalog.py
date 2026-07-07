@@ -47,6 +47,8 @@ class Command(BaseCommand):
         write(f"Пропущено без изменений: {summary.skipped_unchanged}")
         write(f"Пропущено пустых: {summary.skipped_empty}")
         write(f"Дубликатов Material_No: {summary.duplicates}")
+        write(f"Дубликатов решено по ненулевой цене: {summary.duplicates_price_resolved}")
+        write(f"Нулевых цен исправлено из дубликатов: {summary.zero_price_repaired}")
         write(f"Уникальных номеров: {summary.unique_materials}")
         write(f"С розничной ценой: {summary.with_retail_price}")
         write(f"С оптовой ценой: {summary.with_wholesale_price}")

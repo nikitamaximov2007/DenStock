@@ -47,6 +47,35 @@ def start_session(*, location, comment="", by=None) -> InventoryCountingSession:
 # --- Сопоставление скана (склад имеет приоритет над BRP) --------------------------
 
 
+def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
+    """Позиция BRP по нормализованному номеру (material_no и обе замены).
+
+    Если под номер подходит несколько позиций (совпадение по заменам),
+    детерминированно предпочитаем позицию с ненулевой розницей (hotfix 32.3),
+    затем меньший pk.
+    """
+    if not norm:
+        return None
+    from django.db.models import Case, IntegerField, Value, When
+
+    return (
+        BrpCatalogPart.objects.filter(
+            Q(material_no_norm=norm)
+            | Q(replacement_no_1_norm=norm)
+            | Q(replacement_no_2_norm=norm)
+        )
+        .order_by(
+            Case(
+                When(retail_price_usd__gt=0, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            ),
+            "pk",
+        )
+        .first()
+    )
+
+
 def _match(norm: str, raw: str):
     """Найти совпадение: (source, warehouse_part, brp_part, display_name, price)."""
     part = None
@@ -67,15 +96,10 @@ def _match(norm: str, raw: str):
     if part is not None:
         return ("warehouse", part, None, part.name, part.recommended_price)
 
-    if norm:
-        brp = BrpCatalogPart.objects.filter(
-            Q(material_no_norm=norm)
-            | Q(replacement_no_1_norm=norm)
-            | Q(replacement_no_2_norm=norm)
-        ).first()
-        if brp is not None:
-            price = current_customer_price_rub(brp.retail_price_usd)
-            return ("brp_catalog", None, brp, brp.part_desc or brp.material_no, price)
+    brp = find_brp_by_number(norm)
+    if brp is not None:
+        price = current_customer_price_rub(brp.retail_price_usd)
+        return ("brp_catalog", None, brp, brp.part_desc or brp.material_no, price)
 
     return ("unknown", None, None, UNKNOWN_NAME, None)
 
@@ -165,6 +189,39 @@ def set_line_quantity(line: InventoryCountingLine, quantity) -> None:
 def remove_line(line: InventoryCountingLine) -> None:
     _ensure_draft(line.session)
     line.delete()
+
+
+def refresh_draft_prices(session: InventoryCountingSession) -> int:
+    """Обновить снимки цен строк ЧЕРНОВИКА по текущему BRP-каталогу/настройкам.
+
+    Зачем: после починки дубликатов BRP (реимпорт прайса) уже отпиканная
+    ячейка должна показать исправленные цены БЕЗ повторного сканирования.
+    Выбранный подход: цена строки хранится снимком, и для незавершённых
+    черновиков снимок освежается при открытии страницы сессии/обзора.
+    Только черновики: сконвертированные и проведённые сессии, документы,
+    движения и остатки не трогаются. Возвращает число обновлённых строк.
+    """
+    # Статус берём из базы: переданный объект может быть устаревшим
+    # (например, после post_session), а снимки истории трогать нельзя.
+    current_status = (
+        InventoryCountingSession.objects.filter(pk=session.pk)
+        .values_list("status", flat=True)
+        .first()
+    )
+    if current_status != InventoryCountingSession.Status.DRAFT:
+        return 0
+    changed = []
+    lines = session.lines.filter(brp_catalog_part__isnull=False).select_related(
+        "brp_catalog_part"
+    )
+    for line in lines:
+        price = current_customer_price_rub(line.brp_catalog_part.retail_price_usd)
+        if price != line.final_customer_price_rub:
+            line.final_customer_price_rub = price
+            changed.append(line)
+    if changed:
+        InventoryCountingLine.objects.bulk_update(changed, ["final_customer_price_rub"])
+    return len(changed)
 
 
 def resolve_unknown_to_brp(line: InventoryCountingLine, brp_part: BrpCatalogPart) -> None:

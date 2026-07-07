@@ -14,6 +14,8 @@
 пересчёт (зафиксировать факт) — отдельный будущий слой; поэтому есть явное
 предупреждение и защита от повторного проведения одной сессии.
 """
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 
@@ -63,11 +65,30 @@ class InventoryCountingSession(models.Model):
         return self.status == self.Status.DRAFT
 
     def counters(self) -> dict:
-        """Сводка по строкам и сканам для шапки/списка."""
+        """Сводка по строкам и сканам для шапки/списка.
+
+        Разделение понятий (hotfix 32.3): total_scans — сырые сканы;
+        unique — позиции (уникальные номера); total_quantity — деталей
+        (сумма количеств строк, ручная правка учитывается); total_value —
+        стоимость ячейки (сумма количество * цена клиента, Decimal).
+        Счётчик warehouse остаётся внутренним: карточка на складе — не то
+        же самое, что деталь физически лежит в ячейке.
+        """
         lines = self.lines.all()
         return {
             "total_scans": sum(line.scan_count for line in lines),
             "unique": len(lines),
+            "total_quantity": sum(
+                (line.quantity_counted for line in lines), Decimal("0")
+            ),
+            "total_value": sum(
+                (
+                    line.quantity_counted * line.final_customer_price_rub
+                    for line in lines
+                    if line.final_customer_price_rub is not None
+                ),
+                Decimal("0"),
+            ),
             "warehouse": sum(1 for line in lines if line.source == "warehouse"),
             "brp": sum(1 for line in lines if line.source == "brp_catalog"),
             "unknown": sum(1 for line in lines if line.source == "unknown"),

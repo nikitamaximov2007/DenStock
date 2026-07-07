@@ -50,8 +50,12 @@
       <div class="tile__value">{{ counters.unique }}</div>
     </div>
     <div class="tile">
-      <div class="tile__label">Найдено в складе</div>
-      <div class="tile__value">{{ counters.warehouse }}</div>
+      <div class="tile__label">Всего деталей в ячейке</div>
+      <div class="tile__value">{{ counters.total_quantity|floatformat:"-3" }}</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Стоимость ячейки</div>
+      <div class="tile__value">{{ counters.total_value|floatformat:"0" }} ₽</div>
     </div>
     <div class="tile">
       <div class="tile__label">Найдено в BRP</div>
