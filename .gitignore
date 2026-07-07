@@ -50,3 +50,10 @@ desktop.ini
 .idea/
 .vscode/
 *.swp
+
+# AI agents: local session config and data files that must never be committed.
+# The takeover workflow (docs/development/ai-collaboration.md) uses `git add -A`,
+# so these are ignored to keep WIP commits safe.
+.claude/
+*.xlsx
+*.xls
