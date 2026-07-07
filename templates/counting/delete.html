@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Удалить черновик {{ session.full_address }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Удалить черновик инвентаризации ячейки</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'counting_list' %}">К списку</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Удалить черновик инвентаризации ячейки <span class="code-pill">{{ session.full_address }}</span>?
+  </p>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Адрес</th>
+            <td>
+              <span class="code-pill">{{ session.full_address }}</span>
+            </td>
+          </tr>
+          <tr>
+            <th>Статус</th>
+            <td>{{ session.get_status_display }}</td>
+          </tr>
+          {% if session.comment %}
+            <tr>
+              <th>Описание</th>
+              <td>{{ session.comment }}</td>
+            </tr>
+          {% endif %}
+          <tr>
+            <th>Сканов</th>
+            <td>{{ counters.total_scans }}</td>
+          </tr>
+          <tr>
+            <th>Позиций</th>
+            <td>{{ counters.unique }}</td>
+          </tr>
+          <tr>
+            <th>Создано</th>
+            <td>{{ session.created_at|ru_dt }}</td>
+          </tr>
+          <tr>
+            <th>Начал</th>
+            <td>{{ session.created_by|default:"·" }}</td>
+          </tr>
+        </tbody>
+      </table>
+      {% if can_delete %}
+        {% include "partials/_status_block.html" with kind="warning" text="Будут удалены черновик инвентаризации, сырые сканы и сгруппированные строки. Остатки склада не изменятся, потому что инвентаризация ещё не была завершена." %}
+        <form method="post" class="form-actions">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--danger">Удалить</button>
+          <a class="btn btn--secondary" href="{% url 'counting_list' %}">Отмена</a>
+        </form>
+      {% else %}
+        {% include "partials/_status_block.html" with kind="error" text="Эту инвентаризацию удалить нельзя, потому что она уже завершена или связана с документом склада." %}
+        <div class="form-actions">
+          <a class="btn btn--secondary" href="{% url 'counting_list' %}">Вернуться к списку</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

@@ -12,6 +12,7 @@ urlpatterns = [
     path("counting/<int:pk>/convert/", views.counting_convert, name="counting_convert"),
     path("counting/<int:pk>/post/", views.counting_post, name="counting_post"),
     path("counting/<int:pk>/cancel/", views.counting_cancel, name="counting_cancel"),
+    path("counting/<int:pk>/delete/", views.counting_delete, name="counting_delete"),
     path("counting/lines/<int:pk>/qty/", views.counting_line_qty, name="counting_line_qty"),
     path(
         "counting/lines/<int:pk>/remove/",

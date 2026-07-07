@@ -19,8 +19,10 @@ from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.counting.models import InventoryCountingSession, InventoryScanEvent
 from apps.counting.services import (
     CountingError,
+    can_delete_session,
     cancel_session,
     convert_to_receipt,
+    delete_session,
     post_session,
     record_scan,
     start_session,
@@ -390,6 +392,140 @@ def test_full_flow_via_views(client, make_user, refs, location):
     assert session.status == InventoryCountingSession.Status.POSTED
     balance = StockBalance.objects.get(part_type=refs["wh"], location=location)
     assert balance.quantity_available == Decimal("2")
+
+
+# --- Удаление черновика (hotfix 32.2) -----------------------------------------------
+
+
+def test_empty_draft_can_be_deleted(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    assert can_delete_session(session) is True
+    address = delete_session(session)
+    assert address == "B-S01-L02-D03-C08"
+    assert InventoryCountingSession.objects.count() == 0
+
+
+def test_draft_with_scans_deleted_with_events_and_lines(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)
+    record_scan(session, "219800345", by=admin)
+    record_scan(session, "NO-SUCH-999", by=admin)
+    before = _stock_snapshot()
+    delete_session(session)
+    assert InventoryCountingSession.objects.count() == 0
+    assert InventoryScanEvent.objects.count() == 0  # сырые сканы удалены
+    assert not InventoryCountingSession.objects.exists()
+    from apps.counting.models import InventoryCountingLine
+
+    assert InventoryCountingLine.objects.count() == 0  # строки удалены
+    # Место хранения остаётся: адрес переиспользуется.
+    assert StorageLocation.objects.filter(code="B-S01-L02-D03-C08").exists()
+    assert _stock_snapshot() == before  # склад не изменился
+
+
+def test_converted_session_cannot_be_deleted(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    convert_to_receipt(session, by=admin)
+    assert can_delete_session(session) is False
+    with pytest.raises(CountingError):
+        delete_session(session)
+    assert InventoryCountingSession.objects.count() == 1
+
+
+def test_posted_session_cannot_be_deleted(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    before = _stock_snapshot()
+    with pytest.raises(CountingError):
+        delete_session(session)
+    assert InventoryCountingSession.objects.count() == 1
+    assert _stock_snapshot() == before  # остатки и документы целы
+
+
+def test_cancelled_session_cannot_be_deleted(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    cancel_session(session)
+    assert can_delete_session(session) is False
+    with pytest.raises(CountingError):
+        delete_session(session)
+
+
+def test_list_shows_delete_only_for_drafts(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    draft = start_session(location=location, by=admin)
+    posted = start_session(location=location, by=admin)
+    record_scan(posted, "700700", by=admin)
+    post_session(posted, by=admin)
+    html = client.get(reverse("counting_list")).content.decode()
+    assert reverse("counting_delete", args=[draft.pk]) in html
+    assert reverse("counting_delete", args=[posted.pk]) not in html
+    assert "Открыть" in html
+
+
+def test_delete_confirmation_page(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    session.comment = "Тестовая ячейка"
+    session.save(update_fields=["comment"])
+    record_scan(session, "219800345", by=admin)
+    record_scan(session, "219800345", by=admin)
+    html = client.get(reverse("counting_delete", args=[session.pk])).content.decode()
+    assert "Удалить черновик инвентаризации ячейки" in html
+    assert "B-S01-L02-D03-C08" in html
+    assert "Черновик" in html  # статус
+    assert "Тестовая ячейка" in html  # описание
+    assert "Остатки склада не изменятся" in html
+    assert "—" not in html
+
+
+def test_delete_confirmation_blocked_for_posted(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    html = client.get(reverse("counting_delete", args=[session.pk])).content.decode()
+    assert "удалить нельзя" in html
+    assert "Вернуться к списку" in html
+    # Кнопки удаления нет.
+    assert '<button type="submit" class="btn btn--danger">Удалить</button>' not in html
+
+
+def test_post_delete_redirects_with_message(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)
+    resp = client.post(reverse("counting_delete", args=[session.pk]), follow=True)
+    assert resp.redirect_chain[-1][0] == reverse("counting_list")
+    text = resp.content.decode()
+    assert "Черновик инвентаризации ячейки B-S01-L02-D03-C08 удалён." in text
+    assert InventoryCountingSession.objects.count() == 0
+
+
+def test_direct_post_delete_blocked_for_non_draft(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    before = _stock_snapshot()
+    resp = client.post(reverse("counting_delete", args=[session.pk]), follow=True)
+    text = resp.content.decode()
+    assert "удалить нельзя" in text
+    assert InventoryCountingSession.objects.count() == 1
+    assert _stock_snapshot() == before
+
+
+def test_delete_requires_permission(client, make_user, refs, location, admin):
+    session = start_session(location=location, by=admin)
+    # Аноним: редирект на логин, сессия цела.
+    resp = client.post(reverse("counting_delete", args=[session.pk]))
+    assert resp.status_code == 302
+    assert "/login/" in resp["Location"]
+    # Продавец без can_manage_inventory: 403.
+    _login(client, make_user, role=roles.SELLER, name="prodavec")
+    assert client.post(reverse("counting_delete", args=[session.pk])).status_code == 403
+    assert InventoryCountingSession.objects.count() == 1
 
 
 def test_pages_have_no_em_dash(client, make_user, refs, location):

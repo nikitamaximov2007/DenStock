@@ -285,3 +285,40 @@ def cancel_session(session: InventoryCountingSession) -> None:
         raise CountingError("Проведённую сессию отменить нельзя.")
     session.status = InventoryCountingSession.Status.CANCELLED
     session.save(update_fields=["status", "updated_at"])
+
+
+# --- Удаление черновика (hotfix 32.2) ----------------------------------------------
+
+CANNOT_DELETE_MESSAGE = (
+    "Эту инвентаризацию удалить нельзя, потому что она уже завершена "
+    "или связана с документом склада."
+)
+
+
+def can_delete_session(session: InventoryCountingSession) -> bool:
+    """Удалять можно ТОЛЬКО незавершённый черновик, не связанный с документом.
+
+    После «Завершить пересчёт» (конвертация/проведение) сессия — часть
+    истории склада и не удаляется. Отменённые сессии тоже остаются в истории.
+    """
+    return (
+        session.status == InventoryCountingSession.Status.DRAFT
+        and session.converted_receipt_id is None
+    )
+
+
+@transaction.atomic
+def delete_session(session: InventoryCountingSession) -> str:
+    """Удалить черновик сессии вместе со сканами и строками. Склад не трогает.
+
+    Сканы и строки удаляются каскадом (FK on_delete=CASCADE); документ
+    поступления, движения, остатки и StorageLocation не затрагиваются в
+    принципе: у черновика нет документа, а остальные связи защищены.
+    Возвращает адрес удалённой сессии для сообщения пользователю.
+    """
+    session = InventoryCountingSession.objects.select_for_update().get(pk=session.pk)
+    if not can_delete_session(session):
+        raise CountingError(CANNOT_DELETE_MESSAGE)
+    address = session.full_address
+    session.delete()
+    return address

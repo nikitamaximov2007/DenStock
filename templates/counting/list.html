@@ -37,6 +37,7 @@
           <th class="num">Сканов</th>
           <th>Начал</th>
           <th>Создано</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -61,6 +62,14 @@
             <td class="num">{{ s.counter_data.total_scans }}</td>
             <td>{{ s.created_by|default:"·" }}</td>
             <td>{{ s.created_at|ru_dt }}</td>
+            <td class="table__actions">
+              <a class="btn btn--small btn--secondary"
+                 href="{% url 'counting_detail' s.pk %}">Открыть</a>
+              {% if s.can_be_deleted %}
+                <a class="btn btn--small btn--danger"
+                   href="{% url 'counting_delete' s.pk %}">Удалить</a>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>

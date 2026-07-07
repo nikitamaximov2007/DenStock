@@ -20,8 +20,10 @@ from .forms import CountingStartForm
 from .models import InventoryCountingLine, InventoryCountingSession
 from .services import (
     CountingError,
+    can_delete_session,
     cancel_session,
     convert_to_receipt,
+    delete_session,
     post_session,
     record_scan,
     remove_line,
@@ -50,6 +52,7 @@ def counting_list(request):
     sessions = list(qs[:100])
     for session in sessions:
         session.counter_data = session.counters()
+        session.can_be_deleted = can_delete_session(session)
     return render(
         request,
         "counting/list.html",
@@ -263,6 +266,38 @@ def counting_post(request, pk):
         f"Инвентаризация {session.full_address} проведена: остаток записан по адресу.",
     )
     return redirect("receipt_detail", pk=receipt.pk)
+
+
+@login_required
+def counting_delete(request, pk):
+    """Удаление незавершённого черновика: GET — подтверждение, POST — удаление.
+
+    Только черновик до «Завершить пересчёт»: завершённые, сконвертированные,
+    проведённые и связанные с документом сессии не удаляются (проверка и в
+    сервисе, не только в UI). Склад удаление не меняет.
+    """
+    _require_manage(request)
+    session = get_object_or_404(
+        InventoryCountingSession.objects.select_related("storage_location", "created_by"),
+        pk=pk,
+    )
+    if request.method == "POST":
+        try:
+            address = delete_session(session)
+        except CountingError as exc:
+            messages.error(request, str(exc))
+            return redirect("counting_list")
+        messages.success(request, f"Черновик инвентаризации ячейки {address} удалён.")
+        return redirect("counting_list")
+    return render(
+        request,
+        "counting/delete.html",
+        {
+            "session": session,
+            "counters": session.counters(),
+            "can_delete": can_delete_session(session),
+        },
+    )
 
 
 @login_required
