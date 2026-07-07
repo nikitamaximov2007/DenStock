@@ -830,6 +830,85 @@ def test_convert_all_zero_promotes_zero(refs, location, admin):
     assert link.final_customer_price_rub == Decimal("0")
 
 
+# --- Сортировка разбора стоимости (Layer 32.4.1) ------------------------------------
+
+
+def _sorted_session(location, admin):
+    """Четыре строки с разными суммами; порядок создания отличается от сумм."""
+    session = start_session(location=location, by=admin)
+    _line(session, "100", 19, 513)  # сумма 9747
+    _line(session, "050", 5, 0)  # сумма 0 (нулевая цена)
+    _line(session, "300", 13, 3821)  # сумма 49673
+    _line(session, "200", 1, 2571)  # сумма 2571
+    return session
+
+
+def _numbers(session, sort):
+    return [row["number"] for row in get_session_value_breakdown(session, sort=sort)["rows"]]
+
+
+def test_breakdown_sort_modes(refs, location, admin):
+    session = _sorted_session(location, admin)
+    assert _numbers(session, "sum_desc") == ["300", "100", "200", "050"]
+    assert _numbers(session, "sum_asc") == ["050", "200", "100", "300"]
+    assert _numbers(session, "qty_desc") == ["100", "300", "050", "200"]
+    assert _numbers(session, "qty_asc") == ["200", "050", "300", "100"]
+    assert _numbers(session, "price_desc") == ["300", "200", "100", "050"]
+    assert _numbers(session, "price_asc") == ["050", "100", "200", "300"]
+    assert _numbers(session, "number_asc") == ["050", "100", "200", "300"]
+    assert _numbers(session, "number_desc") == ["300", "200", "100", "050"]
+    # «Как в инвентаризации» = порядок таблицы пересчёта; обратный = наоборот.
+    original = [line.scanned_value for line in session.lines.all()]
+    assert _numbers(session, "original") == original
+    assert _numbers(session, "original_desc") == list(reversed(original))
+
+
+def test_breakdown_default_and_invalid_sort(refs, location, admin):
+    session = _sorted_session(location, admin)
+    default = get_session_value_breakdown(session)
+    assert default["sort"] == "sum_desc"
+    assert [r["number"] for r in default["rows"]] == ["300", "100", "200", "050"]
+    invalid = get_session_value_breakdown(session, sort="banana")
+    assert invalid["sort"] == "sum_desc"  # откат к умолчанию
+    assert [r["number"] for r in invalid["rows"]] == ["300", "100", "200", "050"]
+
+
+def test_breakdown_sort_does_not_change_totals(refs, location, admin):
+    session = _sorted_session(location, admin)
+    from apps.counting.services import VALUE_SORTS
+
+    for sort in VALUE_SORTS:
+        data = get_session_value_breakdown(session, sort=sort)
+        assert data["total_value_rub"] == Decimal("61991"), sort
+        assert data["total_quantity"] == Decimal("38"), sort
+        assert data["positions_count"] == 4, sort
+        # Нулевая строка видна в каждом режиме.
+        assert any(r["number"] == "050" for r in data["rows"]), sort
+
+
+def test_breakdown_sort_via_view_keeps_main_table_order(client, make_user, refs, location, admin):
+    import re
+
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    _line(session, "9111", 1, 100)  # сумма 100 (создана первой)
+    _line(session, "9222", 1, 200)  # сумма 200
+    url = reverse("counting_detail", args=[session.pk])
+    html = client.get(url + "?value_sort=sum_desc").content.decode()
+    main_part, modal_part = html.split('id="value-breakdown"')
+    pattern = r'code-pill">(9\d+)</span>'
+    assert re.findall(pattern, main_part) == ["9111", "9222"]  # главная таблица как была
+    assert re.findall(pattern, modal_part) == ["9222", "9111"]  # разбор: дорогие сначала
+    # Форма сортировки сохраняет модалку открытой и помнит выбор.
+    assert 'action="#value-breakdown"' in modal_part
+    assert "Сортировка" in modal_part
+    assert "По умолчанию строки отсортированы по сумме" in modal_part
+    html_asc = client.get(url + "?value_sort=sum_asc").content.decode()
+    _, modal_asc = html_asc.split('id="value-breakdown"')
+    assert re.findall(pattern, modal_asc) == ["9111", "9222"]
+    assert re.search(r'<option value="sum_asc"\s+selected>', modal_asc)
+
+
 # --- Черновик подхватывает исправленные цены BRP (hotfix 32.3) ----------------------
 
 

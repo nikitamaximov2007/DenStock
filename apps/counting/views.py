@@ -19,6 +19,8 @@ from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_num
 from .forms import CountingStartForm
 from .models import InventoryCountingLine, InventoryCountingSession
 from .services import (
+    DEFAULT_VALUE_SORT,
+    VALUE_SORTS,
     CountingError,
     can_delete_session,
     cancel_session,
@@ -113,7 +115,10 @@ def counting_detail(request, pk):
             "session": session,
             "lines": lines,
             "counters": session.counters(),
-            "breakdown": get_session_value_breakdown(session),
+            "breakdown": get_session_value_breakdown(
+                session, sort=request.GET.get("value_sort", DEFAULT_VALUE_SORT)
+            ),
+            "value_sorts": VALUE_SORTS,
             "is_draft": session.is_draft,
         },
     )

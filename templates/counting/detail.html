@@ -234,6 +234,23 @@
         · Итоговая стоимость: {{ breakdown.total_value_rub|floatformat:"0" }} ₽
       </p>
       {% if breakdown.rows %}
+        <form method="get"
+              action="#value-breakdown"
+              class="filter-toolbar filter-toolbar--compact">
+          <label>
+            Сортировка
+            <select name="value_sort" onchange="this.form.submit()">
+              {% for value, label in value_sorts.items %}
+                <option value="{{ value }}"
+                        {% if value == breakdown.sort %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <noscript>
+            <button type="submit">Применить</button>
+          </noscript>
+        </form>
+        <p class="muted">По умолчанию строки отсортированы по сумме, от большей к меньшей.</p>
         <div class="css-modal__table-wrap">
           <table class="table">
             <thead>

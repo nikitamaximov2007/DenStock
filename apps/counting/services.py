@@ -312,14 +312,65 @@ def resolve_unknown_to_brp(line: InventoryCountingLine, brp_part: BrpCatalogPart
     line.save()
 
 
-def get_session_value_breakdown(session: InventoryCountingSession) -> dict:
+# Режимы сортировки разбора стоимости (Layer 32.4.1). Ключ -> подпись в UI.
+# По умолчанию sum_desc: разбор нужен прежде всего чтобы понять, что даёт
+# основной вклад в стоимость ячейки.
+VALUE_SORTS = {
+    "sum_desc": "По сумме: сначала дорогие",
+    "sum_asc": "По сумме: сначала дешёвые",
+    "qty_desc": "По количеству: больше сначала",
+    "qty_asc": "По количеству: меньше сначала",
+    "price_desc": "По цене: дороже сначала",
+    "price_asc": "По цене: дешевле сначала",
+    "number_asc": "По номеру: А → Я",
+    "number_desc": "По номеру: Я → А",
+    "original": "Как в инвентаризации",
+    "original_desc": "Обратный порядок",
+}
+DEFAULT_VALUE_SORT = "sum_desc"
+
+# Составные ключи сортировки: Decimal с минусом = по убыванию; последний
+# компонент у денежно-количественных режимов: номер по возрастанию, поэтому
+# порядок детерминирован и стабилен.
+_VALUE_SORT_KEYS = {
+    "sum_desc": lambda r: (
+        -r["line_total_rub"], -r["customer_price_rub"], -r["quantity"], r["normalized"],
+    ),
+    "sum_asc": lambda r: (
+        r["line_total_rub"], r["customer_price_rub"], r["quantity"], r["normalized"],
+    ),
+    "qty_desc": lambda r: (-r["quantity"], -r["line_total_rub"], r["normalized"]),
+    "qty_asc": lambda r: (r["quantity"], -r["line_total_rub"], r["normalized"]),
+    "price_desc": lambda r: (-r["customer_price_rub"], -r["line_total_rub"], r["normalized"]),
+    "price_asc": lambda r: (r["customer_price_rub"], -r["line_total_rub"], r["normalized"]),
+    "number_asc": lambda r: (r["normalized"],),
+}
+
+
+def _sort_breakdown_rows(rows: list[dict], sort: str) -> list[dict]:
+    if sort == "original":
+        return rows
+    if sort == "original_desc":
+        return list(reversed(rows))
+    if sort == "number_desc":
+        return sorted(rows, key=lambda r: r["normalized"], reverse=True)
+    return sorted(rows, key=_VALUE_SORT_KEYS[sort])
+
+
+def get_session_value_breakdown(
+    session: InventoryCountingSession, sort: str = DEFAULT_VALUE_SORT
+) -> dict:
     """Разбор «Стоимости ячейки»: строка за строкой, количество x цена = сумма.
 
     Единая точка для модального окна и тестов. Только Decimal; сумма строки
     равна quantity_counted * final_customer_price_rub (цены уже в целых
-    рублях); строки без цены участвуют с нулём и НЕ скрываются. Порядок
-    строк совпадает с таблицей пересчёта (Meta.ordering модели).
+    рублях); строки без цены участвуют с нулём и НЕ скрываются. Исходный
+    порядок строк («Как в инвентаризации») совпадает с таблицей пересчёта
+    (Meta.ordering модели); sort меняет только порядок в разборе, итоги
+    от сортировки не зависят. Неизвестный sort откатывается к sum_desc.
     """
+    if sort not in VALUE_SORTS:
+        sort = DEFAULT_VALUE_SORT
     rows = []
     total_quantity = Decimal("0")
     total_value = Decimal("0")
@@ -332,6 +383,7 @@ def get_session_value_breakdown(session: InventoryCountingSession) -> dict:
             source_label = line.get_source_display()
         rows.append({
             "number": line.scanned_value,
+            "normalized": line.normalized_value,
             "name": line.display_name,
             "source_label": source_label,
             "quantity": line.quantity_counted,
@@ -341,10 +393,11 @@ def get_session_value_breakdown(session: InventoryCountingSession) -> dict:
         total_quantity += line.quantity_counted
         total_value += line_total
     return {
-        "rows": rows,
+        "rows": _sort_breakdown_rows(rows, sort),
         "positions_count": len(rows),
         "total_quantity": total_quantity,
         "total_value_rub": total_value,
+        "sort": sort,
     }
 
 
