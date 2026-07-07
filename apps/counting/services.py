@@ -312,6 +312,42 @@ def resolve_unknown_to_brp(line: InventoryCountingLine, brp_part: BrpCatalogPart
     line.save()
 
 
+def get_session_value_breakdown(session: InventoryCountingSession) -> dict:
+    """Разбор «Стоимости ячейки»: строка за строкой, количество x цена = сумма.
+
+    Единая точка для модального окна и тестов. Только Decimal; сумма строки
+    равна quantity_counted * final_customer_price_rub (цены уже в целых
+    рублях); строки без цены участвуют с нулём и НЕ скрываются. Порядок
+    строк совпадает с таблицей пересчёта (Meta.ordering модели).
+    """
+    rows = []
+    total_quantity = Decimal("0")
+    total_value = Decimal("0")
+    for line in session.lines.all():
+        price = line.final_customer_price_rub
+        line_total = line.quantity_counted * price if price is not None else Decimal("0")
+        if line.needs_review:
+            source_label = "Требует разбора"
+        else:
+            source_label = line.get_source_display()
+        rows.append({
+            "number": line.scanned_value,
+            "name": line.display_name,
+            "source_label": source_label,
+            "quantity": line.quantity_counted,
+            "customer_price_rub": price if price is not None else Decimal("0"),
+            "line_total_rub": line_total,
+        })
+        total_quantity += line.quantity_counted
+        total_value += line_total
+    return {
+        "rows": rows,
+        "positions_count": len(rows),
+        "total_quantity": total_quantity,
+        "total_value_rub": total_value,
+    }
+
+
 def resolve_unknown_to_part(line: InventoryCountingLine, part: PartType) -> None:
     _ensure_draft(line.session)
     line.warehouse_part = part
@@ -346,6 +382,10 @@ def convert_to_receipt(
         return session.converted_receipt
     if session.status != InventoryCountingSession.Status.DRAFT:
         raise CountingError("Сессия уже проведена или отменена.")
+    # Перед конвертацией снимки строк освежаются (правильная привязка и
+    # эффективная цена по 32.3.1/32.3.2): документ и карточки получают
+    # ровно те цены, которые пользователь видел в пересчёте.
+    refresh_draft_prices(session)
     lines = list(session.lines.select_related("warehouse_part", "brp_catalog_part"))
     if not lines:
         raise CountingError("Нельзя создать документ из пустой сессии.")
@@ -371,7 +411,16 @@ def convert_to_receipt(
         part = line.warehouse_part
         if part is None and line.brp_catalog_part is not None:
             # Автосоздание карточки из BRP (без ручного «Создать карточку»).
-            part = promote_to_warehouse(line.brp_catalog_part, by=by)
+            # Личность карточки — отсканированная позиция; если у неё розница
+            # 0, а в пересчёте показана эффективная цена от замены (32.3.2),
+            # эта цена фиксируется в снимке (manual override), чтобы карточка
+            # не получила 0 ₽ вопреки тому, что видел пользователь.
+            identity_retail = line.brp_catalog_part.retail_price_usd
+            effective = line.final_customer_price_rub
+            manual = None
+            if (identity_retail is None or identity_retail <= 0) and effective:
+                manual = effective
+            part = promote_to_warehouse(line.brp_catalog_part, by=by, manual_price=manual)
             line.warehouse_part = part
             line.source = InventoryCountingLine.Source.WAREHOUSE
             line.save(update_fields=["warehouse_part", "source"])

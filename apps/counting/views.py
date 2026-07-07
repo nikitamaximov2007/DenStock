@@ -25,6 +25,7 @@ from .services import (
     convert_to_receipt,
     delete_session,
     find_brp_by_number,
+    get_session_value_breakdown,
     post_session,
     record_scan,
     refresh_draft_prices,
@@ -112,6 +113,7 @@ def counting_detail(request, pk):
             "session": session,
             "lines": lines,
             "counters": session.counters(),
+            "breakdown": get_session_value_breakdown(session),
             "is_draft": session.is_draft,
         },
     )

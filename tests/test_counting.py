@@ -16,7 +16,11 @@ from django.urls import reverse
 from apps.accounts import roles
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import Category, PartNumber, PartType, Unit
-from apps.counting.models import InventoryCountingSession, InventoryScanEvent
+from apps.counting.models import (
+    InventoryCountingLine,
+    InventoryCountingSession,
+    InventoryScanEvent,
+)
 from apps.counting.services import (
     CountingError,
     can_delete_session,
@@ -25,6 +29,7 @@ from apps.counting.services import (
     delete_session,
     find_brp_by_number,
     find_brp_price_source,
+    get_session_value_breakdown,
     post_session,
     record_scan,
     refresh_draft_prices,
@@ -694,6 +699,135 @@ def test_posted_zero_price_not_touched_by_price_source(refs, location, admin):
     line = session.lines.get()
     assert line.final_customer_price_rub == Decimal("0")  # история не переписана
     assert _stock_snapshot() == before
+
+
+# --- Разбор стоимости ячейки и эффективные цены при конвертации (Layer 32.4) --------
+
+
+def _line(session, number, qty, price, **overrides):
+    defaults = dict(
+        session=session, scanned_value=number, normalized_value=number,
+        display_name=f"PART {number}", source=InventoryCountingLine.Source.BRP,
+        quantity_counted=Decimal(str(qty)), scan_count=1,
+        final_customer_price_rub=Decimal(str(price)) if price is not None else None,
+    )
+    defaults.update(overrides)
+    return InventoryCountingLine.objects.create(**defaults)
+
+
+def test_value_breakdown_helper_math(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    _line(session, "417127016", 13, 3821)
+    _line(session, "100200300", 19, 513)
+    _line(session, "100200301", 1, 2571)
+    data = get_session_value_breakdown(session)
+    totals = {row["number"]: row["line_total_rub"] for row in data["rows"]}
+    assert totals["417127016"] == Decimal("49673")  # 13 x 3821
+    assert totals["100200300"] == Decimal("9747")  # 19 x 513
+    assert totals["100200301"] == Decimal("2571")
+    assert data["total_value_rub"] == Decimal("61991")  # сумма строк
+    assert data["total_quantity"] == Decimal("33")  # 13 + 19 + 1
+    assert data["positions_count"] == 3
+    # Разбор и счётчики согласованы: без расхождений между плиткой и модалкой.
+    assert data["total_value_rub"] == session.counters()["total_value"]
+
+
+def test_detail_page_value_breakdown_modal(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)  # 14699
+    before = _stock_snapshot()
+    html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+    assert _stock_snapshot() == before  # открытие страницы/модалки склад не меняет
+    # Плитка кликабельна и ведёт на модалку.
+    assert 'href="#value-breakdown"' in html
+    assert "Нажмите для расчёта" in html
+    # Модалка: заголовок, пояснение, ячейка, сводка.
+    assert "Расчёт стоимости ячейки" in html
+    assert "Стоимость считается как количество × цена клиента" in html
+    assert "Всего позиций: 1" in html
+    assert "Итоговая стоимость: 14699 ₽" in html
+    # Колонки таблицы разбора.
+    for col in ("Номер", "Название", "Источник", "Кол-во", "Цена клиента", "Расчёт", "Сумма"):
+        assert col in html
+    # Расчёт строки и итог; итог модалки равен значению плитки.
+    assert "1 × 14699 ₽" in html
+    assert "Итого: 14699 ₽" in html
+    assert html.count("14699 ₽") >= 3  # плитка + строка + итог
+    assert "Закрыть" in html
+
+
+def test_manual_quantity_updates_card_and_modal(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "219800345", by=admin)
+    resp = client.post(
+        reverse("counting_line_qty", args=[line.pk]), {"quantity": "13"}, follow=True
+    )
+    html = resp.content.decode()
+    assert html.count("191087 ₽") >= 3  # плитка, сумма строки, итог модалки
+    assert "13 × 14699 ₽" in html  # расчёт строки
+
+
+def test_zero_price_row_visible_in_breakdown(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)  # 14699
+    record_scan(session, "NO-SUCH-999", by=admin)  # неизвестная, цены нет
+    data = get_session_value_breakdown(session)
+    assert data["positions_count"] == 2  # нулевая строка НЕ скрыта
+    zero_row = next(r for r in data["rows"] if r["number"] == "NO-SUCH-999")
+    assert zero_row["line_total_rub"] == Decimal("0")
+    assert zero_row["source_label"] == "Требует разбора"
+    assert data["total_value_rub"] == Decimal("14699")  # нулевая даёт 0
+    html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+    assert "цена 0" in html
+
+
+def test_convert_promotes_with_effective_price_616(refs, location, admin):
+    """Case 250000059: карточка получает 616 ₽ (цена из замены), а не 0."""
+    exact = _make_zero_screw_059()
+    _make_priced_screw_418()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "250000059", by=admin)
+    line = session.lines.get()
+    assert line.final_customer_price_rub == Decimal("616")
+    convert_to_receipt(session, by=admin)
+    link = BrpPartLink.objects.get(brp_part=exact)  # личность: 250000059
+    assert link.final_customer_price_rub == Decimal("616")  # не 0
+    assert link.manual_customer_price_rub == Decimal("616")  # эффективная цена
+    assert link.part.recommended_price == Decimal("616")
+    # Карточка представляет отсканированный номер, не источник цены.
+    assert link.part.name == "HEX. FLANGED SCEW M6 X 18"
+    numbers = set(PartNumber.objects.filter(part=link.part).values_list("value", flat=True))
+    assert "250000059" in numbers
+    assert not BrpPartLink.objects.filter(brp_part__material_no="250000418").exists()
+    # Согласованность: цена в пересчёте равна цене снимка.
+    line.refresh_from_db()
+    assert line.final_customer_price_rub == link.final_customer_price_rub
+
+
+def test_convert_promotes_exact_nonzero_as_calculated(refs, location, admin):
+    """Case 417224916: обычный расчёт, без manual-переопределения."""
+    _make_old_replaced_417()
+    exact = _make_exact_417()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "417224916", by=admin)
+    convert_to_receipt(session, by=admin)
+    link = BrpPartLink.objects.get(brp_part=exact)
+    assert link.final_customer_price_rub == Decimal("5291")
+    assert link.price_source == BrpPartLink.PriceSource.CALCULATED
+    assert link.manual_customer_price_rub is None
+    assert link.part.recommended_price == Decimal("5291")
+
+
+def test_convert_all_zero_promotes_zero(refs, location, admin):
+    exact = _make_zero_screw_059()  # связанных с ценой нет
+    session = start_session(location=location, by=admin)
+    record_scan(session, "250000059", by=admin)
+    convert_to_receipt(session, by=admin)  # не падает
+    link = BrpPartLink.objects.get(brp_part=exact)
+    assert link.final_customer_price_rub == Decimal("0")
 
 
 # --- Черновик подхватывает исправленные цены BRP (hotfix 32.3) ----------------------
