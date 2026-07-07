@@ -24,6 +24,7 @@ from apps.counting.services import (
     convert_to_receipt,
     delete_session,
     find_brp_by_number,
+    find_brp_price_source,
     post_session,
     record_scan,
     refresh_draft_prices,
@@ -587,6 +588,111 @@ def test_refresh_does_not_relink_posted_session(refs, location, admin):
     line = session.lines.get()
     assert line.brp_catalog_part == old  # история не переписана
     assert line.final_customer_price_rub == Decimal("0")
+    assert _stock_snapshot() == before
+
+
+# --- Источник цены: замена с ценой при нулевом точном номере (hotfix 32.3.2) --------
+
+
+def _make_zero_screw_059():
+    """Точная позиция 250000059 без цены (как в проде, source_row 9041)."""
+    return BrpCatalogPart.objects.create(
+        material_no="250000059", part_desc="HEX. FLANGED SCEW M6 X 18",
+        retail_price_usd=Decimal("0"), wholesale_price_usd=Decimal("0"),
+    )
+
+
+def _make_priced_screw_418():
+    """Связанная позиция 250000418 с ценой; её замена указывает на 250000059."""
+    return BrpCatalogPart.objects.create(
+        material_no="250000418", part_desc="FLANGED HEX. SCREW M6 X 18, SCOTCH GRIP",
+        retail_price_usd=Decimal("4.19"), wholesale_price_usd=Decimal("3.29"),
+        replacement_no_1="250000059",
+    )
+
+
+def test_scan_zero_exact_uses_priced_replacement_as_price_source(refs, location, admin):
+    """Case A: личность строки — точный номер, цена — от замены с розницей."""
+    exact = _make_zero_screw_059()
+    priced = _make_priced_screw_418()
+    assert find_brp_price_source("250000059", exact) == priced
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "250000059", by=admin)
+    assert line.brp_catalog_part == exact  # личность НЕ перепривязана
+    assert line.brp_catalog_part.material_no == "250000059"
+    assert line.final_customer_price_rub == Decimal("616")  # 4.19*105*1.4=615.93
+
+
+def test_refresh_fixes_zero_price_keeping_identity(refs, location, admin):
+    """Case A для существующего черновика: перескан не нужен."""
+    exact = _make_zero_screw_059()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "250000059", by=admin)
+    line = session.lines.get()
+    assert line.final_customer_price_rub == Decimal("0")  # цены ещё нет
+    _make_priced_screw_418()  # реимпорт добавил связанную позицию с ценой
+    before = _stock_snapshot()
+    assert refresh_draft_prices(session) == 1
+    line.refresh_from_db()
+    assert line.brp_catalog_part == exact  # осталась 250000059
+    assert line.final_customer_price_rub == Decimal("616")
+    assert line.quantity_counted == Decimal("1")
+    assert line.scan_count == 1
+    assert session.counters()["total_value"] == Decimal("616")  # итог включает 616
+    assert _stock_snapshot() == before
+
+
+def test_exact_nonzero_price_source_is_itself(refs, location, admin):
+    """Case B: у точного номера есть цена — нулевая замена не используется."""
+    _make_old_replaced_417()  # 417224458, розница 0
+    exact = _make_exact_417()  # 417224916, розница 35.99
+    assert find_brp_price_source("417224916", exact) == exact
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "417224916", by=admin)
+    assert line.brp_catalog_part == exact
+    assert line.final_customer_price_rub == Decimal("5291")
+
+
+def test_all_related_zero_keeps_zero_price(refs, location, admin):
+    """Case C: ни у кого из цепочки нет цены — остаётся 0, без падений."""
+    exact = _make_zero_screw_059()
+    BrpCatalogPart.objects.create(
+        material_no="250000777", part_desc="ZERO RELATIVE",
+        retail_price_usd=Decimal("0"), replacement_no_1="250000059",
+    )
+    assert find_brp_price_source("250000059", exact) == exact
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "250000059", by=admin)
+    assert line.final_customer_price_rub == Decimal("0")
+    assert refresh_draft_prices(session) == 0  # ничего не меняется, стабильно
+
+
+def test_forward_replacement_of_selected_part_is_price_source(refs, location, admin):
+    """Замены самой позиции тоже кандидаты: старый номер 0 ссылается на новый с ценой."""
+    old = BrpCatalogPart.objects.create(
+        material_no="333000111", part_desc="OLD ZERO", brp_status="USE",
+        retail_price_usd=Decimal("0"), replacement_no_1="333000222",
+    )
+    new = BrpCatalogPart.objects.create(
+        material_no="333000222", part_desc="NEW PRICED", retail_price_usd=Decimal("10"),
+    )
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "333000111", by=admin)  # точный номер: старый
+    assert line.brp_catalog_part == old  # личность — отсканированный номер
+    assert find_brp_price_source("333000111", old) == new
+    assert line.final_customer_price_rub == Decimal("1470")  # 10*105*1.4
+
+
+def test_posted_zero_price_not_touched_by_price_source(refs, location, admin):
+    _make_zero_screw_059()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "250000059", by=admin)
+    post_session(session, by=admin)
+    _make_priced_screw_418()
+    before = _stock_snapshot()
+    assert refresh_draft_prices(session) == 0
+    line = session.lines.get()
+    assert line.final_customer_price_rub == Decimal("0")  # история не переписана
     assert _stock_snapshot() == before
 
 

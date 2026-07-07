@@ -84,6 +84,57 @@ def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
     )
 
 
+def find_brp_price_source(
+    norm: str, selected: BrpCatalogPart | None
+) -> BrpCatalogPart | None:
+    """ИСТОЧНИК ЦЕНЫ для номера: сама позиция или связанная замена с ценой.
+
+    Личность строки и источник цены разделены (hotfix 32.3.2): строка
+    остаётся привязанной к точному номеру, но если у него розница 0, цена
+    берётся из связанной по цепочке замен позиции с розницей > 0. Реальный
+    кейс: у 250000059 розница 0, а у 250000418 (замена указывает на
+    250000059) розница 4.19 $ -> 616 ₽.
+
+    Кандидаты: позиции, связанные с отсканированным номером (material_no
+    или замены = номеру), плюс позиции, на которые ссылаются замены самой
+    выбранной позиции. Порядок детерминирован: розница > 0, меньший pk.
+    Если ни у кого розницы нет, источником остаётся выбранная позиция (0).
+    """
+    if selected is not None and (
+        selected.retail_price_usd is not None and selected.retail_price_usd > 0
+    ):
+        return selected
+    if not norm and selected is None:
+        return None
+    related = Q()
+    if norm:
+        related |= (
+            Q(material_no_norm=norm)
+            | Q(replacement_no_1_norm=norm)
+            | Q(replacement_no_2_norm=norm)
+        )
+    if selected is not None:
+        for repl_norm in (selected.replacement_no_1_norm, selected.replacement_no_2_norm):
+            if repl_norm:
+                related |= Q(material_no_norm=repl_norm)
+    if not related:
+        return selected
+    priced = (
+        BrpCatalogPart.objects.filter(related, retail_price_usd__gt=0)
+        .order_by("pk")
+        .first()
+    )
+    return priced or selected
+
+
+def _effective_brp_price(norm: str, brp: BrpCatalogPart):
+    """Цена клиента для строки: от источника цены (целые рубли, Decimal)."""
+    price_source = find_brp_price_source(norm, brp)
+    if price_source is None:
+        return None
+    return current_customer_price_rub(price_source.retail_price_usd)
+
+
 def _match(norm: str, raw: str):
     """Найти совпадение: (source, warehouse_part, brp_part, display_name, price)."""
     part = None
@@ -106,7 +157,7 @@ def _match(norm: str, raw: str):
 
     brp = find_brp_by_number(norm)
     if brp is not None:
-        price = current_customer_price_rub(brp.retail_price_usd)
+        price = _effective_brp_price(norm, brp)
         return ("brp_catalog", None, brp, brp.part_desc or brp.material_no, price)
 
     return ("unknown", None, None, UNKNOWN_NAME, None)
@@ -229,7 +280,7 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
     )
     for line in lines:
         best = find_brp_by_number(line.normalized_value) or line.brp_catalog_part
-        price = current_customer_price_rub(best.retail_price_usd)
+        price = _effective_brp_price(line.normalized_value, best)
         dirty = False
         if best.pk != line.brp_catalog_part_id:
             line.brp_catalog_part = best
@@ -255,7 +306,9 @@ def resolve_unknown_to_brp(line: InventoryCountingLine, brp_part: BrpCatalogPart
     line.warehouse_part = None
     line.source = InventoryCountingLine.Source.BRP
     line.display_name = (brp_part.part_desc or brp_part.material_no)[:255]
-    line.final_customer_price_rub = current_customer_price_rub(brp_part.retail_price_usd)
+    line.final_customer_price_rub = _effective_brp_price(
+        brp_part.material_no_norm, brp_part
+    )
     line.save()
 
 
