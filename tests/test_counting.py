@@ -23,6 +23,7 @@ from apps.counting.services import (
     cancel_session,
     convert_to_receipt,
     delete_session,
+    find_brp_by_number,
     post_session,
     record_scan,
     refresh_draft_prices,
@@ -483,6 +484,110 @@ def test_list_page_shows_details_and_value_columns(client, make_user, refs, loca
     assert "Стоимость" in html
     assert "191087" in html
     assert "Сканов" in html  # сырые сканы отдельной колонкой
+
+
+# --- Точный номер BRP выше совпадения по замене (hotfix 32.3.1) ----------------------
+
+
+def _make_old_replaced_417(**overrides):
+    """Старый номер 417224458 (розница 0, USE), замена указывает на 417224916."""
+    defaults = dict(
+        material_no="417224458", part_desc="ROLLER PULLEY EXT",
+        retail_price_usd=Decimal("0"), wholesale_price_usd=Decimal("0"),
+        brp_status="USE", replacement_no_1="417224916",
+    )
+    defaults.update(overrides)
+    return BrpCatalogPart.objects.create(**defaults)
+
+
+def _make_exact_417(**overrides):
+    """Настоящая позиция 417224916 с реальной ценой (35.99 $ -> 5291 ₽)."""
+    defaults = dict(
+        material_no="417224916", part_desc="ROLLER_PULLEY EXT",
+        retail_price_usd=Decimal("35.99"), wholesale_price_usd=Decimal("28.15"),
+        replacement_no_1="417224458",
+    )
+    defaults.update(overrides)
+    return BrpCatalogPart.objects.create(**defaults)
+
+
+def test_lookup_exact_material_outranks_replacement(db):
+    # Старый номер создаётся ПЕРВЫМ (меньший pk), как в продакшен-базе.
+    _make_old_replaced_417()
+    exact = _make_exact_417()
+    found = find_brp_by_number("417224916")
+    assert found == exact
+    assert found.material_no == "417224916"  # не 417224458
+
+
+def test_lookup_exact_wins_even_with_zero_price(db):
+    # Точный номер ВСЕГДА выше замены, даже если у точного розница 0.
+    _make_old_replaced_417(
+        material_no="417000001", retail_price_usd=Decimal("99"),
+        replacement_no_1="417000002",
+    )
+    exact_zero = BrpCatalogPart.objects.create(
+        material_no="417000002", part_desc="EXACT ZERO", retail_price_usd=Decimal("0"),
+    )
+    assert find_brp_by_number("417000002") == exact_zero
+
+
+def test_replacement_fallback_without_exact_match(refs, location, admin):
+    # Точной позиции 417224916 нет: скан находит старый номер по замене.
+    old = _make_old_replaced_417()
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "417224916", by=admin)
+    assert line.brp_catalog_part == old
+    assert line.final_customer_price_rub == Decimal("0")
+
+
+def test_scan_exact_outranks_replacement(refs, location, admin):
+    _make_old_replaced_417()
+    exact = _make_exact_417()
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "417224916", by=admin)
+    assert line.brp_catalog_part == exact
+    assert line.final_customer_price_rub == Decimal("5291")  # 35.99*105*1.4
+
+
+def test_refresh_relinks_wrong_draft_line(refs, location, admin):
+    """Продакшен-кейс: строка черновика привязана к 417224458 с ценой 0.
+
+    После появления точной позиции 417224916 в каталоге refresh перепривязывает
+    строку и обновляет название/цену; количество и сканы не меняются.
+    """
+    old = _make_old_replaced_417()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "417224916", by=admin)
+    record_scan(session, "417224916", by=admin)
+    record_scan(session, "417224916", by=admin)  # 3 скана, как в проде
+    line = session.lines.get()
+    assert line.brp_catalog_part == old and line.final_customer_price_rub == Decimal("0")
+    exact = _make_exact_417()  # реимпорт добавил настоящую позицию
+    before = _stock_snapshot()
+    assert refresh_draft_prices(session) == 1
+    line.refresh_from_db()
+    assert line.brp_catalog_part == exact  # перепривязана
+    assert line.display_name == "ROLLER_PULLEY EXT"
+    assert line.final_customer_price_rub == Decimal("5291")
+    assert line.quantity_counted == Decimal("3")  # количество не тронуто
+    assert line.scan_count == 3  # сканы не тронуты
+    assert session.counters()["total_value"] == Decimal("15873")  # 3 * 5291
+    assert _stock_snapshot() == before  # склад не изменился
+
+
+def test_refresh_does_not_relink_posted_session(refs, location, admin):
+    old = _make_old_replaced_417()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "417224916", by=admin)
+    post_session(session, by=admin)
+    _make_exact_417()
+    before = _stock_snapshot()
+    assert refresh_draft_prices(session) == 0
+    line = session.lines.get()
+    assert line.brp_catalog_part == old  # история не переписана
+    assert line.final_customer_price_rub == Decimal("0")
+    assert _stock_snapshot() == before
 
 
 # --- Черновик подхватывает исправленные цены BRP (hotfix 32.3) ----------------------

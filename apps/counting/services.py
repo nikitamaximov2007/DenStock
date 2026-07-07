@@ -50,9 +50,12 @@ def start_session(*, location, comment="", by=None) -> InventoryCountingSession:
 def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
     """Позиция BRP по нормализованному номеру (material_no и обе замены).
 
-    Если под номер подходит несколько позиций (совпадение по заменам),
-    детерминированно предпочитаем позицию с ненулевой розницей (hotfix 32.3),
-    затем меньший pk.
+    Приоритет (hotfix 32.3.1): ТОЧНОЕ совпадение material_no ВСЕГДА выше
+    совпадения по замене номера. Реальный кейс: у 417224458 (розница 0,
+    статус USE) замена 417224916; при скане 417224916 должна выбираться
+    сама позиция 417224916 с настоящей ценой, а не старый номер по замене.
+    Внутри группы предпочитается ненулевая розница, затем меньший pk:
+    выбор детерминирован.
     """
     if not norm:
         return None
@@ -65,6 +68,11 @@ def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
             | Q(replacement_no_2_norm=norm)
         )
         .order_by(
+            Case(
+                When(material_no_norm=norm, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            ),
             Case(
                 When(retail_price_usd__gt=0, then=Value(0)),
                 default=Value(1),
@@ -192,12 +200,17 @@ def remove_line(line: InventoryCountingLine) -> None:
 
 
 def refresh_draft_prices(session: InventoryCountingSession) -> int:
-    """Обновить снимки цен строк ЧЕРНОВИКА по текущему BRP-каталогу/настройкам.
+    """Освежить BRP-строки ЧЕРНОВИКА: перепривязка и цены по текущему каталогу.
 
-    Зачем: после починки дубликатов BRP (реимпорт прайса) уже отпиканная
-    ячейка должна показать исправленные цены БЕЗ повторного сканирования.
-    Выбранный подход: цена строки хранится снимком, и для незавершённых
-    черновиков снимок освежается при открытии страницы сессии/обзора.
+    Зачем: после починки каталога (реимпорт, приоритет точного номера) уже
+    отпиканная ячейка должна показать правильные позиции и цены БЕЗ
+    повторного сканирования. Для каждой строки с привязкой к BRP номер
+    строки заново прогоняется через find_brp_by_number (hotfix 32.3.1):
+    если лучшая позиция изменилась (например, строка была привязана к
+    старому номеру по замене, а точный номер существует), строка
+    перепривязывается, название и цена обновляются. Количество и число
+    сканов НЕ меняются.
+
     Только черновики: сконвертированные и проведённые сессии, документы,
     движения и остатки не трогаются. Возвращает число обновлённых строк.
     """
@@ -215,12 +228,24 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
         "brp_catalog_part"
     )
     for line in lines:
-        price = current_customer_price_rub(line.brp_catalog_part.retail_price_usd)
+        best = find_brp_by_number(line.normalized_value) or line.brp_catalog_part
+        price = current_customer_price_rub(best.retail_price_usd)
+        dirty = False
+        if best.pk != line.brp_catalog_part_id:
+            line.brp_catalog_part = best
+            line.display_name = (best.part_desc or best.material_no)[:255]
+            line.source = InventoryCountingLine.Source.BRP
+            dirty = True
         if price != line.final_customer_price_rub:
             line.final_customer_price_rub = price
+            dirty = True
+        if dirty:
             changed.append(line)
     if changed:
-        InventoryCountingLine.objects.bulk_update(changed, ["final_customer_price_rub"])
+        InventoryCountingLine.objects.bulk_update(
+            changed,
+            ["brp_catalog_part", "display_name", "source", "final_customer_price_rub"],
+        )
     return len(changed)
 
 
