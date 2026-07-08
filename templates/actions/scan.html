@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Действия со склада · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Действия со склада</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'actions_report' %}">Отчёт действий</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Сканер действий: продажа, резерв или выдача в ремонт прямо со скана.
+    Остаток меняется сразу и попадает в отчёты; резерв только удерживает
+    доступность, отменить его можно в разделе «Резервы».
+  </p>
+  <div class="action-panel">
+    <form method="get" class="search-form">
+      <input id="scan"
+             name="q"
+             type="text"
+             class="scanner-page__input"
+             placeholder="Отсканируйте номер детали"
+             autocomplete="off"
+             autofocus
+             value="{{ q }}">
+      <button type="submit" class="btn btn--primary">Найти</button>
+    </form>
+    <p class="action-panel__hint">
+      Отсканируйте номер детали. Если деталь есть в нескольких ячейках,
+      выберите нужную ячейку. Сканер работает как клавиатура: скан и Enter.
+    </p>
+  </div>
+  {% if searched %}
+    {% if not_found %}
+      {% include "partials/_empty_state.html" with icon="search" title="Деталь не найдена в остатках склада." text="Действия работают только с реальным остатком. Если деталь новая, сначала примите её поступлением или инвентаризацией ячейки." compact=1 %}
+    {% elif overview %}
+      <div class="card">
+        <div class="card__body">
+          <p>
+            <span class="code-pill">{{ q }}</span>
+            <strong>{{ overview.part.name }}</strong>
+            · Цена клиента:
+            {% if overview.part.recommended_price %}
+              {{ overview.part.recommended_price|floatformat:"0" }} ₽
+            {% else %}
+              не указана
+            {% endif %}
+            · Доступно всего: {{ overview.total_available|floatformat:"-3" }}
+          </p>
+          {% if overview.unit_items %}
+            <p class="muted">
+              Поштучных экземпляров: {{ overview.unit_items }}. Продажа и выдача
+              поштучных деталей оформляются из
+              <a href="{% url 'part_detail' overview.part.pk %}">карточки детали</a>.
+            </p>
+          {% endif %}
+          {% if overview.locations %}
+            {% if overview.locations|length > 1 %}
+              <p>
+                <strong>{{ multi_location_message }}</strong>
+              </p>
+            {% endif %}
+            <form method="post" action="{% url 'actions_perform' %}" class="form">
+              {% csrf_token %}
+              <input type="hidden" name="part_id" value="{{ overview.part.pk }}">
+              <input type="hidden" name="q" value="{{ q }}">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Ячейка списания</th>
+                    <th class="num--qty">Физически</th>
+                    <th class="num--qty">Зарезервировано</th>
+                    <th class="num--qty">Доступно</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in overview.locations %}
+                    <tr>
+                      <td>
+                        <label>
+                          <input type="radio"
+                                 name="location_id"
+                                 value="{{ row.location.pk }}"
+                                 {% if overview.locations|length == 1 %}checked{% endif %}
+                                 required>
+                          <span class="code-pill">{{ row.location.code }}</span>
+                        </label>
+                      </td>
+                      <td class="num--qty">{{ row.physical|floatformat:"-3" }}</td>
+                      <td class="num--qty">{{ row.reserved|floatformat:"-3" }}</td>
+                      <td class="num--qty">
+                        <strong>{{ row.available|floatformat:"-3" }}</strong>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              <div class="form-grid form-grid--2">
+                <p>
+                  <label for="action-type">Действие</label>
+                  <br>
+                  <select id="action-type" name="action_type">
+                    {% for value, label in allowed_actions %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                  </select>
+                </p>
+                <p>
+                  <label for="action-qty">Количество</label>
+                  <br>
+                  <input id="action-qty"
+                         name="quantity"
+                         type="text"
+                         inputmode="decimal"
+                         value="1"
+                         required>
+                </p>
+              </div>
+              <p>
+                <label for="action-comment">Клиент / комментарий</label>
+                <br>
+                <input id="action-comment"
+                       name="customer_comment"
+                       type="text"
+                       maxlength="255"
+                       placeholder="Например: Иванов, снегоход Ski-Doo"
+                       required
+                       style="min-width: 280px">
+              </p>
+              <div class="form-actions">
+                <button type="submit" class="btn btn--primary">Провести действие</button>
+              </div>
+            </form>
+            <p class="muted">
+              Продажа и ремонт списывают остаток сразу; резерв удерживает
+              доступность до отмены или продажи из резерва. Больше доступного
+              количества провести нельзя.
+            </p>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="scan" title="Отсканируйте деталь" text="Поставьте курсор в поле сканера и отсканируйте номер. Система покажет остатки по ячейкам." compact=1 %}
+  {% endif %}
+{% endblock %}

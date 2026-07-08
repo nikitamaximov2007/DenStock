@@ -45,6 +45,11 @@ def _nav_items(user):
              "icon": "inbox", "group": "Склад"})
         add({"label": "Перемещение", "url": reverse("scanner_move"), "stub": False,
              "icon": "swap", "group": "Склад"})
+    if user.can_manage_sales or user.can_manage_reservations or user.can_manage_repairs:
+        add({"label": "Действия со склада", "url": reverse("actions_scan"), "stub": False,
+             "icon": "scan", "group": "Операции"})
+        add({"label": "Отчёт действий", "url": reverse("actions_report"), "stub": False,
+             "icon": "chart", "group": "Операции"})
     add({"label": "Резервы", "url": reverse("reservation_list"), "stub": False,
          "icon": "bookmark", "group": "Операции"})
     add({"label": "Продажи", "url": reverse("sale_list"), "stub": False,

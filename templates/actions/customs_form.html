@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Таможенные данные · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Таможенные данные детали</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'actions_report' %}">К отчёту действий</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    <span class="code-pill">{{ data.number }}</span> {{ part.name }}
+    · Название (EN): {{ data.name_en }}
+  </p>
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
+        <p>
+          <label for="customs-name">Таможенное название (RU)</label>
+          <br>
+          <input id="customs-name"
+                 name="customs_name_ru"
+                 type="text"
+                 maxlength="255"
+                 value="{{ customs.customs_name_ru }}"
+                 placeholder="{{ auto_name }}"
+                 style="min-width: 320px">
+        </p>
+        <p class="muted">
+          Если оставить пустым, в экспорт пойдёт автоперевод: «{{ auto_name }}».
+          Это таможенное название, не техническое: его можно упростить.
+        </p>
+        <div class="form-grid form-grid--2">
+          <p>
+            <label for="gross-weight">Вес брутто, кг/шт</label>
+            <br>
+            <input id="gross-weight"
+                   name="gross_weight_kg"
+                   type="text"
+                   inputmode="decimal"
+                   value="{{ customs.gross_weight_kg|default_if_none:'' }}">
+          </p>
+          <p>
+            <label for="net-weight">Вес нетто, кг/шт</label>
+            <br>
+            <input id="net-weight"
+                   name="net_weight_kg"
+                   type="text"
+                   inputmode="decimal"
+                   value="{{ customs.net_weight_kg|default_if_none:'' }}">
+          </p>
+        </div>
+        <p>
+          <label for="weight-url">Источник веса (URL)</label>
+          <br>
+          <input id="weight-url"
+                 name="weight_source_url"
+                 type="text"
+                 value="{{ customs.weight_source_url }}"
+                 style="min-width: 320px">
+        </p>
+        <p>
+          <label for="weight-note">Источник веса (примечание)</label>
+          <br>
+          <input id="weight-note"
+                 name="weight_source_note"
+                 type="text"
+                 maxlength="255"
+                 value="{{ customs.weight_source_note }}"
+                 style="min-width: 320px">
+        </p>
+        <p>
+          <label>
+            <input type="checkbox"
+                   name="weight_verified"
+                   {% if customs.weight_verified %}checked{% endif %}>
+            Вес проверен
+          </label>
+        </p>
+        <p>
+          <label for="application-area">Область применения</label>
+          <br>
+          <input id="application-area"
+                 name="application_area"
+                 type="text"
+                 maxlength="120"
+                 value="{{ customs.application_area }}">
+        </p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Сохранить</button>
+        </div>
+      </form>
+      <p class="muted">
+        Веса заполняются только вручную или по проверенному источнику:
+        система никогда не выдумывает вес. Если веса нет, колонки G/H в
+        экспорте останутся пустыми. Производитель: {{ customs.manufacturer }},
+        страна производства: {{ customs.country_of_origin }} (для BRP всегда
+        Канада).
+      </p>
+    </div>
+  </div>
+{% endblock %}

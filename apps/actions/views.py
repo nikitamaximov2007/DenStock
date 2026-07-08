@@ -1,0 +1,227 @@
+"""Layer 33 — экраны «Действий со склада». View — оркестратор.
+
+Сканер работает как клавиатура: большое поле + Enter (GET-поиск), действие
+проводится POST + redirect (PRG). Доступ: любое из прав продаж/резервов/
+ремонта; каждый тип действия дополнительно проверяется по своему праву.
+"""
+import datetime
+from decimal import Decimal, InvalidOperation
+
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils.http import urlencode
+
+from apps.catalog.models import PartType
+from apps.warehouse.models import StorageLocation
+
+from .models import WarehouseAction
+from .services import (
+    MULTI_LOCATION_MESSAGE,
+    NOT_FOUND_MESSAGE,
+    ActionError,
+    actions_report,
+    build_export_rows,
+    get_or_create_customs,
+    perform_action,
+    resolve_part,
+    stock_overview,
+)
+
+ACTION_PERMISSIONS = {
+    WarehouseAction.Type.SALE: "can_manage_sales",
+    WarehouseAction.Type.RESERVE: "can_manage_reservations",
+    WarehouseAction.Type.REPAIR: "can_manage_repairs",
+}
+
+
+def _allowed_actions(user) -> list:
+    return [
+        (value, label)
+        for value, label in WarehouseAction.Type.choices
+        if getattr(user, ACTION_PERMISSIONS[value])
+    ]
+
+
+def _require_access(request) -> None:
+    if not _allowed_actions(request.user):
+        raise PermissionDenied
+
+
+def _parse_date(value):
+    try:
+        return datetime.date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
+
+
+@login_required
+def actions_scan(request):
+    """Сканер действий: поиск остатков по скану + форма проведения."""
+    _require_access(request)
+    q = (request.GET.get("q") or "").strip()
+    ctx = {
+        "q": q,
+        "searched": bool(q),
+        "allowed_actions": _allowed_actions(request.user),
+        "not_found_message": NOT_FOUND_MESSAGE,
+        "multi_location_message": MULTI_LOCATION_MESSAGE,
+    }
+    if q:
+        part = resolve_part(q)
+        overview = stock_overview(part) if part else None
+        if part is None or (overview and not overview["locations"] and not overview["unit_items"]):
+            ctx["not_found"] = True
+        else:
+            ctx["overview"] = overview
+    return render(request, "actions/scan.html", ctx)
+
+
+@login_required
+def actions_perform(request):
+    """Провести действие (POST): Продажа / Резерв / Ремонт из выбранной ячейки."""
+    _require_access(request)
+    if request.method != "POST":
+        return redirect("actions_scan")
+    q = (request.POST.get("q") or "").strip()
+    back = reverse("actions_scan") + (f"?{urlencode({'q': q})}" if q else "")
+    part = get_object_or_404(PartType, pk=request.POST.get("part_id"))
+    location_id = request.POST.get("location_id")
+    if not location_id:
+        messages.error(request, "Выберите ячейку списания.")
+        return redirect(back)
+    location = get_object_or_404(StorageLocation, pk=location_id)
+    action_type = request.POST.get("action_type", "")
+    permission = ACTION_PERMISSIONS.get(action_type)
+    if permission is None or not getattr(request.user, permission):
+        raise PermissionDenied
+    try:
+        action = perform_action(
+            part=part,
+            location=location,
+            action_type=action_type,
+            quantity=request.POST.get("quantity", ""),
+            customer_comment=request.POST.get("customer_comment", ""),
+            by=request.user,
+        )
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect(back)
+    qty = format(action.quantity.normalize(), "f")
+    messages.success(
+        request,
+        f"Действие проведено: {action.get_action_type_display()}, "
+        f"{qty} шт, {location.code}",
+    )
+    return redirect(back)
+
+
+@login_required
+def actions_report_view(request):
+    """Единый отчёт действий со склада + подготовка таможенного экспорта."""
+    _require_access(request)
+    filters = {
+        "date_from": _parse_date(request.GET.get("date_from", "")),
+        "date_to": _parse_date(request.GET.get("date_to", "")),
+        "action_type": request.GET.get("action_type", ""),
+        "q": (request.GET.get("q") or "").strip(),
+        "part_number": (request.GET.get("part_number") or "").strip(),
+        "location_code": (request.GET.get("location_code") or "").strip(),
+    }
+    actions, totals = actions_report(**filters)
+    actions = list(actions[:500])
+    export_rows = build_export_rows(actions)
+    ready = [r for r in export_rows if not r["warnings"]]
+    return render(
+        request,
+        "actions/report.html",
+        {
+            "actions": actions,
+            "totals": totals,
+            "filters": filters,
+            "types": WarehouseAction.Type.choices,
+            "export_rows": export_rows,
+            "ready_count": len(ready),
+            "warning_count": len(export_rows) - len(ready),
+            "export_query": request.GET.urlencode(),
+        },
+    )
+
+
+@login_required
+def actions_export(request):
+    """Скачать «Форму для заказа» (xlsx) по текущим фильтрам отчёта."""
+    _require_access(request)
+    from .services import export_customs_xlsx
+
+    filters = {
+        "date_from": _parse_date(request.GET.get("date_from", "")),
+        "date_to": _parse_date(request.GET.get("date_to", "")),
+        "action_type": request.GET.get("action_type", ""),
+        "q": (request.GET.get("q") or "").strip(),
+        "part_number": (request.GET.get("part_number") or "").strip(),
+        "location_code": (request.GET.get("location_code") or "").strip(),
+    }
+    actions, _totals = actions_report(**filters)
+    buffer = export_customs_xlsx(actions)
+    date_from = filters["date_from"] or datetime.date.today()
+    date_to = filters["date_to"] or datetime.date.today()
+    filename = f"customs_order_{date_from}_{date_to}.xlsx"
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+def actions_customs_edit(request, part_id):
+    """Таможенные данные детали: RU-название, веса (только ручные), источник."""
+    _require_access(request)
+    part = get_object_or_404(PartType, pk=part_id)
+    customs = get_or_create_customs(part)
+    if request.method == "POST":
+        name_ru = (request.POST.get("customs_name_ru") or "").strip()
+        customs.customs_name_ru = name_ru
+        customs.customs_name_source = (
+            customs.NameSource.MANUAL if name_ru else customs.NameSource.AUTO
+        )
+        for field in ("gross_weight_kg", "net_weight_kg"):
+            raw = (request.POST.get(field) or "").strip().replace(",", ".")
+            if raw:
+                try:
+                    setattr(customs, field, Decimal(raw))
+                except InvalidOperation:
+                    messages.error(request, "Некорректный вес: используйте число в кг.")
+                    return redirect("actions_customs_edit", part_id=part.pk)
+            else:
+                setattr(customs, field, None)
+        customs.weight_source_url = (request.POST.get("weight_source_url") or "").strip()
+        customs.weight_source_note = (request.POST.get("weight_source_note") or "").strip()
+        customs.weight_verified = bool(request.POST.get("weight_verified"))
+        customs.application_area = (
+            request.POST.get("application_area") or "МОТО ЗАПЧАСТИ"
+        ).strip()
+        customs.updated_by = request.user
+        customs.save()
+        messages.success(request, "Таможенные данные сохранены.")
+        next_url = request.POST.get("next") or reverse("actions_report")
+        return redirect(next_url)
+    from .services import auto_customs_name_ru, part_export_data
+
+    data = part_export_data(part)
+    return render(
+        request,
+        "actions/customs_form.html",
+        {
+            "part": part,
+            "customs": customs,
+            "auto_name": auto_customs_name_ru(data["name_en"]),
+            "data": data,
+            "next": request.GET.get("next", ""),
+        },
+    )

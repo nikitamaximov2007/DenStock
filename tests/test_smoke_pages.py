@@ -25,6 +25,8 @@ ADMIN_PAGES = [
     "brp_settings",
     "counting_list",
     "counting_new",
+    "actions_scan",
+    "actions_report",
     "batch_list",
     "receipt_list",
     "receipt_create",

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}Отчёт действий со склада · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Отчёт действий со склада</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
+      {% if actions %}
+        <a class="btn btn--small btn--primary"
+           href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
+      {% endif %}
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Продажи, резервы и выдачи в ремонт, проведённые со сканера действий.
+    Экспорт заполняет «Форму для заказа» по текущим фильтрам: действия
+    группируются по детали, количество суммируется.
+  </p>
+  <form method="get" class="filter-toolbar">
+    <label>
+      С
+      <input type="date"
+             name="date_from"
+             value="{{ filters.date_from|date:'Y-m-d' }}">
+    </label>
+    <label>
+      По
+      <input type="date" name="date_to" value="{{ filters.date_to|date:'Y-m-d' }}">
+    </label>
+    <label>
+      Тип
+      <select name="action_type">
+        <option value="">Все</option>
+        {% for value, label in types %}
+          <option value="{{ value }}"
+                  {% if value == filters.action_type %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Клиент / комментарий
+      <input type="text" name="q" value="{{ filters.q }}">
+    </label>
+    <label>
+      Номер детали
+      <input type="text" name="part_number" value="{{ filters.part_number }}">
+    </label>
+    <label>
+      Ячейка
+      <input type="text" name="location_code" value="{{ filters.location_code }}">
+    </label>
+    <button type="submit" class="btn btn--small btn--primary">Показать</button>
+  </form>
+  {% if actions %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Когда</th>
+          <th>Тип</th>
+          <th>Номер</th>
+          <th>Название</th>
+          <th class="num--qty">Кол-во</th>
+          <th>Ячейка</th>
+          <th class="num--money">Цена (₽)</th>
+          <th class="num--money">Сумма (₽)</th>
+          <th>Клиент / комментарий</th>
+          <th>Кто</th>
+          <th>Документ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in actions %}
+          <tr>
+            <td>{{ a.created_at|ru_dt }}</td>
+            <td>
+              {% if a.action_type == "sale" %}
+                <span class="pill pill--success">{{ a.get_action_type_display }}</span>
+              {% elif a.action_type == "reserve" %}
+                <span class="pill pill--info">{{ a.get_action_type_display }}</span>
+              {% else %}
+                <span class="pill pill--warning">{{ a.get_action_type_display }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% with number=a.part_type.numbers.first %}
+                {% if number %}<span class="code-pill">{{ number.value }}</span>{% endif %}
+              {% endwith %}
+            </td>
+            <td>
+              <a href="{% url 'part_detail' a.part_type_id %}">{{ a.part_type.name }}</a>
+            </td>
+            <td class="num--qty">{{ a.quantity|floatformat:"-3" }}</td>
+            <td>
+              <span class="code-pill">{{ a.location.code }}</span>
+            </td>
+            <td class="num--money">{{ a.unit_price_rub|floatformat:"0" }}</td>
+            <td class="num--money">{{ a.total_price_rub|floatformat:"0" }}</td>
+            <td>{{ a.customer_comment }}</td>
+            <td>{{ a.created_by|default:"·" }}</td>
+            <td>
+              {% if a.sale %}
+                <a href="{% url 'sale_detail' a.sale_id %}">{{ a.sale.number }}</a>
+              {% elif a.reservation %}
+                <a href="{% url 'reservation_detail' a.reservation_id %}">{{ a.reservation.number }}</a>
+              {% elif a.repair_order %}
+                <a href="{% url 'repair_order_detail' a.repair_order_id %}">{{ a.repair_order.number }}</a>
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th colspan="4">Итого</th>
+          <th class="num--qty">{{ totals.quantity|floatformat:"-3" }}</th>
+          <th></th>
+          <th></th>
+          <th class="num--money">{{ totals.value|floatformat:"0" }}</th>
+          <th colspan="3"></th>
+        </tr>
+      </tfoot>
+    </table>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Готовность к таможенному экспорту</h2>
+      </div>
+      <div class="card__body">
+        <p>
+          Строк в экспорте: {{ export_rows|length }} · готовы: {{ ready_count }} ·
+          требуют данных: {{ warning_count }}. Веса не выдумываются: пустые
+          веса останутся пустыми колонками, заполните их в карточке или в Excel.
+        </p>
+        {% if warning_count %}
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Номер</th>
+                <th>Название (RU)</th>
+                <th>Что не хватает</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in export_rows %}
+                {% if row.warnings %}
+                  <tr>
+                    <td>
+                      <span class="code-pill">{{ row.number }}</span>
+                    </td>
+                    <td>{{ row.name_ru }}</td>
+                    <td>
+                      {% for w in row.warnings %}
+                        <span class="pill pill--warning">{{ w }}</span>
+                      {% endfor %}
+                    </td>
+                    <td class="table__actions">
+                      <a class="btn btn--small btn--secondary"
+                         href="{% url 'actions_customs_edit' row.part.pk %}?next={{ request.get_full_path|urlencode }}">Таможенные данные</a>
+                    </td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="chart" title="Действий пока нет" text="Проведите продажу, резерв или выдачу в ремонт со сканера действий, и они появятся в этом отчёте." compact=1 %}
+  {% endif %}
+{% endblock %}
