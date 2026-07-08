@@ -7,10 +7,12 @@
 пишется по адресу только при проведении; повторное проведение сессии
 запрещено (защита от удвоения).
 """
+import io
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth.models import Group
+from django.core.management import CommandError, call_command
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -39,6 +41,8 @@ from apps.counting.services import (
     undo_last_scan,
 )
 from apps.inventory.models import StockBalance, StockMovement
+from apps.receipts.services import create_receipt, receipt_totals
+from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import compose_address, get_or_create_location
 from apps.warehouse.models import StorageLocation
 
@@ -950,6 +954,128 @@ def test_posted_session_prices_not_refreshed(refs, location, admin):
     line.refresh_from_db()
     assert line.final_customer_price_rub == Decimal("14699")  # снимок цел
     assert _stock_snapshot() == before
+
+
+# --- Документ первичного ввода: цены из пересчёта (hotfix 33.1) ----------------------
+
+
+def _session_with_priced_lines(location, admin):
+    """Сессия: 417224916 x 3 по 5291 ₽ и 250000059 x 1 по 616 ₽ (итог 16489)."""
+    _make_old_replaced_417()
+    _make_exact_417()
+    _make_zero_screw_059()
+    _make_priced_screw_418()
+    session = start_session(location=location, by=admin)
+    line_a = record_scan(session, "417224916", by=admin)
+    set_line_quantity(line_a, 3)
+    record_scan(session, "250000059", by=admin)
+    return session
+
+
+def test_convert_uses_per_line_customer_prices(refs, location, admin):
+    session = _session_with_priced_lines(location, admin)
+    assert session.counters()["total_value"] == Decimal("16489")  # 3*5291 + 616
+    receipt = convert_to_receipt(session, by=admin)  # глобальный unit_cost = 0
+    prices = {
+        line.part_type.brp_link.brp_part.material_no: (line.unit_cost_rub, line.quantity)
+        for line in receipt.lines.select_related("part_type__brp_link__brp_part")
+    }
+    # Глобальный ноль из формы НЕ затирает цены строк пересчёта.
+    assert prices["417224916"] == (Decimal("5291.00"), Decimal("3"))
+    assert prices["250000059"] == (Decimal("616.00"), Decimal("1"))
+    # Итог документа равен «Стоимости ячейки».
+    assert receipt_totals(receipt)["cost"] == Decimal("16489.00")
+
+
+def test_convert_zero_price_line_keeps_zero(refs, location, admin):
+    _make_zero_screw_059()  # связанных цен нет вообще
+    session = start_session(location=location, by=admin)
+    record_scan(session, "250000059", by=admin)
+    receipt = convert_to_receipt(session, by=admin)
+    assert receipt.lines.get().unit_cost_rub == Decimal("0.00")  # цену не выдумали
+
+
+def test_convert_fallback_only_for_unpriced_lines(refs, location, admin):
+    _make_zero_screw_059()
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)  # цена 14699
+    record_scan(session, "250000059", by=admin)  # цены нет
+    receipt = convert_to_receipt(session, by=admin, unit_cost=Decimal("50"))
+    prices = sorted(line.unit_cost_rub for line in receipt.lines.all())
+    # Запасная цена применяется ТОЛЬКО к строке без цены.
+    assert prices == [Decimal("50.00"), Decimal("14699.00")]
+
+
+def test_repair_command_dry_run_and_commit(refs, location, admin):
+    """Продакшен-кейс POS-000003: документ создан с нулями, чинится командой."""
+    session = _session_with_priced_lines(location, admin)
+    receipt = convert_to_receipt(session, by=admin)
+    receipt.lines.update(unit_cost_rub=Decimal("0"))  # симуляция бага до 33.1
+    post_session(session, by=admin)
+    before_stock = _stock_snapshot()
+    before_qty = sorted(receipt.lines.values_list("quantity", flat=True))
+    # Dry-run: полный отчёт, но ничего не записано.
+    out = io.StringIO()
+    call_command("repair_counting_receipt_prices", session_id=session.pk, stdout=out)
+    text = out.getvalue()
+    assert "DRY-RUN" in text
+    assert receipt.number in text
+    assert "5291" in text and "616" in text  # новые цены
+    assert "0.00" in text  # старые цены
+    assert "16489" in text  # новый итог документа
+    assert set(receipt.lines.values_list("unit_cost_rub", flat=True)) == {Decimal("0.00")}
+    # Commit (по id документа): цены обновлены, склад и количества целы.
+    call_command(
+        "repair_counting_receipt_prices",
+        receipt_id=receipt.pk, commit=True, stdout=io.StringIO(),
+    )
+    assert receipt_totals(receipt)["cost"] == Decimal("16489.00")
+    assert sorted(receipt.lines.values_list("quantity", flat=True)) == before_qty
+    assert _stock_snapshot() == before_stock  # остатки/движения/карточки не тронуты
+    # Повторный запуск: менять нечего.
+    out = io.StringIO()
+    call_command("repair_counting_receipt_prices", session_id=session.pk, stdout=out)
+    assert "менять нечего" in out.getvalue()
+
+
+def test_repair_refuses_non_counting_receipt(refs, admin):
+    receipt = create_receipt(supplier=Supplier.objects.create(name="Обычный поставщик"), by=admin)
+    with pytest.raises(CommandError, match="не связан с пересчётом"):
+        call_command("repair_counting_receipt_prices", receipt_id=receipt.pk)
+
+
+def test_convert_page_explains_prices_from_counting(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)
+    html = client.get(reverse("counting_convert", args=[session.pk])).content.decode()
+    assert "Документ первичного ввода" in html
+    assert "Цены будут взяты из пересчёта ячейки" in html
+    assert "Итоговая стоимость документа" in html
+    assert "14699" in html
+    assert "Запасная цена только для строк без цены" in html
+    assert "по желанию" not in html  # старая формулировка убрана
+
+
+def test_receipt_detail_labels_for_counting_receipt(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)
+    receipt = convert_to_receipt(session, by=admin)
+    html = client.get(reverse("receipt_detail", args=[receipt.pk])).content.decode()
+    assert "Оценка за ед. (₽)" in html
+    assert "Сумма оценки" in html
+    assert "Документ первичного ввода из пересчёта ячейки" in html
+    assert "Сумма себестоимости" not in html
+    assert "14699" in html  # итог совпадает со стоимостью пересчёта
+
+
+def test_receipt_detail_labels_for_supplier_receipt(client, make_user, refs, admin):
+    client.login(username="admin", password=PASSWORD)
+    receipt = create_receipt(supplier=Supplier.objects.create(name="Поставщик"), by=admin)
+    html = client.get(reverse("receipt_detail", args=[receipt.pk])).content.decode()
+    assert "Сумма себестоимости" in html  # обычные поступления не изменились
+    assert "Оценка за ед." not in html
 
 
 # --- Удаление черновика (hotfix 32.2) -----------------------------------------------

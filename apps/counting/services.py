@@ -430,6 +430,12 @@ def convert_to_receipt(
     Склад НЕ меняется (это черновик поступления). Неизвестные строки блокируют
     конвертацию: их надо разобрать или удалить. Идемпотентно: если документ уже
     создан, возвращает его.
+
+    Цены (hotfix 33.1): это документ ПЕРВИЧНОГО ВВОДА, а не закупка. Каждая
+    строка документа получает цену клиента строки пересчёта
+    (final_customer_price_rub), поэтому итог документа равен «Стоимости
+    ячейки». Параметр unit_cost - запасная цена ТОЛЬКО для строк без цены;
+    по умолчанию 0, строка без цены остаётся 0.
     """
     if session.status == InventoryCountingSession.Status.CONVERTED and session.converted_receipt:
         return session.converted_receipt
@@ -479,11 +485,18 @@ def convert_to_receipt(
             line.save(update_fields=["warehouse_part", "source"])
         if part is None:
             raise CountingError(f"Строку «{line.scanned_value}» не с чем связать.")
+        # Первичный ввод: это не закупка у поставщика, у строк нет реальной
+        # себестоимости. Оценка строки = цена клиента из пересчёта (та же,
+        # что в «Стоимости ячейки»); глобальный unit_cost - только запасная
+        # цена для строк, у которых цены нет. Строка без цены остаётся 0.
+        line_price = line.final_customer_price_rub
+        if line_price is None or line_price <= 0:
+            line_price = unit_cost
         add_line(
             receipt,
             part_type=part,
             quantity=line.quantity_counted,
-            unit_cost_rub=unit_cost,
+            unit_cost_rub=line_price,
             location=session.storage_location,
             comment=f"Пересчёт {session.full_address}",
         )

@@ -55,9 +55,18 @@
   {% if session.status == "draft" %}
     <div class="card">
       <div class="card__header">
-        <h2 class="card__title">Создать черновик документа</h2>
+        <h2 class="card__title">Документ первичного ввода</h2>
       </div>
       <div class="card__body">
+        <p>
+          Это первичный ввод того, что физически лежит в ячейке, а не закупка
+          у поставщика. <strong>Цены будут взяты из пересчёта ячейки</strong>:
+          каждая строка документа получит свою цену клиента.
+        </p>
+        <p>
+          Итоговая стоимость документа:
+          <strong>{{ counters.total_value|floatformat:"0" }} ₽</strong>
+        </p>
         <p class="muted">
           Позиции из BRP-каталога станут складскими карточками автоматически (с
           номерами и рассчитанной ценой). Черновик документа склад НЕ меняет.
@@ -67,7 +76,7 @@
               class="form">
           {% csrf_token %}
           <div class="field">
-            <label class="field__label" for="unit-cost">Себестоимость за единицу (₽), по желанию</label>
+            <label class="field__label" for="unit-cost">Запасная цена только для строк без цены (₽)</label>
             <input id="unit-cost"
                    name="unit_cost"
                    type="text"

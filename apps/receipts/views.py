@@ -102,6 +102,9 @@ def receipt_detail(request, pk):
         "is_draft": receipt.is_draft,
         "can_manage_parts": request.user.can_manage_parts,
         "show_costs": request.user.can_view_purchase_cost,
+        # 33.1: документ из пересчёта ячейки - первичный ввод, его "цена" -
+        # оценка по цене клиента, а не себестоимость закупки.
+        "is_counting_receipt": receipt.counting_session.exists(),
     }
     if receipt.is_draft:
         initial = {}

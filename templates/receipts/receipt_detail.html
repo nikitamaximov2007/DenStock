@@ -33,9 +33,21 @@
         · Создал: {{ receipt.created_by|default:"·" }}
       </p>
       {% if receipt.comment %}<p class="muted">{{ receipt.comment }}</p>{% endif %}
+      {% if is_counting_receipt %}
+        <p class="muted">
+          Документ первичного ввода из пересчёта ячейки: цены строк - оценка по
+          цене клиента, а не себестоимость закупки.
+        </p>
+      {% endif %}
       <p class="muted">
         Позиций: {{ totals.lines }} · Количество: {{ totals.quantity|floatformat:"-3" }}
-        {% if show_costs %}· Сумма себестоимости: {{ totals.cost }} ₽{% endif %}
+        {% if show_costs %}
+          {% if is_counting_receipt %}
+            · Сумма оценки: {{ totals.cost }} ₽
+          {% else %}
+            · Сумма себестоимости: {{ totals.cost }} ₽
+          {% endif %}
+        {% endif %}
       </p>
     </div>
   </div>
@@ -46,11 +58,19 @@
           <th>Деталь</th>
           <th>Учёт</th>
           <th class="num--qty">Кол-во</th>
-          <th class="num--money">Цена за ед. (₽)</th>
+          <th class="num--money">
+            {% if is_counting_receipt %}
+              Оценка за ед. (₽)
+            {% else %}
+              Цена за ед. (₽)
+            {% endif %}
+          </th>
           <th class="num--money">Сумма (₽)</th>
           <th>Ячейка</th>
           <th>Комментарий</th>
-          {% if is_draft %}<th></th>{% endif %}
+          {% if is_draft %}
+            <th></th>
+          {% endif %}
         </tr>
       </thead>
       <tbody>
