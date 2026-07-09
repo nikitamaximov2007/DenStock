@@ -63,6 +63,10 @@
       <div class="tile__value">{{ counters.brp }}</div>
     </div>
     <div class="tile">
+      <div class="tile__label">Найдено в Polaris</div>
+      <div class="tile__value">{{ counters.polaris }}</div>
+    </div>
+    <div class="tile">
       <div class="tile__label">Неизвестных</div>
       <div class="tile__value">
         {% if counters.unknown %}
@@ -163,6 +167,8 @@
                 <span class="pill pill--success">На складе</span>
               {% elif line.source == "brp_catalog" %}
                 <span class="pill pill--info">BRP-каталог</span>
+              {% elif line.source == "polaris_catalog" %}
+                <span class="pill pill--info">Polaris-каталог</span>
               {% else %}
                 <span class="pill pill--danger">Неизвестно</span>
               {% endif %}

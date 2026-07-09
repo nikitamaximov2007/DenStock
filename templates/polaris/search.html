@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Polaris-каталог · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Polaris-каталог</h1>
+    <div class="page-actions">
+      {% if can_manage_parts %}
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'polaris_settings' %}">Настройки цен</a>
+      {% endif %}
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Справочник дилерского прайса Polaris ({{ catalog_size }} позиций). Это НЕ остатки:
+    на складе появляются только детали, наличие которых учтено. Курс расчёта:
+    {{ pricing.polaris_usd_rate|floatformat:"-4" }} ₽ · Наценка:
+    {{ pricing.polaris_markup_percent|floatformat:"-2" }}%.
+  </p>
+  <div class="action-panel">
+    <form method="get" class="search-form">
+      <input id="polaris-search-input"
+             name="q"
+             type="text"
+             class="scanner-page__input"
+             placeholder="Номер Polaris, superseded number, штрихкод или название…"
+             autocomplete="off"
+             autofocus
+             value="{{ q }}">
+      <button type="submit" class="btn btn--primary">Найти в Polaris-каталоге</button>
+    </form>
+    <p class="action-panel__hint">
+      Сканер работает как клавиатура: отсканируйте номер и нажмите Enter. Сначала
+      ищем на складе, затем в справочнике Polaris.
+    </p>
+  </div>
+  {% if searched %}
+    {% if warehouse_rows %}
+      <div class="page-header reports-section">
+        <h2 class="page-title">На складе</h2>
+        <span class="pill pill--success">фактический склад</span>
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Деталь</th>
+            <th class="num--qty">Доступно</th>
+            <th>Места хранения</th>
+            <th class="num--money">Цена клиента (₽)</th>
+            <th>Polaris</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in warehouse_rows %}
+            <tr>
+              <td>
+                <a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a>
+                <span class="muted">· {{ row.part.category }}</span>
+              </td>
+              <td class="num--qty">
+                {% if row.physical %}
+                  {{ row.available|floatformat:"-3" }}
+                {% else %}
+                  <span class="pill pill--muted">нет остатка</span>
+                {% endif %}
+              </td>
+              <td>
+                {% for balance in row.balances %}
+                  <span class="code-pill">{{ balance.location.code }}</span>
+                  <span class="muted">x {{ balance.quantity_physical|floatformat:"-3" }}</span>
+                {% empty %}
+                  ·
+                {% endfor %}
+              </td>
+              <td class="num--money">
+                {% if row.part.recommended_price is not None %}
+                  {{ row.part.recommended_price|floatformat:"0" }}
+                {% else %}
+                  ·
+                {% endif %}
+              </td>
+              <td>
+                {% if row.link %}
+                  <span class="code-pill">{{ row.link.polaris_part.part_number }}</span>
+                {% else %}
+                  ·
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+    <div class="page-header reports-section">
+      <h2 class="page-title">Polaris-каталог</h2>
+      <span class="pill pill--info">справочник</span>
+    </div>
+    {% if polaris_rows %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Номер</th>
+            <th>Название</th>
+            <th>Superseded</th>
+            <th class="num--money">Розница</th>
+            <th class="num--money">Опт</th>
+            <th class="num--money">Цена клиента (₽)</th>
+            <th>UOM</th>
+            <th>Источник цены</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in polaris_rows %}
+            <tr>
+              <td>
+                <span class="code-pill">{{ row.polaris.part_number }}</span>
+              </td>
+              <td>{{ row.polaris.part_name|default:"·" }}</td>
+              <td>
+                {% if row.polaris.superseded_number %}
+                  <span class="code-pill">{{ row.polaris.superseded_number }}</span>
+                {% else %}
+                  ·
+                {% endif %}
+              </td>
+              <td class="num--money">{{ row.polaris.retail_price_usd|default:"·" }}</td>
+              <td class="num--money">{{ row.polaris.wholesale_price_usd|default:"·" }}</td>
+              <td class="num--money">
+                {% if row.customer_price is not None %}
+                  {{ row.customer_price|floatformat:"0" }}
+                {% else %}
+                  ·
+                {% endif %}
+              </td>
+              <td>{{ row.polaris.uom|default:"·" }}</td>
+              <td>
+                {% if row.price_source %}
+                  <span class="code-pill">{{ row.price_source.part_number }}</span>
+                {% else %}
+                  сама позиция
+                {% endif %}
+              </td>
+              <td class="table__actions">
+                {% if row.promoted_part %}
+                  <a class="btn btn--small btn--secondary"
+                     href="{% url 'part_detail' row.promoted_part.pk %}">На складе</a>
+                {% else %}
+                  {% if can_manage_parts %}
+                    <form method="post"
+                          action="{% url 'polaris_promote' row.polaris.pk %}"
+                          class="inline-form">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn--small btn--secondary">Создать карточку</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+                {% if can_manage_inventory %}
+                  {% if row.promoted_part or can_manage_parts %}
+                    <form method="post"
+                          action="{% url 'polaris_intake' row.polaris.pk %}"
+                          class="inline-form">
+                      {% csrf_token %}
+                      <button type="submit" class="btn btn--small btn--primary">Учесть наличие</button>
+                    </form>
+                  {% endif %}
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      {% url 'part_create' as create_url %}
+      {% if can_manage_parts %}
+        {% include "partials/_empty_state.html" with icon="search" title="Не найдено" text="Ни на складе, ни в Polaris-каталоге совпадений нет. Проверьте номер или создайте карточку вручную." action_url=create_url action_label="Создать деталь вручную" compact=1 %}
+      {% else %}
+        {% include "partials/_empty_state.html" with icon="search" title="Не найдено" text="Ни на складе, ни в Polaris-каталоге совпадений нет. Проверьте номер или обратитесь к руководителю." compact=1 %}
+      {% endif %}
+    {% endif %}
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="book" title="Введите номер или название" text="Поиск по номеру Polaris, superseded number, штрихкоду склада и названию. Минимум 2 символа." compact=1 %}
+  {% endif %}
+{% endblock %}

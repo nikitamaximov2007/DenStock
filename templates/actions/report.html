@@ -93,6 +93,10 @@
             </td>
             <td>
               <span class="code-pill">{{ a.part_number|default:a.part_type.name }}</span>
+              {% if a.manufacturer_name %}
+                <br>
+                <span class="muted">{{ a.manufacturer_name }}</span>
+              {% endif %}
               {% if a.price_source_number %}
                 <br>
                 <span class="muted">цена по замене {{ a.price_source_number }}</span>

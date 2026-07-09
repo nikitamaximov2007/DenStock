@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Настройки цен Polaris · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Настройки цен Polaris</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'polaris_search' %}">К Polaris-каталогу</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Цена клиента считается из розницы Polaris как USD и округляется до целого
+    рубля, без копеек: цена = розница USD x курс x (1 + наценка / 100).
+    Настройки Polaris отдельные от BRP.
+  </p>
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        <div class="field">
+          <label class="field__label" for="polaris-rate">Курс расчёта (₽ за $)</label>
+          <input id="polaris-rate"
+                 name="polaris_usd_rate"
+                 type="text"
+                 inputmode="decimal"
+                 value="{{ pricing.polaris_usd_rate|floatformat:'-4' }}">
+        </div>
+        <div class="field">
+          <label class="field__label" for="polaris-markup">Наценка, %</label>
+          <input id="polaris-markup"
+                 name="polaris_markup_percent"
+                 type="text"
+                 inputmode="decimal"
+                 value="{{ pricing.polaris_markup_percent|floatformat:'-2' }}">
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Сохранить</button>
+        </div>
+      </form>
+      <p class="muted">
+        Обновлено: {{ pricing.updated_at|ru_dt }}
+        {% if pricing.updated_by %}· {{ pricing.updated_by }}{% endif %}
+      </p>
+    </div>
+  </div>
+{% endblock %}

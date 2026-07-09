@@ -20,6 +20,8 @@ from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_num
 from apps.counting.services import find_brp_price_source
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import return_stock_lot_quantity
+from apps.polaris.models import PolarisPartLink
+from apps.polaris.services import find_polaris_price_source
 from apps.procurement.models import money
 from apps.repairs.services import (
     add_stock_lot_to_repair_order,
@@ -68,17 +70,23 @@ def resolve_part(raw: str) -> PartType | None:
     norm = normalize_number(raw)
     part_id = None
     if norm:
-        part_id = (
+        part_ids = list(
             PartNumber.objects.filter(normalized_value=norm)
             .values_list("part_id", flat=True)
-            .first()
+            .distinct()[:2]
         )
+        if len(part_ids) > 1:
+            return None
+        part_id = part_ids[0] if part_ids else None
     if part_id is None:
-        part_id = (
+        part_ids = list(
             PartBarcode.objects.filter(value__iexact=raw)
             .values_list("part_id", flat=True)
-            .first()
+            .distinct()[:2]
         )
+        if len(part_ids) > 1:
+            return None
+        part_id = part_ids[0] if part_ids else None
     if part_id is None:
         return None
     return PartType.objects.filter(pk=part_id).first()
@@ -110,16 +118,31 @@ def identity_number(part: PartType, scanned_raw: str = "") -> str:
 
 
 def _price_source_number(part: PartType) -> str:
-    """Номер связанной позиции BRP, из которой взята цена (если не сама деталь)."""
+    """Catalog number that supplied price when it differs from identity."""
     brp = _brp_part_for(part)
-    if brp is None:
+    if brp is not None:
+        if brp.retail_price_usd and brp.retail_price_usd > 0:
+            return ""
+        source = find_brp_price_source(brp.material_no_norm, brp)
+        if source is not None and source.pk != brp.pk:
+            return source.material_no
         return ""
-    if brp.retail_price_usd and brp.retail_price_usd > 0:
-        return ""  # цена от самой детали — источник не отличается
-    source = find_brp_price_source(brp.material_no_norm, brp)
-    if source is not None and source.pk != brp.pk:
-        return source.material_no
+    polaris = _polaris_part_for(part)
+    if polaris is not None:
+        if polaris.retail_price_usd and polaris.retail_price_usd > 0:
+            return ""
+        source = find_polaris_price_source(polaris.part_number_norm, polaris)
+        if source is not None and source.pk != polaris.pk:
+            return source.part_number
     return ""
+
+
+def _manufacturer_snapshot(part: PartType) -> str:
+    if _polaris_part_for(part) is not None:
+        return "POLARIS"
+    if _brp_part_for(part) is not None:
+        return "BRP"
+    return part.manufacturer.name if part.manufacturer else ""
 
 
 def _lot_available(lot: StockLot) -> Decimal:
@@ -254,6 +277,7 @@ def perform_action(
         # Снимок личности: точный номер, что сканировали/продали.
         part_number=identity_number(part, scanned_number),
         part_name=part.name,
+        manufacturer_name=_manufacturer_snapshot(part),
         location=location,
         location_code=location.code,
         quantity=quantity,
@@ -460,7 +484,10 @@ def auto_customs_name_ru(english_name: str) -> str:
 
 
 def get_or_create_customs(part: PartType) -> PartCustomsInfo:
-    info, _created = PartCustomsInfo.objects.get_or_create(part_type=part)
+    defaults = {}
+    if _polaris_part_for(part) is not None:
+        defaults = {"manufacturer": "POLARIS", "country_of_origin": ""}
+    info, _created = PartCustomsInfo.objects.get_or_create(part_type=part, defaults=defaults)
     return info
 
 
@@ -469,27 +496,52 @@ def _brp_part_for(part: PartType):
     return link.brp_part if link else None
 
 
+def _polaris_part_for(part: PartType):
+    link = (
+        PolarisPartLink.objects.filter(part=part)
+        .select_related("polaris_part")
+        .first()
+    )
+    return link.polaris_part if link else None
+
+
 def part_export_data(part: PartType, number: str | None = None) -> dict:
     """Данные детали для строк экспорта + предупреждения о недостающих полях.
 
     `number` — ТОЧНЫЙ артикул проданной детали (снимок действия); он идёт в
     колонку B без изменений. Замены/источник цены номер НЕ подменяют. Если
     number не передан, берётся основной номер детали (НЕ аналог).
-    K (стоимость за шт) — розница BRP в ДОЛЛАРАХ от эффективного источника
-    цены (правило 32.3.2: если у точной позиции розница 0, берётся связанная
-    замена с ценой). Рублёвые цены в таможенную форму не подмешиваются.
+    K (стоимость за шт) - розница каталога в USD от эффективного источника
+    цены. Рублёвые цены в таможенную форму не подмешиваются.
     """
     customs = get_or_create_customs(part)
     brp = _brp_part_for(part)
+    polaris = _polaris_part_for(part)
     if not number:
         number = identity_number(part)
-    english_name = (brp.part_desc if brp and brp.part_desc else part.name).strip()
+    if polaris is not None:
+        english_name = (polaris.part_name or part.name).strip()
+    else:
+        english_name = (brp.part_desc if brp and brp.part_desc else part.name).strip()
     name_ru = customs.customs_name_ru.strip() or auto_customs_name_ru(english_name)
     usd_price = None
     if brp is not None:
         source = find_brp_price_source(brp.material_no_norm, brp)
         if source is not None and source.retail_price_usd and source.retail_price_usd > 0:
             usd_price = source.retail_price_usd
+    elif polaris is not None:
+        source = find_polaris_price_source(polaris.part_number_norm, polaris)
+        if source is not None and source.retail_price_usd and source.retail_price_usd > 0:
+            usd_price = source.retail_price_usd
+    if polaris is not None:
+        manufacturer = (customs.manufacturer or "POLARIS").upper()
+        if manufacturer == "BRP":
+            manufacturer = "POLARIS"
+        country_raw = (customs.country_of_origin or "").strip()
+        country = "" if country_raw.upper() == "КАНАДА" else country_raw.upper()
+    else:
+        manufacturer = (customs.manufacturer or "BRP").upper()
+        country = (customs.country_of_origin or "КАНАДА").upper()
     warnings = []
     if not customs.customs_name_ru.strip():
         warnings.append("русское название: автоперевод, проверьте")
@@ -505,8 +557,8 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "number": number,
         "name_ru": name_ru.upper(),
         "name_en": english_name.upper(),
-        "manufacturer": (customs.manufacturer or "BRP").upper(),
-        "country": (customs.country_of_origin or "КАНАДА").upper(),
+        "manufacturer": manufacturer,
+        "country": country,
         "gross_weight_kg": customs.gross_weight_kg,
         "net_weight_kg": customs.net_weight_kg,
         "usd_price": usd_price,
@@ -518,21 +570,24 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
 def build_export_rows(actions) -> list[dict]:
     """Строки экспорта: группировка по ТОЧНОМУ номеру продажи, количество сумм.
 
-    Ключ группировки — снимок part_number (точный проданный артикул), а не
-    id детали: даже если у карточки есть номера-замены, в экспорт уходит
-    ровно тот номер, что продали. Отменённые действия сюда не попадают
-    (их не отдаёт actions_report).
+    Ключ группировки - производитель + снимок part_number, а не id детали:
+    BRP 123 и POLARIS 123 остаются разными строками. Отменённые действия сюда
+    не попадают (их не отдаёт actions_report).
     """
-    grouped: dict[str, dict] = {}
+    grouped: dict[tuple[str, str], dict] = {}
     for action in actions:
-        key = action.part_number or identity_number(action.part_type)
+        number = action.part_number or identity_number(action.part_type)
+        manufacturer = action.manufacturer_name or _manufacturer_snapshot(action.part_type)
+        key = (manufacturer, number)
         row = grouped.get(key)
         if row is None:
-            row = part_export_data(action.part_type, number=key)
+            row = part_export_data(action.part_type, number=number)
+            if manufacturer:
+                row["manufacturer"] = manufacturer.upper()
             row["quantity"] = Decimal("0")
             grouped[key] = row
         row["quantity"] += action.quantity
-    return sorted(grouped.values(), key=lambda r: r["number"])
+    return sorted(grouped.values(), key=lambda r: (r["number"], r["manufacturer"]))
 
 
 def export_customs_xlsx(actions) -> BytesIO:

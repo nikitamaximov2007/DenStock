@@ -24,6 +24,8 @@ def _nav_items(user):
          "icon": "box", "group": "Каталог"})
     add({"label": "BRP-каталог", "url": reverse("brp_search"), "stub": False,
          "icon": "book", "group": "Каталог"})
+    add({"label": "Polaris-каталог", "url": reverse("polaris_search"), "stub": False,
+         "icon": "book", "group": "Каталог"})
     if user.can_manage_batches or user.can_view_purchase_cost or user.is_storekeeper:
         add({"label": "Партии", "url": reverse("batch_list"), "stub": False,
              "icon": "layers", "group": "Каталог"})

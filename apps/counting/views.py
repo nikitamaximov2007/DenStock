@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.polaris.services import find_polaris_by_number
 
 from .forms import CountingStartForm
 from .models import InventoryCountingLine, InventoryCountingSession
@@ -34,6 +35,7 @@ from .services import (
     remove_line,
     resolve_unknown_to_brp,
     resolve_unknown_to_part,
+    resolve_unknown_to_polaris,
     set_line_quantity,
     start_session,
     undo_last_scan,
@@ -104,10 +106,12 @@ def counting_detail(request, pk):
         InventoryCountingSession.objects.select_related("storage_location", "converted_receipt"),
         pk=pk,
     )
-    # Черновик освежает снимки цен по текущему BRP-каталогу: после реимпорта
+    # Черновик освежает снимки цен по текущим каталогам: после реимпорта
     # прайса исправленные цены видны без повторного сканирования ячейки.
     refresh_draft_prices(session)
-    lines = session.lines.select_related("warehouse_part", "brp_catalog_part")
+    lines = session.lines.select_related(
+        "warehouse_part", "brp_catalog_part", "polaris_catalog_part"
+    )
     return render(
         request,
         "counting/detail.html",
@@ -135,9 +139,12 @@ def counting_scan(request, pk):
     except CountingError as exc:
         messages.error(request, str(exc))
     else:
-        label = {"warehouse": "склад", "brp_catalog": "BRP", "unknown": "неизвестно"}.get(
-            line.source, line.source
-        )
+        label = {
+            "warehouse": "склад",
+            "brp_catalog": "BRP",
+            "polaris_catalog": "Polaris",
+            "unknown": "неизвестно",
+        }.get(line.source, line.source)
         qty = format(line.quantity_counted.normalize(), "f")
         messages.success(
             request,
@@ -209,7 +216,7 @@ def counting_line_remove(request, pk):
 @login_required
 @require_POST
 def counting_line_resolve(request, pk):
-    """Разобрать неизвестную строку: ввести номер, найти на складе или в BRP."""
+    """Разобрать неизвестную строку: найти на складе, в BRP или Polaris."""
     line = get_object_or_404(InventoryCountingLine, pk=pk)
     _require_manage(request)
     code = (request.POST.get("code") or "").strip()
@@ -224,9 +231,18 @@ def counting_line_resolve(request, pk):
             messages.success(request, "Строка привязана к складской карточке.")
         else:
             brp = find_brp_by_number(norm)
-            if brp:
+            polaris = find_polaris_by_number(norm)
+            if brp and polaris:
+                messages.error(
+                    request,
+                    "Этот номер есть в BRP и Polaris. Откройте общий поиск и выберите каталог.",
+                )
+            elif brp:
                 resolve_unknown_to_brp(line, brp)
                 messages.success(request, "Строка привязана к BRP-каталогу.")
+            elif polaris:
+                resolve_unknown_to_polaris(line, polaris)
+                messages.success(request, "Строка привязана к Polaris-каталогу.")
             else:
                 messages.error(request, "По этому номеру ничего не найдено.")
     except CountingError as exc:
@@ -243,7 +259,9 @@ def counting_convert(request, pk):
         pk=pk,
     )
     refresh_draft_prices(session)  # обзор и конвертация видят актуальные цены
-    lines = session.lines.select_related("warehouse_part", "brp_catalog_part")
+    lines = session.lines.select_related(
+        "warehouse_part", "brp_catalog_part", "polaris_catalog_part"
+    )
     unknown_count = sum(1 for line in lines if line.needs_review)
     if request.method == "POST":
         try:

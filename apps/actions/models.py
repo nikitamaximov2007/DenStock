@@ -45,6 +45,9 @@ class WarehouseAction(models.Model):
     # Снимок личности детали на момент действия (номер, который сканировали).
     part_number = models.CharField("Номер детали (снимок)", max_length=100, blank=True)
     part_name = models.CharField("Название (снимок)", max_length=255, blank=True)
+    manufacturer_name = models.CharField(
+        "Производитель (снимок)", max_length=80, blank=True
+    )
     location = models.ForeignKey(
         "warehouse.StorageLocation", verbose_name="Ячейка списания",
         on_delete=models.PROTECT, related_name="warehouse_actions",
