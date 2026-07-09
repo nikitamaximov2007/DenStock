@@ -660,3 +660,55 @@ def test_debug_command_reports_numbers(variant_part, data):
     assert "primary/OEM номер карточки: '420931285'" in text
     assert "kind=analog" in text  # аналог виден в диагностике
     assert "номер в таможенном экспорте (колонка B): '420931285'" in text
+
+
+@pytest.fixture
+def legacy_replacement_part(db, data):
+    """Карточка, где primary 420931284, но старое действие надо исправить на 420931285."""
+    brp = BrpCatalogPart.objects.create(
+        material_no="420931284", part_desc="OIL SEAL",
+        retail_price_usd=Decimal("24.49"), replacement_no_1="420931285",
+    )
+    part = promote_to_warehouse(brp, by=data["admin"])
+    _stock(part, data["loc2"], 5, data["sup"], data["admin"])
+    return part
+
+
+def test_repair_identity_snapshot_command_changes_only_snapshot(legacy_replacement_part, data):
+    action = perform_action(
+        part=legacy_replacement_part, location=data["loc2"], action_type="sale",
+        quantity="1", customer_comment="Рома Чернушка", by=data["admin"],
+    )
+    lot = StockLot.objects.get(part_type=legacy_replacement_part, location=data["loc2"])
+    qty_after_sale = lot.quantity
+    movements_after_sale = StockMovement.objects.count()
+    assert action.part_number == "420931284"  # legacy/backfill value, not actual sold number
+
+    out = StringIO()
+    call_command(
+        "repair_warehouse_action_identity",
+        action_id=action.pk,
+        part_number="420931285",
+        reason="Фактически продали 420931285",
+        stdout=out,
+    )
+    assert "DRY-RUN" in out.getvalue()
+    action.refresh_from_db()
+    assert action.part_number == "420931284"
+
+    call_command(
+        "repair_warehouse_action_identity",
+        action_id=action.pk,
+        part_number="420931285",
+        reason="Фактически продали 420931285",
+        commit=True,
+        stdout=StringIO(),
+    )
+    action.refresh_from_db()
+    lot.refresh_from_db()
+    assert action.part_number == "420931285"
+    assert lot.quantity == qty_after_sale
+    assert StockMovement.objects.count() == movements_after_sale
+
+    rows = build_export_rows(list(actions_report()[0]))
+    assert rows[0]["number"] == "420931285"
