@@ -13,17 +13,20 @@ from pathlib import Path
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Q, Sum
+from django.utils import timezone
 
 from apps.brp.models import BrpPartLink
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
 from apps.counting.services import find_brp_price_source
 from apps.inventory.models import PartItem, StockLot
+from apps.inventory.services import return_stock_lot_quantity
 from apps.procurement.models import money
 from apps.repairs.services import (
     add_stock_lot_to_repair_order,
     complete_repair_order,
     create_repair_order,
 )
+from apps.sales.models import Sale
 from apps.sales.services import (
     activate_reservation,
     active_reserved_for_lot,
@@ -79,6 +82,44 @@ def resolve_part(raw: str) -> PartType | None:
     if part_id is None:
         return None
     return PartType.objects.filter(pk=part_id).first()
+
+
+def identity_number(part: PartType, scanned_raw: str = "") -> str:
+    """Точный номер личности детали для снимка действия.
+
+    Если отсканированное значение совпадает с одним из номеров детали
+    (в т.ч. номером-заменой) — возвращаем именно его: работник продал ровно
+    этот номер. Иначе основной номер детали (is_primary, затем pk) — это
+    OEM/material_no, НЕ аналог. НИКОГДА не берём соседний/replacement номер
+    по сортировке (это и был баг: PartNumber.ordering ставит analog раньше
+    oem, и `.numbers.first` отдавал замену).
+    """
+    norm = normalize_number(scanned_raw or "")
+    if norm:
+        matched = (
+            PartNumber.objects.filter(part=part, normalized_value=norm)
+            .order_by("-is_primary", "pk")
+            .first()
+        )
+        if matched is not None:
+            return matched.value
+    primary = (
+        PartNumber.objects.filter(part=part).order_by("-is_primary", "pk").first()
+    )
+    return primary.value if primary else (scanned_raw or "").strip()
+
+
+def _price_source_number(part: PartType) -> str:
+    """Номер связанной позиции BRP, из которой взята цена (если не сама деталь)."""
+    brp = _brp_part_for(part)
+    if brp is None:
+        return ""
+    if brp.retail_price_usd and brp.retail_price_usd > 0:
+        return ""  # цена от самой детали — источник не отличается
+    source = find_brp_price_source(brp.material_no_norm, brp)
+    if source is not None and source.pk != brp.pk:
+        return source.material_no
+    return ""
 
 
 def _lot_available(lot: StockLot) -> Decimal:
@@ -148,7 +189,8 @@ def _split_quantity_over_lots(lots, quantity: Decimal):
 
 @transaction.atomic
 def perform_action(
-    *, part: PartType, location, action_type: str, quantity, customer_comment: str, by=None
+    *, part: PartType, location, action_type: str, quantity, customer_comment: str,
+    scanned_number: str = "", by=None,
 ) -> WarehouseAction:
     """Провести действие со сканера: Продажа / Резерв / Ремонт.
 
@@ -209,10 +251,15 @@ def perform_action(
     return WarehouseAction.objects.create(
         action_type=action_type,
         part_type=part,
+        # Снимок личности: точный номер, что сканировали/продали.
+        part_number=identity_number(part, scanned_number),
+        part_name=part.name,
         location=location,
+        location_code=location.code,
         quantity=quantity,
         unit_price_rub=unit_price,
         total_price_rub=money(unit_price * quantity),
+        price_source_number=_price_source_number(part),
         customer_comment=customer_comment,
         sale=sale,
         reservation=reservation,
@@ -221,16 +268,78 @@ def perform_action(
     )
 
 
+# --- Отмена ошибочной продажи --------------------------------------------------------
+
+
+@transaction.atomic
+def cancel_warehouse_action(action: WarehouseAction, *, by=None, reason="") -> WarehouseAction:
+    """Отменить ошибочную ПРОДАЖУ: вернуть остаток в ту же ячейку и сторнировать.
+
+    Остаток возвращается существующим inventory.return_stock_lot_quantity
+    (движение RETURN_LOT, компенсирующее продажу — аудит сохраняется); Sale
+    помечается VOIDED (уходит из отчётов/статистики, они считают только
+    completed); действие — CANCELLED с автором/временем/причиной. Всё
+    атомарно, лоты блокируются внутри return_*; отрицательный остаток
+    невозможен. Резерв/ремонт этой командой не отменяются.
+    """
+    action = WarehouseAction.objects.select_for_update().get(pk=action.pk)
+    if action.status == WarehouseAction.Status.CANCELLED:
+        raise ActionError("Действие уже отменено.")
+    if action.action_type != WarehouseAction.Type.SALE:
+        raise ActionError("Отмена поддержана только для продаж.")
+    reason = (reason or "").strip()
+    if not reason:
+        raise ActionError("Укажите причину отмены.")
+    if action.sale_id is None:
+        raise ActionError("У продажи нет связанного документа: отмена невозможна.")
+    sale = Sale.objects.select_for_update().get(pk=action.sale_id)
+    if sale.status == Sale.Status.VOIDED:
+        raise ActionError("Связанная продажа уже сторнирована.")
+
+    for line in sale.lines.select_related("stock_lot", "batch_line").all():
+        if line.stock_lot_id is None:
+            continue  # поштучные экземпляры сканером не продаются
+        return_stock_lot_quantity(
+            line.batch_line,
+            action.location,
+            line.quantity,
+            unit_cost_rub=line.unit_cost_rub,
+            restock_status=StockLot.Status.AVAILABLE,
+            by=by,
+            document_id=sale.pk,
+            comment=f"Отмена продажи {sale.number}: {reason}"[:255],
+        )
+
+    sale.status = Sale.Status.VOIDED
+    sale.canceled_at = timezone.now()
+    sale.save(update_fields=["status", "canceled_at", "updated_at"])
+
+    action.status = WarehouseAction.Status.CANCELLED
+    action.cancelled_at = timezone.now()
+    action.cancelled_by = by
+    action.cancel_reason = reason
+    action.save(update_fields=["status", "cancelled_at", "cancelled_by", "cancel_reason"])
+    return action
+
+
 # --- Единый отчёт действий -----------------------------------------------------------
 
 
 def actions_report(
-    *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code=""
+    *, date_from=None, date_to=None, action_type="", q="", part_number="",
+    location_code="", include_cancelled=False,
 ):
-    """Отфильтрованный журнал действий + итоги (количество и сумма)."""
+    """Отфильтрованный журнал действий + итоги (количество и сумма).
+
+    Отменённые действия по умолчанию исключены (не входят в итоги, таможню и
+    Excel); include_cancelled=True показывает их отдельно для аудита.
+    """
     qs = WarehouseAction.objects.select_related(
-        "part_type", "location", "created_by", "sale", "reservation", "repair_order"
+        "part_type", "location", "created_by", "cancelled_by",
+        "sale", "reservation", "repair_order",
     )
+    if not include_cancelled:
+        qs = qs.filter(status=WarehouseAction.Status.ACTIVE)
     if date_from:
         qs = qs.filter(created_at__date__gte=date_from)
     if date_to:
@@ -245,12 +354,16 @@ def actions_report(
             "part_id", flat=True
         )
         qs = qs.filter(
-            Q(part_type_id__in=list(part_ids))
+            Q(part_number__icontains=part_number)
+            | Q(part_type_id__in=list(part_ids))
             | Q(part_type__name__icontains=part_number)
         )
     if location_code:
-        qs = qs.filter(location__code__icontains=location_code)
-    totals = qs.aggregate(quantity=Sum("quantity"), value=Sum("total_price_rub"))
+        qs = qs.filter(
+            Q(location_code__icontains=location_code) | Q(location__code__icontains=location_code)
+        )
+    totals_qs = qs.exclude(status=WarehouseAction.Status.CANCELLED)
+    totals = totals_qs.aggregate(quantity=Sum("quantity"), value=Sum("total_price_rub"))
     return qs, {
         "quantity": totals["quantity"] or Decimal("0"),
         "value": totals["value"] or Decimal("0"),
@@ -313,21 +426,20 @@ def _brp_part_for(part: PartType):
     return link.brp_part if link else None
 
 
-def part_export_data(part: PartType) -> dict:
+def part_export_data(part: PartType, number: str | None = None) -> dict:
     """Данные детали для строк экспорта + предупреждения о недостающих полях.
 
+    `number` — ТОЧНЫЙ артикул проданной детали (снимок действия); он идёт в
+    колонку B без изменений. Замены/источник цены номер НЕ подменяют. Если
+    number не передан, берётся основной номер детали (НЕ аналог).
     K (стоимость за шт) — розница BRP в ДОЛЛАРАХ от эффективного источника
     цены (правило 32.3.2: если у точной позиции розница 0, берётся связанная
     замена с ценой). Рублёвые цены в таможенную форму не подмешиваются.
     """
     customs = get_or_create_customs(part)
     brp = _brp_part_for(part)
-    number = brp.material_no if brp else ""
     if not number:
-        primary = (
-            PartNumber.objects.filter(part=part).order_by("-is_primary", "pk").first()
-        )
-        number = primary.value if primary else ""
+        number = identity_number(part)
     english_name = (brp.part_desc if brp and brp.part_desc else part.name).strip()
     name_ru = customs.customs_name_ru.strip() or auto_customs_name_ru(english_name)
     usd_price = None
@@ -361,14 +473,21 @@ def part_export_data(part: PartType) -> dict:
 
 
 def build_export_rows(actions) -> list[dict]:
-    """Строки экспорта: действия группируются по детали, количество суммируется."""
-    grouped: dict[int, dict] = {}
+    """Строки экспорта: группировка по ТОЧНОМУ номеру продажи, количество сумм.
+
+    Ключ группировки — снимок part_number (точный проданный артикул), а не
+    id детали: даже если у карточки есть номера-замены, в экспорт уходит
+    ровно тот номер, что продали. Отменённые действия сюда не попадают
+    (их не отдаёт actions_report).
+    """
+    grouped: dict[str, dict] = {}
     for action in actions:
-        row = grouped.get(action.part_type_id)
+        key = action.part_number or identity_number(action.part_type)
+        row = grouped.get(key)
         if row is None:
-            row = part_export_data(action.part_type)
+            row = part_export_data(action.part_type, number=key)
             row["quantity"] = Decimal("0")
-            grouped[action.part_type_id] = row
+            grouped[key] = row
         row["quantity"] += action.quantity
     return sorted(grouped.values(), key=lambda r: r["number"])
 

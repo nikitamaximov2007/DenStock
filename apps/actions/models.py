@@ -16,28 +16,51 @@ from django.db import models
 
 
 class WarehouseAction(models.Model):
-    """Одно проведённое действие со сканера: продажа, резерв или ремонт."""
+    """Одно проведённое действие со сканера: продажа, резерв или ремонт.
+
+    Личность детали фиксируется СНИМКОМ при создании (`part_number`,
+    `part_name`, `location_code`): именно этот номер показывается в отчёте,
+    таможенном блоке и Excel. Отображаемый номер — ТОЧНО тот, что сканировали/
+    продавали; никакие замены, источники цены и соседние номера его не
+    подменяют (`price_source_number` — только аудит источника цены).
+    """
 
     class Type(models.TextChoices):
         SALE = "sale", "Продажа"
         RESERVE = "reserve", "Резерв"
         REPAIR = "repair", "Ремонт"
 
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Проведено"
+        CANCELLED = "cancelled", "Отменено"
+
     action_type = models.CharField("Тип", max_length=10, choices=Type.choices)
+    status = models.CharField(
+        "Статус", max_length=10, choices=Status.choices, default=Status.ACTIVE, db_index=True
+    )
     part_type = models.ForeignKey(
         "catalog.PartType", verbose_name="Деталь",
         on_delete=models.PROTECT, related_name="warehouse_actions",
     )
+    # Снимок личности детали на момент действия (номер, который сканировали).
+    part_number = models.CharField("Номер детали (снимок)", max_length=100, blank=True)
+    part_name = models.CharField("Название (снимок)", max_length=255, blank=True)
     location = models.ForeignKey(
         "warehouse.StorageLocation", verbose_name="Ячейка списания",
         on_delete=models.PROTECT, related_name="warehouse_actions",
     )
+    location_code = models.CharField("Ячейка (снимок)", max_length=80, blank=True)
     quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
     unit_price_rub = models.DecimalField(
         "Цена клиента за ед. (₽)", max_digits=12, decimal_places=2, default=0
     )
     total_price_rub = models.DecimalField(
         "Сумма (₽)", max_digits=14, decimal_places=2, default=0
+    )
+    # Если цена взята из связанной замены (правило 32.3.2), её номер — для
+    # аудита. Номер ПРОДАННОЙ детали (part_number) от этого не меняется.
+    price_source_number = models.CharField(
+        "Номер источника цены", max_length=100, blank=True
     )
     customer_comment = models.CharField("Клиент / комментарий", max_length=255)
     sale = models.ForeignKey(
@@ -58,6 +81,12 @@ class WarehouseAction(models.Model):
         on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
     created_at = models.DateTimeField("Проведено", auto_now_add=True)
+    cancelled_at = models.DateTimeField("Отменено (когда)", null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто отменил",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    cancel_reason = models.CharField("Причина отмены", max_length=255, blank=True)
 
     class Meta:
         verbose_name = "Действие со склада"
@@ -70,12 +99,17 @@ class WarehouseAction(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.get_action_type_display()} {self.part_type} x {self.quantity}"
+        number = self.part_number or self.part_type
+        return f"{self.get_action_type_display()} {number} x {self.quantity}"
 
     @property
     def document(self):
         """Связанный документ (для ссылки из отчёта)."""
         return self.sale or self.reservation or self.repair_order
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self.status == self.Status.CANCELLED
 
 
 class PartCustomsInfo(models.Model):

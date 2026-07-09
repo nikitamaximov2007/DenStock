@@ -49,6 +49,13 @@
       Ячейка
       <input type="text" name="location_code" value="{{ filters.location_code }}">
     </label>
+    <label>
+      <input type="checkbox"
+             name="cancelled"
+             value="1"
+             {% if show_cancelled %}checked{% endif %}>
+      Показать отменённые
+    </label>
     <button type="submit" class="btn btn--small btn--primary">Показать</button>
   </form>
   {% if actions %}
@@ -66,14 +73,17 @@
           <th>Клиент / комментарий</th>
           <th>Кто</th>
           <th>Документ</th>
+          {% if can_cancel %}<th></th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for a in actions %}
-          <tr>
+          <tr {% if a.is_cancelled %}class="muted"{% endif %}>
             <td>{{ a.created_at|ru_dt }}</td>
             <td>
-              {% if a.action_type == "sale" %}
+              {% if a.is_cancelled %}
+                <span class="pill pill--muted">Отменено</span>
+              {% elif a.action_type == "sale" %}
                 <span class="pill pill--success">{{ a.get_action_type_display }}</span>
               {% elif a.action_type == "reserve" %}
                 <span class="pill pill--info">{{ a.get_action_type_display }}</span>
@@ -82,16 +92,18 @@
               {% endif %}
             </td>
             <td>
-              {% with number=a.part_type.numbers.first %}
-                {% if number %}<span class="code-pill">{{ number.value }}</span>{% endif %}
-              {% endwith %}
+              <span class="code-pill">{{ a.part_number|default:a.part_type.name }}</span>
+              {% if a.price_source_number %}
+                <br>
+                <span class="muted">цена по замене {{ a.price_source_number }}</span>
+              {% endif %}
             </td>
             <td>
-              <a href="{% url 'part_detail' a.part_type_id %}">{{ a.part_type.name }}</a>
+              <a href="{% url 'part_detail' a.part_type_id %}">{{ a.part_name|default:a.part_type.name }}</a>
             </td>
             <td class="num--qty">{{ a.quantity|floatformat:"-3" }}</td>
             <td>
-              <span class="code-pill">{{ a.location.code }}</span>
+              <span class="code-pill">{{ a.location_code|default:a.location.code }}</span>
             </td>
             <td class="num--money">{{ a.unit_price_rub|floatformat:"0" }}</td>
             <td class="num--money">{{ a.total_price_rub|floatformat:"0" }}</td>
@@ -108,6 +120,14 @@
                 ·
               {% endif %}
             </td>
+            {% if can_cancel %}
+              <td class="table__actions">
+                {% if a.action_type == "sale" and not a.is_cancelled %}
+                  <a class="btn btn--small btn--danger"
+                     href="{% url 'actions_cancel' a.pk %}">Отменить</a>
+                {% endif %}
+              </td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>
@@ -118,7 +138,7 @@
           <th></th>
           <th></th>
           <th class="num--money">{{ totals.value|floatformat:"0" }}</th>
-          <th colspan="3"></th>
+          <th colspan="{% if can_cancel %}4{% else %}3{% endif %}"></th>
         </tr>
       </tfoot>
     </table>

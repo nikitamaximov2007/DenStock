@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Отмена продажи · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Отмена продажи</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'actions_report' %}">К отчёту действий</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Номер детали</th>
+            <td>
+              <span class="code-pill">{{ action.part_number|default:action.part_type.name }}</span>
+            </td>
+          </tr>
+          <tr>
+            <th>Название</th>
+            <td>{{ action.part_name|default:action.part_type.name }}</td>
+          </tr>
+          <tr>
+            <th>Ячейка</th>
+            <td>
+              <span class="code-pill">{{ action.location_code|default:action.location.code }}</span>
+            </td>
+          </tr>
+          <tr>
+            <th>Количество</th>
+            <td>{{ action.quantity|floatformat:"-3" }}</td>
+          </tr>
+          <tr>
+            <th>Клиент / комментарий</th>
+            <td>{{ action.customer_comment }}</td>
+          </tr>
+          <tr>
+            <th>Сумма</th>
+            <td>{{ action.total_price_rub|floatformat:"0" }} ₽</td>
+          </tr>
+          <tr>
+            <th>Документ</th>
+            <td>
+              {% if action.sale %}
+                {{ action.sale.number }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {% if can_cancel %}
+        {% include "partials/_status_block.html" with kind="warning" text="Отмена вернёт остаток в эту ячейку (движение возврата) и сторнирует продажу. Действие уйдёт из итогов отчёта, таможенного блока и Excel, но останется в аудите." %}
+        <form method="post" class="form">
+          {% csrf_token %}
+          <div class="field">
+            <label class="field__label" for="reason">Причина отмены</label>
+            <input id="reason"
+                   name="reason"
+                   type="text"
+                   maxlength="255"
+                   required
+                   placeholder="Например: дублирующая продажа, фактически продана одна деталь"
+                   style="min-width: 320px">
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn--danger">Подтвердить отмену</button>
+            <a class="btn btn--secondary" href="{% url 'actions_report' %}">Назад</a>
+          </div>
+        </form>
+      {% else %}
+        {% include "partials/_status_block.html" with kind="error" text="Это действие отменить нельзя: отмена доступна только для проведённых продаж." %}
+        <a class="btn btn--secondary" href="{% url 'actions_report' %}">Вернуться к отчёту</a>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
