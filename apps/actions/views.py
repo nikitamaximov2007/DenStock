@@ -25,6 +25,7 @@ from .services import (
     ActionError,
     actions_report,
     build_export_rows,
+    cancel_warehouse_action,
     get_or_create_customs,
     perform_action,
     resolve_part,
@@ -105,6 +106,7 @@ def actions_perform(request):
             action_type=action_type,
             quantity=request.POST.get("quantity", ""),
             customer_comment=request.POST.get("customer_comment", ""),
+            scanned_number=q,
             by=request.user,
         )
     except ActionError as exc:
@@ -123,6 +125,7 @@ def actions_perform(request):
 def actions_report_view(request):
     """Единый отчёт действий со склада + подготовка таможенного экспорта."""
     _require_access(request)
+    show_cancelled = request.GET.get("cancelled") == "1"
     filters = {
         "date_from": _parse_date(request.GET.get("date_from", "")),
         "date_to": _parse_date(request.GET.get("date_to", "")),
@@ -131,9 +134,11 @@ def actions_report_view(request):
         "part_number": (request.GET.get("part_number") or "").strip(),
         "location_code": (request.GET.get("location_code") or "").strip(),
     }
-    actions, totals = actions_report(**filters)
+    actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
-    export_rows = build_export_rows(actions)
+    # Таможня и Excel — только по активным действиям (без отменённых).
+    active_actions = [a for a in actions if not a.is_cancelled]
+    export_rows = build_export_rows(active_actions)
     ready = [r for r in export_rows if not r["warnings"]]
     return render(
         request,
@@ -142,12 +147,48 @@ def actions_report_view(request):
             "actions": actions,
             "totals": totals,
             "filters": filters,
+            "show_cancelled": show_cancelled,
             "types": WarehouseAction.Type.choices,
             "export_rows": export_rows,
             "ready_count": len(ready),
             "warning_count": len(export_rows) - len(ready),
             "export_query": request.GET.urlencode(),
+            "can_cancel": request.user.is_admin or request.user.is_manager,
         },
+    )
+
+
+@login_required
+def actions_cancel(request, pk):
+    """Отмена ошибочной продажи: GET — подтверждение, POST — возврат остатка.
+
+    Доступ — администратор/руководитель. Возврат физического остатка и
+    сторно делает сервис (транзакция); здесь только UI и причина.
+    """
+    if not (request.user.is_admin or request.user.is_manager):
+        raise PermissionDenied
+    action = get_object_or_404(
+        WarehouseAction.objects.select_related("part_type", "location", "sale"), pk=pk
+    )
+    if request.method == "POST":
+        try:
+            cancel_warehouse_action(
+                action, by=request.user, reason=request.POST.get("reason", "")
+            )
+        except ActionError as exc:
+            messages.error(request, str(exc))
+            return redirect("actions_cancel", pk=pk)
+        messages.success(
+            request,
+            f"Продажа отменена, остаток {action.quantity.normalize():f} шт "
+            f"возвращён в ячейку {action.location_code or action.location.code}.",
+        )
+        return redirect("actions_report")
+    return render(
+        request,
+        "actions/cancel.html",
+        {"action": action, "can_cancel": action.status == WarehouseAction.Status.ACTIVE
+         and action.action_type == WarehouseAction.Type.SALE},
     )
 
 

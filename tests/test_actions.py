@@ -8,10 +8,11 @@
 эффективного источника BRP.
 """
 from decimal import Decimal
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import pytest
 from django.contrib.auth.models import Group
+from django.core.management import call_command
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -21,6 +22,8 @@ from apps.actions.services import (
     actions_report,
     auto_customs_name_ru,
     build_export_rows,
+    cancel_warehouse_action,
+    identity_number,
     part_export_data,
     perform_action,
     resolve_part,
@@ -29,7 +32,7 @@ from apps.actions.services import (
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import Category, PartBarcode, PartNumber, PartType, Unit
-from apps.inventory.models import StockMovement
+from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
@@ -463,3 +466,197 @@ def test_scan_and_report_pages_no_em_dash(client, make_user, data):
         reverse("actions_customs_edit", args=[data["roller"].pk]),
     ):
         assert "—" not in client.get(url).content.decode()
+
+
+# --- Личность детали: точный номер, а не замена (identity hotfix) -------------------
+
+
+@pytest.fixture
+def variant_part(db, data):
+    """Карточка из BRP 420931285 (OEM primary) с заменой 420931284 (ANALOG).
+
+    Воспроизводит прод-баг: PartNumber.ordering ставит analog раньше oem, и
+    старый отчёт через .numbers.first показывал 420931284 вместо 420931285.
+    """
+    brp = BrpCatalogPart.objects.create(
+        material_no="420931285", part_desc="RIGHT PANEL",
+        retail_price_usd=Decimal("12.50"), replacement_no_1="420931284",
+    )
+    part = promote_to_warehouse(brp, by=data["admin"])
+    _stock(part, data["loc2"], 5, data["sup"], data["admin"])
+    return part
+
+
+def test_identity_number_prefers_primary_not_analog(variant_part):
+    numbers = {n.value: n.kind for n in variant_part.numbers.all()}
+    assert numbers == {"420931285": "oem", "420931284": "analog"}
+    # .numbers.first вернул бы analog (баг); identity_number — primary.
+    assert variant_part.numbers.first().value == "420931284"  # старый баг-источник
+    assert identity_number(variant_part) == "420931285"
+    # Точный отсканированный номер (в т.ч. замена) сохраняется как есть.
+    assert identity_number(variant_part, "420931285") == "420931285"
+
+
+def test_sale_snapshots_exact_scanned_number(variant_part, data):
+    action = perform_action(
+        part=variant_part, location=data["loc2"], action_type="sale",
+        quantity="1", customer_comment="Клиент", scanned_number="420931285",
+        by=data["admin"],
+    )
+    assert action.part_number == "420931285"  # НЕ 420931284
+    assert action.part_name == "RIGHT PANEL"
+    assert action.location_code == "S04-L03-D01-C01"
+
+
+def test_report_and_customs_show_exact_number(client, make_user, variant_part, data):
+    perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                   quantity="2", customer_comment="Клиент",
+                   scanned_number="420931285", by=data["admin"])
+    _login(client, make_user, superuser=True, name="boss")
+    html = client.get(reverse("actions_report")).content.decode()
+    assert "420931285" in html
+    assert "420931284" not in html  # замена не показывается как номер продажи
+
+
+def test_export_writes_exact_number(variant_part, data):
+    import openpyxl
+
+    from apps.actions.services import export_customs_xlsx
+
+    perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                   quantity="2", customer_comment="Клиент",
+                   scanned_number="420931285", by=data["admin"])
+    qs, _t = actions_report()
+    sheet = openpyxl.load_workbook(export_customs_xlsx(qs))["Лист1"]
+    b_values = [str(sheet[f"B{r}"].value) for r in range(10, 14) if sheet[f"B{r}"].value]
+    assert "420931285" in b_values
+    assert "420931284" not in b_values
+
+
+def test_price_source_does_not_change_identity(db, data):
+    zero = BrpCatalogPart.objects.create(
+        material_no="250000059", part_desc="SCREW", retail_price_usd=Decimal("0"),
+    )
+    BrpCatalogPart.objects.create(
+        material_no="250000418", part_desc="SCREW PRICED",
+        retail_price_usd=Decimal("4.19"), replacement_no_1="250000059",
+    )
+    part = promote_to_warehouse(zero, by=data["admin"])
+    _stock(part, data["loc1"], 3, data["sup"], data["admin"])
+    action = perform_action(
+        part=part, location=data["loc1"], action_type="sale", quantity="1",
+        customer_comment="Клиент", scanned_number="250000059", by=data["admin"],
+    )
+    assert action.part_number == "250000059"  # личность точная
+    assert action.price_source_number == "250000418"  # источник цены — аудит
+
+
+# --- Отмена ошибочной продажи ---------------------------------------------------------
+
+
+def test_cancel_sale_returns_stock(variant_part, data):
+    action = perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                            quantity="2", customer_comment="Дубль",
+                            scanned_number="420931285", by=data["admin"])
+    lot = StockLot.objects.get(part_type=variant_part, location=data["loc2"])
+    assert lot.quantity == Decimal("3")  # было 5, продали 2
+    cancel_warehouse_action(action, by=data["admin"], reason="Дублирующая продажа")
+    action.refresh_from_db()
+    assert action.status == WarehouseAction.Status.CANCELLED
+    assert action.cancel_reason == "Дублирующая продажа"
+    assert action.cancelled_by == data["admin"]
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("5")  # остаток вернулся в ту же ячейку
+    assert action.sale.status == Sale.Status.VOIDED
+
+
+def test_cancelled_excluded_from_report_and_export(variant_part, data):
+    a1 = perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                        quantity="2", customer_comment="Ошибка",
+                        scanned_number="420931285", by=data["admin"])
+    perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                   quantity="1", customer_comment="Верно",
+                   scanned_number="420931285", by=data["admin"])
+    cancel_warehouse_action(a1, by=data["admin"], reason="Дубль")
+    qs, totals = actions_report()
+    assert qs.count() == 1  # отменённое исключено
+    assert totals["quantity"] == Decimal("1")
+    rows = build_export_rows(list(qs))
+    assert rows[0]["quantity"] == Decimal("1")  # в экспорт только активная
+    qs_all, totals_all = actions_report(include_cancelled=True)
+    assert qs_all.count() == 2
+    assert totals_all["quantity"] == Decimal("1")  # аудит видит отмену, итоги её не считают
+
+
+def test_cannot_cancel_twice(variant_part, data):
+    action = perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                            quantity="1", customer_comment="X",
+                            scanned_number="420931285", by=data["admin"])
+    cancel_warehouse_action(action, by=data["admin"], reason="раз")
+    with pytest.raises(ActionError, match="уже отменено"):
+        cancel_warehouse_action(action, by=data["admin"], reason="два")
+
+
+def test_cannot_cancel_non_sale(variant_part, data):
+    action = perform_action(part=variant_part, location=data["loc2"], action_type="reserve",
+                            quantity="1", customer_comment="X",
+                            scanned_number="420931285", by=data["admin"])
+    with pytest.raises(ActionError, match="только для продаж"):
+        cancel_warehouse_action(action, by=data["admin"], reason="нет")
+
+
+def test_cancel_requires_reason(variant_part, data):
+    action = perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                            quantity="1", customer_comment="X",
+                            scanned_number="420931285", by=data["admin"])
+    with pytest.raises(ActionError, match="причину"):
+        cancel_warehouse_action(action, by=data["admin"], reason="  ")
+
+
+def test_cancel_via_view_gated_and_works(client, make_user, variant_part, data):
+    action = perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                            quantity="2", customer_comment="Дубль",
+                            scanned_number="420931285", by=data["admin"])
+    _login(client, make_user, role=roles.SELLER, name="prodavec")
+    assert client.get(reverse("actions_cancel", args=[action.pk])).status_code == 403
+    client.logout()
+    _login(client, make_user, role=roles.MANAGER, name="boss")
+    assert client.get(reverse("actions_cancel", args=[action.pk])).status_code == 200
+    resp = client.post(reverse("actions_cancel", args=[action.pk]),
+                       {"reason": "Дублирующая продажа"}, follow=True)
+    assert "Продажа отменена" in resp.content.decode()
+    action.refresh_from_db()
+    assert action.status == WarehouseAction.Status.CANCELLED
+    lot = StockLot.objects.get(part_type=variant_part, location=data["loc2"])
+    assert lot.quantity == Decimal("5")
+
+
+def test_cancel_command_dry_run_and_commit(variant_part, data):
+    action = perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                            quantity="2", customer_comment="Дубль",
+                            scanned_number="420931285", by=data["admin"])
+    out = StringIO()
+    call_command("cancel_warehouse_action", action_id=action.pk,
+                 reason="Дублирующая продажа", stdout=out)
+    assert "DRY-RUN" in out.getvalue()
+    action.refresh_from_db()
+    assert action.status == WarehouseAction.Status.ACTIVE  # dry-run не тронул
+    call_command("cancel_warehouse_action", action_id=action.pk,
+                 reason="Дублирующая продажа", commit=True, stdout=StringIO())
+    action.refresh_from_db()
+    assert action.status == WarehouseAction.Status.CANCELLED
+    assert StockLot.objects.get(
+        part_type=variant_part, location=data["loc2"]
+    ).quantity == Decimal("5")
+
+
+def test_debug_command_reports_numbers(variant_part, data):
+    perform_action(part=variant_part, location=data["loc2"], action_type="sale",
+                   quantity="1", customer_comment="X",
+                   scanned_number="420931285", by=data["admin"])
+    out = StringIO()
+    call_command("debug_warehouse_actions", material_no="420931285", stdout=out)
+    text = out.getvalue()
+    assert "primary/OEM номер карточки: '420931285'" in text
+    assert "kind=analog" in text  # аналог виден в диагностике
+    assert "номер в таможенном экспорте (колонка B): '420931285'" in text
