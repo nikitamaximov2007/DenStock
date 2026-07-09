@@ -322,6 +322,49 @@ def cancel_warehouse_action(action: WarehouseAction, *, by=None, reason="") -> W
     return action
 
 
+@transaction.atomic
+def repair_action_identity_snapshot(
+    action: WarehouseAction, *, part_number: str
+) -> WarehouseAction:
+    """Исправить ошибочный snapshot номера без изменения складской физики.
+
+    Используется для исторических действий, созданных до сохранения
+    `scanned_number`: автоматический backfill мог взять primary/OEM карточки,
+    хотя фактически продавали номер-замену с той же карточки. Проверяем, что
+    новый номер уже принадлежит той же `PartType`; остатки, продажи и движения
+    не трогаем.
+    """
+    action = (
+        WarehouseAction.objects.select_for_update()
+        .select_related("part_type", "location")
+        .get(pk=action.pk)
+    )
+    norm = normalize_number(part_number or "")
+    if not norm:
+        raise ActionError("Укажите корректный номер детали.")
+    matched = (
+        PartNumber.objects.filter(part=action.part_type, normalized_value=norm)
+        .order_by("-is_primary", "pk")
+        .first()
+    )
+    if matched is None:
+        raise ActionError("Этот номер не принадлежит карточке детали действия.")
+
+    update_fields = []
+    if action.part_number != matched.value:
+        action.part_number = matched.value
+        update_fields.append("part_number")
+    if not action.part_name:
+        action.part_name = action.part_type.name
+        update_fields.append("part_name")
+    if not action.location_code:
+        action.location_code = action.location.code
+        update_fields.append("location_code")
+    if update_fields:
+        action.save(update_fields=update_fields)
+    return action
+
+
 # --- Единый отчёт действий -----------------------------------------------------------
 
 
