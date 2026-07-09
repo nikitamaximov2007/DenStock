@@ -99,6 +99,7 @@ class InventoryCountingSession(models.Model):
             ),
             "warehouse": sum(1 for line in lines if line.source == "warehouse"),
             "brp": sum(1 for line in lines if line.source == "brp_catalog"),
+            "polaris": sum(1 for line in lines if line.source == "polaris_catalog"),
             "unknown": sum(1 for line in lines if line.source == "unknown"),
         }
 
@@ -137,6 +138,7 @@ class InventoryCountingLine(models.Model):
     class Source(models.TextChoices):
         WAREHOUSE = "warehouse", "На складе"
         BRP = "brp_catalog", "BRP-каталог"
+        POLARIS = "polaris_catalog", "Polaris-каталог"
         UNKNOWN = "unknown", "Неизвестно"
         MANUAL = "manual", "Вручную"
 
@@ -151,6 +153,10 @@ class InventoryCountingLine(models.Model):
     )
     brp_catalog_part = models.ForeignKey(
         "brp.BrpCatalogPart", verbose_name="Позиция BRP",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    polaris_catalog_part = models.ForeignKey(
+        "polaris.PolarisCatalogPart", verbose_name="Позиция Polaris",
         on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
     )
     display_name = models.CharField("Название", max_length=255, blank=True)

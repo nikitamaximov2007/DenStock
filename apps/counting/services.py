@@ -2,7 +2,7 @@
 
 Скан и черновик сессии склад НЕ трогают. Остаток пишется только при проведении,
 через существующий receipts.post_receipt (по адресу сессии). Автосоздание
-складских карточек из BRP выполняется при конвертации/проведении, чтобы
+складских карточек из BRP/Polaris выполняется при конвертации/проведении, чтобы
 пользователь только пикал, а не жал «Создать карточку» на каждую позицию.
 """
 from decimal import Decimal, InvalidOperation
@@ -16,6 +16,16 @@ from apps.brp.pricing import current_customer_price_rub
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
 from apps.inventory.models import NumberSequence
+from apps.polaris.models import PolarisCatalogPart
+from apps.polaris.services import (
+    effective_customer_price_rub as effective_polaris_customer_price_rub,
+)
+from apps.polaris.services import (
+    find_polaris_by_number,
+)
+from apps.polaris.services import (
+    promote_to_warehouse as promote_polaris,
+)
 from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, create_receipt, post_receipt
 from apps.suppliers.models import Supplier
@@ -45,7 +55,7 @@ def start_session(*, location, comment="", by=None) -> InventoryCountingSession:
     )
 
 
-# --- Сопоставление скана (склад имеет приоритет над BRP) --------------------------
+# --- Сопоставление скана (склад имеет приоритет над каталогами) --------------------
 
 
 def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
@@ -136,32 +146,63 @@ def _effective_brp_price(norm: str, brp: BrpCatalogPart):
     return current_customer_price_rub(price_source.retail_price_usd)
 
 
-def _match(norm: str, raw: str):
-    """Найти совпадение: (source, warehouse_part, brp_part, display_name, price)."""
-    part = None
+def _warehouse_part_by_scan(norm: str, raw: str) -> PartType | None:
+    """Warehouse part by number/barcode. Ambiguous numbers require manual review."""
     if norm:
-        part_id = (
+        part_ids = list(
             PartNumber.objects.filter(normalized_value=norm)
             .values_list("part_id", flat=True)
-            .first()
+            .distinct()[:2]
         )
+        if len(part_ids) > 1:
+            return None
+        part_id = part_ids[0] if part_ids else None
         if part_id is None and raw:
-            part_id = (
+            barcode_part_ids = list(
                 PartBarcode.objects.filter(value__iexact=raw)
                 .values_list("part_id", flat=True)
-                .first()
+                .distinct()[:2]
             )
-        if part_id is not None:
-            part = PartType.objects.filter(pk=part_id).first()
+            if len(barcode_part_ids) > 1:
+                return None
+            part_id = barcode_part_ids[0] if barcode_part_ids else None
+        if part_id:
+            return PartType.objects.filter(pk=part_id).first()
+    return None
+
+
+def _match(norm: str, raw: str):
+    """Find match: source, warehouse_part, brp_part, polaris_part, display, price."""
+    part = _warehouse_part_by_scan(norm, raw)
     if part is not None:
-        return ("warehouse", part, None, part.name, part.recommended_price)
+        return ("warehouse", part, None, None, part.name, part.recommended_price)
 
     brp = find_brp_by_number(norm)
+    polaris = find_polaris_by_number(norm)
+    if brp is not None and polaris is not None:
+        return (
+            "unknown",
+            None,
+            None,
+            None,
+            "Номер найден в BRP и Polaris, выберите каталог вручную",
+            None,
+        )
     if brp is not None:
         price = _effective_brp_price(norm, brp)
-        return ("brp_catalog", None, brp, brp.part_desc or brp.material_no, price)
+        return ("brp_catalog", None, brp, None, brp.part_desc or brp.material_no, price)
+    if polaris is not None:
+        price = effective_polaris_customer_price_rub(norm, polaris)
+        return (
+            "polaris_catalog",
+            None,
+            None,
+            polaris,
+            polaris.part_name or polaris.part_number,
+            price,
+        )
 
-    return ("unknown", None, None, UNKNOWN_NAME, None)
+    return ("unknown", None, None, None, UNKNOWN_NAME, None)
 
 
 @transaction.atomic
@@ -181,13 +222,14 @@ def record_scan(
         .first()
     )
     if line is None:
-        source, part, brp, display, price = _match(norm, raw)
+        source, part, brp, polaris, display, price = _match(norm, raw)
         line = InventoryCountingLine.objects.create(
             session=session,
             scanned_value=raw,
             normalized_value=norm,
             warehouse_part=part,
             brp_catalog_part=brp,
+            polaris_catalog_part=polaris,
             display_name=display[:255],
             source=source,
             quantity_counted=Decimal("1"),
@@ -298,17 +340,56 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
             changed,
             ["brp_catalog_part", "display_name", "source", "final_customer_price_rub"],
         )
-    return len(changed)
+    polaris_changed = []
+    polaris_lines = session.lines.filter(
+        polaris_catalog_part__isnull=False
+    ).select_related("polaris_catalog_part")
+    for line in polaris_lines:
+        best = find_polaris_by_number(line.normalized_value) or line.polaris_catalog_part
+        price = effective_polaris_customer_price_rub(line.normalized_value, best)
+        dirty = False
+        if best.pk != line.polaris_catalog_part_id:
+            line.polaris_catalog_part = best
+            line.display_name = (best.part_name or best.part_number)[:255]
+            line.source = InventoryCountingLine.Source.POLARIS
+            dirty = True
+        if price != line.final_customer_price_rub:
+            line.final_customer_price_rub = price
+            dirty = True
+        if dirty:
+            polaris_changed.append(line)
+    if polaris_changed:
+        InventoryCountingLine.objects.bulk_update(
+            polaris_changed,
+            ["polaris_catalog_part", "display_name", "source", "final_customer_price_rub"],
+        )
+    return len(changed) + len(polaris_changed)
 
 
 def resolve_unknown_to_brp(line: InventoryCountingLine, brp_part: BrpCatalogPart) -> None:
     _ensure_draft(line.session)
     line.brp_catalog_part = brp_part
+    line.polaris_catalog_part = None
     line.warehouse_part = None
     line.source = InventoryCountingLine.Source.BRP
     line.display_name = (brp_part.part_desc or brp_part.material_no)[:255]
     line.final_customer_price_rub = _effective_brp_price(
         brp_part.material_no_norm, brp_part
+    )
+    line.save()
+
+
+def resolve_unknown_to_polaris(
+    line: InventoryCountingLine, polaris_part: PolarisCatalogPart
+) -> None:
+    _ensure_draft(line.session)
+    line.polaris_catalog_part = polaris_part
+    line.brp_catalog_part = None
+    line.warehouse_part = None
+    line.source = InventoryCountingLine.Source.POLARIS
+    line.display_name = (polaris_part.part_name or polaris_part.part_number)[:255]
+    line.final_customer_price_rub = effective_polaris_customer_price_rub(
+        polaris_part.part_number_norm, polaris_part
     )
     line.save()
 
@@ -406,6 +487,7 @@ def resolve_unknown_to_part(line: InventoryCountingLine, part: PartType) -> None
     _ensure_draft(line.session)
     line.warehouse_part = part
     line.brp_catalog_part = None
+    line.polaris_catalog_part = None
     line.source = InventoryCountingLine.Source.WAREHOUSE
     line.display_name = part.name[:255]
     line.final_customer_price_rub = part.recommended_price
@@ -446,14 +528,18 @@ def convert_to_receipt(
     # эффективная цена по 32.3.1/32.3.2): документ и карточки получают
     # ровно те цены, которые пользователь видел в пересчёте.
     refresh_draft_prices(session)
-    lines = list(session.lines.select_related("warehouse_part", "brp_catalog_part"))
+    lines = list(
+        session.lines.select_related(
+            "warehouse_part", "brp_catalog_part", "polaris_catalog_part"
+        )
+    )
     if not lines:
         raise CountingError("Нельзя создать документ из пустой сессии.")
     unknown = [line for line in lines if line.source == InventoryCountingLine.Source.UNKNOWN]
     if unknown:
         raise CountingError(
             f"Есть неразобранные позиции ({len(unknown)}): привяжите их к складу или "
-            "BRP-каталогу, либо удалите строки."
+            "BRP- или Polaris-каталогу, либо удалите строки."
         )
     try:
         unit_cost = Decimal(str(unit_cost))
@@ -481,6 +567,16 @@ def convert_to_receipt(
             if (identity_retail is None or identity_retail <= 0) and effective:
                 manual = effective
             part = promote_to_warehouse(line.brp_catalog_part, by=by, manual_price=manual)
+            line.warehouse_part = part
+            line.source = InventoryCountingLine.Source.WAREHOUSE
+            line.save(update_fields=["warehouse_part", "source"])
+        if part is None and line.polaris_catalog_part is not None:
+            identity_retail = line.polaris_catalog_part.retail_price_usd
+            effective = line.final_customer_price_rub
+            manual = None
+            if (identity_retail is None or identity_retail <= 0) and effective:
+                manual = effective
+            part = promote_polaris(line.polaris_catalog_part, by=by, manual_price=manual)
             line.warehouse_part = part
             line.source = InventoryCountingLine.Source.WAREHOUSE
             line.save(update_fields=["warehouse_part", "source"])

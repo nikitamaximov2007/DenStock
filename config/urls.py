@@ -19,6 +19,7 @@ urlpatterns = [
     path("batches/", include("apps.procurement.urls")),
     path("receipts/", include("apps.receipts.urls")),
     path("brp/", include("apps.brp.urls")),
+    path("polaris/", include("apps.polaris.urls")),
     path("inventory/", include("apps.inventory.urls")),
     path("inventory/", include("apps.counting.urls")),
     path("inventory/", include("apps.actions.urls")),

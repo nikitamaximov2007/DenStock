@@ -22,7 +22,7 @@
   </div>
   {% if too_short %}
     {% include "partials/_status_block.html" with kind="info" text="Введите минимум 2 символа." %}
-  {% elif q and not rows and not brp_hits %}
+  {% elif q and not rows and not brp_hits and not polaris_hits %}
     {% include "partials/_status_block.html" with kind="warning" text="Ничего не найдено по запросу." %}
   {% endif %}
   {% if brp_hits %}
@@ -50,6 +50,39 @@
                 <td class="table__actions">
                   <a class="btn btn--small btn--secondary"
                      href="/brp/?q={{ brp.material_no }}">Открыть в BRP-каталоге</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+  {% if polaris_hits %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Найдено в Polaris-каталоге</h2>
+        <span class="pill pill--info">справочник, не остаток</span>
+      </div>
+      <div class="card__body">
+        <table class="table table--compact">
+          <tbody>
+            {% for polaris in polaris_hits %}
+              <tr>
+                <td>
+                  <span class="code-pill">{{ polaris.part_number }}</span>
+                </td>
+                <td>{{ polaris.part_name|default:"·" }}</td>
+                <td>
+                  {% if polaris.superseded_number %}
+                    <span class="pill pill--muted">superseded {{ polaris.superseded_number }}</span>
+                  {% else %}
+                    ·
+                  {% endif %}
+                </td>
+                <td class="table__actions">
+                  <a class="btn btn--small btn--secondary"
+                     href="/polaris/?q={{ polaris.part_number }}">Открыть в Polaris-каталоге</a>
                 </td>
               </tr>
             {% endfor %}

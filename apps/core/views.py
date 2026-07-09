@@ -21,6 +21,7 @@ from apps.inventory.services import (
     receive_part_item,
     receive_stock_lot,
 )
+from apps.polaris.models import PolarisCatalogPart
 from apps.reports.services import (
     get_low_stock_report,
     get_sales_report,
@@ -197,9 +198,10 @@ def search_page(request: HttpRequest) -> HttpResponse:
                     .select_related("location", "batch", "batch_line")
                     .order_by("-created_at")[:20]
                 )
-    # Layer 31: fallback в BRP-справочник. Склад ищем первым; позиции BRP —
-    # только подсказка (справочник, не остаток), действия — на странице /brp/.
+    # Catalog hints are reference data, not stock. If the same number exists in
+    # several catalogs, show every catalog hit instead of silently choosing one.
     brp_hits = []
+    polaris_hits = []
     if len(q) >= 2:
         norm = normalize_number(q)
         number_q = Q(pk=None)
@@ -212,10 +214,17 @@ def search_page(request: HttpRequest) -> HttpResponse:
         if not rows and len(q) >= 3:
             number_q = number_q | Q(part_desc__icontains=q)
         brp_hits = list(BrpCatalogPart.objects.filter(number_q)[:5])
+        polaris_q = Q(pk=None)
+        if norm:
+            polaris_q = Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
+        if not rows and len(q) >= 3:
+            polaris_q = polaris_q | Q(part_name__icontains=q)
+        polaris_hits = list(PolarisCatalogPart.objects.filter(polaris_q)[:5])
     ctx = {
         "q": q,
         "rows": rows,
         "brp_hits": brp_hits,
+        "polaris_hits": polaris_hits,
         "show_costs": request.user.can_view_purchase_cost,
         "can_view_inventory": can_view_inventory,
         "can_sell": request.user.can_manage_sales,

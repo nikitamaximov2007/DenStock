@@ -1,0 +1,192 @@
+"""Polaris catalog screens."""
+from decimal import Decimal, InvalidOperation
+
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import PermissionDenied
+from django.db.models import Q
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_POST
+
+from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.inventory.models import StockBalance
+
+from .models import PolarisCatalogPart, PolarisPartLink, PolarisPricingSettings
+from .pricing import customer_price_rub
+from .services import (
+    PolarisPromotionError,
+    find_polaris_price_source,
+    find_promoted_part,
+    get_or_create_intake_draft,
+    promote_to_warehouse,
+)
+
+WAREHOUSE_LIMIT = 20
+POLARIS_LIMIT = 50
+
+
+def _warehouse_matches(q: str, norm: str) -> list:
+    part_ids = set()
+    if norm:
+        part_ids |= set(
+            PartNumber.objects.filter(normalized_value=norm).values_list("part_id", flat=True)
+        )
+        part_ids |= set(
+            PartBarcode.objects.filter(value__iexact=q).values_list("part_id", flat=True)
+        )
+    parts = list(
+        PartType.objects.filter(Q(pk__in=part_ids) | Q(name__icontains=q))
+        .select_related("category", "manufacturer")
+        .order_by("name")[:WAREHOUSE_LIMIT]
+    )
+    balances = StockBalance.objects.filter(
+        part_type__in=parts, quantity_physical__gt=0
+    ).select_related("location")
+    stock_by_part: dict[int, list] = {}
+    for balance in balances:
+        stock_by_part.setdefault(balance.part_type_id, []).append(balance)
+    links = {
+        link.part_id: link
+        for link in PolarisPartLink.objects.filter(part__in=parts).select_related(
+            "polaris_part"
+        )
+    }
+    rows = []
+    for part in parts:
+        part_balances = stock_by_part.get(part.pk, [])
+        rows.append({
+            "part": part,
+            "balances": part_balances,
+            "available": sum((b.quantity_available for b in part_balances), Decimal("0")),
+            "physical": sum((b.quantity_physical for b in part_balances), Decimal("0")),
+            "link": links.get(part.pk),
+        })
+    return rows
+
+
+def _polaris_matches(q: str, norm: str) -> list:
+    number_q = Q(pk=None)
+    if norm:
+        number_q = Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
+    query = number_q
+    if len(q) >= 3:
+        query = query | Q(part_name__icontains=q)
+    parts = list(PolarisCatalogPart.objects.filter(query).order_by("part_number")[:POLARIS_LIMIT])
+    promoted = {
+        link.polaris_part_id: link.part
+        for link in PolarisPartLink.objects.filter(polaris_part__in=parts).select_related("part")
+    }
+    settings = PolarisPricingSettings.get()
+    rows = []
+    for polaris in parts:
+        price_source = find_polaris_price_source(norm, polaris)
+        retail = price_source.retail_price_usd if price_source else polaris.retail_price_usd
+        rows.append({
+            "polaris": polaris,
+            "customer_price": customer_price_rub(
+                retail, settings.polaris_usd_rate, settings.polaris_markup_percent
+            ),
+            "price_source": (
+                price_source if price_source and price_source.pk != polaris.pk else None
+            ),
+            "promoted_part": promoted.get(polaris.pk),
+        })
+    return rows
+
+
+@login_required
+def polaris_search(request):
+    q = (request.GET.get("q") or "").strip()
+    norm = normalize_number(q)
+    context = {
+        "q": q,
+        "pricing": PolarisPricingSettings.get(),
+        "catalog_size": PolarisCatalogPart.objects.count(),
+        "can_manage_parts": request.user.can_manage_parts,
+        "can_manage_inventory": request.user.can_manage_inventory,
+        "warehouse_rows": [],
+        "polaris_rows": [],
+    }
+    if len(q) >= 2:
+        context["warehouse_rows"] = _warehouse_matches(q, norm)
+        context["polaris_rows"] = _polaris_matches(q, norm)
+        context["searched"] = True
+    return render(request, "polaris/search.html", context)
+
+
+@login_required
+@require_POST
+def polaris_promote(request, pk):
+    if not request.user.can_manage_parts:
+        raise PermissionDenied
+    polaris_part = get_object_or_404(PolarisCatalogPart, pk=pk)
+    try:
+        part = promote_to_warehouse(polaris_part, by=request.user)
+    except PolarisPromotionError as exc:
+        messages.error(request, str(exc))
+        return redirect(request.POST.get("next") or "/polaris/")
+    messages.success(
+        request,
+        f"Карточка «{part}» создана из Polaris-каталога. Остатков пока нет: "
+        "учтите наличие поступлением.",
+    )
+    return redirect("part_detail", pk=part.pk)
+
+
+@login_required
+@require_POST
+def polaris_intake(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    polaris_part = get_object_or_404(PolarisCatalogPart, pk=pk)
+    part = find_promoted_part(polaris_part)
+    if part is None:
+        if not request.user.can_manage_parts:
+            messages.error(
+                request,
+                "Этой детали ещё нет в складской картотеке. Создание карточек "
+                "доступно администратору и руководителю: попросите добавить её.",
+            )
+            return redirect(f"/polaris/?q={polaris_part.part_number}")
+        try:
+            part = promote_to_warehouse(polaris_part, by=request.user)
+        except PolarisPromotionError as exc:
+            messages.error(request, str(exc))
+            return redirect("polaris_search")
+    draft = get_or_create_intake_draft(by=request.user)
+    messages.success(
+        request,
+        f"Деталь «{part}» подставлена в черновик {draft.number}: укажите "
+        "количество, ячейку и цену, затем проведите документ.",
+    )
+    return redirect(f"/receipts/{draft.pk}/?new_part={part.pk}")
+
+
+@login_required
+def polaris_settings(request):
+    if not request.user.can_manage_parts:
+        raise PermissionDenied
+    pricing = PolarisPricingSettings.get()
+    if request.method == "POST":
+        try:
+            rate = Decimal((request.POST.get("polaris_usd_rate") or "").replace(",", "."))
+            markup = Decimal(
+                (request.POST.get("polaris_markup_percent") or "").replace(",", ".")
+            )
+        except InvalidOperation:
+            messages.error(request, "Введите числовые значения курса и наценки.")
+        else:
+            if rate <= 0 or markup < 0:
+                messages.error(request, "Курс должен быть больше нуля, наценка не отрицательной.")
+            else:
+                pricing.polaris_usd_rate = rate
+                pricing.polaris_markup_percent = markup
+                pricing.updated_by = request.user
+                pricing.save()
+                messages.success(
+                    request,
+                    "Настройки сохранены. Новые расчёты пойдут по новым значениям; "
+                    "уже добавленные детали сохраняют зафиксированные курс и наценку.",
+                )
+                return redirect("polaris_settings")
+    return render(request, "polaris/settings.html", {"pricing": pricing})

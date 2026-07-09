@@ -14,7 +14,7 @@
   </p>
   {% include "partials/_status_block.html" with kind="warning" text="Режим: первичный ввод ячейки. Проведение ДОБАВИТ остаток по этому адресу. Не проводите одну и ту же ячейку дважды: остаток удвоится. Сверочный пересчёт (зафиксировать факт) появится отдельным слоем." %}
   {% if unknown_count %}
-    {% include "partials/_status_block.html" with kind="error" text="Есть неразобранные позиции. Вернитесь к сканированию, привяжите их к складу или BRP-каталогу либо удалите. Пока они есть, документ создать нельзя." %}
+    {% include "partials/_status_block.html" with kind="error" text="Есть неразобранные позиции. Вернитесь к сканированию, привяжите их к складу, BRP- или Polaris-каталогу либо удалите. Пока они есть, документ создать нельзя." %}
   {% endif %}
   {% if lines %}
     <table class="table">
@@ -39,6 +39,8 @@
                 <span class="pill pill--success">На складе</span>
               {% elif line.source == "brp_catalog" %}
                 <span class="pill pill--info">BRP-каталог</span>
+              {% elif line.source == "polaris_catalog" %}
+                <span class="pill pill--info">Polaris-каталог</span>
               {% else %}
                 <span class="pill pill--danger">Неизвестно</span>
               {% endif %}
@@ -68,8 +70,9 @@
           <strong>{{ counters.total_value|floatformat:"0" }} ₽</strong>
         </p>
         <p class="muted">
-          Позиции из BRP-каталога станут складскими карточками автоматически (с
-          номерами и рассчитанной ценой). Черновик документа склад НЕ меняет.
+          Позиции из BRP- и Polaris-каталогов станут складскими карточками
+          автоматически (с номерами и рассчитанной ценой). Черновик документа
+          склад НЕ меняет.
         </p>
         <form method="post"
               action="{% url 'counting_convert' session.pk %}"
