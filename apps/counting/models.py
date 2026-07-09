@@ -39,8 +39,16 @@ class InventoryCountingSession(models.Model):
         "Статус", max_length=20, choices=Status.choices, default=Status.DRAFT
     )
     comment = models.CharField("Комментарий", max_length=255, blank=True)
+    # Layer 34: пересчёт — ПЕРВИЧНЫЙ ВВОД, его пользовательский документ живёт
+    # в разделе «Инвентаризация» под IC-номером (единый счётчик с документами
+    # сверки). Внутренний receipt остаётся технической деталью проведения и в
+    # списке «Поступлений» не показывается.
+    inventory_number = models.CharField(
+        "Номер инвентаризации", max_length=20, blank=True, default="",
+        editable=False, db_index=True,
+    )
     converted_receipt = models.ForeignKey(
-        "receipts.Receipt", verbose_name="Документ инвентаризации",
+        "receipts.Receipt", verbose_name="Технический документ проведения",
         on_delete=models.SET_NULL, null=True, blank=True,
         related_name="counting_session", editable=False,
     )

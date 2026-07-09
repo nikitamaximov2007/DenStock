@@ -2,32 +2,39 @@
 
 Нет активной передачи: последняя задача завершена.
 
-- Task: Hotfix Layer 33.1 - counting-created receipts use per-line cell
-  customer value (DONE)
+- Task: Layer 34 - move counting inventory into stocktaking (DONE)
 - Branch: main
 - Completed: полностью.
-  - convert_to_receipt: каждая строка документа получает
-    final_customer_price_rub своей строки пересчёта; глобальный unit_cost -
-    только запасная цена для строк без цены (по умолчанию 0, строка без
-    цены остаётся 0). Итог документа = «Стоимости ячейки».
-  - convert.html: карточка «Документ первичного ввода», «Цены будут взяты
-    из пересчёта ячейки», «Итоговая стоимость документа: X ₽», поле
-    переименовано в «Запасная цена только для строк без цены (₽)».
-  - receipt_detail: для документов из пересчёта (receipt.counting_session
-    .exists()) метки «Оценка за ед. (₽)» / «Сумма оценки» + пояснение;
-    обычные поступления от поставщика не изменились.
-  - Команда repair_counting_receipt_prices (--session-id|--receipt-id,
-    dry-run по умолчанию / --commit): переносит цены строк пересчёта в уже
-    созданный документ; чинит ТОЛЬКО документы, связанные с пересчётом;
-    меняет только unit_cost_rub строк - количества, остатки, лоты, движения
-    не трогаются; transaction.atomic. Продакшен: --session-id 3 (или
-    --receipt-id 3) -> POS-000003 станет 460305 ₽.
-- Caveat (зафиксировано ранее в 33.1-обсуждении): landed cost лотов,
-  созданных проведением POS-000003 с нулями, командой НЕ переписывается
-  (история движений/партий не мутируется) - чинится только оценка
-  документа. Если Денису нужна переоценка лотов для статистики стоимости
-  склада, это отдельное решение/слой.
-- Tests run: full pytest (838 passed; 8 новых), ruff, djlint, manage.py
-  check, makemigrations --check (миграций нет).
-- Next exact steps for Codex: none, no handoff active.
-- Do not touch: applied migrations, stock posting flows, движения.
+  - InventoryCountingSession.inventory_number (IC-xxxxxx из общего счётчика
+    inventory_count - единая нумерация с документами сверки, коллизий нет);
+    миграция counting/0002; post_session присваивает номер.
+  - counting_post редиректит на /stocktaking/initial/<pk>/ с сообщением
+    «Пересчёт завершён. Создан документ инвентаризации IC-...».
+  - /stocktaking/: блок «Первичный ввод ячеек (из пересчёта)» (номер,
+    ячейка, описание, позиций, итоговое количество, сумма оценки) + detail
+    страница initial_inventory_detail (строки из пересчёта автоматически:
+    номер/название/источник/ячейка/количество/оценка за ед./сумма/статус,
+    итог = стоимости ячейки, техдокумент упомянут без ссылки).
+  - /receipts/: список фильтрует counting_session__isnull=True - POS-3..6
+    исчезнут после деплоя автоматически; физически целы (лоты/движения/
+    партии ссылаются). Detail технически доступна по прямому URL.
+  - Страницы пересчёта не ссылаются на поступления; плитки «Событий
+    сканирования» / «Итоговое количество» + подсказка про ручные правки.
+  - Команда migrate_counting_receipts_to_stocktaking (--dry-run/--commit):
+    присваивает IC-номера историческим POSTED-сессиям, идемпотентна,
+    склад не трогает, отчёт found/assigned/skipped/hidden.
+  - Команда delete_draft_receipts --receipt-id N (--commit): только
+    черновики, отказ для проведённых и связанных с пересчётом (для решения
+    судьбы POS-000001/000002 пользователем, не молча).
+  - Физика склада НЕ менялась: остатки создаются прежним post_receipt
+    внутреннего документа; новых движений нет; двойное проведение сессии
+    по-прежнему заблокировано.
+- Tests run: full pytest (845 passed; 7 новых), ruff, djlint, manage.py
+  check, makemigrations --check. Браузерный smoke: полный поток convert ->
+  post -> IC-000001 в /stocktaking/, /receipts/ без POS, остатки не
+  удвоены (15 = 2 старых + 13), 375px без переполнения. backup_all/
+  ops_check локально не работают (нужен pg_dump) - это продовые команды.
+- Next exact steps for Codex: на проде после деплоя выполнить
+  migrate_counting_receipts_to_stocktaking по инструкции в
+  docs/operations/brp-catalog-import.md.
+- Do not touch: applied migrations, stock posting flows, движения/остатки.

@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path("", views.inventory_count_list, name="inventory_count_list"),
     path("new/", views.inventory_count_create, name="inventory_count_create"),
+    path("initial/<int:pk>/", views.initial_inventory_detail, name="initial_inventory_detail"),
     path("<int:pk>/", views.inventory_count_detail, name="inventory_count_detail"),
     path("<int:pk>/add-lot/", views.inventory_count_add_lot, name="inventory_count_add_lot"),
     path("<int:pk>/complete/", views.inventory_count_complete, name="inventory_count_complete"),

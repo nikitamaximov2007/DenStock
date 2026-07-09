@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Инвентаризация {{ session.inventory_number|default:session.full_address }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Инвентаризация {{ session.inventory_number|default:"(первичный ввод)" }}</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'inventory_count_list' %}">К списку</a>
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'counting_detail' session.pk %}">Открыть пересчёт</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    <span class="pill pill--success">Проведена</span>
+    Первичный ввод ячейки <span class="code-pill">{{ session.full_address }}</span>
+    · {{ session.posted_at|ru_dt }}
+    {% if session.created_by %}· {{ session.created_by }}{% endif %}
+  </p>
+  <div class="card">
+    <div class="card__body">
+      {% if session.comment %}<p>Описание ячейки: {{ session.comment }}</p>{% endif %}
+      <p class="muted">
+        Позиции заполнены пересчётом сканером автоматически. Это первичный ввод
+        фактического наличия, а не сверка: расхождений и корректировок нет,
+        остатки записаны по адресу при проведении пересчёта. Цены строк -
+        оценка по цене клиента, а не себестоимость закупки.
+      </p>
+      <p>
+        Позиций: {{ breakdown.positions_count }}
+        · Итоговое количество: {{ breakdown.total_quantity|floatformat:"-3" }}
+        · Сумма оценки: <strong>{{ breakdown.total_value_rub|floatformat:"0" }} ₽</strong>
+      </p>
+    </div>
+  </div>
+  {% if breakdown.rows %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Номер</th>
+          <th>Название</th>
+          <th>Источник</th>
+          <th>Ячейка</th>
+          <th class="num--qty">Количество</th>
+          <th class="num--money">Оценка за ед. (₽)</th>
+          <th class="num--money">Сумма оценки (₽)</th>
+          <th>Статус</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in breakdown.rows %}
+          <tr>
+            <td>
+              <span class="code-pill">{{ row.number }}</span>
+            </td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.source_label }}</td>
+            <td>
+              <span class="code-pill">{{ session.full_address }}</span>
+            </td>
+            <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+            <td class="num--money">
+              {{ row.customer_price_rub|floatformat:"0" }}
+              {% if not row.customer_price_rub %}<span class="pill pill--warning">цена 0</span>{% endif %}
+            </td>
+            <td class="num--money">
+              <strong>{{ row.line_total_rub|floatformat:"0" }}</strong>
+            </td>
+            <td>
+              <span class="pill pill--success">Найдено</span>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th colspan="4">Итого</th>
+          <th class="num--qty">{{ breakdown.total_quantity|floatformat:"-3" }}</th>
+          <th></th>
+          <th class="num--money">{{ breakdown.total_value_rub|floatformat:"0" }} ₽</th>
+          <th></th>
+        </tr>
+      </tfoot>
+    </table>
+  {% endif %}
+  {% if session.converted_receipt %}
+    <p class="muted">
+      Технический документ проведения: {{ session.converted_receipt.number }}
+      (служебный, в «Поступлениях» не отображается).
+    </p>
+  {% endif %}
+{% endblock %}

@@ -81,6 +81,31 @@ docker compose exec web python manage.py repair_counting_receipt_prices --sessio
 отклоняет), меняет только цены строк: количества, остатки, лоты и движения
 не затрагиваются.
 
+### Пересчёт в разделе «Инвентаризация» (Layer 34)
+
+Проведённый пересчёт ячейки - документ ПЕРВИЧНОГО ВВОДА с IC-номером в
+разделе /stocktaking/, а не поступление: технические POS-документы скрыты
+из списка /receipts/ (физически целы: на них ссылаются партии/лоты/
+движения). Историческая миграция уже проведённых ячеек:
+
+```bash
+# 1. Отчёт без записи:
+docker compose exec -T web python manage.py migrate_counting_receipts_to_stocktaking --dry-run
+# 2. Бэкап и запись (присваиваются только IC-номера, склад не меняется):
+docker compose exec -T web python manage.py backup_all
+docker compose exec -T web python manage.py migrate_counting_receipts_to_stocktaking --commit
+```
+
+Команда идемпотентна: повторный запуск ничего не меняет. Демо-черновики
+поступлений (например POS-000001/000002, если они не нужны) удаляются
+ТОЛЬКО явной командой по id (черновик не имеет склада, удаление безопасно;
+проведённые и связанные с пересчётом документы команда отклоняет):
+
+```bash
+docker compose exec -T web python manage.py delete_draft_receipts --receipt-id 1 --dry-run
+docker compose exec -T web python manage.py delete_draft_receipts --receipt-id 1 --commit
+```
+
 Приоритет поиска по номеру (hotfix 32.3.1): точное совпадение material_no
 ВСЕГДА выше совпадения по замене номера; внутри группы предпочитается
 ненулевая розница, затем меньший id. Кейс: у 417224458 (розница 0, USE)

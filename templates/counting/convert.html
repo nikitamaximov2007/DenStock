@@ -98,10 +98,10 @@
       </div>
       <div class="card__body">
         <p>
-          Черновик документа создан:
-          <a href="{% url 'receipt_detail' session.converted_receipt_id %}">{{ session.converted_receipt.number }}</a>.
-          Проверьте позиции. Проведение запишет остаток по адресу
-          <span class="code-pill">{{ session.full_address }}</span>.
+          Черновик документа первичного ввода создан. Проверьте позиции выше:
+          проведение запишет остаток по адресу
+          <span class="code-pill">{{ session.full_address }}</span>
+          и создаст документ в разделе «Инвентаризация».
         </p>
         <form method="post" action="{% url 'counting_post' session.pk %}">
           {% csrf_token %}
@@ -113,10 +113,11 @@
     <div class="status-card status-card--ok">
       <span class="status-card__dot"></span>
       <div class="status-card__body">
-        <p class="status-card__title">Инвентаризация проведена</p>
+        <p class="status-card__title">Пересчёт завершён</p>
         <p class="status-card__meta">
-          Остаток записан по адресу {{ session.full_address }}. Документ:
-          <a href="{% url 'receipt_detail' session.converted_receipt_id %}">{{ session.converted_receipt.number }}</a>.
+          Создан документ инвентаризации {{ session.inventory_number }}.
+          Остаток записан по адресу {{ session.full_address }}.
+          <a href="{% url 'initial_inventory_detail' session.pk %}">Открыть инвентаризацию</a>
         </p>
       </div>
     </div>

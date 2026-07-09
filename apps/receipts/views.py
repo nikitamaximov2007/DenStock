@@ -41,7 +41,13 @@ def receipt_list(request):
     _require_manage(request)
     status = request.GET.get("status", "")
     q = (request.GET.get("q") or "").strip()
-    qs = Receipt.objects.select_related("supplier", "created_by", "posted_by")
+    # Layer 34: документы, созданные пересчётом ячейки, - технические
+    # (первичный ввод, раздел «Инвентаризация»). «Поступления» показывают
+    # только реальные поставки; сами документы не удаляются: на них
+    # ссылаются партии/лоты/движения.
+    qs = Receipt.objects.select_related("supplier", "created_by", "posted_by").filter(
+        counting_session__isnull=True
+    )
     if status:
         qs = qs.filter(status=status)
     if q:

@@ -41,7 +41,7 @@ from apps.counting.services import (
     undo_last_scan,
 )
 from apps.inventory.models import StockBalance, StockMovement
-from apps.receipts.services import create_receipt, receipt_totals
+from apps.receipts.services import add_line, create_receipt, post_receipt, receipt_totals
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import compose_address, get_or_create_location
 from apps.warehouse.models import StorageLocation
@@ -474,7 +474,7 @@ def test_detail_page_shows_totals_without_warehouse_tile(client, make_user, refs
         reverse("counting_line_qty", args=[line.pk]), {"quantity": "13"}, follow=True
     )
     html = resp.content.decode()
-    assert "Всего деталей в ячейке" in html
+    assert "Итоговое количество" in html  # Layer 34: переименовано
     assert "Стоимость ячейки" in html
     assert "191087" in html  # 13 * 14699: итог обновился после правки
     assert "13" in html
@@ -1076,6 +1076,150 @@ def test_receipt_detail_labels_for_supplier_receipt(client, make_user, refs, adm
     html = client.get(reverse("receipt_detail", args=[receipt.pk])).content.decode()
     assert "Сумма себестоимости" in html  # обычные поступления не изменились
     assert "Оценка за ед." not in html
+
+
+# --- Layer 34: пересчёт попадает в «Инвентаризацию», а не в «Поступления» ------------
+
+
+def test_post_assigns_inventory_number(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    session.refresh_from_db()
+    assert session.inventory_number.startswith("IC-")  # документ инвентаризации
+
+
+def test_counting_post_redirects_to_stocktaking_document(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)
+    convert_to_receipt(session, by=admin)
+    resp = client.post(reverse("counting_post", args=[session.pk]), follow=True)
+    session.refresh_from_db()
+    assert resp.redirect_chain[-1][0] == reverse("initial_inventory_detail", args=[session.pk])
+    text = resp.content.decode()
+    assert "Пересчёт завершён" in text
+    assert f"Создан документ инвентаризации {session.inventory_number}" in text
+    # На страницах пересчёта нет ссылки на технический документ поступления.
+    detail = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+    assert f"/receipts/{session.converted_receipt_id}/" not in detail
+    assert session.converted_receipt.number not in detail
+    assert session.inventory_number in detail
+
+
+def test_receipts_list_hides_counting_documents(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    session.refresh_from_db()
+    supplier_receipt = create_receipt(
+        supplier=Supplier.objects.create(name="Реальный поставщик"), by=admin
+    )
+    html = client.get(reverse("receipt_list")).content.decode()
+    assert session.converted_receipt.number not in html  # технический документ скрыт
+    assert supplier_receipt.number in html  # реальная поставка на месте
+    # Сам документ физически цел (лоты/движения ссылаются на него).
+    assert session.converted_receipt.status == "posted"
+
+
+def test_stocktaking_shows_initial_inventory_with_lines(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "219800345", by=admin)  # 14699
+    set_line_quantity(line, 13)  # ручная правка количества
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    session.refresh_from_db()
+    # Список «Инвентаризации»: блок первичного ввода.
+    html = client.get(reverse("inventory_count_list")).content.decode()
+    assert "Первичный ввод ячеек" in html
+    assert session.inventory_number in html
+    assert "B-S01-L02-D03-C08" in html
+    assert "Итоговое количество" in html
+    # Документ: строки заполнены автоматически, ручное количество на месте.
+    html = client.get(reverse("initial_inventory_detail", args=[session.pk])).content.decode()
+    assert f"Инвентаризация {session.inventory_number}" in html
+    assert "219800345" in html and "BELT DRIVE" in html
+    assert "Оценка за ед. (₽)" in html and "Сумма оценки" in html
+    assert "13" in html  # ручная правка попала в документ
+    total = session.counters()["total_value"]
+    assert f"{total:.0f}" in html  # итог = сумме количество x оценка
+    assert "Технический документ проведения" in html
+    assert "—" not in html
+
+
+def test_migrate_command_is_idempotent(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    # Симуляция прода до Layer 34: у проведённой сессии нет IC-номера.
+    InventoryCountingSession.objects.filter(pk=session.pk).update(inventory_number="")
+    before = _stock_snapshot()
+    out = io.StringIO()
+    call_command("migrate_counting_receipts_to_stocktaking", stdout=out)
+    text = out.getvalue()
+    assert "DRY-RUN" in text and "БУДЕТ ПРИСВОЕН" in text
+    session.refresh_from_db()
+    assert session.inventory_number == ""  # dry-run ничего не записал
+    out = io.StringIO()
+    call_command("migrate_counting_receipts_to_stocktaking", commit=True, stdout=out)
+    session.refresh_from_db()
+    assert session.inventory_number.startswith("IC-")
+    assert session.converted_receipt.number in out.getvalue()  # отчёт о скрытых
+    assert _stock_snapshot() == before  # склад не тронут
+    # Повторный запуск: дублей и изменений нет.
+    number = session.inventory_number
+    out = io.StringIO()
+    call_command("migrate_counting_receipts_to_stocktaking", commit=True, stdout=out)
+    session.refresh_from_db()
+    assert session.inventory_number == number
+    assert "Пропущено (номер уже есть): 1" in out.getvalue()
+
+
+def test_delete_draft_receipts_command(refs, location, admin):
+    draft = create_receipt(supplier=Supplier.objects.create(name="Демо"), by=admin)
+    add_line(draft, part_type=refs["wh"], quantity=Decimal("1"),
+             unit_cost_rub=Decimal("10"), location=location)
+    # Dry-run не удаляет.
+    out = io.StringIO()
+    call_command("delete_draft_receipts", receipt_id=draft.pk, stdout=out)
+    assert "DRY-RUN" in out.getvalue()
+    draft.refresh_from_db()
+    # Commit удаляет черновик (склада у черновика нет).
+    before = _stock_snapshot()
+    call_command("delete_draft_receipts", receipt_id=draft.pk, commit=True,
+                 stdout=io.StringIO())
+    from apps.receipts.models import Receipt
+
+    assert not Receipt.objects.filter(pk=draft.pk).exists()
+    assert _stock_snapshot() == before
+    # Проведённый документ удалить нельзя.
+    posted = create_receipt(supplier=Supplier.objects.create(name="Пост"), by=admin)
+    add_line(posted, part_type=refs["wh"], quantity=Decimal("1"),
+             unit_cost_rub=Decimal("10"), location=location)
+    post_receipt(posted, by=admin)
+    with pytest.raises(CommandError, match="не черновик"):
+        call_command("delete_draft_receipts", receipt_id=posted.pk)
+    # Документ пересчёта удалить нельзя (даже черновик).
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    counting_receipt = convert_to_receipt(session, by=admin)
+    with pytest.raises(CommandError, match="связан с пересчётом"):
+        call_command("delete_draft_receipts", receipt_id=counting_receipt.pk)
+
+
+def test_counting_detail_renamed_counters_and_hint(client, make_user, refs, location, admin):
+    client.login(username="admin", password=PASSWORD)
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin)
+    html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+    assert "Событий сканирования" in html
+    assert "Итоговое количество" in html
+    assert "Всего сканов" not in html
+    assert "Всего деталей в ячейке" not in html
+    assert "считается по столбцу" in html
+    assert "из-за ручных правок, отмен и удалений" in html
 
 
 # --- Удаление черновика (hotfix 32.2) -----------------------------------------------

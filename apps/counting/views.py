@@ -270,19 +270,27 @@ def counting_convert(request, pk):
 @login_required
 @require_POST
 def counting_post(request, pk):
-    """Провести инвентаризацию: остаток пишется по адресу сессии."""
+    """Провести инвентаризацию: остаток пишется по адресу сессии.
+
+    Layer 34: результат для пользователя — документ в разделе
+    «Инвентаризация» (IC-номер), а не поступление: пересчёт — первичный
+    ввод, внутренний документ проведения в «Поступлениях» не показывается.
+    """
     _require_manage(request)
     session = get_object_or_404(InventoryCountingSession, pk=pk)
     try:
-        receipt = post_session(session, by=request.user)
+        post_session(session, by=request.user)
     except CountingError as exc:
         messages.error(request, str(exc))
         return redirect("counting_convert", pk=pk)
+    session.refresh_from_db()
     messages.success(
         request,
-        f"Инвентаризация {session.full_address} проведена: остаток записан по адресу.",
+        f"Пересчёт завершён. Создан документ инвентаризации "
+        f"{session.inventory_number}: остаток записан по адресу "
+        f"{session.full_address}.",
     )
-    return redirect("receipt_detail", pk=receipt.pk)
+    return redirect("initial_inventory_detail", pk=session.pk)
 
 
 @login_required

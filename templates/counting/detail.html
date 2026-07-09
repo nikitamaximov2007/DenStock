@@ -42,7 +42,7 @@
   {% endif %}
   <section class="tiles dashboard-section" aria-label="Итоги пересчёта">
     <div class="tile">
-      <div class="tile__label">Всего сканов</div>
+      <div class="tile__label">Событий сканирования</div>
       <div class="tile__value">{{ counters.total_scans }}</div>
     </div>
     <div class="tile">
@@ -50,7 +50,7 @@
       <div class="tile__value">{{ counters.unique }}</div>
     </div>
     <div class="tile">
-      <div class="tile__label">Всего деталей в ячейке</div>
+      <div class="tile__label">Итоговое количество</div>
       <div class="tile__value">{{ counters.total_quantity|floatformat:"-3" }}</div>
     </div>
     <a class="tile tile--link" href="#value-breakdown">
@@ -73,6 +73,10 @@
       </div>
     </div>
   </section>
+  <p class="muted">
+    Итоговое количество считается по столбцу «Количество». Оно может отличаться
+    от числа сканов из-за ручных правок, отмен и удалений.
+  </p>
   {% if is_draft %}
     <div class="page-header">
       <div class="page-actions">
@@ -92,11 +96,16 @@
         </form>
       </div>
     </div>
-  {% elif session.converted_receipt %}
+  {% elif session.status == "posted" %}
     <p>
       Документ инвентаризации:
-      <a href="{% url 'receipt_detail' session.converted_receipt_id %}">{{ session.converted_receipt.number }}</a>
-      {% if session.status == "posted" %}<span class="pill pill--success">проведено</span>{% endif %}
+      <a href="{% url 'initial_inventory_detail' session.pk %}">{{ session.inventory_number|default:"открыть" }}</a>
+      <span class="pill pill--success">проведено</span>
+    </p>
+  {% elif session.converted_receipt %}
+    <p>
+      Черновик документа первичного ввода создан:
+      <a href="{% url 'counting_convert' session.pk %}">завершите проведение</a>.
     </p>
   {% endif %}
   <div class="card">

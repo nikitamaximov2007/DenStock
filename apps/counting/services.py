@@ -15,6 +15,7 @@ from apps.brp.models import BrpCatalogPart
 from apps.brp.pricing import current_customer_price_rub
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.inventory.models import NumberSequence
 from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, create_receipt, post_receipt
 from apps.suppliers.models import Supplier
@@ -526,7 +527,11 @@ def post_session(session: InventoryCountingSession, *, by=None) -> Receipt:
     post_receipt(receipt, by=by)
     session.status = InventoryCountingSession.Status.POSTED
     session.posted_at = timezone.now()
-    session.save(update_fields=["status", "posted_at", "updated_at"])
+    # Layer 34: пользовательский документ пересчёта — «Инвентаризация» с
+    # IC-номером (единый счётчик с документами сверки, коллизий нет).
+    if not session.inventory_number:
+        session.inventory_number = NumberSequence.next("inventory_count")
+    session.save(update_fields=["status", "posted_at", "inventory_number", "updated_at"])
     return receipt
 
 

@@ -8,8 +8,12 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db.models import Count, DecimalField, F, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+
+from apps.counting.models import InventoryCountingSession
+from apps.counting.services import get_session_value_breakdown
 
 from .forms import AddCountLotForm, CountQuantityForm, InventoryCountForm
 from .models import InventoryCountDocument, InventoryCountLine
@@ -38,14 +42,58 @@ def inventory_count_list(request):
     )
     if status:
         qs = qs.filter(status=status)
+    # Layer 34: первичный ввод ячеек (проведённые пересчёты сканером) — тоже
+    # документы инвентаризации (IC-номера из общего счётчика). Позиции у них
+    # заполняются пересчётом автоматически, вручную ничего добавлять не надо.
+    initial_sessions = list(
+        InventoryCountingSession.objects.filter(
+            status=InventoryCountingSession.Status.POSTED
+        )
+        .select_related("storage_location", "created_by")
+        .annotate(
+            positions_total=Count("lines"),
+            quantity_total=Sum("lines__quantity_counted"),
+            value_total=Sum(
+                F("lines__quantity_counted") * F("lines__final_customer_price_rub"),
+                output_field=DecimalField(max_digits=32, decimal_places=9),
+            ),
+        )
+        .order_by("-posted_at")[:100]
+    )
     return render(
         request,
         "stocktaking/inventory_count_list.html",
         {
             "documents": qs[:100],
+            "initial_sessions": initial_sessions,
             "status": status,
             "statuses": InventoryCountDocument.Status.choices,
             "can_manage": request.user.can_manage_stocktaking,
+        },
+    )
+
+
+@login_required
+def initial_inventory_detail(request, pk):
+    """Документ первичного ввода ячейки (проведённый пересчёт сканером).
+
+    Строки заполнены пересчётом автоматически: номер, название, источник,
+    количество (столбец «Количество» пересчёта, с ручными правками), оценка
+    за единицу (цена клиента) и сумма оценки. Это НЕ сверка: расхождений и
+    корректировок здесь нет, остатки уже записаны проведением пересчёта.
+    """
+    session = get_object_or_404(
+        InventoryCountingSession.objects.select_related(
+            "storage_location", "created_by", "converted_receipt"
+        ).filter(status=InventoryCountingSession.Status.POSTED),
+        pk=pk,
+    )
+    return render(
+        request,
+        "stocktaking/initial_inventory_detail.html",
+        {
+            "session": session,
+            "breakdown": get_session_value_breakdown(session, sort="original"),
         },
     )
 

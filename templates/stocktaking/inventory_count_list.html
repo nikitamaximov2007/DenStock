@@ -9,6 +9,51 @@
       </div>
     {% endif %}
   </div>
+  <p class="page-subtitle">
+    Первичный ввод ячеек создаётся пересчётом сканером автоматически; сверка
+    (расхождения и корректировки) оформляется документами ниже.
+  </p>
+  {% if initial_sessions %}
+    <div class="page-header reports-section">
+      <h2 class="page-title">Первичный ввод ячеек (из пересчёта)</h2>
+      <span class="pill pill--success">позиции заполнены автоматически</span>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Номер</th>
+          <th>Ячейка</th>
+          <th>Описание</th>
+          <th class="num">Позиций</th>
+          <th class="num">Итоговое количество</th>
+          <th class="num--money">Сумма оценки</th>
+          <th>Проведена</th>
+          <th>Кто</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in initial_sessions %}
+          <tr>
+            <td>
+              <a href="{% url 'initial_inventory_detail' s.pk %}">{{ s.inventory_number|default:"без номера" }}</a>
+            </td>
+            <td>
+              <span class="code-pill">{{ s.full_address }}</span>
+            </td>
+            <td>{{ s.comment|truncatechars:50|default:"·" }}</td>
+            <td class="num">{{ s.positions_total }}</td>
+            <td class="num">{{ s.quantity_total|default:0|floatformat:"-3" }}</td>
+            <td class="num--money">{{ s.value_total|default:0|floatformat:"0" }} ₽</td>
+            <td>{{ s.posted_at|ru_dt }}</td>
+            <td>{{ s.created_by|default:"·" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  <div class="page-header reports-section">
+    <h2 class="page-title">Сверка остатков</h2>
+  </div>
   <form method="get" class="filter-toolbar filter-toolbar--compact">
     <label>
       Статус
