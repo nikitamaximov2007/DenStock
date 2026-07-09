@@ -1,4 +1,6 @@
+import secrets
 from datetime import timedelta
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -11,11 +13,14 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.actions.services import identity_number, stock_overview
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
 from apps.inventory.models import PartItem, StockLot, StockMovement
 from apps.inventory.services import (
+    FOUND_ADDITION_DOC,
     InventoryError,
+    add_found_stock,
     move_part_item,
     move_stock_lot,
     receive_part_item,
@@ -284,14 +289,69 @@ def _load_operation(request: HttpRequest):
 def _wrong_object_message(result) -> str:
     if result.type == "location":
         return "Сначала отсканируйте деталь, потом ячейку."
-    if result.type == "part_type":
-        return (
-            "Это вид детали, а не конкретный экземпляр. Отсканируйте экземпляр "
-            "(ITEM:/DS-…) или серийный номер."
-        )
     if result.type == "batch":
         return "Это партия, а не экземпляр."
     return "Ожидается экземпляр детали."
+
+
+def _prepare_found_addition(request: HttpRequest, part: PartType, scanned_code: str):
+    """Контекст «довнести найденную деталь» + токен идемпотентности.
+
+    Работник отсканировал обычный номер детали (вид/BRP material_no). Ищем, где
+    эта деталь уже лежит; если нигде — не кладём молча, а просим сначала
+    провести инвентаризацию ячейки. Возвращает (addition|None, error).
+    """
+    overview = stock_overview(part)
+    if not overview["locations"]:
+        return None, (
+            "Этой детали ещё нет ни в одной ячейке. Сначала проведите "
+            "инвентаризацию ячейки или выберите ячейку вручную."
+        )
+    token = secrets.token_urlsafe(16)
+    request.session["found_add_token"] = token
+    return {
+        "part": part,
+        "number": identity_number(part, scanned_code),
+        "overview": overview,
+        "token": token,
+        "unit_price": part.recommended_price or Decimal("0"),
+    }, ""
+
+
+def _handle_found_addition(request: HttpRequest) -> str:
+    """Провести довнесение +1 после подтверждения. Возвращает текст ошибки/"".
+
+    Идемпотентность: одноразовый токен из сессии потребляется ДО изменения
+    склада — повторная отправка той же формы (двойной Enter/сабмит) не добавит
+    вторую деталь. Мутация — только через inventory.add_found_stock (atomic).
+    """
+    token = request.POST.get("token", "")
+    expected = request.session.get("found_add_token")
+    if not expected or token != expected:
+        return "Форма устарела или отправлена повторно: деталь не добавлена ещё раз."
+    request.session.pop("found_add_token", None)  # потребляем до мутации
+    part = PartType.objects.filter(pk=_int(request.POST.get("part_id"))).first()
+    location = StorageLocation.objects.filter(
+        pk=_int(request.POST.get("location_id"))
+    ).first()
+    if part is None:
+        return "Деталь не найдена."
+    if location is None:
+        return "Выберите ячейку, куда положить деталь."
+    number = identity_number(part, request.POST.get("scanned_number", ""))
+    try:
+        lot, _movement = add_found_stock(
+            part, location, by=request.user,
+            comment=f"Найденная деталь {number} в {location.code}",
+        )
+    except InventoryError as exc:
+        return str(exc)
+    messages.success(
+        request,
+        f"Добавлено +1: {number} {part.name} в ячейку {location.code}. "
+        f"Новый остаток лота: {lot.quantity.normalize():f}.",
+    )
+    return ""
 
 
 def _confirm_operation(request: HttpRequest, kind: str, obj, location) -> str:
@@ -352,12 +412,18 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
 
     kind, obj, location = "", None, None
     candidates: list = []
+    addition = None  # контекст «довнести найденную деталь» (обычный номер)
     error = ""
 
     if request.method == "POST":
         action = request.POST.get("action", "")
         if action == "reset":
             return redirect("scanner_receiving")
+
+        if action == "add_found":
+            error = _handle_found_addition(request)
+            if not error:
+                return redirect("scanner_receiving")  # успех → messages + PRG
 
         kind, obj, location = _load_operation(request)
 
@@ -401,6 +467,14 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
                     obj = PartItem.objects.select_related(
                         "part_type", "current_location"
                     ).get(pk=result.id)
+                elif result.type == "part_type":
+                    # Обычный номер детали (вид/BRP material_no): не ошибка, а
+                    # сценарий «довнести найденную деталь к существующей ячейке».
+                    part = PartType.objects.filter(pk=result.id).first()
+                    if part is None:
+                        error = "Деталь не найдена."
+                    else:
+                        addition, error = _prepare_found_addition(request, part, code)
                 else:
                     error = _wrong_object_message(result)
             else:
@@ -418,7 +492,9 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
             if not error:
                 return redirect("scanner_receiving")  # успех → messages + PRG
 
-    if obj is None:
+    if addition is not None:
+        step = "add_found"
+    elif obj is None:
         step = "scan_object"
     elif location is None:
         step = "scan_location"
@@ -429,6 +505,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
         "object": obj,
         "object_kind": kind,
         "location": location,
+        "addition": addition,
         "step": step,
         "candidates": candidates,
         "error": error,
@@ -441,6 +518,12 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
             StockMovement.objects.filter(
                 created_by=request.user, movement_type__in=_HISTORY_TYPES
             ).select_related("part_type", "to_location")[:10]
+        ),
+        "found_history": (
+            StockMovement.objects.filter(
+                movement_type=StockMovement.MovementType.ADJUST_IN,
+                document_type=FOUND_ADDITION_DOC,
+            ).select_related("part_type", "to_location", "created_by")[:10]
         ),
         "show_costs": request.user.can_view_purchase_cost,
     }

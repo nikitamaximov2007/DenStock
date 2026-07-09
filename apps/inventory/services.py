@@ -431,6 +431,49 @@ def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockL
     return lot
 
 
+# Тег движения для «добавления найденной детали» (приёмка сканером по артикулу).
+# Физически это положительная корректировка остатка (ADJUST_IN), но помеченная
+# отдельным document_type — так её видно в аудите и она не путается со сверкой.
+FOUND_ADDITION_DOC = "found_addition"
+
+
+@transaction.atomic
+def add_found_stock(
+    part_type, location, quantity=Decimal("1"), *, by=None, comment=""
+) -> tuple[StockLot, StockMovement]:
+    """Довнести найденную деталь (+quantity) к существующему остатку в ячейке.
+
+    Это НЕ поступление от поставщика и НЕ новая инвентаризация: работник нашёл
+    ещё одну такую же деталь и кладёт её туда, где эта деталь УЖЕ лежит.
+    Требуется существующий доступный лот в этой ячейке (молча в неизвестную
+    ячейку не кладём). Возврат/создание движения делает существующий
+    adjust_stock_lot_quantity (ADJUST_IN, помеченный document_type), поэтому
+    аудит (кто/когда/куда/сколько/комментарий) и защита от минуса — как везде.
+    """
+    quantity = Decimal(quantity)
+    if quantity <= 0:
+        raise InventoryError("Количество должно быть больше нуля.")
+    if location is None or not location.can_hold_stock():
+        raise InventoryError("Ячейка не предназначена для хранения остатка.")
+    lot = (
+        StockLot.objects.select_for_update()
+        .filter(part_type=part_type, location=location, status=StockLot.Status.AVAILABLE)
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    if lot is None:
+        raise InventoryError(
+            "Этой детали ещё нет в выбранной ячейке. Сначала проведите "
+            "инвентаризацию ячейки или выберите ячейку, где эта деталь уже лежит."
+        )
+    note = (comment or "").strip() or "Добавление найденной детали"
+    movement = adjust_stock_lot_quantity(
+        lot, quantity, by=by, comment=note[:255], document_type=FOUND_ADDITION_DOC
+    )
+    lot.refresh_from_db()  # свежее количество для сообщения вызывающему
+    return lot, movement
+
+
 @transaction.atomic
 def adjust_stock_lot_quantity(
     lot: StockLot, delta, *, by=None, comment="", document_type="", document_id=None

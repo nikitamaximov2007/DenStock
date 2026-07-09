@@ -7,13 +7,19 @@
   {% endif %}
   <p class="muted">
     Шаг:
-    {% if step == "scan_object" %}
-      1 · сканируйте деталь
+    {% if step == "add_found" %}
+      довнесение найденной детали · выберите ячейку и подтвердите
+    {% elif step == "scan_object" %}
+      1 · сканируйте номер детали или экземпляр
     {% elif step == "scan_location" %}
       2 · сканируйте ячейку
     {% else %}
       3 · подтвердите
     {% endif %}
+  </p>
+  <p class="muted">
+    Экземпляр (ITEM:/DS-…) или серийник размещается как раньше. Обычный номер
+    детали (артикул/BRP) довносит +1 к остатку в ячейке, где деталь уже лежит.
   </p>
   {% if object %}
     <table class="table">
@@ -39,7 +45,81 @@
       </tbody>
     </table>
   {% endif %}
-  {% if step == "confirm" %}
+  {% if addition %}
+    <div class="card">
+      <div class="card__body">
+        <p>
+          <span class="code-pill">{{ addition.number }}</span>
+          <strong>{{ addition.part.name }}</strong>
+          · Оценка за ед.:
+          {% if addition.unit_price %}
+            {{ addition.unit_price|floatformat:"0" }} ₽
+          {% else %}
+            не указана
+          {% endif %}
+        </p>
+        {% if addition.overview.locations|length == 1 %}
+          <p>
+            Деталь уже хранится в ячейке
+            <span class="code-pill">{{ addition.overview.locations.0.location.code }}</span>.
+            Положите её туда и подтвердите добавление +1.
+          </p>
+        {% else %}
+          <p>
+            <strong>Деталь найдена в нескольких ячейках. Выберите, куда положить.</strong>
+          </p>
+        {% endif %}
+        <form method="post" class="form">
+          {% csrf_token %}
+          <input type="hidden" name="part_id" value="{{ addition.part.pk }}">
+          <input type="hidden" name="scanned_number" value="{{ addition.number }}">
+          <input type="hidden" name="token" value="{{ addition.token }}">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Ячейка</th>
+                <th class="num--qty">Физически</th>
+                <th class="num--qty">Зарезервировано</th>
+                <th class="num--qty">Доступно</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in addition.overview.locations %}
+                <tr>
+                  <td>
+                    <label>
+                      <input type="radio"
+                             name="location_id"
+                             value="{{ row.location.pk }}"
+                             {% if addition.overview.locations|length == 1 %}checked{% endif %}
+                             required>
+                      <span class="code-pill">{{ row.location.code }}</span>
+                    </label>
+                  </td>
+                  <td class="num--qty">{{ row.physical|floatformat:"-3" }}</td>
+                  <td class="num--qty">{{ row.reserved|floatformat:"-3" }}</td>
+                  <td class="num--qty">
+                    <strong>{{ row.available|floatformat:"-3" }}</strong>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div class="form-actions">
+            <button type="submit"
+                    name="action"
+                    value="add_found"
+                    class="btn btn--primary">Добавить +1 к наличию</button>
+            <button type="submit" name="action" value="reset" class="btn">Отмена</button>
+          </div>
+        </form>
+        <p class="muted">
+          Это не поступление от поставщика: остаток в «Поступлениях» не появится.
+          Добавляется +1 к тому, что уже лежит в выбранной ячейке.
+        </p>
+      </div>
+    </div>
+  {% elif step == "confirm" %}
     <form method="post" class="form">
       {% csrf_token %}
       <input type="hidden" name="object_kind" value="{{ object_kind }}">
@@ -63,9 +143,7 @@
              autocomplete="off"
              autofocus>
       <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
-      {% if object %}
-        <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
-      {% endif %}
+      {% if object %}<button type="submit" name="action" value="reset" class="btn">Сбросить</button>{% endif %}
     </form>
   {% endif %}
   {% if candidates %}
@@ -143,9 +221,7 @@
               ·
             {% endif %}
           </td>
-          {% if show_costs %}
-            <td>{{ m.total_cost_rub }}</td>
-          {% endif %}
+          {% if show_costs %}<td>{{ m.total_cost_rub }}</td>{% endif %}
         </tr>
       {% empty %}
         <tr>
@@ -154,4 +230,39 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if found_history %}
+    <h2>Добавление найденных деталей</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Номер детали</th>
+          <th>Название</th>
+          <th>Куда</th>
+          <th class="num--qty">Кол-во</th>
+          <th>Кто</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in found_history %}
+          <tr>
+            <td>{{ m.created_at|date:"d.m.Y H:i" }}</td>
+            <td>
+              <span class="code-pill">{{ m.part_type.brp_link.brp_part.material_no|default:m.part_type.name }}</span>
+            </td>
+            <td>{{ m.part_type.name }}</td>
+            <td>
+              {% if m.to_location %}
+                {{ m.to_location.code }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+            <td class="num--qty">+{{ m.quantity|floatformat:"-3" }}</td>
+            <td>{{ m.created_by|default:"·" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
 {% endblock %}
