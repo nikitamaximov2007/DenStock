@@ -1,5 +1,5 @@
 """Polaris catalog screens."""
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -9,9 +9,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.catalog.services import get_current_price_settings
 from apps.inventory.models import StockBalance
 
-from .models import PolarisCatalogPart, PolarisPartLink, PolarisPricingSettings
+from .models import PolarisCatalogPart, PolarisPartLink
 from .pricing import customer_price_rub
 from .services import (
     PolarisPromotionError,
@@ -64,7 +65,7 @@ def _warehouse_matches(q: str, norm: str) -> list:
     return rows
 
 
-def _polaris_matches(q: str, norm: str) -> list:
+def _polaris_matches(q: str, norm: str, settings) -> list:
     number_q = Q(pk=None)
     if norm:
         number_q = Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
@@ -76,7 +77,6 @@ def _polaris_matches(q: str, norm: str) -> list:
         link.polaris_part_id: link.part
         for link in PolarisPartLink.objects.filter(polaris_part__in=parts).select_related("part")
     }
-    settings = PolarisPricingSettings.get()
     rows = []
     for polaris in parts:
         price_source = find_polaris_price_source(norm, polaris)
@@ -84,7 +84,9 @@ def _polaris_matches(q: str, norm: str) -> list:
         rows.append({
             "polaris": polaris,
             "customer_price": customer_price_rub(
-                retail, settings.polaris_usd_rate, settings.polaris_markup_percent
+                retail,
+                settings.current_usd_rate,
+                settings.polaris_markup_percent,
             ),
             "price_source": (
                 price_source if price_source and price_source.pk != polaris.pk else None
@@ -98,9 +100,10 @@ def _polaris_matches(q: str, norm: str) -> list:
 def polaris_search(request):
     q = (request.GET.get("q") or "").strip()
     norm = normalize_number(q)
+    pricing = get_current_price_settings()
     context = {
         "q": q,
-        "pricing": PolarisPricingSettings.get(),
+        "pricing": pricing,
         "catalog_size": PolarisCatalogPart.objects.count(),
         "can_manage_parts": request.user.can_manage_parts,
         "can_manage_inventory": request.user.can_manage_inventory,
@@ -109,7 +112,7 @@ def polaris_search(request):
     }
     if len(q) >= 2:
         context["warehouse_rows"] = _warehouse_matches(q, norm)
-        context["polaris_rows"] = _polaris_matches(q, norm)
+        context["polaris_rows"] = _polaris_matches(q, norm, pricing)
         context["searched"] = True
     return render(request, "polaris/search.html", context)
 
@@ -166,27 +169,4 @@ def polaris_intake(request, pk):
 def polaris_settings(request):
     if not request.user.can_manage_parts:
         raise PermissionDenied
-    pricing = PolarisPricingSettings.get()
-    if request.method == "POST":
-        try:
-            rate = Decimal((request.POST.get("polaris_usd_rate") or "").replace(",", "."))
-            markup = Decimal(
-                (request.POST.get("polaris_markup_percent") or "").replace(",", ".")
-            )
-        except InvalidOperation:
-            messages.error(request, "Введите числовые значения курса и наценки.")
-        else:
-            if rate <= 0 or markup < 0:
-                messages.error(request, "Курс должен быть больше нуля, наценка не отрицательной.")
-            else:
-                pricing.polaris_usd_rate = rate
-                pricing.polaris_markup_percent = markup
-                pricing.updated_by = request.user
-                pricing.save()
-                messages.success(
-                    request,
-                    "Настройки сохранены. Новые расчёты пойдут по новым значениям; "
-                    "уже добавленные детали сохраняют зафиксированные курс и наценку.",
-                )
-                return redirect("polaris_settings")
-    return render(request, "polaris/settings.html", {"pricing": pricing})
+    return redirect("price_settings")

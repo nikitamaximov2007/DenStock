@@ -1,5 +1,8 @@
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import get_object_or_404
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
 from django.views.decorators.http import require_POST
 from django.views.generic import ListView, TemplateView
@@ -7,10 +10,44 @@ from django.views.generic import ListView, TemplateView
 from . import forms
 from .generic import DirectoryCreateView, DirectoryListView, DirectoryUpdateView, toggle_active
 from .models import Category, Manufacturer, Unit, VehicleMake, VehicleModel, VehicleType
+from .services import get_current_price_settings, update_current_price_settings
 
 
 class DirectoryIndexView(LoginRequiredMixin, TemplateView):
     template_name = "directories/index.html"
+
+
+@login_required
+def price_settings(request):
+    if not request.user.can_manage_parts:
+        raise PermissionDenied
+
+    settings = get_current_price_settings()
+    initial = {
+        "current_usd_rate": settings.current_usd_rate,
+        "brp_markup_percent": settings.brp_markup_percent,
+        "polaris_markup_percent": settings.polaris_markup_percent,
+    }
+    refreshed_count = None
+    if request.method == "POST":
+        form = forms.PriceSettingsForm(request.POST)
+        if form.is_valid():
+            settings, refreshed_count = update_current_price_settings(
+                current_usd_rate=form.cleaned_data["current_usd_rate"],
+                brp_markup_percent=form.cleaned_data["brp_markup_percent"],
+                polaris_markup_percent=form.cleaned_data["polaris_markup_percent"],
+                by=request.user,
+            )
+            messages.success(request, "Настройки цен сохранены")
+            return redirect("price_settings")
+    else:
+        form = forms.PriceSettingsForm(initial=initial)
+
+    return render(
+        request,
+        "directories/price_settings.html",
+        {"form": form, "pricing": settings, "refreshed_count": refreshed_count},
+    )
 
 
 # --- Категории (дерево) ---

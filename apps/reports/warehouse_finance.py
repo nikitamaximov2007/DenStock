@@ -111,7 +111,8 @@ def _brp_base_usd(brp) -> Decimal | None:
 
 def get_warehouse_valuation() -> WarehouseValuation:
     """Посчитать три показателя по текущему физическому остатку (read-only)."""
-    rate = ValuationSettings.get().purchase_usd_rate
+    valuation_settings = ValuationSettings.get()
+    rate = valuation_settings.current_usd_rate
     qty_by_part = _physical_by_part()
     purchase_total = DEC0
     sale_total = DEC0
@@ -139,7 +140,7 @@ def get_warehouse_valuation() -> WarehouseValuation:
                 # Источник продажи тот же, что и закупки (retail-база BRP);
                 # формула клиентской цены — существующая (pricing BRP).
                 sale_rub = brp_customer_price_rub(
-                    base_usd, brp_settings.brp_usd_rate, brp_settings.brp_markup_percent
+                    base_usd, rate, brp_settings.brp_markup_percent
                 )
         elif polaris_link is not None:
             polaris = polaris_link.polaris_part
@@ -148,7 +149,7 @@ def get_warehouse_valuation() -> WarehouseValuation:
             if retail_source is not None and retail_source.retail_price_usd:
                 sale_rub = polaris_customer_price_rub(
                     retail_source.retail_price_usd,
-                    polaris_settings.polaris_usd_rate,
+                    rate,
                     polaris_settings.polaris_markup_percent,
                 )
         if sale_rub is None:
