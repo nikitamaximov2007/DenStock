@@ -58,4 +58,4 @@ desktop.ini
 *.xlsx
 *.xls
 # Исключение: таможенный шаблон экспорта (Layer 33) хранится в репозитории.
-!docs/templates/supplier_order_template.xlsx
+!apps/actions/customs_template/supplier_order_template.xlsx
