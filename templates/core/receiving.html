@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load number_format %}
 {% block title %}Приёмка сканером · DenisStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Приёмка сканером</h1>
@@ -7,10 +8,8 @@
   {% endif %}
   <p class="muted">
     Шаг:
-    {% if step == "add_found" %}
-      довнесение найденной детали · выберите ячейку и подтвердите
-    {% elif step == "scan_object" %}
-      1 · сканируйте номер детали или экземпляр
+    {% if step == "scan_object" %}
+      1 · сканируйте детали подряд
     {% elif step == "scan_location" %}
       2 · сканируйте ячейку
     {% else %}
@@ -18,8 +17,8 @@
     {% endif %}
   </p>
   <p class="muted">
-    Экземпляр (ITEM:/DS-…) или серийник размещается как раньше. Обычный номер
-    детали (артикул/BRP) довносит +1 к остатку в ячейке, где деталь уже лежит.
+    Экземпляр (ITEM:/DS-…) или серийник размещается по прежнему сценарию. Обычные
+    exact-артикулы накапливаются в очереди и не меняют остаток до подтверждения ячейки.
   </p>
   {% if object %}
     <table class="table">
@@ -31,7 +30,7 @@
               Экземпляр {{ object.internal_number }} · {{ object.part_type }}
               ({{ object.get_status_display }})
             {% else %}
-              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity }}
+              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity|quantity_number }}
               ({{ object.get_status_display }})
             {% endif %}
           </td>
@@ -45,81 +44,7 @@
       </tbody>
     </table>
   {% endif %}
-  {% if addition %}
-    <div class="card">
-      <div class="card__body">
-        <p>
-          <span class="code-pill">{{ addition.number }}</span>
-          <strong>{{ addition.part.name }}</strong>
-          · Оценка за ед.:
-          {% if addition.unit_price %}
-            {{ addition.unit_price|floatformat:"0" }} ₽
-          {% else %}
-            не указана
-          {% endif %}
-        </p>
-        {% if addition.overview.locations|length == 1 %}
-          <p>
-            Деталь уже хранится в ячейке
-            <span class="code-pill">{{ addition.overview.locations.0.location.code }}</span>.
-            Положите её туда и подтвердите добавление +1.
-          </p>
-        {% else %}
-          <p>
-            <strong>Деталь найдена в нескольких ячейках. Выберите, куда положить.</strong>
-          </p>
-        {% endif %}
-        <form method="post" class="form">
-          {% csrf_token %}
-          <input type="hidden" name="part_id" value="{{ addition.part.pk }}">
-          <input type="hidden" name="scanned_number" value="{{ addition.number }}">
-          <input type="hidden" name="token" value="{{ addition.token }}">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Ячейка</th>
-                <th class="num--qty">Физически</th>
-                <th class="num--qty">Зарезервировано</th>
-                <th class="num--qty">Доступно</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in addition.overview.locations %}
-                <tr>
-                  <td>
-                    <label>
-                      <input type="radio"
-                             name="location_id"
-                             value="{{ row.location.pk }}"
-                             {% if addition.overview.locations|length == 1 %}checked{% endif %}
-                             required>
-                      <span class="code-pill">{{ row.location.code }}</span>
-                    </label>
-                  </td>
-                  <td class="num--qty">{{ row.physical|floatformat:"-3" }}</td>
-                  <td class="num--qty">{{ row.reserved|floatformat:"-3" }}</td>
-                  <td class="num--qty">
-                    <strong>{{ row.available|floatformat:"-3" }}</strong>
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-          <div class="form-actions">
-            <button type="submit"
-                    name="action"
-                    value="add_found"
-                    class="btn btn--primary">Добавить +1 к наличию</button>
-            <button type="submit" name="action" value="reset" class="btn">Отмена</button>
-          </div>
-        </form>
-        <p class="muted">
-          Это не поступление от поставщика: остаток в «Поступлениях» не появится.
-          Добавляется +1 к тому, что уже лежит в выбранной ячейке.
-        </p>
-      </div>
-    </div>
-  {% elif step == "confirm" %}
+  {% if step == "confirm" %}
     <form method="post" class="form">
       {% csrf_token %}
       <input type="hidden" name="object_kind" value="{{ object_kind }}">
@@ -143,8 +68,224 @@
              autocomplete="off"
              autofocus>
       <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
-      {% if object %}<button type="submit" name="action" value="reset" class="btn">Сбросить</button>{% endif %}
+      {% if object %}
+        <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
+      {% endif %}
     </form>
+  {% endif %}
+  {% if catalog_choice.candidates %}
+    <div class="card">
+      <div class="card__body">
+        <h2>Выберите производителя</h2>
+        <p class="muted">Одинаковый exact-артикул найден в нескольких источниках.</p>
+        <div class="card__actions">
+          {% for candidate in catalog_choice.candidates %}
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden"
+                     name="candidate_token"
+                     value="{{ catalog_choice.token }}">
+              <input type="hidden"
+                     name="candidate_key"
+                     value="{{ candidate.source }}:{{ candidate.source_id }}">
+              <button type="submit"
+                      name="action"
+                      value="queue_select_candidate"
+                      class="btn btn--secondary">
+                {{ candidate.manufacturer }} · {{ candidate.exact_number }} · {{ candidate.name }}
+              </button>
+            </form>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+  {% if receiving_queue.line_count %}
+    <div class="toolbar">
+      <h2>К добавлению · {{ receiving_queue.quantity }} шт.</h2>
+      <form method="post">
+        {% csrf_token %}
+        <button type="submit"
+                name="action"
+                value="queue_clear"
+                class="btn btn--danger">Очистить список</button>
+      </form>
+    </div>
+    {% if receiving_queue.unassigned %}
+      <div class="card">
+        <div class="card__body">
+          <h2>Нужно выбрать ячейку</h2>
+          {% for line in receiving_queue.unassigned %}
+            <div class="receiving-queue-line">
+              <p>
+                <strong>{{ line.manufacturer }}</strong>
+                · <span class="code-pill">{{ line.exact_number }}</span>
+                · {{ line.name }}
+                · {{ line.quantity }} шт.
+                · {{ line.unit_price_decimal|whole_number }} ₽ за ед.
+              </p>
+              {% if line.location_mode == "existing" and line.location_choices %}
+                <p class="muted">Деталь найдена в нескольких ячейках. Выбор обязателен.</p>
+                <form method="post" class="form">
+                  {% csrf_token %}
+                  <input type="hidden" name="line_id" value="{{ line.id }}">
+                  <table class="table table--compact">
+                    <thead>
+                      <tr>
+                        <th>Ячейка</th>
+                        <th class="num--qty">Физически</th>
+                        <th class="num--qty">Резерв</th>
+                        <th class="num--qty">Доступно</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for choice in line.location_choices %}
+                        <tr>
+                          <td>
+                            <label>
+                              <input type="radio" name="location_id" value="{{ choice.id }}" required>
+                              <span class="code-pill">{{ choice.code }}</span>
+                            </label>
+                          </td>
+                          <td class="num--qty">{{ choice.physical|quantity_number }}</td>
+                          <td class="num--qty">{{ choice.reserved|quantity_number }}</td>
+                          <td class="num--qty">{{ choice.available|quantity_number }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                  <button type="submit"
+                          name="action"
+                          value="queue_assign"
+                          class="btn btn--primary">Назначить ячейку</button>
+                </form>
+              {% else %}
+                <p class="muted">Эта деталь ещё не размещалась на складе. Выберите ячейку.</p>
+                <form method="post" class="form receiving-location-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="line_id" value="{{ line.id }}">
+                  <input type="text"
+                         name="location_code"
+                         list="active-storage-locations"
+                         placeholder="Начните вводить код ячейки"
+                         autocomplete="off"
+                         required>
+                  <button type="submit"
+                          name="action"
+                          value="queue_assign"
+                          class="btn btn--primary">Назначить ячейку</button>
+                </form>
+              {% endif %}
+              <div class="form-actions">
+                <form method="post" class="inline-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="line_id" value="{{ line.id }}">
+                  <input type="number"
+                         name="quantity"
+                         min="1"
+                         step="1"
+                         value="{{ line.quantity }}"
+                         required>
+                  <button type="submit" name="action" value="queue_update">Изменить количество</button>
+                </form>
+                <form method="post" class="inline-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="line_id" value="{{ line.id }}">
+                  <button type="submit"
+                          name="action"
+                          value="queue_remove"
+                          class="btn btn--danger">Удалить строку</button>
+                </form>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+    <datalist id="active-storage-locations">
+      {% for storage in receiving_queue.active_locations %}
+        <option value="{{ storage.code }}">
+          {{ storage.name }}
+          {% if storage.description %} · {{ storage.description }}{% endif %}
+          · видов: {{ storage.part_kinds }}
+        </option>
+      {% endfor %}
+    </datalist>
+    {% for group in receiving_queue.groups %}
+      <div class="card receiving-group">
+        <div class="card__body">
+          <h2>Ячейка <span class="code-pill">{{ group.location.code }}</span></h2>
+          <p class="muted">{{ group.position_count }} позиций · {{ group.quantity|quantity_number }} единиц</p>
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>Производитель</th>
+                <th>Артикул</th>
+                <th>Название</th>
+                <th class="num--qty">Кол-во</th>
+                <th class="num--money">Оценка</th>
+                <th class="num--money">Сумма</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for line in group.lines %}
+                <tr>
+                  <td>{{ line.manufacturer }}</td>
+                  <td><span class="code-pill">{{ line.exact_number }}</span></td>
+                  <td>
+                    {{ line.name }}
+                    {% if line.location_recommended %}<span class="muted">· рекомендуемая ячейка</span>{% endif %}
+                  </td>
+                  <td class="num--qty">
+                    <form method="post" class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="line_id" value="{{ line.id }}">
+                      <input type="number"
+                             name="quantity"
+                             min="1"
+                             step="1"
+                             value="{{ line.quantity }}"
+                             required>
+                      <button type="submit"
+                              name="action"
+                              value="queue_update"
+                              title="Изменить количество">OK</button>
+                    </form>
+                  </td>
+                  <td class="num--money">{{ line.unit_price_decimal|whole_number }} ₽</td>
+                  <td class="num--money">{{ line.total_price|whole_number }} ₽</td>
+                  <td class="table__actions">
+                    <form method="post" class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="line_id" value="{{ line.id }}">
+                      <button type="submit" name="action" value="queue_unassign">Изменить ячейку</button>
+                    </form>
+                    <form method="post" class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="line_id" value="{{ line.id }}">
+                      <button type="submit"
+                              name="action"
+                              value="queue_remove"
+                              class="btn btn--danger">Удалить</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <form method="post" class="form-actions">
+            {% csrf_token %}
+            <input type="hidden" name="location_id" value="{{ group.location.pk }}">
+            <input type="hidden" name="token" value="{{ group.token }}">
+            <button type="submit"
+                    name="action"
+                    value="queue_post"
+                    class="btn btn--primary">Добавить {{ group.quantity }} деталей в {{ group.location.code }}</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
   {% endif %}
   {% if candidates %}
     <ul class="scanner-candidates">
@@ -176,7 +317,7 @@
         {% for lot in receiving_lots %}
           <tr>
             <td>{{ lot.part_type }}</td>
-            <td>{{ lot.quantity }}</td>
+            <td>{{ lot.quantity|quantity_number }}</td>
             <td>{{ lot.batch.number }}</td>
             <td>{{ lot.location.code }}</td>
             <td>
@@ -201,7 +342,9 @@
       <tr>
         <th>Дата</th>
         <th>Тип</th>
+        <th>Артикул</th>
         <th>Деталь</th>
+        <th class="num--qty">Кол-во</th>
         <th>Куда</th>
         {% if show_costs %}
           <th>Сумма (₽)</th>
@@ -213,7 +356,9 @@
         <tr>
           <td>{{ m.created_at|date:"d.m.Y H:i" }}</td>
           <td>{{ m.get_movement_type_display }}</td>
+          <td><span class="code-pill">{{ m.display_part_number }}</span></td>
           <td>{{ m.part_type }}</td>
+          <td class="num--qty">{{ m.quantity|quantity_number }}</td>
           <td>
             {% if m.to_location %}
               {{ m.to_location.code }}
@@ -221,11 +366,11 @@
               ·
             {% endif %}
           </td>
-          {% if show_costs %}<td>{{ m.total_cost_rub }}</td>{% endif %}
+          {% if show_costs %}<td>{{ m.total_cost_rub|whole_number }}</td>{% endif %}
         </tr>
       {% empty %}
         <tr>
-          <td colspan="{% if show_costs %}5{% else %}4{% endif %}" class="muted">Операций нет.</td>
+          <td colspan="{% if show_costs %}7{% else %}6{% endif %}" class="muted">Операций нет.</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -236,10 +381,13 @@
       <thead>
         <tr>
           <th>Дата</th>
-          <th>Номер детали</th>
+          <th>Тип</th>
+          <th>Производитель</th>
+          <th>Артикул</th>
           <th>Название</th>
-          <th>Куда</th>
           <th class="num--qty">Кол-во</th>
+          <th>Ячейка</th>
+          <th class="num--money">Сумма (₽)</th>
           <th>Кто</th>
         </tr>
       </thead>
@@ -247,10 +395,13 @@
         {% for m in found_history %}
           <tr>
             <td>{{ m.created_at|date:"d.m.Y H:i" }}</td>
+            <td>Добавление найденных деталей</td>
+            <td>{{ m.part_type.manufacturer.name|default:"СКЛАД" }}</td>
             <td>
-              <span class="code-pill">{{ m.part_type.brp_link.brp_part.material_no|default:m.part_type.name }}</span>
+              <span class="code-pill">{{ m.display_part_number }}</span>
             </td>
             <td>{{ m.part_type.name }}</td>
+            <td class="num--qty">+{{ m.quantity|quantity_number }}</td>
             <td>
               {% if m.to_location %}
                 {{ m.to_location.code }}
@@ -258,7 +409,7 @@
                 ·
               {% endif %}
             </td>
-            <td class="num--qty">+{{ m.quantity|floatformat:"-3" }}</td>
+            <td class="num--money">{{ m.customer_total_value|whole_number }}</td>
             <td>{{ m.created_by|default:"·" }}</td>
           </tr>
         {% endfor %}

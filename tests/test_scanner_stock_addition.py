@@ -1,23 +1,26 @@
-"""Приёмка сканером: довнесение найденной детали +1 к существующей ячейке.
-
-Гарантии: обычный номер детали (BRP material_no) не даёт ошибку «это вид
-детали», а предлагает положить +1 туда, где деталь уже лежит; подтверждение
-добавляет ровно +1 (движение ADJUST_IN с тегом found_addition); двойной сабмит
-не добавляет +2; несколько ячеек требуют выбора; если детали нет ни в одной
-ячейке — молча не добавляем; в «Поступлениях» ничего не появляется; exact
-material_no не подменяется заменой.
-"""
+"""Batch scanner receiving of exact warehouse, BRP, and Polaris identities."""
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth.models import Group
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from apps.accounts import roles
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse
-from apps.inventory.models import StockMovement
-from apps.inventory.services import add_found_stock, create_stock_lot, receive_stock_lot
+from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.core.receiving_queue import PENDING_SESSION_KEY, QUEUE_SESSION_KEY
+from apps.inventory.models import FoundStockPosting, StockLot, StockMovement
+from apps.inventory.services import (
+    InventoryError,
+    add_found_stock,
+    create_stock_lot,
+    post_found_stock_group,
+    receive_stock_lot,
+)
+from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.receipts.models import Receipt
@@ -110,120 +113,474 @@ def test_add_found_stock_requires_existing_lot(data):
     assert not StockMovement.objects.filter(document_type="found_addition").exists()
 
 
-# --- Экран приёмки ------------------------------------------------------------------
+# --- Helpers -----------------------------------------------------------------------
 
 
-def test_scan_part_number_offers_addition_not_error(client, make_user, data):
+def _queue(client):
+    return client.session[QUEUE_SESSION_KEY]
+
+
+def _single_line(client):
+    return next(iter(_queue(client)["lines"].values()))
+
+
+def _group_payload(client, location):
+    client.get(URL)  # rendering creates/refreshes the group token
+    token = _queue(client)["group_tokens"][str(location.pk)]["token"]
+    return {"action": "queue_post", "location_id": location.pk, "token": token}
+
+
+# --- Queue behavior ----------------------------------------------------------------
+
+
+def test_scan_exact_part_queues_without_stock_mutation(client, make_user, data):
     _login(client, make_user, superuser=True, name="boss")
-    resp = client.post(URL, {"action": "scan", "code": "420931285"})
-    html = resp.content.decode()
-    assert "Это вид детали, а не конкретный экземпляр" not in html  # старой ошибки нет
-    assert "Добавить +1 к наличию" in html
-    assert "S04-L03-D01-C04" in html  # ячейка, где деталь уже лежит
-    assert "420931285" in html
-    assert "420931284" not in html  # замена не подменяет номер
-    # Токен идемпотентности выставлен в сессии.
-    assert client.session.get("found_add_token")
+    movements = StockMovement.objects.count()
+    receipts = Receipt.objects.count()
+    response = client.post(URL, {"action": "scan", "code": "420931285"}, follow=True)
+
+    line = _single_line(client)
+    assert response.status_code == 200
+    assert line["exact_number"] == "420931285"
+    assert line["location_id"] == data["loc4"].pk
+    assert line["quantity"] == 1
+    assert "420931284" not in response.content.decode()
+    assert StockMovement.objects.count() == movements
+    assert Receipt.objects.count() == receipts
 
 
-def test_confirm_adds_exactly_one(client, make_user, data):
+def test_repeat_scan_groups_quantity_and_survives_refresh(client, make_user, data):
     _login(client, make_user, superuser=True, name="boss")
     client.post(URL, {"action": "scan", "code": "420931285"})
-    token = client.session["found_add_token"]
-    resp = client.post(URL, {
-        "action": "add_found", "part_id": data["part"].pk,
-        "location_id": data["loc4"].pk, "scanned_number": "420931285", "token": token,
-    }, follow=True)
-    assert "Добавлено +1: 420931285 OIL SEAL в ячейку S04-L03-D01-C04" in resp.content.decode()
-    data["lot4"].refresh_from_db()
-    assert data["lot4"].quantity == Decimal("4")
-
-
-def test_double_submit_does_not_add_two(client, make_user, data):
-    _login(client, make_user, superuser=True, name="boss")
     client.post(URL, {"action": "scan", "code": "420931285"})
-    token = client.session["found_add_token"]
-    payload = {
-        "action": "add_found", "part_id": data["part"].pk,
-        "location_id": data["loc4"].pk, "scanned_number": "420931285", "token": token,
+    assert _single_line(client)["quantity"] == 2
+    html = client.get(URL).content.decode()
+    assert "К добавлению · 2 шт." in html
+    assert _single_line(client)["quantity"] == 2
+
+
+def test_warehouse_exact_numbers_stay_split_and_share_first_lot(client, make_user, data):
+    category = Category.objects.create(name="Складские номера")
+    part = PartType.objects.create(
+        name="Уплотнение с двумя артикулами",
+        category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("100"),
+    )
+    first_number = PartNumber.objects.create(
+        part=part, value="WH-100", kind=PartNumber.Kind.OEM, is_primary=True
+    )
+    second_number = PartNumber.objects.create(
+        part=part, value="WH-200", kind=PartNumber.Kind.ARTICLE
+    )
+    _login(client, make_user, superuser=True, name="boss")
+
+    client.post(URL, {"action": "scan", "code": first_number.value})
+    client.post(URL, {"action": "scan", "code": second_number.value})
+    lines = list(_queue(client)["lines"].values())
+    assert {line["exact_number"] for line in lines} == {first_number.value, second_number.value}
+    assert len(lines) == 2
+
+    client.post(URL, {"action": "scan", "code": "wh 100"})
+    lines = list(_queue(client)["lines"].values())
+    quantities = {line["exact_number"]: line["quantity"] for line in lines}
+    assert quantities == {first_number.value: 2, second_number.value: 1}
+
+    for line in lines:
+        client.post(
+            URL,
+            {
+                "action": "queue_assign",
+                "line_id": line["id"],
+                "location_code": data["loc3"].code,
+            },
+        )
+    lines = list(_queue(client)["lines"].values())
+    assert len(lines) == 2
+    assert {line["location_id"] for line in lines} == {data["loc3"].pk}
+
+    batches_before = Batch.objects.count()
+    batch_lines_before = BatchLine.objects.count()
+    payload = _group_payload(client, data["loc3"])
+    first_post = client.post(URL, payload, follow=True)
+    second_post = client.post(URL, payload, follow=True)
+
+    lots = StockLot.objects.filter(part_type=part, location=data["loc3"])
+    assert lots.count() == 1
+    lot = lots.get()
+    assert lot.quantity == Decimal("3")
+    assert Batch.objects.count() == batches_before + 1
+    assert BatchLine.objects.count() == batch_lines_before + 1
+    movements = StockMovement.objects.filter(stock_lot=lot, document_type="found_addition")
+    assert movements.count() == 2
+    assert {movement.comment for movement in movements} == {
+        f"Добавление найденной детали {first_number.value} x 2 в {data['loc3'].code}",
+        f"Добавление найденной детали {second_number.value} x 1 в {data['loc3'].code}",
     }
-    client.post(URL, payload)  # первый сабмит: +1
-    resp = client.post(URL, payload)  # повтор той же формы: должен быть отклонён
-    assert "не добавлена ещё раз" in resp.content.decode()
-    data["lot4"].refresh_from_db()
-    assert data["lot4"].quantity == Decimal("4")  # ровно +1, не +2
+    for movement in movements:
+        detail = client.get(reverse("movement_detail", args=[movement.pk])).content.decode()
+        assert movement.comment in detail
+    assert FoundStockPosting.objects.filter(token=payload["token"]).count() == 1
+    assert "Добавлено 3 деталей" in first_post.content.decode()
+    assert "Эта группа уже была проведена" in second_post.content.decode()
+    assert lot.quantity == Decimal("3")
 
 
-def test_multiple_cells_require_choice(client, make_user, data):
-    # Та же деталь ещё и в C03 — теперь две ячейки.
+def test_queue_page_query_count_is_bounded(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    with CaptureQueriesContext(connection) as captured:
+        response = client.get(URL)
+    assert response.status_code == 200
+    assert len(captured) == 9
+
+
+def test_queue_isolated_between_users(client, django_user_model, make_user, data):
+    _login(client, make_user, superuser=True, name="first")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    first_session = client.session.session_key
+
+    client.logout()
+    second = django_user_model.objects.create_superuser("second", password=PASSWORD)
+    assert second
+    client.login(username="second", password=PASSWORD)
+    assert QUEUE_SESSION_KEY not in client.session
+    assert client.session.session_key != first_session
+
+
+def test_remove_and_clear_queue_do_not_change_stock(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    before = StockMovement.objects.count()
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    client.post(URL, {"action": "queue_remove", "line_id": line["id"]})
+    assert not _queue(client)["lines"]
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    client.post(URL, {"action": "queue_clear"})
+    assert not _queue(client)["lines"]
+    assert StockMovement.objects.count() == before
+
+
+def test_quantity_must_be_positive_integer(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    response = client.post(
+        URL,
+        {"action": "queue_update", "line_id": line["id"], "quantity": "0"},
+    )
+    assert "положительным целым" in response.content.decode()
+    assert _single_line(client)["quantity"] == 1
+
+
+# --- Locations and independent groups ----------------------------------------------
+
+
+def test_multiple_cells_require_explicit_choice(client, make_user, data):
     _stock(data["part"], data["loc3"], 2, data["sup"], data["admin"])
     _login(client, make_user, superuser=True, name="boss")
-    resp = client.post(URL, {"action": "scan", "code": "420931285"})
-    html = resp.content.decode()
-    assert "Деталь найдена в нескольких ячейках" in html
-    assert "S04-L03-D01-C03" in html and "S04-L03-D01-C04" in html
-    # Радио не предвыбрано (нужен явный выбор).
-    assert "checked" not in html.split("Ячейка")[1].split("</table>")[0]
-
-
-def test_part_not_in_any_cell_not_added_silently(client, make_user, admin, data):
-    orphan_brp = BrpCatalogPart.objects.create(
-        material_no="999000111", part_desc="LONELY", retail_price_usd=Decimal("5"),
+    response = client.post(
+        URL, {"action": "scan", "code": "420931285"}, follow=True
     )
-    orphan = promote_to_warehouse(orphan_brp, by=admin)  # карточка есть, остатка нет
-    _login(client, make_user, superuser=True, name="boss")
-    resp = client.post(URL, {"action": "scan", "code": "999000111"})
-    html = resp.content.decode()
-    assert "Этой детали ещё нет ни в одной ячейке" in html
-    assert "Добавить +1" not in html
-    assert not StockMovement.objects.filter(part_type=orphan).exists()
+    line = _single_line(client)
+    html = response.content.decode()
+    assert line["location_id"] is None
+    assert {choice["id"] for choice in line["location_choices"]} == {
+        data["loc3"].pk,
+        data["loc4"].pk,
+    }
+    assert "Деталь найдена в нескольких ячейках" in html
+    assert "checked" not in html
 
 
-def test_addition_does_not_create_receipt(client, make_user, data):
-    receipts_before = Receipt.objects.count()
+def test_assign_choice_places_line_in_correct_group(client, make_user, data):
+    _stock(data["part"], data["loc3"], 2, data["sup"], data["admin"])
     _login(client, make_user, superuser=True, name="boss")
     client.post(URL, {"action": "scan", "code": "420931285"})
-    token = client.session["found_add_token"]
-    client.post(URL, {
-        "action": "add_found", "part_id": data["part"].pk,
-        "location_id": data["loc4"].pk, "scanned_number": "420931285", "token": token,
-    })
-    assert Receipt.objects.count() == receipts_before  # «Поступлений» не прибавилось
+    line = _single_line(client)
+    client.post(
+        URL,
+        {"action": "queue_assign", "line_id": line["id"], "location_id": data["loc3"].pk},
+    )
+    assert _single_line(client)["location_id"] == data["loc3"].pk
+    assert "Ячейка <span class=\"code-pill\">S04-L03-D01-C03" in client.get(URL).content.decode()
+
+
+def test_cannot_assign_inactive_or_unrelated_location(client, make_user, data):
+    inactive = StorageLocation.objects.create(
+        name="Архив", code="S04-L03-D01-C05", storage_allowed=True, is_active=False
+    )
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    response = client.post(
+        URL,
+        {"action": "queue_assign", "line_id": line["id"], "location_id": inactive.pk},
+    )
+    assert "активную ячейку" in response.content.decode()
+    assert _single_line(client)["location_id"] == data["loc4"].pk
+
+
+def test_posting_one_location_leaves_other_group(client, make_user, data):
+    brp2 = BrpCatalogPart.objects.create(
+        material_no="420999999", part_desc="FILTER", retail_price_usd=Decimal("8")
+    )
+    part2 = promote_to_warehouse(brp2, by=data["admin"])
+    lot3 = _stock(part2, data["loc3"], 1, data["sup"], data["admin"])
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    client.post(URL, {"action": "scan", "code": "420999999"})
+    html = client.get(URL).content.decode()
+    assert html.index("S04-L03-D01-C03") < html.index("S04-L03-D01-C04")
+
+    client.post(URL, _group_payload(client, data["loc4"]))
+    data["lot4"].refresh_from_db()
+    lot3.refresh_from_db()
+    assert data["lot4"].quantity == Decimal("4")
+    assert lot3.quantity == Decimal("1")
+    assert {line["location_id"] for line in _queue(client)["lines"].values()} == {
+        data["loc3"].pk
+    }
+
+
+# --- New catalog identities ---------------------------------------------------------
+
+
+def test_new_brp_part_can_create_first_lot_without_receipt(client, make_user, data):
+    brp = BrpCatalogPart.objects.create(
+        material_no="999000111", part_desc="LONELY", retail_price_usd=Decimal("5")
+    )
+    _login(client, make_user, superuser=True, name="boss")
+    receipts_before = Receipt.objects.count()
+    client.post(URL, {"action": "scan", "code": brp.material_no})
+    line = _single_line(client)
+    assert line["location_id"] is None and line["location_mode"] == "new"
+    client.post(
+        URL,
+        {"action": "queue_update", "line_id": line["id"], "quantity": 3},
+    )
+    client.post(
+        URL,
+        {
+            "action": "queue_assign",
+            "line_id": line["id"],
+            "location_code": data["loc3"].code,
+        },
+    )
+    response = client.post(URL, _group_payload(client, data["loc3"]), follow=True)
+
+    part = brp.links.get().part
+    lot = StockLot.objects.get(part_type=part, location=data["loc3"])
+    movement = StockMovement.objects.get(stock_lot=lot, document_type="found_addition")
+    assert lot.quantity == Decimal("3")
+    assert movement.movement_type == StockMovement.MovementType.ADJUST_IN
+    assert movement.quantity == Decimal("3")
+    assert Receipt.objects.count() == receipts_before
+    assert "Новые остатки: 999000111: 3" in response.content.decode()
+
+
+def test_new_polaris_part_can_create_first_lot(client, make_user, data):
+    polaris = PolarisCatalogPart.objects.create(
+        part_number="POL-700", part_name="POLARIS SEAL", retail_price_usd=Decimal("7")
+    )
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": polaris.part_number})
+    line = _single_line(client)
+    client.post(
+        URL,
+        {
+            "action": "queue_assign",
+            "line_id": line["id"],
+            "location_code": data["loc3"].code,
+        },
+    )
+    client.post(URL, _group_payload(client, data["loc3"]))
+    link = PolarisPartLink.objects.get(polaris_part=polaris)
+    assert StockLot.objects.get(part_type=link.part, location=data["loc3"]).quantity == 1
+
+
+def test_new_part_location_can_change_before_posting(client, make_user, data):
+    brp = BrpCatalogPart.objects.create(
+        material_no="CHANGE-CELL", part_desc="CHANGE CELL", retail_price_usd=Decimal("3")
+    )
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": brp.material_no})
+    line = _single_line(client)
+    client.post(
+        URL,
+        {
+            "action": "queue_assign",
+            "line_id": line["id"],
+            "location_code": data["loc3"].code,
+        },
+    )
+    client.post(URL, {"action": "queue_unassign", "line_id": line["id"]})
+    assert _single_line(client)["location_id"] is None
+    client.post(
+        URL,
+        {
+            "action": "queue_assign",
+            "line_id": line["id"],
+            "location_code": data["loc4"].code,
+        },
+    )
+    assert _single_line(client)["location_id"] == data["loc4"].pk
+    assert not StockMovement.objects.filter(document_type="found_addition").exists()
+
+
+def test_unknown_code_does_not_create_anonymous_part(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    part_count = PartType.objects.count()
+    movement_count = StockMovement.objects.count()
+    response = client.post(URL, {"action": "scan", "code": "NO-SUCH-777"})
+    assert "не найден в каталогах BRP, Polaris" in response.content.decode()
+    assert PartType.objects.count() == part_count
+    assert StockMovement.objects.count() == movement_count
+
+
+def test_same_number_in_brp_and_polaris_requires_source_choice(client, make_user, data):
+    BrpCatalogPart.objects.create(
+        material_no="SHARED-1", part_desc="BRP PART", retail_price_usd=Decimal("5")
+    )
+    PolarisCatalogPart.objects.create(
+        part_number="SHARED-1", part_name="POLARIS PART", retail_price_usd=Decimal("6")
+    )
+    _login(client, make_user, superuser=True, name="boss")
+    response = client.post(URL, {"action": "scan", "code": "SHARED-1"}, follow=True)
+    pending = client.session[PENDING_SESSION_KEY]
+    assert not client.session.get(QUEUE_SESSION_KEY, {"lines": {}})["lines"]
+    brp_key = next(key for key in pending["candidates"] if key.startswith("brp:"))
+    assert any(key.startswith("polaris:") for key in pending["candidates"])
+    assert "Выберите производителя" in response.content.decode()
+    client.post(
+        URL,
+        {
+            "action": "queue_select_candidate",
+            "candidate_token": pending["token"],
+            "candidate_key": brp_key,
+        },
+    )
+    assert _single_line(client)["source"] == "brp"
+    assert _single_line(client)["manufacturer"] == "BRP"
+
+
+# --- Atomicity and idempotency ------------------------------------------------------
+
+
+def test_group_post_and_double_submit_are_idempotent(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    payload = _group_payload(client, data["loc4"])
+    first = client.post(URL, payload, follow=True)
+    second = client.post(URL, payload, follow=True)
+    data["lot4"].refresh_from_db()
+    assert "Добавлено 1 деталей" in first.content.decode()
+    assert "Эта группа уже была проведена" in second.content.decode()
+    assert data["lot4"].quantity == Decimal("4")
+    assert FoundStockPosting.objects.filter(token=payload["token"]).count() == 1
+
+
+def test_group_location_hidden_field_cannot_be_substituted(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    payload = _group_payload(client, data["loc4"])
+    payload["location_id"] = data["loc3"].pk
+    response = client.post(URL, payload)
+    data["lot4"].refresh_from_db()
+    assert "Группа изменилась" in response.content.decode()
+    assert data["lot4"].quantity == Decimal("3")
+
+
+def test_service_rolls_back_entire_group_on_second_adjustment(monkeypatch, data):
+    from apps.inventory import services as inventory_services
+
+    brp2 = BrpCatalogPart.objects.create(
+        material_no="ATOMIC-2", part_desc="SECOND", retail_price_usd=Decimal("4")
+    )
+    part2 = promote_to_warehouse(brp2, by=data["admin"])
+    lot2 = _stock(part2, data["loc4"], 2, data["sup"], data["admin"])
+    before_first = data["lot4"].quantity
+    before_second = lot2.quantity
+    movements_before = StockMovement.objects.count()
+    entries = [
+        {
+            "source": "brp",
+            "source_id": data["part"].brp_link.brp_part_id,
+            "exact_number": "420931285",
+            "quantity": 2,
+        },
+        {
+            "source": "brp",
+            "source_id": brp2.pk,
+            "exact_number": "ATOMIC-2",
+            "quantity": 1,
+        },
+    ]
+
+    original_adjust = inventory_services.adjust_stock_lot_quantity
+    calls = 0
+
+    def fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise InventoryError("Ошибка второй строки")
+        return original_adjust(*args, **kwargs)
+
+    monkeypatch.setattr(inventory_services, "adjust_stock_lot_quantity", fail_second)
+    with pytest.raises(InventoryError):
+        post_found_stock_group(
+            entries=entries,
+            location=data["loc4"],
+            token="atomic-group-token",
+            by=data["admin"],
+        )
+    data["lot4"].refresh_from_db()
+    lot2.refresh_from_db()
+    assert data["lot4"].quantity == before_first
+    assert lot2.quantity == before_second
+    assert StockMovement.objects.count() == movements_before
+    assert not FoundStockPosting.objects.filter(token="atomic-group-token").exists()
+
+
+def test_service_rejects_nonpositive_quantity(data):
+    entry = {
+        "source": "brp",
+        "source_id": data["part"].brp_link.brp_part_id,
+        "exact_number": "420931285",
+        "quantity": -1,
+    }
+    with pytest.raises(InventoryError, match="положительным целым"):
+        post_found_stock_group(
+            entries=[entry],
+            location=data["loc4"],
+            token="bad-quantity-token",
+            by=data["admin"],
+        )
+
+
+# --- Regressions --------------------------------------------------------------------
 
 
 def test_serial_item_flow_unaffected(client, make_user, data):
-    # Сканирование ITEM:/DS-… (несуществующий) не уходит в довнесение.
     _login(client, make_user, superuser=True, name="boss")
-    resp = client.post(URL, {"action": "scan", "code": "ITEM:DS-NOPE"})
-    html = resp.content.decode()
-    assert "Добавить +1 к наличию" not in html  # это не сценарий довнесения
+    response = client.post(URL, {"action": "scan", "code": "ITEM:DS-NOPE"})
+    assert "К добавлению" not in response.content.decode()
+    assert not client.session.get(QUEUE_SESSION_KEY, {"lines": {}})["lines"]
 
 
-def test_actions_overview_shows_new_balance(client, make_user, data):
-    _login(client, make_user, superuser=True, name="boss")
-    client.post(URL, {"action": "scan", "code": "420931285"})
-    token = client.session["found_add_token"]
-    client.post(URL, {
-        "action": "add_found", "part_id": data["part"].pk,
-        "location_id": data["loc4"].pk, "scanned_number": "420931285", "token": token,
-    })
-    html = client.get(reverse("actions_scan") + "?q=420931285").content.decode()
-    assert "S04-L03-D01-C04" in html
-    assert "Доступно всего: 4" in html  # обновлённый остаток
-
-
-def test_found_history_shown_on_receiving(client, make_user, data):
+def test_actions_overview_and_history_show_new_balance(client, make_user, data):
     _login(client, make_user, superuser=True, name="boss")
     client.post(URL, {"action": "scan", "code": "420931285"})
-    token = client.session["found_add_token"]
-    client.post(URL, {
-        "action": "add_found", "part_id": data["part"].pk,
-        "location_id": data["loc4"].pk, "scanned_number": "420931285", "token": token,
-    })
-    html = client.get(URL).content.decode()
-    assert "Добавление найденных деталей" in html
-    assert "420931285" in html
-    assert "S04-L03-D01-C04" in html
+    client.post(URL, _group_payload(client, data["loc4"]))
+    actions_html = client.get(reverse("actions_scan") + "?q=420931285").content.decode()
+    receiving_html = client.get(URL).content.decode()
+    assert "Доступно всего: 4" in actions_html
+    assert "Добавление найденных деталей" in receiving_html
+    assert "420931285" in receiving_html
+    assert "S04-L03-D01-C04" in receiving_html
+    assert "+1" in receiving_html
 
 
 def test_receiving_requires_inventory_permission(client, make_user, data):

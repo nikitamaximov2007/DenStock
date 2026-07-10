@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load number_format %}
 {% block title %}Движения · DenisStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Журнал движений</h1>
@@ -33,13 +34,13 @@
     <button type="submit">Фильтр</button>
   </form>
   {% if movements %}
-    <table class="table">
+    <table class="table movement-table">
       <thead>
         <tr>
           <th>Дата</th>
           <th>Тип</th>
+          <th>Артикул</th>
           <th>Деталь</th>
-          <th>Объект</th>
           <th class="num--qty">Кол-во</th>
           <th>Откуда → Куда</th>
           <th>Кто</th>
@@ -53,15 +54,9 @@
               <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
             </td>
             <td>{{ m.get_movement_type_display }}</td>
+            <td><span class="code-pill">{{ m.display_part_number }}</span></td>
             <td>{{ m.part_type }}</td>
-            <td>
-              {% if m.stock_lot_id %}
-                лот #{{ m.stock_lot_id }}
-              {% elif m.part_item_id %}
-                {{ m.part_item.internal_number }}
-              {% endif %}
-            </td>
-            <td class="num--qty">{{ m.quantity }}</td>
+            <td class="num--qty">{{ m.quantity|quantity_number }}</td>
             <td>
               {% if m.from_location %}
                 {{ m.from_location.code }}
@@ -76,7 +71,9 @@
               {% endif %}
             </td>
             <td>{{ m.created_by|default:"·" }}</td>
-            {% if show_costs %}<td class="num--money">{{ m.total_cost_rub }}</td>{% endif %}
+            {% if show_costs %}
+              <td class="num--money">{{ m.total_cost_rub|whole_number }}</td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>

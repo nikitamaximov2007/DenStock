@@ -11,7 +11,9 @@ from django.db import IntegrityError, transaction
 from django.urls import reverse
 
 from apps.accounts import roles
-from apps.catalog.models import Category, PartType, Unit
+from apps.brp.models import BrpCatalogPart
+from apps.brp.services import promote_to_warehouse as promote_brp
+from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.inventory.admin import StockBalanceAdmin, StockMovementAdmin
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
@@ -27,6 +29,8 @@ from apps.inventory.services import (
     receive_part_item,
     receive_stock_lot,
 )
+from apps.polaris.models import PolarisCatalogPart
+from apps.polaris.services import promote_to_warehouse as promote_polaris
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
@@ -64,6 +68,12 @@ def refs(db):
     )
     serial = PartType.objects.create(
         name="Насос", category=cat, unit=unit, tracking_mode=PartType.TrackingMode.SERIAL
+    )
+    PartNumber.objects.create(
+        part=bulk, value="BOLT-001", kind=PartNumber.Kind.OEM, is_primary=True
+    )
+    PartNumber.objects.create(
+        part=serial, value="PUMP-001", kind=PartNumber.Kind.OEM, is_primary=True
     )
     loc1 = StorageLocation.objects.create(
         name="Ячейка A", code="A-01", storage_allowed=True, is_active=True
@@ -364,6 +374,73 @@ def test_cost_hidden_in_movements_from_storekeeper(make_user, client, refs, admi
     client.login(username="admin", password=PASSWORD)
     admin_html = client.get(reverse("movement_list")).content.decode()
     assert "600" in admin_html
+
+
+def test_movement_list_shows_exact_article_and_whole_values(client, refs, admin):
+    line = _finalized_line(
+        refs, admin, quantity="1", unit_cost="2645", shipping="0"
+    )
+    lot = create_stock_lot(line, refs["loc1"], Decimal("1"))
+    receive_stock_lot(lot, by=admin)
+    client.login(username="admin", password=PASSWORD)
+    html = client.get(reverse("movement_list")).content.decode()
+
+    assert '<span class="code-pill">BOLT-001</span>' in html
+    assert f"лот #{lot.pk}" not in html
+    assert '<td class="num--qty">1</td>' in html
+    assert '<td class="num--money">2645</td>' in html
+    assert "1,000" not in html and "2645,00" not in html
+
+
+def test_movement_list_preserves_fractional_quantities(client, refs, admin):
+    line = _finalized_line(
+        refs, admin, quantity="1.5", unit_cost="100", shipping="0"
+    )
+    lot = create_stock_lot(line, refs["loc1"], Decimal("1.5"))
+    receive_stock_lot(lot, by=admin)
+    movement = StockMovement.objects.get(stock_lot=lot)
+    client.login(username="admin", password=PASSWORD)
+
+    html = client.get(reverse("movement_list")).content.decode()
+    detail = client.get(reverse("movement_detail", args=[movement.pk])).content.decode()
+
+    assert '<td class="num--qty">1.5</td>' in html
+    assert "1.5" in detail
+    assert '<td class="num--qty">2</td>' not in html
+
+
+def test_movement_brp_replacement_does_not_replace_exact_number(client, refs, admin):
+    catalog = BrpCatalogPart.objects.create(
+        material_no="420931285",
+        part_desc="OIL SEAL",
+        retail_price_usd=Decimal("10"),
+        replacement_no_1="420931284",
+    )
+    part = promote_brp(catalog, by=admin)
+    line = _finalized_line(refs, admin, part=part, quantity="1", shipping="0")
+    lot = create_stock_lot(line, refs["loc1"], Decimal("1"))
+    receive_stock_lot(lot, by=admin)
+    client.login(username="admin", password=PASSWORD)
+    html = client.get(reverse("movement_list")).content.decode()
+    assert "420931285" in html
+    assert "420931284" not in html
+
+
+def test_movement_polaris_superseded_does_not_replace_exact_number(client, refs, admin):
+    catalog = PolarisCatalogPart.objects.create(
+        part_number="POL-EXACT",
+        part_name="POLARIS SEAL",
+        superseded_number="POL-OLD",
+        retail_price_usd=Decimal("10"),
+    )
+    part = promote_polaris(catalog, by=admin)
+    line = _finalized_line(refs, admin, part=part, quantity="1", shipping="0")
+    lot = create_stock_lot(line, refs["loc1"], Decimal("1"))
+    receive_stock_lot(lot, by=admin)
+    client.login(username="admin", password=PASSWORD)
+    html = client.get(reverse("movement_list")).content.decode()
+    assert "POL-EXACT" in html
+    assert "POL-OLD" not in html
 
 
 def test_storekeeper_can_operate_viewer_cannot(make_user, client, refs, admin):

@@ -535,3 +535,52 @@ form.toolbar input:focus, form.toolbar select:focus {
 @media (max-width: 560px) {
   .css-modal__dialog { margin: 2vh auto; padding: 14px; max-height: 92vh; }
 }
+
+/* Пакетная приёмка: компактные группы по физическим ячейкам. */
+.receiving-queue-line { padding: 14px 0; border-top: 1px solid var(--line); }
+.receiving-queue-line:first-of-type { border-top: 0; }
+.receiving-queue-line p { margin: 0 0 10px; }
+.receiving-group { margin-top: 14px; }
+.receiving-group h2 { margin-top: 0; }
+.receiving-group .inline-form input[type="number"],
+.receiving-queue-line .inline-form input[type="number"] { width: 78px; }
+.receiving-group .inline-form .btn--danger { background: var(--danger);
+  border-color: var(--danger); color: #fff; }
+.receiving-location-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.receiving-location-form input { flex: 1 1 260px; min-width: 0; }
+
+@media (max-width: 560px) {
+  .receiving-group .card__body, .receiving-queue-line { padding-left: 0; padding-right: 0; }
+  .receiving-group .table { white-space: normal; }
+  .receiving-group .table thead { display: none; }
+  .receiving-group .table tbody { display: block; }
+  .receiving-group .table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 10px; padding: 10px; border-bottom: 1px solid var(--line); }
+  .receiving-group .table tbody td { display: block; padding: 2px 0; border: 0; min-width: 0; }
+  .receiving-group .table tbody td:nth-child(1),
+  .receiving-group .table tbody td:nth-child(2),
+  .receiving-group .table tbody td:nth-child(3),
+  .receiving-group .table tbody td:nth-child(5),
+  .receiving-group .table tbody td:nth-child(6) { grid-column: 1; text-align: left; }
+  .receiving-group .table tbody td:nth-child(4) { grid-column: 2; grid-row: 1 / span 3; }
+  .receiving-group .table tbody td:nth-child(5)::before { content: "Оценка: "; color: var(--muted); }
+  .receiving-group .table tbody td:nth-child(6)::before { content: "Сумма: "; color: var(--muted); }
+  .receiving-group .table tbody td:nth-child(7) { display: flex; grid-column: 1 / -1;
+    flex-wrap: wrap; gap: 6px; margin-top: 5px; text-align: left; }
+  .receiving-group .table__actions .inline-form { display: block; margin: 0; }
+  .receiving-location-form input, .receiving-location-form button { width: 100%; }
+  .receiving-queue-line .form-actions { align-items: stretch; }
+  .receiving-queue-line .form-actions form { width: 100%; }
+  .receiving-queue-line .form-actions input,
+  .receiving-queue-line .form-actions button { min-height: 40px; }
+  .movement-table { display: table; white-space: normal; table-layout: fixed; }
+  .movement-table th, .movement-table td { padding: 8px 6px; font-size: 13px; }
+  .movement-table th:nth-child(1) { width: 25%; }
+  .movement-table th:nth-child(2) { width: 29%; }
+  .movement-table th:nth-child(3) { width: 31%; }
+  .movement-table th:nth-child(5) { width: 15%; }
+  .movement-table th:nth-child(4), .movement-table td:nth-child(4),
+  .movement-table th:nth-child(6), .movement-table td:nth-child(6),
+  .movement-table th:nth-child(7), .movement-table td:nth-child(7),
+  .movement-table th:nth-child(8), .movement-table td:nth-child(8) { display: none; }
+}

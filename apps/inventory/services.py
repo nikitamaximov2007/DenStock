@@ -3,20 +3,31 @@
 Создаёт физические экземпляры из строки уже финансово закрытой партии. Без
 складских движений (`StockMovement`/`StockBalance` — Слой 10) и без сканера.
 """
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 
 from apps.procurement.models import BatchLine
 from apps.warehouse.models import StorageLocation
 
-from .models import NumberSequence, PartItem, StockBalance, StockLot, StockMovement
+from .models import (
+    FoundStockPosting,
+    NumberSequence,
+    PartItem,
+    StockBalance,
+    StockLot,
+    StockMovement,
+)
 
 
 class InventoryError(Exception):
     """Невозможно создать экземпляр(ы) детали."""
+
+
+class FoundStockAlreadyPosted(InventoryError):
+    """Группа пакетной приёмки с этим токеном уже проведена."""
 
 
 def _validate_line(line: BatchLine) -> None:
@@ -474,6 +485,233 @@ def add_found_stock(
     return lot, movement
 
 
+def _positive_integer(value) -> int:
+    try:
+        decimal = Decimal(str(value))
+        integer = int(decimal)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise InventoryError("Количество должно быть положительным целым числом.") from exc
+    if decimal != integer or integer <= 0:
+        raise InventoryError("Количество должно быть положительным целым числом.")
+    return integer
+
+
+def _found_part_from_entry(entry: dict, *, by=None):
+    """Resolve/promote one trusted queue reference inside the posting transaction."""
+    from apps.brp.models import BrpCatalogPart, BrpPartLink
+    from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
+    from apps.brp.services import promote_to_warehouse as promote_brp
+    from apps.catalog.models import PartNumber, PartType, normalize_number
+    from apps.catalog.services import get_current_price_settings
+    from apps.counting.services import find_brp_price_source
+    from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
+    from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
+    from apps.polaris.services import (
+        find_polaris_price_source,
+    )
+    from apps.polaris.services import (
+        promote_to_warehouse as promote_polaris,
+    )
+
+    source = entry.get("source")
+    source_id = entry.get("source_id")
+    expected = normalize_number(entry.get("exact_number") or "")
+    if source == "warehouse":
+        part = PartType.objects.select_for_update().filter(pk=source_id).first()
+        if part is None:
+            raise InventoryError("Карточка детали больше не найдена.")
+        exact = (
+            PartNumber.objects.filter(part=part, normalized_value=expected)
+            .exclude(kind=PartNumber.Kind.ANALOG)
+            .order_by("-is_primary", "pk")
+            .first()
+        )
+        if exact is None:
+            raise InventoryError("Exact-артикул больше не принадлежит карточке детали.")
+        return part, exact.value
+
+    pricing = get_current_price_settings()
+    if source == "brp":
+        catalog = BrpCatalogPart.objects.select_for_update().filter(pk=source_id).first()
+        if catalog is None or catalog.material_no_norm != expected:
+            raise InventoryError("Exact-позиция BRP больше не найдена.")
+        link = BrpPartLink.objects.filter(brp_part=catalog).select_related("part").first()
+        if link:
+            return link.part, catalog.material_no
+        manual = None
+        if not catalog.retail_price_usd or catalog.retail_price_usd <= 0:
+            price_source = find_brp_price_source(catalog.material_no_norm, catalog)
+            if price_source is not None:
+                manual = brp_customer_price_rub(
+                    price_source.retail_price_usd,
+                    pricing.current_usd_rate,
+                    pricing.brp_markup_percent,
+                )
+        return promote_brp(catalog, by=by, manual_price=manual), catalog.material_no
+
+    if source == "polaris":
+        catalog = PolarisCatalogPart.objects.select_for_update().filter(pk=source_id).first()
+        if catalog is None or catalog.part_number_norm != expected:
+            raise InventoryError("Exact-позиция Polaris больше не найдена.")
+        link = (
+            PolarisPartLink.objects.filter(polaris_part=catalog)
+            .select_related("part")
+            .first()
+        )
+        if link:
+            return link.part, catalog.part_number
+        manual = None
+        if not catalog.retail_price_usd or catalog.retail_price_usd <= 0:
+            price_source = find_polaris_price_source(catalog.part_number_norm, catalog)
+            if price_source is not None:
+                manual = polaris_customer_price_rub(
+                    price_source.retail_price_usd,
+                    pricing.current_usd_rate,
+                    pricing.polaris_markup_percent,
+                )
+        return promote_polaris(catalog, by=by, manual_price=manual), catalog.part_number
+
+    raise InventoryError("Неизвестный источник детали в очереди.")
+
+
+def _post_found_stock_group(*, entries, location, token: str, by=None):
+    from apps.procurement.models import Batch, BatchLine, money
+    from apps.procurement.services import finalize_cost
+    from apps.suppliers.models import Supplier
+
+    if not token or len(token) > 64:
+        raise InventoryError("Некорректный токен пакетной приёмки.")
+    prepared = []
+    for entry in entries:
+        prepared.append((entry, _positive_integer(entry.get("quantity"))))
+    if not prepared:
+        raise InventoryError("Группа пакетной приёмки пуста.")
+
+    with transaction.atomic():
+        location = StorageLocation.objects.select_for_update().filter(pk=location.pk).first()
+        if location is None or not location.can_hold_stock():
+            raise InventoryError("Ячейка не предназначена для хранения остатка.")
+        FoundStockPosting.objects.create(
+            token=token,
+            location=location,
+            line_count=len(prepared),
+            quantity=sum(quantity for _entry, quantity in prepared),
+            created_by=by,
+        )
+
+        resolved = []
+        for entry, quantity in prepared:
+            part, exact_number = _found_part_from_entry(entry, by=by)
+            if part.tracking_mode != part.TrackingMode.BULK:
+                raise InventoryError(
+                    f"Деталь {exact_number} учитывается по экземплярам; "
+                    "пакетное добавление запрещено."
+                )
+            lot = (
+                StockLot.objects.select_for_update()
+                .filter(part_type=part, location=location, status=StockLot.Status.AVAILABLE)
+                .order_by("-created_at", "-pk")
+                .first()
+            )
+            resolved.append(
+                {
+                    "part": part,
+                    "exact_number": exact_number,
+                    "quantity": quantity,
+                    "lot": lot,
+                }
+            )
+
+        missing_by_part = {}
+        for row in resolved:
+            if row["lot"] is None:
+                missing_by_part.setdefault(row["part"].pk, []).append(row)
+        lines_by_part_id = {}
+        if missing_by_part:
+            supplier, _created = Supplier.objects.get_or_create(
+                name="Стартовый ввод", defaults={"is_active": True, "default_currency": "RUB"}
+            )
+            batch = Batch.objects.create(
+                supplier=supplier,
+                status=Batch.Status.ACCEPTED,
+                currency="RUB",
+                exchange_rate=Decimal("1"),
+                created_by=by,
+                notes=(
+                    f"Пакетное добавление найденных деталей в {location.code}; "
+                    "без supplier receipt"
+                ),
+            )
+            for rows in missing_by_part.values():
+                row = rows[0]
+                exact_numbers = ", ".join(item["exact_number"] for item in rows)
+                line = BatchLine.objects.create(
+                    batch=batch,
+                    part_type=row["part"],
+                    quantity=Decimal(sum(item["quantity"] for item in rows)),
+                    unit_cost_currency=money(row["part"].recommended_price or Decimal("0")),
+                    note=f"Найденные детали {exact_numbers} в {location.code}"[:255],
+                )
+                lines_by_part_id[row["part"].pk] = line
+            finalize_cost(batch, by)
+
+        created_lots_by_part_id = {}
+        results = []
+        for row in resolved:
+            lot = row["lot"]
+            if lot is None:
+                lot = created_lots_by_part_id.get(row["part"].pk)
+                if lot is None:
+                    line = lines_by_part_id[row["part"].pk]
+                    line.refresh_from_db()
+                    lot = StockLot.objects.create(
+                        part_type=row["part"],
+                        batch=line.batch,
+                        batch_line=line,
+                        location=location,
+                        quantity=Decimal("0"),
+                        initial_quantity=Decimal("0"),
+                        landed_unit_cost_rub=line.landed_unit_cost_rub,
+                        status=StockLot.Status.AVAILABLE,
+                        note="Первый лот из пакетной приёмки найденных деталей",
+                    )
+                    created_lots_by_part_id[row["part"].pk] = lot
+                row["lot"] = lot
+            comment = (
+                f"Добавление найденной детали {row['exact_number']} x {row['quantity']} "
+                f"в {location.code}"
+            )[:255]
+            movement = adjust_stock_lot_quantity(
+                lot,
+                Decimal(row["quantity"]),
+                by=by,
+                comment=comment,
+                document_type=FOUND_ADDITION_DOC,
+            )
+            lot.refresh_from_db()
+            results.append(
+                {
+                    "lot": lot,
+                    "movement": movement,
+                    "exact_number": row["exact_number"],
+                    "quantity": row["quantity"],
+                }
+            )
+        return results
+
+
+def post_found_stock_group(*, entries, location, token: str, by=None):
+    """Atomically post one location group with durable idempotency."""
+    try:
+        return _post_found_stock_group(
+            entries=entries, location=location, token=token, by=by
+        )
+    except IntegrityError as exc:
+        if FoundStockPosting.objects.filter(token=token).exists():
+            raise FoundStockAlreadyPosted("Эта группа уже была проведена.") from exc
+        raise
+
+
 @transaction.atomic
 def adjust_stock_lot_quantity(
     lot: StockLot, delta, *, by=None, comment="", document_type="", document_id=None
@@ -899,4 +1137,3 @@ def backfill_opening_movements(*, by=None) -> int:
         )
         created += 1
     return created
-
