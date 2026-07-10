@@ -26,5 +26,10 @@
     <div class="tile">
       <a href="{% url 'supplier_list' %}">Поставщики</a>
     </div>
+    {% if user.can_manage_parts %}
+      <div class="tile">
+        <a href="{% url 'price_settings' %}">Настройки цен</a>
+      </div>
+    {% endif %}
   </div>
 {% endblock %}

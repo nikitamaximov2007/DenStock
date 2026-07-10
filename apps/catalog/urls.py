@@ -4,6 +4,7 @@ from . import views
 
 urlpatterns = [
     path("", views.DirectoryIndexView.as_view(), name="directory_index"),
+    path("price-settings/", views.price_settings, name="price_settings"),
     # Категории
     path("categories/", views.CategoryListView.as_view(), name="category_list"),
     path("categories/new/", views.CategoryCreateView.as_view(), name="category_create"),

@@ -11,17 +11,16 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.brp.models import BrpCatalogPart
-from apps.brp.pricing import current_customer_price_rub
+from apps.brp.models import BrpCatalogPart, BrpPricingSettings
+from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
 from apps.inventory.models import NumberSequence
-from apps.polaris.models import PolarisCatalogPart
-from apps.polaris.services import (
-    effective_customer_price_rub as effective_polaris_customer_price_rub,
-)
+from apps.polaris.models import PolarisCatalogPart, PolarisPricingSettings
+from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
 from apps.polaris.services import (
     find_polaris_by_number,
+    find_polaris_price_source,
 )
 from apps.polaris.services import (
     promote_to_warehouse as promote_polaris,
@@ -29,6 +28,7 @@ from apps.polaris.services import (
 from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, create_receipt, post_receipt
 from apps.suppliers.models import Supplier
+from apps.warehouse.models import ValuationSettings
 
 from .models import InventoryCountingLine, InventoryCountingSession, InventoryScanEvent
 
@@ -138,12 +138,42 @@ def find_brp_price_source(
     return priced or selected
 
 
-def _effective_brp_price(norm: str, brp: BrpCatalogPart):
+def _effective_brp_price(
+    norm: str,
+    brp: BrpCatalogPart,
+    *,
+    usd_rate: Decimal | None = None,
+    markup_percent: Decimal | None = None,
+):
     """Цена клиента для строки: от источника цены (целые рубли, Decimal)."""
     price_source = find_brp_price_source(norm, brp)
     if price_source is None:
         return None
-    return current_customer_price_rub(price_source.retail_price_usd)
+    if usd_rate is None or markup_percent is None:
+        valuation = ValuationSettings.get()
+        settings = BrpPricingSettings.get()
+        usd_rate = valuation.current_usd_rate
+        markup_percent = settings.brp_markup_percent
+    return brp_customer_price_rub(price_source.retail_price_usd, usd_rate, markup_percent)
+
+
+def _effective_polaris_price(
+    norm: str,
+    polaris: PolarisCatalogPart,
+    *,
+    usd_rate: Decimal | None = None,
+    markup_percent: Decimal | None = None,
+):
+    price_source = find_polaris_price_source(norm, polaris)
+    if price_source is None:
+        return None
+
+    if usd_rate is None or markup_percent is None:
+        valuation = ValuationSettings.get()
+        settings = PolarisPricingSettings.get()
+        usd_rate = valuation.current_usd_rate
+        markup_percent = settings.polaris_markup_percent
+    return polaris_customer_price_rub(price_source.retail_price_usd, usd_rate, markup_percent)
 
 
 def _warehouse_part_by_scan(norm: str, raw: str) -> PartType | None:
@@ -192,7 +222,7 @@ def _match(norm: str, raw: str):
         price = _effective_brp_price(norm, brp)
         return ("brp_catalog", None, brp, None, brp.part_desc or brp.material_no, price)
     if polaris is not None:
-        price = effective_polaris_customer_price_rub(norm, polaris)
+        price = _effective_polaris_price(norm, polaris)
         return (
             "polaris_catalog",
             None,
@@ -318,12 +348,21 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
     if current_status != InventoryCountingSession.Status.DRAFT:
         return 0
     changed = []
+    valuation = ValuationSettings.get()
+    brp_settings = BrpPricingSettings.get()
+    polaris_settings = PolarisPricingSettings.get()
+    usd_rate = valuation.current_usd_rate
     lines = session.lines.filter(brp_catalog_part__isnull=False).select_related(
         "brp_catalog_part"
     )
     for line in lines:
         best = find_brp_by_number(line.normalized_value) or line.brp_catalog_part
-        price = _effective_brp_price(line.normalized_value, best)
+        price = _effective_brp_price(
+            line.normalized_value,
+            best,
+            usd_rate=usd_rate,
+            markup_percent=brp_settings.brp_markup_percent,
+        )
         dirty = False
         if best.pk != line.brp_catalog_part_id:
             line.brp_catalog_part = best
@@ -346,7 +385,12 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
     ).select_related("polaris_catalog_part")
     for line in polaris_lines:
         best = find_polaris_by_number(line.normalized_value) or line.polaris_catalog_part
-        price = effective_polaris_customer_price_rub(line.normalized_value, best)
+        price = _effective_polaris_price(
+            line.normalized_value,
+            best,
+            usd_rate=usd_rate,
+            markup_percent=polaris_settings.polaris_markup_percent,
+        )
         dirty = False
         if best.pk != line.polaris_catalog_part_id:
             line.polaris_catalog_part = best
@@ -388,7 +432,7 @@ def resolve_unknown_to_polaris(
     line.warehouse_part = None
     line.source = InventoryCountingLine.Source.POLARIS
     line.display_name = (polaris_part.part_name or polaris_part.part_number)[:255]
-    line.final_customer_price_rub = effective_polaris_customer_price_rub(
+    line.final_customer_price_rub = _effective_polaris_price(
         polaris_part.part_number_norm, polaris_part
     )
     line.save()

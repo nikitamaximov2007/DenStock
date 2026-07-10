@@ -22,7 +22,7 @@ ADMIN_PAGES = [
     "scanner",
     "part_list",
     "brp_search",
-    "brp_settings",
+    "price_settings",
     "counting_list",
     "counting_new",
     "actions_scan",

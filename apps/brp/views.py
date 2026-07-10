@@ -5,7 +5,7 @@
 склад» — can_manage_parts; «Учесть наличие» — can_manage_inventory; настройки
 цен — can_manage_parts. Сам просмотр ничего не меняет.
 """
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -15,9 +15,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.catalog.services import get_current_price_settings
 from apps.inventory.models import StockBalance
 
-from .models import BrpCatalogPart, BrpPartLink, BrpPricingSettings
+from .models import BrpCatalogPart, BrpPartLink
 from .pricing import customer_price_rub
 from .services import (
     BrpPromotionError,
@@ -75,7 +76,7 @@ def _warehouse_matches(q: str, norm: str) -> list:
     return rows
 
 
-def _brp_matches(q: str, norm: str, status: str) -> list:
+def _brp_matches(q: str, norm: str, status: str, settings) -> list:
     """Позиции справочника: точный номер/замена, затем описание."""
     number_q = Q()
     if norm:
@@ -95,13 +96,14 @@ def _brp_matches(q: str, norm: str, status: str) -> list:
         link.brp_part_id: link.part
         for link in BrpPartLink.objects.filter(brp_part__in=parts).select_related("part")
     }
-    settings = BrpPricingSettings.get()
     rows = []
     for brp in parts:
         rows.append({
             "brp": brp,
             "customer_price": customer_price_rub(
-                brp.retail_price_usd, settings.brp_usd_rate, settings.brp_markup_percent
+                brp.retail_price_usd,
+                settings.current_usd_rate,
+                settings.brp_markup_percent,
             ),
             "promoted_part": promoted.get(brp.pk),
             "status_pill": STATUS_PILLS.get(brp.brp_status, "pill--muted"),
@@ -114,11 +116,12 @@ def brp_search(request):
     q = (request.GET.get("q") or "").strip()
     status = (request.GET.get("status") or "").strip()
     norm = normalize_number(q)
+    pricing = get_current_price_settings()
     context = {
         "q": q,
         "status": status,
         "statuses": sorted(BrpCatalogPart.STATUS_LABELS.items()),
-        "pricing": BrpPricingSettings.get(),
+        "pricing": pricing,
         "catalog_size": BrpCatalogPart.objects.count(),
         "can_manage_parts": request.user.can_manage_parts,
         "can_manage_inventory": request.user.can_manage_inventory,
@@ -128,7 +131,7 @@ def brp_search(request):
     if len(q) >= 2 or status:
         if len(q) >= 2:
             context["warehouse_rows"] = _warehouse_matches(q, norm)
-        context["brp_rows"] = _brp_matches(q, norm, status)
+        context["brp_rows"] = _brp_matches(q, norm, status, pricing)
         context["searched"] = True
     return render(request, "brp/search.html", context)
 
@@ -185,30 +188,7 @@ def brp_intake(request, pk):
 
 @login_required
 def brp_settings(request):
-    """Курс и наценка. Меняют администратор/руководитель (can_manage_parts)."""
+    """Legacy BRP settings URL. The price settings screen is unified."""
     if not request.user.can_manage_parts:
         raise PermissionDenied
-    pricing = BrpPricingSettings.get()
-    if request.method == "POST":
-        try:
-            rate = Decimal((request.POST.get("brp_usd_rate") or "").replace(",", "."))
-            markup = Decimal(
-                (request.POST.get("brp_markup_percent") or "").replace(",", ".")
-            )
-        except InvalidOperation:
-            messages.error(request, "Введите числовые значения курса и наценки.")
-        else:
-            if rate <= 0 or markup < 0:
-                messages.error(request, "Курс должен быть больше нуля, наценка не отрицательной.")
-            else:
-                pricing.brp_usd_rate = rate
-                pricing.brp_markup_percent = markup
-                pricing.updated_by = request.user
-                pricing.save()
-                messages.success(
-                    request,
-                    "Настройки сохранены. Новые расчёты пойдут по новым значениям; "
-                    "уже добавленные детали сохраняют зафиксированные курс и наценку.",
-                )
-                return redirect("brp_settings")
-    return render(request, "brp/settings.html", {"pricing": pricing})
+    return redirect("price_settings")

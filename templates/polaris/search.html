@@ -6,14 +6,14 @@
     <div class="page-actions">
       {% if can_manage_parts %}
         <a class="btn btn--small btn--secondary"
-           href="{% url 'polaris_settings' %}">Настройки цен</a>
+           href="{% url 'price_settings' %}">Настройки цен</a>
       {% endif %}
     </div>
   </div>
   <p class="page-subtitle">
     Справочник дилерского прайса Polaris ({{ catalog_size }} позиций). Это НЕ остатки:
     на складе появляются только детали, наличие которых учтено. Курс расчёта:
-    {{ pricing.polaris_usd_rate|floatformat:"-4" }} ₽ · Наценка:
+    {{ pricing.current_usd_rate|floatformat:"-4" }} ₽ · Наценка Polaris:
     {{ pricing.polaris_markup_percent|floatformat:"-2" }}%.
   </p>
   <div class="action-panel">

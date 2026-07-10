@@ -50,11 +50,8 @@ class PolarisCatalogPart(models.Model):
 
 
 class PolarisPricingSettings(models.Model):
-    """Separate Polaris customer price settings."""
+    """Separate Polaris markup settings. The USD rate is shared in ValuationSettings."""
 
-    polaris_usd_rate = models.DecimalField(
-        "Курс расчёта (₽ за $)", max_digits=10, decimal_places=4, default=Decimal("105")
-    )
     polaris_markup_percent = models.DecimalField(
         "Наценка, %", max_digits=6, decimal_places=2, default=Decimal("40")
     )
@@ -69,7 +66,7 @@ class PolarisPricingSettings(models.Model):
         verbose_name_plural = "Настройки цен Polaris"
 
     def __str__(self) -> str:
-        return f"курс {self.polaris_usd_rate} ₽, наценка {self.polaris_markup_percent}%"
+        return f"наценка Polaris {self.polaris_markup_percent}%"
 
     @classmethod
     def get(cls) -> "PolarisPricingSettings":

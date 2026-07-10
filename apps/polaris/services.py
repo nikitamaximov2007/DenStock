@@ -7,6 +7,7 @@ from apps.procurement.models import money
 from apps.receipts.models import Receipt
 from apps.receipts.services import create_receipt
 from apps.suppliers.models import Supplier
+from apps.warehouse.models import ValuationSettings
 
 from .models import PolarisCatalogPart, PolarisPartLink, PolarisPricingSettings
 from .pricing import current_customer_price_rub, customer_price_rub
@@ -103,10 +104,11 @@ def promote_to_warehouse(
     if existing is not None:
         return existing.part
 
+    valuation = ValuationSettings.get()
     settings = PolarisPricingSettings.get()
     calculated = customer_price_rub(
         polaris_part.retail_price_usd,
-        settings.polaris_usd_rate,
+        valuation.current_usd_rate,
         settings.polaris_markup_percent,
     )
     final = manual_price if manual_price is not None else calculated
@@ -147,7 +149,7 @@ def promote_to_warehouse(
         polaris_part=polaris_part,
         polaris_retail_price_usd=polaris_part.retail_price_usd,
         polaris_wholesale_price_usd=polaris_part.wholesale_price_usd,
-        usd_rate_used=settings.polaris_usd_rate,
+        usd_rate_used=valuation.current_usd_rate,
         markup_percent_used=settings.polaris_markup_percent,
         calculated_customer_price_rub=calculated,
         manual_customer_price_rub=manual_price,

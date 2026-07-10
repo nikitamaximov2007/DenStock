@@ -13,6 +13,7 @@ from apps.procurement.models import money
 from apps.receipts.models import Receipt
 from apps.receipts.services import create_receipt
 from apps.suppliers.models import Supplier
+from apps.warehouse.models import ValuationSettings
 
 from .models import BrpCatalogPart, BrpPartLink, BrpPricingSettings
 from .pricing import customer_price_rub
@@ -50,9 +51,10 @@ def promote_to_warehouse(
     if existing is not None:
         return existing.part
 
+    valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
     calculated = customer_price_rub(
-        brp_part.retail_price_usd, settings.brp_usd_rate, settings.brp_markup_percent
+        brp_part.retail_price_usd, valuation.current_usd_rate, settings.brp_markup_percent
     )
     final = manual_price if manual_price is not None else calculated
     source = (
@@ -90,7 +92,7 @@ def promote_to_warehouse(
         brp_part=brp_part,
         brp_retail_price_usd=brp_part.retail_price_usd,
         brp_wholesale_price_usd=brp_part.wholesale_price_usd,
-        usd_rate_used=settings.brp_usd_rate,
+        usd_rate_used=valuation.current_usd_rate,
         markup_percent_used=settings.brp_markup_percent,
         calculated_customer_price_rub=calculated,
         manual_customer_price_rub=manual_price,

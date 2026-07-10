@@ -235,8 +235,8 @@ def test_unpriced_positions_do_not_break_dashboard(client, make_user, env):
 
 def test_custom_rate_setting_used(env):
     settings_row = ValuationSettings.get()
-    settings_row.purchase_usd_rate = Decimal("90")
-    settings_row.save(update_fields=["purchase_usd_rate"])
+    settings_row.current_usd_rate = Decimal("90")
+    settings_row.save(update_fields=["current_usd_rate"])
     part, _brp = _brp_part(env, retail="10")
     _stock(part, env["loc"], 1, env["sup"], env["admin"])
     v = get_warehouse_valuation()

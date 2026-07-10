@@ -5,14 +5,15 @@
     <h1 class="page-title">BRP-каталог</h1>
     <div class="page-actions">
       {% if can_manage_parts %}
-        <a class="btn btn--small btn--secondary" href="{% url 'brp_settings' %}">Настройки цен</a>
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'price_settings' %}">Настройки цен</a>
       {% endif %}
     </div>
   </div>
   <p class="page-subtitle">
     Справочник дилерского прайса BRP ({{ catalog_size }} позиций). Это НЕ остатки:
     на складе появляются только детали, наличие которых учтено. Курс расчёта:
-    {{ pricing.brp_usd_rate|floatformat:"-4" }} ₽ · Наценка:
+    {{ pricing.current_usd_rate|floatformat:"-4" }} ₽ · Наценка BRP:
     {{ pricing.brp_markup_percent|floatformat:"-2" }}%.
   </p>
   <div class="action-panel">

@@ -261,3 +261,33 @@ def test_polaris_search_page_settings_gated_and_visible(client, make_user, db):
     assert "GASKET" in html
     assert "1764" in html
     assert "—" not in html
+
+
+def test_price_settings_refreshes_current_polaris_card_without_link_snapshot(
+    client, make_user, db, admin
+):
+    polaris = PolarisCatalogPart.objects.create(
+        part_number="5550001", part_name="SEAL", retail_price_usd=Decimal("100")
+    )
+    part = promote_to_warehouse(polaris, by=admin)
+    link = part.polaris_link
+    assert part.recommended_price == Decimal("14700")
+    assert link.final_customer_price_rub == Decimal("14700")
+
+    _login(client, make_user, superuser=True)
+    resp = client.post(
+        reverse("price_settings"),
+        {
+            "current_usd_rate": "120",
+            "brp_markup_percent": "40",
+            "polaris_markup_percent": "10",
+        },
+    )
+    assert resp.status_code == 302
+
+    part.refresh_from_db()
+    link.refresh_from_db()
+    assert part.recommended_price == Decimal("13200")
+    assert link.usd_rate_used == Decimal("105")
+    assert link.markup_percent_used == Decimal("40")
+    assert link.final_customer_price_rub == Decimal("14700")

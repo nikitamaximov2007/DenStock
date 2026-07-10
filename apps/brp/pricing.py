@@ -18,6 +18,8 @@
 """
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
+from apps.warehouse.models import ValuationSettings
+
 from .models import BrpPricingSettings
 
 HUNDRED = Decimal("100")
@@ -45,7 +47,8 @@ def customer_price_rub(retail_price_usd, usd_rate, markup_percent):
 
 def current_customer_price_rub(retail_price_usd):
     """Цена клиента по ТЕКУЩИМ настройкам (для превью каталога)."""
+    valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
     return customer_price_rub(
-        retail_price_usd, settings.brp_usd_rate, settings.brp_markup_percent
+        retail_price_usd, valuation.current_usd_rate, settings.brp_markup_percent
     )

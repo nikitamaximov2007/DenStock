@@ -69,6 +69,9 @@ def _nav_items(user):
              "icon": "chart", "group": "Аналитика"})
     add({"label": "Справочники", "url": reverse("directory_index"), "stub": False,
          "icon": "book", "group": "Каталог"})
+    if user.can_manage_parts:
+        add({"label": "Настройки цен", "url": reverse("price_settings"), "stub": False,
+             "icon": "gauge", "group": "Каталог"})
     add({"label": "Склад", "url": reverse("warehouse_index"), "stub": False,
          "icon": "warehouse", "group": "Склад"})
     if user.can_view_finance:

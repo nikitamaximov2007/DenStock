@@ -25,8 +25,8 @@
   - Физический остаток: LOT_PHYSICAL_STATUSES + ITEM_PHYSICAL_STATUSES
     (та же физика, что в «Остатках»); резервы не вычитаются (по ТЗ).
 - Курс: apps/warehouse/models.ValuationSettings (singleton,
-  purchase_usd_rate=105, «Курс для оценки закупочной стоимости»),
-  миграция warehouse/0002. В шаблоне курс не хардкодится.
+  current_usd_rate=105, общий текущий курс для цен и оценки склада),
+  миграция warehouse/0003. В шаблоне курс не хардкодится.
 - UI (templates/reports/statistics.html): три плитки с подписями, строка
   unpriced, details «Как считаются показатели?». Старые плитки
   «Стоимость склада, ₽»/«Потенциальная выручка, ₽» удалены из KPI

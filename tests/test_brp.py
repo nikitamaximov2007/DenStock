@@ -22,11 +22,12 @@ from apps.brp.pricing import customer_price_rub
 from apps.brp.services import get_or_create_intake_draft, promote_to_warehouse
 from apps.catalog.models import PartNumber, PartType
 from apps.inventory.models import StockBalance, StockMovement
+from apps.polaris.models import PolarisPricingSettings
 from apps.procurement.models import Batch
 from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, post_receipt
 from apps.warehouse.addresses import AddressError, compose_address
-from apps.warehouse.models import StorageLocation
+from apps.warehouse.models import StorageLocation, ValuationSettings
 
 PASSWORD = "parol-12345"
 
@@ -289,8 +290,9 @@ def test_price_none_without_retail():
 
 
 def test_pricing_settings_defaults(db):
+    valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
-    assert settings.brp_usd_rate == Decimal("105")
+    assert valuation.current_usd_rate == Decimal("105")
     assert settings.brp_markup_percent == Decimal("40")
 
 
@@ -361,10 +363,12 @@ def test_manual_price_keeps_sources(db, refs, admin):
 
 def test_settings_change_affects_future_not_past(db, refs, admin):
     old_part = promote_to_warehouse(_brp("111"), by=admin)
+    valuation = ValuationSettings.get()
+    valuation.current_usd_rate = Decimal("90")
+    valuation.save(update_fields=["current_usd_rate"])
     settings = BrpPricingSettings.get()
-    settings.brp_usd_rate = Decimal("90")
     settings.brp_markup_percent = Decimal("50")
-    settings.save()
+    settings.save(update_fields=["brp_markup_percent"])
     new_part = promote_to_warehouse(_brp("222"), by=admin)
     old_link, new_link = old_part.brp_link, new_part.brp_link
     assert old_link.usd_rate_used == Decimal("105")  # история не изменилась
@@ -496,15 +500,65 @@ def test_storekeeper_intake_needs_promoted_card(client, make_user, imported):
 def test_settings_page_gated_and_saves(client, make_user, db):
     _login(client, make_user, role=roles.SELLER, name="prodavec")
     assert client.get(reverse("brp_settings")).status_code == 403
+    assert client.get(reverse("price_settings")).status_code == 403
     client.logout()
     _login(client, make_user, superuser=True)
     resp = client.post(
-        reverse("brp_settings"), {"brp_usd_rate": "98,5", "brp_markup_percent": "35"}
+        reverse("price_settings"),
+        {
+            "current_usd_rate": "98,5",
+            "brp_markup_percent": "35",
+            "polaris_markup_percent": "45",
+        },
     )
     assert resp.status_code == 302
-    settings = BrpPricingSettings.get()
-    assert settings.brp_usd_rate == Decimal("98.5")
-    assert settings.brp_markup_percent == Decimal("35")
+    valuation = ValuationSettings.get()
+    brp = BrpPricingSettings.get()
+    polaris = PolarisPricingSettings.get()
+    assert valuation.current_usd_rate == Decimal("98.5")
+    assert brp.brp_markup_percent == Decimal("35")
+    assert polaris.polaris_markup_percent == Decimal("45")
+
+
+def test_price_settings_refreshes_current_brp_card_without_link_snapshot(
+    client, make_user, db, refs, admin
+):
+    part = promote_to_warehouse(_brp(retail="100"), by=admin)
+    link = part.brp_link
+    assert part.recommended_price == Decimal("14700")
+    assert link.final_customer_price_rub == Decimal("14700")
+
+    _login(client, make_user, superuser=True)
+    resp = client.post(
+        reverse("price_settings"),
+        {
+            "current_usd_rate": "90",
+            "brp_markup_percent": "50",
+            "polaris_markup_percent": "40",
+        },
+    )
+    assert resp.status_code == 302
+
+    part.refresh_from_db()
+    link.refresh_from_db()
+    assert part.recommended_price == Decimal("13500")
+    assert link.usd_rate_used == Decimal("105")
+    assert link.markup_percent_used == Decimal("40")
+    assert link.final_customer_price_rub == Decimal("14700")
+
+
+def test_price_settings_rejects_non_finite_values(client, make_user, db):
+    _login(client, make_user, superuser=True)
+    resp = client.post(
+        reverse("price_settings"),
+        {
+            "current_usd_rate": "NaN",
+            "brp_markup_percent": "35",
+            "polaris_markup_percent": "45",
+        },
+    )
+    assert resp.status_code == 200
+    assert ValuationSettings.get().current_usd_rate == Decimal("105")
 
 
 # --- Адресное хранение ---------------------------------------------------------------
@@ -577,5 +631,5 @@ def test_brp_price_shown_without_kopecks(client, make_user, imported):
 
 def test_brp_pages_have_no_em_dash(client, make_user, imported):
     _login(client, make_user, superuser=True)
-    for url in (reverse("brp_search") + "?q=042", reverse("brp_settings")):
+    for url in (reverse("brp_search") + "?q=042", reverse("price_settings")):
         assert "—" not in client.get(url).content.decode()

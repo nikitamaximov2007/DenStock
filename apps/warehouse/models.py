@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -107,26 +108,33 @@ class StorageLocation(models.Model):
 
 
 class ValuationSettings(models.Model):
-    """Настройка оценки склада: курс для закупочной стоимости (одна строка).
+    """Единый текущий курс для цен и финансовой оценки склада (одна строка).
 
-    Это ТЕКУЩАЯ оценка повторного заказа всего остатка по ценам прайсов
-    производителей, а не бухгалтерская себестоимость уже купленных партий и
-    не фактический исторический курс закупки. Меняется отдельно от курсов
-    клиентских цен BRP/Polaris.
+    Это ТЕКУЩАЯ оценка повторного заказа и клиентских цен BRP/Polaris, а не
+    бухгалтерская себестоимость уже купленных партий и не фактический
+    исторический курс закупки.
     """
 
-    purchase_usd_rate = models.DecimalField(
-        "Курс для оценки закупочной стоимости (₽ за $)",
+    current_usd_rate = models.DecimalField(
+        "Текущий курс доллара (₽ за $)",
         max_digits=10, decimal_places=4, default=Decimal("105"),
     )
     updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        django_settings.AUTH_USER_MODEL,
+        verbose_name="Кто изменил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
 
     class Meta:
-        verbose_name = "Настройки оценки склада"
-        verbose_name_plural = "Настройки оценки склада"
+        verbose_name = "Настройки цен"
+        verbose_name_plural = "Настройки цен"
 
     def __str__(self) -> str:
-        return f"курс закупочной оценки {self.purchase_usd_rate} ₽/$"
+        return f"текущий курс {self.current_usd_rate} ₽/$"
 
     @classmethod
     def get(cls) -> "ValuationSettings":
