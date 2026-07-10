@@ -237,6 +237,11 @@ def _serialized_locations(part_id: int | None) -> list[dict]:
     ]
 
 
+def _queue_merge_key(source: str, source_id: int, exact_number: str, location_id) -> tuple:
+    """Stable identity of a receiving line, including the scanned exact number."""
+    return source, source_id, normalize_number(exact_number), location_id
+
+
 def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
     if candidate.tracking_mode != PartType.TrackingMode.BULK:
         raise ReceivingQueueError(
@@ -245,13 +250,20 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
     queue = load_queue(session)
     choices = _serialized_locations(candidate.part_id)
     location_id = choices[0]["id"] if len(choices) == 1 else None
+    candidate_key = _queue_merge_key(
+        candidate.source, candidate.source_id, candidate.exact_number, location_id
+    )
     existing = next(
         (
             line
             for line in queue["lines"].values()
-            if line["source"] == candidate.source
-            and line["source_id"] == candidate.source_id
-            and line.get("location_id") == location_id
+            if _queue_merge_key(
+                line["source"],
+                line["source_id"],
+                line.get("exact_number", ""),
+                line.get("location_id"),
+            )
+            == candidate_key
         ),
         None,
     )
@@ -377,14 +389,22 @@ def assign_location(session, line_id: str, *, location_id=None, location_code=""
     if allowed and location.pk not in allowed:
         raise ReceivingQueueError("Для этой детали выберите одну из ячеек текущего остатка.")
 
+    line["exact_number"] = candidate.exact_number
+    target_key = _queue_merge_key(
+        line["source"], line["source_id"], line["exact_number"], location.pk
+    )
     duplicate = next(
         (
             other
             for other in queue["lines"].values()
             if other["id"] != line_id
-            and other["source"] == line["source"]
-            and other["source_id"] == line["source_id"]
-            and other.get("location_id") == location.pk
+            and _queue_merge_key(
+                other["source"],
+                other["source_id"],
+                other.get("exact_number", ""),
+                other.get("location_id"),
+            )
+            == target_key
         ),
         None,
     )

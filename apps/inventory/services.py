@@ -622,9 +622,12 @@ def _post_found_stock_group(*, entries, location, token: str, by=None):
                 }
             )
 
-        missing = [row for row in resolved if row["lot"] is None]
-        lines_by_index = {}
-        if missing:
+        missing_by_part = {}
+        for row in resolved:
+            if row["lot"] is None:
+                missing_by_part.setdefault(row["part"].pk, []).append(row)
+        lines_by_part_id = {}
+        if missing_by_part:
             supplier, _created = Supplier.objects.get_or_create(
                 name="Стартовый ввод", defaults={"is_active": True, "default_currency": "RUB"}
             )
@@ -639,34 +642,41 @@ def _post_found_stock_group(*, entries, location, token: str, by=None):
                     "без supplier receipt"
                 ),
             )
-            for row in missing:
+            for rows in missing_by_part.values():
+                row = rows[0]
+                exact_numbers = ", ".join(item["exact_number"] for item in rows)
                 line = BatchLine.objects.create(
                     batch=batch,
                     part_type=row["part"],
-                    quantity=Decimal(row["quantity"]),
+                    quantity=Decimal(sum(item["quantity"] for item in rows)),
                     unit_cost_currency=money(row["part"].recommended_price or Decimal("0")),
-                    note=f"Найденная деталь {row['exact_number']} в {location.code}"[:255],
+                    note=f"Найденные детали {exact_numbers} в {location.code}"[:255],
                 )
-                lines_by_index[id(row)] = line
+                lines_by_part_id[row["part"].pk] = line
             finalize_cost(batch, by)
 
+        created_lots_by_part_id = {}
         results = []
         for row in resolved:
             lot = row["lot"]
             if lot is None:
-                line = lines_by_index[id(row)]
-                line.refresh_from_db()
-                lot = StockLot.objects.create(
-                    part_type=row["part"],
-                    batch=line.batch,
-                    batch_line=line,
-                    location=location,
-                    quantity=Decimal("0"),
-                    initial_quantity=Decimal("0"),
-                    landed_unit_cost_rub=line.landed_unit_cost_rub,
-                    status=StockLot.Status.AVAILABLE,
-                    note="Первый лот из пакетной приёмки найденных деталей",
-                )
+                lot = created_lots_by_part_id.get(row["part"].pk)
+                if lot is None:
+                    line = lines_by_part_id[row["part"].pk]
+                    line.refresh_from_db()
+                    lot = StockLot.objects.create(
+                        part_type=row["part"],
+                        batch=line.batch,
+                        batch_line=line,
+                        location=location,
+                        quantity=Decimal("0"),
+                        initial_quantity=Decimal("0"),
+                        landed_unit_cost_rub=line.landed_unit_cost_rub,
+                        status=StockLot.Status.AVAILABLE,
+                        note="Первый лот из пакетной приёмки найденных деталей",
+                    )
+                    created_lots_by_part_id[row["part"].pk] = lot
+                row["lot"] = lot
             comment = (
                 f"Добавление найденной детали {row['exact_number']} x {row['quantity']} "
                 f"в {location.code}"

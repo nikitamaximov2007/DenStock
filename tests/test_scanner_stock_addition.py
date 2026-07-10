@@ -10,7 +10,7 @@ from django.urls import reverse
 from apps.accounts import roles
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse
-from apps.catalog.models import PartType
+from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.core.receiving_queue import PENDING_SESSION_KEY, QUEUE_SESSION_KEY
 from apps.inventory.models import FoundStockPosting, StockLot, StockMovement
 from apps.inventory.services import (
@@ -157,6 +157,74 @@ def test_repeat_scan_groups_quantity_and_survives_refresh(client, make_user, dat
     html = client.get(URL).content.decode()
     assert "К добавлению · 2 шт." in html
     assert _single_line(client)["quantity"] == 2
+
+
+def test_warehouse_exact_numbers_stay_split_and_share_first_lot(client, make_user, data):
+    category = Category.objects.create(name="Складские номера")
+    part = PartType.objects.create(
+        name="Уплотнение с двумя артикулами",
+        category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("100"),
+    )
+    first_number = PartNumber.objects.create(
+        part=part, value="WH-100", kind=PartNumber.Kind.OEM, is_primary=True
+    )
+    second_number = PartNumber.objects.create(
+        part=part, value="WH-200", kind=PartNumber.Kind.ARTICLE
+    )
+    _login(client, make_user, superuser=True, name="boss")
+
+    client.post(URL, {"action": "scan", "code": first_number.value})
+    client.post(URL, {"action": "scan", "code": second_number.value})
+    lines = list(_queue(client)["lines"].values())
+    assert {line["exact_number"] for line in lines} == {first_number.value, second_number.value}
+    assert len(lines) == 2
+
+    client.post(URL, {"action": "scan", "code": "wh 100"})
+    lines = list(_queue(client)["lines"].values())
+    quantities = {line["exact_number"]: line["quantity"] for line in lines}
+    assert quantities == {first_number.value: 2, second_number.value: 1}
+
+    for line in lines:
+        client.post(
+            URL,
+            {
+                "action": "queue_assign",
+                "line_id": line["id"],
+                "location_code": data["loc3"].code,
+            },
+        )
+    lines = list(_queue(client)["lines"].values())
+    assert len(lines) == 2
+    assert {line["location_id"] for line in lines} == {data["loc3"].pk}
+
+    batches_before = Batch.objects.count()
+    batch_lines_before = BatchLine.objects.count()
+    payload = _group_payload(client, data["loc3"])
+    first_post = client.post(URL, payload, follow=True)
+    second_post = client.post(URL, payload, follow=True)
+
+    lots = StockLot.objects.filter(part_type=part, location=data["loc3"])
+    assert lots.count() == 1
+    lot = lots.get()
+    assert lot.quantity == Decimal("3")
+    assert Batch.objects.count() == batches_before + 1
+    assert BatchLine.objects.count() == batch_lines_before + 1
+    movements = StockMovement.objects.filter(stock_lot=lot, document_type="found_addition")
+    assert movements.count() == 2
+    assert {movement.comment for movement in movements} == {
+        f"Добавление найденной детали {first_number.value} x 2 в {data['loc3'].code}",
+        f"Добавление найденной детали {second_number.value} x 1 в {data['loc3'].code}",
+    }
+    for movement in movements:
+        detail = client.get(reverse("movement_detail", args=[movement.pk])).content.decode()
+        assert movement.comment in detail
+    assert FoundStockPosting.objects.filter(token=payload["token"]).count() == 1
+    assert "Добавлено 3 деталей" in first_post.content.decode()
+    assert "Эта группа уже была проведена" in second_post.content.decode()
+    assert lot.quantity == Decimal("3")
 
 
 def test_queue_page_query_count_is_bounded(client, make_user, data):
