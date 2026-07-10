@@ -264,6 +264,43 @@ class StockMovement(models.Model):
         raise RuntimeError("StockMovement неизменяем (append-only): запись нельзя удалить.")
 
 
+class FoundStockPosting(models.Model):
+    """Успешно проведённая группа пакетной приёмки.
+
+    Уникальный токен создаётся в той же транзакции, что лоты и движения. Если
+    транзакция откатывается, токен также исчезает и группу можно исправить и
+    повторить. Если POST дублируется, уникальность токена не даёт второй раз
+    увеличить остаток.
+    """
+
+    token = models.CharField("Одноразовый токен", max_length=64, unique=True)
+    location = models.ForeignKey(
+        "warehouse.StorageLocation",
+        verbose_name="Ячейка",
+        on_delete=models.PROTECT,
+        related_name="found_stock_postings",
+    )
+    line_count = models.PositiveIntegerField("Позиций")
+    quantity = models.PositiveIntegerField("Единиц")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто провёл",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Проведение найденных деталей"
+        verbose_name_plural = "Проведения найденных деталей"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"{self.location.code}: {self.quantity} шт."
+
+
 class StockBalance(models.Model):
     """Read-optimized кэш текущих остатков. НЕ источник истины.
 

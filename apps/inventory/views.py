@@ -26,6 +26,7 @@ from .forms import (
     StockLotQuickForm,
 )
 from .models import PartItem, PartItemImage, StockBalance, StockLot, StockMovement
+from .presentation import attach_movement_identity, identity_numbers_prefetch
 from .services import (
     InventoryError,
     adjust_stock_lot_quantity,
@@ -443,7 +444,8 @@ class MovementListView(InventoryViewMixin, ListView):
         qs = StockMovement.objects.select_related(
             "part_type", "stock_lot", "part_item", "batch",
             "from_location", "to_location", "created_by",
-        )
+            "part_type__brp_link__brp_part", "part_type__polaris_link__polaris_part",
+        ).prefetch_related(identity_numbers_prefetch())
         mtype = self.request.GET.get("type")
         part = self.request.GET.get("part")
         batch = self.request.GET.get("batch")
@@ -460,6 +462,7 @@ class MovementListView(InventoryViewMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        attach_movement_identity(ctx["movements"])
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["types"] = StockMovement.MovementType.choices
         ctx["parts"] = PartType.objects.filter(movements__isnull=False).distinct()
@@ -479,8 +482,16 @@ class MovementDetailView(InventoryViewMixin, DetailView):
     template_name = "inventory/movement_detail.html"
     context_object_name = "movement"
 
+    def get_queryset(self):
+        return StockMovement.objects.select_related(
+            "part_type", "stock_lot", "part_item", "batch", "batch_line",
+            "from_location", "to_location", "created_by",
+            "part_type__brp_link__brp_part", "part_type__polaris_link__polaris_part",
+        ).prefetch_related(identity_numbers_prefetch())
+
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        attach_movement_identity([ctx["movement"]])
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         return ctx
 

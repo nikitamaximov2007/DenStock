@@ -1,6 +1,5 @@
-import secrets
 from datetime import timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -13,16 +12,17 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from apps.actions.services import identity_number, stock_overview
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
-from apps.inventory.models import PartItem, StockLot, StockMovement
+from apps.inventory.models import FoundStockPosting, PartItem, StockLot, StockMovement
+from apps.inventory.presentation import attach_movement_identity, identity_numbers_prefetch
 from apps.inventory.services import (
     FOUND_ADDITION_DOC,
+    FoundStockAlreadyPosted,
     InventoryError,
-    add_found_stock,
     move_part_item,
     move_stock_lot,
+    post_found_stock_group,
     receive_part_item,
     receive_stock_lot,
 )
@@ -37,6 +37,23 @@ from apps.sales.models import Reservation
 from apps.warehouse.models import StorageLocation
 
 from .models import UnresolvedScan
+from .receiving_queue import (
+    ReceivingQueueError,
+    add_candidate,
+    assign_location,
+    clear_pending,
+    clear_queue,
+    find_receiving_candidates,
+    group_for_post,
+    pending_context,
+    pop_pending_candidate,
+    queue_context,
+    remove_line,
+    remove_posted_group,
+    store_pending_candidates,
+    unassign_location,
+    update_quantity,
+)
 from .scanner import resolve_scan
 from .search import search_parts
 
@@ -294,62 +311,61 @@ def _wrong_object_message(result) -> str:
     return "Ожидается экземпляр детали."
 
 
-def _prepare_found_addition(request: HttpRequest, part: PartType, scanned_code: str):
-    """Контекст «довнести найденную деталь» + токен идемпотентности.
-
-    Работник отсканировал обычный номер детали (вид/BRP material_no). Ищем, где
-    эта деталь уже лежит; если нигде — не кладём молча, а просим сначала
-    провести инвентаризацию ячейки. Возвращает (addition|None, error).
-    """
-    overview = stock_overview(part)
-    if not overview["locations"]:
-        return None, (
-            "Этой детали ещё нет ни в одной ячейке. Сначала проведите "
-            "инвентаризацию ячейки или выберите ячейку вручную."
+def _queue_candidate_scan(request: HttpRequest, code: str, *, warehouse_part_id=None):
+    """Add an unambiguous exact identity, or persist a manufacturer choice."""
+    candidates = find_receiving_candidates(code, warehouse_part_id=warehouse_part_id)
+    if not candidates:
+        return False
+    if len(candidates) > 1:
+        store_pending_candidates(request.session, candidates)
+        messages.info(
+            request,
+            "Артикул найден у нескольких производителей. Выберите точную позицию.",
         )
-    token = secrets.token_urlsafe(16)
-    request.session["found_add_token"] = token
-    return {
-        "part": part,
-        "number": identity_number(part, scanned_code),
-        "overview": overview,
-        "token": token,
-        "unit_price": part.recommended_price or Decimal("0"),
-    }, ""
+        return True
+    line, added_new = add_candidate(request.session, candidates[0])
+    verb = "добавлен в очередь" if added_new else "увеличен в очереди"
+    messages.success(request, f"{line['exact_number']}: {verb}, количество {line['quantity']}.")
+    return True
 
 
-def _handle_found_addition(request: HttpRequest) -> str:
-    """Провести довнесение +1 после подтверждения. Возвращает текст ошибки/"".
+def _post_queue_group(request: HttpRequest) -> str:
+    location_id = _int(request.POST.get("location_id"))
+    token = (request.POST.get("token") or "").strip()
+    if location_id is None:
+        return "Группа ячейки не найдена."
+    location = StorageLocation.objects.filter(pk=location_id).first()
+    if location is None or not location.can_hold_stock():
+        return "Ячейка неактивна или не предназначена для хранения."
 
-    Идемпотентность: одноразовый токен из сессии потребляется ДО изменения
-    склада — повторная отправка той же формы (двойной Enter/сабмит) не добавит
-    вторую деталь. Мутация — только через inventory.add_found_stock (atomic).
-    """
-    token = request.POST.get("token", "")
-    expected = request.session.get("found_add_token")
-    if not expected or token != expected:
-        return "Форма устарела или отправлена повторно: деталь не добавлена ещё раз."
-    request.session.pop("found_add_token", None)  # потребляем до мутации
-    part = PartType.objects.filter(pk=_int(request.POST.get("part_id"))).first()
-    location = StorageLocation.objects.filter(
-        pk=_int(request.POST.get("location_id"))
-    ).first()
-    if part is None:
-        return "Деталь не найдена."
-    if location is None:
-        return "Выберите ячейку, куда положить деталь."
-    number = identity_number(part, request.POST.get("scanned_number", ""))
+    already = FoundStockPosting.objects.filter(token=token, created_by=request.user).exists()
+    if already:
+        remove_posted_group(request.session, location_id)
+        messages.info(request, "Эта группа уже была проведена.")
+        return ""
     try:
-        lot, _movement = add_found_stock(
-            part, location, by=request.user,
-            comment=f"Найденная деталь {number} в {location.code}",
+        entries, _fingerprint = group_for_post(request.session, location_id, token)
+        results = post_found_stock_group(
+            entries=entries, location=location, token=token, by=request.user
         )
-    except InventoryError as exc:
+    except FoundStockAlreadyPosted:
+        remove_posted_group(request.session, location_id)
+        messages.info(request, "Эта группа уже была проведена.")
+        return ""
+    except (InventoryError, ReceivingQueueError) as exc:
         return str(exc)
+
+    remove_posted_group(request.session, location_id)
+    quantity = sum(row["quantity"] for row in results)
+    balances = ", ".join(
+        f"{row['exact_number']}: "
+        f"{row['lot'].quantity.quantize(Decimal('1'), rounding=ROUND_HALF_UP):f}"
+        for row in results
+    )
     messages.success(
         request,
-        f"Добавлено +1: {number} {part.name} в ячейку {location.code}. "
-        f"Новый остаток лота: {lot.quantity.normalize():f}.",
+        f"Добавлено {quantity} деталей в ячейку {location.code}. "
+        f"Новые остатки: {balances}.",
     )
     return ""
 
@@ -412,7 +428,6 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
 
     kind, obj, location = "", None, None
     candidates: list = []
-    addition = None  # контекст «довнести найденную деталь» (обычный номер)
     error = ""
 
     if request.method == "POST":
@@ -420,10 +435,54 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
         if action == "reset":
             return redirect("scanner_receiving")
 
-        if action == "add_found":
-            error = _handle_found_addition(request)
-            if not error:
-                return redirect("scanner_receiving")  # успех → messages + PRG
+        try:
+            if action == "queue_clear":
+                clear_queue(request.session)
+                messages.success(request, "Список приёмки очищен. Остатки не изменялись.")
+                return redirect("scanner_receiving")
+            if action == "queue_remove":
+                remove_line(request.session, request.POST.get("line_id", ""))
+                messages.success(request, "Строка удалена из очереди. Остатки не изменялись.")
+                return redirect("scanner_receiving")
+            if action == "queue_update":
+                update_quantity(
+                    request.session,
+                    request.POST.get("line_id", ""),
+                    request.POST.get("quantity"),
+                )
+                messages.success(request, "Количество в очереди обновлено.")
+                return redirect("scanner_receiving")
+            if action == "queue_assign":
+                code = assign_location(
+                    request.session,
+                    request.POST.get("line_id", ""),
+                    location_id=_int(request.POST.get("location_id")),
+                    location_code=request.POST.get("location_code", ""),
+                )
+                messages.success(request, f"Деталь будет добавлена в {code}.")
+                return redirect("scanner_receiving")
+            if action == "queue_unassign":
+                unassign_location(request.session, request.POST.get("line_id", ""))
+                messages.success(request, "Выберите другую ячейку до проведения группы.")
+                return redirect("scanner_receiving")
+            if action == "queue_select_candidate":
+                candidate = pop_pending_candidate(
+                    request.session,
+                    request.POST.get("candidate_token", ""),
+                    request.POST.get("candidate_key", ""),
+                )
+                line, _added_new = add_candidate(request.session, candidate)
+                messages.success(
+                    request,
+                    f"{line['manufacturer']} {line['exact_number']} добавлен в очередь.",
+                )
+                return redirect("scanner_receiving")
+            if action == "queue_post":
+                error = _post_queue_group(request)
+                if not error:
+                    return redirect("scanner_receiving")
+        except ReceivingQueueError as exc:
+            error = str(exc)
 
         kind, obj, location = _load_operation(request)
 
@@ -455,26 +514,43 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
             if not code:
                 error = "Пустой код."
             elif obj is None:
+                clear_pending(request.session)
                 result = resolve_scan(code, user=request.user)
-                if result.status == "unknown":
-                    _record_unresolved(request, code)
-                    error = "Код не распознан."
-                elif result.status == "ambiguous":
-                    candidates = result.candidates
-                    error = "Уточните, какой экземпляр разместить."
-                elif result.type == "part_item":
+                if result.type == "part_item" and result.status == "found":
                     kind = "part_item"
                     obj = PartItem.objects.select_related(
                         "part_type", "current_location"
                     ).get(pk=result.id)
-                elif result.type == "part_type":
-                    # Обычный номер детали (вид/BRP material_no): не ошибка, а
-                    # сценарий «довнести найденную деталь к существующей ячейке».
-                    part = PartType.objects.filter(pk=result.id).first()
-                    if part is None:
-                        error = "Деталь не найдена."
+                elif result.status == "ambiguous" and any(
+                    candidate.get("type") == "part_item" for candidate in result.candidates
+                ):
+                    candidates = result.candidates
+                    error = "Уточните, какой экземпляр разместить."
+                elif result.type == "part_type" and result.status == "found":
+                    try:
+                        queued = _queue_candidate_scan(
+                            request, code, warehouse_part_id=result.id
+                        )
+                    except ReceivingQueueError as exc:
+                        error = str(exc)
                     else:
-                        addition, error = _prepare_found_addition(request, part, code)
+                        if queued:
+                            return redirect("scanner_receiving")
+                        error = "Карточка детали не подходит для пакетной приёмки."
+                elif result.status in {"unknown", "ambiguous"}:
+                    try:
+                        queued = _queue_candidate_scan(request, code)
+                    except ReceivingQueueError as exc:
+                        error = str(exc)
+                    else:
+                        if queued:
+                            return redirect("scanner_receiving")
+                        _record_unresolved(request, code)
+                        error = (
+                            "Код не распознан: он не найден в каталогах BRP, Polaris "
+                            "или в складском "
+                            "справочнике. Сначала создайте карточку детали или проверьте номер."
+                        )
                 else:
                     error = _wrong_object_message(result)
             else:
@@ -492,39 +568,55 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
             if not error:
                 return redirect("scanner_receiving")  # успех → messages + PRG
 
-    if addition is not None:
-        step = "add_found"
-    elif obj is None:
+    if obj is None:
         step = "scan_object"
     elif location is None:
         step = "scan_location"
     else:
         step = "confirm"
 
+    history = list(
+        StockMovement.objects.filter(
+            created_by=request.user, movement_type__in=_HISTORY_TYPES
+        )
+        .select_related(
+            "part_type", "part_type__manufacturer", "to_location",
+            "part_type__brp_link__brp_part", "part_type__polaris_link__polaris_part",
+        )
+        .prefetch_related(identity_numbers_prefetch())[:10]
+    )
+    found_history = list(
+        StockMovement.objects.filter(
+            movement_type=StockMovement.MovementType.ADJUST_IN,
+            document_type=FOUND_ADDITION_DOC,
+        )
+        .select_related(
+            "part_type", "part_type__manufacturer", "to_location", "created_by",
+            "part_type__brp_link__brp_part", "part_type__polaris_link__polaris_part",
+        )
+        .prefetch_related(identity_numbers_prefetch())[:10]
+    )
+    attach_movement_identity(history)
+    attach_movement_identity(found_history)
+    for movement in found_history:
+        movement.customer_unit_price = movement.part_type.recommended_price or Decimal("0")
+        movement.customer_total_value = movement.customer_unit_price * movement.quantity
     ctx = {
         "object": obj,
         "object_kind": kind,
         "location": location,
-        "addition": addition,
         "step": step,
         "candidates": candidates,
+        "catalog_choice": pending_context(request.session),
+        "receiving_queue": queue_context(request.session),
         "error": error,
         "receiving_lots": (
             StockLot.objects.filter(status=StockLot.Status.RECEIVING)
             .select_related("part_type", "batch", "location")
             .order_by("-created_at")[:50]
         ),
-        "history": (
-            StockMovement.objects.filter(
-                created_by=request.user, movement_type__in=_HISTORY_TYPES
-            ).select_related("part_type", "to_location")[:10]
-        ),
-        "found_history": (
-            StockMovement.objects.filter(
-                movement_type=StockMovement.MovementType.ADJUST_IN,
-                document_type=FOUND_ADDITION_DOC,
-            ).select_related("part_type", "to_location", "created_by")[:10]
-        ),
+        "history": history,
+        "found_history": found_history,
         "show_costs": request.user.can_view_purchase_cost,
     }
     return render(request, "core/receiving.html", ctx)
