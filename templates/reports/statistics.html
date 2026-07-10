@@ -23,16 +23,44 @@
       </div>
     </div>
   </form>
+  <section class="tiles dashboard-section" aria-label="Финансовая оценка склада">
+    <div class="tile">
+      <div class="tile__label">Закупочная стоимость склада</div>
+      <div class="tile__value num">{{ stats.valuation.purchase_cost|floatformat:"0" }} ₽</div>
+      <div class="tile__hint">По ценам прайсов и курсу {{ stats.valuation.usd_rate|floatformat:"-2" }} ₽/$</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Оценка склада по цене продажи</div>
+      <div class="tile__value num">{{ stats.valuation.sale_value|floatformat:"0" }} ₽</div>
+      <div class="tile__hint">Весь физический остаток по клиентским ценам</div>
+    </div>
+    <div class="tile">
+      <div class="tile__label">Потенциальная прибыль</div>
+      <div class="tile__value num">{{ stats.valuation.potential_profit|floatformat:"0" }} ₽</div>
+      <div class="tile__hint">Оценка продажи минус стоимость заказа</div>
+    </div>
+  </section>
+  {% if stats.valuation.unpriced_positions %}
+    <p class="muted"
+       title="Эти детали не включены в закупочную стоимость и расчёт потенциальной прибыли из-за отсутствия цены в прайсе.">
+      Без закупочной цены: {{ stats.valuation.unpriced_positions }} позиций /
+      {{ stats.valuation.unpriced_units|floatformat:"-3" }} единиц
+    </p>
+  {% endif %}
+  <details class="muted">
+    <summary>Как считаются показатели?</summary>
+    <p class="muted">
+      Закупочная стоимость склада рассчитывается по базовым ценам из прайсов
+      производителей и курсу {{ stats.valuation.usd_rate|floatformat:"-2" }} ₽ за
+      доллар. Для Polaris используется оптовая цена. Оценка склада по цене
+      продажи рассчитывается по действующим клиентским ценам. Потенциальная
+      прибыль является разницей между этими показателями. Доставка, таможня,
+      налоги, комиссии и другие расходы пока не учитываются: фактическая
+      себестоимость будет уточняться по реальным поступлениям.
+    </p>
+  </details>
   <section class="tiles dashboard-section"
            aria-label="Ключевые показатели склада">
-    <div class="tile">
-      <div class="tile__label">Стоимость склада, ₽</div>
-      <div class="tile__value num">{{ stats.kpi.stock_cost }}</div>
-    </div>
-    <div class="tile">
-      <div class="tile__label">Потенциальная выручка, ₽</div>
-      <div class="tile__value num">{{ stats.kpi.potential_revenue }}</div>
-    </div>
     <div class="tile">
       <div class="tile__label">Видов на складе</div>
       <div class="tile__value">{{ stats.kpi.part_types_with_stock }}</div>

@@ -2,34 +2,42 @@
 
 Нет активной передачи: задача завершена.
 
-- Task: Приёмка сканером — довнесение найденной детали (+1) по обычному
-  номеру детали (DONE)
-- Branch: main
-- Verified merged Codex work first: identity fix + cancellation + repair
-  command + Polaris catalog — все на main, 869 passed, ruff/djlint/check/
-  makemigrations чисто.
-- Реализовано:
-  - inventory.services.add_found_stock(part, location, qty=1, by, comment):
-    +qty к существующему доступному лоту (part,location) через
-    adjust_stock_lot_quantity (ADJUST_IN, document_type="found_addition");
-    если лота в ячейке нет — InventoryError (молча не кладём); atomic,
-    select_for_update, защита от минуса. FOUND_ADDITION_DOC константа.
-  - core.views.scanner_receiving: скан обычного номера (result.type ==
-    "part_type") больше НЕ ошибка «это вид детали», а сценарий «довнести
-    найденную деталь»: _prepare_found_addition (ищет ячейки через
-    actions.stock_overview, ставит одноразовый token в сессию),
-    _handle_found_addition (потребляет token ДО мутации — защита от двойного
-    сабмита, зовёт add_found_stock, сообщение с новым остатком, PRG).
-    exact номер = actions.identity_number (не замена). found_history
-    (ADJUST_IN + found_addition) в ctx.
-  - templates/core/receiving.html: карточка добавления (номер/название/оценка/
-    ячейки с выбором), кнопка «Добавить +1 к наличию», таблица «Добавление
-    найденных деталей». Экземпляры ITEM:/DS-… — старый флоу без изменений.
-  - Цена = customer/evaluation (part.recommended_price), не себестоимость.
-  - Миграций НЕТ (переиспользованы существующие таблицы/движения).
-- Не тронуты: sale/reserve/repair, customs export, receipts, stocktaking,
-  BRP exact/replacement логика.
-- Checks: full pytest 881 passed (12 новых в test_scanner_stock_addition.py),
-  ruff clean, djlint clean, manage.py check, makemigrations --check без
-  изменений. Браузерный smoke: скан 420931285 -> карточка (не 420931284) ->
-  +1 (3->4) -> /actions «Доступно 4», /receipts чист, 375px без переполнения.
+- Task: Финансовая статистика склада — три показателя на /statistics/ (DONE)
+- Branch: feature/warehouse-financial-statistics (НЕ мержить без решения
+  пользователя; в main не пушилось)
+- Как было: «Стоимость склада» считалась по landed cost (после
+  инвентаризаций первичного ввода он нулевой — карточка бесполезна);
+  «Потенциальная выручка» = available x recommended_price.
+- Как стало (apps/reports/warehouse_finance.py, read-only):
+  1. «Закупочная стоимость склада» = физический остаток x базовая цена USD
+     x курс настройки (default 105). BRP: retail_price_usd (база формулы
+     клиентской цены, ДО наценки) от effective source (replacement при
+     нуле); Polaris: ТОЛЬКО wholesale («ОПТОВАЯ»), при нуле — оптовая от
+     superseded-связи (identity не подменяется).
+  2. «Оценка склада по цене продажи» = физический остаток x действующая
+     клиентская цена (существующие формулы pricing BRP/Polaris, настройки
+     цен читаются один раз на расчёт — нет N+1). Ручные карточки —
+     recommended_price.
+  3. «Потенциальная прибыль» = разница. Без учёта доставки/таможни/налогов
+     (пояснение в UI); фактическая себестоимость — отдельная будущая задача.
+  - Позиции без закупочной цены: исключаются из закупки, счётчик
+    «Без закупочной цены: N позиций / N единиц» + tooltip.
+  - Физический остаток: LOT_PHYSICAL_STATUSES + ITEM_PHYSICAL_STATUSES
+    (та же физика, что в «Остатках»); резервы не вычитаются (по ТЗ).
+- Курс: apps/warehouse/models.ValuationSettings (singleton,
+  purchase_usd_rate=105, «Курс для оценки закупочной стоимости»),
+  миграция warehouse/0002. В шаблоне курс не хардкодится.
+- UI (templates/reports/statistics.html): три плитки с подписями, строка
+  unpriced, details «Как считаются показатели?». Старые плитки
+  «Стоимость склада, ₽»/«Потенциальная выручка, ₽» удалены из KPI
+  (StatsKpi без stock_cost/potential_revenue; _potential_revenue удалена;
+  блок «Деньги в складе» по категориям на landed cost не трогали).
+- SQL: ~7 запросов независимо от числа видов деталей (2 агрегата остатков,
+  1 parts+links, 3 singleton-настройки) + точечные запросы источника цены
+  только для деталей с нулевой ценой прайса. Тест лимита: 8.
+- Tests: tests/test_warehouse_finance.py (11) + обновлён
+  tests/test_statistics.py. Full pytest 892 passed; ruff/djlint/check/
+  makemigrations --check чисто. Browser smoke на 375px ok, числа сверены
+  вручную.
+- Не тронуто: остатки, движения, продажи, резервы, импорты, customs,
+  scanner receiving, исторические документы.
