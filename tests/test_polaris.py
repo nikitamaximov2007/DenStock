@@ -222,7 +222,7 @@ def test_actions_polaris_price_source_does_not_replace_identity(db, admin):
     assert action.price_source_number == "250000418"
 
 
-def test_customs_export_polaris_exact_number_and_blank_country(db, admin):
+def test_customs_export_polaris_exact_number_country_and_application(db, admin):
     polaris = PolarisCatalogPart.objects.create(
         part_number="420931285", part_name="OIL SEAL", retail_price_usd=Decimal("24.49")
     )
@@ -244,8 +244,9 @@ def test_customs_export_polaris_exact_number_and_blank_country(db, admin):
     assert str(sheet["B10"].value) == "420931285"
     assert sheet["D10"].value == "OIL SEAL"
     assert sheet["E10"].value == "POLARIS"
-    assert sheet["F10"].value in (None, "")
-    assert sheet["M10"].value == "МОТО ЗАПЧАСТИ"
+    assert sheet["F10"].value == "CANADA"  # страна всегда латиницей
+    assert sheet["K10"].value is None  # оптовой цены в прайсе нет — розницу не подставляем
+    assert sheet["M10"].value is None  # применимость не задана — категорию не выдумываем
 
 
 def test_polaris_search_page_settings_gated_and_visible(client, make_user, db):

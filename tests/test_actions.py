@@ -354,21 +354,24 @@ def test_auto_customs_name_ru():
     assert auto_customs_name_ru("UNKNOWNWORD 42") == "UNKNOWNWORD 42"  # не выдумываем
 
 
-def test_part_export_data_uses_effective_usd_price(data):
-    # Точный номер с нулевой розницей + замена с ценой (правило 32.3.2).
+def test_part_export_data_uses_effective_wholesale_price(data):
+    # Точный номер без оптовой + замена с оптовой: цена от источника,
+    # номер детали остаётся точным.
     zero = BrpCatalogPart.objects.create(
         material_no="250000059", part_desc="HEX. FLANGED SCEW M6 X 18",
-        retail_price_usd=Decimal("0"),
+        retail_price_usd=Decimal("0"), wholesale_price_usd=Decimal("0"),
     )
     BrpCatalogPart.objects.create(
         material_no="250000418", part_desc="FLANGED HEX. SCREW",
-        retail_price_usd=Decimal("4.19"), replacement_no_1="250000059",
+        retail_price_usd=Decimal("4.19"), wholesale_price_usd=Decimal("3.29"),
+        replacement_no_1="250000059",
     )
     part = promote_to_warehouse(zero, by=data["admin"])
     row = part_export_data(part)
     assert row["number"] == "250000059"  # личность остаётся отсканированной
-    assert row["usd_price"] == Decimal("4.19")  # USD от эффективного источника
-    assert "нет цены в USD" not in row["warnings"]
+    assert row["usd_price"] == Decimal("3.29")  # ОПТОВАЯ от эффективного источника
+    assert row["usd_price"] != Decimal("4.19")  # не розница
+    assert "нет оптовой цены в USD" not in row["warnings"]
     assert "нет веса брутто" in row["warnings"]  # вес не выдуман
 
 
@@ -396,7 +399,8 @@ def test_customs_edit_saves_manual_data(client, make_user, data):
     # Ручное название уходит в экспорт в ВЕРХНЕМ регистре.
     row = part_export_data(data["roller"])
     assert row["name_ru"] == "РОЛИК ВАРИАТОРА"
-    assert row["warnings"] == []
+    # Применимость у карточки не заполнена — остаётся только это предупреждение.
+    assert row["warnings"] == ["не определена область применения"]
 
 
 def test_export_rows_group_by_part(data):
@@ -435,13 +439,13 @@ def test_export_xlsx_structure(client, make_user, data):
     assert sheet["C10"].value == "РОЛИК ШКИВ"  # RU в верхнем регистре (автоперевод)
     assert sheet["D10"].value == "ROLLER PULLEY"
     assert sheet["E10"].value == "BRP"
-    assert sheet["F10"].value == "КАНАДА"
+    assert sheet["F10"].value == "CANADA"  # всегда латиницей
     assert sheet["G10"].value is None and sheet["H10"].value is None  # весов нет: пусто
     assert sheet["I10"].value == "=J10*G10"
     assert Decimal(str(sheet["J10"].value)) == Decimal("2")
-    assert Decimal(str(sheet["K10"].value)) == Decimal("25.99")  # розница BRP в USD
+    assert Decimal(str(sheet["K10"].value)) == Decimal("20")  # ОПТОВАЯ BRP в USD
     assert sheet["L10"].value == "=K10*J10"
-    assert sheet["M10"].value == "МОТО ЗАПЧАСТИ"
+    assert sheet["M10"].value is None  # применимость не задана — не выдумываем
     # Вторая строка: деталь без BRP-связи: номер со склада, цены USD нет.
     assert str(sheet["B11"].value) == "700100"
     assert sheet["K11"].value is None

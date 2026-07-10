@@ -15,12 +15,18 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from apps.brp.models import BrpPartLink
-from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.brp.models import BrpCatalogPart, BrpPartLink
+from apps.catalog.models import (
+    PartBarcode,
+    PartNumber,
+    PartType,
+    VehicleType,
+    normalize_number,
+)
 from apps.counting.services import find_brp_price_source
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import return_stock_lot_quantity
-from apps.polaris.models import PolarisPartLink
+from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.services import find_polaris_price_source
 from apps.procurement.models import money
 from apps.repairs.services import (
@@ -50,6 +56,13 @@ TEMPLATE_PATH = (
 )
 TEMPLATE_SHEET = "Лист1"
 TEMPLATE_DATA_START_ROW = 10  # строка 10 шаблона — пример, перезаписывается данными
+TEMPLATE_DATA_COLUMNS = "ABCDEFGHIJKLM"
+# Строки 1-9 — инструкции и шапка (не трогаем). Ниже 10-й строки шаблон
+# заранее заполнен BRP/CANADA/СНЕГОХОД и формулами: это заготовка, а не
+# данные. Перед заполнением товарный диапазон очищается по значениям.
+TEMPLATE_DATA_END_ROW = 149  # 150-я строка шаблона — служебная (merged F150:H150)
+# Страна производства для этого таможенного экспорта — всегда латиницей.
+CUSTOMS_COUNTRY = "CANADA"
 
 # openpyxl запрещает управляющие символы; текст, начинающийся с этих символов,
 # Excel исполняет как формулу (formula injection).
@@ -534,6 +547,99 @@ def _polaris_part_for(part: PartType):
     return link.polaris_part if link else None
 
 
+def _brp_wholesale_usd(brp) -> Decimal | None:
+    """Оптовая (dealer) цена BRP в USD: сама позиция, иначе связанная замена.
+
+    Колонка «ОПТОВАЯ» прайса BRP. Replacement — ТОЛЬКО источник цены: номер
+    детали (material_no) от этого не меняется. Розница и клиентская цена в
+    таможенную форму не подмешиваются.
+    """
+    if brp.wholesale_price_usd and brp.wholesale_price_usd > 0:
+        return brp.wholesale_price_usd
+    related = Q()
+    if brp.material_no_norm:
+        related |= Q(replacement_no_1_norm=brp.material_no_norm)
+        related |= Q(replacement_no_2_norm=brp.material_no_norm)
+    for repl in (brp.replacement_no_1_norm, brp.replacement_no_2_norm):
+        if repl:
+            related |= Q(material_no_norm=repl)
+    if not related:
+        return None
+    source = (
+        BrpCatalogPart.objects.filter(related, wholesale_price_usd__gt=0)
+        .order_by("pk")
+        .first()
+    )
+    return source.wholesale_price_usd if source else None
+
+
+def _polaris_wholesale_usd(polaris) -> Decimal | None:
+    """Оптовая цена Polaris в USD: сама позиция, иначе superseded-связь.
+
+    Superseded — ТОЛЬКО источник цены: part_number не подменяется.
+    """
+    if polaris.wholesale_price_usd and polaris.wholesale_price_usd > 0:
+        return polaris.wholesale_price_usd
+    related = Q()
+    if polaris.part_number_norm:
+        related |= Q(superseded_number_norm=polaris.part_number_norm)
+    if polaris.superseded_number_norm:
+        related |= Q(part_number_norm=polaris.superseded_number_norm)
+    if not related:
+        return None
+    source = (
+        PolarisCatalogPart.objects.filter(related, wholesale_price_usd__gt=0)
+        .order_by("pk")
+        .first()
+    )
+    return source.wholesale_price_usd if source else None
+
+
+# Вид техники (справочник) -> таможенная область применения. Мотоциклы компания
+# не обслуживает: их применимость НЕ превращается в «МОТО ЗАПЧАСТИ», строка
+# просто остаётся пустой.
+_APPLICATION_BY_VEHICLE_TYPE = {
+    "снегоход": "СНЕГОХОД",
+    "квадроцикл": "КВАДРОЦИКЛ",
+    "гидроцикл": "ГИДРОЦИКЛ",
+    "катер": "КАТЕР / ЛОДКА",
+    "лодка": "КАТЕР / ЛОДКА",
+    "яхта": "КАТЕР / ЛОДКА",
+    "автомобиль": "АВТОМОБИЛЬ",
+}
+MULTI_APPLICATION = "УНИВЕРСАЛЬНЫЕ ЗАПЧАСТИ"
+# Старый хардкод модели (PartCustomsInfo.application_area по умолчанию).
+# В таможенную форму он не выгружается никогда.
+LEGACY_APPLICATION = "МОТО ЗАПЧАСТИ"
+
+
+def resolve_customs_application(part: PartType) -> str:
+    """Область применения по ФАКТИЧЕСКОЙ применимости детали.
+
+    Источник — только данные каталога: PartCompatibility -> VehicleModel ->
+    VehicleMake -> VehicleType. Ни названия детали, ни производителя каталога
+    (BRP/Polaris) для догадок не используются.
+
+    Одна обслуживаемая категория -> она; несколько -> «УНИВЕРСАЛЬНЫЕ ЗАПЧАСТИ»;
+    нет данных или только необслуживаемая техника (мотоциклы) -> пустая строка.
+    """
+    names = (
+        VehicleType.objects.filter(makes__models__compatibilities__part=part)
+        .values_list("name", flat=True)
+        .distinct()
+    )
+    categories = {
+        _APPLICATION_BY_VEHICLE_TYPE[name.strip().lower()]
+        for name in names
+        if name and name.strip().lower() in _APPLICATION_BY_VEHICLE_TYPE
+    }
+    if not categories:
+        return ""  # надёжно определить нельзя — не выдумываем
+    if len(categories) > 1:
+        return MULTI_APPLICATION
+    return next(iter(categories))
+
+
 def part_export_data(part: PartType, number: str | None = None) -> dict:
     """Данные детали для строк экспорта + предупреждения о недостающих полях.
 
@@ -553,24 +659,27 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     else:
         english_name = (brp.part_desc if brp and brp.part_desc else part.name).strip()
     name_ru = customs.customs_name_ru.strip() or auto_customs_name_ru(english_name)
+    # «Стоимость за шт» — ОПТОВАЯ цена прайса в USD (без курса и наценки).
     usd_price = None
     if brp is not None:
-        source = find_brp_price_source(brp.material_no_norm, brp)
-        if source is not None and source.retail_price_usd and source.retail_price_usd > 0:
-            usd_price = source.retail_price_usd
+        usd_price = _brp_wholesale_usd(brp)
     elif polaris is not None:
-        source = find_polaris_price_source(polaris.part_number_norm, polaris)
-        if source is not None and source.retail_price_usd and source.retail_price_usd > 0:
-            usd_price = source.retail_price_usd
+        usd_price = _polaris_wholesale_usd(polaris)
     if polaris is not None:
         manufacturer = (customs.manufacturer or "POLARIS").upper()
         if manufacturer == "BRP":
             manufacturer = "POLARIS"
-        country_raw = (customs.country_of_origin or "").strip()
-        country = "" if country_raw.upper() == "КАНАДА" else country_raw.upper()
     else:
         manufacturer = (customs.manufacturer or "BRP").upper()
-        country = (customs.country_of_origin or "КАНАДА").upper()
+    # Страна для этого таможенного экспорта всегда латиницей.
+    country = CUSTOMS_COUNTRY
+    # Область применения: ручное значение, иначе — по фактической применимости.
+    # Легаси-хардкод «МОТО ЗАПЧАСТИ» в форму не попадает никогда.
+    manual_application = (customs.application_area or "").strip()
+    if not manual_application or manual_application.upper() == LEGACY_APPLICATION:
+        application_area = resolve_customs_application(part)
+    else:
+        application_area = manual_application.upper()
     warnings = []
     if not customs.customs_name_ru.strip():
         warnings.append("русское название: автоперевод, проверьте")
@@ -579,7 +688,9 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     if customs.net_weight_kg is None:
         warnings.append("нет веса нетто")
     if usd_price is None:
-        warnings.append("нет цены в USD")
+        warnings.append("нет оптовой цены в USD")
+    if not application_area:
+        warnings.append("не определена область применения")
     return {
         "part": part,
         "customs": customs,
@@ -591,7 +702,7 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "gross_weight_kg": customs.gross_weight_kg,
         "net_weight_kg": customs.net_weight_kg,
         "usd_price": usd_price,
-        "application_area": (customs.application_area or "МОТО ЗАПЧАСТИ").upper(),
+        "application_area": application_area,
         "warnings": warnings,
     }
 
@@ -642,14 +753,40 @@ def build_export_rows(actions) -> list[dict]:
     return sorted(grouped.values(), key=lambda r: (r["number"], r["manufacturer"]))
 
 
+def _center_data_row(sheet, row: int) -> None:
+    """Единое оформление строки данных: центр по обеим осям + перенос текста.
+
+    Для КАЖДОЙ ячейки создаётся свой Alignment: общий mutable-объект openpyxl
+    разделял бы стиль между ячейками. Высота строки сбрасывается в авто, иначе
+    строки шаблона с зафиксированной высотой (15/18) визуально «съезжают»
+    относительно соседних.
+    """
+    from openpyxl.cell.cell import MergedCell
+    from openpyxl.styles import Alignment
+
+    for column in TEMPLATE_DATA_COLUMNS:
+        cell = sheet[f"{column}{row}"]
+        if isinstance(cell, MergedCell):
+            continue
+        cell.alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+    sheet.row_dimensions[row].height = None
+
+
 def export_customs_xlsx(actions) -> BytesIO:
     """Заполнить копию шаблона «Форма для заказа» отфильтрованными действиями.
 
-    Шаблон: лист «Лист1», строки 1-9 (инструкции/шапка) сохраняются, данные
-    с строки 10; строка 10 шаблона — пример (271002228) и перезаписывается.
-    Формулы I (=J*G) и L (=K*J) сохраняются/проставляются построчно. Все
-    текстовые поля пишутся в ВЕРХНЕМ регистре. Пустые веса остаются пустыми:
-    веса не выдумываются.
+    Шаблон: лист «Лист1», строки 1-9 (инструкции/шапка) сохраняются. Товарный
+    диапазон (строки 10..150) — заготовка шаблона с предзаполненными BRP,
+    CANADA, СНЕГОХОД и формулами: перед записью значения очищаются, чтобы
+    ниже последней реальной позиции не осталось ложных товарных данных и
+    ложных «0,00». Стили, границы, заливка и ширины колонок сохраняются.
+
+    Формулы I (=J*G) и L (=K*J) проставляются только на фактических строках и
+    ссылаются на свою строку. Текстовые поля — в ВЕРХНЕМ регистре через
+    санитайзер. Пустые веса и отсутствующая оптовая цена остаются пустыми:
+    ничего не выдумывается.
     """
     import openpyxl
 
@@ -661,9 +798,17 @@ def export_customs_xlsx(actions) -> BytesIO:
         )
     workbook = openpyxl.load_workbook(str(TEMPLATE_PATH))
     sheet = workbook[TEMPLATE_SHEET]
-    # Пример шаблона в строке 10 очищается: он не должен уехать как данные.
-    for column in "ABCDGHJK":
-        sheet[f"{column}{TEMPLATE_DATA_START_ROW}"] = None
+
+    # Очистка ТОЛЬКО значений товарного диапазона (стили/границы остаются).
+    # Объединённые ячейки шаблона пропускаем: у них value read-only.
+    from openpyxl.cell.cell import MergedCell
+
+    for r in range(TEMPLATE_DATA_START_ROW, TEMPLATE_DATA_END_ROW + 1):
+        for column in TEMPLATE_DATA_COLUMNS:
+            cell = sheet[f"{column}{r}"]
+            if not isinstance(cell, MergedCell):
+                cell.value = None
+
     for offset, row in enumerate(rows):
         r = TEMPLATE_DATA_START_ROW + offset
         sheet[f"A{r}"] = None  # номер трекинга заполняется вручную
@@ -678,9 +823,11 @@ def export_customs_xlsx(actions) -> BytesIO:
         sheet[f"H{r}"] = row["net_weight_kg"]
         sheet[f"I{r}"] = f"=J{r}*G{r}"
         sheet[f"J{r}"] = row["quantity"]  # openpyxl пишет Decimal как число
-        sheet[f"K{r}"] = row["usd_price"]
+        sheet[f"K{r}"] = row["usd_price"]  # оптовая цена прайса в USD
         sheet[f"L{r}"] = f"=K{r}*J{r}"
         sheet[f"M{r}"] = excel_safe_text(row["application_area"])
+        _center_data_row(sheet, r)  # включая последнюю строку
+
     buffer = BytesIO()
     workbook.save(buffer)
     buffer.seek(0)
