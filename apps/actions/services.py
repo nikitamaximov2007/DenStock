@@ -4,13 +4,13 @@
 сервисами apps.sales и apps.repairs (движения, остатки, брони — там).
 Здесь: поиск остатков по скану, раскладка количества по лотам выбранной
 ячейки (FIFO), журнальная запись WarehouseAction для единого отчёта и
-Excel-экспорт «Формы для заказа» (openpyxl, шаблон в docs/templates/).
+Excel-экспорт «Формы для заказа» (openpyxl, шаблон в apps/actions/customs_template/:
+рантайм-ассет должен лежать в пакете, docs/ исключён из Docker-образа).
 """
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 
-from django.conf import settings
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
@@ -41,9 +41,20 @@ from apps.sales.services import (
 
 from .models import PartCustomsInfo, WarehouseAction
 
-TEMPLATE_PATH = Path(settings.BASE_DIR) / "docs" / "templates" / "supplier_order_template.xlsx"
+# Шаблон — РАНТАЙМ-АССЕТ и лежит внутри пакета приложения, а не в docs/:
+# каталог docs/ исключён из Docker-образа (.dockerignore), поэтому шаблон
+# оттуда не попадал в production и экспорт падал с FileNotFoundError.
+# Путь берётся от модуля, а не от BASE_DIR: работает в любом окружении.
+TEMPLATE_PATH = (
+    Path(__file__).resolve().parent / "customs_template" / "supplier_order_template.xlsx"
+)
 TEMPLATE_SHEET = "Лист1"
 TEMPLATE_DATA_START_ROW = 10  # строка 10 шаблона — пример, перезаписывается данными
+
+# openpyxl запрещает управляющие символы; текст, начинающийся с этих символов,
+# Excel исполняет как формулу (formula injection).
+_EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@")
+_EXCEL_MAX_TEXT = 32767
 
 NOT_FOUND_MESSAGE = "Деталь не найдена в остатках склада."
 MULTI_LOCATION_MESSAGE = "Деталь найдена в нескольких ячейках. Выберите, откуда списать."
@@ -483,12 +494,30 @@ def auto_customs_name_ru(english_name: str) -> str:
     return " ".join(translated).strip()
 
 
-def get_or_create_customs(part: PartType) -> PartCustomsInfo:
-    defaults = {}
+def _customs_defaults(part: PartType) -> dict:
     if _polaris_part_for(part) is not None:
-        defaults = {"manufacturer": "POLARIS", "country_of_origin": ""}
-    info, _created = PartCustomsInfo.objects.get_or_create(part_type=part, defaults=defaults)
+        return {"manufacturer": "POLARIS", "country_of_origin": ""}
+    return {}
+
+
+def get_or_create_customs(part: PartType) -> PartCustomsInfo:
+    """Таможенная карточка детали (создаёт строку). Только для страницы правки."""
+    info, _created = PartCustomsInfo.objects.get_or_create(
+        part_type=part, defaults=_customs_defaults(part)
+    )
     return info
+
+
+def read_customs(part: PartType) -> PartCustomsInfo:
+    """Таможенная карточка ТОЛЬКО для чтения: отсутствующую не сохраняет.
+
+    Отчёт и экспорт (GET) не должны писать в базу; строка появляется, когда
+    пользователь реально правит таможенные данные.
+    """
+    info = PartCustomsInfo.objects.filter(part_type=part).first()
+    if info is not None:
+        return info
+    return PartCustomsInfo(part_type=part, **_customs_defaults(part))  # не сохраняем
 
 
 def _brp_part_for(part: PartType):
@@ -514,7 +543,7 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     K (стоимость за шт) - розница каталога в USD от эффективного источника
     цены. Рублёвые цены в таможенную форму не подмешиваются.
     """
-    customs = get_or_create_customs(part)
+    customs = read_customs(part)  # read-only: экспорт/отчёт не пишут в базу
     brp = _brp_part_for(part)
     polaris = _polaris_part_for(part)
     if not number:
@@ -567,6 +596,29 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     }
 
 
+def excel_safe_text(value) -> str | None:
+    """Текст, безопасный для openpyxl и Excel (None -> пустая ячейка).
+
+    Убирает управляющие символы (иначе openpyxl бросает IllegalCharacterError),
+    режет по лимиту Excel и нейтрализует formula injection: строка, начинающаяся
+    с =, +, - или @, экранируется апострофом и остаётся ТЕКСТОМ. Кириллица,
+    пробелы, дефисы внутри и артикулы не искажаются.
+    """
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    if value is None:
+        return None
+    text = str(value)
+    text = ILLEGAL_CHARACTERS_RE.sub("", text)
+    if not text:
+        return None
+    if len(text) > _EXCEL_MAX_TEXT:
+        text = text[:_EXCEL_MAX_TEXT]
+    if text.startswith(_EXCEL_FORMULA_PREFIXES):
+        text = "'" + text
+    return text
+
+
 def build_export_rows(actions) -> list[dict]:
     """Строки экспорта: группировка по ТОЧНОМУ номеру продажи, количество сумм.
 
@@ -602,6 +654,11 @@ def export_customs_xlsx(actions) -> BytesIO:
     import openpyxl
 
     rows = build_export_rows(actions)
+    if not TEMPLATE_PATH.exists():  # явная причина вместо голого FileNotFoundError
+        raise ActionError(
+            f"Шаблон таможенной формы не найден: {TEMPLATE_PATH}. "
+            "Он должен поставляться вместе с приложением."
+        )
     workbook = openpyxl.load_workbook(str(TEMPLATE_PATH))
     sheet = workbook[TEMPLATE_SHEET]
     # Пример шаблона в строке 10 очищается: он не должен уехать как данные.
@@ -610,18 +667,20 @@ def export_customs_xlsx(actions) -> BytesIO:
     for offset, row in enumerate(rows):
         r = TEMPLATE_DATA_START_ROW + offset
         sheet[f"A{r}"] = None  # номер трекинга заполняется вручную
-        sheet[f"B{r}"] = row["number"]
-        sheet[f"C{r}"] = row["name_ru"]
-        sheet[f"D{r}"] = row["name_en"]
-        sheet[f"E{r}"] = row["manufacturer"]
-        sheet[f"F{r}"] = row["country"]
+        # Текстовые колонки — только через санитайзер: управляющие символы из
+        # прайсов ломали workbook, а «=»/«+»/«-»/«@» превращались в формулу.
+        sheet[f"B{r}"] = excel_safe_text(row["number"])
+        sheet[f"C{r}"] = excel_safe_text(row["name_ru"])
+        sheet[f"D{r}"] = excel_safe_text(row["name_en"])
+        sheet[f"E{r}"] = excel_safe_text(row["manufacturer"])
+        sheet[f"F{r}"] = excel_safe_text(row["country"])
         sheet[f"G{r}"] = row["gross_weight_kg"]  # None = пусто: вес не выдумываем
         sheet[f"H{r}"] = row["net_weight_kg"]
         sheet[f"I{r}"] = f"=J{r}*G{r}"
         sheet[f"J{r}"] = row["quantity"]  # openpyxl пишет Decimal как число
         sheet[f"K{r}"] = row["usd_price"]
         sheet[f"L{r}"] = f"=K{r}*J{r}"
-        sheet[f"M{r}"] = row["application_area"]
+        sheet[f"M{r}"] = excel_safe_text(row["application_area"])
     buffer = BytesIO()
     workbook.save(buffer)
     buffer.seek(0)

@@ -121,12 +121,9 @@ def actions_perform(request):
     return redirect(back)
 
 
-@login_required
-def actions_report_view(request):
-    """Единый отчёт действий со склада + подготовка таможенного экспорта."""
-    _require_access(request)
-    show_cancelled = request.GET.get("cancelled") == "1"
-    filters = {
+def _report_filters(request) -> dict:
+    """Фильтры отчёта из GET. Общий парсер для HTML-отчёта и Excel-экспорта."""
+    return {
         "date_from": _parse_date(request.GET.get("date_from", "")),
         "date_to": _parse_date(request.GET.get("date_to", "")),
         "action_type": request.GET.get("action_type", ""),
@@ -134,6 +131,14 @@ def actions_report_view(request):
         "part_number": (request.GET.get("part_number") or "").strip(),
         "location_code": (request.GET.get("location_code") or "").strip(),
     }
+
+
+@login_required
+def actions_report_view(request):
+    """Единый отчёт действий со склада + подготовка таможенного экспорта."""
+    _require_access(request)
+    show_cancelled = request.GET.get("cancelled") == "1"
+    filters = _report_filters(request)
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
     # Таможня и Excel — только по активным действиям (без отменённых).
@@ -194,19 +199,16 @@ def actions_cancel(request, pk):
 
 @login_required
 def actions_export(request):
-    """Скачать «Форму для заказа» (xlsx) по текущим фильтрам отчёта."""
+    """Скачать «Форму для заказа» (xlsx) по текущим фильтрам отчёта.
+
+    Read-only: тот же набор действий, что показывает отчёт, и только активные
+    (отменённые в таможенный экспорт не попадают, как и в блоке готовности).
+    """
     _require_access(request)
     from .services import export_customs_xlsx
 
-    filters = {
-        "date_from": _parse_date(request.GET.get("date_from", "")),
-        "date_to": _parse_date(request.GET.get("date_to", "")),
-        "action_type": request.GET.get("action_type", ""),
-        "q": (request.GET.get("q") or "").strip(),
-        "part_number": (request.GET.get("part_number") or "").strip(),
-        "location_code": (request.GET.get("location_code") or "").strip(),
-    }
-    actions, _totals = actions_report(**filters)
+    filters = _report_filters(request)
+    actions, _totals = actions_report(**filters)  # include_cancelled=False
     buffer = export_customs_xlsx(actions)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()
