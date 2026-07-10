@@ -82,11 +82,18 @@
         <p>
           <label for="application-area">Область применения</label>
           <br>
-          <input id="application-area"
-                 name="application_area"
-                 type="text"
-                 maxlength="120"
-                 value="{{ customs.application_area }}">
+          <select id="application-area" name="application_area">
+            <option value="" {% if not customs.application_area %}selected{% endif %}>Не заполнено</option>
+            {% for value, label in application_choices %}
+              <option value="{{ value }}"
+                      {% if customs.application_area == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </p>
+        <p class="muted">
+          Источник в текущем экспорте: {{ application_source_label }}.
+          Список категорий контролируемый: свободный текст и категория по
+          названию детали или производителю каталога не допускаются.
         </p>
         <div class="form-actions">
           <button type="submit" class="btn btn--primary">Сохранить</button>

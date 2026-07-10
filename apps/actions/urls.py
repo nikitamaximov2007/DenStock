@@ -13,4 +13,9 @@ urlpatterns = [
         views.actions_customs_edit,
         name="actions_customs_edit",
     ),
+    path(
+        "actions/customs/<int:part_id>/application/",
+        views.actions_customs_application,
+        name="actions_customs_application",
+    ),
 ]

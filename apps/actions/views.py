@@ -10,7 +10,8 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import HttpResponse
+from django.db import transaction
+from django.http import HttpResponse, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import urlencode
@@ -18,7 +19,7 @@ from django.utils.http import urlencode
 from apps.catalog.models import PartType
 from apps.warehouse.models import StorageLocation
 
-from .models import WarehouseAction
+from .models import PartCustomsInfo, WarehouseAction
 from .services import (
     MULTI_LOCATION_MESSAGE,
     NOT_FOUND_MESSAGE,
@@ -31,6 +32,13 @@ from .services import (
     resolve_part,
     stock_overview,
 )
+
+# Подпись источника области применения для UI (см. part_export_data.application_source).
+APPLICATION_SOURCE_LABELS = {
+    "manual": "Указано вручную",
+    "compatibility": "Определено по совместимости",
+    "none": "Не заполнено",
+}
 
 ACTION_PERMISSIONS = {
     WarehouseAction.Type.SALE: "can_manage_sales",
@@ -145,6 +153,10 @@ def actions_report_view(request):
     active_actions = [a for a in actions if not a.is_cancelled]
     export_rows = build_export_rows(active_actions)
     ready = [r for r in export_rows if not r["warnings"]]
+    # Готовность именно области применения — отдельно от прочих предупреждений
+    # (название/вес/цена): «готово» значит явно заполнено вручную ИЛИ уверенно
+    # определено по совместимости, «не заполнено» — ни того, ни другого.
+    application_missing = [r for r in export_rows if not r["application_area"]]
     return render(
         request,
         "actions/report.html",
@@ -157,7 +169,11 @@ def actions_report_view(request):
             "export_rows": export_rows,
             "ready_count": len(ready),
             "warning_count": len(export_rows) - len(ready),
+            "application_ready_count": len(export_rows) - len(application_missing),
+            "application_missing_count": len(application_missing),
+            "application_choices": PartCustomsInfo.ApplicationArea.choices,
             "export_query": request.GET.urlencode(),
+            "current_path_query": request.get_full_path(),
             "can_cancel": request.user.is_admin or request.user.is_manager,
         },
     )
@@ -246,9 +262,11 @@ def actions_customs_edit(request, part_id):
         customs.weight_source_url = (request.POST.get("weight_source_url") or "").strip()
         customs.weight_source_note = (request.POST.get("weight_source_note") or "").strip()
         customs.weight_verified = bool(request.POST.get("weight_verified"))
-        customs.application_area = (
-            request.POST.get("application_area") or "МОТО ЗАПЧАСТИ"
-        ).strip()
+        application_area = (request.POST.get("application_area") or "").strip().upper()
+        if application_area and application_area not in PartCustomsInfo.ApplicationArea.values:
+            messages.error(request, "Недопустимая область применения.")
+            return redirect("actions_customs_edit", part_id=part.pk)
+        customs.application_area = application_area  # "" = не заполнено, не легаси-хардкод
         customs.updated_by = request.user
         customs.save()
         messages.success(request, "Таможенные данные сохранены.")
@@ -265,6 +283,37 @@ def actions_customs_edit(request, part_id):
             "customs": customs,
             "auto_name": auto_customs_name_ru(data["name_en"]),
             "data": data,
+            "application_choices": PartCustomsInfo.ApplicationArea.choices,
+            "application_source_label": APPLICATION_SOURCE_LABELS[data["application_source"]],
             "next": request.GET.get("next", ""),
         },
     )
+
+
+@login_required
+def actions_customs_application(request, part_id):
+    """Быстрое построчное сохранение области применения (готовность к экспорту).
+
+    Только POST — просмотр страницы готовности НЕ создаёт PartCustomsInfo
+    (список строится через read_customs, см. build_export_rows). Строка
+    создаётся здесь, только когда пользователь явно сохраняет выбор. Ту же
+    точную PartType, что показана в строке экспорта — BRP и Polaris с
+    одинаковым номером здесь не смешиваются, потому что part_id указывает на
+    конкретную складскую карточку, а не на каталожный номер.
+    """
+    _require_access(request)
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    part = get_object_or_404(PartType, pk=part_id)
+    next_url = request.POST.get("next") or reverse("actions_report")
+    value = (request.POST.get("application_area") or "").strip().upper()
+    if value and value not in PartCustomsInfo.ApplicationArea.values:
+        messages.error(request, "Недопустимая область применения.")
+        return redirect(next_url)
+    with transaction.atomic():
+        customs, _created = PartCustomsInfo.objects.get_or_create(part_type=part)
+        customs.application_area = value
+        customs.updated_by = request.user
+        customs.save(update_fields=["application_area", "updated_by", "updated_at"])
+    messages.success(request, "Область применения сохранена.")
+    return redirect(next_url)

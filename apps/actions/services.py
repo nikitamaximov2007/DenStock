@@ -597,19 +597,22 @@ def _polaris_wholesale_usd(polaris) -> Decimal | None:
 
 # Вид техники (справочник) -> таможенная область применения. Мотоциклы компания
 # не обслуживает: их применимость НЕ превращается в «МОТО ЗАПЧАСТИ», строка
-# просто остаётся пустой.
+# просто остаётся пустой. Значения - из единого списка PartCustomsInfo.
+# ApplicationArea: та же таблица категорий, что предлагает ручной select.
+_ApplicationArea = PartCustomsInfo.ApplicationArea
 _APPLICATION_BY_VEHICLE_TYPE = {
-    "снегоход": "СНЕГОХОД",
-    "квадроцикл": "КВАДРОЦИКЛ",
-    "гидроцикл": "ГИДРОЦИКЛ",
-    "катер": "КАТЕР / ЛОДКА",
-    "лодка": "КАТЕР / ЛОДКА",
-    "яхта": "КАТЕР / ЛОДКА",
-    "автомобиль": "АВТОМОБИЛЬ",
+    "снегоход": _ApplicationArea.SNOWMOBILE,
+    "квадроцикл": _ApplicationArea.ATV,
+    "гидроцикл": _ApplicationArea.WATERCRAFT,
+    "катер": _ApplicationArea.BOAT,
+    "лодка": _ApplicationArea.BOAT,
+    "яхта": _ApplicationArea.BOAT,
+    "автомобиль": _ApplicationArea.CAR,
 }
-MULTI_APPLICATION = "УНИВЕРСАЛЬНЫЕ ЗАПЧАСТИ"
-# Старый хардкод модели (PartCustomsInfo.application_area по умолчанию).
-# В таможенную форму он не выгружается никогда.
+MULTI_APPLICATION = _ApplicationArea.UNIVERSAL
+# Старый хардкод модели (прежний default application_area). Не входит в
+# ApplicationArea.choices намеренно: в таможенную форму не выгружается
+# никогда, а явное ручное значение с ним никогда не совпадёт.
 LEGACY_APPLICATION = "МОТО ЗАПЧАСТИ"
 
 
@@ -636,8 +639,8 @@ def resolve_customs_application(part: PartType) -> str:
     if not categories:
         return ""  # надёжно определить нельзя — не выдумываем
     if len(categories) > 1:
-        return MULTI_APPLICATION
-    return next(iter(categories))
+        return str(MULTI_APPLICATION)
+    return str(next(iter(categories)))
 
 
 def part_export_data(part: PartType, number: str | None = None) -> dict:
@@ -673,13 +676,16 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         manufacturer = (customs.manufacturer or "BRP").upper()
     # Страна для этого таможенного экспорта всегда латиницей.
     country = CUSTOMS_COUNTRY
-    # Область применения: ручное значение, иначе — по фактической применимости.
-    # Легаси-хардкод «МОТО ЗАПЧАСТИ» в форму не попадает никогда.
+    # Область применения: приоритет 1) ручное значение карточки, 2) автоопределение
+    # по PartCompatibility, 3) пусто. Легаси-хардкод «МОТО ЗАПЧАСТИ» (старый
+    # default модели) считается «не заполнено» и в форму не попадает никогда.
     manual_application = (customs.application_area or "").strip()
-    if not manual_application or manual_application.upper() == LEGACY_APPLICATION:
-        application_area = resolve_customs_application(part)
-    else:
+    if manual_application and manual_application.upper() != LEGACY_APPLICATION:
         application_area = manual_application.upper()
+        application_source = "manual"
+    else:
+        application_area = resolve_customs_application(part)
+        application_source = "compatibility" if application_area else "none"
     warnings = []
     if not customs.customs_name_ru.strip():
         warnings.append("русское название: автоперевод, проверьте")
@@ -703,6 +709,7 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "net_weight_kg": customs.net_weight_kg,
         "usd_price": usd_price,
         "application_area": application_area,
+        "application_source": application_source,
         "warnings": warnings,
     }
 

@@ -122,6 +122,23 @@ class PartCustomsInfo(models.Model):
         MANUAL = "manual", "Введено вручную"
         AUTO = "auto_translation", "Автоперевод"
 
+    class ApplicationArea(models.TextChoices):
+        """Контролируемый список таможенных категорий (Layer 33.1).
+
+        Единственный источник допустимых значений: используется и формой
+        редактирования, и автоопределением по PartCompatibility в services.py.
+        Категория никогда не выводится из названия детали или производителя
+        каталога (BRP/Polaris) — только явный выбор или подтверждённая
+        совместимость с техникой.
+        """
+
+        SNOWMOBILE = "СНЕГОХОД", "Снегоход"
+        ATV = "КВАДРОЦИКЛ", "Квадроцикл"
+        WATERCRAFT = "ГИДРОЦИКЛ", "Гидроцикл"
+        BOAT = "КАТЕР / ЛОДКА", "Катер / лодка"
+        CAR = "АВТОМОБИЛЬ", "Автомобиль"
+        UNIVERSAL = "УНИВЕРСАЛЬНЫЕ ЗАПЧАСТИ", "Универсальные запчасти"
+
     part_type = models.OneToOneField(
         "catalog.PartType", verbose_name="Деталь",
         on_delete=models.CASCADE, related_name="customs_info",
@@ -142,8 +159,15 @@ class PartCustomsInfo(models.Model):
     weight_source_url = models.URLField("Источник веса (URL)", blank=True)
     weight_source_note = models.CharField("Источник веса (примечание)", max_length=255, blank=True)
     weight_verified = models.BooleanField("Вес проверен", default=False)
+    # Раньше default был легаси-хардкодом «МОТО ЗАПЧАСТИ» (компания мотоциклы
+    # не обслуживает). Пустая строка = «не заполнено»: экспорт тогда пробует
+    # автоопределение по совместимости, иначе оставляет ячейку пустой.
+    # choices - контролируемый список, свободный текст не допускается; старые
+    # значения вне списка (если найдутся на production) не будут потеряны -
+    # choices не удаляет данные, только ограничивает выбор в новых формах.
     application_area = models.CharField(
-        "Область применения", max_length=120, default="МОТО ЗАПЧАСТИ"
+        "Область применения", max_length=120, blank=True, default="",
+        choices=ApplicationArea.choices,
     )
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(

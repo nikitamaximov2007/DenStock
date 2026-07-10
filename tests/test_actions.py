@@ -385,7 +385,7 @@ def test_customs_edit_saves_manual_data(client, make_user, data):
             "weight_source_url": "https://example.com/spec",
             "weight_source_note": "страница поставщика",
             "weight_verified": "on",
-            "application_area": "МОТО ЗАПЧАСТИ",
+            "application_area": "",  # не заполнено - легаси "МОТО ЗАПЧАСТИ" больше не выбор
         },
     )
     assert resp.status_code == 302
@@ -396,6 +396,7 @@ def test_customs_edit_saves_manual_data(client, make_user, data):
     assert customs.net_weight_kg == Decimal("0.2")
     assert customs.weight_source_url == "https://example.com/spec"
     assert customs.weight_verified is True
+    assert customs.application_area == ""
     # Ручное название уходит в экспорт в ВЕРХНЕМ регистре.
     row = part_export_data(data["roller"])
     assert row["name_ru"] == "РОЛИК ВАРИАТОРА"

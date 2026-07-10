@@ -16,6 +16,12 @@
     Экспорт заполняет «Форму для заказа» по текущим фильтрам: действия
     группируются по детали, количество суммируется.
   </p>
+  {% if application_missing_count %}
+    <p class="pill pill--warning">
+      Позиций без области применения: {{ application_missing_count }}.
+      В Excel эти ячейки останутся пустыми.
+    </p>
+  {% endif %}
   <form method="get" class="filter-toolbar">
     <label>
       С
@@ -175,9 +181,7 @@
                     </td>
                     <td>{{ row.name_ru }}</td>
                     <td>
-                      {% for w in row.warnings %}
-                        <span class="pill pill--warning">{{ w }}</span>
-                      {% endfor %}
+                      {% for w in row.warnings %}<span class="pill pill--warning">{{ w }}</span>{% endfor %}
                     </td>
                     <td class="table__actions">
                       <a class="btn btn--small btn--secondary"
@@ -189,6 +193,68 @@
             </tbody>
           </table>
         {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Область применения для таможни</h2>
+      </div>
+      <div class="card__body">
+        <p>
+          Готово: {{ application_ready_count }} · не заполнено: {{ application_missing_count }}.
+          Категория никогда не определяется по названию детали или
+          производителю каталога: только явный выбор здесь или подтверждённая
+          совместимость с техникой (PartCompatibility).
+        </p>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Производитель</th>
+              <th>Артикул</th>
+              <th>Название</th>
+              <th class="num--qty">Кол-во</th>
+              <th>Источник</th>
+              <th>Область применения</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in export_rows %}
+              <tr>
+                <td>{{ row.manufacturer }}</td>
+                <td><span class="code-pill">{{ row.number }}</span></td>
+                <td>{{ row.name_ru }}</td>
+                <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+                <td>
+                  {% if row.application_source == "manual" %}
+                    <span class="pill pill--info">Указано вручную</span>
+                  {% elif row.application_source == "compatibility" %}
+                    <span class="pill pill--success">Определено по совместимости</span>
+                  {% else %}
+                    <span class="pill pill--muted">Не заполнено</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.application_area|default:"не заполнено" }}</td>
+                <td class="table__actions">
+                  <form method="post"
+                        action="{% url 'actions_customs_application' row.part.pk %}"
+                        class="inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ current_path_query }}">
+                    <select name="application_area">
+                      <option value="" {% if not row.application_area %}selected{% endif %}>Не заполнено</option>
+                      {% for value, label in application_choices %}
+                        <option value="{{ value }}"
+                                {% if row.application_area == value %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   {% else %}
