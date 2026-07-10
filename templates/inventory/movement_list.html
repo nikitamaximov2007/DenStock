@@ -56,7 +56,7 @@
             <td>{{ m.get_movement_type_display }}</td>
             <td><span class="code-pill">{{ m.display_part_number }}</span></td>
             <td>{{ m.part_type }}</td>
-            <td class="num--qty">{{ m.quantity|whole_number }}</td>
+            <td class="num--qty">{{ m.quantity|quantity_number }}</td>
             <td>
               {% if m.from_location %}
                 {{ m.from_location.code }}

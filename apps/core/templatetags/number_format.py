@@ -15,3 +15,17 @@ def whole_number(value):
     except (InvalidOperation, TypeError, ValueError):
         return value
     return format(rounded, "f")
+
+
+@register.filter
+def quantity_number(value):
+    """Display quantities compactly without changing fractional values."""
+    if value in (None, ""):
+        return ""
+    try:
+        decimal = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return value
+    if decimal == decimal.to_integral_value():
+        return format(decimal.quantize(Decimal("1")), "f")
+    return format(decimal.normalize(), "f")

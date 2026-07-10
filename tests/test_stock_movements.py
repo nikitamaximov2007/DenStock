@@ -392,6 +392,23 @@ def test_movement_list_shows_exact_article_and_whole_values(client, refs, admin)
     assert "1,000" not in html and "2645,00" not in html
 
 
+def test_movement_list_preserves_fractional_quantities(client, refs, admin):
+    line = _finalized_line(
+        refs, admin, quantity="1.5", unit_cost="100", shipping="0"
+    )
+    lot = create_stock_lot(line, refs["loc1"], Decimal("1.5"))
+    receive_stock_lot(lot, by=admin)
+    movement = StockMovement.objects.get(stock_lot=lot)
+    client.login(username="admin", password=PASSWORD)
+
+    html = client.get(reverse("movement_list")).content.decode()
+    detail = client.get(reverse("movement_detail", args=[movement.pk])).content.decode()
+
+    assert '<td class="num--qty">1.5</td>' in html
+    assert "1.5" in detail
+    assert '<td class="num--qty">2</td>' not in html
+
+
 def test_movement_brp_replacement_does_not_replace_exact_number(client, refs, admin):
     catalog = BrpCatalogPart.objects.create(
         material_no="420931285",

@@ -30,7 +30,7 @@
               Экземпляр {{ object.internal_number }} · {{ object.part_type }}
               ({{ object.get_status_display }})
             {% else %}
-              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity|whole_number }}
+              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity|quantity_number }}
               ({{ object.get_status_display }})
             {% endif %}
           </td>
@@ -147,9 +147,9 @@
                               <span class="code-pill">{{ choice.code }}</span>
                             </label>
                           </td>
-                          <td class="num--qty">{{ choice.physical|whole_number }}</td>
-                          <td class="num--qty">{{ choice.reserved|whole_number }}</td>
-                          <td class="num--qty">{{ choice.available|whole_number }}</td>
+                          <td class="num--qty">{{ choice.physical|quantity_number }}</td>
+                          <td class="num--qty">{{ choice.reserved|quantity_number }}</td>
+                          <td class="num--qty">{{ choice.available|quantity_number }}</td>
                         </tr>
                       {% endfor %}
                     </tbody>
@@ -215,7 +215,7 @@
       <div class="card receiving-group">
         <div class="card__body">
           <h2>Ячейка <span class="code-pill">{{ group.location.code }}</span></h2>
-          <p class="muted">{{ group.position_count }} позиций · {{ group.quantity }} единиц</p>
+          <p class="muted">{{ group.position_count }} позиций · {{ group.quantity|quantity_number }} единиц</p>
           <table class="table table--compact">
             <thead>
               <tr>
@@ -317,7 +317,7 @@
         {% for lot in receiving_lots %}
           <tr>
             <td>{{ lot.part_type }}</td>
-            <td>{{ lot.quantity|whole_number }}</td>
+            <td>{{ lot.quantity|quantity_number }}</td>
             <td>{{ lot.batch.number }}</td>
             <td>{{ lot.location.code }}</td>
             <td>
@@ -358,7 +358,7 @@
           <td>{{ m.get_movement_type_display }}</td>
           <td><span class="code-pill">{{ m.display_part_number }}</span></td>
           <td>{{ m.part_type }}</td>
-          <td class="num--qty">{{ m.quantity|whole_number }}</td>
+          <td class="num--qty">{{ m.quantity|quantity_number }}</td>
           <td>
             {% if m.to_location %}
               {{ m.to_location.code }}
@@ -401,7 +401,7 @@
               <span class="code-pill">{{ m.display_part_number }}</span>
             </td>
             <td>{{ m.part_type.name }}</td>
-            <td class="num--qty">+{{ m.quantity|whole_number }}</td>
+            <td class="num--qty">+{{ m.quantity|quantity_number }}</td>
             <td>
               {% if m.to_location %}
                 {{ m.to_location.code }}
