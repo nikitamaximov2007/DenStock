@@ -157,21 +157,25 @@ def test_empty_warehouse_does_not_break(client, make_user):
     assert "Активных резервов нет" in html
 
 
-# --- KPI и деньги из landed cost -------------------------------------------------
+# --- KPI и финансовая оценка склада ----------------------------------------------
 
 
-def test_kpi_stock_cost_matches_landed_cost(data):
+def test_kpi_counts_and_valuation(data):
     period = resolve_stats_period({})
     stats = get_statistics(period)
-    expected = data["item"].landed_cost_rub + (
-        data["lot"].quantity * data["lot"].landed_unit_cost_rub
-    )
-    assert stats.kpi.stock_cost == expected
     assert stats.kpi.part_types_with_stock == 2
     assert stats.kpi.locations_with_stock == 1
-    # Потенциальная выручка: только у serial задана рекомендованная цена (1 шт x 500).
-    assert stats.kpi.potential_revenue == Decimal("500.00")
     assert stats.kpi.total_available == Decimal("6")
+    # Финансовая оценка: обе детали ручные (без прайсов BRP/Polaris) — значит
+    # закупочная стоимость 0, обе позиции в счётчике «без закупочной цены»;
+    # оценка продажи — по действующей клиентской цене карточки (1 шт x 500).
+    v = stats.valuation
+    assert v.purchase_cost == Decimal("0.00")
+    assert v.sale_value == Decimal("500.00")
+    assert v.potential_profit == Decimal("500.00")
+    assert v.unpriced_positions == 2
+    assert v.unpriced_units == Decimal("6")
+    assert v.usd_rate == Decimal("105")
 
 
 def test_value_blocks_grouped(data):

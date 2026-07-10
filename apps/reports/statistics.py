@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.procurement.models import money
+from apps.reports.warehouse_finance import get_warehouse_valuation
 from apps.sales.models import Reservation, Sale, SaleLine
 
 TOP_N = 10
@@ -60,8 +61,6 @@ def _since(period: StatsPeriod):
 
 @dataclass
 class StatsKpi:
-    stock_cost: Decimal
-    potential_revenue: Decimal
     part_types_with_stock: int
     total_available: Decimal
     active_reservations: int
@@ -119,6 +118,7 @@ class ActivityRow:
 class Statistics:
     period: StatsPeriod
     kpi: StatsKpi
+    valuation: object = None  # WarehouseValuation: три финансовых показателя
     value_by_category: list = field(default_factory=list)
     top_parts_by_value: list = field(default_factory=list)
     low_stock: list = field(default_factory=list)
@@ -175,17 +175,6 @@ def _unvalued_count() -> int:
         status=StockLot.Status.AVAILABLE, quantity__gt=0, landed_unit_cost_rub=0
     ).count()
     return items + lots
-
-
-def _potential_revenue() -> Decimal:
-    """Доступно × рекомендованная цена (только там, где цена задана)."""
-    expr = ExpressionWrapper(
-        F("quantity_available") * F("part_type__recommended_price"), output_field=_MONEY
-    )
-    agg = StockBalance.objects.filter(
-        part_type__recommended_price__isnull=False
-    ).aggregate(v=Sum(expr))
-    return money(agg["v"] or DEC0)
 
 
 # --- Низкие остатки (та же логика, что в отчётах, + pk для ссылки) -------------
@@ -320,7 +309,6 @@ def _activity(period: StatsPeriod):
 
 def get_statistics(period: StatsPeriod) -> Statistics:
     by_part, by_category = _value_maps()
-    stock_cost = money(sum((p["value"] for p in by_part.values()), DEC0))
 
     balances = StockBalance.objects.all()
     agg = balances.aggregate(avail=Sum("quantity_available"))
@@ -347,8 +335,6 @@ def get_statistics(period: StatsPeriod) -> Statistics:
     )[:TOP_N]
 
     kpi = StatsKpi(
-        stock_cost=stock_cost,
-        potential_revenue=_potential_revenue(),
         part_types_with_stock=part_types_with_stock,
         total_available=agg["avail"] or DEC0,
         active_reservations=Reservation.objects.filter(
@@ -362,6 +348,7 @@ def get_statistics(period: StatsPeriod) -> Statistics:
     return Statistics(
         period=period,
         kpi=kpi,
+        valuation=get_warehouse_valuation(),
         value_by_category=categories,
         top_parts_by_value=top_parts,
         low_stock=low_stock,

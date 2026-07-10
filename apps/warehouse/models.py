@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -102,3 +104,31 @@ class StorageLocation(models.Model):
     def can_hold_stock(self) -> bool:
         """Можно ли класть остаток (инвариант слоёв 9–12)."""
         return self.is_active and self.storage_allowed
+
+
+class ValuationSettings(models.Model):
+    """Настройка оценки склада: курс для закупочной стоимости (одна строка).
+
+    Это ТЕКУЩАЯ оценка повторного заказа всего остатка по ценам прайсов
+    производителей, а не бухгалтерская себестоимость уже купленных партий и
+    не фактический исторический курс закупки. Меняется отдельно от курсов
+    клиентских цен BRP/Polaris.
+    """
+
+    purchase_usd_rate = models.DecimalField(
+        "Курс для оценки закупочной стоимости (₽ за $)",
+        max_digits=10, decimal_places=4, default=Decimal("105"),
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Настройки оценки склада"
+        verbose_name_plural = "Настройки оценки склада"
+
+    def __str__(self) -> str:
+        return f"курс закупочной оценки {self.purchase_usd_rate} ₽/$"
+
+    @classmethod
+    def get(cls) -> "ValuationSettings":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
