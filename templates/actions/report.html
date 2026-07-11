@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load l10n %}
 {% block title %}Отчёт действий со склада · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -16,6 +17,12 @@
     Экспорт заполняет «Форму для заказа» по текущим фильтрам: действия
     группируются по детали, количество суммируется.
   </p>
+  {% if customs_missing_count %}
+    <p class="pill pill--warning">
+      У {{ customs_missing_count }} позиций не заполнены таможенные данные
+      (область применения и/или вес). В Excel часть ячеек останется пустой.
+    </p>
+  {% endif %}
   <form method="get" class="filter-toolbar">
     <label>
       С
@@ -175,9 +182,7 @@
                     </td>
                     <td>{{ row.name_ru }}</td>
                     <td>
-                      {% for w in row.warnings %}
-                        <span class="pill pill--warning">{{ w }}</span>
-                      {% endfor %}
+                      {% for w in row.warnings %}<span class="pill pill--warning">{{ w }}</span>{% endfor %}
                     </td>
                     <td class="table__actions">
                       <a class="btn btn--small btn--secondary"
@@ -189,6 +194,90 @@
             </tbody>
           </table>
         {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Таможенные данные для экспорта</h2>
+      </div>
+      <div class="card__body">
+        <p>
+          Готово: {{ customs_ready_count }} · не заполнено: {{ customs_missing_count }}.
+          Область применения никогда не определяется по названию детали или
+          производителю каталога, вес никогда не выдумывается: только явный
+          ввод здесь (запоминается на карточке детали навсегда) или
+          подтверждённая совместимость с техникой для области применения.
+          Общий вес брутто считается автоматически (вес одной штуки × кол-во)
+          и отдельно не сохраняется.
+        </p>
+        <table class="table customs-readiness">
+          <thead>
+            <tr>
+              <th>Производитель</th>
+              <th>Артикул</th>
+              <th>Название</th>
+              <th class="num--qty">Кол-во</th>
+              <th>Область применения</th>
+              <th class="num--qty">Брутто/шт, кг</th>
+              <th class="num--qty">Нетто/шт, кг</th>
+              <th class="num--qty">Брутто всего, кг</th>
+              <th>Статус</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in export_rows %}
+              <tr>
+                <td>{{ row.manufacturer }}</td>
+                <td><span class="code-pill">{{ row.number }}</span></td>
+                <td>{{ row.name_ru }}</td>
+                <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+                <td>{{ row.application_area|default:"не заполнено" }}</td>
+                <td class="num--qty">{{ row.gross_weight_kg|floatformat:3|default:"не заполнено" }}</td>
+                <td class="num--qty">{{ row.net_weight_kg|floatformat:3|default:"не заполнено" }}</td>
+                <td class="num--qty">{{ row.gross_weight_total_kg|floatformat:3|default:"·" }}</td>
+                <td>
+                  {% if row.customs_ready %}
+                    <span class="pill pill--success">Готово</span>
+                  {% else %}
+                    {% for reason in row.customs_missing_reasons %}
+                      <span class="pill pill--warning">{{ reason }}</span>
+                    {% endfor %}
+                  {% endif %}
+                  {% if row.customs.weight_verified %}
+                    <span class="pill pill--info">Вес подтверждён вручную</span>
+                  {% endif %}
+                </td>
+                <td class="table__actions">
+                  <form method="post"
+                        action="{% url 'actions_customs_quick_save' row.part.pk %}"
+                        class="inline-form customs-quick-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{{ current_path_query }}">
+                    <select name="application_area">
+                      <option value="" {% if not row.application_area %}selected{% endif %}>Не заполнено</option>
+                      {% for value, label in application_choices %}
+                        <option value="{{ value }}"
+                                {% if row.application_area == value %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                    <input type="text"
+                           name="gross_weight_kg"
+                           inputmode="decimal"
+                           placeholder="брутто, кг"
+                           value="{{ row.customs.gross_weight_kg|default_if_none:''|unlocalize }}">
+                    <input type="text"
+                           name="net_weight_kg"
+                           inputmode="decimal"
+                           placeholder="нетто, кг"
+                           value="{{ row.customs.net_weight_kg|default_if_none:''|unlocalize }}">
+                    <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   {% else %}

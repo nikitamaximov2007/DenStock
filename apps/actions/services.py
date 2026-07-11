@@ -597,19 +597,22 @@ def _polaris_wholesale_usd(polaris) -> Decimal | None:
 
 # Вид техники (справочник) -> таможенная область применения. Мотоциклы компания
 # не обслуживает: их применимость НЕ превращается в «МОТО ЗАПЧАСТИ», строка
-# просто остаётся пустой.
+# просто остаётся пустой. Значения - из единого списка PartCustomsInfo.
+# ApplicationArea: та же таблица категорий, что предлагает ручной select.
+_ApplicationArea = PartCustomsInfo.ApplicationArea
 _APPLICATION_BY_VEHICLE_TYPE = {
-    "снегоход": "СНЕГОХОД",
-    "квадроцикл": "КВАДРОЦИКЛ",
-    "гидроцикл": "ГИДРОЦИКЛ",
-    "катер": "КАТЕР / ЛОДКА",
-    "лодка": "КАТЕР / ЛОДКА",
-    "яхта": "КАТЕР / ЛОДКА",
-    "автомобиль": "АВТОМОБИЛЬ",
+    "снегоход": _ApplicationArea.SNOWMOBILE,
+    "квадроцикл": _ApplicationArea.ATV,
+    "гидроцикл": _ApplicationArea.WATERCRAFT,
+    "катер": _ApplicationArea.BOAT,
+    "лодка": _ApplicationArea.BOAT,
+    "яхта": _ApplicationArea.BOAT,
+    "автомобиль": _ApplicationArea.CAR,
 }
-MULTI_APPLICATION = "УНИВЕРСАЛЬНЫЕ ЗАПЧАСТИ"
-# Старый хардкод модели (PartCustomsInfo.application_area по умолчанию).
-# В таможенную форму он не выгружается никогда.
+MULTI_APPLICATION = _ApplicationArea.UNIVERSAL
+# Старый хардкод модели (прежний default application_area). Не входит в
+# ApplicationArea.choices намеренно: в таможенную форму не выгружается
+# никогда, а явное ручное значение с ним никогда не совпадёт.
 LEGACY_APPLICATION = "МОТО ЗАПЧАСТИ"
 
 
@@ -636,8 +639,54 @@ def resolve_customs_application(part: PartType) -> str:
     if not categories:
         return ""  # надёжно определить нельзя — не выдумываем
     if len(categories) > 1:
-        return MULTI_APPLICATION
-    return next(iter(categories))
+        return str(MULTI_APPLICATION)
+    return str(next(iter(categories)))
+
+
+# Вес одной штуки: max_digits=8, decimal_places=3 у PartCustomsInfo -> целая
+# часть максимум 5 цифр (99999.999 кг). Значение вне этого диапазона Postgres
+# бы тихо округлил/обрезал при записи — валидируем в Python заранее.
+_MAX_WEIGHT_KG = Decimal("100000")
+
+# Заметка-маркер, которую быстрый редактор пишет в weight_source_note при
+# ручном вводе обоих весов (URL не выдумывается). Для классификации источника
+# она НЕ считается внешним источником: «Указано вручную», а не «Получено из
+# источника».
+MANUAL_WEIGHT_NOTE = "Указано вручную сотрудником"
+
+
+def parse_weight_kg(raw) -> Decimal | None:
+    """Вес одной штуки в кг: Decimal с точностью до 3 знаков, строго > 0.
+
+    Пустая строка/None -> None («не заполнено» - разрешённое состояние, вес
+    не выдумывается). Ноль как «подтверждённый» вес запрещён явно - это не
+    то же самое, что «не заполнено». Отрицательные значения, NaN, Infinity,
+    больше 3 знаков после запятой и значения вне диапазона поля - ValueError
+    с понятным текстом для пользователя.
+    """
+    raw = (str(raw) if raw is not None else "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError("Вес должен быть числом в кг.") from exc
+    if not value.is_finite():  # ловит и NaN, и Infinity
+        raise ValueError("Вес должен быть числом в кг.")
+    if value <= 0:
+        raise ValueError("Вес должен быть больше нуля.")
+    exponent = value.as_tuple().exponent
+    if isinstance(exponent, int) and exponent < -3:
+        raise ValueError("Вес: не более 3 знаков после запятой.")
+    if value >= _MAX_WEIGHT_KG:
+        raise ValueError("Вес слишком большой.")
+    return value
+
+
+def validate_weight_pair(gross: Decimal | None, net: Decimal | None) -> None:
+    """Вес брутто не может быть меньше веса нетто (только когда заданы оба)."""
+    if gross is not None and net is not None and gross < net:
+        raise ValueError("Вес брутто не может быть меньше веса нетто.")
 
 
 def part_export_data(part: PartType, number: str | None = None) -> dict:
@@ -673,13 +722,16 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         manufacturer = (customs.manufacturer or "BRP").upper()
     # Страна для этого таможенного экспорта всегда латиницей.
     country = CUSTOMS_COUNTRY
-    # Область применения: ручное значение, иначе — по фактической применимости.
-    # Легаси-хардкод «МОТО ЗАПЧАСТИ» в форму не попадает никогда.
+    # Область применения: приоритет 1) ручное значение карточки, 2) автоопределение
+    # по PartCompatibility, 3) пусто. Легаси-хардкод «МОТО ЗАПЧАСТИ» (старый
+    # default модели) считается «не заполнено» и в форму не попадает никогда.
     manual_application = (customs.application_area or "").strip()
-    if not manual_application or manual_application.upper() == LEGACY_APPLICATION:
-        application_area = resolve_customs_application(part)
-    else:
+    if manual_application and manual_application.upper() != LEGACY_APPLICATION:
         application_area = manual_application.upper()
+        application_source = "manual"
+    else:
+        application_area = resolve_customs_application(part)
+        application_source = "compatibility" if application_area else "none"
     warnings = []
     if not customs.customs_name_ru.strip():
         warnings.append("русское название: автоперевод, проверьте")
@@ -691,6 +743,28 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         warnings.append("нет оптовой цены в USD")
     if not application_area:
         warnings.append("не определена область применения")
+    # Источник веса для UI (Layer 33.1): автоматического источника весов в
+    # архитектуре нет (ни BRP, ни Polaris каталог вес не хранят) - только
+    # ручной ввод, при желании с проверенной ссылкой/примечанием
+    # (weight_source_url/note - их смысл не меняется, здесь только читаем).
+    source_note = customs.weight_source_note.strip()
+    if customs.gross_weight_kg is None and customs.net_weight_kg is None:
+        weight_source = "none"
+    elif customs.weight_source_url.strip() or (
+        source_note and source_note != MANUAL_WEIGHT_NOTE
+    ):
+        weight_source = "sourced"
+    else:
+        weight_source = "manual"
+    # Готовность именно к таможенному экспорту (Layer 33.1): ровно эти три
+    # поля. Цена и название сюда не входят - у них своя строка выше.
+    customs_missing_reasons = []
+    if not application_area:
+        customs_missing_reasons.append("Не заполнена область применения")
+    if customs.gross_weight_kg is None:
+        customs_missing_reasons.append("Не заполнен вес брутто")
+    if customs.net_weight_kg is None:
+        customs_missing_reasons.append("Не заполнен вес нетто")
     return {
         "part": part,
         "customs": customs,
@@ -703,6 +777,10 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "net_weight_kg": customs.net_weight_kg,
         "usd_price": usd_price,
         "application_area": application_area,
+        "application_source": application_source,
+        "weight_source": weight_source,
+        "customs_ready": not customs_missing_reasons,
+        "customs_missing_reasons": customs_missing_reasons,
         "warnings": warnings,
     }
 
@@ -821,7 +899,11 @@ def export_customs_xlsx(actions) -> BytesIO:
         sheet[f"F{r}"] = excel_safe_text(row["country"])
         sheet[f"G{r}"] = row["gross_weight_kg"]  # None = пусто: вес не выдумываем
         sheet[f"H{r}"] = row["net_weight_kg"]
-        sheet[f"I{r}"] = f"=J{r}*G{r}"
+        sheet[f"I{r}"] = f"=J{r}*G{r}"  # вес брутто сумма = брутто/шт * количество
+        # 3 знака после запятой: у мелкой детали (0.125 кг) 2 знака шаблона
+        # («0.00») визуально теряют точность, хотя само число не искажается.
+        for column in "GHI":
+            sheet[f"{column}{r}"].number_format = "0.000"
         sheet[f"J{r}"] = row["quantity"]  # openpyxl пишет Decimal как число
         sheet[f"K{r}"] = row["usd_price"]  # оптовая цена прайса в USD
         sheet[f"L{r}"] = f"=K{r}*J{r}"

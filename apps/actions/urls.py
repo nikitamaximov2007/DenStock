@@ -13,4 +13,9 @@ urlpatterns = [
         views.actions_customs_edit,
         name="actions_customs_edit",
     ),
+    path(
+        "actions/customs/<int:part_id>/quick-save/",
+        views.actions_customs_quick_save,
+        name="actions_customs_quick_save",
+    ),
 ]
