@@ -22,7 +22,12 @@ from django.urls import reverse
 
 from apps.accounts import roles
 from apps.actions.models import PartCustomsInfo
-from apps.actions.services import parse_weight_kg, part_export_data, perform_action
+from apps.actions.services import (
+    MANUAL_WEIGHT_NOTE,
+    parse_weight_kg,
+    part_export_data,
+    perform_action,
+)
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse as promote_brp
 from apps.inventory.services import create_stock_lot, receive_stock_lot
@@ -457,3 +462,210 @@ def test_formula_references_correct_row_and_quantity_column(client, make_user, e
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
     assert sheet[f"I{DATA_ROW}"].value == f"=J{DATA_ROW}*G{DATA_ROW}"
+
+
+# --- weight_verified: ручной ввод обоих весов = ручное подтверждение ------------------------
+
+
+def test_quick_save_both_weights_sets_verified(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_verified is True
+    assert customs.updated_by is not None
+
+
+def test_quick_save_only_gross_does_not_verify(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.5")  # net не заполнен
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.gross_weight_kg == Decimal("0.5")  # частичное сохранение разрешено
+    assert customs.weight_verified is False
+
+
+def test_quick_save_only_net_does_not_verify(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    _save(client, part, net_weight_kg="0.4")
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.net_weight_kg == Decimal("0.4")
+    assert customs.weight_verified is False
+
+
+def test_clearing_one_weight_resets_verified(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, application_area=ApplicationArea.SNOWMOBILE,
+        gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        weight_verified=True,
+    )
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.5", net_weight_kg="")  # нетто удалили
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.net_weight_kg is None
+    assert customs.weight_verified is False
+    row = part_export_data(part)
+    assert row["customs_ready"] is False  # позиция снова неготова
+    assert "Не заполнен вес нетто" in row["customs_missing_reasons"]
+
+
+def test_changing_only_application_area_keeps_verified(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        weight_verified=True,
+    )
+    _login(client, make_user)
+    _save(client, part, application_area=ApplicationArea.ATV)  # ключей веса нет в POST
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_verified is True  # не сброшен
+    assert customs.gross_weight_kg == Decimal("0.5")  # веса не стёрты
+    assert customs.net_weight_kg == Decimal("0.4")
+    assert customs.application_area == "КВАДРОЦИКЛ"
+
+
+def test_invalid_weights_do_not_change_verified(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        weight_verified=True,
+    )
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.1")  # 0.1 < сохранённого нетто 0.4 -> откат
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.gross_weight_kg == Decimal("0.5")  # ничего не изменилось
+    assert customs.weight_verified is True
+    _save(client, part, gross_weight_kg="абв")  # не число -> ранний отказ до транзакции
+    customs.refresh_from_db()
+    assert customs.gross_weight_kg == Decimal("0.5")
+    assert customs.weight_verified is True
+
+
+def test_invalid_weights_on_new_card_do_not_verify(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.1", net_weight_kg="0.5")  # gross < net
+    assert not PartCustomsInfo.objects.filter(part_type=part).exists()
+
+
+def test_get_does_not_change_verified(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        weight_verified=False,
+    )
+    _sell(env, part, number="219800345")
+    _login(client, make_user)
+    client.get(reverse("actions_report"))
+    client.get(reverse("actions_export"))
+    resp = client.get(reverse("actions_customs_quick_save", args=[part.pk]))
+    assert resp.status_code == 405  # квик-сохранение — только POST
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_verified is False  # GET ничего не подтвердил
+
+
+def test_unauthenticated_cannot_verify_weights(client, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        weight_verified=False,
+    )
+    resp = _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")
+    assert resp.status_code == 302 and "login" in resp.url
+    assert PartCustomsInfo.objects.get(part_type=part).weight_verified is False
+
+
+def test_viewer_cannot_verify_weights(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        weight_verified=False,
+    )
+    make_user("viewer", role=roles.VIEWER)
+    client.login(username="viewer", password=PASSWORD)
+    resp = _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")
+    assert resp.status_code == 403
+    assert PartCustomsInfo.objects.get(part_type=part).weight_verified is False
+
+
+# --- Маркер ручного источника: заметка без фиктивного URL ------------------------------------
+
+
+def test_quick_save_writes_manual_note_without_url(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_source_note == MANUAL_WEIGHT_NOTE
+    assert customs.weight_source_url == ""  # фиктивная ссылка не выдумана
+    assert part_export_data(part)["weight_source"] == "manual"  # «Указано вручную»
+    html = client.get(reverse("actions_customs_edit", args=[part.pk])).content.decode()
+    assert "Указано вручную" in html
+
+
+def test_quick_save_preserves_real_source_note(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    PartCustomsInfo.objects.create(
+        part_type=part, weight_source_url="https://example.com/spec",
+        weight_source_note="страница поставщика",
+    )
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_verified is True
+    assert customs.weight_source_url == "https://example.com/spec"  # источник не затёрт
+    assert customs.weight_source_note == "страница поставщика"
+    assert part_export_data(part)["weight_source"] == "sourced"
+
+
+def test_quick_save_partial_pair_does_not_write_manual_note(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    _save(client, part, gross_weight_kg="0.5")  # пары нет — подтверждать нечего
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_source_note == ""
+
+
+# --- Согласованность с детальной формой -------------------------------------------------------
+
+
+def test_detail_form_cannot_verify_incomplete_pair(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    client.post(
+        reverse("actions_customs_edit", args=[part.pk]),
+        {"gross_weight_kg": "0.5", "weight_verified": "on"},  # нетто нет
+    )
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.gross_weight_kg == Decimal("0.5")
+    assert customs.weight_verified is False  # неполную пару подтвердить нельзя
+
+
+def test_detail_form_explicit_unchecked_respected(client, make_user, env):
+    """Детальная форма — явный чекбокс: оба веса без отметки НЕ подтверждают.
+
+    Там есть поля источника (вес мог быть записан с непроверенной страницы),
+    поэтому решение остаётся за пользователем. Быстрый редактор без полей
+    источника — чисто ручной ввод, он подтверждает автоматически.
+    """
+    part, _ = _brp(env, material="219800345")
+    _login(client, make_user)
+    client.post(
+        reverse("actions_customs_edit", args=[part.pk]),
+        {"gross_weight_kg": "0.5", "net_weight_kg": "0.4"},  # чекбокс не отмечен
+    )
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    assert customs.weight_verified is False
+
+
+def test_report_shows_verified_pill(client, make_user, env):
+    part, _ = _brp(env, material="219800345")
+    _sell(env, part, number="219800345")
+    _login(client, make_user)
+    html = client.get(reverse("actions_report")).content.decode()
+    assert "Вес подтверждён вручную" not in html  # ещё не подтверждён
+    _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")
+    html = client.get(reverse("actions_report")).content.decode()
+    assert "Вес подтверждён вручную" in html

@@ -648,6 +648,12 @@ def resolve_customs_application(part: PartType) -> str:
 # бы тихо округлил/обрезал при записи — валидируем в Python заранее.
 _MAX_WEIGHT_KG = Decimal("100000")
 
+# Заметка-маркер, которую быстрый редактор пишет в weight_source_note при
+# ручном вводе обоих весов (URL не выдумывается). Для классификации источника
+# она НЕ считается внешним источником: «Указано вручную», а не «Получено из
+# источника».
+MANUAL_WEIGHT_NOTE = "Указано вручную сотрудником"
+
 
 def parse_weight_kg(raw) -> Decimal | None:
     """Вес одной штуки в кг: Decimal с точностью до 3 знаков, строго > 0.
@@ -741,9 +747,12 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     # архитектуре нет (ни BRP, ни Polaris каталог вес не хранят) - только
     # ручной ввод, при желании с проверенной ссылкой/примечанием
     # (weight_source_url/note - их смысл не меняется, здесь только читаем).
+    source_note = customs.weight_source_note.strip()
     if customs.gross_weight_kg is None and customs.net_weight_kg is None:
         weight_source = "none"
-    elif customs.weight_source_url.strip() or customs.weight_source_note.strip():
+    elif customs.weight_source_url.strip() or (
+        source_note and source_note != MANUAL_WEIGHT_NOTE
+    ):
         weight_source = "sourced"
     else:
         weight_source = "manual"

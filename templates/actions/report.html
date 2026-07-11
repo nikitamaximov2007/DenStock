@@ -244,6 +244,9 @@
                       <span class="pill pill--warning">{{ reason }}</span>
                     {% endfor %}
                   {% endif %}
+                  {% if row.customs.weight_verified %}
+                    <span class="pill pill--info">Вес подтверждён вручную</span>
+                  {% endif %}
                 </td>
                 <td class="table__actions">
                   <form method="post"

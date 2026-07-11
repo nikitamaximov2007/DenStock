@@ -20,6 +20,7 @@ from apps.warehouse.models import StorageLocation
 
 from .models import PartCustomsInfo, WarehouseAction
 from .services import (
+    MANUAL_WEIGHT_NOTE,
     MULTI_LOCATION_MESSAGE,
     NOT_FOUND_MESSAGE,
     ActionError,
@@ -276,7 +277,14 @@ def actions_customs_edit(request, part_id):
         customs.net_weight_kg = net
         customs.weight_source_url = (request.POST.get("weight_source_url") or "").strip()
         customs.weight_source_note = (request.POST.get("weight_source_note") or "").strip()
-        customs.weight_verified = bool(request.POST.get("weight_verified"))
+        # Чекбокс — явное решение пользователя (здесь есть поля источника:
+        # вес мог быть записан с непроверенной страницы). Guard единый с
+        # быстрым редактором: неполную пару весов подтвердить нельзя.
+        customs.weight_verified = (
+            bool(request.POST.get("weight_verified"))
+            and gross is not None
+            and net is not None
+        )
         application_area = (request.POST.get("application_area") or "").strip().upper()
         if application_area and application_area not in PartCustomsInfo.ApplicationArea.values:
             messages.error(request, "Недопустимая область применения.")
@@ -321,6 +329,15 @@ def actions_customs_quick_save(request, part_id):
     конкретная складская карточка (PartType): BRP и Polaris с одинаковым
     номером здесь не смешиваются, а replacement/superseded не может получить
     вес exact-детали — это физически другая карточка со своим PartCustomsInfo.
+
+    weight_verified: ручной ввод здесь — само по себе подтверждение веса
+    (полей источника в быстрой форме нет). Если веса затронуты в POST,
+    флаг пересчитывается от итоговой пары: оба валидных веса -> True,
+    неполная пара (в т.ч. после удаления одного из весов) -> False. Смена
+    только области применения (ключей веса нет в POST) флаг не трогает.
+    В weight_source_note пишется маркер «Указано вручную сотрудником» —
+    только если URL и заметка пусты: реальный источник из детальной формы
+    не затирается, фиктивный URL не выдумывается.
     """
     _require_access(request)
     if request.method != "POST":
@@ -366,6 +383,18 @@ def actions_customs_quick_save(request, part_id):
             transaction.set_rollback(True)
             error_message = str(exc)
         else:
+            if gross is not _UNSET or net is not _UNSET:
+                both_weights = (
+                    customs.gross_weight_kg is not None
+                    and customs.net_weight_kg is not None
+                )
+                customs.weight_verified = both_weights
+                update_fields.append("weight_verified")
+                if both_weights and not customs.weight_source_url.strip() and (
+                    customs.weight_source_note.strip() in ("", MANUAL_WEIGHT_NOTE)
+                ):
+                    customs.weight_source_note = MANUAL_WEIGHT_NOTE
+                    update_fields.append("weight_source_note")
             customs.updated_by = request.user
             customs.save(update_fields=update_fields)
     if error_message:
