@@ -13,9 +13,12 @@ from typing import Any
 if __package__ in {None, ""}:  # Direct `python tools/research/...` execution.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tools.research.wst.bootstrap import bootstrap_media
 from tools.research.wst.config import load_settings, wst_paths
 from tools.research.wst.document_extractors import extract_document, write_document_extraction
 from tools.research.wst.downloader import download_media
+from tools.research.wst.media_pipeline import process_media_record
+from tools.research.wst.media_recovery import executable, executable_version
 from tools.research.wst.models import message_record
 from tools.research.wst.navigation import build_navigation_graph
 from tools.research.wst.ocr import run_ocr, write_ocr
@@ -30,12 +33,6 @@ from tools.research.wst.video_frames import (
     extract_keyframe,
     periodic_timestamps,
     retain_distinct_frames,
-)
-from tools.research.wst.video_transcriber import (
-    extract_mono_audio,
-    probe_media,
-    transcribe_audio,
-    write_transcript,
 )
 
 
@@ -86,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--until")
         item.add_argument("--message-id", type=int)
         item.add_argument("--download-media", action="store_true")
+        item.add_argument("--download-timeout", type=int, default=300)
         item.add_argument("--skip-existing", action="store_true")
         item.add_argument("--retry-failed", action="store_true")
         item.add_argument("--dry-run", action="store_true")
@@ -93,10 +91,31 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--whisper-model")
     process.add_argument("--device", default="auto")
     process.add_argument("--compute-type", default="auto")
+    process.add_argument(
+        "--transcription-backend", default="auto", choices=("auto", "faster-whisper", "whisper-cpp")
+    )
+    process.add_argument("--chunk-minutes", type=int, default=15)
+    process.add_argument("--chunk-overlap-seconds", type=int, default=20)
+    process.add_argument("--retry-failed-chunks", action="store_true")
     process.add_argument("--max-video-duration", type=int)
     process.add_argument("--skip-existing", action="store_true")
     process.add_argument("--retry-failed", action="store_true")
+    process.add_argument("--message-id", type=int)
     process.add_argument("--dry-run", action="store_true")
+    bootstrap = subparsers.add_parser("bootstrap-media")
+    bootstrap.add_argument("--install", action="store_true")
+    bootstrap.add_argument("--download-model", action="store_true")
+    bootstrap.add_argument("--whisper-model", default="large-v3")
+    retry = subparsers.add_parser("retry-media")
+    retry.add_argument("--only-download-failed", action="store_true")
+    retry.add_argument("--only-probe-failed", action="store_true")
+    retry.add_argument("--only-audio-failed", action="store_true")
+    retry.add_argument("--only-transcript-failed", action="store_true")
+    retry.add_argument("--only-ocr-failed", action="store_true")
+    retry.add_argument("--message-id", type=int)
+    retry.add_argument("--max-attempts", type=int, default=3)
+    retry.add_argument("--backend", default="auto")
+    retry.add_argument("--force-repair", action="store_true")
     subparsers.add_parser("doctor")
     return parser
 
@@ -176,6 +195,7 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
                         media,
                         paths,
                         existing_sha256=saved.get("sha256") if saved else None,
+                        timeout_seconds=args.download_timeout,
                     )
                     media.update(outcome)
                     state.update_media(
@@ -185,7 +205,7 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
                         download_status=outcome["status"],
                         error_message=outcome.get("error"),
                         retry_count=(saved or {}).get("retry_count", 0)
-                        + (outcome["status"] == "failed"),
+                        + int(outcome["status"] == "retry_pending"),
                     )
                 manifest.append(media)
             _write_jsonl_by_key(paths["raw"] / "posts.jsonl", records, "message_id")
@@ -227,17 +247,16 @@ def process(args: argparse.Namespace) -> dict[str, Any]:
     settings = load_settings(output_root=args.output_root)
     paths = wst_paths(settings)
     media = _read_jsonl(paths["raw"] / "media_manifest.jsonl")
+    if args.message_id:
+        media = [item for item in media if item.get("message_id") == args.message_id]
     if args.dry_run:
         return {"mode": "process", "dry_run": True, "media": len(media)}
     counts: Counter[str] = Counter()
     errors: list[str] = []
-    for item in media:
-        source_path = Path(item.get("path") or "")
-        if not source_path.exists():
-            counts["missing"] += 1
-            continue
-        post_id = int(item["message_id"])
-        try:
+    with WSTState(paths["state"] / "wst_state.sqlite3") as state:
+        for item in media:
+            source_path = Path(item.get("path") or "")
+            post_id = int(item["message_id"])
             if source_path.suffix.lower() in {
                 ".pdf",
                 ".pptx",
@@ -248,41 +267,74 @@ def process(args: argparse.Namespace) -> dict[str, Any]:
                 ".txt",
                 ".md",
             }:
-                result = extract_document(source_path, post_id)
-                write_document_extraction(result, paths["extracted_documents"])
-                counts["documents"] += 1
-            elif item.get("media_type") in {"video", "audio"}:
-                metadata = probe_media(source_path)
-                if not metadata["audio_streams"]:
-                    counts["without_audio"] += 1
-                    continue
-                audio_path = extract_mono_audio(source_path, paths["state"] / "tmp")
-                segments = transcribe_audio(
-                    audio_path,
-                    model_name=args.whisper_model or settings.whisper_model,
-                    device=args.device,
-                    compute_type=args.compute_type,
-                )
-                write_transcript(
-                    post_id, metadata["duration_seconds"], segments, paths["transcripts"]
-                )
-                audio_path.unlink(missing_ok=True)
-                counts["transcripts"] += 1
-                if item.get("media_type") == "video":
-                    _process_video_frames(
-                        post_id, source_path, metadata, paths, settings.ocr_languages
-                    )
-                    counts["video_evidence"] += 1
-            else:
+                try:
+                    result = extract_document(source_path, post_id)
+                    write_document_extraction(result, paths["extracted_documents"])
+                    counts["documents"] += 1
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"post {post_id}: {exc.__class__.__name__}: {exc}")
+                continue
+            if item.get("media_type") not in {"video", "audio"}:
                 counts["unsupported"] += 1
-        except Exception as exc:  # noqa: BLE001 - one bad local asset must not stop a run.
-            errors.append(f"post {post_id}: {exc.__class__.__name__}: {exc}")
+                continue
+            result = process_media_record(
+                item,
+                paths,
+                state,
+                whisper_model=args.whisper_model or settings.whisper_model,
+                device=args.device,
+                compute_type=args.compute_type,
+                ocr_languages=settings.ocr_languages,
+                chunk_seconds=args.chunk_minutes * 60,
+                overlap_seconds=args.chunk_overlap_seconds,
+            )
+            counts[result["status"]] += 1
+        errors.extend(
+            f"post {row['message_id']} {row['stage']}: {row['error_message']}"
+            for row in state.retry_queue()
+        )
     write_report(
         paths["reports"] / "extraction_report.md",
         "WST extraction",
         {"counts": dict(counts), "errors": errors},
     )
     return {"mode": "process", **dict(counts), "errors": len(errors)}
+
+
+def retry_media(args: argparse.Namespace) -> dict[str, Any]:
+    settings = load_settings(output_root=args.output_root)
+    paths = wst_paths(settings)
+    stage = next(
+        (
+            name
+            for enabled, name in (
+                (args.only_download_failed, "downloaded"),
+                (args.only_probe_failed, "integrity_checked"),
+                (args.only_audio_failed, "audio_extracted"),
+                (args.only_transcript_failed, "transcript_created"),
+                (args.only_ocr_failed, "ocr_created"),
+            )
+            if enabled
+        ),
+        None,
+    )
+    with WSTState(paths["state"] / "wst_state.sqlite3") as state:
+        queue = [
+            row
+            for row in state.retry_queue(stage=stage, message_id=args.message_id)
+            if row["attempts"] < args.max_attempts
+        ]
+        write_report(
+            paths["reports"] / "media_retry_queue.md",
+            "WST media retry queue",
+            {
+                "items": [
+                    f"post {row['message_id']} {row['stage']}: {row['next_action']}"
+                    for row in queue
+                ]
+            },
+        )
+    return {"retry_pending": len(queue), "stage": stage or "all"}
 
 
 def _process_video_frames(
@@ -324,8 +376,10 @@ async def doctor(args: argparse.Namespace) -> dict[str, Any]:
     paths = wst_paths(settings)
     report = {
         "telegram_credentials_present": settings.has_telegram_credentials,
-        "ffmpeg": bool(shutil.which("ffmpeg")),
-        "ffprobe": bool(shutil.which("ffprobe")),
+        "ffmpeg": bool(executable("ffmpeg")),
+        "ffprobe": bool(executable("ffprobe")),
+        "ffmpeg_version": executable_version("ffmpeg"),
+        "ffprobe_version": executable_version("ffprobe"),
         "free_disk_bytes": shutil.disk_usage(settings.output_root).free,
         "output_directories": all(path.exists() for path in paths.values()),
     }
@@ -354,6 +408,14 @@ def main() -> int:
     try:
         if args.command == "doctor":
             result = asyncio.run(doctor(args))
+        elif args.command == "bootstrap-media":
+            result = bootstrap_media(
+                install=args.install,
+                whisper_model=args.whisper_model,
+                download_model=args.download_model,
+            )
+        elif args.command == "retry-media":
+            result = retry_media(args)
         elif args.command == "process":
             result = process(args)
         else:

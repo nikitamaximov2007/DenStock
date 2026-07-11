@@ -90,6 +90,9 @@ def wst_paths(settings: WSTSettings) -> dict[str, Path]:
         "index": root / "index",
         "ai_corpus": root / "ai_corpus",
         "reports": root / "reports",
+        "derived": root / "derived",
+        "repaired": root / "derived" / "repaired",
+        "diagnostics": root / "derived" / "diagnostics",
     }
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)

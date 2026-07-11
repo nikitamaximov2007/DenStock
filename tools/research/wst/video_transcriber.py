@@ -168,3 +168,86 @@ def transcribe_audio(
         }
         for item in segments
     ]
+
+
+def extract_audio_chunk(
+    audio_path: Path,
+    start: Decimal,
+    end: Decimal,
+    temporary_dir: Path,
+    chunk_number: int,
+) -> Path:
+    local = Path(__file__).resolve().parents[1] / ".runtime" / "bin" / "ffmpeg.exe"
+    executable = str(local) if local.exists() else shutil.which("ffmpeg")
+    if not executable:
+        raise RuntimeError("ffmpeg is not installed.")
+    temporary_dir.mkdir(parents=True, exist_ok=True)
+    target = temporary_dir / f"{audio_path.stem}-chunk-{chunk_number:04}.wav"
+    subprocess.run(
+        [
+            executable,
+            "-y",
+            "-ss",
+            str(start),
+            "-t",
+            str(end - start),
+            "-i",
+            str(audio_path),
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(target),
+        ],
+        capture_output=True,
+        check=True,
+    )
+    return target
+
+
+def transcribe_in_chunks(
+    audio_path: Path,
+    duration: Decimal,
+    temporary_dir: Path,
+    *,
+    model_name: str,
+    device: str,
+    compute_type: str,
+    chunk_seconds: int,
+    overlap_seconds: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    absolute_segments: list[dict[str, Any]] = []
+    chunk_results: list[dict[str, Any]] = []
+    for number, (start, end) in enumerate(
+        transcription_chunks(duration, chunk_seconds, overlap_seconds), start=1
+    ):
+        chunk_path = extract_audio_chunk(audio_path, start, end, temporary_dir, number)
+        try:
+            segments = transcribe_audio(
+                chunk_path, model_name=model_name, device=device, compute_type=compute_type
+            )
+            absolute_segments.extend(
+                {
+                    **segment,
+                    "start": str(start + decimal_seconds(segment["start"])),
+                    "end": str(start + decimal_seconds(segment["end"])),
+                    "chunk_id": number,
+                    "backend": "faster-whisper",
+                    "model": model_name,
+                }
+                for segment in segments
+            )
+            chunk_results.append({"chunk_id": number, "status": "complete"})
+        except Exception as exc:  # noqa: BLE001
+            chunk_results.append(
+                {
+                    "chunk_id": number,
+                    "status": "retry_pending",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+        finally:
+            chunk_path.unlink(missing_ok=True)
+    return deduplicate_overlap(absolute_segments), chunk_results

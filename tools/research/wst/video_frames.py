@@ -45,7 +45,8 @@ def hamming_distance(left: str, right: str) -> int:
 
 
 def extract_keyframe(video_path: Path, timestamp: Decimal, output_dir: Path) -> Path:
-    executable = shutil.which("ffmpeg")
+    local = Path(__file__).resolve().parents[1] / ".runtime" / "bin" / "ffmpeg.exe"
+    executable = str(local) if local.exists() else shutil.which("ffmpeg")
     if not executable:
         raise RuntimeError("ffmpeg is not installed.")
     output_dir.mkdir(parents=True, exist_ok=True)

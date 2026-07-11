@@ -33,6 +33,7 @@ research_inputs/
 *.session-journal
 tools/research/.sessions/
 tools/research/.cache/
+tools/research/.runtime/
 tools/research/models/
 tools/research/tmp/
 

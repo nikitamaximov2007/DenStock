@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,6 +48,22 @@ class WSTState:
                 link_order INTEGER NOT NULL,
                 external_url TEXT,
                 PRIMARY KEY (parent_message_id, link_order, edge_type)
+            );
+            CREATE TABLE IF NOT EXISTS media_stages (
+                message_id INTEGER NOT NULL,
+                stage TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                backend TEXT,
+                started_at TEXT,
+                finished_at TEXT,
+                error_class TEXT,
+                error_message TEXT,
+                diagnostic_details TEXT NOT NULL DEFAULT '{}',
+                artifact_paths TEXT NOT NULL DEFAULT '[]',
+                content_hash TEXT,
+                next_action TEXT,
+                PRIMARY KEY(message_id, stage)
             );
             """
         )
@@ -143,6 +160,133 @@ class WSTState:
             ],
         )
         self.connection.commit()
+
+    def begin_stage(self, message_id: int, stage: str, *, backend: str = "") -> int:
+        current = self.stage_record(message_id, stage) or {}
+        attempts = int(current.get("attempts", 0)) + 1
+        self.connection.execute(
+            """
+            INSERT INTO media_stages(message_id, stage, status, attempts, backend, started_at)
+            VALUES (?, ?, 'running', ?, ?, ?)
+            ON CONFLICT(message_id, stage) DO UPDATE SET
+              status='running', attempts=excluded.attempts, backend=excluded.backend,
+              started_at=excluded.started_at, finished_at=NULL,
+              error_class=NULL, error_message=NULL, next_action=NULL
+            """,
+            (message_id, stage, attempts, backend, _now()),
+        )
+        self.connection.commit()
+        return attempts
+
+    def finish_stage(
+        self,
+        message_id: int,
+        stage: str,
+        *,
+        status: str = "complete",
+        backend: str = "",
+        diagnostics: dict[str, Any] | None = None,
+        artifacts: list[str] | None = None,
+        content_hash: str | None = None,
+        next_action: str = "",
+    ) -> None:
+        current = self.stage_record(message_id, stage) or {}
+        self.connection.execute(
+            """
+            INSERT INTO media_stages(
+              message_id, stage, status, attempts, backend, finished_at, diagnostic_details,
+              artifact_paths, content_hash, next_action
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(message_id, stage) DO UPDATE SET
+              status=excluded.status, backend=excluded.backend, finished_at=excluded.finished_at,
+              diagnostic_details=excluded.diagnostic_details,
+              artifact_paths=excluded.artifact_paths,
+              content_hash=excluded.content_hash, next_action=excluded.next_action
+            """,
+            (
+                message_id,
+                stage,
+                status,
+                int(current.get("attempts", 0)),
+                backend,
+                _now(),
+                json.dumps(diagnostics or {}, ensure_ascii=False, sort_keys=True, default=str),
+                json.dumps(artifacts or [], ensure_ascii=False),
+                content_hash,
+                next_action,
+            ),
+        )
+        self.connection.commit()
+
+    def fail_stage(
+        self,
+        message_id: int,
+        stage: str,
+        error: Exception | str,
+        *,
+        diagnostics: dict[str, Any] | None = None,
+        artifacts: list[str] | None = None,
+        retry: bool = True,
+        next_action: str = "",
+    ) -> None:
+        message = str(error)
+        error_class = (
+            error.__class__.__name__ if isinstance(error, Exception) else "ProcessingError"
+        )
+        status = "retry_pending" if retry else "unrecoverable"
+        self.finish_stage(
+            message_id,
+            stage,
+            status=status,
+            diagnostics={
+                **(diagnostics or {}),
+                "error_class": error_class,
+                "error_message": message,
+            },
+            artifacts=artifacts,
+            next_action=next_action or "Inspect diagnostics and rerun retry-media.",
+        )
+        self.connection.execute(
+            "UPDATE media_stages SET error_class=?, error_message=? WHERE message_id=? AND stage=?",
+            (error_class, message, message_id, stage),
+        )
+        self.connection.commit()
+
+    def stage_record(self, message_id: int, stage: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM media_stages WHERE message_id=? AND stage=?", (message_id, stage)
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["diagnostic_details"] = json.loads(result["diagnostic_details"] or "{}")
+        result["artifact_paths"] = json.loads(result["artifact_paths"] or "[]")
+        return result
+
+    def retry_queue(
+        self, *, stage: str | None = None, message_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        clauses = ["status='retry_pending'"]
+        values: list[Any] = []
+        if stage:
+            clauses.append("stage=?")
+            values.append(stage)
+        if message_id:
+            clauses.append("message_id=?")
+            values.append(message_id)
+        rows = self.connection.execute(
+            "SELECT * FROM media_stages WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY message_id, stage",
+            values,
+        ).fetchall()
+        return [self.stage_record(row["message_id"], row["stage"]) for row in rows]
+
+    def progress(self) -> dict[str, int]:
+        rows = self.connection.execute(
+            "SELECT stage, status, COUNT(*) AS count FROM media_stages GROUP BY stage, status"
+        ).fetchall()
+        return {f"{row['stage']}:{row['status']}": int(row["count"]) for row in rows}
 
     def close(self) -> None:
         self.connection.close()

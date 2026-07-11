@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,7 @@ async def download_media(
     *,
     existing_sha256: str | None = None,
     retries: int = 2,
+    timeout_seconds: int = 300,
 ) -> dict[str, Any]:
     """Download to .part and atomically rename; never keeps a partial final file."""
     message_id = int(message.id)
@@ -65,26 +67,59 @@ async def download_media(
                 "sha256": digest,
                 "size_bytes": target.stat().st_size,
             }
-    temporary = target.with_suffix(target.suffix + ".part")
-    temporary.unlink(missing_ok=True)
     for attempt in range(retries + 1):
+        temporary = target.with_name(f"{target.name}.{secrets.token_hex(4)}.part")
         try:
-            downloaded = await client.download_media(message, file=str(temporary))
+            downloaded = await asyncio.wait_for(
+                client.download_media(message, file=str(temporary)), timeout=timeout_seconds
+            )
             if not downloaded or not temporary.exists():
                 raise RuntimeError("Telegram returned no media file.")
+            actual_size = temporary.stat().st_size
+            expected_size = media.get("size_bytes")
+            if actual_size <= 0:
+                raise RuntimeError("Telegram download produced an empty file.")
+            if expected_size not in (None, 0, actual_size):
+                raise RuntimeError(
+                    f"Telegram download size mismatch: expected {expected_size}, got {actual_size}."
+                )
             os.replace(temporary, target)
             return {
                 "status": "downloaded",
                 "path": str(target),
                 "sha256": sha256_file(target),
-                "size_bytes": target.stat().st_size,
+                "size_bytes": actual_size,
+                "attempts": attempt + 1,
+            }
+        except TimeoutError:
+            _remove_temporary(temporary)
+            return {
+                "status": "retry_pending",
+                "error": f"Telegram download timed out after {timeout_seconds}s.",
+                "attempts": attempt + 1,
             }
         except Exception as exc:  # noqa: BLE001 - Telethon errors are optional dependencies.
-            temporary.unlink(missing_ok=True)
+            _remove_temporary(temporary)
             seconds = getattr(exc, "seconds", None)
             if seconds is not None:
-                return {"status": "flood_wait", "error": f"FloodWait: retry after {seconds}s"}
+                return {
+                    "status": "retry_pending",
+                    "error": f"FloodWait: retry after {seconds}s",
+                    "attempts": attempt + 1,
+                }
             if attempt >= retries:
-                return {"status": "failed", "error": f"{exc.__class__.__name__}: {exc}"}
+                return {
+                    "status": "retry_pending",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                    "attempts": attempt + 1,
+                }
             await asyncio.sleep(min(2**attempt, 4))
     raise AssertionError("unreachable")
+
+
+def _remove_temporary(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError:
+        # A cancelled downloader may still own an old .part; later retries use a new name.
+        return

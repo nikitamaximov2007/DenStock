@@ -43,6 +43,7 @@ Model caches must remain outside the repository or in ignored directories.
 ## Safe sequence
 
 ```powershell
+python tools/research/collect_wst_sources.py bootstrap-media --install
 python tools/research/collect_wst_sources.py doctor
 
 python tools/research/collect_wst_sources.py inventory `
@@ -62,6 +63,12 @@ python tools/research/build_wst_corpus.py validate
 python tools/research/build_wst_corpus.py build --pack-max-mb 8
 python tools/research/build_wst_corpus.py search "целевая аудитория"
 ```
+
+`bootstrap-media` installs Python dependencies into `.venv-research` and, when
+available, prepares FFmpeg in the ignored user-space runtime. It never commits
+binaries or models. If Tesseract cannot be installed without an administrator,
+the collector keeps frames and puts OCR into `retry_pending` with an actionable
+retry command; it never treats that as successful OCR.
 
 Only after reviewing the navigation result should a user run:
 

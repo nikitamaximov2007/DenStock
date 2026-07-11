@@ -21,6 +21,12 @@ class _FloodWaitClient:
         raise error
 
 
+class _EmptyDownloadClient:
+    async def download_media(self, _message, file: str):
+        assert file
+        return None
+
+
 def test_safe_media_name_keeps_extension_and_removes_path_traversal() -> None:
     name = safe_media_name(12, "../../bad name?.pdf", "application/pdf")
     assert name == "post-12-bad-name.pdf"
@@ -84,4 +90,24 @@ def test_downloader_records_flood_wait_without_retrying_aggressively(tmp_path: P
         )
     )
 
-    assert result == {"status": "flood_wait", "error": "FloodWait: retry after 30s"}
+    assert result["status"] == "retry_pending"
+    assert result["error"] == "FloodWait: retry after 30s"
+
+
+def test_downloader_retries_empty_file_as_integrity_failure(tmp_path: Path) -> None:
+    settings = load_settings(
+        project_root=tmp_path,
+        output_root=tmp_path / "research_inputs" / "wst",
+    )
+    result = asyncio.run(
+        download_media(
+            _EmptyDownloadClient(),
+            SimpleNamespace(id=12),
+            {"media_type": "audio", "file_name": "a.mp3", "size_bytes": 10},
+            wst_paths(settings),
+            retries=0,
+        )
+    )
+
+    assert result["status"] == "retry_pending"
+    assert "Telegram returned no media" in result["error"]
