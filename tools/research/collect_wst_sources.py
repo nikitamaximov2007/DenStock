@@ -195,6 +195,11 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
                 if record.get("grouped_id"):
                     albums.setdefault(str(record["grouped_id"]), []).append(record["message_id"])
             _write_json(paths["raw"] / "album_manifest.json", {"albums": albums})
+            write_report(
+                paths["reports"] / "external_links.md",
+                "WST external links",
+                {"links": [edge.get("external_url", "") for edge in graph["external_links"]]},
+            )
             summary = {
                 "mode": args.command,
                 "posts": len(records),

@@ -104,6 +104,21 @@ def _write_ai_corpus(
         (corpus / "posts" / f"post-{post['message_id']}.md").write_text(
             f"# Post {post['message_id']}\n\n{content}\n", encoding="utf-8"
         )
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in chunks:
+        grouped.setdefault(item["material_id"], []).append(item)
+    for material_id, material_chunks in grouped.items():
+        if material_id.startswith("video-"):
+            target = corpus / "videos" / f"video-{material_id.removeprefix('video-')}.md"
+        elif material_id.startswith("document-"):
+            target = corpus / "documents" / f"{material_id}.md"
+        else:
+            continue
+        target.write_text(
+            "\n\n".join(f"{item['source_ref']}\n\n{item['text']}" for item in material_chunks)
+            + "\n",
+            encoding="utf-8",
+        )
     packs = build_packs(chunks, corpus / "packs", pack_size)
     index = ["# WST corpus index", ""] + [
         f"- post-{post['message_id']}: {post['canonical_url']}" for post in posts

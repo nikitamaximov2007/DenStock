@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -91,15 +92,34 @@ def _extract_pdf(path: Path, post_id: int) -> dict[str, Any]:
     with fitz.open(path) as document:
         for page_number, page in enumerate(document, start=1):
             text = page.get_text("text").strip()
+            method = "text_layer"
+            if not text:
+                text = _ocr_pdf_page(page)
+                method = "ocr" if text else "ocr_required"
             blocks.append(
                 {
                     "page": page_number,
                     "text": text,
-                    "extraction_method": "text_layer" if text else "ocr_required",
+                    "extraction_method": method,
                 }
             )
-    method = "text_layer" if all(block["text"] for block in blocks) else "mixed"
+    methods = {block["extraction_method"] for block in blocks}
+    method = "text_layer" if methods == {"text_layer"} else "mixed"
     return _result(path, post_id, blocks, method)
+
+
+def _ocr_pdf_page(page: Any) -> str:
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError:
+        return ""
+    try:
+        pixmap = page.get_pixmap(matrix=page.parent.Matrix(2, 2), alpha=False)
+        with Image.open(BytesIO(pixmap.tobytes("png"))) as image:
+            return pytesseract.image_to_string(image, lang="rus+eng").strip()
+    except Exception:  # noqa: BLE001 - an unreadable page remains explicitly marked.
+        return ""
 
 
 def _extract_pptx(path: Path, post_id: int) -> dict[str, Any]:
