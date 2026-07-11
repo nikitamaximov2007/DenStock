@@ -14,5 +14,8 @@ def test_gitignore_contains_research_safety_rules() -> None:
         "*.session",
         "*.session-journal",
         "tools/research/.sessions/",
+        "tools/research/.cache/",
+        "tools/research/models/",
+        "tools/research/tmp/",
     ):
         assert pattern in gitignore

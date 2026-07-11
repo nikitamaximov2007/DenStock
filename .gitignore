@@ -32,6 +32,9 @@ research_inputs/
 *.session
 *.session-journal
 tools/research/.sessions/
+tools/research/.cache/
+tools/research/models/
+tools/research/tmp/
 
 # Backups (database dumps, label PDFs кэш)
 /backups/
