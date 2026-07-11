@@ -14,8 +14,8 @@ urlpatterns = [
         name="actions_customs_edit",
     ),
     path(
-        "actions/customs/<int:part_id>/application/",
-        views.actions_customs_application,
-        name="actions_customs_application",
+        "actions/customs/<int:part_id>/quick-save/",
+        views.actions_customs_quick_save,
+        name="actions_customs_quick_save",
     ),
 ]

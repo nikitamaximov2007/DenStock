@@ -643,6 +643,46 @@ def resolve_customs_application(part: PartType) -> str:
     return str(next(iter(categories)))
 
 
+# Вес одной штуки: max_digits=8, decimal_places=3 у PartCustomsInfo -> целая
+# часть максимум 5 цифр (99999.999 кг). Значение вне этого диапазона Postgres
+# бы тихо округлил/обрезал при записи — валидируем в Python заранее.
+_MAX_WEIGHT_KG = Decimal("100000")
+
+
+def parse_weight_kg(raw) -> Decimal | None:
+    """Вес одной штуки в кг: Decimal с точностью до 3 знаков, строго > 0.
+
+    Пустая строка/None -> None («не заполнено» - разрешённое состояние, вес
+    не выдумывается). Ноль как «подтверждённый» вес запрещён явно - это не
+    то же самое, что «не заполнено». Отрицательные значения, NaN, Infinity,
+    больше 3 знаков после запятой и значения вне диапазона поля - ValueError
+    с понятным текстом для пользователя.
+    """
+    raw = (str(raw) if raw is not None else "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError("Вес должен быть числом в кг.") from exc
+    if not value.is_finite():  # ловит и NaN, и Infinity
+        raise ValueError("Вес должен быть числом в кг.")
+    if value <= 0:
+        raise ValueError("Вес должен быть больше нуля.")
+    exponent = value.as_tuple().exponent
+    if isinstance(exponent, int) and exponent < -3:
+        raise ValueError("Вес: не более 3 знаков после запятой.")
+    if value >= _MAX_WEIGHT_KG:
+        raise ValueError("Вес слишком большой.")
+    return value
+
+
+def validate_weight_pair(gross: Decimal | None, net: Decimal | None) -> None:
+    """Вес брутто не может быть меньше веса нетто (только когда заданы оба)."""
+    if gross is not None and net is not None and gross < net:
+        raise ValueError("Вес брутто не может быть меньше веса нетто.")
+
+
 def part_export_data(part: PartType, number: str | None = None) -> dict:
     """Данные детали для строк экспорта + предупреждения о недостающих полях.
 
@@ -697,6 +737,25 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         warnings.append("нет оптовой цены в USD")
     if not application_area:
         warnings.append("не определена область применения")
+    # Источник веса для UI (Layer 33.1): автоматического источника весов в
+    # архитектуре нет (ни BRP, ни Polaris каталог вес не хранят) - только
+    # ручной ввод, при желании с проверенной ссылкой/примечанием
+    # (weight_source_url/note - их смысл не меняется, здесь только читаем).
+    if customs.gross_weight_kg is None and customs.net_weight_kg is None:
+        weight_source = "none"
+    elif customs.weight_source_url.strip() or customs.weight_source_note.strip():
+        weight_source = "sourced"
+    else:
+        weight_source = "manual"
+    # Готовность именно к таможенному экспорту (Layer 33.1): ровно эти три
+    # поля. Цена и название сюда не входят - у них своя строка выше.
+    customs_missing_reasons = []
+    if not application_area:
+        customs_missing_reasons.append("Не заполнена область применения")
+    if customs.gross_weight_kg is None:
+        customs_missing_reasons.append("Не заполнен вес брутто")
+    if customs.net_weight_kg is None:
+        customs_missing_reasons.append("Не заполнен вес нетто")
     return {
         "part": part,
         "customs": customs,
@@ -710,6 +769,9 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "usd_price": usd_price,
         "application_area": application_area,
         "application_source": application_source,
+        "weight_source": weight_source,
+        "customs_ready": not customs_missing_reasons,
+        "customs_missing_reasons": customs_missing_reasons,
         "warnings": warnings,
     }
 
@@ -828,7 +890,11 @@ def export_customs_xlsx(actions) -> BytesIO:
         sheet[f"F{r}"] = excel_safe_text(row["country"])
         sheet[f"G{r}"] = row["gross_weight_kg"]  # None = пусто: вес не выдумываем
         sheet[f"H{r}"] = row["net_weight_kg"]
-        sheet[f"I{r}"] = f"=J{r}*G{r}"
+        sheet[f"I{r}"] = f"=J{r}*G{r}"  # вес брутто сумма = брутто/шт * количество
+        # 3 знака после запятой: у мелкой детали (0.125 кг) 2 знака шаблона
+        # («0.00») визуально теряют точность, хотя само число не искажается.
+        for column in "GHI":
+            sheet[f"{column}{r}"].number_format = "0.000"
         sheet[f"J{r}"] = row["quantity"]  # openpyxl пишет Decimal как число
         sheet[f"K{r}"] = row["usd_price"]  # оптовая цена прайса в USD
         sheet[f"L{r}"] = f"=K{r}*J{r}"

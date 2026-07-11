@@ -5,7 +5,6 @@
 ремонта; каждый тип действия дополнительно проверяется по своему праву.
 """
 import datetime
-from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -28,17 +27,27 @@ from .services import (
     build_export_rows,
     cancel_warehouse_action,
     get_or_create_customs,
+    parse_weight_kg,
     perform_action,
     resolve_part,
     stock_overview,
+    validate_weight_pair,
 )
 
-# Подпись источника области применения для UI (см. part_export_data.application_source).
+# Подписи источников для UI (см. part_export_data.application_source/weight_source).
 APPLICATION_SOURCE_LABELS = {
     "manual": "Указано вручную",
     "compatibility": "Определено по совместимости",
     "none": "Не заполнено",
 }
+WEIGHT_SOURCE_LABELS = {
+    "manual": "Указано вручную",
+    "sourced": "Получено из источника",
+    "none": "Не заполнено",
+}
+
+# Сентинел «поле не передано в POST» — отличаем от «передано пустым» (сброс).
+_UNSET = object()
 
 ACTION_PERMISSIONS = {
     WarehouseAction.Type.SALE: "can_manage_sales",
@@ -153,10 +162,17 @@ def actions_report_view(request):
     active_actions = [a for a in actions if not a.is_cancelled]
     export_rows = build_export_rows(active_actions)
     ready = [r for r in export_rows if not r["warnings"]]
-    # Готовность именно области применения — отдельно от прочих предупреждений
-    # (название/вес/цена): «готово» значит явно заполнено вручную ИЛИ уверенно
-    # определено по совместимости, «не заполнено» — ни того, ни другого.
-    application_missing = [r for r in export_rows if not r["application_area"]]
+    # Готовность к таможенному экспорту (Layer 33.1): область применения +
+    # оба веса одной штуки. Цена и название сюда не входят - у них своя
+    # генерическая таблица предупреждений выше (ready_count/warning_count).
+    for row in export_rows:
+        row["gross_weight_total_kg"] = (
+            row["gross_weight_kg"] * row["quantity"]
+            if row["gross_weight_kg"] is not None
+            else None
+        )  # только для отображения: quantity меняется от экспорта к экспорту,
+        # само значение никогда не сохраняется обратно в PartCustomsInfo.
+    customs_missing = [r for r in export_rows if not r["customs_ready"]]
     return render(
         request,
         "actions/report.html",
@@ -169,8 +185,8 @@ def actions_report_view(request):
             "export_rows": export_rows,
             "ready_count": len(ready),
             "warning_count": len(export_rows) - len(ready),
-            "application_ready_count": len(export_rows) - len(application_missing),
-            "application_missing_count": len(application_missing),
+            "customs_ready_count": len(export_rows) - len(customs_missing),
+            "customs_missing_count": len(customs_missing),
             "application_choices": PartCustomsInfo.ApplicationArea.choices,
             "export_query": request.GET.urlencode(),
             "current_path_query": request.get_full_path(),
@@ -249,16 +265,15 @@ def actions_customs_edit(request, part_id):
         customs.customs_name_source = (
             customs.NameSource.MANUAL if name_ru else customs.NameSource.AUTO
         )
-        for field in ("gross_weight_kg", "net_weight_kg"):
-            raw = (request.POST.get(field) or "").strip().replace(",", ".")
-            if raw:
-                try:
-                    setattr(customs, field, Decimal(raw))
-                except InvalidOperation:
-                    messages.error(request, "Некорректный вес: используйте число в кг.")
-                    return redirect("actions_customs_edit", part_id=part.pk)
-            else:
-                setattr(customs, field, None)
+        try:
+            gross = parse_weight_kg(request.POST.get("gross_weight_kg"))
+            net = parse_weight_kg(request.POST.get("net_weight_kg"))
+            validate_weight_pair(gross, net)
+        except ValueError as exc:
+            messages.error(request, str(exc))
+            return redirect("actions_customs_edit", part_id=part.pk)
+        customs.gross_weight_kg = gross
+        customs.net_weight_kg = net
         customs.weight_source_url = (request.POST.get("weight_source_url") or "").strip()
         customs.weight_source_note = (request.POST.get("weight_source_note") or "").strip()
         customs.weight_verified = bool(request.POST.get("weight_verified"))
@@ -285,35 +300,76 @@ def actions_customs_edit(request, part_id):
             "data": data,
             "application_choices": PartCustomsInfo.ApplicationArea.choices,
             "application_source_label": APPLICATION_SOURCE_LABELS[data["application_source"]],
+            "weight_source_label": WEIGHT_SOURCE_LABELS[data["weight_source"]],
             "next": request.GET.get("next", ""),
         },
     )
 
 
 @login_required
-def actions_customs_application(request, part_id):
-    """Быстрое построчное сохранение области применения (готовность к экспорту).
+def actions_customs_quick_save(request, part_id):
+    """Быстрое построчное сохранение таможенных данных (готовность к экспорту).
+
+    Одна форма/кнопка на строку сохраняет область применения и оба веса
+    одной штуки вместе, но НЕЗАВИСИМО: если в POST нет ключа для какого-то
+    поля, оно не трогается (пользователь мог поменять только одно поле —
+    смена области применения не должна стирать сохранённые веса, и наоборот).
 
     Только POST — просмотр страницы готовности НЕ создаёт PartCustomsInfo
     (список строится через read_customs, см. build_export_rows). Строка
-    создаётся здесь, только когда пользователь явно сохраняет выбор. Ту же
-    точную PartType, что показана в строке экспорта — BRP и Polaris с
-    одинаковым номером здесь не смешиваются, потому что part_id указывает на
-    конкретную складскую карточку, а не на каталожный номер.
+    создаётся здесь, только когда пользователь явно сохраняет. part_id —
+    конкретная складская карточка (PartType): BRP и Polaris с одинаковым
+    номером здесь не смешиваются, а replacement/superseded не может получить
+    вес exact-детали — это физически другая карточка со своим PartCustomsInfo.
     """
     _require_access(request)
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     part = get_object_or_404(PartType, pk=part_id)
     next_url = request.POST.get("next") or reverse("actions_report")
-    value = (request.POST.get("application_area") or "").strip().upper()
-    if value and value not in PartCustomsInfo.ApplicationArea.values:
-        messages.error(request, "Недопустимая область применения.")
+
+    application_area = _UNSET
+    if "application_area" in request.POST:
+        application_area = (request.POST.get("application_area") or "").strip().upper()
+        if application_area and application_area not in PartCustomsInfo.ApplicationArea.values:
+            messages.error(request, "Недопустимая область применения.")
+            return redirect(next_url)
+
+    gross = net = _UNSET
+    try:
+        if "gross_weight_kg" in request.POST:
+            gross = parse_weight_kg(request.POST.get("gross_weight_kg"))
+        if "net_weight_kg" in request.POST:
+            net = parse_weight_kg(request.POST.get("net_weight_kg"))
+    except ValueError as exc:
+        messages.error(request, str(exc))
         return redirect(next_url)
+
+    error_message = None
     with transaction.atomic():
         customs, _created = PartCustomsInfo.objects.get_or_create(part_type=part)
-        customs.application_area = value
-        customs.updated_by = request.user
-        customs.save(update_fields=["application_area", "updated_by", "updated_at"])
-    messages.success(request, "Область применения сохранена.")
+        update_fields = ["updated_by", "updated_at"]
+        if application_area is not _UNSET:
+            customs.application_area = application_area
+            update_fields.append("application_area")
+        if gross is not _UNSET:
+            customs.gross_weight_kg = gross
+            update_fields.append("gross_weight_kg")
+        if net is not _UNSET:
+            customs.net_weight_kg = net
+            update_fields.append("net_weight_kg")
+        try:
+            validate_weight_pair(customs.gross_weight_kg, customs.net_weight_kg)
+        except ValueError as exc:
+            # Откатываем и вставку get_or_create для новой строки, и правки:
+            # невалидная строка не должна оставлять после себя пустой ряд.
+            transaction.set_rollback(True)
+            error_message = str(exc)
+        else:
+            customs.updated_by = request.user
+            customs.save(update_fields=update_fields)
+    if error_message:
+        messages.error(request, error_message)
+        return redirect(next_url)
+    messages.success(request, "Таможенные данные сохранены.")
     return redirect(next_url)

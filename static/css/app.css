@@ -164,6 +164,8 @@ body.app {
 .inline-form { display: inline; margin-left: 8px; }
 .inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
   border-radius: 6px; background: #fff; }
+.customs-quick-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
+.customs-quick-form input[type="text"] { width: 92px; }
 .form p { margin: 10px 0; }
 .form label { display: inline-block; margin-bottom: 4px; color: var(--muted); }
 .form input[type="text"], .form input[type="password"] { padding: 10px 12px; font-size: 16px;

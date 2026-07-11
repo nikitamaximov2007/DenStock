@@ -227,7 +227,7 @@ def test_post_creates_customs_row(client, make_user, env):
     assert not PartCustomsInfo.objects.filter(part_type=part).exists()
     _login(client, make_user)
     resp = client.post(
-        reverse("actions_customs_application", args=[part.pk]),
+        reverse("actions_customs_quick_save", args=[part.pk]),
         {"application_area": ApplicationArea.SNOWMOBILE},
     )
     assert resp.status_code == 302
@@ -241,7 +241,7 @@ def test_post_updates_existing_row(client, make_user, env):
     PartCustomsInfo.objects.create(part_type=part, application_area=ApplicationArea.SNOWMOBILE)
     _login(client, make_user)
     resp = client.post(
-        reverse("actions_customs_application", args=[part.pk]),
+        reverse("actions_customs_quick_save", args=[part.pk]),
         {"application_area": ApplicationArea.BOAT},
     )
     assert resp.status_code == 302
@@ -256,7 +256,7 @@ def test_post_updates_existing_row(client, make_user, env):
 def test_unauthenticated_cannot_save(client, env):
     part, _ = _brp(env, material="219800345")
     resp = client.post(
-        reverse("actions_customs_application", args=[part.pk]),
+        reverse("actions_customs_quick_save", args=[part.pk]),
         {"application_area": ApplicationArea.SNOWMOBILE},
     )
     assert resp.status_code == 302  # login_required редиректит на вход
@@ -269,7 +269,7 @@ def test_viewer_role_cannot_save(client, make_user, env):
     make_user("viewer", role=roles.VIEWER)
     client.login(username="viewer", password=PASSWORD)
     resp = client.post(
-        reverse("actions_customs_application", args=[part.pk]),
+        reverse("actions_customs_quick_save", args=[part.pk]),
         {"application_area": ApplicationArea.SNOWMOBILE},
     )
     assert resp.status_code == 403
@@ -283,7 +283,7 @@ def test_cannot_save_arbitrary_category(client, make_user, env):
     part, _ = _brp(env, material="219800345")
     _login(client, make_user)
     resp = client.post(
-        reverse("actions_customs_application", args=[part.pk]),
+        reverse("actions_customs_quick_save", args=[part.pk]),
         {"application_area": "ПОЕЗД"},
     )
     assert resp.status_code == 302
@@ -295,7 +295,7 @@ def test_cannot_overwrite_with_arbitrary_category(client, make_user, env):
     PartCustomsInfo.objects.create(part_type=part, application_area=ApplicationArea.SNOWMOBILE)
     _login(client, make_user)
     client.post(
-        reverse("actions_customs_application", args=[part.pk]),
+        reverse("actions_customs_quick_save", args=[part.pk]),
         {"application_area": "ПОЕЗД"},
     )
     customs = PartCustomsInfo.objects.get(part_type=part)
@@ -310,11 +310,11 @@ def test_brp_and_polaris_same_number_not_mixed(client, make_user, env):
     pol_part, _ = _polaris(env, number="3610075")  # тот же номер, другой производитель
     _login(client, make_user)
     client.post(
-        reverse("actions_customs_application", args=[brp_part.pk]),
+        reverse("actions_customs_quick_save", args=[brp_part.pk]),
         {"application_area": ApplicationArea.SNOWMOBILE},
     )
     client.post(
-        reverse("actions_customs_application", args=[pol_part.pk]),
+        reverse("actions_customs_quick_save", args=[pol_part.pk]),
         {"application_area": ApplicationArea.WATERCRAFT},
     )
     assert (
@@ -344,12 +344,20 @@ def test_replacement_compatibility_does_not_leak_to_exact_part(client, make_user
 
 
 def test_report_page_readiness_counts(client, make_user, env):
+    # Готовность теперь считается по трём полям сразу (область применения +
+    # оба веса), поэтому «готовые» строки должны иметь всё заполненным.
     manual, _ = _brp(env, material="111000001")
-    PartCustomsInfo.objects.create(part_type=manual, application_area=ApplicationArea.SNOWMOBILE)
+    PartCustomsInfo.objects.create(
+        part_type=manual, application_area=ApplicationArea.SNOWMOBILE,
+        gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+    )
     _sell(env, manual, number="111000001")
 
     via_compat, _ = _brp(env, material="222000002")
     _compat(via_compat, "Can-Am", "Квадроцикл", "OUTLANDER")
+    PartCustomsInfo.objects.create(
+        part_type=via_compat, gross_weight_kg=Decimal("1"), net_weight_kg=Decimal("0.9"),
+    )
     _sell(env, via_compat, number="222000002")
 
     missing, _ = _brp(env, material="333000003")
@@ -361,16 +369,19 @@ def test_report_page_readiness_counts(client, make_user, env):
     assert "не заполнено: 1" in html
 
 
-def test_missing_application_warning_shown_and_hidden(client, make_user, env):
+def test_missing_customs_data_warning_shown_and_hidden(client, make_user, env):
     part, _ = _brp(env, material="219800345")
     _sell(env, part, number="219800345")
     _login(client, make_user)
     html = client.get(reverse("actions_report")).content.decode()
-    assert "Позиций без области применения: 1" in html
+    assert "У 1 позиций не заполнены таможенные данные" in html
 
-    PartCustomsInfo.objects.create(part_type=part, application_area=ApplicationArea.SNOWMOBILE)
+    PartCustomsInfo.objects.create(
+        part_type=part, application_area=ApplicationArea.SNOWMOBILE,
+        gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+    )
     html = client.get(reverse("actions_report")).content.decode()
-    assert "Позиций без области применения" not in html
+    assert "не заполнены таможенные данные" not in html
 
 
 # --- 17-18. Data migration -----------------------------------------------------------------
