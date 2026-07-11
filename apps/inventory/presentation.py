@@ -1,15 +1,34 @@
-"""Read-only helpers for human-friendly inventory presentation."""
+"""Read-only helpers for human-friendly inventory presentation.
 
+Единая (canonical) точка exact identity детали для всего UI:
+BRP material_no -> Polaris part_number -> primary складской номер ->
+не-analog складской номер -> «Артикул не указан». Аналог, replacement,
+superseded и источник цены identity НЕ являются никогда; `.numbers.first()`
+запрещён (PartNumber.Meta.ordering ставит analog раньше oem).
+
+Чтобы не плодить N+1 на списках, identity готовится заранее:
+`with_part_identity()` для queryset'ов, `attach_part_identity()` для готовых
+строк, `identity_numbers_prefetch()` для точечного prefetch.
+"""
+
+from django import forms
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Prefetch, Q
 
 from apps.catalog.models import PartNumber
 
+NO_EXACT_NUMBER = "Артикул не указан"
 
-def identity_numbers_prefetch() -> Prefetch:
-    """Prefetch exact/primary warehouse numbers without analog ordering traps."""
+
+def identity_numbers_prefetch(part_field: str = "part_type") -> Prefetch:
+    """Prefetch exact/primary warehouse numbers without analog ordering traps.
+
+    `part_field` — путь до PartType от префетчиваемого объекта
+    ("part_type" для лотов/строк, "" для queryset самих PartType).
+    """
+    lookup = f"{part_field}__numbers" if part_field else "numbers"
     return Prefetch(
-        "part_type__numbers",
+        lookup,
         queryset=(
             PartNumber.objects.exclude(kind=PartNumber.Kind.ANALOG)
             .order_by("-is_primary", "pk")
@@ -18,7 +37,27 @@ def identity_numbers_prefetch() -> Prefetch:
     )
 
 
-def part_exact_number(part) -> str:
+def analog_numbers_prefetch(part_field: str = "") -> Prefetch:
+    """Prefetch ТОЛЬКО аналогов — показывать отдельно и явно подписанными."""
+    lookup = f"{part_field}__numbers" if part_field else "numbers"
+    return Prefetch(
+        lookup,
+        queryset=PartNumber.objects.filter(kind=PartNumber.Kind.ANALOG).order_by("value"),
+        to_attr="analog_numbers_for_display",
+    )
+
+
+def with_part_identity(queryset, part_field: str = "part_type"):
+    """select_related/prefetch, достаточные для part_exact_number без N+1."""
+    prefix = f"{part_field}__" if part_field else ""
+    return queryset.select_related(
+        f"{prefix}brp_link__brp_part",
+        f"{prefix}polaris_link__polaris_part",
+        f"{prefix}manufacturer",
+    ).prefetch_related(identity_numbers_prefetch(part_field))
+
+
+def part_exact_number(part, default: str = NO_EXACT_NUMBER) -> str:
     """Return catalog identity, never replacement/analog/price-source number."""
     try:
         return part.brp_link.brp_part.material_no
@@ -36,7 +75,85 @@ def part_exact_number(part) -> str:
             .exclude(kind=PartNumber.Kind.ANALOG)
             .order_by("-is_primary", "pk")[:1]
         )
-    return numbers[0].value if numbers else "Артикул не указан"
+    return numbers[0].value if numbers else default
+
+
+def manufacturer_display(part) -> str:
+    """Производитель для UI: каталог BRP/Polaris сильнее справочника карточки."""
+    try:
+        if part.brp_link is not None:
+            return "BRP"
+    except (AttributeError, ObjectDoesNotExist):
+        pass
+    try:
+        if part.polaris_link is not None:
+            return "POLARIS"
+    except (AttributeError, ObjectDoesNotExist):
+        pass
+    return str(part.manufacturer) if part.manufacturer_id else ""
+
+
+def attach_part_identity(rows, part_attr: str = "part_type") -> None:
+    """Приложить к строкам exact-артикул и производителя их детали.
+
+    Строки — любые объекты с атрибутом `part_attr` (лот, строка документа,
+    aggregate-строка отчёта). Queryset должен быть подготовлен через
+    with_part_identity(), иначе на каждой строке будут запросы.
+    """
+    for row in rows:
+        part = getattr(row, part_attr, None) if part_attr else row
+        if part is None:
+            row.part_exact_number = ""
+            row.part_manufacturer = ""
+            continue
+        row.part_exact_number = part_exact_number(part)
+        row.part_manufacturer = manufacturer_display(part)
+
+
+def _quantity_text(value) -> str:
+    """Кол-во без хвостовых нулей: 3.000 -> '3', 2.500 -> '2.5'."""
+    return f"{value.normalize():f}"
+
+
+def part_option_label(part) -> str:
+    """Подпись опции выбора детали: название · артикул [· производитель]."""
+    pieces = [part.name, part_exact_number(part)]
+    manufacturer = manufacturer_display(part)
+    if manufacturer:
+        pieces.append(manufacturer)
+    return " · ".join(pieces)
+
+
+def lot_option_label(lot) -> str:
+    """Подпись опции выбора лота: деталь · артикул [· произв.] · кол-во · ячейка."""
+    pieces = [lot.part_type.name, part_exact_number(lot.part_type)]
+    manufacturer = manufacturer_display(lot.part_type)
+    if manufacturer:
+        pieces.append(manufacturer)
+    pieces.append(f"{_quantity_text(lot.quantity)} шт.")
+    pieces.append(lot.location.code)
+    return " · ".join(pieces)
+
+
+class ExactPartChoiceField(forms.ModelChoiceField):
+    """Select детали: видимая подпись — название + exact-артикул, value = pk.
+
+    Queryset в форме оборачивать with_part_identity(..., part_field=""),
+    иначе подпись каждой опции будет ходить в базу.
+    """
+
+    def label_from_instance(self, obj) -> str:
+        return part_option_label(obj)
+
+
+class ExactLotChoiceField(forms.ModelChoiceField):
+    """Select лота: деталь идентифицируется названием и exact-артикулом.
+
+    Queryset в форме оборачивать with_part_identity(...).
+    """
+
+    def label_from_instance(self, obj) -> str:
+        return lot_option_label(obj)
 
 
 def attach_movement_identity(movements) -> None:

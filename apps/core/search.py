@@ -26,6 +26,12 @@ from apps.catalog.models import (
     normalize_number,
 )
 from apps.inventory.models import PartItem, StockBalance, StockLot
+from apps.inventory.presentation import (
+    analog_numbers_prefetch,
+    manufacturer_display,
+    part_exact_number,
+    with_part_identity,
+)
 from apps.inventory.services import ITEM_PHYSICAL_STATUSES, LOT_PHYSICAL_STATUSES
 
 MIN_QUERY_LEN = 2
@@ -42,6 +48,11 @@ class PartSearchRow:
     locations: list = field(default_factory=list)
     batches: list = field(default_factory=list)
     source: str = "balance"  # "balance" | "primary" — откуда взято наличие
+    # Identity детали: exact-артикул первым и выделенным, аналоги отдельно
+    # и явно подписанными (аналог никогда не identity).
+    exact_number: str = ""
+    manufacturer: str = ""
+    analogs: list = field(default_factory=list)
     # Разворот (заполняет вьюха только для инвентарь-видящих ролей).
     items: list = field(default_factory=list)
     lots: list = field(default_factory=list)
@@ -83,9 +94,11 @@ def search_parts(query: str) -> list[PartSearchRow]:
     if not ids:
         return []
     parts = list(
-        PartType.objects.filter(pk__in=ids)
-        .select_related("category", "manufacturer", "unit")
-        .prefetch_related("numbers")
+        with_part_identity(
+            PartType.objects.filter(pk__in=ids).select_related("category", "unit"),
+            part_field="",
+        )
+        .prefetch_related(analog_numbers_prefetch())
         .order_by("name")[:RESULT_LIMIT]
     )
     part_ids = [p.pk for p in parts]
@@ -143,6 +156,12 @@ def search_parts(query: str) -> list[PartSearchRow]:
                 part=part, physical=phys, available=avail, reserved=resv,
                 receiving=receiving.get(pid, Decimal("0")),
                 locations=locs, batches=batches, source=source,
+                exact_number=part_exact_number(part, default=""),
+                manufacturer=manufacturer_display(part),
+                analogs=[
+                    n.value
+                    for n in getattr(part, "analog_numbers_for_display", [])
+                ],
             )
         )
     return rows

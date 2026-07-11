@@ -1,5 +1,7 @@
 from django import forms
 
+from apps.inventory.presentation import part_option_label, with_part_identity
+
 from .models import Batch, BatchLine
 
 
@@ -34,3 +36,10 @@ class BatchLineForm(forms.ModelForm):
     class Meta:
         model = BatchLine
         fields = ["part_type", "quantity", "unit_cost_currency", "note"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Деталь выбирается по названию + exact-артикулу, не только по имени.
+        field = self.fields["part_type"]
+        field.queryset = with_part_identity(field.queryset, part_field="")
+        field.label_from_instance = part_option_label
