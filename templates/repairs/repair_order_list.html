@@ -27,9 +27,10 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Номер</th>
+          <th>№</th>
           <th>Статус</th>
           <th>Клиент</th>
+          <th>Состав</th>
           <th>Техника</th>
           {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
           <th>Проведён</th>
@@ -43,6 +44,7 @@
             </td>
             <td>{{ o.get_status_display }}</td>
             <td>{{ o.customer_name }}</td>
+            <td>{% include "partials/_doc_composition.html" with doc=o %}</td>
             <td>
               {{ o.vehicle_type|default:"" }}
               {{ o.vehicle_make }} {{ o.vehicle_model }}

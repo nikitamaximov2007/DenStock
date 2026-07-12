@@ -13,6 +13,12 @@ from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.inventory.presentation import (
+    attach_document_composition,
+    attach_part_identity,
+    lines_with_identity_prefetch,
+    with_part_identity,
+)
 from apps.repairs.models import RepairOrder
 from apps.sales.models import Sale, SaleLine
 from apps.warehouse.models import StorageLocation
@@ -61,14 +67,20 @@ def _resolve_source(request):
 @login_required
 def return_list(request):
     status = request.GET.get("status", "")
-    qs = StockReturn.objects.select_related("created_by").order_by("-created_at")
+    qs = (
+        StockReturn.objects.select_related("created_by")
+        .prefetch_related(lines_with_identity_prefetch(StockReturnLine))
+        .order_by("-created_at")
+    )
     if status:
         qs = qs.filter(status=status)
+    returns = list(qs[:100])
+    attach_document_composition(returns)  # состав: первая позиция + «ещё N»
     return render(
         request,
         "returns/return_list.html",
         {
-            "returns": qs[:100],
+            "returns": returns,
             "status": status,
             "statuses": StockReturn.Status.choices,
             "can_manage": request.user.can_manage_returns,
@@ -84,15 +96,22 @@ def return_detail(request, pk):
     is_draft = ret.status == StockReturn.Status.DRAFT
     source_rows = []
     if source is not None and is_draft:
-        for sl in get_source_lines(source):
+        source_lines = list(with_part_identity(get_source_lines(source)))
+        attach_part_identity(source_lines)  # exact-артикул и в таблице «к возврату»
+        for sl in source_lines:
             avail = returnable_quantity(sl, draft=ret)
             if avail > 0:
                 source_rows.append(
                     {"line": sl, "returnable": avail, "is_item": sl.part_item_id is not None}
                 )
-    lines = ret.lines.select_related(
-        "part_type", "part_item", "stock_lot", "to_location", "returned_lot"
+    lines = list(
+        with_part_identity(
+            ret.lines.select_related(
+                "part_type", "part_item", "stock_lot", "to_location", "returned_lot"
+            )
+        )
     )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     return render(
         request,
         "returns/return_detail.html",

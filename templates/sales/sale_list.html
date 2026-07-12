@@ -27,9 +27,10 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Номер</th>
+          <th>№</th>
           <th>Статус</th>
           <th>Клиент</th>
+          <th>Состав</th>
           <th class="num--money">Выручка (₽)</th>
           {% if show_costs %}<th class="num--money">Прибыль (₽)</th>{% endif %}
           <th>Проведена</th>
@@ -43,6 +44,7 @@
             </td>
             <td>{{ s.get_status_display }}</td>
             <td>{{ s.customer_name }}</td>
+            <td>{% include "partials/_doc_composition.html" with doc=s %}</td>
             <td class="num--money">{{ s.revenue_total }}</td>
             {% if show_costs %}<td class="num--money">{{ s.profit_total }}</td>{% endif %}
             <td>

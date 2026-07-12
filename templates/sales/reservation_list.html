@@ -27,9 +27,10 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Номер</th>
+          <th>№</th>
           <th>Статус</th>
           <th>Клиент</th>
+          <th>Состав</th>
           <th>Телефон</th>
           <th>Действует до</th>
           <th>Создан</th>
@@ -43,6 +44,7 @@
             </td>
             <td>{{ r.get_status_display }}</td>
             <td>{{ r.customer_name }}</td>
+            <td>{% include "partials/_doc_composition.html" with doc=r %}</td>
             <td>{{ r.customer_phone|default:"·" }}</td>
             <td>
               {% if r.expires_at %}

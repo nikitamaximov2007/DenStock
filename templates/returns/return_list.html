@@ -23,8 +23,9 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Номер</th>
+          <th>№</th>
           <th>Статус</th>
+          <th>Состав</th>
           <th>Источник</th>
           {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
           <th>Проведён</th>
@@ -37,6 +38,7 @@
               <a href="{% url 'return_detail' r.pk %}">{{ r.number }}</a>
             </td>
             <td>{{ r.get_status_display }}</td>
+            <td>{% include "partials/_doc_composition.html" with doc=r %}</td>
             <td>{{ r.get_source_type_display }} #{{ r.source_id }}</td>
             {% if show_costs %}<td class="num--money">{{ r.cost_total }}</td>{% endif %}
             <td>

@@ -1,0 +1,13 @@
+{% comment %}
+Источник остатка строки документа — вторичная техническая информация
+(экземпляр или лот). Не заменяет название и артикул детали.
+{% endcomment %}
+<span class="muted">
+  {% if line.part_item %}
+    экземпляр {{ line.part_item.internal_number }}
+  {% elif line.stock_lot %}
+    лот #{{ line.stock_lot_id }}
+  {% else %}
+    ·
+  {% endif %}
+</span>

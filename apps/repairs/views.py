@@ -13,6 +13,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.inventory.models import PartItem
+from apps.inventory.presentation import (
+    attach_document_composition,
+    attach_part_identity,
+    lines_with_identity_prefetch,
+    with_part_identity,
+)
 
 from .forms import AddRepairItemForm, AddRepairLotForm, RepairOrderForm
 from .models import RepairIssueLine, RepairOrder
@@ -51,14 +57,20 @@ def _resolve_item(code: str):
 @login_required
 def repair_order_list(request):
     status = request.GET.get("status", "")
-    qs = RepairOrder.objects.select_related("created_by", "vehicle_type").order_by("-created_at")
+    qs = (
+        RepairOrder.objects.select_related("created_by", "vehicle_type")
+        .prefetch_related(lines_with_identity_prefetch(RepairIssueLine))
+        .order_by("-created_at")
+    )
     if status:
         qs = qs.filter(status=status)
+    orders = list(qs[:100])
+    attach_document_composition(orders)  # состав: первая позиция + «ещё N»
     return render(
         request,
         "repairs/repair_order_list.html",
         {
-            "orders": qs[:100],
+            "orders": orders,
             "status": status,
             "statuses": RepairOrder.Status.choices,
             "can_manage": request.user.can_manage_repairs,
@@ -72,13 +84,18 @@ def repair_order_detail(request, pk):
     order = get_object_or_404(
         RepairOrder.objects.select_related("created_by", "vehicle_type"), pk=pk
     )
-    lines = order.lines.select_related(
-        "part_type",
-        "part_item",
-        "part_item__current_location",
-        "stock_lot",
-        "stock_lot__location",
+    lines = list(
+        with_part_identity(
+            order.lines.select_related(
+                "part_type",
+                "part_item",
+                "part_item__current_location",
+                "stock_lot",
+                "stock_lot__location",
+            )
+        )
     )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_draft = order.status == RepairOrder.Status.DRAFT
     return render(
         request,

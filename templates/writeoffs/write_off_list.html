@@ -27,8 +27,9 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Номер</th>
+          <th>№</th>
           <th>Статус</th>
+          <th>Состав</th>
           <th>Причина</th>
           {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
           <th>Проведён</th>
@@ -41,6 +42,7 @@
               <a href="{% url 'write_off_detail' d.pk %}">{{ d.number }}</a>
             </td>
             <td>{{ d.get_status_display }}</td>
+            <td>{% include "partials/_doc_composition.html" with doc=d %}</td>
             <td>{{ d.get_reason_display }}</td>
             {% if show_costs %}<td class="num--money">{{ d.cost_total }}</td>{% endif %}
             <td>

@@ -13,6 +13,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.inventory.models import PartItem
+from apps.inventory.presentation import (
+    attach_document_composition,
+    attach_part_identity,
+    lines_with_identity_prefetch,
+    with_part_identity,
+)
 
 from .forms import AddWriteOffItemForm, AddWriteOffLotForm, WriteOffForm
 from .models import WriteOffDocument, WriteOffLine
@@ -51,14 +57,20 @@ def _resolve_item(code: str):
 @login_required
 def write_off_list(request):
     status = request.GET.get("status", "")
-    qs = WriteOffDocument.objects.select_related("created_by").order_by("-created_at")
+    qs = (
+        WriteOffDocument.objects.select_related("created_by")
+        .prefetch_related(lines_with_identity_prefetch(WriteOffLine))
+        .order_by("-created_at")
+    )
     if status:
         qs = qs.filter(status=status)
+    documents = list(qs[:100])
+    attach_document_composition(documents)  # состав: первая позиция + «ещё N»
     return render(
         request,
         "writeoffs/write_off_list.html",
         {
-            "documents": qs[:100],
+            "documents": documents,
             "status": status,
             "statuses": WriteOffDocument.Status.choices,
             "can_manage": request.user.can_manage_write_offs,
@@ -70,13 +82,18 @@ def write_off_list(request):
 @login_required
 def write_off_detail(request, pk):
     doc = get_object_or_404(WriteOffDocument.objects.select_related("created_by"), pk=pk)
-    lines = doc.lines.select_related(
-        "part_type",
-        "part_item",
-        "part_item__current_location",
-        "stock_lot",
-        "stock_lot__location",
+    lines = list(
+        with_part_identity(
+            doc.lines.select_related(
+                "part_type",
+                "part_item",
+                "part_item__current_location",
+                "stock_lot",
+                "stock_lot__location",
+            )
+        )
     )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_draft = doc.status == WriteOffDocument.Status.DRAFT
     return render(
         request,

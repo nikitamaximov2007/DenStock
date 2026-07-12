@@ -106,7 +106,7 @@ def attach_part_identity(rows, part_attr: str = "part_type") -> None:
             row.part_exact_number = ""
             row.part_manufacturer = ""
             continue
-        row.part_exact_number = part_exact_number(part)
+        row.part_exact_number = part_exact_number(part, default="")
         row.part_manufacturer = manufacturer_display(part)
 
 
@@ -133,6 +133,52 @@ def lot_option_label(lot) -> str:
     pieces.append(f"{_quantity_text(lot.quantity)} шт.")
     pieces.append(lot.location.code)
     return " · ".join(pieces)
+
+
+def _plural_ru(count: int, one: str, few: str, many: str) -> str:
+    tail, tail2 = count % 10, count % 100
+    if tail == 1 and tail2 != 11:
+        return one
+    if tail in (2, 3, 4) and tail2 not in (12, 13, 14):
+        return few
+    return many
+
+
+def lines_with_identity_prefetch(line_model, lines_attr: str = "lines") -> Prefetch:
+    """Prefetch строк документа с identity деталей — для списков документов."""
+    return Prefetch(
+        lines_attr,
+        queryset=with_part_identity(line_model.objects.select_related("part_type")),
+    )
+
+
+def attach_document_composition(documents, lines_attr: str = "lines") -> None:
+    """Краткий состав документа для списка: первая позиция + «ещё N позиций».
+
+    Документы должны быть получены с lines_with_identity_prefetch(), иначе
+    каждая строка списка будет ходить в базу. Прикладывает:
+    first_part_name / first_part_number / first_part_id / first_qty,
+    more_lines_label («ещё 2 позиции · всего 3») и lines_total.
+    """
+    for doc in documents:
+        lines = list(getattr(doc, lines_attr).all())
+        doc.lines_total = len(lines)
+        doc.first_part_name = ""
+        doc.first_part_number = ""
+        doc.first_part_id = None
+        doc.first_qty = None
+        doc.more_lines_label = ""
+        if not lines:
+            continue
+        first = lines[0]
+        doc.first_part_name = first.part_type.name
+        doc.first_part_number = part_exact_number(first.part_type, default="")
+        doc.first_part_id = first.part_type_id
+        doc.first_qty = first.quantity
+        more = len(lines) - 1
+        if more:
+            word = _plural_ru(more, "позиция", "позиции", "позиций")
+            doc.more_lines_label = f"ещё {more} {word} · всего {len(lines)}"
 
 
 class ExactPartChoiceField(forms.ModelChoiceField):
