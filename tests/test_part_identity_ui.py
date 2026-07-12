@@ -2,7 +2,9 @@
 
 Пользовательский стандарт: в любой операционной таблице деталь опознаётся
 названием + exact-артикулом (BRP material_no -> Polaris part_number ->
-primary складской номер -> не-analog номер -> «Артикул не указан»).
+primary-номер допустимого вида -> OEM/артикул из EXACT_NUMBER_KINDS ->
+«Артикул не указан»). Внутренний справочный (internal_ref) артикулом
+не становится никогда.
 Аналог/replacement/superseded/источник цены identity не являются никогда;
 `.numbers.first()` в identity-хелперах запрещён (ordering ставит analog
 раньше oem). Лот/экземпляр/номер документа — вторичная информация.
@@ -194,6 +196,44 @@ def test_analog_never_identity(env):
     # ...но identity им не становится.
     assert part_exact_number(part) == "Артикул не указан"
     assert part_exact_number(part, default="") == ""
+
+
+def test_internal_only_never_identity(env):
+    part, _ = _plain_part(env, name="ВНУТРЕННЯЯ", numbers=[
+        ("INT-001", KIND.INTERNAL_REF, False),
+    ])
+    assert part_exact_number(part) == "Артикул не указан"
+    assert part_exact_number(part, default="") == ""
+
+
+def test_internal_plus_analog_never_identity(env):
+    part, _ = _plain_part(env, name="ВНУТР-АНАЛОГ", numbers=[
+        ("099-ANALOG-1", KIND.ANALOG, False),
+        ("INT-001", KIND.INTERNAL_REF, False),
+    ])
+    assert part_exact_number(part) == "Артикул не указан"
+
+
+def test_oem_wins_over_internal(env):
+    # internal создан ПЕРВЫМ (меньший pk) — OEM всё равно выигрывает.
+    part, _ = _plain_part(env, name="ОЕМ-ВНУТР", numbers=[
+        ("INT-001", KIND.INTERNAL_REF, False),
+        ("OEM-333", KIND.OEM, False),
+    ])
+    assert part_exact_number(part) == "OEM-333"
+
+
+def test_primary_internal_never_identity(env):
+    # Даже явный primary не делает внутренний справочный номер артикулом.
+    part, _ = _plain_part(env, name="ПРИМ-ВНУТР", numbers=[
+        ("INT-001", KIND.INTERNAL_REF, True),
+        ("OEM-333", KIND.OEM, False),
+    ])
+    assert part_exact_number(part) == "OEM-333"
+    solo, _ = _plain_part(env, name="ПРИМ-ВНУТР-СОЛО", numbers=[
+        ("INT-001", KIND.INTERNAL_REF, True),
+    ])
+    assert part_exact_number(solo) == "Артикул не указан"
 
 
 def test_replacement_never_identity(env):
@@ -666,3 +706,49 @@ def test_low_stock_report_no_n_plus_one(client, make_user, env):
     with CaptureQueriesContext(connection) as many:
         client.get(reverse("reports_stock"))
     assert len(many) <= len(first) + 3, (len(first), len(many))
+
+
+# --- Internal-номер не подменяет артикул нигде в UI -------------------------------------------
+
+
+@pytest.fixture
+def internal_only_part(env):
+    """Деталь с ЕДИНСТВЕННЫМ внутренним справочным номером и остатком."""
+    part, lot = _plain_part(env, name="INTERNAL ONLY PART", numbers=[
+        ("INT-777", KIND.INTERNAL_REF, True),
+    ], qty=2)
+    return part, lot
+
+
+def test_form_option_does_not_use_internal_as_number(env, internal_only_part):
+    part, lot = internal_only_part
+    labels = [x for x in _lot_labels(AddSaleLotForm()) if "INTERNAL ONLY PART" in x]
+    assert labels, "лот должен быть в списке"
+    assert "INT-777" not in labels[0]  # internal не выдан за артикул
+    assert "Артикул не указан" in labels[0]
+
+
+def test_search_does_not_use_internal_as_number(client, make_user, env, internal_only_part):
+    _login(client, make_user)
+    html = client.get(reverse("part_search") + "?q=INTERNAL ONLY").content.decode()
+    assert '<span class="code-pill">INT-777</span>' not in html
+    assert "не указан" in html
+
+
+def test_label_does_not_print_internal_as_number(client, make_user, env, internal_only_part):
+    part, _ = internal_only_part
+    _login(client, make_user)
+    html = client.get(reverse("label_part", args=[part.pk])).content.decode()
+    assert "INT-777" not in html
+
+
+def test_low_stock_csv_does_not_use_internal_as_number(client, make_user, env, internal_only_part):
+    part, _ = internal_only_part
+    part.min_stock_level = Decimal("10")
+    part.save(update_fields=["min_stock_level"])
+    _login(client, make_user)
+    body = client.get(reverse("reports_export_low_stock")).content.decode("utf-8-sig")
+    row = next(line for line in body.splitlines() if "INTERNAL ONLY PART" in line)
+    assert "INT-777" not in row  # колонка «Артикул» остаётся пустой
+    html = client.get(reverse("reports_stock")).content.decode()
+    assert '<span class="code-pill">INT-777</span>' not in html

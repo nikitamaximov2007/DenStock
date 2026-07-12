@@ -1,10 +1,11 @@
 """Read-only helpers for human-friendly inventory presentation.
 
 Единая (canonical) точка exact identity детали для всего UI:
-BRP material_no -> Polaris part_number -> primary складской номер ->
-не-analog складской номер -> «Артикул не указан». Аналог, replacement,
-superseded и источник цены identity НЕ являются никогда; `.numbers.first()`
-запрещён (PartNumber.Meta.ordering ставит analog раньше oem).
+BRP material_no -> Polaris part_number -> primary-номер допустимого вида ->
+OEM/артикул (EXACT_NUMBER_KINDS) -> «Артикул не указан». Аналог, внутренний
+справочный (internal_ref), replacement, superseded и источник цены identity
+НЕ являются никогда; `.numbers.first()` запрещён (PartNumber.Meta.ordering
+ставит analog раньше oem).
 
 Чтобы не плодить N+1 на списках, identity готовится заранее:
 `with_part_identity()` для queryset'ов, `attach_part_identity()` для готовых
@@ -27,6 +28,12 @@ class PartIdentity(NamedTuple):
     manufacturer: str
 
 
+# Явный whitelist видов номера, которым разрешено быть exact-артикулом.
+# Именно whitelist, а НЕ exclude(ANALOG): любой новый/технический kind
+# (internal_ref, будущие) по умолчанию артикулом не становится.
+EXACT_NUMBER_KINDS = (PartNumber.Kind.OEM, PartNumber.Kind.ARTICLE)
+
+
 def identity_numbers_prefetch(part_field: str = "part_type") -> Prefetch:
     """Prefetch exact/primary warehouse numbers without analog ordering traps.
 
@@ -37,7 +44,7 @@ def identity_numbers_prefetch(part_field: str = "part_type") -> Prefetch:
     return Prefetch(
         lookup,
         queryset=(
-            PartNumber.objects.exclude(kind=PartNumber.Kind.ANALOG)
+            PartNumber.objects.filter(kind__in=EXACT_NUMBER_KINDS)
             .order_by("-is_primary", "pk")
         ),
         to_attr="identity_numbers_for_display",
@@ -78,8 +85,7 @@ def part_exact_number(part, default: str = NO_EXACT_NUMBER) -> str:
     numbers = getattr(part, "identity_numbers_for_display", None)
     if numbers is None:
         numbers = list(
-            PartNumber.objects.filter(part=part)
-            .exclude(kind=PartNumber.Kind.ANALOG)
+            PartNumber.objects.filter(part=part, kind__in=EXACT_NUMBER_KINDS)
             .order_by("-is_primary", "pk")[:1]
         )
     return numbers[0].value if numbers else default
