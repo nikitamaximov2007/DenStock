@@ -36,8 +36,9 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Номер</th>
-          <th>Деталь</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
+          <th>Внутренний номер</th>
           <th>Статус</th>
           <th>Серийник</th>
           <th>Место</th>
@@ -48,9 +49,18 @@
         {% for item in items %}
           <tr>
             <td>
+              <a href="{% url 'part_detail' item.part_type_id %}">{{ item.part_type.name }}</a>
+            </td>
+            <td>
+              {% if item.part_exact_number %}
+                <span class="code-pill">{{ item.part_exact_number }}</span>
+              {% else %}
+                <span class="muted">не указан</span>
+              {% endif %}
+            </td>
+            <td>
               <a href="{% url 'item_detail' item.pk %}">{{ item.internal_number }}</a>
             </td>
-            <td>{{ item.part_type }}</td>
             <td>{{ item.get_status_display }}</td>
             <td>{{ item.serial_number|default:"·" }}</td>
             <td>

@@ -14,6 +14,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.inventory.models import PartItem, StockLot, StockMovement
+from apps.inventory.presentation import attach_part_identity, with_part_identity
 
 from .forms import ReceiptForm, ReceiptLineForm
 from .models import Receipt, ReceiptLine
@@ -100,7 +101,10 @@ def receipt_detail(request, pk):
     receipt = get_object_or_404(
         Receipt.objects.select_related("supplier", "created_by", "posted_by", "batch"), pk=pk
     )
-    lines = receipt.lines.select_related("part_type", "location", "batch_line")
+    lines = list(
+        with_part_identity(receipt.lines.select_related("part_type", "location", "batch_line"))
+    )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     ctx = {
         "receipt": receipt,
         "lines": lines,
@@ -121,12 +125,22 @@ def receipt_detail(request, pk):
         ctx["line_form"] = ReceiptLineForm(initial=initial)
     else:
         batch = receipt.batch
-        ctx["created_items"] = PartItem.objects.filter(batch=batch).select_related(
-            "part_type", "current_location"
+        created_items = list(
+            with_part_identity(
+                PartItem.objects.filter(batch=batch).select_related(
+                    "part_type", "current_location"
+                )
+            )
         )
-        ctx["created_lots"] = StockLot.objects.filter(batch=batch).select_related(
-            "part_type", "location"
+        attach_part_identity(created_items)
+        ctx["created_items"] = created_items
+        created_lots = list(
+            with_part_identity(
+                StockLot.objects.filter(batch=batch).select_related("part_type", "location")
+            )
         )
+        attach_part_identity(created_lots)
+        ctx["created_lots"] = created_lots
         ctx["movement_count"] = StockMovement.objects.filter(batch=batch).count()
     return render(request, "receipts/receipt_detail.html", ctx)
 

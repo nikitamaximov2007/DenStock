@@ -15,7 +15,12 @@ from django.views.decorators.http import require_POST
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
 from apps.inventory.models import FoundStockPosting, PartItem, StockLot, StockMovement
-from apps.inventory.presentation import attach_movement_identity, identity_numbers_prefetch
+from apps.inventory.presentation import (
+    attach_movement_identity,
+    attach_part_identity,
+    identity_numbers_prefetch,
+    with_part_identity,
+)
 from apps.inventory.services import (
     FOUND_ADDITION_DOC,
     FoundStockAlreadyPosted,
@@ -601,6 +606,14 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
     for movement in found_history:
         movement.customer_unit_price = movement.part_type.recommended_price or Decimal("0")
         movement.customer_total_value = movement.customer_unit_price * movement.quantity
+    receiving_lots = list(
+        with_part_identity(
+            StockLot.objects.filter(status=StockLot.Status.RECEIVING)
+            .select_related("part_type", "batch", "location")
+            .order_by("-created_at")
+        )[:50]
+    )
+    attach_part_identity(receiving_lots)  # exact-артикул отдельной колонкой
     ctx = {
         "object": obj,
         "object_kind": kind,
@@ -610,11 +623,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
         "catalog_choice": pending_context(request.session),
         "receiving_queue": queue_context(request.session),
         "error": error,
-        "receiving_lots": (
-            StockLot.objects.filter(status=StockLot.Status.RECEIVING)
-            .select_related("part_type", "batch", "location")
-            .order_by("-created_at")[:50]
-        ),
+        "receiving_lots": receiving_lots,
         "history": history,
         "found_history": found_history,
         "show_costs": request.user.can_view_purchase_cost,
@@ -816,6 +825,14 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
     else:
         step = "confirm"
 
+    placed_lots = list(
+        with_part_identity(
+            StockLot.objects.filter(status__in=_MOVABLE_LOT_STATUSES)
+            .select_related("part_type", "batch", "location")
+            .order_by("part_type__name", "location__code")
+        )[:50]
+    )
+    attach_part_identity(placed_lots)  # exact-артикул отдельной колонкой
     ctx = {
         "object": obj,
         "object_kind": kind,
@@ -824,11 +841,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
         "candidates": candidates,
         "error": error,
         "info": info,
-        "placed_lots": (
-            StockLot.objects.filter(status__in=_MOVABLE_LOT_STATUSES)
-            .select_related("part_type", "batch", "location")
-            .order_by("part_type__name", "location__code")[:50]
-        ),
+        "placed_lots": placed_lots,
         "history": (
             StockMovement.objects.filter(
                 created_by=request.user, movement_type__in=_MOVE_HISTORY_TYPES

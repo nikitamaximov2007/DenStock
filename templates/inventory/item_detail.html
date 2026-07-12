@@ -1,7 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ item.internal_number }} · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Экземпляр {{ item.internal_number }}</h1>
+  <h1 class="page-title">{{ item.part_type.name }}</h1>
+  <p class="page-subtitle">
+    {% if part_exact_number %}
+      Артикул: <span class="code-pill">{{ part_exact_number }}</span> ·
+    {% endif %}
+    Внутренний номер: {{ item.internal_number }}
+  </p>
   <p>
     <a href="{% url 'item_list' %}">← К списку экземпляров</a>
     {% if can_manage %}· <a href="{% url 'item_edit' item.pk %}">Изменить</a>{% endif %}
@@ -12,8 +18,24 @@
   <table class="table">
     <tbody>
       <tr>
-        <th>Деталь</th>
-        <td>{{ item.part_type }}</td>
+        <th>Название детали</th>
+        <td>
+          <a href="{% url 'part_detail' item.part_type_id %}">{{ item.part_type.name }}</a>
+        </td>
+      </tr>
+      <tr>
+        <th>Артикул</th>
+        <td>
+          {% if part_exact_number %}
+            <span class="code-pill">{{ part_exact_number }}</span>
+          {% else %}
+            <span class="muted">не указан</span>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Внутренний номер</th>
+        <td>{{ item.internal_number }}</td>
       </tr>
       <tr>
         <th>Штрихкод</th>

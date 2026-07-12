@@ -26,7 +26,13 @@ from .forms import (
     StockLotQuickForm,
 )
 from .models import PartItem, PartItemImage, StockBalance, StockLot, StockMovement
-from .presentation import attach_movement_identity, identity_numbers_prefetch
+from .presentation import (
+    attach_movement_identity,
+    attach_part_identity,
+    identity_numbers_prefetch,
+    part_exact_number,
+    with_part_identity,
+)
 from .services import (
     InventoryError,
     adjust_stock_lot_quantity,
@@ -75,7 +81,9 @@ class PartItemListView(InventoryViewMixin, ListView):
     paginate_by = 50
 
     def get_queryset(self):
-        qs = PartItem.objects.select_related("part_type", "batch", "current_location")
+        qs = with_part_identity(
+            PartItem.objects.select_related("part_type", "batch", "current_location")
+        )
         status = self.request.GET.get("status")
         part = self.request.GET.get("part")
         batch = self.request.GET.get("batch")
@@ -92,6 +100,7 @@ class PartItemListView(InventoryViewMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        attach_part_identity(ctx["items"])  # exact-артикул отдельной колонкой
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
         ctx["statuses"] = PartItem.Status.choices
@@ -112,6 +121,7 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        ctx["part_exact_number"] = part_exact_number(self.object.part_type, default="")
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
         ctx["can_print_labels"] = self.request.user.can_print_labels
@@ -285,7 +295,9 @@ class StockLotListView(InventoryViewMixin, ListView):
     paginate_by = 50
 
     def get_queryset(self):
-        qs = StockLot.objects.select_related("part_type", "batch", "location")
+        qs = with_part_identity(
+            StockLot.objects.select_related("part_type", "batch", "location")
+        )
         status = self.request.GET.get("status")
         part = self.request.GET.get("part")
         batch = self.request.GET.get("batch")
@@ -302,6 +314,7 @@ class StockLotListView(InventoryViewMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        attach_part_identity(ctx["lots"])  # exact-артикул отдельной колонкой
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
         ctx["statuses"] = StockLot.Status.choices
@@ -322,6 +335,7 @@ class StockLotDetailView(InventoryViewMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        ctx["part_exact_number"] = part_exact_number(self.object.part_type, default="")
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
         ctx["can_stocktake"] = self.request.user.can_manage_stocktaking
@@ -503,7 +517,9 @@ class BalanceListView(InventoryViewMixin, ListView):
     paginate_by = 50
 
     def get_queryset(self):
-        qs = StockBalance.objects.select_related("part_type", "location", "batch")
+        qs = with_part_identity(
+            StockBalance.objects.select_related("part_type", "location", "batch")
+        )
         part = self.request.GET.get("part")
         batch = self.request.GET.get("batch")
         location = self.request.GET.get("location")
@@ -517,6 +533,7 @@ class BalanceListView(InventoryViewMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        attach_part_identity(ctx["balances"])  # exact-артикул отдельной колонкой
         ctx["parts"] = PartType.objects.filter(balances__isnull=False).distinct()
         ctx["batches"] = Batch.objects.filter(balances__isnull=False).distinct()
         ctx["locations"] = StorageLocation.objects.filter(balances__isnull=False).distinct()

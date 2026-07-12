@@ -91,7 +91,8 @@
   <table class="table">
     <thead>
       <tr>
-        <th>Деталь</th>
+        <th>Название детали</th>
+        <th>Артикул</th>
         <th>Кол-во</th>
         {% if show_costs %}
           <th>Цена за ед.</th>
@@ -106,7 +107,7 @@
     <tbody>
       {% for line in lines %}
         <tr>
-          <td>{{ line.part_type }}</td>
+          {% include "partials/_line_part_cells.html" %}
           <td>{{ line.quantity }}</td>
           {% if show_costs %}
             <td>{{ line.unit_cost_currency }} {{ batch.currency }} / {{ line.unit_cost_rub }} ₽</td>
@@ -131,7 +132,7 @@
         </tr>
       {% empty %}
         <tr>
-          <td colspan="5" class="muted">Строк нет.</td>
+          <td colspan="6" class="muted">Строк нет.</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -144,7 +145,8 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Деталь</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
           <th>Создано</th>
           {% if can_manage_inventory %}
             <th></th>
@@ -155,7 +157,7 @@
         {% for line in lines %}
           {% if line.part_type.tracking_mode == "serial" %}
             <tr>
-              <td>{{ line.part_type }}</td>
+              {% include "partials/_line_part_cells.html" %}
               <td>{{ line.items_made }} из {{ line.quantity|floatformat:0 }}</td>
               {% if can_manage_inventory %}
                 <td>
@@ -178,7 +180,8 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Деталь</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
           <th>Распределено</th>
           {% if can_manage_inventory %}
             <th></th>
@@ -189,7 +192,7 @@
         {% for line in lines %}
           {% if line.part_type.tracking_mode == "bulk" %}
             <tr>
-              <td>{{ line.part_type }}</td>
+              {% include "partials/_line_part_cells.html" %}
               <td>{{ line.lots_qty|floatformat:3 }} из {{ line.quantity|floatformat:3 }}</td>
               {% if can_manage_inventory %}
                 <td>

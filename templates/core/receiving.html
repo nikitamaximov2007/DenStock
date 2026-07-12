@@ -306,7 +306,8 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Деталь</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
           <th>Кол-во</th>
           <th>Партия</th>
           <th>Ячейка</th>
@@ -316,7 +317,14 @@
       <tbody>
         {% for lot in receiving_lots %}
           <tr>
-            <td>{{ lot.part_type }}</td>
+            <td>{{ lot.part_type.name }}</td>
+            <td>
+              {% if lot.part_exact_number %}
+                <span class="code-pill">{{ lot.part_exact_number }}</span>
+              {% else %}
+                <span class="muted">не указан</span>
+              {% endif %}
+            </td>
             <td>{{ lot.quantity|quantity_number }}</td>
             <td>{{ lot.batch.number }}</td>
             <td>{{ lot.location.code }}</td>
@@ -330,7 +338,7 @@
           </tr>
         {% empty %}
           <tr>
-            <td colspan="5" class="muted">Лотов на приёмке нет.</td>
+            <td colspan="6" class="muted">Лотов на приёмке нет.</td>
           </tr>
         {% endfor %}
       </tbody>
