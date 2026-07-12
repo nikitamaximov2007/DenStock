@@ -40,11 +40,11 @@
       </tr>
       <tr>
         <th>Количество</th>
-        <td>{{ lot.quantity }}</td>
+        <td>{{ lot.quantity|quantity_int }}</td>
       </tr>
       <tr>
         <th>Исходное количество</th>
-        <td>{{ lot.initial_quantity }}</td>
+        <td>{{ lot.initial_quantity|quantity_int }}</td>
       </tr>
       <tr>
         <th>Статус</th>
@@ -59,7 +59,7 @@
       {% if show_costs %}
         <tr>
           <th>Себестоимость за ед.</th>
-          <td>{{ lot.landed_unit_cost_rub }} ₽</td>
+          <td>{{ lot.landed_unit_cost_rub|money_int }} ₽</td>
         </tr>
       {% endif %}
       <tr>
@@ -118,7 +118,7 @@
             <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
           </td>
           <td>{{ m.get_movement_type_display }}</td>
-          <td>{{ m.quantity }}</td>
+          <td>{{ m.quantity|quantity_int }}</td>
           <td>
             {% if m.from_location %}
               {{ m.from_location.code }}

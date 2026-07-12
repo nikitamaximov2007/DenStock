@@ -217,7 +217,7 @@ def test_brp_search_shows_repaired_price(client, make_user, db, tmp_path):
     _login(client, make_user, superuser=True)
     html = client.get(reverse("brp_search") + "?q=417224916").content.decode()
     assert "ROLLER PULLEY EXT" in html
-    assert "5291" in html  # не 0: выбрана строка с настоящей розницей
+    assert "5 291" in html  # не 0: выбрана строка с настоящей розницей
 
 
 def test_reimport_is_idempotent(db, sample_file):
@@ -622,7 +622,7 @@ def test_brp_price_shown_without_kopecks(client, make_user, imported):
     _login(client, make_user, superuser=True)
     # 353589: 9.03 * 105 * 1.40 = 1327.41 -> 1327.
     html = client.get(reverse("brp_search") + "?q=353589").content.decode()
-    assert "1327" in html
+    assert "1 327" in html
     assert "1327,41" not in html and "1327.41" not in html
 
 

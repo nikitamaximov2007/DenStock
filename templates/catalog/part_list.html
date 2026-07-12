@@ -37,7 +37,7 @@
             <td>{{ part.category }}</td>
             <td>{{ part.manufacturer|default:"·" }}</td>
             <td>{{ part.get_tracking_mode_display }}</td>
-            <td class="num--money">{{ part.recommended_price|default:"·" }}</td>
+            <td class="num--money">{{ part.recommended_price|money_int }}</td>
             <td>
               {% if part.is_active %}
                 Активна

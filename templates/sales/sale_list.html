@@ -45,8 +45,8 @@
             <td>{{ s.get_status_display }}</td>
             <td>{{ s.customer_name }}</td>
             <td>{% include "partials/_doc_composition.html" with doc=s %}</td>
-            <td class="num--money">{{ s.revenue_total }}</td>
-            {% if show_costs %}<td class="num--money">{{ s.profit_total }}</td>{% endif %}
+            <td class="num--money">{{ s.revenue_total|money_int }}</td>
+            {% if show_costs %}<td class="num--money">{{ s.profit_total|money_int }}</td>{% endif %}
             <td>
               {% if s.sold_at %}
                 {{ s.sold_at|ru_dt }}

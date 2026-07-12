@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% load number_format %}
 {% block title %}Движения · DenisStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Журнал движений</h1>
@@ -56,7 +55,7 @@
             <td>{{ m.get_movement_type_display }}</td>
             <td><span class="code-pill">{{ m.display_part_number }}</span></td>
             <td>{{ m.part_type }}</td>
-            <td class="num--qty">{{ m.quantity|quantity_number }}</td>
+            <td class="num--qty">{{ m.quantity|quantity_int }}</td>
             <td>
               {% if m.from_location %}
                 {{ m.from_location.code }}
@@ -72,7 +71,7 @@
             </td>
             <td>{{ m.created_by|default:"·" }}</td>
             {% if show_costs %}
-              <td class="num--money">{{ m.total_cost_rub|whole_number }}</td>
+              <td class="num--money">{{ m.total_cost_rub|money_int }}</td>
             {% endif %}
           </tr>
         {% endfor %}

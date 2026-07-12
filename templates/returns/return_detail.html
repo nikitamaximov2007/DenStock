@@ -71,10 +71,10 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>{{ line.quantity|quantity_int }}</td>
           <td>{{ line.to_location.code }}</td>
           <td>{{ line.get_restock_status_display }}</td>
-          {% if show_costs %}<td>{{ line.total_cost_rub }}</td>{% endif %}
+          {% if show_costs %}<td>{{ line.total_cost_rub|money_int }}</td>{% endif %}
           <td>{% include "partials/_line_source.html" %}</td>
           {% if can_manage and is_draft %}
             <td>
@@ -99,7 +99,7 @@
       <tbody>
         <tr>
           <th>Себестоимость возвращённого</th>
-          <td>{{ ret.cost_total }} ₽</td>
+          <td>{{ ret.cost_total|money_int }} ₽</td>
         </tr>
       </tbody>
     </table>
@@ -130,7 +130,7 @@
             <tr>
               {% include "partials/_line_part_cells.html" with line=row.line %}
               <td>{% include "partials/_line_source.html" with line=row.line %}</td>
-              <td>{{ row.returnable|floatformat:"-3" }}</td>
+              <td>{{ row.returnable|quantity_int }}</td>
               <td>
                 <form method="post"
                       action="{% url 'return_add_line' ret.pk %}"

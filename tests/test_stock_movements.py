@@ -388,7 +388,7 @@ def test_movement_list_shows_exact_article_and_whole_values(client, refs, admin)
     assert '<span class="code-pill">BOLT-001</span>' in html
     assert f"лот #{lot.pk}" not in html
     assert '<td class="num--qty">1</td>' in html
-    assert '<td class="num--money">2645</td>' in html
+    assert '<td class="num--money">2 645</td>' in html
     assert "1,000" not in html and "2645,00" not in html
 
 
@@ -404,8 +404,8 @@ def test_movement_list_preserves_fractional_quantities(client, refs, admin):
     html = client.get(reverse("movement_list")).content.decode()
     detail = client.get(reverse("movement_detail", args=[movement.pk])).content.decode()
 
-    assert '<td class="num--qty">1.5</td>' in html
-    assert "1.5" in detail
+    assert '<td class="num--qty">1,5</td>' in html
+    assert "1,5" in detail
     assert '<td class="num--qty">2</td>' not in html
 
 

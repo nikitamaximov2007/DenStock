@@ -184,7 +184,7 @@ def test_costs_hidden_from_storekeeper(make_user, client, refs):
     client.logout()
     client.login(username="admin", password=PASSWORD)
     admin_html = client.get(reverse("batch_detail", args=[batch.pk])).content.decode()
-    assert "44100" in admin_html  # админу видны
+    assert "44 100" in admin_html  # админу видны
 
 
 def test_seller_cannot_view_batches(make_user, client, refs):

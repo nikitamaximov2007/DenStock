@@ -53,15 +53,15 @@
     {% if show_costs %}
       <div class="tile">
         <div class="tile__label">Выручка, ₽</div>
-        <div class="tile__value num">{{ report.sales.revenue }}</div>
+        <div class="tile__value num">{{ report.sales.revenue|money_int }}</div>
       </div>
       <div class="tile">
         <div class="tile__label">Себестоимость, ₽</div>
-        <div class="tile__value num">{{ report.sales.cost }}</div>
+        <div class="tile__value num">{{ report.sales.cost|money_int }}</div>
       </div>
       <div class="tile">
         <div class="tile__label">Валовая прибыль, ₽</div>
-        <div class="tile__value num">{{ report.sales.profit }}</div>
+        <div class="tile__value num">{{ report.sales.profit|money_int }}</div>
       </div>
     {% endif %}
   </section>
@@ -91,7 +91,7 @@
                     <span class="muted">не указан</span>
                   {% endif %}
                 </td>
-                <td class="num--money">{{ row.value }}</td>
+                <td class="num--money">{{ row.value|money_int }}</td>
               </tr>
             {% empty %}
               <tr>
@@ -123,7 +123,7 @@
                   <span class="muted">не указан</span>
                 {% endif %}
               </td>
-              <td class="num--qty">{{ row.value|floatformat:"-3" }}</td>
+              <td class="num--qty">{{ row.value|quantity_int }}</td>
             </tr>
           {% empty %}
             <tr>
@@ -150,7 +150,7 @@
       {% if show_costs %}
         <tr>
           <th>Себестоимость выданного</th>
-          <td class="num--money">{{ report.repairs.issued_cost }} ₽</td>
+          <td class="num--money">{{ report.repairs.issued_cost|money_int }} ₽</td>
         </tr>
       {% endif %}
     </tbody>
@@ -174,12 +174,12 @@
       </tr>
       <tr>
         <th>Возвращено (кол-во)</th>
-        <td class="num--qty">{{ report.returns.quantity|floatformat:"-3" }}</td>
+        <td class="num--qty">{{ report.returns.quantity|quantity_int }}</td>
       </tr>
       {% if show_costs %}
         <tr>
           <th>Себестоимость возвращённого</th>
-          <td class="num--money">{{ report.returns.cost }} ₽</td>
+          <td class="num--money">{{ report.returns.cost|money_int }} ₽</td>
         </tr>
       {% endif %}
     </tbody>
@@ -207,7 +207,7 @@
           <td>{{ row.reason }}</td>
           <td class="num">{{ row.count }}</td>
           {% if show_costs %}
-            <td class="num--money">{{ row.cost }}</td>
+            <td class="num--money">{{ row.cost|money_int }}</td>
           {% endif %}
         </tr>
       {% empty %}
@@ -233,15 +233,15 @@
       <tr>
         <th>Оприходовано (ADJUST +)</th>
         <td>
-          {{ report.adjustments.adjust_in_qty|floatformat:"-3" }}
-          {% if show_costs %}· {{ report.adjustments.adjust_in_cost }} ₽{% endif %}
+          {{ report.adjustments.adjust_in_qty|quantity_int }}
+          {% if show_costs %}· {{ report.adjustments.adjust_in_cost|money_int }} ₽{% endif %}
         </td>
       </tr>
       <tr>
         <th>Списано сверкой (ADJUST −)</th>
         <td>
-          {{ report.adjustments.adjust_out_qty|floatformat:"-3" }}
-          {% if show_costs %}· {{ report.adjustments.adjust_out_cost }} ₽{% endif %}
+          {{ report.adjustments.adjust_out_qty|quantity_int }}
+          {% if show_costs %}· {{ report.adjustments.adjust_out_cost|money_int }} ₽{% endif %}
         </td>
       </tr>
     </tbody>

@@ -26,17 +26,17 @@
   <section class="tiles dashboard-section" aria-label="Финансовая оценка склада">
     <div class="tile">
       <div class="tile__label">Закупочная стоимость склада</div>
-      <div class="tile__value num">{{ stats.valuation.purchase_cost|floatformat:"0" }} ₽</div>
+      <div class="tile__value num">{{ stats.valuation.purchase_cost|money_int }} ₽</div>
       <div class="tile__hint">По ценам прайсов и текущему курсу {{ stats.valuation.usd_rate|floatformat:"-2" }} ₽/$</div>
     </div>
     <div class="tile">
       <div class="tile__label">Оценка склада по цене продажи</div>
-      <div class="tile__value num">{{ stats.valuation.sale_value|floatformat:"0" }} ₽</div>
+      <div class="tile__value num">{{ stats.valuation.sale_value|money_int }} ₽</div>
       <div class="tile__hint">Весь физический остаток по клиентским ценам</div>
     </div>
     <div class="tile">
       <div class="tile__label">Потенциальная прибыль</div>
-      <div class="tile__value num">{{ stats.valuation.potential_profit|floatformat:"0" }} ₽</div>
+      <div class="tile__value num">{{ stats.valuation.potential_profit|money_int }} ₽</div>
       <div class="tile__hint">Оценка продажи минус стоимость заказа</div>
     </div>
   </section>
@@ -44,7 +44,7 @@
     <p class="muted"
        title="Эти детали не включены в закупочную стоимость и расчёт потенциальной прибыли из-за отсутствия цены в прайсе.">
       Без закупочной цены: {{ stats.valuation.unpriced_positions }} позиций /
-      {{ stats.valuation.unpriced_units|floatformat:"-3" }} единиц
+      {{ stats.valuation.unpriced_units|quantity_int }} единиц
     </p>
   {% endif %}
   <details class="muted">
@@ -67,7 +67,7 @@
     </div>
     <div class="tile">
       <div class="tile__label">Доступно, ед.</div>
-      <div class="tile__value num">{{ stats.kpi.total_available|floatformat:"-3" }}</div>
+      <div class="tile__value num">{{ stats.kpi.total_available|quantity_int }}</div>
     </div>
     <div class="tile">
       <div class="tile__label">Активных резервов</div>
@@ -116,7 +116,7 @@
             {% for row in stats.value_by_category %}
               <tr>
                 <td>{{ row.name }}</td>
-                <td class="num--money">{{ row.value }}</td>
+                <td class="num--money">{{ row.value|money_int }}</td>
               </tr>
             {% empty %}
               <tr>
@@ -141,7 +141,7 @@
                 <td>
                   <a href="{% url 'part_detail' row.pk %}">{{ row.name }}</a>
                 </td>
-                <td class="num--money">{{ row.value }}</td>
+                <td class="num--money">{{ row.value|money_int }}</td>
               </tr>
             {% empty %}
               <tr>
@@ -179,8 +179,8 @@
             <td>
               <a href="{% url 'part_detail' row.pk %}">{{ row.name }}</a>
             </td>
-            <td class="num--qty">{{ row.available|floatformat:"-3" }}</td>
-            <td class="num--qty">{{ row.min_stock_level|floatformat:"-3" }}</td>
+            <td class="num--qty">{{ row.available|quantity_int }}</td>
+            <td class="num--qty">{{ row.min_stock_level|quantity_int }}</td>
           </tr>
         {% endfor %}
       </tbody>
@@ -215,8 +215,8 @@
             <td>
               <a href="{% url 'part_detail' row.pk %}">{{ row.name }}</a>
             </td>
-            <td class="num--qty">{{ row.available|floatformat:"-3" }}</td>
-            <td class="num--money">{{ row.value }}</td>
+            <td class="num--qty">{{ row.available|quantity_int }}</td>
+            <td class="num--money">{{ row.value|money_int }}</td>
             <td>
               {% if row.last_movement %}
                 {{ row.last_movement|ru_dt }}
@@ -249,9 +249,9 @@
         {% for row in stats.movers %}
           <tr>
             <td>{{ row.name }}</td>
-            <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
-            <td class="num--money">{{ row.revenue }}</td>
-            <td class="num--money">{{ row.profit }}</td>
+            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
+            <td class="num--money">{{ row.revenue|money_int }}</td>
+            <td class="num--money">{{ row.profit|money_int }}</td>
           </tr>
         {% endfor %}
       </tbody>

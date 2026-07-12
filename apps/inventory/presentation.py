@@ -124,8 +124,10 @@ def attach_part_identity(rows, part_attr: str = "part_type") -> None:
 
 
 def _quantity_text(value) -> str:
-    """Кол-во без хвостовых нулей: 3.000 -> '3', 2.500 -> '2.5'."""
-    return f"{value.normalize():f}"
+    """Кол-во в пользовательском формате (единый formatter): 3.000 -> '3'."""
+    from apps.core.templatetags.number_format import quantity_int
+
+    return quantity_int(value)
 
 
 def part_option_label(part) -> str:

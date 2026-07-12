@@ -1,6 +1,6 @@
 from collections import defaultdict
 from datetime import timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -15,6 +15,7 @@ from django.views.decorators.http import require_POST
 
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
+from apps.core.templatetags.number_format import quantity_int
 from apps.inventory.models import FoundStockPosting, PartItem, StockLot, StockMovement
 from apps.inventory.presentation import (
     attach_movement_identity,
@@ -350,7 +351,10 @@ def _queue_candidate_scan(request: HttpRequest, code: str, *, warehouse_part_id=
         return True
     line, added_new = add_candidate(request.session, candidates[0])
     verb = "добавлен в очередь" if added_new else "увеличен в очереди"
-    messages.success(request, f"{line['exact_number']}: {verb}, количество {line['quantity']}.")
+    messages.success(
+        request,
+        f"{line['exact_number']}: {verb}, количество {quantity_int(line['quantity'])}.",
+    )
     return True
 
 
@@ -383,8 +387,7 @@ def _post_queue_group(request: HttpRequest) -> str:
     remove_posted_group(request.session, location_id)
     quantity = sum(row["quantity"] for row in results)
     balances = ", ".join(
-        f"{row['exact_number']}: "
-        f"{row['lot'].quantity.quantize(Decimal('1'), rounding=ROUND_HALF_UP):f}"
+        f"{row['exact_number']}: {quantity_int(row['lot'].quantity)}"
         for row in results
     )
     messages.success(

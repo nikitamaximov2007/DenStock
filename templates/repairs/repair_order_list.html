@@ -50,7 +50,7 @@
               {{ o.vehicle_make }} {{ o.vehicle_model }}
               {% if not o.vehicle_type and not o.vehicle_make and not o.vehicle_model %}·{% endif %}
             </td>
-            {% if show_costs %}<td class="num--money">{{ o.cost_total }}</td>{% endif %}
+            {% if show_costs %}<td class="num--money">{{ o.cost_total|money_int }}</td>{% endif %}
             <td>
               {% if o.completed_at %}
                 {{ o.completed_at|ru_dt }}

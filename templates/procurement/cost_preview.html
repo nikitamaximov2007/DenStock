@@ -15,16 +15,16 @@
         </tr>
         <tr>
           <th>Сумма товаров</th>
-          <td>{{ base_total }} ₽</td>
+          <td>{{ base_total|money_int }} ₽</td>
         </tr>
         <tr>
           <th>Накладные расходы</th>
-          <td>{{ computed.extra }} ₽</td>
+          <td>{{ computed.extra|money_int }} ₽</td>
         </tr>
         <tr>
           <th>Итоговая себестоимость партии</th>
           <td>
-            <strong>{{ grand_total }} ₽</strong>
+            <strong>{{ grand_total|money_int }} ₽</strong>
           </td>
         </tr>
       </tbody>
@@ -45,11 +45,11 @@
         {% for row in computed.lines %}
           <tr>
             <td>{{ row.line.part_type }}</td>
-            <td>{{ row.line.quantity }}</td>
-            <td>{{ row.line.total_cost_rub }}</td>
-            <td>{{ row.allocated }}</td>
-            <td>{{ row.landed_total }}</td>
-            <td>{{ row.landed_unit }}</td>
+            <td>{{ row.line.quantity|quantity_int }}</td>
+            <td>{{ row.line.total_cost_rub|money_int }}</td>
+            <td>{{ row.allocated|money_int }}</td>
+            <td>{{ row.landed_total|money_int }}</td>
+            <td>{{ row.landed_unit|money_int }}</td>
           </tr>
         {% endfor %}
       </tbody>

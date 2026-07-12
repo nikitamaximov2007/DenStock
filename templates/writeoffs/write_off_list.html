@@ -44,7 +44,7 @@
             <td>{{ d.get_status_display }}</td>
             <td>{% include "partials/_doc_composition.html" with doc=d %}</td>
             <td>{{ d.get_reason_display }}</td>
-            {% if show_costs %}<td class="num--money">{{ d.cost_total }}</td>{% endif %}
+            {% if show_costs %}<td class="num--money">{{ d.cost_total|money_int }}</td>{% endif %}
             <td>
               {% if d.completed_at %}
                 {{ d.completed_at|ru_dt }}

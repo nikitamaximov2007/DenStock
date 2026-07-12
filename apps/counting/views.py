@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.core.templatetags.number_format import quantity_int
 from apps.polaris.services import find_polaris_by_number
 
 from .forms import CountingStartForm
@@ -145,7 +146,7 @@ def counting_scan(request, pk):
             "polaris_catalog": "Polaris",
             "unknown": "неизвестно",
         }.get(line.source, line.source)
-        qty = format(line.quantity_counted.normalize(), "f")
+        qty = quantity_int(line.quantity_counted)
         messages.success(
             request,
             f"{line.scanned_value}: {line.display_name} ({label}), количество {qty}",

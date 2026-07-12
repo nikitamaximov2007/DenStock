@@ -54,7 +54,7 @@
             {{ line.location.code }}
             <span class="muted">· лот #{{ line.stock_lot_id }}</span>
           </td>
-          <td>{{ line.expected_quantity|floatformat:"-3" }}</td>
+          <td>{{ line.expected_quantity|quantity_int }}</td>
           <td>
             {% if can_manage and is_draft %}
               <form method="post"
@@ -70,22 +70,22 @@
                 <button type="submit">OK</button>
               </form>
             {% else %}
-              {{ line.counted_quantity|default_if_none:"·"|floatformat:"-3" }}
+              {{ line.counted_quantity|default_if_none:"·"|quantity_int }}
             {% endif %}
           </td>
           <td>
             {% if line.difference is None %}
               ·
             {% else %}
-              {{ line.difference|floatformat:"-3" }}
+              {{ line.difference|quantity_int }}
             {% endif %}
           </td>
-          {% if show_costs %}<td>{{ line.unit_cost_rub }}</td>{% endif %}
+          {% if show_costs %}<td>{{ line.unit_cost_rub|money_int }}</td>{% endif %}
           {% if not is_draft %}
             <td>
               {% if line.adjustment %}
                 {{ line.adjustment.get_movement_type_display }}
-                ({{ line.adjustment.quantity|floatformat:"-3" }})
+                ({{ line.adjustment.quantity|quantity_int }})
               {% else %}
                 без изменений
               {% endif %}

@@ -60,7 +60,7 @@
               {% endif %}
             </td>
             <td class="num">{{ r.line_count }}</td>
-            {% if show_costs %}<td class="num--money">{{ r.cost_total|default:"0.00" }}</td>{% endif %}
+            {% if show_costs %}<td class="num--money">{{ r.cost_total|money_int }}</td>{% endif %}
             <td>{{ r.created_by|default:"·" }}</td>
             <td>
               {% if r.posted_at %}

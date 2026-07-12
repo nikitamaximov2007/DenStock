@@ -260,7 +260,7 @@ def test_polaris_search_page_settings_gated_and_visible(client, make_user, db):
     html = client.get(reverse("polaris_search"), {"q": "3022082"}).content.decode()
     assert "Polaris-каталог" in html
     assert "GASKET" in html
-    assert "1764" in html
+    assert "1 764" in html
     assert "—" not in html
 
 

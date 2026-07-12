@@ -476,7 +476,7 @@ def test_detail_page_shows_totals_without_warehouse_tile(client, make_user, refs
     html = resp.content.decode()
     assert "Итоговое количество" in html  # Layer 34: переименовано
     assert "Стоимость ячейки" in html
-    assert "191087" in html  # 13 * 14699: итог обновился после правки
+    assert "191 087" in html  # 13 * 14699: итог обновился после правки
     assert "13" in html
     # «Найдено в складе» убрано из сводки, источник в таблице строк остался.
     assert "Найдено в складе" not in html
@@ -492,7 +492,7 @@ def test_list_page_shows_details_and_value_columns(client, make_user, refs, loca
     html = client.get(reverse("counting_list")).content.decode()
     assert "Деталей" in html
     assert "Стоимость" in html
-    assert "191087" in html
+    assert "191 087" in html
     assert "Сканов" in html  # сырые сканы отдельной колонкой
 
 
@@ -750,14 +750,14 @@ def test_detail_page_value_breakdown_modal(client, make_user, refs, location, ad
     assert "Расчёт стоимости ячейки" in html
     assert "Стоимость считается как количество × цена клиента" in html
     assert "Всего позиций: 1" in html
-    assert "Итоговая стоимость: 14699 ₽" in html
+    assert "Итоговая стоимость: 14 699 ₽" in html
     # Колонки таблицы разбора.
     for col in ("Номер", "Название", "Источник", "Кол-во", "Цена клиента", "Расчёт", "Сумма"):
         assert col in html
     # Расчёт строки и итог; итог модалки равен значению плитки.
-    assert "1 × 14699 ₽" in html
-    assert "Итого: 14699 ₽" in html
-    assert html.count("14699 ₽") >= 3  # плитка + строка + итог
+    assert "1 × 14 699 ₽" in html
+    assert "Итого: 14 699 ₽" in html
+    assert html.count("14 699 ₽") >= 3  # плитка + строка + итог
     assert "Закрыть" in html
 
 
@@ -769,8 +769,8 @@ def test_manual_quantity_updates_card_and_modal(client, make_user, refs, locatio
         reverse("counting_line_qty", args=[line.pk]), {"quantity": "13"}, follow=True
     )
     html = resp.content.decode()
-    assert html.count("191087 ₽") >= 3  # плитка, сумма строки, итог модалки
-    assert "13 × 14699 ₽" in html  # расчёт строки
+    assert html.count("191 087 ₽") >= 3  # плитка, сумма строки, итог модалки
+    assert "13 × 14 699 ₽" in html  # расчёт строки
 
 
 def test_zero_price_row_visible_in_breakdown(client, make_user, refs, location, admin):
@@ -938,8 +938,8 @@ def test_draft_refreshes_corrected_brp_price(client, make_user, refs, location, 
     # Страница сессии показывает исправленную цену (refresh зовётся во view).
     client.login(username="admin", password=PASSWORD)
     html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
-    assert "5291" in html
-    assert "68783" in html
+    assert "5 291" in html
+    assert "68 783" in html
 
 
 def test_posted_session_prices_not_refreshed(refs, location, admin):
@@ -1052,7 +1052,7 @@ def test_convert_page_explains_prices_from_counting(client, make_user, refs, loc
     assert "Документ первичного ввода" in html
     assert "Цены будут взяты из пересчёта ячейки" in html
     assert "Итоговая стоимость документа" in html
-    assert "14699" in html
+    assert "14 699" in html
     assert "Запасная цена только для строк без цены" in html
     assert "по желанию" not in html  # старая формулировка убрана
 
@@ -1067,7 +1067,7 @@ def test_receipt_detail_labels_for_counting_receipt(client, make_user, refs, loc
     assert "Сумма оценки" in html
     assert "Документ первичного ввода из пересчёта ячейки" in html
     assert "Сумма себестоимости" not in html
-    assert "14699" in html  # итог совпадает со стоимостью пересчёта
+    assert "14 699" in html  # итог совпадает со стоимостью пересчёта
 
 
 def test_receipt_detail_labels_for_supplier_receipt(client, make_user, refs, admin):
@@ -1143,8 +1143,7 @@ def test_stocktaking_shows_initial_inventory_with_lines(client, make_user, refs,
     assert "219800345" in html and "BELT DRIVE" in html
     assert "Оценка за ед. (₽)" in html and "Сумма оценки" in html
     assert "13" in html  # ручная правка попала в документ
-    total = session.counters()["total_value"]
-    assert f"{total:.0f}" in html  # итог = сумме количество x оценка
+    assert "191 087" in html  # итог = сумме количество x оценка
     assert "Технический документ проведения" in html
     assert "—" not in html
 

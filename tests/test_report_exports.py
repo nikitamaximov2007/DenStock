@@ -161,7 +161,8 @@ def test_manager_export_has_financial_columns(make_user, client, data):
     assert "Выручка (₽)" in text
     assert "Себестоимость (₽)" in text
     assert "Валовая прибыль (₽)" in text
-    assert "900,00" in text  # Decimal с запятой
+    assert "900" in text
+    assert "900,00" not in text
 
 
 def test_storekeeper_export_omits_financials(make_user, client, data):
@@ -223,7 +224,8 @@ def test_returns_export_does_not_subtract_from_revenue(make_user, client, data):
     client.login(username="boss", password=PASSWORD)
     # Возврат существует, но выручка в экспорте продаж не уменьшена.
     sales_text = _csv_text(client.get(reverse("reports_export_sales")))
-    assert "900,00" in sales_text
+    assert "900" in sales_text
+    assert "900,00" not in sales_text
 
 
 def test_export_matches_service_numbers(data):
@@ -234,7 +236,7 @@ def test_export_matches_service_numbers(data):
     header, rows = sales_rows(report, period, include_costs=True)
     assert "Выручка (₽)" in header
     idx = header.index("Выручка (₽)")
-    assert rows[0][idx] == f"{report.revenue}".replace(".", ",")
+    assert rows[0][idx] == "900"
 
 
 # --- Складские экспорты ------------------------------------------------------

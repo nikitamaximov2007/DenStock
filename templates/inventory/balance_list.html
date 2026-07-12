@@ -55,9 +55,9 @@
             </td>
             <td>{{ b.location.code }}</td>
             <td>{{ b.batch.number }}</td>
-            <td class="num--qty">{{ b.quantity_physical }}</td>
-            <td class="num--qty">{{ b.quantity_available }}</td>
-            <td class="num--qty">{{ b.quantity_quarantine }}</td>
+            <td class="num--qty">{{ b.quantity_physical|quantity_int }}</td>
+            <td class="num--qty">{{ b.quantity_available|quantity_int }}</td>
+            <td class="num--qty">{{ b.quantity_quarantine|quantity_int }}</td>
           </tr>
         {% endfor %}
       </tbody>

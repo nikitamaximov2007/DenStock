@@ -72,7 +72,7 @@
               </td>
               <td class="num--qty">
                 {% if row.physical %}
-                  {{ row.available|floatformat:"-3" }}
+                  {{ row.available|quantity_int }}
                 {% else %}
                   <span class="pill pill--muted">нет остатка</span>
                 {% endif %}
@@ -80,14 +80,14 @@
               <td>
                 {% for balance in row.balances %}
                   <span class="code-pill">{{ balance.location.code }}</span>
-                  <span class="muted">x {{ balance.quantity_physical|floatformat:"-3" }}</span>
+                  <span class="muted">x {{ balance.quantity_physical|quantity_int }}</span>
                 {% empty %}
                   ·
                 {% endfor %}
               </td>
               <td class="num--money">
                 {% if row.part.recommended_price is not None %}
-                  {{ row.part.recommended_price|floatformat:"0" }}
+                  {{ row.part.recommended_price|money_int }}
                 {% else %}
                   ·
                 {% endif %}
@@ -138,7 +138,7 @@
               <td class="num--money">{{ row.brp.retail_price_usd|default:"·" }}</td>
               <td class="num--money">
                 {% if row.customer_price is not None %}
-                  {{ row.customer_price|floatformat:"0" }}
+                  {{ row.customer_price|money_int }}
                 {% else %}
                   ·
                 {% endif %}

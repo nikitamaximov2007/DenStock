@@ -35,7 +35,7 @@
             <td>{{ b.supplier }}</td>
             <td>{{ b.get_status_display }}</td>
             <td>{{ b.arrived_at|ru_date|default:"·" }}</td>
-            {% if show_costs %}<td class="num--money">{{ b.total_extra_cost }} {{ b.currency }}</td>{% endif %}
+            {% if show_costs %}<td class="num--money">{{ b.total_extra_cost|money_int }} {{ b.currency }}</td>{% endif %}
           </tr>
         {% endfor %}
       </tbody>
