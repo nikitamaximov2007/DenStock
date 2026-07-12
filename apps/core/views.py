@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -210,21 +211,40 @@ def search_page(request: HttpRequest) -> HttpResponse:
     q = request.GET.get("q", "").strip()
     rows = search_parts(q)
     can_view_inventory = request.user.can_manage_inventory or request.user.is_viewer
-    if can_view_inventory:
+    if can_view_inventory and rows:
+        # Разворот одним запросом на все результаты (не по запросу на строку);
+        # лимит 20 на деталь сохраняется при группировке.
+        serial_ids = [
+            r.part.pk for r in rows
+            if r.part.tracking_mode == PartType.TrackingMode.SERIAL
+        ]
+        bulk_ids = [
+            r.part.pk for r in rows
+            if r.part.tracking_mode != PartType.TrackingMode.SERIAL
+        ]
+        items_by_part: dict[int, list] = defaultdict(list)
+        if serial_ids:
+            for item in (
+                PartItem.objects.filter(part_type_id__in=serial_ids)
+                .select_related("current_location", "batch")
+                .order_by("internal_number")
+            ):
+                if len(items_by_part[item.part_type_id]) < 20:
+                    items_by_part[item.part_type_id].append(item)
+        lots_by_part: dict[int, list] = defaultdict(list)
+        if bulk_ids:
+            for lot in (
+                StockLot.objects.filter(part_type_id__in=bulk_ids)
+                .select_related("location", "batch", "batch_line")
+                .order_by("-created_at")
+            ):
+                if len(lots_by_part[lot.part_type_id]) < 20:
+                    lots_by_part[lot.part_type_id].append(lot)
         for row in rows:
-            part = row.part
-            if part.tracking_mode == part.TrackingMode.SERIAL:
-                row.items = list(
-                    PartItem.objects.filter(part_type=part)
-                    .select_related("current_location", "batch")
-                    .order_by("internal_number")[:20]
-                )
+            if row.part.tracking_mode == PartType.TrackingMode.SERIAL:
+                row.items = items_by_part.get(row.part.pk, [])
             else:
-                row.lots = list(
-                    StockLot.objects.filter(part_type=part)
-                    .select_related("location", "batch", "batch_line")
-                    .order_by("-created_at")[:20]
-                )
+                row.lots = lots_by_part.get(row.part.pk, [])
     # Catalog hints are reference data, not stock. If the same number exists in
     # several catalogs, show every catalog hit instead of silently choosing one.
     brp_hits = []
