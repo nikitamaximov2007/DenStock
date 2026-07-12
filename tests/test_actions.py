@@ -320,7 +320,10 @@ def test_perform_via_view_and_success_message(client, make_user, data):
         follow=True,
     )
     text = resp.content.decode()
-    assert "Действие проведено: Продажа, 1 шт, S01-L02-D03-C08" in text
+    assert (
+        "Действие проведено: Продажа — Болт одноместный, артикул 700100, "
+        "1 шт, S01-L02-D03-C08"
+    ) in text
     data["single_lot"].refresh_from_db()
     assert data["single_lot"].quantity == Decimal("9")
 

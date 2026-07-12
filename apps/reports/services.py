@@ -13,6 +13,7 @@ from django.db.models import Count, Sum
 from django.utils import timezone
 
 from apps.inventory.models import StockBalance, StockMovement
+from apps.inventory.presentation import identity_for_part_ids
 from apps.procurement.models import money
 from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.returns.models import StockReturn
@@ -76,6 +77,7 @@ def _bounds(period: Period):
 class TopRow:
     part_type: str
     value: Decimal
+    exact_number: str = ""
 
 
 @dataclass
@@ -149,6 +151,8 @@ class LowStockRow:
     part_type: str
     available: Decimal
     min_stock_level: Decimal
+    exact_number: str = ""
+    manufacturer: str = ""
 
 
 @dataclass
@@ -172,11 +176,16 @@ def get_sales_report(period: Period) -> SalesReport:
         revenue=Sum("revenue_total"), cost=Sum("cost_total"), profit=Sum("profit_total"),
     )
     lines = SaleLine.objects.filter(sale__in=sales)
-    top_rev = (
-        lines.values("part_type__name").annotate(v=Sum("total_price")).order_by("-v")[:TOP_N]
+    top_rev = list(
+        lines.values("part_type_id", "part_type__name")
+        .annotate(v=Sum("total_price")).order_by("-v")[:TOP_N]
     )
-    top_qty = (
-        lines.values("part_type__name").annotate(v=Sum("quantity")).order_by("-v")[:TOP_N]
+    top_qty = list(
+        lines.values("part_type_id", "part_type__name")
+        .annotate(v=Sum("quantity")).order_by("-v")[:TOP_N]
+    )
+    identity = identity_for_part_ids(
+        {r["part_type_id"] for r in top_rev} | {r["part_type_id"] for r in top_qty}
     )
     return SalesReport(
         count=agg["count"] or 0,
@@ -184,8 +193,20 @@ def get_sales_report(period: Period) -> SalesReport:
         revenue=money(agg["revenue"] or DEC0),
         cost=money(agg["cost"] or DEC0),
         profit=money(agg["profit"] or DEC0),
-        top_by_revenue=[TopRow(r["part_type__name"], money(r["v"] or DEC0)) for r in top_rev],
-        top_by_quantity=[TopRow(r["part_type__name"], r["v"] or DEC0) for r in top_qty],
+        top_by_revenue=[
+            TopRow(
+                r["part_type__name"], money(r["v"] or DEC0),
+                identity[r["part_type_id"]].exact_number,
+            )
+            for r in top_rev
+        ],
+        top_by_quantity=[
+            TopRow(
+                r["part_type__name"], r["v"] or DEC0,
+                identity[r["part_type_id"]].exact_number,
+            )
+            for r in top_qty
+        ],
     )
 
 
@@ -331,13 +352,22 @@ def get_low_stock_report() -> list:
         .annotate(available=Sum("quantity_available"))
         .order_by("part_type__name")
     )
-    result = []
-    for r in rows:
-        minlvl = r["part_type__min_stock_level"] or DEC0
-        avail = r["available"] or DEC0
-        if minlvl > 0 and avail < minlvl:
-            result.append(LowStockRow(r["part_type__name"], avail, minlvl))
-    return result
+    low = [
+        r for r in rows
+        if (r["part_type__min_stock_level"] or DEC0) > 0
+        and (r["available"] or DEC0) < (r["part_type__min_stock_level"] or DEC0)
+    ]
+    identity = identity_for_part_ids({r["part_type"] for r in low})
+    return [
+        LowStockRow(
+            r["part_type__name"],
+            r["available"] or DEC0,
+            r["part_type__min_stock_level"] or DEC0,
+            identity[r["part_type"]].exact_number,
+            identity[r["part_type"]].manufacturer,
+        )
+        for r in low
+    ]
 
 
 # --- Дашборд (сборка периодных отчётов) --------------------------------------

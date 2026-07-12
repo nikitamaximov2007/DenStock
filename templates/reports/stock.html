@@ -61,7 +61,8 @@
   <table class="table">
     <thead>
       <tr>
-        <th>Деталь</th>
+        <th>Название детали</th>
+        <th>Артикул</th>
         <th>Доступно</th>
         <th>Минимум</th>
       </tr>
@@ -70,12 +71,19 @@
       {% for row in low_stock %}
         <tr>
           <td>{{ row.part_type }}</td>
+          <td>
+            {% if row.exact_number %}
+              <span class="code-pill">{{ row.exact_number }}</span>
+            {% else %}
+              <span class="muted">не указан</span>
+            {% endif %}
+          </td>
           <td>{{ row.available|floatformat:"-3" }}</td>
           <td>{{ row.min_stock_level|floatformat:"-3" }}</td>
         </tr>
       {% empty %}
         <tr>
-          <td colspan="3" class="muted">Низких остатков нет.</td>
+          <td colspan="4" class="muted">Низких остатков нет.</td>
         </tr>
       {% endfor %}
     </tbody>
