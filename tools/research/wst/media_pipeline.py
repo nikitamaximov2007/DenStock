@@ -9,7 +9,7 @@ from .media_recovery import (
     validate_media_file,
     write_diagnostics,
 )
-from .ocr import run_ocr, write_ocr
+from .ocr import active_ocr_backend, run_ocr, write_ocr
 from .state import WSTState
 from .video_frames import extract_keyframe, periodic_timestamps, retain_distinct_frames
 from .video_transcriber import transcribe_in_chunks, write_transcript
@@ -258,7 +258,8 @@ def _process_visual(
         artifacts=[item["path"] for item in frames],
         diagnostics={"frame_count": len(frames), "decode_errors": errors},
     )
-    state.begin_stage(message_id, "ocr_created", backend="tesseract")
+    backend = active_ocr_backend() or "unavailable"
+    state.begin_stage(message_id, "ocr_created", backend=backend)
     ocr_frames, ocr_errors = [], []
     for frame in frames:
         try:
@@ -280,13 +281,13 @@ def _process_visual(
             diagnostics={"errors": ocr_errors, "ocr_blocks": len(ocr_frames)},
             artifacts=[str(json_path), str(markdown_path), *[item["path"] for item in frames]],
             retry=True,
-            next_action="Install Tesseract rus+eng, then run retry-media --only-ocr-failed.",
+            next_action="Run bootstrap-media --install, then retry-media --only-ocr-failed.",
         )
     else:
         state.finish_stage(
             message_id,
             "ocr_created",
-            backend="tesseract",
+            backend=backend,
             artifacts=[str(json_path), str(markdown_path)],
             diagnostics={"ocr_blocks": len(ocr_frames)},
         )

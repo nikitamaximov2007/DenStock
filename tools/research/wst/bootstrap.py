@@ -146,3 +146,45 @@ def bootstrap_media(
         report["faster_whisper"] = False
         report["whisper_model_ready"] = False
     return report
+
+
+def bootstrap_ocr(
+    *, install: bool = False, backend: str = "auto", download_model: bool = False
+) -> dict[str, Any]:
+    """Prepare a local-only OCR backend without invoking system-wide installers."""
+    research_root = Path(__file__).resolve().parents[1]
+    requirements = research_root / "requirements-wst-ocr.txt"
+    report: dict[str, Any] = {
+        "backend": backend,
+        "storage_mode": "LOCAL ONLY",
+        "requirements": requirements.name,
+        "actions": [],
+        "manual_steps": [],
+    }
+    if backend in {"auto", "easyocr"}:
+        if install:
+            completed = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-r", str(requirements)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            report["actions"].append(
+                {"name": "easyocr_dependencies", "exit_code": completed.returncode}
+            )
+        try:
+            from .ocr import _easyocr_reader
+
+            if download_model:
+                _easyocr_reader()
+            report["easyocr"] = True
+            report["easyocr_model_ready"] = bool(download_model)
+        except (ImportError, RuntimeError) as exc:
+            report["easyocr"] = False
+            report["easyocr_model_ready"] = False
+            report["manual_steps"].append(str(exc))
+    if backend in {"auto", "tesseract"}:
+        from .ocr import available_ocr_languages
+
+        report["tesseract_rus_eng"] = {"rus", "eng"}.issubset(available_ocr_languages())
+    return report

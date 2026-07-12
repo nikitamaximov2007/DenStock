@@ -65,6 +65,21 @@ class WSTState:
                 next_action TEXT,
                 PRIMARY KEY(message_id, stage)
             );
+            CREATE TABLE IF NOT EXISTS media_downloads (
+                message_id INTEGER PRIMARY KEY,
+                expected_size INTEGER,
+                downloaded_bytes INTEGER NOT NULL DEFAULT 0,
+                verified_bytes INTEGER NOT NULL DEFAULT 0,
+                chunk_size INTEGER NOT NULL,
+                current_offset INTEGER NOT NULL DEFAULT 0,
+                temporary_path TEXT,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_successful_offset INTEGER NOT NULL DEFAULT 0,
+                last_progress_at TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                last_error TEXT,
+                next_action TEXT
+            );
             """
         )
         self.connection.commit()
@@ -287,6 +302,49 @@ class WSTState:
             "SELECT stage, status, COUNT(*) AS count FROM media_stages GROUP BY stage, status"
         ).fetchall()
         return {f"{row['stage']}:{row['status']}": int(row["count"]) for row in rows}
+
+    def download_record(self, message_id: int) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM media_downloads WHERE message_id=?", (message_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def checkpoint_download(self, message_id: int, **values: Any) -> None:
+        current = self.download_record(message_id) or {
+            "message_id": message_id,
+            "downloaded_bytes": 0,
+            "verified_bytes": 0,
+            "chunk_size": 0,
+            "current_offset": 0,
+            "attempt_count": 0,
+            "last_successful_offset": 0,
+            "status": "pending",
+        }
+        current.update(values)
+        current["last_progress_at"] = _now()
+        columns = (
+            "message_id",
+            "expected_size",
+            "downloaded_bytes",
+            "verified_bytes",
+            "chunk_size",
+            "current_offset",
+            "temporary_path",
+            "attempt_count",
+            "last_successful_offset",
+            "last_progress_at",
+            "status",
+            "last_error",
+            "next_action",
+        )
+        self.connection.execute(
+            f"INSERT INTO media_downloads ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' for _ in columns)}) "
+            "ON CONFLICT(message_id) DO UPDATE SET "
+            + ", ".join(f"{column}=excluded.{column}" for column in columns[1:]),
+            [current.get(column) for column in columns],
+        )
+        self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()

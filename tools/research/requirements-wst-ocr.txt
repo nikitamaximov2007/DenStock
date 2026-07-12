@@ -1,0 +1,3 @@
+# Local OCR only. EasyOCR downloads models only when bootstrap-ocr requests them.
+Pillow>=10,<12
+easyocr>=1.7,<2

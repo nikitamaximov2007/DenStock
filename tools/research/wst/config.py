@@ -34,6 +34,14 @@ class WSTSettings:
 
 
 def resolve_output_root(value: str | Path | None, project_root: Path = PROJECT_ROOT) -> Path:
+    raw = str(value) if value is not None else str(DEFAULT_OUTPUT_ROOT)
+    normalized = raw.replace("\\", "/").lower()
+    if (
+        "://" in raw
+        or normalized.startswith(("s3://", "bucket://", "//", "\\\\"))
+        or normalized.startswith(("s3:", "bucket:"))
+    ):
+        raise ValueError("WST output must be a local path under research_inputs/wst.")
     candidate = Path(value) if value else DEFAULT_OUTPUT_ROOT
     if not candidate.is_absolute():
         candidate = project_root / candidate

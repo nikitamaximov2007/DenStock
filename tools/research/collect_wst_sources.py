@@ -13,7 +13,7 @@ from typing import Any
 if __package__ in {None, ""}:  # Direct `python tools/research/...` execution.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.research.wst.bootstrap import bootstrap_media
+from tools.research.wst.bootstrap import bootstrap_media, bootstrap_ocr
 from tools.research.wst.config import load_settings, wst_paths
 from tools.research.wst.document_extractors import extract_document, write_document_extraction
 from tools.research.wst.downloader import download_media
@@ -84,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--message-id", type=int)
         item.add_argument("--download-media", action="store_true")
         item.add_argument("--download-timeout", type=int, default=300)
+        item.add_argument("--download-chunk-size-mb", type=int, default=4)
+        item.add_argument("--download-checkpoint-mb", type=int, default=16)
+        item.add_argument("--max-download-attempts", type=int, default=3)
+        item.add_argument("--resume-download", action=argparse.BooleanOptionalAction, default=True)
+        item.add_argument("--restart-download", action="store_true")
         item.add_argument("--skip-existing", action="store_true")
         item.add_argument("--retry-failed", action="store_true")
         item.add_argument("--dry-run", action="store_true")
@@ -106,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--install", action="store_true")
     bootstrap.add_argument("--download-model", action="store_true")
     bootstrap.add_argument("--whisper-model", default="large-v3")
+    bootstrap_ocr_parser = subparsers.add_parser("bootstrap-ocr")
+    bootstrap_ocr_parser.add_argument("--install", action="store_true")
+    bootstrap_ocr_parser.add_argument("--download-model", action="store_true")
+    bootstrap_ocr_parser.add_argument(
+        "--backend", choices=("auto", "easyocr", "tesseract"), default="auto"
+    )
     retry = subparsers.add_parser("retry-media")
     retry.add_argument("--only-download-failed", action="store_true")
     retry.add_argument("--only-probe-failed", action="store_true")
@@ -116,6 +127,8 @@ def build_parser() -> argparse.ArgumentParser:
     retry.add_argument("--max-attempts", type=int, default=3)
     retry.add_argument("--backend", default="auto")
     retry.add_argument("--force-repair", action="store_true")
+    download_status = subparsers.add_parser("download-status")
+    download_status.add_argument("--message-id", type=int, required=True)
     subparsers.add_parser("doctor")
     return parser
 
@@ -141,7 +154,11 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
             _write_json(paths["raw"] / "navigation_graph.json", graph)
             node_paths = {item["message_id"]: item for item in graph["nodes"]}
             messages: dict[int, tuple[Any, str, list[int]]] = {}
-            if args.command == "collect-all":
+            if args.message_id:
+                message = await source.get_message(args.message_id)
+                if message is not None:
+                    messages[int(message.id)] = (message, "direct_message", [])
+            elif args.command == "collect-all":
                 async for message in source.iter_messages(limit=args.limit):
                     node = node_paths.get(getattr(message, "id", None))
                     discovery = "both" if node else "full_channel_scan"
@@ -158,8 +175,6 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
                             node["discovery_source"],
                             node["navigation_path"],
                         )
-            if args.message_id:
-                messages = {key: value for key, value in messages.items() if key == args.message_id}
             records, manifest = [], []
             for message, discovery, navigation_path in messages.values():
                 record = message_record(
@@ -196,6 +211,12 @@ async def collect(args: argparse.Namespace) -> dict[str, Any]:
                         paths,
                         existing_sha256=saved.get("sha256") if saved else None,
                         timeout_seconds=args.download_timeout,
+                        retries=max(args.max_download_attempts - 1, 0),
+                        state=state,
+                        chunk_size=args.download_chunk_size_mb * 1024 * 1024,
+                        checkpoint_bytes=args.download_checkpoint_mb * 1024 * 1024,
+                        resume=args.resume_download,
+                        restart=args.restart_download,
                     )
                     media.update(outcome)
                     state.update_media(
@@ -337,6 +358,28 @@ def retry_media(args: argparse.Namespace) -> dict[str, Any]:
     return {"retry_pending": len(queue), "stage": stage or "all"}
 
 
+def download_status(args: argparse.Namespace) -> dict[str, Any]:
+    settings = load_settings(output_root=args.output_root)
+    paths = wst_paths(settings)
+    with WSTState(paths["state"] / "wst_state.sqlite3") as state:
+        record = state.download_record(args.message_id)
+    if record is None:
+        return {
+            "message_id": args.message_id,
+            "status": "pending",
+            "next_action": "Start collection.",
+        }
+    return {
+        "message_id": args.message_id,
+        "status": record["status"],
+        "downloaded_bytes": record["downloaded_bytes"],
+        "expected_size": record["expected_size"],
+        "last_successful_offset": record["last_successful_offset"],
+        "attempt_count": record["attempt_count"],
+        "next_action": record.get("next_action") or "",
+    }
+
+
 def _process_video_frames(
     post_id: int,
     source_path: Path,
@@ -375,6 +418,10 @@ async def doctor(args: argparse.Namespace) -> dict[str, Any]:
     settings = load_settings(output_root=args.output_root)
     paths = wst_paths(settings)
     report = {
+        "Storage mode": "LOCAL ONLY",
+        "Output root": str(settings.output_root),
+        "Cloud uploads": "DISABLED",
+        "Yandex Object Storage": "NOT USED",
         "telegram_credentials_present": settings.has_telegram_credentials,
         "ffmpeg": bool(executable("ffmpeg")),
         "ffprobe": bool(executable("ffprobe")),
@@ -384,11 +431,17 @@ async def doctor(args: argparse.Namespace) -> dict[str, Any]:
         "output_directories": all(path.exists() for path in paths.values()),
     }
     try:
-        from tools.research.wst.ocr import available_ocr_languages
+        from tools.research.wst.ocr import (
+            active_ocr_backend,
+            available_ocr_backends,
+            available_ocr_languages,
+        )
 
         languages = available_ocr_languages()
         report["ocr_languages"] = sorted(languages)
         report["ocr_rus_eng"] = {"rus", "eng"}.issubset(languages)
+        report["ocr_backends"] = available_ocr_backends()
+        report["OCR backend"] = active_ocr_backend() or "NOT READY"
     except Exception:  # noqa: BLE001
         report["ocr_rus_eng"] = False
     try:
@@ -414,8 +467,16 @@ def main() -> int:
                 whisper_model=args.whisper_model,
                 download_model=args.download_model,
             )
+        elif args.command == "bootstrap-ocr":
+            result = bootstrap_ocr(
+                install=args.install,
+                backend=args.backend,
+                download_model=args.download_model,
+            )
         elif args.command == "retry-media":
             result = retry_media(args)
+        elif args.command == "download-status":
+            result = download_status(args)
         elif args.command == "process":
             result = process(args)
         else:
