@@ -55,7 +55,8 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Деталь</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
           <th>Учёт</th>
           <th class="num--qty">Кол-во</th>
           <th class="num--money">
@@ -76,9 +77,7 @@
       <tbody>
         {% for line in lines %}
           <tr>
-            <td>
-              <a href="{% url 'part_detail' line.part_type_id %}">{{ line.part_type }}</a>
-            </td>
+            {% include "partials/_line_part_cells.html" %}
             <td>{{ line.part_type.get_tracking_mode_display }}</td>
             <td class="num--qty">{{ line.quantity|floatformat:"-3" }}</td>
             <td class="num--money">{{ line.unit_cost_rub }}</td>
@@ -167,8 +166,9 @@
           <table class="table table--compact">
             <thead>
               <tr>
-                <th>Номер</th>
-                <th>Деталь</th>
+                <th>Название детали</th>
+                <th>Артикул</th>
+                <th>Внутренний номер</th>
                 <th>Статус</th>
                 <th>Ячейка</th>
               </tr>
@@ -176,10 +176,17 @@
             <tbody>
               {% for item in created_items %}
                 <tr>
+                  <td>{{ item.part_type.name }}</td>
+                  <td>
+                    {% if item.part_exact_number %}
+                      <span class="code-pill">{{ item.part_exact_number }}</span>
+                    {% else %}
+                      <span class="muted">не указан</span>
+                    {% endif %}
+                  </td>
                   <td>
                     <a href="{% url 'item_detail' item.pk %}">{{ item.internal_number }}</a>
                   </td>
-                  <td>{{ item.part_type }}</td>
                   <td>{{ item.get_status_display }}</td>
                   <td>
                     {% if item.current_location %}
@@ -198,24 +205,32 @@
           <table class="table table--compact">
             <thead>
               <tr>
-                <th>Лот</th>
-                <th>Деталь</th>
+                <th>Название детали</th>
+                <th>Артикул</th>
                 <th class="num--qty">Кол-во</th>
                 <th>Статус</th>
                 <th>Ячейка</th>
+                <th>Лот</th>
               </tr>
             </thead>
             <tbody>
               {% for lot in created_lots %}
                 <tr>
+                  <td>{{ lot.part_type.name }}</td>
                   <td>
-                    <a href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
+                    {% if lot.part_exact_number %}
+                      <span class="code-pill">{{ lot.part_exact_number }}</span>
+                    {% else %}
+                      <span class="muted">не указан</span>
+                    {% endif %}
                   </td>
-                  <td>{{ lot.part_type }}</td>
                   <td class="num--qty">{{ lot.quantity|floatformat:"-3" }}</td>
                   <td>{{ lot.get_status_display }}</td>
                   <td>
                     <span class="code-pill">{{ lot.location.code }}</span>
+                  </td>
+                  <td>
+                    <a class="muted" href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
                   </td>
                 </tr>
               {% endfor %}

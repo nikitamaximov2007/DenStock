@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404, render
 
 from apps.catalog.models import PartType
 from apps.inventory.models import PartItem
+from apps.inventory.presentation import part_exact_number
 from apps.warehouse.models import StorageLocation
 
 from .barcode import safe_code128_svg
@@ -22,13 +23,13 @@ def _require_print(request) -> None:
 
 
 def _primary_number(part_type: PartType) -> str:
-    """Основной/первый OEM-номер вида детали для подписи (без денежных данных)."""
-    number = (
-        part_type.numbers.filter(is_primary=True).first()
-        or part_type.numbers.filter(kind=part_type.numbers.model.Kind.OEM).first()
-        or part_type.numbers.first()
-    )
-    return number.value if number else ""
+    """Exact-артикул вида детали для подписи этикетки.
+
+    Единый canonical helper: BRP/Polaris/primary/OEM. Аналог на этикетку не
+    попадает никогда (старый fallback `.numbers.first()` печатал аналог из-за
+    сортировки PartNumber); без exact-номера строка остаётся пустой.
+    """
+    return part_exact_number(part_type, default="")
 
 
 def _item_ctx(item: PartItem) -> dict:

@@ -36,11 +36,13 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Деталь</th>
-          <th>Ячейка</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
           <th class="num--qty">Количество</th>
+          <th>Ячейка</th>
           <th>Статус</th>
           <th>Партия</th>
+          <th>Лот</th>
           {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
         </tr>
       </thead>
@@ -48,12 +50,22 @@
         {% for lot in lots %}
           <tr>
             <td>
-              <a href="{% url 'lot_detail' lot.pk %}">{{ lot.part_type }}</a>
+              <a href="{% url 'part_detail' lot.part_type_id %}">{{ lot.part_type.name }}</a>
             </td>
-            <td>{{ lot.location.code }}</td>
+            <td>
+              {% if lot.part_exact_number %}
+                <span class="code-pill">{{ lot.part_exact_number }}</span>
+              {% else %}
+                <span class="muted">не указан</span>
+              {% endif %}
+            </td>
             <td class="num--qty">{{ lot.quantity }}</td>
+            <td>{{ lot.location.code }}</td>
             <td>{{ lot.get_status_display }}</td>
             <td>{{ lot.batch.number }}</td>
+            <td>
+              <a class="muted" href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
+            </td>
             {% if show_costs %}<td class="num--money">{{ lot.landed_unit_cost_rub }}</td>{% endif %}
           </tr>
         {% endfor %}

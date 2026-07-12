@@ -75,7 +75,8 @@
         <table class="table">
           <thead>
             <tr>
-              <th>Деталь</th>
+              <th>Название детали</th>
+              <th>Артикул</th>
               <th class="num--money">Выручка (₽)</th>
             </tr>
           </thead>
@@ -83,11 +84,18 @@
             {% for row in report.sales.top_by_revenue %}
               <tr>
                 <td>{{ row.part_type }}</td>
+                <td>
+                  {% if row.exact_number %}
+                    <span class="code-pill">{{ row.exact_number }}</span>
+                  {% else %}
+                    <span class="muted">не указан</span>
+                  {% endif %}
+                </td>
                 <td class="num--money">{{ row.value }}</td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="2" class="muted">Нет данных за период.</td>
+                <td colspan="3" class="muted">Нет данных за период.</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -99,7 +107,8 @@
       <table class="table">
         <thead>
           <tr>
-            <th>Деталь</th>
+            <th>Название детали</th>
+            <th>Артикул</th>
             <th class="num--qty">Кол-во</th>
           </tr>
         </thead>
@@ -107,11 +116,18 @@
           {% for row in report.sales.top_by_quantity %}
             <tr>
               <td>{{ row.part_type }}</td>
+              <td>
+                {% if row.exact_number %}
+                  <span class="code-pill">{{ row.exact_number }}</span>
+                {% else %}
+                  <span class="muted">не указан</span>
+                {% endif %}
+              </td>
               <td class="num--qty">{{ row.value|floatformat:"-3" }}</td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan="2" class="muted">Нет данных за период.</td>
+              <td colspan="3" class="muted">Нет данных за период.</td>
             </tr>
           {% endfor %}
         </tbody>

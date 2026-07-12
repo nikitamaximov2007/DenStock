@@ -1,6 +1,7 @@
 from django import forms
 
 from apps.inventory.models import StockLot
+from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 
 from .models import WriteOffDocument
 
@@ -18,7 +19,7 @@ class AddWriteOffItemForm(forms.Form):
 
 
 class AddWriteOffLotForm(forms.Form):
-    lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
+    lot = ExactLotChoiceField(label="Лот", queryset=StockLot.objects.none())
     quantity = forms.DecimalField(
         label="Количество", max_digits=12, decimal_places=3, min_value=0.001
     )
@@ -26,7 +27,8 @@ class AddWriteOffLotForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Списать можно доступный или карантинный лот (брак/карантин).
-        self.fields["lot"].queryset = (
+        # Опция подписана названием + exact-артикулом детали.
+        self.fields["lot"].queryset = with_part_identity(
             StockLot.objects.filter(
                 status__in=[StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE]
             )

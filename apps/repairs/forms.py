@@ -2,6 +2,7 @@ from django import forms
 
 from apps.catalog.models import VehicleType
 from apps.inventory.models import StockLot
+from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 
 from .models import RepairOrder
 
@@ -33,14 +34,15 @@ class AddRepairItemForm(forms.Form):
 
 
 class AddRepairLotForm(forms.Form):
-    lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
+    lot = ExactLotChoiceField(label="Лот", queryset=StockLot.objects.none())
     quantity = forms.DecimalField(
         label="Количество", max_digits=12, decimal_places=3, min_value=0.001
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["lot"].queryset = (
+        # Опция подписана названием + exact-артикулом детали (не только именем).
+        self.fields["lot"].queryset = with_part_identity(
             StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
             .select_related("part_type", "location")
             .order_by("part_type__name", "location__code")

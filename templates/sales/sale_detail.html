@@ -50,8 +50,8 @@
   <table class="table">
     <thead>
       <tr>
-        <th>Деталь</th>
-        <th>Что</th>
+        <th>Название детали</th>
+        <th>Артикул</th>
         <th>Кол-во</th>
         <th>Цена (₽)</th>
         <th>Сумма (₽)</th>
@@ -59,6 +59,7 @@
           <th>Себестоимость (₽)</th>
           <th>Прибыль (₽)</th>
         {% endif %}
+        <th>Источник остатка</th>
         {% if can_sell and is_draft %}
           <th></th>
         {% endif %}
@@ -67,14 +68,7 @@
     <tbody>
       {% for line in lines %}
         <tr>
-          <td>{{ line.part_type }}</td>
-          <td>
-            {% if line.part_item %}
-              Экземпляр {{ line.part_item.internal_number }}
-            {% else %}
-              Лот #{{ line.stock_lot.pk }}
-            {% endif %}
-          </td>
+          {% include "partials/_line_part_cells.html" %}
           <td>{{ line.quantity|floatformat:"-3" }}</td>
           <td>
             {{ line.unit_price }}
@@ -87,6 +81,7 @@
             <td>{{ line.total_cost_rub }}</td>
             <td>{{ line.profit_rub }}</td>
           {% endif %}
+          <td>{% include "partials/_line_source.html" %}</td>
           {% if can_sell and is_draft %}
             <td>
               <form method="post"
@@ -100,7 +95,7 @@
         </tr>
       {% empty %}
         <tr>
-          <td colspan="8" class="muted">Позиций нет.</td>
+          <td colspan="9" class="muted">Позиций нет.</td>
         </tr>
       {% endfor %}
     </tbody>

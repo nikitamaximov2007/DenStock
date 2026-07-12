@@ -122,6 +122,9 @@ def stock_rows(report):
 
 
 def low_stock_rows(rows):
-    header = ["Деталь", "Доступно", "Минимум"]
-    out = [[r.part_type, _num(r.available), _num(r.min_stock_level)] for r in rows]
+    header = ["Название детали", "Артикул", "Производитель", "Доступно", "Минимум"]
+    out = [
+        [r.part_type, r.exact_number, r.manufacturer, _num(r.available), _num(r.min_stock_level)]
+        for r in rows
+    ]
     return header, out

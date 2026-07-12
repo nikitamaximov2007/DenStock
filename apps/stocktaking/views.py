@@ -14,6 +14,7 @@ from django.views.decorators.http import require_POST
 
 from apps.counting.models import InventoryCountingSession
 from apps.counting.services import get_session_value_breakdown
+from apps.inventory.presentation import attach_part_identity, with_part_identity
 
 from .forms import AddCountLotForm, CountQuantityForm, InventoryCountForm
 from .models import InventoryCountDocument, InventoryCountLine
@@ -103,9 +104,14 @@ def inventory_count_detail(request, pk):
     doc = get_object_or_404(
         InventoryCountDocument.objects.select_related("created_by", "scope_location"), pk=pk
     )
-    lines = doc.lines.select_related(
-        "part_type", "stock_lot", "stock_lot__location", "location", "adjustment"
+    lines = list(
+        with_part_identity(
+            doc.lines.select_related(
+                "part_type", "stock_lot", "stock_lot__location", "location", "adjustment"
+            )
+        )
     )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_draft = doc.status == InventoryCountDocument.Status.DRAFT
     return render(
         request,

@@ -1,8 +1,18 @@
 from django import forms
 
 from apps.inventory.models import StockLot
+from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 
 from .models import Reservation, Sale
+
+
+def _available_lots():
+    """Лоты для выбора: опция подписана названием + exact-артикулом детали."""
+    return with_part_identity(
+        StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
+        .select_related("part_type", "location")
+        .order_by("part_type__name", "location__code")
+    )
 
 
 class ReservationForm(forms.ModelForm):
@@ -30,18 +40,14 @@ class AddItemForm(forms.Form):
 
 
 class AddLotForm(forms.Form):
-    lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
+    lot = ExactLotChoiceField(label="Лот", queryset=StockLot.objects.none())
     quantity = forms.DecimalField(
         label="Количество", max_digits=12, decimal_places=3, min_value=0.001
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["lot"].queryset = (
-            StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
-            .select_related("part_type", "location")
-            .order_by("part_type__name", "location__code")
-        )
+        self.fields["lot"].queryset = _available_lots()
 
 
 class SaleForm(forms.ModelForm):
@@ -60,7 +66,7 @@ class AddSaleItemForm(forms.Form):
 
 
 class AddSaleLotForm(forms.Form):
-    lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
+    lot = ExactLotChoiceField(label="Лот", queryset=StockLot.objects.none())
     quantity = forms.DecimalField(
         label="Количество", max_digits=12, decimal_places=3, min_value=0.001
     )
@@ -70,8 +76,4 @@ class AddSaleLotForm(forms.Form):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["lot"].queryset = (
-            StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
-            .select_related("part_type", "location")
-            .order_by("part_type__name", "location__code")
-        )
+        self.fields["lot"].queryset = _available_lots()

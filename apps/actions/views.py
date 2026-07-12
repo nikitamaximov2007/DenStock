@@ -131,9 +131,14 @@ def actions_perform(request):
         messages.error(request, str(exc))
         return redirect(back)
     qty = format(action.quantity.normalize(), "f")
+    # Идентификация детали в подтверждении: название + exact-артикул из
+    # снимка действия — не внутренний лот.
+    identity = action.part_name or str(part)
+    if action.part_number:
+        identity += f", артикул {action.part_number}"
     messages.success(
         request,
-        f"Действие проведено: {action.get_action_type_display()}, "
+        f"Действие проведено: {action.get_action_type_display()} — {identity}, "
         f"{qty} шт, {location.code}",
     )
     return redirect(back)

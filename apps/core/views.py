@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
@@ -15,7 +16,12 @@ from django.views.decorators.http import require_POST
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
 from apps.inventory.models import FoundStockPosting, PartItem, StockLot, StockMovement
-from apps.inventory.presentation import attach_movement_identity, identity_numbers_prefetch
+from apps.inventory.presentation import (
+    attach_movement_identity,
+    attach_part_identity,
+    identity_numbers_prefetch,
+    with_part_identity,
+)
 from apps.inventory.services import (
     FOUND_ADDITION_DOC,
     FoundStockAlreadyPosted,
@@ -205,21 +211,40 @@ def search_page(request: HttpRequest) -> HttpResponse:
     q = request.GET.get("q", "").strip()
     rows = search_parts(q)
     can_view_inventory = request.user.can_manage_inventory or request.user.is_viewer
-    if can_view_inventory:
+    if can_view_inventory and rows:
+        # Разворот одним запросом на все результаты (не по запросу на строку);
+        # лимит 20 на деталь сохраняется при группировке.
+        serial_ids = [
+            r.part.pk for r in rows
+            if r.part.tracking_mode == PartType.TrackingMode.SERIAL
+        ]
+        bulk_ids = [
+            r.part.pk for r in rows
+            if r.part.tracking_mode != PartType.TrackingMode.SERIAL
+        ]
+        items_by_part: dict[int, list] = defaultdict(list)
+        if serial_ids:
+            for item in (
+                PartItem.objects.filter(part_type_id__in=serial_ids)
+                .select_related("current_location", "batch")
+                .order_by("internal_number")
+            ):
+                if len(items_by_part[item.part_type_id]) < 20:
+                    items_by_part[item.part_type_id].append(item)
+        lots_by_part: dict[int, list] = defaultdict(list)
+        if bulk_ids:
+            for lot in (
+                StockLot.objects.filter(part_type_id__in=bulk_ids)
+                .select_related("location", "batch", "batch_line")
+                .order_by("-created_at")
+            ):
+                if len(lots_by_part[lot.part_type_id]) < 20:
+                    lots_by_part[lot.part_type_id].append(lot)
         for row in rows:
-            part = row.part
-            if part.tracking_mode == part.TrackingMode.SERIAL:
-                row.items = list(
-                    PartItem.objects.filter(part_type=part)
-                    .select_related("current_location", "batch")
-                    .order_by("internal_number")[:20]
-                )
+            if row.part.tracking_mode == PartType.TrackingMode.SERIAL:
+                row.items = items_by_part.get(row.part.pk, [])
             else:
-                row.lots = list(
-                    StockLot.objects.filter(part_type=part)
-                    .select_related("location", "batch", "batch_line")
-                    .order_by("-created_at")[:20]
-                )
+                row.lots = lots_by_part.get(row.part.pk, [])
     # Catalog hints are reference data, not stock. If the same number exists in
     # several catalogs, show every catalog hit instead of silently choosing one.
     brp_hits = []
@@ -601,6 +626,14 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
     for movement in found_history:
         movement.customer_unit_price = movement.part_type.recommended_price or Decimal("0")
         movement.customer_total_value = movement.customer_unit_price * movement.quantity
+    receiving_lots = list(
+        with_part_identity(
+            StockLot.objects.filter(status=StockLot.Status.RECEIVING)
+            .select_related("part_type", "batch", "location")
+            .order_by("-created_at")
+        )[:50]
+    )
+    attach_part_identity(receiving_lots)  # exact-артикул отдельной колонкой
     ctx = {
         "object": obj,
         "object_kind": kind,
@@ -610,11 +643,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
         "catalog_choice": pending_context(request.session),
         "receiving_queue": queue_context(request.session),
         "error": error,
-        "receiving_lots": (
-            StockLot.objects.filter(status=StockLot.Status.RECEIVING)
-            .select_related("part_type", "batch", "location")
-            .order_by("-created_at")[:50]
-        ),
+        "receiving_lots": receiving_lots,
         "history": history,
         "found_history": found_history,
         "show_costs": request.user.can_view_purchase_cost,
@@ -816,6 +845,14 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
     else:
         step = "confirm"
 
+    placed_lots = list(
+        with_part_identity(
+            StockLot.objects.filter(status__in=_MOVABLE_LOT_STATUSES)
+            .select_related("part_type", "batch", "location")
+            .order_by("part_type__name", "location__code")
+        )[:50]
+    )
+    attach_part_identity(placed_lots)  # exact-артикул отдельной колонкой
     ctx = {
         "object": obj,
         "object_kind": kind,
@@ -824,11 +861,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
         "candidates": candidates,
         "error": error,
         "info": info,
-        "placed_lots": (
-            StockLot.objects.filter(status__in=_MOVABLE_LOT_STATUSES)
-            .select_related("part_type", "batch", "location")
-            .order_by("part_type__name", "location__code")[:50]
-        ),
+        "placed_lots": placed_lots,
         "history": (
             StockMovement.objects.filter(
                 created_by=request.user, movement_type__in=_MOVE_HISTORY_TYPES

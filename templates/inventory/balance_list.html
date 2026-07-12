@@ -2,7 +2,7 @@
 {% block title %}Остатки · DenisStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Остатки</h1>
-  <p class="muted">Кэш текущих остатков (пересобирается из лотов и экземпляров). Только чтение.</p>
+  <p class="muted">Текущие остатки по ячейкам. Только просмотр.</p>
   <form method="get" class="toolbar">
     <select name="part">
       <option value="">Все детали</option>
@@ -31,7 +31,8 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Деталь</th>
+          <th>Название детали</th>
+          <th>Артикул</th>
           <th>Ячейка</th>
           <th>Партия</th>
           <th class="num--qty">Физически</th>
@@ -42,7 +43,16 @@
       <tbody>
         {% for b in balances %}
           <tr>
-            <td>{{ b.part_type }}</td>
+            <td>
+              <a href="{% url 'part_detail' b.part_type_id %}">{{ b.part_type.name }}</a>
+            </td>
+            <td>
+              {% if b.part_exact_number %}
+                <span class="code-pill">{{ b.part_exact_number }}</span>
+              {% else %}
+                <span class="muted">не указан</span>
+              {% endif %}
+            </td>
             <td>{{ b.location.code }}</td>
             <td>{{ b.batch.number }}</td>
             <td class="num--qty">{{ b.quantity_physical }}</td>

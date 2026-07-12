@@ -1,0 +1,14 @@
+{% comment %}
+Две ячейки идентификации детали в строке документа: название (ссылка на
+карточку детали) и exact-артикул. Требует attach_part_identity() во вьюхе.
+{% endcomment %}
+<td>
+  <a href="{% url 'part_detail' line.part_type_id %}">{{ line.part_type.name }}</a>
+</td>
+<td>
+  {% if line.part_exact_number %}
+    <span class="code-pill">{{ line.part_exact_number }}</span>
+  {% else %}
+    <span class="muted">не указан</span>
+  {% endif %}
+</td>

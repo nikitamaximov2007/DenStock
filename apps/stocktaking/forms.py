@@ -1,6 +1,7 @@
 from django import forms
 
 from apps.inventory.models import StockLot
+from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 from apps.warehouse.models import StorageLocation
 
 from .models import InventoryCountDocument
@@ -27,10 +28,11 @@ class InventoryCountForm(forms.ModelForm):
 
 
 class AddCountLotForm(forms.Form):
-    lot = forms.ModelChoiceField(label="Лот", queryset=StockLot.objects.none())
+    lot = ExactLotChoiceField(label="Лот", queryset=StockLot.objects.none())
 
     def __init__(self, *args, location=None, **kwargs):
         super().__init__(*args, **kwargs)
+        # Опция подписана названием + exact-артикулом детали.
         qs = (
             StockLot.objects.filter(status__in=_PHYSICAL_LOT_STATUSES)
             .select_related("part_type", "location")
@@ -38,7 +40,7 @@ class AddCountLotForm(forms.Form):
         )
         if location is not None:
             qs = qs.filter(location=location)
-        self.fields["lot"].queryset = qs
+        self.fields["lot"].queryset = with_part_identity(qs)
 
 
 class CountQuantityForm(forms.Form):

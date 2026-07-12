@@ -35,8 +35,9 @@
   <table class="table">
     <thead>
       <tr>
-        <th>Деталь</th>
-        <th>Лот / ячейка</th>
+        <th>Название детали</th>
+        <th>Артикул</th>
+        <th>Ячейка</th>
         <th>Системное</th>
         <th>Факт</th>
         <th>Расхождение</th>
@@ -48,8 +49,11 @@
     <tbody>
       {% for line in lines %}
         <tr>
-          <td>{{ line.part_type }}</td>
-          <td>Лот #{{ line.stock_lot_id }} · {{ line.location.code }}</td>
+          {% include "partials/_line_part_cells.html" %}
+          <td>
+            {{ line.location.code }}
+            <span class="muted">· лот #{{ line.stock_lot_id }}</span>
+          </td>
           <td>{{ line.expected_quantity|floatformat:"-3" }}</td>
           <td>
             {% if can_manage and is_draft %}
@@ -100,7 +104,7 @@
         </tr>
       {% empty %}
         <tr>
-          <td colspan="8" class="muted">Позиций нет.</td>
+          <td colspan="9" class="muted">Позиций нет.</td>
         </tr>
       {% endfor %}
     </tbody>

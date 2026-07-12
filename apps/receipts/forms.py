@@ -2,6 +2,7 @@
 from django import forms
 
 from apps.catalog.models import PartType
+from apps.inventory.presentation import part_option_label, with_part_identity
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 
@@ -35,9 +36,12 @@ class ReceiptLineForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["part_type"].queryset = (
-            PartType.objects.filter(is_active=True).select_related("category").order_by("name")
+        # Деталь выбирается по названию + exact-артикулу, не только по имени.
+        self.fields["part_type"].queryset = with_part_identity(
+            PartType.objects.filter(is_active=True).select_related("category").order_by("name"),
+            part_field="",
         )
+        self.fields["part_type"].label_from_instance = part_option_label
         self.fields["location"].queryset = StorageLocation.objects.filter(
             is_active=True, storage_allowed=True
         ).order_by("code")

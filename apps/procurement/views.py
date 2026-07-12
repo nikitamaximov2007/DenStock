@@ -11,6 +11,7 @@ from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
 from apps.accounts.permissions import ManageBatchesMixin
+from apps.inventory.presentation import attach_part_identity, with_part_identity
 
 from .forms import BatchForm, BatchLineForm
 from .models import Batch, BatchLine
@@ -68,13 +69,22 @@ class BatchDetailView(BatchAccessMixin, DetailView):
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_batches
         ctx["can_manage_inventory"] = self.request.user.can_manage_inventory
-        ctx["lines"] = self.object.lines.select_related("part_type").annotate(
-            items_made=Count("items"),
-            lots_qty=Coalesce(
-                Sum("lots__quantity"),
-                Value(Decimal("0"), output_field=DecimalField(max_digits=12, decimal_places=3)),
-            ),
+        lines = list(
+            with_part_identity(
+                self.object.lines.select_related("part_type").annotate(
+                    items_made=Count("items"),
+                    lots_qty=Coalesce(
+                        Sum("lots__quantity"),
+                        Value(
+                            Decimal("0"),
+                            output_field=DecimalField(max_digits=12, decimal_places=3),
+                        ),
+                    ),
+                )
+            )
         )
+        attach_part_identity(lines)  # exact-артикул отдельной колонкой
+        ctx["lines"] = lines
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, Batch.Status(s).label) for s in allowed]
         return ctx

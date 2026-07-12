@@ -12,6 +12,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.inventory.models import PartItem
+from apps.inventory.presentation import (
+    attach_document_composition,
+    attach_part_identity,
+    lines_with_identity_prefetch,
+    with_part_identity,
+)
 
 from .forms import (
     AddItemForm,
@@ -69,14 +75,20 @@ def _resolve_item(code: str):
 @login_required
 def reservation_list(request):
     status = request.GET.get("status", "")
-    qs = Reservation.objects.select_related("created_by").order_by("-created_at")
+    qs = (
+        Reservation.objects.select_related("created_by")
+        .prefetch_related(lines_with_identity_prefetch(ReservationLine))
+        .order_by("-created_at")
+    )
     if status:
         qs = qs.filter(status=status)
+    reservations = list(qs[:100])
+    attach_document_composition(reservations)  # состав: первая позиция + «ещё N»
     return render(
         request,
         "sales/reservation_list.html",
         {
-            "reservations": qs[:100],
+            "reservations": reservations,
             "status": status,
             "statuses": Reservation.Status.choices,
             "can_manage": request.user.can_manage_reservations,
@@ -87,13 +99,18 @@ def reservation_list(request):
 @login_required
 def reservation_detail(request, pk):
     reservation = get_object_or_404(Reservation.objects.select_related("created_by"), pk=pk)
-    lines = reservation.lines.select_related(
-        "part_type",
-        "part_item",
-        "part_item__current_location",
-        "stock_lot",
-        "stock_lot__location",
+    lines = list(
+        with_part_identity(
+            reservation.lines.select_related(
+                "part_type",
+                "part_item",
+                "part_item__current_location",
+                "stock_lot",
+                "stock_lot__location",
+            )
+        )
     )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_open = reservation.status in (Reservation.Status.DRAFT, Reservation.Status.ACTIVE)
     return render(
         request,
@@ -222,14 +239,20 @@ def reservation_cancel(request, pk):
 @login_required
 def sale_list(request):
     status = request.GET.get("status", "")
-    qs = Sale.objects.select_related("sold_by").order_by("-created_at")
+    qs = (
+        Sale.objects.select_related("sold_by")
+        .prefetch_related(lines_with_identity_prefetch(SaleLine))
+        .order_by("-created_at")
+    )
     if status:
         qs = qs.filter(status=status)
+    sales = list(qs[:100])
+    attach_document_composition(sales)  # состав: первая позиция + «ещё N»
     return render(
         request,
         "sales/sale_list.html",
         {
-            "sales": qs[:100],
+            "sales": sales,
             "status": status,
             "statuses": Sale.Status.choices,
             "can_sell": request.user.can_manage_sales,
@@ -241,13 +264,18 @@ def sale_list(request):
 @login_required
 def sale_detail(request, pk):
     sale = get_object_or_404(Sale.objects.select_related("sold_by", "reservation"), pk=pk)
-    lines = sale.lines.select_related(
-        "part_type",
-        "part_item",
-        "part_item__current_location",
-        "stock_lot",
-        "stock_lot__location",
+    lines = list(
+        with_part_identity(
+            sale.lines.select_related(
+                "part_type",
+                "part_item",
+                "part_item__current_location",
+                "stock_lot",
+                "stock_lot__location",
+            )
+        )
     )
+    attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_draft = sale.status == Sale.Status.DRAFT
     return render(
         request,

@@ -1,7 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Лот {{ lot.pk }} · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Лот {{ lot.part_type }}</h1>
+  <h1 class="page-title">Лот #{{ lot.pk }}: {{ lot.part_type.name }}</h1>
+  <p class="page-subtitle">
+    {% if part_exact_number %}
+      Артикул: <span class="code-pill">{{ part_exact_number }}</span>
+    {% else %}
+      Артикул: <span class="muted">не указан</span>
+    {% endif %}
+  </p>
   <p>
     <a href="{% url 'lot_list' %}">← К списку лотов</a>
     {% if can_manage %}· <a href="{% url 'lot_edit' lot.pk %}">Изменить</a>{% endif %}
@@ -12,8 +19,20 @@
   <table class="table">
     <tbody>
       <tr>
-        <th>Деталь</th>
-        <td>{{ lot.part_type }}</td>
+        <th>Название детали</th>
+        <td>
+          <a href="{% url 'part_detail' lot.part_type_id %}">{{ lot.part_type.name }}</a>
+        </td>
+      </tr>
+      <tr>
+        <th>Артикул</th>
+        <td>
+          {% if part_exact_number %}
+            <span class="code-pill">{{ part_exact_number }}</span>
+          {% else %}
+            <span class="muted">не указан</span>
+          {% endif %}
+        </td>
       </tr>
       <tr>
         <th>Ячейка</th>

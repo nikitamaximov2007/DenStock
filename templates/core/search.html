@@ -96,20 +96,23 @@
       <h2>
         <a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a>
       </h2>
-      <p class="muted">
-        {{ row.part.category }}
-        {% if row.part.manufacturer %}· {{ row.part.manufacturer }}{% endif %}
-        · {{ row.part.get_tracking_mode_display }}
-        {% with nums=row.part.numbers.all %}
-          {% if nums %}
-            ·
-            {% for n in nums|slice:":3" %}
-              {{ n.value }}
-              {% if not forloop.last %},{% endif %}
-            {% endfor %}
-          {% endif %}
-        {% endwith %}
+      <p>
+        Артикул:
+        {% if row.exact_number %}
+          <span class="code-pill">{{ row.exact_number }}</span>
+        {% else %}
+          <span class="muted">не указан</span>
+        {% endif %}
+        {% if row.manufacturer %}· {{ row.manufacturer }}{% endif %}
+        {% if row.analogs %}
+          · Аналоги:
+          {% for a in row.analogs|slice:":3" %}
+            <span class="muted">{{ a }}</span>
+            {% if not forloop.last %},{% endif %}
+          {% endfor %}
+        {% endif %}
       </p>
+      <p class="muted">{{ row.part.category }} · {{ row.part.get_tracking_mode_display }}</p>
       <p class="search-result__avail">
         Доступно: <strong>{{ row.available|floatformat:"-3" }}</strong> · всего:
         {{ row.physical|floatformat:"-3" }}

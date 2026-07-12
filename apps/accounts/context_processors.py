@@ -72,7 +72,7 @@ def _nav_items(user):
     if user.can_manage_parts:
         add({"label": "Настройки цен", "url": reverse("price_settings"), "stub": False,
              "icon": "gauge", "group": "Каталог"})
-    add({"label": "Склад", "url": reverse("warehouse_index"), "stub": False,
+    add({"label": "Структура склада", "url": reverse("warehouse_index"), "stub": False,
          "icon": "warehouse", "group": "Склад"})
     if user.can_view_finance:
         add({"label": "Статистика", "url": reverse("statistics_dashboard"), "stub": False,
