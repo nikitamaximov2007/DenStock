@@ -4,7 +4,7 @@
   <h1 class="page-title">{{ title }}</h1>
   {% if line %}
     <p class="muted">
-      Партия {{ line.batch.number }} · {{ line.part_type }} · количество {{ line.quantity }} ·
+      Партия {{ line.batch.number }} · {{ line.part_type }} · количество {{ line.quantity|quantity_int }} ·
       остаток для распределения {{ remaining }}
     </p>
   {% endif %}

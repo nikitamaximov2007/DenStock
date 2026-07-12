@@ -2,7 +2,7 @@
 {% block title %}{{ title }} · DenisStock{% endblock %}
 {% block content %}
   <h1 class="page-title">{{ title }}</h1>
-  <p class="muted">Текущее количество: {{ lot.quantity }} · ячейка {{ lot.location.code }}</p>
+  <p class="muted">Текущее количество: {{ lot.quantity|quantity_int }} · ячейка {{ lot.location.code }}</p>
   <p>
     <a href="{{ back_url }}">← Назад</a>
   </p>

@@ -69,17 +69,17 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>{{ line.quantity|quantity_int }}</td>
           <td>
-            {{ line.unit_price }}
+            {{ line.unit_price|money_int }}
             {% if line.part_type.min_price and line.unit_price < line.part_type.min_price %}
-              <span class="muted">(ниже мин. {{ line.part_type.min_price }})</span>
+              <span class="muted">(ниже мин. {{ line.part_type.min_price|money_int }})</span>
             {% endif %}
           </td>
-          <td>{{ line.total_price }}</td>
+          <td>{{ line.total_price|money_int }}</td>
           {% if show_costs %}
-            <td>{{ line.total_cost_rub }}</td>
-            <td>{{ line.profit_rub }}</td>
+            <td>{{ line.total_cost_rub|money_int }}</td>
+            <td>{{ line.profit_rub|money_int }}</td>
           {% endif %}
           <td>{% include "partials/_line_source.html" %}</td>
           {% if can_sell and is_draft %}
@@ -104,16 +104,16 @@
     <tbody>
       <tr>
         <th>Выручка</th>
-        <td>{{ sale.revenue_total }} ₽</td>
+        <td>{{ sale.revenue_total|money_int }} ₽</td>
       </tr>
       {% if show_costs %}
         <tr>
           <th>Себестоимость</th>
-          <td>{{ sale.cost_total }} ₽</td>
+          <td>{{ sale.cost_total|money_int }} ₽</td>
         </tr>
         <tr>
           <th>Прибыль</th>
-          <td>{{ sale.profit_total }} ₽</td>
+          <td>{{ sale.profit_total|money_int }} ₽</td>
         </tr>
       {% endif %}
     </tbody>

@@ -74,10 +74,10 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>{{ line.quantity|quantity_int }}</td>
           {% if show_costs %}
-            <td>{{ line.unit_cost_rub }}</td>
-            <td>{{ line.total_cost_rub }}</td>
+            <td>{{ line.unit_cost_rub|money_int }}</td>
+            <td>{{ line.total_cost_rub|money_int }}</td>
           {% endif %}
           <td>{% include "partials/_line_source.html" %}</td>
           {% if can_manage and is_draft %}
@@ -103,7 +103,7 @@
       <tbody>
         <tr>
           <th>Себестоимость выданного</th>
-          <td>{{ order.cost_total }} ₽</td>
+          <td>{{ order.cost_total|money_int }} ₽</td>
         </tr>
       </tbody>
     </table>

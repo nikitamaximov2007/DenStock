@@ -70,7 +70,7 @@
                 ·
               {% endif %}
             </td>
-            {% if show_costs %}<td class="num--money">{{ item.landed_cost_rub }}</td>{% endif %}
+            {% if show_costs %}<td class="num--money">{{ item.landed_cost_rub|money_int }}</td>{% endif %}
           </tr>
         {% endfor %}
       </tbody>

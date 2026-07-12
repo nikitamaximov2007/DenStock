@@ -41,11 +41,11 @@
             <strong>{{ overview.part.name }}</strong>
             · Цена клиента:
             {% if overview.part.recommended_price %}
-              {{ overview.part.recommended_price|floatformat:"0" }} ₽
+              {{ overview.part.recommended_price|money_int }} ₽
             {% else %}
               не указана
             {% endif %}
-            · Доступно всего: {{ overview.total_available|floatformat:"-3" }}
+            · Доступно всего: {{ overview.total_available|quantity_int }}
           </p>
           {% if overview.unit_items %}
             <p class="muted">
@@ -86,10 +86,10 @@
                           <span class="code-pill">{{ row.location.code }}</span>
                         </label>
                       </td>
-                      <td class="num--qty">{{ row.physical|floatformat:"-3" }}</td>
-                      <td class="num--qty">{{ row.reserved|floatformat:"-3" }}</td>
+                      <td class="num--qty">{{ row.physical|quantity_int }}</td>
+                      <td class="num--qty">{{ row.reserved|quantity_int }}</td>
                       <td class="num--qty">
-                        <strong>{{ row.available|floatformat:"-3" }}</strong>
+                        <strong>{{ row.available|quantity_int }}</strong>
                       </td>
                     </tr>
                   {% endfor %}

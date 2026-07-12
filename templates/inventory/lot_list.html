@@ -59,14 +59,14 @@
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td class="num--qty">{{ lot.quantity }}</td>
+            <td class="num--qty">{{ lot.quantity|quantity_int }}</td>
             <td>{{ lot.location.code }}</td>
             <td>{{ lot.get_status_display }}</td>
             <td>{{ lot.batch.number }}</td>
             <td>
               <a class="muted" href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
             </td>
-            {% if show_costs %}<td class="num--money">{{ lot.landed_unit_cost_rub }}</td>{% endif %}
+            {% if show_costs %}<td class="num--money">{{ lot.landed_unit_cost_rub|money_int }}</td>{% endif %}
           </tr>
         {% endfor %}
       </tbody>

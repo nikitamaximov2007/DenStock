@@ -112,12 +112,12 @@
             <td>
               <a href="{% url 'part_detail' a.part_type_id %}">{{ a.part_name|default:a.part_type.name }}</a>
             </td>
-            <td class="num--qty">{{ a.quantity|floatformat:"-3" }}</td>
+            <td class="num--qty">{{ a.quantity|quantity_int }}</td>
             <td>
               <span class="code-pill">{{ a.location_code|default:a.location.code }}</span>
             </td>
-            <td class="num--money">{{ a.unit_price_rub|floatformat:"0" }}</td>
-            <td class="num--money">{{ a.total_price_rub|floatformat:"0" }}</td>
+            <td class="num--money">{{ a.unit_price_rub|money_int }}</td>
+            <td class="num--money">{{ a.total_price_rub|money_int }}</td>
             <td>{{ a.customer_comment }}</td>
             <td>{{ a.created_by|default:"·" }}</td>
             <td>
@@ -145,10 +145,10 @@
       <tfoot>
         <tr>
           <th colspan="4">Итого</th>
-          <th class="num--qty">{{ totals.quantity|floatformat:"-3" }}</th>
+          <th class="num--qty">{{ totals.quantity|quantity_int }}</th>
           <th></th>
           <th></th>
-          <th class="num--money">{{ totals.value|floatformat:"0" }}</th>
+          <th class="num--money">{{ totals.value|money_int }}</th>
           <th colspan="{% if can_cancel %}4{% else %}3{% endif %}"></th>
         </tr>
       </tfoot>
@@ -231,7 +231,7 @@
                 <td>{{ row.manufacturer }}</td>
                 <td><span class="code-pill">{{ row.number }}</span></td>
                 <td>{{ row.name_ru }}</td>
-                <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+                <td class="num--qty">{{ row.quantity|quantity_int }}</td>
                 <td>{{ row.application_area|default:"не заполнено" }}</td>
                 <td class="num--qty">{{ row.gross_weight_kg|floatformat:3|default:"не заполнено" }}</td>
                 <td class="num--qty">{{ row.net_weight_kg|floatformat:3|default:"не заполнено" }}</td>

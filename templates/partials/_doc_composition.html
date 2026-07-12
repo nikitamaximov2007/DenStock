@@ -5,7 +5,7 @@
 {% if doc.first_part_name %}
   <a href="{% url 'part_detail' doc.first_part_id %}">{{ doc.first_part_name }}</a>
   {% if doc.first_part_number %}· <span class="code-pill">{{ doc.first_part_number }}</span>{% endif %}
-  × {{ doc.first_qty|floatformat:"-3" }}
+  × {{ doc.first_qty|quantity_int }}
   {% if doc.more_lines_label %}
     <br>
     <span class="muted">{{ doc.more_lines_label }}</span>

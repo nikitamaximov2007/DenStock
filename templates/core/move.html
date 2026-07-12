@@ -28,7 +28,7 @@
               Экземпляр {{ object.internal_number }} · {{ object.part_type }}
               ({{ object.get_status_display }})
             {% else %}
-              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity }}
+              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity|quantity_int }}
               ({{ object.get_status_display }}), перемещается целиком
             {% endif %}
           </td>
@@ -123,7 +123,7 @@
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td>{{ lot.quantity }}</td>
+            <td>{{ lot.quantity|quantity_int }}</td>
             <td>{{ lot.batch.number }}</td>
             <td>{{ lot.location.code }}</td>
             <td>
@@ -175,7 +175,7 @@
             {% endif %}
           </td>
           {% if show_costs %}
-            <td>{{ m.total_cost_rub }}</td>
+            <td>{{ m.total_cost_rub|money_int }}</td>
           {% endif %}
         </tr>
       {% empty %}

@@ -51,11 +51,11 @@
     </div>
     <div class="tile">
       <div class="tile__label">Итоговое количество</div>
-      <div class="tile__value">{{ counters.total_quantity|floatformat:"-3" }}</div>
+      <div class="tile__value">{{ counters.total_quantity|quantity_int }}</div>
     </div>
     <a class="tile tile--link" href="#value-breakdown">
       <div class="tile__label">Стоимость ячейки</div>
-      <div class="tile__value">{{ counters.total_value|floatformat:"0" }} ₽</div>
+      <div class="tile__value">{{ counters.total_value|money_int }} ₽</div>
       <div class="tile__hint">Нажмите для расчёта</div>
     </a>
     <div class="tile">
@@ -187,12 +187,12 @@
                   <button type="submit">OK</button>
                 </form>
               {% else %}
-                {{ line.quantity_counted|floatformat:"-3" }}
+                {{ line.quantity_counted|quantity_int }}
               {% endif %}
             </td>
             <td class="num--money">
               {% if line.final_customer_price_rub is not None %}
-                {{ line.final_customer_price_rub|floatformat:"0" }}
+                {{ line.final_customer_price_rub|money_int }}
               {% else %}
                 ·
               {% endif %}
@@ -245,8 +245,8 @@
       <p>
         Ячейка: <span class="code-pill">{{ session.full_address }}</span>
         · Всего позиций: {{ breakdown.positions_count }}
-        · Всего деталей: {{ breakdown.total_quantity|floatformat:"-3" }}
-        · Итоговая стоимость: {{ breakdown.total_value_rub|floatformat:"0" }} ₽
+        · Всего деталей: {{ breakdown.total_quantity|quantity_int }}
+        · Итоговая стоимость: {{ breakdown.total_value_rub|money_int }} ₽
       </p>
       {% if breakdown.rows %}
         <form method="get"
@@ -287,14 +287,14 @@
                   </td>
                   <td>{{ row.name }}</td>
                   <td>{{ row.source_label }}</td>
-                  <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+                  <td class="num--qty">{{ row.quantity|quantity_int }}</td>
                   <td class="num--money">
-                    {{ row.customer_price_rub|floatformat:"0" }} ₽
+                    {{ row.customer_price_rub|money_int }} ₽
                     {% if not row.customer_price_rub %}<span class="pill pill--warning">цена 0</span>{% endif %}
                   </td>
-                  <td class="num--money">{{ row.quantity|floatformat:"-3" }} × {{ row.customer_price_rub|floatformat:"0" }} ₽</td>
+                  <td class="num--money">{{ row.quantity|quantity_int }} × {{ row.customer_price_rub|money_int }} ₽</td>
                   <td class="num--money">
-                    <strong>{{ row.line_total_rub|floatformat:"0" }} ₽</strong>
+                    <strong>{{ row.line_total_rub|money_int }} ₽</strong>
                   </td>
                 </tr>
               {% endfor %}
@@ -303,7 +303,7 @@
         </div>
         <div class="value-total">
           <div class="value-total__formula">Сумма строк</div>
-          <div class="value-total__sum">Итого: {{ breakdown.total_value_rub|floatformat:"0" }} ₽</div>
+          <div class="value-total__sum">Итого: {{ breakdown.total_value_rub|money_int }} ₽</div>
           <div class="value-total__formula">Итого = сумма всех строк: количество × цена клиента</div>
         </div>
       {% else %}

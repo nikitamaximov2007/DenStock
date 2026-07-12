@@ -40,12 +40,12 @@
         </p>
       {% endif %}
       <p class="muted">
-        Позиций: {{ totals.lines }} · Количество: {{ totals.quantity|floatformat:"-3" }}
+        Позиций: {{ totals.lines }} · Количество: {{ totals.quantity|quantity_int }}
         {% if show_costs %}
           {% if is_counting_receipt %}
-            · Сумма оценки: {{ totals.cost }} ₽
+            · Сумма оценки: {{ totals.cost|money_int }} ₽
           {% else %}
-            · Сумма себестоимости: {{ totals.cost }} ₽
+            · Сумма себестоимости: {{ totals.cost|money_int }} ₽
           {% endif %}
         {% endif %}
       </p>
@@ -79,9 +79,9 @@
           <tr>
             {% include "partials/_line_part_cells.html" %}
             <td>{{ line.part_type.get_tracking_mode_display }}</td>
-            <td class="num--qty">{{ line.quantity|floatformat:"-3" }}</td>
-            <td class="num--money">{{ line.unit_cost_rub }}</td>
-            <td class="num--money">{{ line.total_cost_rub|floatformat:2 }}</td>
+            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+            <td class="num--money">{{ line.unit_cost_rub|money_int }}</td>
+            <td class="num--money">{{ line.total_cost_rub|money_int }}</td>
             <td>
               <span class="code-pill">{{ line.location.code }}</span>
             </td>
@@ -224,7 +224,7 @@
                       <span class="muted">не указан</span>
                     {% endif %}
                   </td>
-                  <td class="num--qty">{{ lot.quantity|floatformat:"-3" }}</td>
+                  <td class="num--qty">{{ lot.quantity|quantity_int }}</td>
                   <td>{{ lot.get_status_display }}</td>
                   <td>
                     <span class="code-pill">{{ lot.location.code }}</span>

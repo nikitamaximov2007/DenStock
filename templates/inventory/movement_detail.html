@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% load number_format %}
 {% block title %}Движение #{{ movement.pk }} · DenisStock{% endblock %}
 {% block content %}
   <h1 class="page-title">Движение #{{ movement.pk }}</h1>
@@ -36,7 +35,7 @@
       </tr>
       <tr>
         <th>Количество</th>
-        <td>{{ movement.quantity|quantity_number }}</td>
+        <td>{{ movement.quantity|quantity_int }}</td>
       </tr>
       <tr>
         <th>Откуда</th>
@@ -71,11 +70,11 @@
       {% if show_costs %}
         <tr>
           <th>Себестоимость за ед.</th>
-          <td>{{ movement.unit_cost_rub|whole_number }} ₽</td>
+          <td>{{ movement.unit_cost_rub|money_int }} ₽</td>
         </tr>
         <tr>
           <th>Себестоимость движения</th>
-          <td>{{ movement.total_cost_rub|whole_number }} ₽</td>
+          <td>{{ movement.total_cost_rub|money_int }} ₽</td>
         </tr>
       {% endif %}
       <tr>

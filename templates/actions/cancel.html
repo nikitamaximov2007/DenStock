@@ -30,7 +30,7 @@
           </tr>
           <tr>
             <th>Количество</th>
-            <td>{{ action.quantity|floatformat:"-3" }}</td>
+            <td>{{ action.quantity|quantity_int }}</td>
           </tr>
           <tr>
             <th>Клиент / комментарий</th>
@@ -38,7 +38,7 @@
           </tr>
           <tr>
             <th>Сумма</th>
-            <td>{{ action.total_price_rub|floatformat:"0" }} ₽</td>
+            <td>{{ action.total_price_rub|money_int }} ₽</td>
           </tr>
           <tr>
             <th>Документ</th>

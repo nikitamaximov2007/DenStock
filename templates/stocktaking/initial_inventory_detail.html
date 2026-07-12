@@ -27,8 +27,8 @@
       </p>
       <p>
         Позиций: {{ breakdown.positions_count }}
-        · Итоговое количество: {{ breakdown.total_quantity|floatformat:"-3" }}
-        · Сумма оценки: <strong>{{ breakdown.total_value_rub|floatformat:"0" }} ₽</strong>
+        · Итоговое количество: {{ breakdown.total_quantity|quantity_int }}
+        · Сумма оценки: <strong>{{ breakdown.total_value_rub|money_int }} ₽</strong>
       </p>
     </div>
   </div>
@@ -57,13 +57,13 @@
             <td>
               <span class="code-pill">{{ session.full_address }}</span>
             </td>
-            <td class="num--qty">{{ row.quantity|floatformat:"-3" }}</td>
+            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
             <td class="num--money">
-              {{ row.customer_price_rub|floatformat:"0" }}
+              {{ row.customer_price_rub|money_int }}
               {% if not row.customer_price_rub %}<span class="pill pill--warning">цена 0</span>{% endif %}
             </td>
             <td class="num--money">
-              <strong>{{ row.line_total_rub|floatformat:"0" }}</strong>
+              <strong>{{ row.line_total_rub|money_int }}</strong>
             </td>
             <td>
               <span class="pill pill--success">Найдено</span>
@@ -74,9 +74,9 @@
       <tfoot>
         <tr>
           <th colspan="4">Итого</th>
-          <th class="num--qty">{{ breakdown.total_quantity|floatformat:"-3" }}</th>
+          <th class="num--qty">{{ breakdown.total_quantity|quantity_int }}</th>
           <th></th>
-          <th class="num--money">{{ breakdown.total_value_rub|floatformat:"0" }} ₽</th>
+          <th class="num--money">{{ breakdown.total_value_rub|money_int }} ₽</th>
           <th></th>
         </tr>
       </tfoot>

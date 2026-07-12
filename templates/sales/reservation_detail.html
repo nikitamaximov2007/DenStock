@@ -84,7 +84,7 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity|floatformat:"-3" }}</td>
+          <td>{{ line.quantity|quantity_int }}</td>
           <td>
             {% if line.part_item %}
               {{ line.part_item.current_location.code|default:"·" }}
@@ -95,9 +95,9 @@
           {% if show_costs %}
             <td>
               {% if line.part_item %}
-                {{ line.part_item.landed_cost_rub }}
+                {{ line.part_item.landed_cost_rub|money_int }}
               {% else %}
-                {{ line.stock_lot.landed_unit_cost_rub }}
+                {{ line.stock_lot.landed_unit_cost_rub|money_int }}
               {% endif %}
             </td>
           {% endif %}

@@ -31,15 +31,15 @@
         </tr>
         <tr>
           <th>Сумма товаров</th>
-          <td>{{ batch.goods_total }}</td>
+          <td>{{ batch.goods_total|money_int }}</td>
         </tr>
         <tr>
           <th>Доставка / Таможня / Комиссии / Прочие</th>
-          <td>{{ batch.shipping_cost }} / {{ batch.customs_cost }} / {{ batch.commission_cost }} / {{ batch.other_cost }}</td>
+          <td>{{ batch.shipping_cost|money_int }} / {{ batch.customs_cost|money_int }} / {{ batch.commission_cost|money_int }} / {{ batch.other_cost|money_int }}</td>
         </tr>
         <tr>
           <th>Доп. расходы всего</th>
-          <td>{{ batch.total_extra_cost }}</td>
+          <td>{{ batch.total_extra_cost|money_int }}</td>
         </tr>
       {% endif %}
       <tr>
@@ -108,12 +108,12 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity }}</td>
+          <td>{{ line.quantity|quantity_int }}</td>
           {% if show_costs %}
-            <td>{{ line.unit_cost_currency }} {{ batch.currency }} / {{ line.unit_cost_rub }} ₽</td>
-            <td>{{ line.total_cost_rub }} ₽</td>
+            <td>{{ line.unit_cost_currency }} {{ batch.currency }} / {{ line.unit_cost_rub|money_int }} ₽</td>
+            <td>{{ line.total_cost_rub|money_int }} ₽</td>
           {% endif %}
-          {% if show_costs and batch.cost_finalized %}<td>{{ line.landed_total_cost_rub }} ₽</td>{% endif %}
+          {% if show_costs and batch.cost_finalized %}<td>{{ line.landed_total_cost_rub|money_int }} ₽</td>{% endif %}
           {% if can_manage %}
             <td>
               {% if batch.lines_editable %}
@@ -158,7 +158,7 @@
           {% if line.part_type.tracking_mode == "serial" %}
             <tr>
               {% include "partials/_line_part_cells.html" %}
-              <td>{{ line.items_made }} из {{ line.quantity|floatformat:0 }}</td>
+              <td>{{ line.items_made }} из {{ line.quantity|quantity_int }}</td>
               {% if can_manage_inventory %}
                 <td>
                   {% if line.items_made < line.quantity %}
@@ -193,7 +193,7 @@
           {% if line.part_type.tracking_mode == "bulk" %}
             <tr>
               {% include "partials/_line_part_cells.html" %}
-              <td>{{ line.lots_qty|floatformat:3 }} из {{ line.quantity|floatformat:3 }}</td>
+              <td>{{ line.lots_qty|quantity_int }} из {{ line.quantity|quantity_int }}</td>
               {% if can_manage_inventory %}
                 <td>
                   {% if line.lots_qty < line.quantity %}

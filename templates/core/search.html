@@ -114,14 +114,14 @@
       </p>
       <p class="muted">{{ row.part.category }} · {{ row.part.get_tracking_mode_display }}</p>
       <p class="search-result__avail">
-        Доступно: <strong>{{ row.available|floatformat:"-3" }}</strong> · всего:
-        {{ row.physical|floatformat:"-3" }}
-        {% if row.reserved %}· зарезервировано: {{ row.reserved|floatformat:"-3" }}{% endif %}
-        {% if row.receiving %}· на приёмке: {{ row.receiving|floatformat:"-3" }}{% endif %}
+        Доступно: <strong>{{ row.available|quantity_int }}</strong> · всего:
+        {{ row.physical|quantity_int }}
+        {% if row.reserved %}· зарезервировано: {{ row.reserved|quantity_int }}{% endif %}
+        {% if row.receiving %}· на приёмке: {{ row.receiving|quantity_int }}{% endif %}
       </p>
       <p>
-        Цена продажи: рек. {{ row.part.recommended_price|default:"·" }} · мин.
-        {{ row.part.min_price|default:"·" }}
+        Цена продажи: рек. {{ row.part.recommended_price|money_int }} · мин.
+        {{ row.part.min_price|money_int }}
       </p>
       <p>
         Ячейки: {{ row.locations|join:", "|default:"·" }} · Партии:
@@ -165,7 +165,7 @@
                   </td>
                   <td>{{ it.batch.number }}</td>
                   <td>{{ it.serial_number|default:"·" }}</td>
-                  {% if show_costs %}<td>{{ it.landed_cost_rub }}</td>{% endif %}
+                  {% if show_costs %}<td>{{ it.landed_cost_rub|money_int }}</td>{% endif %}
                 </tr>
               {% endfor %}
             </tbody>
@@ -189,11 +189,11 @@
                   <td>
                     <a href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>
                   </td>
-                  <td>{{ lot.quantity|floatformat:"-3" }}</td>
+                  <td>{{ lot.quantity|quantity_int }}</td>
                   <td>{{ lot.get_status_display }}</td>
                   <td>{{ lot.location.code }}</td>
                   <td>{{ lot.batch.number }}</td>
-                  {% if show_costs %}<td>{{ lot.landed_unit_cost_rub }}</td>{% endif %}
+                  {% if show_costs %}<td>{{ lot.landed_unit_cost_rub|money_int }}</td>{% endif %}
                 </tr>
               {% endfor %}
             </tbody>

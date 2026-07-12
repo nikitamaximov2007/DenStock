@@ -233,7 +233,7 @@ def test_landed_sums_hidden_from_storekeeper(make_user, client, refs):
     client.logout()
     client.login(username="admin", password=PASSWORD)
     admin_html = client.get(reverse("batch_detail", args=[batch.pk])).content.decode()
-    assert "372000" in admin_html
+    assert "372 000" in admin_html
 
 
 def test_lines_immutable_after_finalize(make_user, client, refs):

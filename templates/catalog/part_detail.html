@@ -43,11 +43,11 @@
       </tr>
       <tr>
         <th>Рекомендуемая цена</th>
-        <td>{{ part.recommended_price|default:"·" }}</td>
+        <td>{{ part.recommended_price|money_int }}</td>
       </tr>
       <tr>
         <th>Минимальная цена</th>
-        <td>{{ part.min_price|default:"·" }}</td>
+        <td>{{ part.min_price|money_int }}</td>
       </tr>
       <tr>
         <th>Минимальный остаток</th>

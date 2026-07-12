@@ -16,6 +16,7 @@ from django.urls import reverse
 from django.utils.http import urlencode
 
 from apps.catalog.models import PartType
+from apps.core.templatetags.number_format import quantity_int
 from apps.warehouse.models import StorageLocation
 
 from .models import PartCustomsInfo, WarehouseAction
@@ -130,7 +131,7 @@ def actions_perform(request):
     except ActionError as exc:
         messages.error(request, str(exc))
         return redirect(back)
-    qty = format(action.quantity.normalize(), "f")
+    qty = quantity_int(action.quantity)
     # Идентификация детали в подтверждении: название + exact-артикул из
     # снимка действия — не внутренний лот.
     identity = action.part_name or str(part)
@@ -223,7 +224,7 @@ def actions_cancel(request, pk):
             return redirect("actions_cancel", pk=pk)
         messages.success(
             request,
-            f"Продажа отменена, остаток {action.quantity.normalize():f} шт "
+            f"Продажа отменена, остаток {quantity_int(action.quantity)} шт "
             f"возвращён в ячейку {action.location_code or action.location.code}.",
         )
         return redirect("actions_report")
