@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 
+from tools.research.wst.state import WSTState
 from tools.research.wst.video_frames import parse_scene_timestamps, periodic_timestamps
 from tools.research.wst.video_transcriber import (
     deduplicate_overlap,
@@ -53,6 +55,61 @@ def test_scene_and_periodic_timestamps() -> None:
         Decimal("0.000"),
         Decimal("1.500"),
     ]
+
+
+def test_transcription_resume_skips_completed_local_chunk(tmp_path, monkeypatch) -> None:
+    from tools.research.wst import video_transcriber
+
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"audio")
+    calls: list[Path] = []
+
+    def fake_extract(_audio, _start, _end, directory, number):
+        path = directory / f"{number}.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"chunk")
+        return path
+
+    def fake_transcribe(path, **_kwargs):
+        calls.append(path)
+        return [{"start": "0", "end": "1", "text": path.stem}]
+
+    monkeypatch.setattr(video_transcriber, "extract_audio_chunk", fake_extract)
+    monkeypatch.setattr(video_transcriber, "transcribe_audio", fake_transcribe)
+    with WSTState(tmp_path / "state.sqlite3") as state:
+        first, first_results = video_transcriber.transcribe_in_chunks(
+            audio,
+            Decimal("11"),
+            tmp_path / "tmp",
+            model_name="small",
+            device="cpu",
+            compute_type="int8",
+            chunk_seconds=5,
+            overlap_seconds=0,
+            state=state,
+            message_id=9,
+            artifact_dir=tmp_path / "artifacts",
+            stop_after_completed=1,
+        )
+        second, second_results = video_transcriber.transcribe_in_chunks(
+            audio,
+            Decimal("11"),
+            tmp_path / "tmp",
+            model_name="small",
+            device="cpu",
+            compute_type="int8",
+            chunk_seconds=5,
+            overlap_seconds=0,
+            state=state,
+            message_id=9,
+            artifact_dir=tmp_path / "artifacts",
+        )
+
+    assert len(first) == 1
+    assert first_results[1]["status"] == "pending"
+    assert second_results[0]["skipped_completed"] is True
+    assert len(second) == 3
+    assert len(calls) == 3
     assert periodic_timestamps(Decimal("601"), 300) == [
         Decimal("0"),
         Decimal("300"),

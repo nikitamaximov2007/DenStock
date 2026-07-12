@@ -26,6 +26,7 @@ def process_media_record(
     ocr_languages: str,
     chunk_seconds: int = 900,
     overlap_seconds: int = 20,
+    stop_after_transcript_chunks: int | None = None,
 ) -> dict[str, Any]:
     """Recover independent audio and visual evidence without deleting successful stages."""
     message_id = int(item["message_id"])
@@ -90,7 +91,6 @@ def process_media_record(
         message_id, "metadata_checked", backend="ffprobe", diagnostics=integrity.metadata
     )
 
-    visual = _process_visual(message_id, working, integrity.metadata, paths, ocr_languages, state)
     audio = _process_audio(
         message_id,
         working,
@@ -102,13 +102,26 @@ def process_media_record(
         state,
         chunk_seconds,
         overlap_seconds,
+        stop_after_transcript_chunks,
     )
+    if audio.get("paused"):
+        state.finish_stage(
+            message_id,
+            "evidence_built",
+            status="partial",
+            artifacts=audio["artifacts"],
+            diagnostics={"audio": audio},
+            next_action="Rerun process to resume from the next pending transcript chunk.",
+        )
+        return {"message_id": message_id, "status": "partial", "audio": audio}
+    visual = _process_visual(message_id, working, integrity.metadata, paths, ocr_languages, state)
     status = "complete" if visual["complete"] and audio["complete"] else "partial"
+    evidence_path = _write_video_evidence(message_id, paths)
     state.finish_stage(
         message_id,
         "evidence_built",
         status=status,
-        artifacts=visual["artifacts"] + audio["artifacts"],
+        artifacts=[str(evidence_path), *visual["artifacts"], *audio["artifacts"]],
         diagnostics={"visual": visual, "audio": audio},
         next_action="Run retry-media for pending stages." if status == "partial" else "",
     )
@@ -126,6 +139,7 @@ def _process_audio(
     state: WSTState,
     chunk_seconds: int,
     overlap_seconds: int,
+    stop_after_transcript_chunks: int | None,
 ) -> dict[str, Any]:
     state.begin_stage(message_id, "audio_extracted", backend="ffmpeg")
     if not metadata.get("audio_streams"):
@@ -170,8 +184,14 @@ def _process_audio(
                 compute_type=compute_type,
                 chunk_seconds=chunk_seconds,
                 overlap_seconds=overlap_seconds,
+                state=state,
+                message_id=message_id,
+                artifact_dir=paths["state"] / "transcript_chunks",
+                stop_after_completed=stop_after_transcript_chunks,
             )
             failed_chunks = [item for item in chunk_results if item["status"] != "complete"]
+            skipped_completed = sum(bool(item.get("skipped_completed")) for item in chunk_results)
+            paused = any(item.get("reason") == "intentional_pause" for item in chunk_results)
             json_path, markdown_path = write_transcript(
                 message_id, metadata["duration_seconds"], segments, paths["transcripts"]
             )
@@ -185,6 +205,21 @@ def _process_audio(
                     "segment_count": len(segments),
                     "audio_stream": audio_paths.index(audio_path),
                     "chunks": chunk_results,
+                    "total_chunks": len(chunk_results),
+                    "completed_chunks": len(chunk_results) - len(failed_chunks),
+                    "pending_chunks": sum(item["status"] == "pending" for item in chunk_results),
+                    "failed_chunks": sum(
+                        item["status"] == "retry_pending" for item in chunk_results
+                    ),
+                    "resumed_from_chunk": next(
+                        (
+                            item["chunk_id"]
+                            for item in chunk_results
+                            if not item.get("skipped_completed")
+                        ),
+                        None,
+                    ),
+                    "skipped_completed_chunks": skipped_completed,
                 },
                 next_action="Run retry-media --only-transcript-failed --retry-failed-chunks."
                 if failed_chunks
@@ -194,6 +229,8 @@ def _process_audio(
                 "complete": not failed_chunks,
                 "artifacts": [str(json_path), str(markdown_path)],
                 "failed_chunks": len(failed_chunks),
+                "paused": paused,
+                "skipped_completed_chunks": skipped_completed,
             }
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{exc.__class__.__name__}: {exc}")
@@ -223,6 +260,18 @@ def _process_visual(
     languages: str,
     state: WSTState,
 ) -> dict[str, Any]:
+    completed_ocr = state.stage_record(message_id, "ocr_created")
+    if completed_ocr and completed_ocr["status"] == "complete":
+        artifacts = [Path(path) for path in completed_ocr["artifact_paths"]]
+        if artifacts and all(path.is_file() for path in artifacts):
+            frames = state.stage_record(message_id, "frames_extracted") or {}
+            return {
+                "complete": True,
+                "artifacts": [str(path) for path in artifacts],
+                "frame_count": frames.get("diagnostic_details", {}).get("frame_count", 0),
+                "ocr_blocks": completed_ocr.get("diagnostic_details", {}).get("ocr_blocks", 0),
+                "skipped_completed": True,
+            }
     state.begin_stage(message_id, "frames_extracted", backend="ffmpeg-periodic")
     if not metadata.get("video_streams"):
         state.finish_stage(
@@ -297,3 +346,17 @@ def _process_visual(
         "frame_count": len(frames),
         "ocr_blocks": len(ocr_frames),
     }
+
+
+def _write_video_evidence(message_id: int, paths: dict[str, Path]) -> Path:
+    evidence_path = paths["extracted"] / "evidence" / f"{message_id}.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text(
+        "# WST video evidence\n\n"
+        f"Telegram post: {message_id}\n\n"
+        f"Transcript: ../transcripts/{message_id}.md\n"
+        f"OCR: ../ocr/{message_id}.md\n"
+        f"Keyframes: ../keyframes/{message_id}/\n",
+        encoding="utf-8",
+    )
+    return evidence_path

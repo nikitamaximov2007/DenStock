@@ -102,6 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     process.add_argument("--chunk-minutes", type=int, default=15)
     process.add_argument("--chunk-overlap-seconds", type=int, default=20)
     process.add_argument("--retry-failed-chunks", action="store_true")
+    process.add_argument("--stop-after-transcript-chunks", type=int)
     process.add_argument("--max-video-duration", type=int)
     process.add_argument("--skip-existing", action="store_true")
     process.add_argument("--retry-failed", action="store_true")
@@ -308,6 +309,7 @@ def process(args: argparse.Namespace) -> dict[str, Any]:
                 ocr_languages=settings.ocr_languages,
                 chunk_seconds=args.chunk_minutes * 60,
                 overlap_seconds=args.chunk_overlap_seconds,
+                stop_after_transcript_chunks=args.stop_after_transcript_chunks,
             )
             counts[result["status"]] += 1
         errors.extend(

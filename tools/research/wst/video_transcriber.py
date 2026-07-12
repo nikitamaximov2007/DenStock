@@ -7,6 +7,8 @@ from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 from typing import Any
 
+from .state import WSTState
+
 
 def decimal_seconds(value: Any) -> Decimal:
     return Decimal(str(value)).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
@@ -217,18 +219,48 @@ def transcribe_in_chunks(
     compute_type: str,
     chunk_seconds: int,
     overlap_seconds: int,
+    state: WSTState | None = None,
+    message_id: int | None = None,
+    artifact_dir: Path | None = None,
+    stop_after_completed: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     absolute_segments: list[dict[str, Any]] = []
     chunk_results: list[dict[str, Any]] = []
-    for number, (start, end) in enumerate(
-        transcription_chunks(duration, chunk_seconds, overlap_seconds), start=1
-    ):
+    plan = transcription_chunks(duration, chunk_seconds, overlap_seconds)
+    completed_this_run = 0
+    for number, (start, end) in enumerate(plan, start=1):
+        stage = f"transcript_chunk_{number:04d}"
+        artifact = _chunk_artifact_path(artifact_dir, message_id, number)
+        prior = state.stage_record(message_id, stage) if state and message_id else None
+        if prior and prior["status"] == "complete" and artifact and artifact.is_file():
+            absolute_segments.extend(_read_chunk_artifact(artifact))
+            chunk_results.append(
+                {
+                    "chunk_id": number,
+                    "status": "complete",
+                    "skipped_completed": True,
+                    "artifact": str(artifact),
+                }
+            )
+            continue
+        if stop_after_completed is not None and completed_this_run >= stop_after_completed:
+            chunk_results.extend(
+                {
+                    "chunk_id": pending_number,
+                    "status": "pending",
+                    "reason": "intentional_pause",
+                }
+                for pending_number in range(number, len(plan) + 1)
+            )
+            break
+        if state and message_id:
+            state.begin_stage(message_id, stage, backend="faster-whisper")
         chunk_path = extract_audio_chunk(audio_path, start, end, temporary_dir, number)
         try:
             segments = transcribe_audio(
                 chunk_path, model_name=model_name, device=device, compute_type=compute_type
             )
-            absolute_segments.extend(
+            absolute_chunk_segments = [
                 {
                     **segment,
                     "start": str(start + decimal_seconds(segment["start"])),
@@ -238,9 +270,35 @@ def transcribe_in_chunks(
                     "model": model_name,
                 }
                 for segment in segments
+            ]
+            absolute_segments.extend(absolute_chunk_segments)
+            if artifact:
+                _write_chunk_artifact(artifact, absolute_chunk_segments)
+            if state and message_id:
+                state.finish_stage(
+                    message_id,
+                    stage,
+                    backend="faster-whisper",
+                    artifacts=[str(artifact)] if artifact else [],
+                    diagnostics={
+                        "start": str(start),
+                        "end": str(end),
+                        "segment_count": len(segments),
+                    },
+                )
+            chunk_results.append(
+                {"chunk_id": number, "status": "complete", "artifact": str(artifact or "")}
             )
-            chunk_results.append({"chunk_id": number, "status": "complete"})
+            completed_this_run += 1
         except Exception as exc:  # noqa: BLE001
+            if state and message_id:
+                state.fail_stage(
+                    message_id,
+                    stage,
+                    exc,
+                    retry=True,
+                    next_action="Rerun process to retry this transcript chunk locally.",
+                )
             chunk_results.append(
                 {
                     "chunk_id": number,
@@ -251,3 +309,21 @@ def transcribe_in_chunks(
         finally:
             chunk_path.unlink(missing_ok=True)
     return deduplicate_overlap(absolute_segments), chunk_results
+
+
+def _chunk_artifact_path(
+    artifact_dir: Path | None, message_id: int | None, number: int
+) -> Path | None:
+    if artifact_dir is None or message_id is None:
+        return None
+    return artifact_dir / f"post-{message_id}" / f"chunk-{number:04d}.json"
+
+
+def _write_chunk_artifact(path: Path, segments: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"segments": segments}, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _read_chunk_artifact(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return list(payload.get("segments") or [])
