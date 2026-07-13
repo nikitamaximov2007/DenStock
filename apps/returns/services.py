@@ -208,9 +208,9 @@ def source_location_for_repair_line(repair_line):
 
 def _repair_source_for_legacy_line(ret, line):
     """Restore a missing repair-line link on a legacy return draft without guessing."""
-    candidates = RepairIssueLine.objects.select_for_update().select_related(
-        "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
-    ).filter(repair_order_id=ret.source_id, part_type_id=line.part_type_id)
+    candidates = RepairIssueLine.objects.filter(
+        repair_order_id=ret.source_id, part_type_id=line.part_type_id
+    )
     if line.part_item_id:
         candidates = candidates.filter(part_item_id=line.part_item_id)
     elif line.stock_lot_id:
@@ -220,26 +220,40 @@ def _repair_source_for_legacy_line(ret, line):
     else:
         raise ReturnError("Не удалось восстановить источник строки возврата из ремонта.")
 
-    sources = list(candidates[:2])
-    if len(sources) != 1:
+    source_ids = list(
+        candidates.select_for_update().order_by("pk").values_list("pk", flat=True)[:2]
+    )
+    if len(source_ids) != 1:
         raise ReturnError("Не удалось однозначно восстановить источник строки возврата из ремонта.")
-    return sources[0]
+    return RepairIssueLine.objects.select_related(
+        "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
+    ).get(pk=source_ids[0])
 
 
 def _locked_source(ret, line):
     if line.source_sale_line_id:
-        source = SaleLine.objects.select_for_update().select_related(
-            "part_item", "stock_lot", "batch_line", "part_type"
-        ).filter(pk=line.source_sale_line_id).first()
-        if source is None:
+        source_id = (
+            SaleLine.objects.select_for_update()
+            .filter(pk=line.source_sale_line_id)
+            .values_list("pk", flat=True)
+            .first()
+        )
+        if source_id is None:
             raise ReturnError("Исходная строка продажи для возврата не найдена.")
-        return source
+        return SaleLine.objects.select_related(
+            "part_item", "stock_lot", "batch_line", "part_type"
+        ).get(pk=source_id)
     if line.source_repair_line_id:
-        source = RepairIssueLine.objects.select_for_update().select_related(
-            "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
-        ).filter(pk=line.source_repair_line_id, repair_order_id=ret.source_id).first()
-        if source is not None:
-            return source
+        source_id = (
+            RepairIssueLine.objects.select_for_update()
+            .filter(pk=line.source_repair_line_id, repair_order_id=ret.source_id)
+            .values_list("pk", flat=True)
+            .first()
+        )
+        if source_id is not None:
+            return RepairIssueLine.objects.select_related(
+                "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
+            ).get(pk=source_id)
     if ret.source_type == StockReturn.SourceType.REPAIR_ORDER:
         return _repair_source_for_legacy_line(ret, line)
     raise ReturnError("Не удалось определить источник строки возврата.")
@@ -297,6 +311,21 @@ def update_return_line_restock_status(line, *, restock_status, by=None) -> Stock
 # --- Проведение --------------------------------------------------------------
 
 
+def _return_line_locking_queryset(ret):
+    """The lock query must stay free of nullable-relation joins for PostgreSQL."""
+    return (
+        StockReturnLine.objects.select_for_update()
+        .filter(stock_return=ret)
+        .order_by("pk")
+        .values_list("pk", flat=True)
+    )
+
+
+def _locked_return_line_ids(ret) -> list[int]:
+    """Lock only base return lines before loading their nullable relations."""
+    return list(_return_line_locking_queryset(ret))
+
+
 @transaction.atomic
 def complete_return(ret, *, by=None) -> StockReturn:
     """Провести возврат: вернуть остаток через inventory.return_*, заморозить
@@ -306,11 +335,12 @@ def complete_return(ret, *, by=None) -> StockReturn:
     ret = StockReturn.objects.select_for_update().get(pk=ret.pk)
     if ret.status != StockReturn.Status.DRAFT:
         raise ReturnError("Возврат уже проведён.")
+    line_ids = _locked_return_line_ids(ret)
     lines = list(
-        ret.lines.select_for_update().select_related(
+        StockReturnLine.objects.filter(pk__in=line_ids).select_related(
             "part_item", "stock_lot", "batch_line", "to_location",
             "source_sale_line", "source_repair_line", "part_type",
-        )
+        ).order_by("pk")
     )
     if not lines:
         raise ReturnError("Нельзя провести пустой возврат.")
