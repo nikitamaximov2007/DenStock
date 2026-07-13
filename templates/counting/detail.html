@@ -30,13 +30,20 @@
                class="scanner-page__input"
                placeholder="Сканируйте номер или штрихкод"
                autocomplete="off"
-               autofocus>
+               autofocus
+               data-scan-input>
         <button type="submit" class="btn btn--primary">Добавить скан</button>
       </form>
       <p class="action-panel__hint">
         Пикайте все детали из этой ячейки подряд. Одинаковые номера будут сложены
         автоматически. Сканер работает как клавиатура: скан и Enter. Сортировать
         детали заранее не нужно.
+        <span class="scan-indicator"
+              data-scan-indicator
+              data-ready-label="Сканер готов"
+              data-idle-label="Нажмите, чтобы продолжить сканирование"
+              role="status"
+              aria-live="polite">Сканер готов</span>
       </p>
     </div>
   {% endif %}
