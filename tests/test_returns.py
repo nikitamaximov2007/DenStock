@@ -6,6 +6,7 @@
 Sale/RepairOrder. Физику делают inventory.return_*, документ ведёт apps/returns;
 view ledger напрямую не пишет.
 """
+import inspect
 import re
 import urllib.parse
 import urllib.request
@@ -18,6 +19,7 @@ from unittest.mock import patch
 import pytest
 from django.contrib.auth.models import Group
 from django.db import connection
+from django.db.backends.postgresql.base import DatabaseWrapper
 from django.db.migrations.executor import MigrationExecutor
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -50,7 +52,9 @@ from apps.repairs.services import (
 from apps.returns.models import StockReturn, StockReturnLine
 from apps.returns.services import (
     ReturnError,
+    _locked_return_line_ids,
     _locked_source,
+    _return_line_locking_queryset,
     add_repair_line_return,
     add_sale_line_return,
     complete_return,
@@ -390,6 +394,69 @@ def test_repair_return_draft_status_can_change_before_completion(data, client):
         )
     line.refresh_from_db()
     assert line.restock_status == StockReturnLine.RestockStatus.AVAILABLE
+
+
+def test_repair_return_locking_query_loads_nullable_relations_separately(data):
+    ret = _new_return(data, data["order"])
+    line = add_repair_line_return(
+        ret,
+        data["repair_lot_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    line.refresh_from_db()
+
+    assert line.source_sale_line_id is None
+    assert line.part_item_id is None
+    assert line.returned_lot_id is None
+    assert line.stock_lot_id == data["lot"].pk
+    assert line.source_repair_line_id == data["repair_lot_line"].pk
+    assert _locked_return_line_ids(ret) == [line.pk]
+    assert "select_related" not in inspect.getsource(_locked_return_line_ids)
+    assert "select_for_update().select_related" not in inspect.getsource(_locked_source)
+
+    complete_return(ret, by=data["admin"])
+
+    ret.refresh_from_db()
+    line.refresh_from_db()
+    assert ret.status == StockReturn.Status.COMPLETED
+    assert line.returned_lot_id == data["lot"].pk
+    assert (
+        StockMovement.objects.filter(document_id=ret.pk, document_type="stock_return").count()
+        == 1
+    )
+    assert WarehouseAction.objects.filter(stock_return=ret).count() == 1
+
+
+def test_return_line_lock_query_generates_join_free_postgresql_sql(data):
+    ret = _new_return(data, data["order"])
+    postgres = DatabaseWrapper(
+        {
+            "NAME": "scratch",
+            "USER": "",
+            "PASSWORD": "",
+            "HOST": "",
+            "PORT": "",
+            "OPTIONS": {},
+            "TIME_ZONE": None,
+            "CONN_HEALTH_CHECKS": False,
+            "CONN_MAX_AGE": 0,
+            "ATOMIC_REQUESTS": False,
+            "AUTOCOMMIT": True,
+        },
+        "postgresql_sql_generation",
+    )
+    postgres.get_autocommit = lambda: False
+
+    sql, _params = _return_line_locking_queryset(ret).query.get_compiler(
+        connection=postgres
+    ).as_sql()
+
+    assert 'FROM "returns_stockreturnline"' in sql
+    assert "FOR UPDATE" in sql
+    assert "LEFT OUTER JOIN" not in sql
 
 
 def test_legacy_repair_return_line_recovers_missing_source_link(data):
