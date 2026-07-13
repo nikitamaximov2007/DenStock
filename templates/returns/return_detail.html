@@ -46,8 +46,12 @@
         <td>
           {% if ret.completed_at %}
             {{ ret.completed_at|date:"d.m.Y H:i" }}
+            {% if ret.completed_by %}
+              <br>
+              <span class="muted">{{ ret.completed_by }}</span>
+            {% endif %}
           {% else %}
-            · (черновик)
+            Нет
           {% endif %}
         </td>
       </tr>
@@ -60,11 +64,15 @@
         <th>Название детали</th>
         <th>Артикул</th>
         <th>Кол-во</th>
-        <th>Ячейка</th>
+        <th>Исходная ячейка</th>
         <th>Состояние</th>
-        {% if show_costs %}<th>Себестоимость строки (₽)</th>{% endif %}
-        <th>Источник остатка</th>
-        {% if can_manage and is_draft %}<th></th>{% endif %}
+        {% if show_costs %}
+          <th>Себестоимость строки (₽)</th>
+        {% endif %}
+        <th>Источник списания</th>
+        {% if can_manage and is_draft %}
+          <th></th>
+        {% endif %}
       </tr>
     </thead>
     <tbody>
@@ -73,9 +81,32 @@
           {% include "partials/_line_part_cells.html" %}
           <td>{{ line.quantity|quantity_int }}</td>
           <td>{{ line.to_location.code }}</td>
-          <td>{{ line.get_restock_status_display }}</td>
+          <td>
+            {% if can_manage and is_draft %}
+              <form method="post"
+                    action="{% url 'return_update_line_status' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <select name="restock_status" aria-label="Состояние возврата">
+                  {% for value, label in restock_choices %}
+                    <option value="{{ value }}"
+                            {% if value == line.restock_status %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Сохранить</button>
+              </form>
+            {% else %}
+              {{ line.get_restock_status_display }}
+            {% endif %}
+          </td>
           {% if show_costs %}<td>{{ line.total_cost_rub|money_int }}</td>{% endif %}
-          <td>{% include "partials/_line_source.html" %}</td>
+          <td>
+            {% if ret.source_type == "repair_order" and source %}
+              Ремонт <a href="{% url 'repair_order_detail' source.pk %}">{{ source.number }}</a>
+            {% else %}
+              {% include "partials/_line_source.html" %}
+            {% endif %}
+          </td>
           {% if can_manage and is_draft %}
             <td>
               <form method="post"
@@ -98,8 +129,14 @@
     <table class="table">
       <tbody>
         <tr>
-          <th>Себестоимость возвращённого</th>
-          <td>{{ ret.cost_total|money_int }} ₽</td>
+          <th>
+            {% if is_draft %}
+              Будет восстановлено
+            {% else %}
+              Себестоимость возвращённого
+            {% endif %}
+          </th>
+          <td>{{ ret.display_cost_total|money_rub }}</td>
         </tr>
       </tbody>
     </table>
@@ -120,7 +157,7 @@
           <tr>
             <th>Название детали</th>
             <th>Артикул</th>
-            <th>Источник остатка</th>
+            <th>Исходная ячейка</th>
             <th>Доступно к возврату</th>
             <th>Возврат</th>
           </tr>
@@ -129,7 +166,13 @@
           {% for row in source_rows %}
             <tr>
               {% include "partials/_line_part_cells.html" with line=row.line %}
-              <td>{% include "partials/_line_source.html" with line=row.line %}</td>
+              <td>
+                {% if row.source_location %}
+                  {{ row.source_location.code }}
+                {% else %}
+                  Выбирается ниже
+                {% endif %}
+              </td>
               <td>{{ row.returnable|quantity_int }}</td>
               <td>
                 <form method="post"
@@ -148,15 +191,18 @@
                            value="{{ row.returnable|floatformat:'-3' }}"
                            required>
                   {% endif %}
-                  <select name="to_location" required>
-                    <option value="">Ячейка…</option>
-                    {% for loc in locations %}
-                      <option value="{{ loc.pk }}">{{ loc.code }}</option>
-                    {% endfor %}
-                  </select>
+                  {% if row.source_location %}
+                    <input type="hidden" name="to_location" value="{{ row.source_location.pk }}">
+                    <span class="code-pill">{{ row.source_location.code }}</span>
+                  {% else %}
+                    <select name="to_location" required>
+                      <option value="">Ячейка…</option>
+                      {% for loc in locations %}<option value="{{ loc.pk }}">{{ loc.code }}</option>{% endfor %}
+                    </select>
+                  {% endif %}
                   <select name="restock_status">
                     {% for value, label in restock_choices %}
-                      <option value="{{ value }}" {% if value == "quarantine" %}selected{% endif %}>{{ label }}</option>
+                      <option value="{{ value }}" {% if value == "available" %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                   </select>
                   <button type="submit">Вернуть</button>
@@ -167,9 +213,10 @@
         </tbody>
       </table>
       <p class="muted">
-        По умолчанию деталь возвращается в карантин (требует проверки). «Доступен»
-        выбирайте, только если деталь проверена. Проведение возврата восстанавливает
-        физический остаток и создаёт движение прихода; это не возврат денег.
+        После проведения деталь будет возвращена в исходную ячейку списания. По умолчанию
+        исправная неиспользованная деталь доступна; выберите «Карантин», если нужна проверка.
+        Проведение возврата восстанавливает физический остаток и создаёт движение прихода;
+        это не возврат денег.
       </p>
     {% else %}
       <p class="muted">Нет позиций, доступных к возврату по этому источнику.</p>

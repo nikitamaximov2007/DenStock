@@ -46,6 +46,14 @@ class StockReturn(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField("Проведён (когда)", null=True, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто провёл",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
 
     class Meta:
         verbose_name = "Возврат на склад"
@@ -111,7 +119,7 @@ class StockReturnLine(models.Model):
     )
     restock_status = models.CharField(
         "Состояние возврата", max_length=20, choices=RestockStatus.choices,
-        default=RestockStatus.QUARANTINE,
+        default=RestockStatus.AVAILABLE,
     )
     unit_cost_rub = models.DecimalField(
         "Себестоимость за ед. (₽)", max_digits=12, decimal_places=2, editable=False, default=0

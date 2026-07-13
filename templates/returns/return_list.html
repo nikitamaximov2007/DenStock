@@ -39,13 +39,13 @@
             </td>
             <td>{{ r.get_status_display }}</td>
             <td>{% include "partials/_doc_composition.html" with doc=r %}</td>
-            <td>{{ r.get_source_type_display }} #{{ r.source_id }}</td>
-            {% if show_costs %}<td class="num--money">{{ r.cost_total|money_int }}</td>{% endif %}
+            <td>{{ r.source_label }}</td>
+            {% if show_costs %}<td class="num--money">{{ r.display_cost_total|money_rub }}</td>{% endif %}
             <td>
               {% if r.completed_at %}
                 {{ r.completed_at|ru_dt }}
               {% else %}
-                ·
+                Нет
               {% endif %}
             </td>
           </tr>

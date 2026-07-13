@@ -10,6 +10,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db.models import Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
@@ -23,7 +24,7 @@ from apps.repairs.models import RepairOrder
 from apps.sales.models import Sale, SaleLine
 from apps.warehouse.models import StorageLocation
 
-from .forms import AddReturnLineForm, ReturnForm
+from .forms import AddReturnLineForm, ReturnForm, ReturnLineRestockStatusForm
 from .models import StockReturn, StockReturnLine
 from .services import (
     ReturnError,
@@ -35,7 +36,9 @@ from .services import (
     get_source_lines,
     remove_return_line,
     resolve_source_line,
-    returnable_quantity,
+    returnable_quantities,
+    source_location_for_repair_line,
+    update_return_line_restock_status,
 )
 
 
@@ -75,6 +78,32 @@ def return_list(request):
     if status:
         qs = qs.filter(status=status)
     returns = list(qs[:100])
+    repair_ids = {
+        ret.source_id
+        for ret in returns
+        if ret.source_type == StockReturn.SourceType.REPAIR_ORDER
+    }
+    sale_ids = {
+        ret.source_id for ret in returns if ret.source_type == StockReturn.SourceType.SALE
+    }
+    repair_numbers = dict(
+        RepairOrder.objects.filter(pk__in=repair_ids).values_list("pk", "number")
+    )
+    sale_numbers = dict(Sale.objects.filter(pk__in=sale_ids).values_list("pk", "number"))
+    cost_by_return = dict(
+        StockReturnLine.objects.filter(stock_return__in=returns)
+        .values("stock_return_id")
+        .annotate(total=Sum("total_cost_rub"))
+        .values_list("stock_return_id", "total")
+    )
+    for ret in returns:
+        if ret.source_type == StockReturn.SourceType.REPAIR_ORDER:
+            ret.source_label = f"Ремонт {repair_numbers.get(ret.source_id, 'не найден')}"
+        else:
+            ret.source_label = f"Продажа {sale_numbers.get(ret.source_id, 'не найдена')}"
+        ret.display_cost_total = ret.cost_total if ret.status != StockReturn.Status.DRAFT else (
+            cost_by_return.get(ret.pk) or Decimal("0")
+        )
     attach_document_composition(returns)  # состав: первая позиция + «ещё N»
     return render(
         request,
@@ -91,18 +120,31 @@ def return_list(request):
 
 @login_required
 def return_detail(request, pk):
-    ret = get_object_or_404(StockReturn.objects.select_related("created_by"), pk=pk)
+    ret = get_object_or_404(
+        StockReturn.objects.select_related("created_by", "completed_by"), pk=pk
+    )
     source = get_source(ret)
     is_draft = ret.status == StockReturn.Status.DRAFT
     source_rows = []
     if source is not None and is_draft:
         source_lines = list(with_part_identity(get_source_lines(source)))
         attach_part_identity(source_lines)  # exact-артикул и в таблице «к возврату»
+        returnable_by_source = returnable_quantities(source_lines, draft=ret)
         for sl in source_lines:
-            avail = returnable_quantity(sl, draft=ret)
+            avail = returnable_by_source[sl.pk]
             if avail > 0:
+                source_location = (
+                    source_location_for_repair_line(sl)
+                    if ret.source_type == StockReturn.SourceType.REPAIR_ORDER
+                    else None
+                )
                 source_rows.append(
-                    {"line": sl, "returnable": avail, "is_item": sl.part_item_id is not None}
+                    {
+                        "line": sl,
+                        "returnable": avail,
+                        "is_item": sl.part_item_id is not None,
+                        "source_location": source_location,
+                    }
                 )
     lines = list(
         with_part_identity(
@@ -112,6 +154,11 @@ def return_detail(request, pk):
         )
     )
     attach_part_identity(lines)  # exact-артикул отдельной колонкой
+    ret.display_cost_total = (
+        ret.cost_total
+        if not is_draft
+        else sum((line.total_cost_rub for line in lines), Decimal("0"))
+    )
     return render(
         request,
         "returns/return_detail.html",
@@ -212,6 +259,27 @@ def return_remove_line(request, pk):
         messages.error(request, str(exc))
     else:
         messages.success(request, "Позиция снята с возврата.")
+    return redirect("return_detail", pk=return_pk)
+
+
+@login_required
+@require_POST
+def return_update_line_status(request, pk):
+    _require_returns(request)
+    line = get_object_or_404(StockReturnLine, pk=pk)
+    return_pk = line.stock_return_id
+    form = ReturnLineRestockStatusForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Выберите допустимое состояние возврата.")
+        return redirect("return_detail", pk=return_pk)
+    try:
+        update_return_line_restock_status(
+            line, restock_status=form.cleaned_data["restock_status"], by=request.user
+        )
+    except ReturnError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Состояние позиции возврата обновлено.")
     return redirect("return_detail", pk=return_pk)
 
 

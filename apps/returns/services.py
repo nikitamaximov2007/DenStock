@@ -15,7 +15,9 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from apps.actions.models import WarehouseAction
 from apps.inventory.models import PartItem
+from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import (
     InventoryError,
     return_part_item,
@@ -69,6 +71,50 @@ def returnable_quantity(source_line, *, draft=None) -> Decimal:
     return base
 
 
+def returnable_quantities(source_lines, *, draft=None) -> dict[int, Decimal]:
+    """Bulk version of ``returnable_quantity`` for one source document's lines."""
+    source_lines = list(source_lines)
+    if not source_lines:
+        return {}
+    source_field = (
+        "source_sale_line_id"
+        if isinstance(source_lines[0], SaleLine)
+        else "source_repair_line_id"
+    )
+    source_ids = [line.pk for line in source_lines]
+    completed = {
+        row[source_field]: row["quantity"]
+        for row in (
+            StockReturnLine.objects.filter(
+                stock_return__status=StockReturn.Status.COMPLETED,
+                **{f"{source_field}__in": source_ids},
+            )
+            .values(source_field)
+            .annotate(quantity=Sum("quantity"))
+        )
+    }
+    drafted = {}
+    if draft is not None:
+        drafted = {
+            row[source_field]: row["quantity"]
+            for row in (
+                StockReturnLine.objects.filter(
+                    stock_return=draft, **{f"{source_field}__in": source_ids}
+                )
+                .values(source_field)
+                .annotate(quantity=Sum("quantity"))
+            )
+        }
+    quantities = {}
+    for line in source_lines:
+        completed_quantity = completed.get(line.pk, Decimal("0"))
+        drafted_quantity = drafted.get(line.pk, Decimal("0"))
+        quantities[line.pk] = (
+            line.quantity - completed_quantity - drafted_quantity
+        )
+    return quantities
+
+
 # --- Создание / наполнение возврата ------------------------------------------
 
 
@@ -120,6 +166,11 @@ def _add_line(ret, source_line, quantity, *, to_location, restock_status) -> Sto
     if to_location is None or not to_location.can_hold_stock():
         raise ReturnError("Ячейка возврата не предназначена для хранения остатка.")
 
+    # Repair returns are restorations of a concrete warehouse issue. The browser
+    # may submit a location, but the source row remains authoritative.
+    if isinstance(source_line, RepairIssueLine):
+        to_location = source_location_for_repair_line(source_line)
+
     is_item = source_line.part_item_id is not None
     if is_item:
         quantity = Decimal("1")
@@ -144,6 +195,25 @@ def _add_line(ret, source_line, quantity, *, to_location, restock_status) -> Sto
     )
     fields.update(_source_filter(source_line))
     return StockReturnLine.objects.create(**fields)
+
+
+def source_location_for_repair_line(repair_line):
+    """Original storage location captured by the issued item or stock lot."""
+    if repair_line.stock_lot_id:
+        return repair_line.stock_lot.location
+    if repair_line.part_item_id and repair_line.part_item.current_location_id:
+        return repair_line.part_item.current_location
+    raise ReturnError("Не удалось определить исходную ячейку списания из ремонта.")
+
+
+def _locked_source(line):
+    if line.source_sale_line_id:
+        return SaleLine.objects.select_for_update().select_related(
+            "part_item", "stock_lot", "batch_line", "part_type"
+        ).get(pk=line.source_sale_line_id)
+    return RepairIssueLine.objects.select_for_update().select_related(
+        "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
+    ).get(pk=line.source_repair_line_id)
 
 
 @transaction.atomic
@@ -176,6 +246,25 @@ def remove_return_line(line, *, by=None) -> None:
     line.delete()
 
 
+@transaction.atomic
+def update_return_line_restock_status(line, *, restock_status, by=None) -> StockReturnLine:
+    """Update the planned state of a draft line without touching stock."""
+    line = (
+        StockReturnLine.objects.select_for_update()
+        .select_related("stock_return")
+        .get(pk=line.pk)
+    )
+    _ensure_draft(line.stock_return)
+    if restock_status not in (
+        StockReturnLine.RestockStatus.AVAILABLE,
+        StockReturnLine.RestockStatus.QUARANTINE,
+    ):
+        raise ReturnError("Недопустимое состояние возврата.")
+    line.restock_status = restock_status
+    line.save(update_fields=["restock_status"])
+    return line
+
+
 # --- Проведение --------------------------------------------------------------
 
 
@@ -200,7 +289,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
     now = timezone.now()
     processed: dict[tuple[str, int], Decimal] = {}
     for line in lines:
-        source = line.source_sale_line or line.source_repair_line
+        source = _locked_source(line)
         key = (
             ("sale", source.pk) if line.source_sale_line_id else ("repair", source.pk)
         )
@@ -215,6 +304,13 @@ def complete_return(ret, *, by=None) -> StockReturn:
         line.unit_cost_rub = source.unit_cost_rub
         line.total_cost_rub = money(line.unit_cost_rub * line.quantity)
 
+        if isinstance(source, RepairIssueLine):
+            line.to_location = source_location_for_repair_line(source)
+            line.stock_lot = source.stock_lot
+            line.part_item = source.part_item
+            line.batch = source.batch
+            line.batch_line = source.batch_line
+
         try:
             if line.part_item_id:
                 item = PartItem.objects.select_for_update().get(pk=line.part_item_id)
@@ -227,19 +323,59 @@ def complete_return(ret, *, by=None) -> StockReturn:
                 returned_lot = return_stock_lot_quantity(
                     line.batch_line, line.to_location, line.quantity,
                     unit_cost_rub=line.unit_cost_rub, restock_status=line.restock_status,
+                    stock_lot=line.stock_lot if line.source_repair_line_id else None,
                     by=by, document_id=ret.pk, comment=f"Возврат {ret.number}",
                 )
                 line.returned_lot = returned_lot
-                line.save(update_fields=["unit_cost_rub", "total_cost_rub", "returned_lot"])
+                line.save(
+                    update_fields=[
+                        "unit_cost_rub", "total_cost_rub", "returned_lot", "to_location",
+                        "stock_lot", "part_item", "batch", "batch_line",
+                    ]
+                )
         except InventoryError as exc:
             # Физический сервис отверг возврат (напр. конфликт статуса лота в ячейке)
             # — поднимаем как доменную ошибку возврата; транзакция откатывается.
             raise ReturnError(str(exc)) from exc
 
+        if line.source_repair_line_id:
+            WarehouseAction.objects.create(
+                action_type=WarehouseAction.Type.REPAIR_RETURN,
+                part_type=line.part_type,
+                part_number=part_exact_number(line.part_type),
+                part_name=line.part_type.name,
+                manufacturer_name=manufacturer_display(line.part_type),
+                location=line.to_location,
+                location_code=line.to_location.code,
+                quantity=line.quantity,
+                unit_cost_rub=line.unit_cost_rub,
+                total_cost_rub=line.total_cost_rub,
+                customer_comment=(ret.reason or ret.comment or f"Возврат {ret.number}")[:255],
+                repair_order=source.repair_order,
+                stock_return=ret,
+                repair_issue_line=source,
+                stock_lot=line.stock_lot,
+                created_by=by,
+            )
+
     ret.cost_total = calculate_return_costs(ret)
     ret.status = StockReturn.Status.COMPLETED
     ret.completed_at = now
-    ret.save(update_fields=["cost_total", "status", "completed_at", "updated_at"])
+    ret.completed_by = by
+    ret.save(
+        update_fields=["cost_total", "status", "completed_at", "completed_by", "updated_at"]
+    )
+    repair_order_ids = {
+        line.source_repair_line.repair_order_id
+        for line in lines
+        if line.source_repair_line_id
+    }
+    if repair_order_ids:
+        from apps.repairs.services import calculate_repair_costs
+
+        for repair_order in RepairOrder.objects.select_for_update().filter(pk__in=repair_order_ids):
+            repair_order.cost_total = calculate_repair_costs(repair_order)
+            repair_order.save(update_fields=["cost_total", "updated_at"])
     return ret
 
 
@@ -261,7 +397,9 @@ def get_source(ret: StockReturn):
 
 def get_source_lines(source):
     """Строки документа-источника (SaleLine/RepairIssueLine)."""
-    return source.lines.select_related("part_type", "part_item", "stock_lot")
+    return source.lines.select_related(
+        "part_type", "part_item__current_location", "stock_lot__location"
+    )
 
 
 def resolve_source_line(ret: StockReturn, source_line_id):

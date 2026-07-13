@@ -112,7 +112,10 @@
             <td>
               <a href="{% url 'part_detail' a.part_type_id %}">{{ a.part_name|default:a.part_type.name }}</a>
             </td>
-            <td class="num--qty">{{ a.quantity|quantity_int }}</td>
+            <td class="num--qty">
+              {% if a.action_type == "repair_return" %}+{% endif %}
+              {{ a.quantity|quantity_int }}
+            </td>
             <td>
               <span class="code-pill">{{ a.location_code|default:a.location.code }}</span>
             </td>
@@ -125,6 +128,12 @@
                 <a href="{% url 'sale_detail' a.sale_id %}">{{ a.sale.number }}</a>
               {% elif a.reservation %}
                 <a href="{% url 'reservation_detail' a.reservation_id %}">{{ a.reservation.number }}</a>
+              {% elif a.stock_return %}
+                <a href="{% url 'return_detail' a.stock_return_id %}">{{ a.stock_return.number }}</a>
+                {% if a.repair_order %}
+                  <br>
+                  <span class="muted">Источник: <a href="{% url 'repair_order_detail' a.repair_order_id %}">{{ a.repair_order.number }}</a></span>
+                {% endif %}
               {% elif a.repair_order %}
                 <a href="{% url 'repair_order_detail' a.repair_order_id %}">{{ a.repair_order.number }}</a>
               {% else %}
@@ -244,9 +253,7 @@
                       <span class="pill pill--warning">{{ reason }}</span>
                     {% endfor %}
                   {% endif %}
-                  {% if row.customs.weight_verified %}
-                    <span class="pill pill--info">Вес подтверждён вручную</span>
-                  {% endif %}
+                  {% if row.customs.weight_verified %}<span class="pill pill--info">Вес подтверждён вручную</span>{% endif %}
                 </td>
                 <td class="table__actions">
                   <form method="post"
