@@ -12,6 +12,7 @@ from django.views.generic import CreateView, DetailView, ListView, UpdateView
 from apps.accounts.permissions import ManagePartsMixin
 from apps.core.forms import ImageUploadForm
 from apps.core.images import add_image, deactivate_image, set_primary
+from apps.inventory.presentation import attach_part_identity, with_part_identity
 
 from .forms import PartBarcodeForm, PartCompatibilityForm, PartNumberForm, PartTypeForm
 from .models import (
@@ -29,7 +30,12 @@ class PartTypeListView(LoginRequiredMixin, ListView):
     paginate_by = 50
 
     def get_queryset(self):
-        qs = PartType.objects.select_related("category", "manufacturer", "unit")
+        # with_part_identity добавляет select_related BRP/Polaris-связей и
+        # prefetch допустимых номеров — точный артикул строки считается без
+        # N+1 канонической логикой part_exact_number (см. presentation.py).
+        qs = with_part_identity(
+            PartType.objects.select_related("category", "unit"), part_field=""
+        )
         query = self.request.GET.get("q", "").strip()
         if query:
             qs = qs.filter(
@@ -42,6 +48,10 @@ class PartTypeListView(LoginRequiredMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        # Точный артикул готовится во view (не в шаблоне) по канонической
+        # логике: BRP material_no -> Polaris part_number -> primary OEM/ARTICLE
+        # -> любой OEM/ARTICLE -> пусто. Аналог/INTERNAL_REF/лот сюда не попадают.
+        attach_part_identity(ctx["object_list"], part_attr="")
         ctx["q"] = self.request.GET.get("q", "")
         ctx["show"] = self.request.GET.get("show", "active")
         ctx["can_manage"] = self.request.user.can_manage_parts

@@ -1,9 +1,16 @@
+import re
+from decimal import Decimal
+
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.brp.models import BrpCatalogPart
+from apps.brp.services import promote_to_warehouse as promote_brp
 from apps.catalog.models import (
     Category,
     Manufacturer,
@@ -16,6 +23,8 @@ from apps.catalog.models import (
     VehicleModel,
     VehicleType,
 )
+from apps.polaris.models import PolarisCatalogPart
+from apps.polaris.services import promote_to_warehouse as promote_polaris
 
 PASSWORD = "parol-12345"
 
@@ -217,3 +226,213 @@ def test_navigation_shows_parts(make_user, client):
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("dashboard")).content.decode()
     assert "Детали" in html
+
+
+# --- Колонка «Артикул» на /parts/ (feature/parts-list-article-column) -----------------
+
+
+KIND = PartNumber.Kind
+
+
+def _admin(make_user, client):
+    make_user("boss", is_superuser=True)
+    client.login(username="boss", password=PASSWORD)
+
+
+def _list_html(client, **params):
+    return client.get(reverse("part_list"), params).content.decode()
+
+
+def _row_cells(html, needle):
+    """Ячейки <td> строки таблицы, содержащей `needle` (по названию детали)."""
+    for row in re.findall(r"<tr>.*?</tr>", html, re.S):
+        if needle in row:
+            return re.findall(r"<td.*?</td>", row, re.S)
+    raise AssertionError(f"строка с {needle!r} не найдена")
+
+
+def _article_cell(html, needle):
+    """Ячейка «Артикул» (вторая колонка) строки детали."""
+    return _row_cells(html, needle)[1]
+
+
+def test_parts_list_has_article_header(make_user, client, refs):
+    _admin(make_user, client)
+    _make_part(refs, name="Просто деталь")
+    html = _list_html(client)
+    assert "<th>Артикул</th>" in html
+
+
+def test_article_header_is_after_name(make_user, client, refs):
+    _admin(make_user, client)
+    _make_part(refs, name="Просто деталь")
+    html = _list_html(client)
+    assert html.index("<th>Название</th>") < html.index("<th>Артикул</th>")
+    assert html.index("<th>Артикул</th>") < html.index("<th>Категория</th>")
+
+
+def test_brp_part_shows_material_no(make_user, client, refs):
+    _admin(make_user, client)
+    brp = BrpCatalogPart.objects.create(
+        material_no="417224204", part_desc="AXLE - 10MM",
+        retail_price_usd=Decimal("10"), wholesale_price_usd=Decimal("7"),
+    )
+    promote_brp(brp)
+    cell = _article_cell(_list_html(client, show="all"), "AXLE - 10MM")
+    assert '<span class="code-pill">417224204</span>' in cell
+
+
+def test_polaris_part_shows_part_number(make_user, client, refs):
+    _admin(make_user, client)
+    pol = PolarisCatalogPart.objects.create(
+        part_number="3086878", part_name="BALL BEARING",
+        wholesale_price_usd=Decimal("6"), retail_price_usd=Decimal("20"),
+    )
+    promote_polaris(pol)
+    cell = _article_cell(_list_html(client, show="all"), "BALL BEARING")
+    assert '<span class="code-pill">3086878</span>' in cell
+
+
+def test_plain_part_shows_primary_oem(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Деталь с OEM")
+    PartNumber.objects.create(part=part, value="OEM-777", kind=KIND.OEM, is_primary=True)
+    cell = _article_cell(_list_html(client), "Деталь с OEM")
+    assert '<span class="code-pill">OEM-777</span>' in cell
+
+
+def test_plain_part_shows_article_when_no_oem(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Деталь с артикулом")
+    PartNumber.objects.create(part=part, value="ART-555", kind=KIND.ARTICLE)
+    cell = _article_cell(_list_html(client), "Деталь с артикулом")
+    assert '<span class="code-pill">ART-555</span>' in cell
+
+
+def test_analog_not_used_as_article(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Только аналог")
+    PartNumber.objects.create(part=part, value="099-ANALOG", kind=KIND.ANALOG)
+    cell = _article_cell(_list_html(client), "Только аналог")
+    assert "099-ANALOG" not in cell
+    assert "—" in cell
+
+
+def test_internal_ref_not_used_as_article(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Только внутренний")
+    PartNumber.objects.create(part=part, value="INT-001", kind=KIND.INTERNAL_REF)
+    cell = _article_cell(_list_html(client), "Только внутренний")
+    assert "INT-001" not in cell
+    assert "—" in cell
+
+
+def test_primary_internal_ref_does_not_beat_oem(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Внутренний и OEM")
+    PartNumber.objects.create(part=part, value="INT-999", kind=KIND.INTERNAL_REF, is_primary=True)
+    PartNumber.objects.create(part=part, value="OEM-333", kind=KIND.OEM)
+    cell = _article_cell(_list_html(client), "Внутренний и OEM")
+    assert '<span class="code-pill">OEM-333</span>' in cell
+    assert "INT-999" not in cell
+
+
+def test_missing_article_shows_dash(make_user, client, refs):
+    _admin(make_user, client)
+    _make_part(refs, name="Совсем без номера")
+    cell = _article_cell(_list_html(client), "Совсем без номера")
+    assert "—" in cell
+    assert "code-pill" not in cell
+    assert "None" not in cell
+
+
+def test_ds_like_internal_number_not_shown_as_article(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Деталь с DS")
+    # DS-номер экземпляра моделируем как INTERNAL_REF: в колонку артикула он не попадает.
+    PartNumber.objects.create(part=part, value="DS-000123", kind=KIND.INTERNAL_REF)
+    PartNumber.objects.create(part=part, value="OEM-100", kind=KIND.OEM, is_primary=True)
+    cell = _article_cell(_list_html(client), "Деталь с DS")
+    assert '<span class="code-pill">OEM-100</span>' in cell
+    assert "DS-000123" not in cell
+
+
+def test_search_by_exact_article_still_finds(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Искомая деталь")
+    PartNumber.objects.create(part=part, value="XR-2024", kind=KIND.OEM)
+    html = _list_html(client, q="XR-2024")
+    assert "Искомая деталь" in html
+    assert '<span class="code-pill">XR-2024</span>' in _article_cell(html, "Искомая деталь")
+
+
+def test_search_by_brp_material_no_finds(make_user, client, refs):
+    _admin(make_user, client)
+    brp = BrpCatalogPart.objects.create(
+        material_no="417224204", part_desc="AXLE FIND",
+        retail_price_usd=Decimal("10"), wholesale_price_usd=Decimal("7"),
+    )
+    promote_brp(brp)
+    html = _list_html(client, q="417224204", show="all")
+    assert "AXLE FIND" in html
+
+
+def test_search_by_analog_shows_canonical_article(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Найдена по аналогу")
+    PartNumber.objects.create(part=part, value="AN-500", kind=KIND.ANALOG)
+    PartNumber.objects.create(part=part, value="OEM-CANON", kind=KIND.OEM, is_primary=True)
+    html = _list_html(client, q="AN-500")
+    assert "Найдена по аналогу" in html
+    cell = _article_cell(html, "Найдена по аналогу")
+    assert '<span class="code-pill">OEM-CANON</span>' in cell
+    assert "AN-500" not in cell
+
+
+def test_active_filter_still_works_with_article(make_user, client, refs):
+    _admin(make_user, client)
+    active = _make_part(refs, name="Активная деталь")
+    PartNumber.objects.create(part=active, value="OEM-ACT", kind=KIND.OEM)
+    disabled = _make_part(refs, name="Отключённая деталь", is_active=False)
+    PartNumber.objects.create(part=disabled, value="OEM-OFF", kind=KIND.OEM)
+    active_html = _list_html(client, show="active")
+    assert "Активная деталь" in active_html
+    assert "Отключённая деталь" not in active_html
+    all_html = _list_html(client, show="all")
+    assert "Отключённая деталь" in all_html
+
+
+def test_money_format_unchanged_in_article_row(make_user, client, refs):
+    _admin(make_user, client)
+    part = _make_part(refs, name="Деталь с ценой", recommended_price=Decimal("1616.00"))
+    PartNumber.objects.create(part=part, value="OEM-PR", kind=KIND.OEM)
+    cells = _row_cells(_list_html(client), "Деталь с ценой")
+    money = " ".join(cells)
+    assert "1 616" in money
+    assert "1616.00" not in money
+
+
+def test_parts_list_article_no_query_growth(make_user, client, refs):
+    """SQL-запросы списка не растут линейно от числа деталей (нет N+1)."""
+    _admin(make_user, client)
+    brp = BrpCatalogPart.objects.create(
+        material_no="500000001", part_desc="BRP ONE",
+        retail_price_usd=Decimal("10"), wholesale_price_usd=Decimal("7"),
+    )
+    promote_brp(brp)
+    with CaptureQueriesContext(connection) as first:
+        client.get(reverse("part_list"), {"show": "all"})
+
+    for i in range(2, 10):
+        b = BrpCatalogPart.objects.create(
+            material_no=f"50000000{i}", part_desc=f"BRP {i}",
+            retail_price_usd=Decimal("10"), wholesale_price_usd=Decimal("7"),
+        )
+        promote_brp(b)
+        plain = _make_part(refs, name=f"Обычная {i}")
+        PartNumber.objects.create(part=plain, value=f"OEM-{i}", kind=KIND.OEM)
+    with CaptureQueriesContext(connection) as many:
+        client.get(reverse("part_list"), {"show": "all"})
+
+    # 16 новых деталей не должны давать линейного роста запросов.
+    assert len(many) <= len(first) + 3, (len(first), len(many))
