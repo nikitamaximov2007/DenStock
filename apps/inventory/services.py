@@ -961,7 +961,8 @@ def return_part_item(item, to_location, *, restock_status, by=None,
 
 @transaction.atomic
 def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_rub,
-                              restock_status, by=None, document_id=None, comment="") -> StockLot:
+                              restock_status, stock_lot=None, by=None, document_id=None,
+                              comment="") -> StockLot:
     """Вернуть количество в лот ячейки `to_location` по правилу «найти/оживить/
     создать» под UniqueConstraint(batch_line, location):
 
@@ -979,11 +980,16 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
         raise InventoryError("Недопустимое состояние возврата (ожидается available/quarantine).")
     if to_location is None or not to_location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
-    lot = (
-        StockLot.objects.select_for_update()
-        .filter(batch_line=batch_line, location=to_location)
-        .first()
-    )
+    if stock_lot is not None:
+        lot = StockLot.objects.select_for_update().get(pk=stock_lot.pk)
+        if lot.batch_line_id != batch_line.pk or lot.location_id != to_location.pk:
+            raise InventoryError("Исходный лот не соответствует строке партии или ячейке возврата.")
+    else:
+        lot = (
+            StockLot.objects.select_for_update()
+            .filter(batch_line=batch_line, location=to_location)
+            .first()
+        )
     if lot is None:
         lot = StockLot.objects.create(
             part_type=batch_line.part_type, batch=batch_line.batch, batch_line=batch_line,

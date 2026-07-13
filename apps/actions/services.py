@@ -427,7 +427,7 @@ def actions_report(
     """
     qs = WarehouseAction.objects.select_related(
         "part_type", "location", "created_by", "cancelled_by",
-        "sale", "reservation", "repair_order",
+        "sale", "reservation", "repair_order", "stock_return",
     )
     if not include_cancelled:
         qs = qs.filter(status=WarehouseAction.Status.ACTIVE)

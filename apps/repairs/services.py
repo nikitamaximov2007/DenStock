@@ -202,6 +202,21 @@ def cancel_repair_order(order, *, by=None) -> RepairOrder:
 
 
 def calculate_repair_costs(order: RepairOrder) -> Decimal:
-    """Сумма себестоимости из (замороженных) строк заказа."""
-    total = order.lines.aggregate(s=Sum("total_cost_rub"))["s"] or Decimal("0")
+    """Стоимость фактически использованных деталей с учётом возвратов на склад."""
+    from apps.returns.models import StockReturn, StockReturnLine
+
+    returned_by_line = dict(
+        StockReturnLine.objects.filter(
+            stock_return__status=StockReturn.Status.COMPLETED,
+            source_repair_line__repair_order=order,
+        )
+        .values("source_repair_line_id")
+        .annotate(quantity=Sum("quantity"))
+        .values_list("source_repair_line_id", "quantity")
+    )
+    total = Decimal("0")
+    for line in order.lines.all():
+        returned = returned_by_line.get(line.pk) or Decimal("0")
+        remaining_used = max(line.quantity - returned, Decimal("0"))
+        total += line.unit_cost_rub * remaining_used
     return money(total)

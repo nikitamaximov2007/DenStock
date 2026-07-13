@@ -29,12 +29,13 @@ class WarehouseAction(models.Model):
         SALE = "sale", "Продажа"
         RESERVE = "reserve", "Резерв"
         REPAIR = "repair", "Ремонт"
+        REPAIR_RETURN = "repair_return", "Возврат из ремонта"
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Проведено"
         CANCELLED = "cancelled", "Отменено"
 
-    action_type = models.CharField("Тип", max_length=10, choices=Type.choices)
+    action_type = models.CharField("Тип", max_length=20, choices=Type.choices)
     status = models.CharField(
         "Статус", max_length=10, choices=Status.choices, default=Status.ACTIVE, db_index=True
     )
@@ -60,6 +61,12 @@ class WarehouseAction(models.Model):
     total_price_rub = models.DecimalField(
         "Сумма (₽)", max_digits=14, decimal_places=2, default=0
     )
+    unit_cost_rub = models.DecimalField(
+        "Себестоимость за ед. (₽)", max_digits=12, decimal_places=2, default=0
+    )
+    total_cost_rub = models.DecimalField(
+        "Себестоимость (₽)", max_digits=14, decimal_places=2, default=0
+    )
     # Если цена взята из связанной замены (правило 32.3.2), её номер — для
     # аудита. Номер ПРОДАННОЙ детали (part_number) от этого не меняется.
     price_source_number = models.CharField(
@@ -78,6 +85,19 @@ class WarehouseAction(models.Model):
         "repairs.RepairOrder", verbose_name="Ремонтный заказ",
         on_delete=models.SET_NULL,
         null=True, blank=True, related_name="scanner_actions", editable=False,
+    )
+    stock_return = models.ForeignKey(
+        "returns.StockReturn", verbose_name="Возврат на склад", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="warehouse_actions", editable=False,
+    )
+    repair_issue_line = models.ForeignKey(
+        "repairs.RepairIssueLine", verbose_name="Исходная строка ремонта",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="warehouse_actions",
+        editable=False,
+    )
+    stock_lot = models.ForeignKey(
+        "inventory.StockLot", verbose_name="Исходный лот", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="warehouse_actions", editable=False,
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, verbose_name="Кто провёл",
@@ -108,7 +128,7 @@ class WarehouseAction(models.Model):
     @property
     def document(self):
         """Связанный документ (для ссылки из отчёта)."""
-        return self.sale or self.reservation or self.repair_order
+        return self.stock_return or self.sale or self.reservation or self.repair_order
 
     @property
     def is_cancelled(self) -> bool:

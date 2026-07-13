@@ -62,7 +62,7 @@ def _allowed_actions(user) -> list:
     return [
         (value, label)
         for value, label in WarehouseAction.Type.choices
-        if getattr(user, ACTION_PERMISSIONS[value])
+        if value in ACTION_PERMISSIONS and getattr(user, ACTION_PERMISSIONS[value])
     ]
 
 
@@ -166,7 +166,11 @@ def actions_report_view(request):
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
     # Таможня и Excel — только по активным действиям (без отменённых).
-    active_actions = [a for a in actions if not a.is_cancelled]
+    active_actions = [
+        a
+        for a in actions
+        if not a.is_cancelled and a.action_type != WarehouseAction.Type.REPAIR_RETURN
+    ]
     export_rows = build_export_rows(active_actions)
     ready = [r for r in export_rows if not r["warnings"]]
     # Готовность к таможенному экспорту (Layer 33.1): область применения +
@@ -248,7 +252,8 @@ def actions_export(request):
 
     filters = _report_filters(request)
     actions, _totals = actions_report(**filters)  # include_cancelled=False
-    buffer = export_customs_xlsx(actions)
+    customs_actions = actions.exclude(action_type=WarehouseAction.Type.REPAIR_RETURN)
+    buffer = export_customs_xlsx(customs_actions)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()
     filename = f"customs_order_{date_from}_{date_to}.xlsx"

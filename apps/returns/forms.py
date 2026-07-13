@@ -28,3 +28,11 @@ class AddReturnLineForm(forms.Form):
         self.fields["to_location"].queryset = (
             StorageLocation.objects.filter(is_active=True, storage_allowed=True).order_by("code")
         )
+
+
+class ReturnLineRestockStatusForm(forms.Form):
+    """Change only the future physical state of a draft return line."""
+
+    restock_status = forms.ChoiceField(
+        label="Состояние", choices=StockReturnLine.RestockStatus.choices
+    )
