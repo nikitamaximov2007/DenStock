@@ -167,6 +167,7 @@ def return_detail(request, pk):
             "source": source,
             "source_rows": source_rows,
             "lines": lines,
+            "has_lines": bool(lines),
             "is_draft": is_draft,
             "can_manage": request.user.can_manage_returns,
             "show_costs": request.user.can_view_purchase_cost,

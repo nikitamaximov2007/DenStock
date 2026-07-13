@@ -12,6 +12,7 @@ import urllib.request
 from decimal import Decimal
 from http.cookiejar import CookieJar
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -49,6 +50,7 @@ from apps.repairs.services import (
 from apps.returns.models import StockReturn, StockReturnLine
 from apps.returns.services import (
     ReturnError,
+    _locked_source,
     add_repair_line_return,
     add_sale_line_return,
     complete_return,
@@ -390,6 +392,107 @@ def test_repair_return_draft_status_can_change_before_completion(data, client):
     assert line.restock_status == StockReturnLine.RestockStatus.AVAILABLE
 
 
+def test_legacy_repair_return_line_recovers_missing_source_link(data):
+    ret = _new_return(data, data["order"])
+    line = add_repair_line_return(
+        ret,
+        data["repair_lot_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    line.source_repair_line_id = None  # Simulates a pre-0003 legacy draft row in memory.
+
+    source = _locked_source(ret, line)
+
+    assert source.pk == data["repair_lot_line"].pk
+
+
+def test_return_complete_second_post_is_a_safe_redirect(data, client):
+    ret = _new_return(data, data["order"])
+    add_repair_line_return(
+        ret,
+        data["repair_lot_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    client.force_login(data["admin"])
+
+    first = client.post(reverse("return_complete", args=[ret.pk]))
+    action_count = WarehouseAction.objects.filter(stock_return=ret).count()
+    movement_count = StockMovement.objects.count()
+    second = client.post(reverse("return_complete", args=[ret.pk]))
+
+    assert first.status_code == 302
+    assert second.status_code == 302
+    assert WarehouseAction.objects.filter(stock_return=ret).count() == action_count
+    assert StockMovement.objects.count() == movement_count
+
+
+def test_return_complete_maps_inventory_error_to_redirect_without_changes(data, client):
+    ret = _new_return(data, data["order"])
+    add_repair_line_return(
+        ret,
+        data["repair_lot_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    data["lot"].refresh_from_db()
+    lot_before = data["lot"].quantity
+    client.force_login(data["admin"])
+
+    with patch(
+        "apps.returns.services.return_stock_lot_quantity",
+        side_effect=InventoryError("Конфликт остатка"),
+    ):
+        response = client.post(reverse("return_complete", args=[ret.pk]), follow=True)
+
+    ret.refresh_from_db()
+    data["lot"].refresh_from_db()
+    assert response.status_code == 200
+    assert "Конфликт остатка" in response.content.decode()
+    assert ret.status == StockReturn.Status.DRAFT
+    assert data["lot"].quantity == lot_before
+
+
+@pytest.mark.parametrize(
+    "failure_path",
+    (
+        "apps.inventory.services._record_movement",
+        "apps.returns.services.WarehouseAction.objects.create",
+        "apps.repairs.services.calculate_repair_costs",
+    ),
+)
+def test_return_completion_rolls_back_after_critical_failure(data, failure_path):
+    ret = _new_return(data, data["order"])
+    add_repair_line_return(
+        ret,
+        data["repair_lot_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    data["lot"].refresh_from_db()
+    lot_before = data["lot"].quantity
+    movement_count = StockMovement.objects.count()
+
+    with patch(failure_path, side_effect=RuntimeError):
+        with pytest.raises(RuntimeError):
+            complete_return(ret, by=data["admin"])
+
+    ret.refresh_from_db()
+    data["lot"].refresh_from_db()
+    assert ret.status == StockReturn.Status.DRAFT
+    assert data["lot"].quantity == lot_before
+    assert StockMovement.objects.count() == movement_count
+
+
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
     """A 0002 draft remains operable after applying returns 0003/actions 0007."""
@@ -622,6 +725,36 @@ def test_repair_return_draft_detail_shows_source_and_expected_cost(data, client)
     assert data["loc"].code in html
     assert "Будет восстановлено" in html
     assert "лот #" not in html.lower()
+
+
+def test_return_complete_button_has_scoped_visible_styles_and_double_post_guard(data, client):
+    ret = _new_return(data, data["order"])
+    add_repair_line_return(
+        ret,
+        data["repair_lot_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    client.force_login(data["admin"])
+    html = client.get(reverse("return_detail", args=[ret.pk])).content.decode()
+    css = Path("static/css/app.css").read_text(encoding="utf-8")
+
+    assert 'class="btn btn--primary return-complete-button"' in html
+    assert "data-return-complete-form" in html
+    assert "button.disabled = true" in html
+    assert ".return-complete-form .return-complete-button" in css
+    assert "background: var(--accent); border-color: var(--accent); color: #fff;" in css
+
+
+def test_return_complete_button_is_hidden_for_empty_draft(data, client):
+    ret = _new_return(data, data["order"])
+    client.force_login(data["admin"])
+
+    html = client.get(reverse("return_detail", args=[ret.pk])).content.decode()
+
+    assert "Провести возврат" not in html
 
 
 def test_return_list_query_count_is_bounded(data, client):

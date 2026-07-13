@@ -206,14 +206,43 @@ def source_location_for_repair_line(repair_line):
     raise ReturnError("Не удалось определить исходную ячейку списания из ремонта.")
 
 
-def _locked_source(line):
-    if line.source_sale_line_id:
-        return SaleLine.objects.select_for_update().select_related(
-            "part_item", "stock_lot", "batch_line", "part_type"
-        ).get(pk=line.source_sale_line_id)
-    return RepairIssueLine.objects.select_for_update().select_related(
+def _repair_source_for_legacy_line(ret, line):
+    """Restore a missing repair-line link on a legacy return draft without guessing."""
+    candidates = RepairIssueLine.objects.select_for_update().select_related(
         "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
-    ).get(pk=line.source_repair_line_id)
+    ).filter(repair_order_id=ret.source_id, part_type_id=line.part_type_id)
+    if line.part_item_id:
+        candidates = candidates.filter(part_item_id=line.part_item_id)
+    elif line.stock_lot_id:
+        candidates = candidates.filter(stock_lot_id=line.stock_lot_id)
+    elif line.batch_line_id:
+        candidates = candidates.filter(batch_line_id=line.batch_line_id)
+    else:
+        raise ReturnError("Не удалось восстановить источник строки возврата из ремонта.")
+
+    sources = list(candidates[:2])
+    if len(sources) != 1:
+        raise ReturnError("Не удалось однозначно восстановить источник строки возврата из ремонта.")
+    return sources[0]
+
+
+def _locked_source(ret, line):
+    if line.source_sale_line_id:
+        source = SaleLine.objects.select_for_update().select_related(
+            "part_item", "stock_lot", "batch_line", "part_type"
+        ).filter(pk=line.source_sale_line_id).first()
+        if source is None:
+            raise ReturnError("Исходная строка продажи для возврата не найдена.")
+        return source
+    if line.source_repair_line_id:
+        source = RepairIssueLine.objects.select_for_update().select_related(
+            "part_item", "stock_lot__location", "batch_line", "part_type", "repair_order"
+        ).filter(pk=line.source_repair_line_id, repair_order_id=ret.source_id).first()
+        if source is not None:
+            return source
+    if ret.source_type == StockReturn.SourceType.REPAIR_ORDER:
+        return _repair_source_for_legacy_line(ret, line)
+    raise ReturnError("Не удалось определить источник строки возврата.")
 
 
 @transaction.atomic
@@ -278,7 +307,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
     if ret.status != StockReturn.Status.DRAFT:
         raise ReturnError("Возврат уже проведён.")
     lines = list(
-        ret.lines.select_related(
+        ret.lines.select_for_update().select_related(
             "part_item", "stock_lot", "batch_line", "to_location",
             "source_sale_line", "source_repair_line", "part_type",
         )
@@ -288,8 +317,9 @@ def complete_return(ret, *, by=None) -> StockReturn:
 
     now = timezone.now()
     processed: dict[tuple[str, int], Decimal] = {}
+    repair_order_ids = set()
     for line in lines:
-        source = _locked_source(line)
+        source = _locked_source(ret, line)
         key = (
             ("sale", source.pk) if line.source_sale_line_id else ("repair", source.pk)
         )
@@ -305,11 +335,13 @@ def complete_return(ret, *, by=None) -> StockReturn:
         line.total_cost_rub = money(line.unit_cost_rub * line.quantity)
 
         if isinstance(source, RepairIssueLine):
+            line.source_repair_line = source
             line.to_location = source_location_for_repair_line(source)
             line.stock_lot = source.stock_lot
             line.part_item = source.part_item
             line.batch = source.batch
             line.batch_line = source.batch_line
+            repair_order_ids.add(source.repair_order_id)
 
         try:
             if line.part_item_id:
@@ -318,19 +350,24 @@ def complete_return(ret, *, by=None) -> StockReturn:
                     item, line.to_location, restock_status=line.restock_status,
                     by=by, document_id=ret.pk, comment=f"Возврат {ret.number}",
                 )
-                line.save(update_fields=["unit_cost_rub", "total_cost_rub"])
+                line.save(
+                    update_fields=[
+                        "unit_cost_rub", "total_cost_rub", "source_repair_line", "to_location",
+                        "stock_lot", "part_item", "batch", "batch_line",
+                    ]
+                )
             else:
                 returned_lot = return_stock_lot_quantity(
                     line.batch_line, line.to_location, line.quantity,
                     unit_cost_rub=line.unit_cost_rub, restock_status=line.restock_status,
-                    stock_lot=line.stock_lot if line.source_repair_line_id else None,
+                    stock_lot=line.stock_lot if isinstance(source, RepairIssueLine) else None,
                     by=by, document_id=ret.pk, comment=f"Возврат {ret.number}",
                 )
                 line.returned_lot = returned_lot
                 line.save(
                     update_fields=[
                         "unit_cost_rub", "total_cost_rub", "returned_lot", "to_location",
-                        "stock_lot", "part_item", "batch", "batch_line",
+                        "stock_lot", "part_item", "batch", "batch_line", "source_repair_line",
                     ]
                 )
         except InventoryError as exc:
@@ -338,7 +375,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
             # — поднимаем как доменную ошибку возврата; транзакция откатывается.
             raise ReturnError(str(exc)) from exc
 
-        if line.source_repair_line_id:
+        if isinstance(source, RepairIssueLine):
             WarehouseAction.objects.create(
                 action_type=WarehouseAction.Type.REPAIR_RETURN,
                 part_type=line.part_type,
@@ -365,11 +402,6 @@ def complete_return(ret, *, by=None) -> StockReturn:
     ret.save(
         update_fields=["cost_total", "status", "completed_at", "completed_by", "updated_at"]
     )
-    repair_order_ids = {
-        line.source_repair_line.repair_order_id
-        for line in lines
-        if line.source_repair_line_id
-    }
     if repair_order_ids:
         from apps.repairs.services import calculate_repair_costs
 
