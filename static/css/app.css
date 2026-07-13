@@ -164,6 +164,20 @@ body.app {
 .inline-form { display: inline; margin-left: 8px; }
 .inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
   border-radius: 6px; background: #fff; }
+.return-complete-form { margin-left: 0; }
+.return-complete-form .return-complete-button {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.return-complete-form .return-complete-button:hover,
+.return-complete-form .return-complete-button:focus-visible {
+  background: #1a5fd0; border-color: #1a5fd0; color: #fff;
+}
+.return-complete-form .return-complete-button:active {
+  background: #184fb0; border-color: #184fb0; color: #fff;
+}
+.return-complete-form .return-complete-button:disabled {
+  background: var(--accent); border-color: var(--accent); color: #fff;
+}
 .customs-quick-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
 .customs-quick-form input[type="text"] { width: 92px; }
 .form p { margin: 10px 0; }
