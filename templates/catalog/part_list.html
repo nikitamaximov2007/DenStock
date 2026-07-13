@@ -21,6 +21,7 @@
       <thead>
         <tr>
           <th>Название</th>
+          <th>Артикул</th>
           <th>Категория</th>
           <th>Производитель</th>
           <th>Учёт</th>
@@ -33,6 +34,13 @@
           <tr>
             <td>
               <a href="{% url 'part_detail' part.pk %}">{{ part.name }}</a>
+            </td>
+            <td>
+              {% if part.part_exact_number %}
+                <span class="code-pill">{{ part.part_exact_number }}</span>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
             </td>
             <td>{{ part.category }}</td>
             <td>{{ part.manufacturer|default:"·" }}</td>
