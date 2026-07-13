@@ -92,11 +92,10 @@
     }
     var pageInput = document.getElementById("scanner-page-input");
     if (pageInput) {
-      pageInput.focus(); // автофокус на странице сканера
+      pageInput.focus(); // автофокус на странице сканера (fetch-резолв)
     }
-    var receivingInput = document.getElementById("receiving-scan-input");
-    if (receivingInput) {
-      receivingInput.focus(); // автофокус на экране приёмки после перезагрузки
-    }
+    // Экраны непрерывного скана с перезагрузкой (приёмка/перемещение/
+    // инвентаризация/действия) держит сфокусированными scan_focus.js по
+    // общему селектору [data-scan-input] — здесь их не трогаем.
   });
 })();

@@ -78,7 +78,8 @@
              class="scanner-page__input"
              placeholder="{% if step == 'scan_object' %}Отсканируйте деталь…{% else %}Отсканируйте новую ячейку…{% endif %}"
              autocomplete="off"
-             autofocus>
+             autofocus
+             data-scan-input>
       <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
       {% if object %}
         <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
