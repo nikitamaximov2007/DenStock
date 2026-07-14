@@ -6,6 +6,8 @@
     <a href="{% url 'warehouse_index' %}">← К структуре склада</a>
     {% if can_manage %}
       · <a href="{% url 'location_edit' location.pk %}">Изменить</a>
+      · <a class="btn btn--secondary btn--small"
+    href="{% url 'location_rename' location.pk %}">Переименовать ячейку</a>
     {% endif %}
     {% if can_print_labels %}
       · <a href="{% url 'label_location' location.pk %}" target="_blank">Печать этикетки</a>
@@ -72,6 +74,31 @@
     </ul>
   {% else %}
     <p class="muted">Нет вложенных мест.</p>
+  {% endif %}
+  <h2>История переименований</h2>
+  {% if rename_history %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Когда</th>
+          <th>Старый код</th>
+          <th>Новый код</th>
+          <th>Кто</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in rename_history %}
+          <tr>
+            <td>{{ entry.renamed_at|date:"d.m.Y H:i" }}</td>
+            <td>{{ entry.old_code }}</td>
+            <td>{{ entry.new_code }}</td>
+            <td>{{ entry.renamed_by|default:"Система" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Переименований не было.</p>
   {% endif %}
   <h2>Содержимое</h2>
   {% include "partials/_status_block.html" with kind="info" text="Остатки появятся в следующих слоях." %}

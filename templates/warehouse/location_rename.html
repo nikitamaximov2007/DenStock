@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Переименование ячейки · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Переименовать ячейку</h1>
+  <p>Изменится только обозначение существующей ячейки. Остатки, документы и связи не перемещаются.</p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.expected_code }}
+    {% if form.non_field_errors %}
+      {{ form.non_field_errors }}
+    {% endif %}
+    <p>
+      <label for="current-code">Текущий код ячейки</label>
+      <input id="current-code" type="text" value="{{ location.code }}" readonly>
+    </p>
+    <p>
+      {{ form.new_code.label_tag }}
+      {{ form.new_code }}
+      {{ form.new_code.errors }}
+    </p>
+    <button type="submit" class="btn btn--primary">Сохранить новый код</button>
+    <a class="btn btn--secondary"
+       href="{% url 'location_detail' location.pk %}">Отмена</a>
+  </form>
+{% endblock %}

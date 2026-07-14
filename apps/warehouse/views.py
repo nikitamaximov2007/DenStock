@@ -4,12 +4,13 @@ from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.views.decorators.http import require_POST
-from django.views.generic import CreateView, DetailView, ListView, UpdateView
+from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
 
 from apps.accounts.permissions import ManageWarehouseMixin
 
-from .forms import StorageLocationForm
+from .forms import StorageLocationForm, StorageLocationRenameForm, StorageLocationUpdateForm
 from .models import StorageLocation
+from .services import StorageLocationRenameError, rename_storage_location
 
 
 class LocationTreeView(LoginRequiredMixin, ListView):
@@ -61,6 +62,7 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
         ctx["can_manage"] = self.request.user.can_manage_warehouse
         ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["children"] = self.object.children.all()
+        ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
         return ctx
 
 
@@ -82,7 +84,7 @@ class LocationCreateView(ManageWarehouseMixin, CreateView):
 
 class LocationUpdateView(ManageWarehouseMixin, UpdateView):
     model = StorageLocation
-    form_class = StorageLocationForm
+    form_class = StorageLocationUpdateForm
     template_name = "directories/form.html"
     success_url = reverse_lazy("warehouse_index")
 
@@ -94,6 +96,42 @@ class LocationUpdateView(ManageWarehouseMixin, UpdateView):
     def form_valid(self, form):
         messages.success(self.request, "Изменения сохранены.")
         return super().form_valid(form)
+
+
+class LocationRenameView(ManageWarehouseMixin, FormView):
+    form_class = StorageLocationRenameForm
+    template_name = "warehouse/location_rename.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        self.location = get_object_or_404(StorageLocation, pk=kwargs["pk"])
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_initial(self):
+        initial = super().get_initial()
+        initial["expected_code"] = self.location.code
+        return initial
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["location"] = self.location
+        return ctx
+
+    def form_valid(self, form):
+        old_code = self.location.code
+        try:
+            location = rename_storage_location(
+                self.location,
+                new_code=form.cleaned_data["new_code"],
+                expected_code=form.cleaned_data["expected_code"],
+                by=self.request.user,
+            )
+        except StorageLocationRenameError as exc:
+            form.add_error("new_code", str(exc))
+            return self.form_invalid(form)
+
+        messages.success(self.request, f"Ячейка {old_code} переименована в {location.code}.")
+        messages.warning(self.request, "Распечатайте новую этикетку для ячейки.")
+        return redirect("location_detail", pk=location.pk)
 
 
 @require_POST

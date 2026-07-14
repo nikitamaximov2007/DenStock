@@ -107,6 +107,36 @@ class StorageLocation(models.Model):
         return self.is_active and self.storage_allowed
 
 
+class StorageLocationRenameHistory(models.Model):
+    """Неизменяемый аудит переименований физической ячейки."""
+
+    location = models.ForeignKey(
+        StorageLocation,
+        verbose_name="Ячейка",
+        on_delete=models.PROTECT,
+        related_name="rename_history",
+    )
+    old_code = models.CharField("Старый код", max_length=60)
+    new_code = models.CharField("Новый код", max_length=60)
+    renamed_by = models.ForeignKey(
+        django_settings.AUTH_USER_MODEL,
+        verbose_name="Кто переименовал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    renamed_at = models.DateTimeField("Переименовано", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "История переименования ячейки"
+        verbose_name_plural = "История переименований ячеек"
+        ordering = ["-renamed_at", "-pk"]
+
+    def __str__(self) -> str:
+        return f"{self.old_code} -> {self.new_code}"
+
+
 class ValuationSettings(models.Model):
     """Единый текущий курс для цен и финансовой оценки склада (одна строка).
 
