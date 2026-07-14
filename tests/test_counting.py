@@ -46,6 +46,7 @@ from apps.receipts.services import add_line, create_receipt, post_receipt, recei
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import compose_address, get_or_create_location
 from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
+from apps.warehouse.services import rename_storage_location
 
 PASSWORD = "parol-12345"
 
@@ -438,6 +439,71 @@ def test_new_session_creates_location_without_zone(client, make_user, refs):
     )
     assert resp.status_code == 302
     assert StorageLocation.objects.filter(code="S01-L01-B01-C03").exists()
+
+
+def test_new_session_reuses_code_released_by_location_rename(client, make_user):
+    """A renamed cell must release its old automatic barcode for a new physical cell."""
+    user = make_user("rename-counting", is_superuser=True)
+    old_location = StorageLocation.objects.create(
+        name="Старая ячейка",
+        code="S04-L03-D02-C07",
+        level=StorageLocation.Level.CELL,
+    )
+    old_location_id = old_location.pk
+    rename_storage_location(
+        old_location,
+        new_code="S04-L03-D02-C08",
+        expected_code="S04-L03-D02-C07",
+        by=user,
+    )
+
+    _login(client, make_user, superuser=True, name="counting-operator")
+    response = client.post(
+        reverse("counting_new"),
+        {
+            "rack_number": "4",
+            "level_number": "3",
+            "place_type": "drawer",
+            "place_number": "2",
+            "cell_number": "7",
+            "comment": "",
+        },
+    )
+
+    assert response.status_code == 302
+    new_location = StorageLocation.objects.get(code="S04-L03-D02-C07")
+    session = InventoryCountingSession.objects.get(storage_location=new_location)
+    assert new_location.pk != old_location_id
+    assert new_location.barcode == "LOC:S04-L03-D02-C07"
+    assert session.full_address == "S04-L03-D02-C07"
+    old_location.refresh_from_db()
+    assert old_location.barcode == "LOC:S04-L03-D02-C08"
+
+
+def test_new_session_shows_barcode_conflict_without_partial_records(client, make_user):
+    _login(client, make_user, superuser=True, name="conflict-operator")
+    StorageLocation.objects.create(
+        name="Занятый штрихкод",
+        code="S04-L03-D02-C08",
+        barcode="LOC:S04-L03-D02-C07",
+    )
+
+    response = client.post(
+        reverse("counting_new"),
+        {
+            "rack_number": "4",
+            "level_number": "3",
+            "place_type": "drawer",
+            "place_number": "2",
+            "cell_number": "7",
+            "comment": "",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "штрихкод уже используется другой ячейкой" in response.content.decode()
+    assert not StorageLocation.objects.filter(code="S04-L03-D02-C07").exists()
+    assert not InventoryCountingSession.objects.exists()
 
 
 def test_new_page_shows_address_legend(client, make_user, db):

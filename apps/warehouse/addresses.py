@@ -21,7 +21,10 @@ C = ячейка внутри ящика/контейнера (cell/compartment)
 Одна деталь может лежать в нескольких адресах: остаток и так привязан к месту
 (StockBalance/StockLot).
 """
+from django.db import IntegrityError, transaction
+
 from .models import StorageLocation
+from .services import StorageLocationCreateError
 
 # Вид хранения -> буква в адресе. Полки сегмента не добавляют.
 # K и X — легаси-буквы старых адресов: новые адреса используют B.
@@ -80,6 +83,18 @@ def get_or_create_location(address: str, *, name: str = "") -> StorageLocation:
     level = (
         StorageLocation.Level.CELL if "-C" in address else StorageLocation.Level.SHELF
     )
-    return StorageLocation.objects.create(
-        code=address, name=name or address, level=level
-    )
+    try:
+        # A savepoint makes an expected unique conflict safe for an outer counting transaction.
+        with transaction.atomic():
+            return StorageLocation.objects.create(
+                code=address, name=name or address, level=level
+            )
+    except IntegrityError as exc:
+        # A concurrent request may already have created the same code. A barcode conflict
+        # cannot be retried as a location lookup and must be shown to the operator.
+        location = StorageLocation.objects.filter(code__iexact=address).first()
+        if location is not None:
+            return location
+        raise StorageLocationCreateError(
+            "Не удалось создать ячейку: штрихкод уже используется другой ячейкой."
+        ) from exc

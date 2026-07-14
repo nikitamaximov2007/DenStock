@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError, transaction
 from django.db.models import Count, DecimalField, F, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -17,6 +18,7 @@ from django.views.decorators.http import require_POST
 from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
 from apps.core.templatetags.number_format import quantity_int
 from apps.polaris.services import find_polaris_by_number
+from apps.warehouse.services import StorageLocationCreateError
 
 from .forms import CountingStartForm
 from .models import InventoryCountingLine, InventoryCountingSession
@@ -86,14 +88,21 @@ def counting_new(request):
     if request.method == "POST":
         form = CountingStartForm(request.POST)
         if form.is_valid():
-            location = form.resolve_location()
-            session = start_session(
-                location=location, comment=form.cleaned_data["comment"], by=request.user
-            )
-            messages.success(
-                request, f"Пересчёт начат для адреса {session.full_address}."
-            )
-            return redirect("counting_detail", pk=session.pk)
+            try:
+                with transaction.atomic():
+                    location = form.resolve_location()
+                    session = start_session(
+                        location=location, comment=form.cleaned_data["comment"], by=request.user
+                    )
+            except StorageLocationCreateError as exc:
+                form.add_error(None, str(exc))
+            except IntegrityError:
+                form.add_error(None, "Не удалось начать пересчёт. Повторите попытку.")
+            else:
+                messages.success(
+                    request, f"Пересчёт начат для адреса {session.full_address}."
+                )
+                return redirect("counting_detail", pk=session.pk)
     else:
         form = CountingStartForm()
     return render(request, "counting/new.html", {"form": form})
