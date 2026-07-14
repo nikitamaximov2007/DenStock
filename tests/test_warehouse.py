@@ -1,10 +1,28 @@
+from decimal import Decimal
+from unittest.mock import patch
+
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.urls import reverse
 
 from apps.accounts import roles
-from apps.warehouse.models import StorageLocation
+from apps.actions.models import WarehouseAction
+from apps.catalog.models import Category, PartType, Unit
+from apps.core.scanner import resolve_scan
+from apps.inventory.models import StockBalance, StockMovement
+from apps.inventory.services import (
+    create_part_items,
+    create_stock_lot,
+    receive_part_item,
+    receive_stock_lot,
+)
+from apps.procurement.models import Batch, BatchLine
+from apps.procurement.services import finalize_cost
+from apps.suppliers.models import Supplier
+from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
+from apps.warehouse.services import StorageLocationRenameError, rename_storage_location
 
 PASSWORD = "parol-12345"
 L = StorageLocation.Level
@@ -161,3 +179,271 @@ def test_navigation_shows_warehouse(make_user, client):
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("dashboard")).content.decode()
     assert "Склад" in html
+
+
+def _finalized_line(supplier, part, admin, *, quantity):
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    line = BatchLine.objects.create(
+        batch=batch,
+        part_type=part,
+        quantity=Decimal(quantity),
+        unit_cost_currency=Decimal("100"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    line.refresh_from_db()
+    return line
+
+
+@pytest.fixture
+def renamed_inventory(db, make_user):
+    admin = make_user("warehouse-admin", is_superuser=True)
+    supplier = Supplier.objects.create(name="ООО Поставка")
+    category = Category.objects.create(name="Расходники")
+    unit = Unit.objects.get(name="Штука")
+    location = StorageLocation.objects.create(
+        name="Рабочая ячейка",
+        code="S04-L03-D01-C04",
+        storage_allowed=True,
+        is_active=True,
+    )
+    bulk_part = PartType.objects.create(
+        name="Втулка",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    serial_part = PartType.objects.create(
+        name="Датчик",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.SERIAL,
+    )
+    bulk_line = _finalized_line(supplier, bulk_part, admin, quantity="5")
+    serial_line = _finalized_line(supplier, serial_part, admin, quantity="1")
+    lot = create_stock_lot(bulk_line, location, Decimal("5"))
+    receive_stock_lot(lot, by=admin)
+    lot.refresh_from_db()
+    item = create_part_items(serial_line, 1)[0]
+    receive_part_item(item, to_location=location, by=admin)
+    item.refresh_from_db()
+    action = WarehouseAction.objects.create(
+        action_type=WarehouseAction.Type.SALE,
+        part_type=bulk_part,
+        part_number="420931285",
+        part_name="Втулка",
+        location=location,
+        location_code=location.code,
+        quantity=Decimal("1"),
+        customer_comment="Снимок ячейки",
+    )
+    return {
+        "admin": admin,
+        "location": location,
+        "lot": lot,
+        "item": item,
+        "action": action,
+        "bulk_line": bulk_line,
+        "serial_line": serial_line,
+    }
+
+
+def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_inventory, client):
+    data = renamed_inventory
+    location = data["location"]
+    old_code = location.code
+    original_barcode = location.barcode
+    lot = data["lot"]
+    item = data["item"]
+    action = data["action"]
+    balance = StockBalance.objects.get(batch_line=data["bulk_line"], location=location)
+    movements_before = StockMovement.objects.count()
+    lot_before = (
+        lot.location_id,
+        lot.quantity,
+        lot.initial_quantity,
+        lot.status,
+        lot.landed_unit_cost_rub,
+        lot.batch_id,
+        lot.batch_line_id,
+        lot.part_type_id,
+    )
+    balance_before = (
+        balance.location_id,
+        balance.quantity_physical,
+        balance.quantity_available,
+        balance.quantity_reserved,
+        balance.quantity_quarantine,
+        balance.quantity_in_repair,
+        balance.batch_id,
+        balance.batch_line_id,
+        balance.part_type_id,
+    )
+    item_before = (
+        item.current_location_id,
+        item.status,
+        item.landed_cost_rub,
+        item.batch_id,
+        item.batch_line_id,
+        item.part_type_id,
+    )
+
+    renamed = rename_storage_location(
+        location,
+        new_code=" s04-l03-d01-c05 ",
+        expected_code=old_code,
+        by=data["admin"],
+    )
+
+    assert renamed.pk == location.pk
+    assert renamed.code == "S04-L03-D01-C05"
+    location.refresh_from_db()
+    lot.refresh_from_db()
+    balance.refresh_from_db()
+    item.refresh_from_db()
+    action.refresh_from_db()
+    assert location.barcode == original_barcode
+    assert lot_before == (
+        lot.location_id,
+        lot.quantity,
+        lot.initial_quantity,
+        lot.status,
+        lot.landed_unit_cost_rub,
+        lot.batch_id,
+        lot.batch_line_id,
+        lot.part_type_id,
+    )
+    assert balance_before == (
+        balance.location_id,
+        balance.quantity_physical,
+        balance.quantity_available,
+        balance.quantity_reserved,
+        balance.quantity_quarantine,
+        balance.quantity_in_repair,
+        balance.batch_id,
+        balance.batch_line_id,
+        balance.part_type_id,
+    )
+    assert item_before == (
+        item.current_location_id,
+        item.status,
+        item.landed_cost_rub,
+        item.batch_id,
+        item.batch_line_id,
+        item.part_type_id,
+    )
+    assert StockMovement.objects.count() == movements_before
+    assert action.location_id == location.pk
+    assert action.location.code == "S04-L03-D01-C05"
+    assert action.location_code == old_code
+    assert action.part_number == "420931285"
+    assert StorageLocationRenameHistory.objects.filter(
+        location=location,
+        old_code=old_code,
+        new_code="S04-L03-D01-C05",
+        renamed_by=data["admin"],
+    ).count() == 1
+
+    assert resolve_scan(old_code).status == "unknown"
+    assert resolve_scan(location.code).id == location.pk
+    # Штрихкод не является алиасом кода и сохраняется, потому что меняется только code.
+    assert resolve_scan(original_barcode).id == location.pk
+    client.force_login(data["admin"])
+    label = client.get(reverse("label_location", args=[location.pk]))
+    assert label.status_code == 200
+    assert location.code in label.content.decode()
+
+
+@pytest.mark.parametrize(
+    ("new_code", "message"),
+    [
+        ("S04 L03", "без пробелов"),
+        ("420931285", "Номер детали"),
+        (" s04-l03-d01-c04 ", "совпадает"),
+    ],
+)
+def test_rename_rejects_invalid_or_unchanged_code(renamed_inventory, new_code, message):
+    location = renamed_inventory["location"]
+    with pytest.raises(StorageLocationRenameError, match=message):
+        rename_storage_location(
+            location,
+            new_code=new_code,
+            expected_code=location.code,
+            by=renamed_inventory["admin"],
+        )
+    location.refresh_from_db()
+    assert location.code == "S04-L03-D01-C04"
+    assert StorageLocationRenameHistory.objects.count() == 0
+
+
+def test_rename_rejects_occupied_or_stale_code(renamed_inventory):
+    location = renamed_inventory["location"]
+    StorageLocation.objects.create(name="Занятая", code="S04-L03-D01-C05")
+    with pytest.raises(StorageLocationRenameError, match="уже существует"):
+        rename_storage_location(
+            location,
+            new_code="S04-L03-D01-C05",
+            expected_code=location.code,
+            by=renamed_inventory["admin"],
+        )
+    with pytest.raises(StorageLocationRenameError, match="другим пользователем"):
+        rename_storage_location(
+            location,
+            new_code="S04-L03-D01-C06",
+            expected_code="S04-L03-D01-C03",
+            by=renamed_inventory["admin"],
+        )
+    assert StorageLocationRenameHistory.objects.count() == 0
+
+
+def test_rename_converts_concurrent_unique_conflict_to_user_error(renamed_inventory):
+    location = renamed_inventory["location"]
+    with patch(
+        "apps.warehouse.services._persist_location_rename",
+        side_effect=IntegrityError,
+    ):
+        with pytest.raises(StorageLocationRenameError, match="уже существует"):
+            rename_storage_location(
+                location,
+                new_code="S04-L03-D01-C05",
+                expected_code=location.code,
+                by=renamed_inventory["admin"],
+            )
+    location.refresh_from_db()
+    assert location.code == "S04-L03-D01-C04"
+    assert StorageLocationRenameHistory.objects.count() == 0
+
+
+def test_rename_view_permissions_double_post_and_generic_edit_guard(
+    renamed_inventory, make_user, client
+):
+    location = renamed_inventory["location"]
+    rename_url = reverse("location_rename", args=[location.pk])
+    viewer = make_user("rename-viewer", role=roles.VIEWER)
+    client.force_login(viewer)
+    assert client.get(rename_url).status_code == 403
+    assert client.post(
+        rename_url,
+        {"expected_code": location.code, "new_code": "S04-L03-D01-C05"},
+    ).status_code == 403
+
+    client.force_login(renamed_inventory["admin"])
+    page = client.get(rename_url)
+    assert page.status_code == 200
+    assert "Текущий код ячейки" in page.content.decode()
+    payload = {"expected_code": location.code, "new_code": "S04-L03-D01-C05"}
+    assert client.post(rename_url, payload).status_code == 302
+    repeated = client.post(rename_url, payload)
+    assert repeated.status_code == 200
+    assert "уже изменён другим пользователем" in repeated.content.decode()
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 1
+
+    response = client.post(
+        reverse("location_edit", args=[location.pk]),
+        _create_payload(name="Новое имя", code="S04-L03-D01-C99"),
+    )
+    assert response.status_code == 302
+    location.refresh_from_db()
+    assert location.name == "Новое имя"
+    assert location.code == "S04-L03-D01-C05"
