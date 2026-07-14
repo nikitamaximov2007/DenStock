@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ title }}</h1>
+  <form method="post" class="form">
+    {% csrf_token %}
+    <p>
+      <label for="location-code">Код ячейки</label>
+      <input id="location-code" type="text" value="{{ object.code }}" readonly>
+      <span class="muted">Код существующей ячейки изменяется через отдельную операцию переименования.</span>
+    </p>
+    <p>
+      <a class="btn btn--secondary btn--small"
+         href="{% url 'location_rename' object.pk %}">Переименовать ячейку</a>
+    </p>
+    <p>
+      <label for="location-barcode">Штрихкод</label>
+      <input id="location-barcode"
+             type="text"
+             value="{{ object.barcode }}"
+             readonly>
+      <span class="muted">Штрихкод остаётся стабильным при переименовании ячейки.</span>
+    </p>
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Сохранить</button>
+  </form>
+{% endblock %}
