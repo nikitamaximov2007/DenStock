@@ -8,12 +8,16 @@
 запрещено (защита от удвоения).
 """
 import io
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth.models import Group
 from django.core.management import CommandError, call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts import roles
 from apps.actions.models import WarehouseAction
@@ -1525,6 +1529,162 @@ def test_delete_requires_permission(client, make_user, refs, location, admin):
     _login(client, make_user, role=roles.SELLER, name="prodavec")
     assert client.post(reverse("counting_delete", args=[session.pk])).status_code == 403
     assert InventoryCountingSession.objects.count() == 1
+
+
+def _list_session(*, code, user, created_at, posted_at=None, line_count=0, quantity="0",
+                  price="0", scans=0):
+    location = StorageLocation.objects.create(name=code, code=code)
+    status = (
+        InventoryCountingSession.Status.POSTED
+        if posted_at
+        else InventoryCountingSession.Status.DRAFT
+    )
+    session = InventoryCountingSession.objects.create(
+        storage_location=location,
+        full_address=code,
+        title=code,
+        status=status,
+        created_by=user,
+        posted_at=posted_at,
+    )
+    InventoryCountingSession.objects.filter(pk=session.pk).update(created_at=created_at)
+    for index in range(line_count):
+        InventoryCountingLine.objects.create(
+            session=session,
+            scanned_value=f"N-{session.pk}-{index}",
+            normalized_value=f"N-{session.pk}-{index}",
+            display_name="Тестовая строка",
+            quantity_counted=Decimal(quantity),
+            final_customer_price_rub=Decimal(price),
+            scan_count=scans,
+        )
+    session.refresh_from_db()
+    return session
+
+
+def test_counting_list_uses_live_location_code_after_rename(client, make_user):
+    user = make_user("live-location", is_superuser=True)
+    location = StorageLocation.objects.create(name="C07", code="S04-L03-D02-C07")
+    session = InventoryCountingSession.objects.create(
+        storage_location=location,
+        full_address="S04-L03-D02-C07",
+        title="Пересчёт C07",
+        status=InventoryCountingSession.Status.POSTED,
+        created_by=user,
+        posted_at=timezone.now(),
+    )
+    original_location_id = location.pk
+    rename_storage_location(
+        location,
+        new_code="S04-L03-D02-C08",
+        expected_code="S04-L03-D02-C07",
+        by=user,
+    )
+    replacement = get_or_create_location("S04-L03-D02-C07")
+
+    client.force_login(user)
+    detail = client.get(reverse("counting_detail", args=[session.pk]))
+    listed = client.get(reverse("counting_list"))
+    session.refresh_from_db()
+
+    assert detail.status_code == listed.status_code == 200
+    assert "S04-L03-D02-C08" in detail.content.decode()
+    text = listed.content.decode()
+    assert "S04-L03-D02-C08" in text
+    assert "На момент пересчёта: S04-L03-D02-C07" in text
+    assert session.full_address == "S04-L03-D02-C07"
+    assert session.storage_location_id == original_location_id
+    assert replacement.pk != original_location_id
+    assert session.storage_location_id != replacement.pk
+
+
+def test_counting_list_sorting_and_conducted_null_order(client, make_user):
+    user_a = make_user("alpha", is_superuser=True)
+    user_m = make_user("middle", is_superuser=True)
+    user_z = make_user("zulu", is_superuser=True)
+    base = timezone.now() - timedelta(days=4)
+    first = _list_session(
+        code="S01-L01-D01-C03", user=user_z, created_at=base + timedelta(days=1),
+        posted_at=base + timedelta(days=1), line_count=1, quantity="1", price="10", scans=2,
+    )
+    second = _list_session(
+        code="S01-L01-D01-C01", user=user_a, created_at=base + timedelta(days=2),
+        posted_at=base + timedelta(days=3), line_count=2, quantity="5", price="10", scans=1,
+    )
+    draft = _list_session(
+        code="S01-L01-D01-C02", user=user_m, created_at=base + timedelta(days=3),
+        line_count=3, quantity="2", price="30", scans=4,
+    )
+    client.force_login(user_a)
+
+    expected = {
+        ("conducted_at", "desc"): [second.pk, first.pk, draft.pk],
+        ("conducted_at", "asc"): [first.pk, second.pk, draft.pk],
+        ("created_at", "asc"): [first.pk, second.pk, draft.pk],
+        ("created_at", "desc"): [draft.pk, second.pk, first.pk],
+        ("address", "asc"): [second.pk, draft.pk, first.pk],
+        ("address", "desc"): [first.pk, draft.pk, second.pk],
+        ("status", "asc"): [draft.pk, first.pk, second.pk],
+        ("status", "desc"): [first.pk, second.pk, draft.pk],
+        ("positions", "desc"): [draft.pk, second.pk, first.pk],
+        ("positions", "asc"): [first.pk, second.pk, draft.pk],
+        ("quantity", "desc"): [second.pk, draft.pk, first.pk],
+        ("quantity", "asc"): [first.pk, draft.pk, second.pk],
+        ("value", "desc"): [draft.pk, second.pk, first.pk],
+        ("value", "asc"): [first.pk, second.pk, draft.pk],
+        ("scans", "desc"): [draft.pk, first.pk, second.pk],
+        ("scans", "asc"): [first.pk, second.pk, draft.pk],
+        ("created_by", "asc"): [second.pk, draft.pk, first.pk],
+        ("created_by", "desc"): [first.pk, draft.pk, second.pk],
+    }
+    for (sort, direction), ids in expected.items():
+        response = client.get(reverse("counting_list"), {"sort": sort, "direction": direction})
+        assert [session.pk for session in response.context["sessions"]] == ids, (sort, direction)
+
+
+def test_counting_list_fallback_headers_and_pagination_keep_query_params(client, make_user):
+    user = make_user("sort-operator", is_superuser=True)
+    base = timezone.now() - timedelta(days=2)
+    for number in range(52):
+        _list_session(
+            code=f"S09-L01-D01-C{number + 1:02d}",
+            user=user,
+            created_at=base + timedelta(seconds=number),
+        )
+    client.force_login(user)
+
+    fallback = client.get(reverse("counting_list"), {"sort": "DROP_TABLE", "direction": "random"})
+    assert fallback.context["sort"] == "conducted_at"
+    assert fallback.context["direction"] == "desc"
+
+    response = client.get(
+        reverse("counting_list"),
+        {"status": "draft", "sort": "address", "direction": "asc", "page": 2},
+    )
+    html = response.content.decode()
+    assert response.context["page_obj"].number == 2
+    assert response.context["page_obj"].paginator.count == 52
+    assert "sort=address" in html and "direction=asc" in html and "status=draft" in html
+    assert "table-sort-link--active" in html and "↑" in html
+    assert "direction=desc" in html
+
+
+def test_counting_list_has_no_per_row_queries(client, make_user):
+    user = make_user("query-operator", is_superuser=True)
+    base = timezone.now()
+    _list_session(code="S08-L01-D01-C01", user=user, created_at=base)
+    client.force_login(user)
+    with CaptureQueriesContext(connection) as one_row_queries:
+        client.get(reverse("counting_list"))
+    for number in range(8):
+        _list_session(
+            code=f"S08-L01-D01-C{number + 2:02d}",
+            user=user,
+            created_at=base + timedelta(seconds=number),
+        )
+    with CaptureQueriesContext(connection) as many_row_queries:
+        client.get(reverse("counting_list"))
+    assert len(many_row_queries) <= len(one_row_queries) + 1
 
 
 def test_pages_have_no_em_dash(client, make_user, refs, location):

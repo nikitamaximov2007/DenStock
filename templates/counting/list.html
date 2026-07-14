@@ -30,15 +30,70 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Адрес</th>
+          <th>
+            <a class="table-sort-link{% if sort_headers.address.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='address' direction=sort_headers.address.next_direction page=1 %}">
+              Адрес
+              {% if sort_headers.address.active %}{{ sort_headers.address.indicator }}{% endif %}
+            </a>
+          </th>
           <th>Описание</th>
-          <th>Статус</th>
-          <th class="num">Позиций</th>
-          <th class="num">Деталей</th>
-          <th class="num--money">Стоимость</th>
-          <th class="num">Сканов</th>
-          <th>Начал</th>
-          <th>Создано</th>
+          <th>
+            <a class="table-sort-link{% if sort_headers.status.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='status' direction=sort_headers.status.next_direction page=1 %}">
+              Статус
+              {% if sort_headers.status.active %}{{ sort_headers.status.indicator }}{% endif %}
+            </a>
+          </th>
+          <th class="num">
+            <a class="table-sort-link{% if sort_headers.positions.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='positions' direction=sort_headers.positions.next_direction page=1 %}">
+              Позиций
+              {% if sort_headers.positions.active %}{{ sort_headers.positions.indicator }}{% endif %}
+            </a>
+          </th>
+          <th class="num">
+            <a class="table-sort-link{% if sort_headers.quantity.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='quantity' direction=sort_headers.quantity.next_direction page=1 %}">
+              Деталей
+              {% if sort_headers.quantity.active %}{{ sort_headers.quantity.indicator }}{% endif %}
+            </a>
+          </th>
+          <th class="num--money">
+            <a class="table-sort-link{% if sort_headers.value.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='value' direction=sort_headers.value.next_direction page=1 %}">
+              Стоимость
+              {% if sort_headers.value.active %}{{ sort_headers.value.indicator }}{% endif %}
+            </a>
+          </th>
+          <th class="num">
+            <a class="table-sort-link{% if sort_headers.scans.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='scans' direction=sort_headers.scans.next_direction page=1 %}">
+              Сканов
+              {% if sort_headers.scans.active %}{{ sort_headers.scans.indicator }}{% endif %}
+            </a>
+          </th>
+          <th>
+            <a class="table-sort-link{% if sort_headers.created_by.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='created_by' direction=sort_headers.created_by.next_direction page=1 %}">
+              Начал
+              {% if sort_headers.created_by.active %}{{ sort_headers.created_by.indicator }}{% endif %}
+            </a>
+          </th>
+          <th>
+            <a class="table-sort-link{% if sort_headers.created_at.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='created_at' direction=sort_headers.created_at.next_direction page=1 %}">
+              Создано
+              {% if sort_headers.created_at.active %}{{ sort_headers.created_at.indicator }}{% endif %}
+            </a>
+          </th>
+          <th>
+            <a class="table-sort-link{% if sort_headers.conducted_at.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='conducted_at' direction=sort_headers.conducted_at.next_direction page=1 %}">
+              Проведено
+              {% if sort_headers.conducted_at.active %}{{ sort_headers.conducted_at.indicator }}{% endif %}
+            </a>
+          </th>
           <th></th>
         </tr>
       </thead>
@@ -47,8 +102,11 @@
           <tr>
             <td>
               <a href="{% url 'counting_detail' s.pk %}">
-                <span class="code-pill">{{ s.full_address }}</span>
+                <span class="code-pill">{{ s.display_address }}</span>
               </a>
+              {% if s.display_address != s.full_address %}
+                <span class="muted" title="На момент пересчёта: {{ s.full_address }}">был: {{ s.full_address }}</span>
+              {% endif %}
             </td>
             <td>{{ s.comment|truncatechars:60|default:"·" }}</td>
             <td>
@@ -66,6 +124,13 @@
             <td class="num">{{ s.scans_total|default:0 }}</td>
             <td>{{ s.created_by|default:"·" }}</td>
             <td>{{ s.created_at|ru_dt }}</td>
+            <td>
+              {% if s.posted_at %}
+                {{ s.posted_at|ru_dt }}
+              {% else %}
+                &ndash;
+              {% endif %}
+            </td>
             <td class="table__actions">
               <a class="btn btn--small btn--secondary"
                  href="{% url 'counting_detail' s.pk %}">Открыть</a>
@@ -78,6 +143,7 @@
         {% endfor %}
       </tbody>
     </table>
+    {% include "partials/_pagination.html" %}
   {% else %}
     {% url 'counting_new' as new_url %}
     {% include "partials/_empty_state.html" with icon="scan" title="Пересчётов пока нет" text="Начните пересчёт: выберите ячейку и сканируйте детали подряд." action_url=new_url action_label="Новый пересчёт" compact=1 %}
