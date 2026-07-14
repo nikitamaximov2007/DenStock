@@ -6,6 +6,7 @@
   <form method="post" class="form">
     {% csrf_token %}
     {{ form.expected_code }}
+    {{ form.next }}
     {% if form.non_field_errors %}
       {{ form.non_field_errors }}
     {% endif %}
@@ -19,7 +20,6 @@
       {{ form.new_code.errors }}
     </p>
     <button type="submit" class="btn btn--primary">Сохранить новый код</button>
-    <a class="btn btn--secondary"
-       href="{% url 'location_detail' location.pk %}">Отмена</a>
+    <a class="btn btn--secondary" href="{{ cancel_url }}">Отмена</a>
   </form>
 {% endblock %}

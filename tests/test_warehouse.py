@@ -21,6 +21,7 @@ from apps.inventory.services import (
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
+from apps.warehouse.forms import StorageLocationForm
 from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
 from apps.warehouse.services import StorageLocationRenameError, rename_storage_location
 
@@ -447,3 +448,120 @@ def test_rename_view_permissions_double_post_and_generic_edit_guard(
     location.refresh_from_db()
     assert location.name == "Новое имя"
     assert location.code == "S04-L03-D01-C05"
+
+
+def test_existing_location_edit_keeps_code_and_barcode_server_side(renamed_inventory, client):
+    location = renamed_inventory["location"]
+    original_code = location.code
+    original_barcode = location.barcode
+    client.force_login(renamed_inventory["admin"])
+    edit_url = reverse("location_edit", args=[location.pk])
+
+    page = client.get(edit_url)
+    html = page.content.decode()
+    assert page.status_code == 200
+    assert f'value="{original_code}"' in html
+    assert "Код существующей ячейки изменяется через отдельную операцию" in html
+    assert reverse("location_rename", args=[location.pk]) in html
+    assert f'value="{original_barcode}"' in html
+
+    response = client.post(
+        edit_url,
+        {
+            "name": "Ячейка после правки",
+            "code": "S04-L03-D01-C99",
+            "barcode": "LOC:S04-L03-D01-C99",
+            "level": L.SHELF,
+            "purpose": P.QUARANTINE,
+            "storage_allowed": "on",
+            "sort_order": "7",
+            "description": "Проверенная административная настройка",
+            "capacity": "18",
+        },
+    )
+    assert response.status_code == 302
+    location.refresh_from_db()
+    assert location.code == original_code
+    assert location.barcode == original_barcode
+    assert location.name == "Ячейка после правки"
+    assert location.level == L.SHELF
+    assert location.purpose == P.QUARANTINE
+    assert location.sort_order == 7
+    assert location.description == "Проверенная административная настройка"
+    assert location.capacity == 18
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 0
+
+    form = StorageLocationForm(
+        instance=location,
+        data={
+            "name": location.name,
+            "code": "S04-L03-D01-C98",
+            "barcode": "LOC:S04-L03-D01-C98",
+            "level": location.level,
+            "purpose": location.purpose,
+            "storage_allowed": "on",
+            "sort_order": str(location.sort_order),
+            "description": location.description,
+            "capacity": location.capacity,
+        },
+    )
+    assert "code" not in form.fields
+    assert "barcode" not in form.fields
+    assert form.is_valid()
+    form.save()
+    location.refresh_from_db()
+    assert location.code == original_code
+    assert location.barcode == original_barcode
+
+
+def test_admin_change_form_keeps_existing_location_identity(renamed_inventory, client):
+    location = renamed_inventory["location"]
+    admin_user = renamed_inventory["admin"]
+    original_code = location.code
+    original_barcode = location.barcode
+    client.force_login(admin_user)
+    admin_url = reverse("admin:warehouse_storagelocation_change", args=[location.pk])
+
+    page = client.get(admin_url)
+    assert page.status_code == 200
+    assert 'name="code"' not in page.content.decode()
+    assert 'name="barcode"' not in page.content.decode()
+
+    response = client.post(
+        admin_url,
+        {
+            "name": "Правка через admin",
+            "code": "S04-L03-D01-C99",
+            "barcode": "LOC:S04-L03-D01-C99",
+            "level": location.level,
+            "purpose": location.purpose,
+            "storage_allowed": "on",
+            "is_active": "on",
+            "sort_order": str(location.sort_order),
+            "description": location.description,
+            "capacity": location.capacity or "",
+            "_save": "Save",
+        },
+    )
+    assert response.status_code == 302
+    location.refresh_from_db()
+    assert location.code == original_code
+    assert location.barcode == original_barcode
+    assert location.name == "Правка через admin"
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 0
+
+
+def test_rename_rejects_external_next_url(renamed_inventory, client):
+    location = renamed_inventory["location"]
+    client.force_login(renamed_inventory["admin"])
+    rename_url = reverse("location_rename", args=[location.pk])
+    response = client.post(
+        rename_url,
+        {
+            "expected_code": location.code,
+            "new_code": "S04-L03-D01-C05",
+            "next": "https://evil.example/",
+        },
+    )
+    assert response.status_code == 302
+    assert response["Location"] == reverse("location_detail", args=[location.pk])

@@ -11,7 +11,7 @@ class StorageLocationAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         if obj is not None:
-            return ("code",)
+            return ("code", "barcode")
         return ()
 
 

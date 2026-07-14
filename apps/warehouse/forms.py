@@ -29,6 +29,13 @@ class StorageLocationForm(forms.ModelForm):
         except StorageLocationRenameError as exc:
             raise forms.ValidationError(str(exc)) from exc
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            # Existing physical identities may only change through the rename service.
+            self.fields.pop("code", None)
+            self.fields.pop("barcode", None)
+
 
 class StorageLocationUpdateForm(StorageLocationForm):
     """Общие свойства ячейки редактируются отдельно от её физического кода."""
@@ -36,7 +43,6 @@ class StorageLocationUpdateForm(StorageLocationForm):
     class Meta(StorageLocationForm.Meta):
         fields = [
             "name",
-            "barcode",
             "level",
             "purpose",
             "parent",
@@ -49,6 +55,7 @@ class StorageLocationUpdateForm(StorageLocationForm):
 
 class StorageLocationRenameForm(forms.Form):
     expected_code = forms.CharField(widget=forms.HiddenInput)
+    next = forms.CharField(required=False, widget=forms.HiddenInput)
     new_code = forms.CharField(label="Новый код ячейки", max_length=60)
 
     def clean_new_code(self):

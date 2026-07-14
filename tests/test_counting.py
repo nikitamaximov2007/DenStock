@@ -16,6 +16,7 @@ from django.core.management import CommandError, call_command
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.actions.models import WarehouseAction
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.counting.models import (
@@ -44,7 +45,7 @@ from apps.inventory.models import StockBalance, StockMovement
 from apps.receipts.services import add_line, create_receipt, post_receipt, receipt_totals
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import compose_address, get_or_create_location
-from apps.warehouse.models import StorageLocation
+from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
 
 PASSWORD = "parol-12345"
 
@@ -307,6 +308,111 @@ def test_list_and_gating(client, make_user):
     client.logout()
     _login(client, make_user, role=roles.SELLER, name="prodavec")
     assert client.get(reverse("counting_list")).status_code == 403
+
+
+def test_counting_rename_button_is_visible_for_manager_in_draft_and_posted(
+    client, make_user, refs, location, admin
+):
+    draft = start_session(location=location, by=admin)
+    posted = start_session(location=location, by=admin)
+    record_scan(posted, "700700", by=admin)
+    post_session(posted, by=admin)
+    _login(client, make_user, role=roles.MANAGER, name="manager")
+
+    for session in (draft, posted):
+        html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+        rename_url = reverse("location_rename", args=[location.pk])
+        detail_url = reverse("counting_detail", args=[session.pk])
+        assert "Переименовать ячейку" in html
+        assert f"{rename_url}?next={detail_url}" in html
+
+
+def test_counting_rename_button_is_hidden_without_warehouse_structure_permission(
+    client, make_user, location, admin
+):
+    session = start_session(location=location, by=admin)
+    _login(client, make_user, role=roles.STOREKEEPER, name="storekeeper")
+    response = client.get(reverse("counting_detail", args=[session.pk]))
+    assert response.status_code == 200
+    assert "Переименовать ячейку" not in response.content.decode()
+
+
+def test_counting_rename_returns_to_same_posted_session_without_mutating_inventory(
+    client, make_user, refs, location, admin
+):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "700700", by=admin)
+    post_session(session, by=admin)
+    session.refresh_from_db()
+    session_pk = session.pk
+    old_code = location.code
+    action = WarehouseAction.objects.create(
+        action_type=WarehouseAction.Type.SALE,
+        part_type=refs["wh"],
+        part_number="700700",
+        part_name=refs["wh"].name,
+        location=location,
+        location_code=old_code,
+        quantity=Decimal("1"),
+        customer_comment="Проверка snapshot",
+    )
+    detail_url = reverse("counting_detail", args=[session.pk])
+    rename_url = reverse("location_rename", args=[location.pk])
+    scans_before = InventoryScanEvent.objects.filter(session=session).count()
+    counters_before = session.counters()
+    stock_before = _stock_snapshot()
+    lines_before = list(
+        session.lines.values_list(
+            "scanned_value",
+            "warehouse_part_id",
+            "quantity_counted",
+            "final_customer_price_rub",
+        )
+    )
+
+    client.login(username="admin", password=PASSWORD)
+    page = client.get(detail_url)
+    assert f"{rename_url}?next={detail_url}" in page.content.decode()
+    response = client.post(
+        rename_url,
+        {
+            "expected_code": old_code,
+            "new_code": "S04-L03-D02-C08",
+            "next": detail_url,
+        },
+    )
+    assert response.status_code == 302
+    assert response["Location"] == detail_url
+
+    location.refresh_from_db()
+    session.refresh_from_db()
+    action.refresh_from_db()
+    assert location.code == "S04-L03-D02-C08"
+    assert session.pk == session_pk
+    assert session.full_address == old_code
+    assert session.status == InventoryCountingSession.Status.POSTED
+    assert InventoryScanEvent.objects.filter(session=session).count() == scans_before
+    assert session.counters() == counters_before
+    assert _stock_snapshot() == stock_before
+    assert list(
+        session.lines.values_list(
+            "scanned_value",
+            "warehouse_part_id",
+            "quantity_counted",
+            "final_customer_price_rub",
+        )
+    ) == lines_before
+    assert action.location_code == old_code
+    assert action.location.code == location.code
+    assert StorageLocationRenameHistory.objects.filter(
+        location=location,
+        old_code=old_code,
+        new_code=location.code,
+    ).count() == 1
+
+    returned = client.get(detail_url)
+    assert returned.status_code == 200
+    assert location.code in returned.content.decode()
 
 
 def test_scan_endpoint_enter_handling(client, make_user, refs, location):
