@@ -125,6 +125,7 @@ def counting_detail(request, pk):
             ),
             "value_sorts": VALUE_SORTS,
             "is_draft": session.is_draft,
+            "can_rename_location": request.user.can_manage_warehouse,
         },
     )
 

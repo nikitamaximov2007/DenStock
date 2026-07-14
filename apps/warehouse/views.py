@@ -2,7 +2,8 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
 
@@ -11,6 +12,22 @@ from apps.accounts.permissions import ManageWarehouseMixin
 from .forms import StorageLocationForm, StorageLocationRenameForm, StorageLocationUpdateForm
 from .models import StorageLocation
 from .services import StorageLocationRenameError, rename_storage_location
+
+
+def _safe_internal_next(request, candidate: str) -> str:
+    """Accept only an application-relative return URL."""
+    if (
+        candidate
+        and candidate.startswith("/")
+        and not candidate.startswith("//")
+        and url_has_allowed_host_and_scheme(
+            candidate,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )
+    ):
+        return candidate
+    return ""
 
 
 class LocationTreeView(LoginRequiredMixin, ListView):
@@ -85,7 +102,7 @@ class LocationCreateView(ManageWarehouseMixin, CreateView):
 class LocationUpdateView(ManageWarehouseMixin, UpdateView):
     model = StorageLocation
     form_class = StorageLocationUpdateForm
-    template_name = "directories/form.html"
+    template_name = "warehouse/location_edit.html"
     success_url = reverse_lazy("warehouse_index")
 
     def get_context_data(self, **kwargs):
@@ -109,11 +126,20 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
     def get_initial(self):
         initial = super().get_initial()
         initial["expected_code"] = self.location.code
+        initial["next"] = _safe_internal_next(
+            self.request,
+            self.request.GET.get("next", ""),
+        )
         return initial
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["location"] = self.location
+        candidate = self.request.POST.get("next", "") if self.request.method == "POST" else ""
+        ctx["cancel_url"] = _safe_internal_next(self.request, candidate) or _safe_internal_next(
+            self.request,
+            self.request.GET.get("next", ""),
+        ) or reverse("location_detail", args=[self.location.pk])
         return ctx
 
     def form_valid(self, form):
@@ -131,7 +157,10 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
 
         messages.success(self.request, f"Ячейка {old_code} переименована в {location.code}.")
         messages.warning(self.request, "Распечатайте новую этикетку для ячейки.")
-        return redirect("location_detail", pk=location.pk)
+        return redirect(
+            _safe_internal_next(self.request, form.cleaned_data.get("next", ""))
+            or reverse("location_detail", args=[location.pk])
+        )
 
 
 @require_POST
