@@ -161,6 +161,8 @@ body.app {
   border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .table th, .table td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .table th { background: var(--bg); font-size: 14px; color: var(--muted); }
+.table-sort-link { color: inherit; text-decoration: none; white-space: nowrap; }
+.table-sort-link:hover, .table-sort-link--active { color: var(--accent); text-decoration: underline; }
 .inline-form { display: inline; margin-left: 8px; }
 .inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
   border-radius: 6px; background: #fff; }

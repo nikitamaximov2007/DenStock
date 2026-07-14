@@ -9,8 +9,10 @@ from decimal import Decimal
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Count, DecimalField, F, Sum
+from django.db.models import Case, CharField, Count, DecimalField, F, IntegerField, Sum, Value, When
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
@@ -50,25 +52,102 @@ def _require_manage(request) -> None:
         raise PermissionDenied
 
 
+COUNTING_LIST_PAGE_SIZE = 50
+DEFAULT_COUNTING_LIST_SORT = "conducted_at"
+DEFAULT_COUNTING_LIST_DIRECTION = "desc"
+COUNTING_LIST_SORTS = {
+    "address": "display_address",
+    "status": "status",
+    "positions": "unique_total",
+    "quantity": "quantity_total",
+    "value": "value_total",
+    "scans": "scans_total",
+    "created_by": "created_by__username",
+    "created_at": "created_at",
+    "conducted_at": "posted_at",
+}
+DESCENDING_BY_DEFAULT = {"positions", "quantity", "value", "scans", "created_at", "conducted_at"}
+
+
+def _counting_list_sort(request):
+    """Return only a whitelist-approved list ordering request."""
+    sort = request.GET.get("sort", DEFAULT_COUNTING_LIST_SORT)
+    direction = request.GET.get("direction", DEFAULT_COUNTING_LIST_DIRECTION)
+    if sort not in COUNTING_LIST_SORTS or direction not in {"asc", "desc"}:
+        return DEFAULT_COUNTING_LIST_SORT, DEFAULT_COUNTING_LIST_DIRECTION
+    return sort, direction
+
+
+def _counting_sort_headers(active_sort: str, active_direction: str) -> dict[str, dict]:
+    headers = {}
+    for key in COUNTING_LIST_SORTS:
+        active = key == active_sort
+        default_direction = "desc" if key in DESCENDING_BY_DEFAULT else "asc"
+        headers[key] = {
+            "active": active,
+            "indicator": "↓" if active_direction == "desc" else "↑",
+            "next_direction": ("asc" if active_direction == "desc" else "desc")
+            if active
+            else default_direction,
+        }
+    return headers
+
+
+def _ordered_counting_sessions(qs, *, sort: str, direction: str):
+    if sort == "conducted_at":
+        conducted_first = Case(
+            When(posted_at__isnull=False, then=Value(0)),
+            default=Value(1),
+            output_field=IntegerField(),
+        )
+        posted_at = F("posted_at")
+        ordered_posted_at = (
+            posted_at.desc(nulls_last=True)
+            if direction == "desc"
+            else posted_at.asc(nulls_last=True)
+        )
+        return qs.annotate(conducted_first=conducted_first).order_by(
+            "conducted_first", ordered_posted_at, "-created_at", "pk"
+        )
+
+    field = F(COUNTING_LIST_SORTS[sort])
+    ordering = field.desc(nulls_last=True) if direction == "desc" else field.asc(nulls_last=True)
+    return qs.order_by(ordering, "pk")
+
+
 @login_required
 def counting_list(request):
     _require_manage(request)
     status = request.GET.get("status", "")
+    sort, direction = _counting_list_sort(request)
+    decimal_total = DecimalField(max_digits=32, decimal_places=9)
     qs = InventoryCountingSession.objects.select_related(
         "storage_location", "created_by", "converted_receipt"
     ).annotate(
+        display_address=Coalesce(
+            "storage_location__code", "full_address", output_field=CharField()
+        ),
         # Агрегаты по ОДНОЙ связи lines: без дублирования строк в join.
         unique_total=Count("lines"),
-        scans_total=Sum("lines__scan_count"),
-        quantity_total=Sum("lines__quantity_counted"),
-        value_total=Sum(
-            F("lines__quantity_counted") * F("lines__final_customer_price_rub"),
-            output_field=DecimalField(max_digits=32, decimal_places=9),
+        scans_total=Coalesce(Sum("lines__scan_count"), Value(0)),
+        quantity_total=Coalesce(
+            Sum("lines__quantity_counted"), Value(Decimal("0")), output_field=decimal_total
+        ),
+        value_total=Coalesce(
+            Sum(
+                F("lines__quantity_counted") * F("lines__final_customer_price_rub"),
+                output_field=decimal_total,
+            ),
+            Value(Decimal("0")),
+            output_field=decimal_total,
         ),
     )
     if status:
         qs = qs.filter(status=status)
-    sessions = list(qs[:100])
+    qs = _ordered_counting_sessions(qs, sort=sort, direction=direction)
+    paginator = Paginator(qs, COUNTING_LIST_PAGE_SIZE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    sessions = list(page_obj.object_list)
     for session in sessions:
         session.can_be_deleted = can_delete_session(session)
     return render(
@@ -76,8 +155,13 @@ def counting_list(request):
         "counting/list.html",
         {
             "sessions": sessions,
+            "page_obj": page_obj,
+            "is_paginated": page_obj.has_other_pages(),
             "status": status,
             "statuses": InventoryCountingSession.Status.choices,
+            "sort": sort,
+            "direction": direction,
+            "sort_headers": _counting_sort_headers(sort, direction),
         },
     )
 
