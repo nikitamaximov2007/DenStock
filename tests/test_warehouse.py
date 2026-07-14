@@ -1,9 +1,11 @@
+import io
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import IntegrityError
 from django.urls import reverse
 
@@ -21,6 +23,7 @@ from apps.inventory.services import (
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
+from apps.warehouse.addresses import get_or_create_location
 from apps.warehouse.forms import StorageLocationForm
 from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
 from apps.warehouse.services import StorageLocationRenameError, rename_storage_location
@@ -304,7 +307,8 @@ def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_invent
     balance.refresh_from_db()
     item.refresh_from_db()
     action.refresh_from_db()
-    assert location.barcode == original_barcode
+    assert original_barcode == "LOC:S04-L03-D01-C04"
+    assert location.barcode == "LOC:S04-L03-D01-C05"
     assert lot_before == (
         lot.location_id,
         lot.quantity,
@@ -348,8 +352,17 @@ def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_invent
 
     assert resolve_scan(old_code).status == "unknown"
     assert resolve_scan(location.code).id == location.pk
-    # Штрихкод не является алиасом кода и сохраняется, потому что меняется только code.
-    assert resolve_scan(original_barcode).id == location.pk
+    assert resolve_scan(original_barcode).status == "unknown"
+    assert resolve_scan(location.barcode).id == location.pk
+    replacement_location = get_or_create_location(old_code)
+    assert replacement_location.pk != location.pk
+    assert replacement_location.barcode == original_barcode
+    assert not StockBalance.objects.filter(location=replacement_location).exists()
+    balance.refresh_from_db()
+    action.refresh_from_db()
+    assert balance.location_id == location.pk
+    assert action.location_id == location.pk
+    assert action.location_code == old_code
     client.force_login(data["admin"])
     label = client.get(reverse("label_location", args=[location.pk]))
     assert label.status_code == 200
@@ -398,6 +411,61 @@ def test_rename_rejects_occupied_or_stale_code(renamed_inventory):
     assert StorageLocationRenameHistory.objects.count() == 0
 
 
+def test_rename_keeps_custom_barcode(renamed_inventory):
+    location = renamed_inventory["location"]
+    StorageLocation.objects.filter(pk=location.pk).update(barcode="CUSTOM-WAREHOUSE-24")
+    location.refresh_from_db()
+
+    renamed = rename_storage_location(
+        location,
+        new_code="S04-L03-D01-C05",
+        expected_code=location.code,
+        by=renamed_inventory["admin"],
+    )
+
+    assert renamed.pk == location.pk
+    assert renamed.code == "S04-L03-D01-C05"
+    assert renamed.barcode == "CUSTOM-WAREHOUSE-24"
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 1
+
+
+def test_rename_assigns_auto_barcode_when_legacy_barcode_is_empty(renamed_inventory):
+    location = renamed_inventory["location"]
+    StorageLocation.objects.filter(pk=location.pk).update(barcode="")
+    location.refresh_from_db()
+
+    renamed = rename_storage_location(
+        location,
+        new_code="S04-L03-D01-C05",
+        expected_code=location.code,
+        by=renamed_inventory["admin"],
+    )
+
+    assert renamed.barcode == "LOC:S04-L03-D01-C05"
+
+
+def test_rename_rejects_conflicting_auto_barcode_without_partial_update(renamed_inventory):
+    location = renamed_inventory["location"]
+    StorageLocation.objects.create(
+        name="Чужой штрихкод",
+        code="S04-L03-D01-C99",
+        barcode="LOC:S04-L03-D01-C05",
+    )
+
+    with pytest.raises(StorageLocationRenameError, match="Штрихкод"):
+        rename_storage_location(
+            location,
+            new_code="S04-L03-D01-C05",
+            expected_code=location.code,
+            by=renamed_inventory["admin"],
+        )
+
+    location.refresh_from_db()
+    assert location.code == "S04-L03-D01-C04"
+    assert location.barcode == "LOC:S04-L03-D01-C04"
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 0
+
+
 def test_rename_converts_concurrent_unique_conflict_to_user_error(renamed_inventory):
     location = renamed_inventory["location"]
     with patch(
@@ -414,6 +482,75 @@ def test_rename_converts_concurrent_unique_conflict_to_user_error(renamed_invent
     location.refresh_from_db()
     assert location.code == "S04-L03-D01-C04"
     assert StorageLocationRenameHistory.objects.count() == 0
+
+
+def _legacy_auto_barcode_location(*, code="S04-L03-D02-C08", old_code="S04-L03-D02-C07"):
+    location = StorageLocation.objects.create(name="Legacy", code=old_code)
+    StorageLocationRenameHistory.objects.create(location=location, old_code=old_code, new_code=code)
+    StorageLocation.objects.filter(pk=location.pk).update(code=code, barcode=f"LOC:{old_code}")
+    location.refresh_from_db()
+    return location
+
+
+def test_repair_location_auto_barcodes_dry_run_and_apply(db):
+    location = _legacy_auto_barcode_location()
+    out = io.StringIO()
+
+    call_command("repair_location_auto_barcodes", stdout=out)
+    assert "DRY-RUN" in out.getvalue()
+    assert f"id={location.pk}" in out.getvalue()
+    location.refresh_from_db()
+    assert location.code == "S04-L03-D02-C08"
+    assert location.barcode == "LOC:S04-L03-D02-C07"
+
+    out = io.StringIO()
+    call_command("repair_location_auto_barcodes", apply=True, stdout=out)
+    location.refresh_from_db()
+    assert "ИСПРАВЛЕНО" in out.getvalue()
+    assert location.code == "S04-L03-D02-C08"
+    assert location.barcode == "LOC:S04-L03-D02-C08"
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 1
+
+    out = io.StringIO()
+    call_command("repair_location_auto_barcodes", apply=True, stdout=out)
+    assert "исправлено 0" in out.getvalue()
+
+
+def test_repair_location_auto_barcodes_skips_custom_and_conflicting_barcodes(db):
+    custom = StorageLocation.objects.create(name="Custom", code="S04-L03-D02-C08", barcode="CUSTOM")
+    StorageLocationRenameHistory.objects.create(
+        location=custom, old_code="S04-L03-D02-C07", new_code="S04-L03-D02-C08"
+    )
+    conflict = _legacy_auto_barcode_location(code="S04-L03-D02-C10", old_code="S04-L03-D02-C09")
+    StorageLocation.objects.create(
+        name="Занятый новый штрихкод",
+        code="S04-L03-D02-C99",
+        barcode="LOC:S04-L03-D02-C10",
+    )
+
+    out = io.StringIO()
+    call_command("repair_location_auto_barcodes", apply=True, stdout=out)
+    custom.refresh_from_db()
+    conflict.refresh_from_db()
+    assert custom.barcode == "CUSTOM"
+    assert conflict.barcode == "LOC:S04-L03-D02-C09"
+    assert "ПРОПУСК" in out.getvalue()
+
+
+def test_repair_location_auto_barcodes_can_target_one_location(db):
+    first = _legacy_auto_barcode_location(code="S04-L03-D02-C08", old_code="S04-L03-D02-C07")
+    second = _legacy_auto_barcode_location(code="S04-L03-D02-C10", old_code="S04-L03-D02-C09")
+
+    call_command(
+        "repair_location_auto_barcodes",
+        location_id=first.pk,
+        apply=True,
+        stdout=io.StringIO(),
+    )
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.barcode == "LOC:S04-L03-D02-C08"
+    assert second.barcode == "LOC:S04-L03-D02-C09"
 
 
 def test_rename_view_permissions_double_post_and_generic_edit_guard(
