@@ -1,48 +1,42 @@
 # Current handoff
 
-- Task: исправление `/scanner/move/` и согласование текущих остатков.
-- Branch: `fix/movement-stock-sync`.
-- Base: `a892d606da8796c3d93aefe71221b3ad706ee65c`.
-- Worktree: `F:\DenStock-movement-fix`.
-- Classification: stock-integrity hotfix with one inventory migration.
+- Task: согласовать общую оценку склада по цене продажи с категориями.
+- Branch: `fix/finance-category-valuation`.
+- Base: `627a84bc896e3d6ff7f07d4eb561aef683bf2123`.
+- Worktree: `F:\DenStock-finance-stats-fix`.
+- Classification: read-only finance statistics hotfix, no migration.
 
 ## Root cause
 
-1. `resolve_scan(article)` возвращал `PartType`, но `scanner_move` принимал на
-   первом шаге только `PartItem`. Поэтому точный артикул `703500875` завершался
-   сообщением «Ожидается экземпляр детали», хотя размещённые `StockLot` были.
-2. Ручной `move_stock_lot` корректно менял живой `StockLot.location` и обновлял
-   `StockBalance`, но карточка первичной инвентаризации показывала исторические
-   `InventoryCountingLine.quantity_counted` и `session.full_address` как будто
-   это текущий состав ячейки.
-3. Страница «Остатки» показывала read-кэш в грани `batch_line + location`, из-за
-   чего одна exact-деталь в одной ячейке могла занимать несколько строк.
+Верхняя карточка использовала физические `StockLot`/`PartItem` и текущую
+клиентскую цену BRP/Polaris. Таблица категорий отдельно считала только
+`AVAILABLE` по landed cost. В regression-сценарии одна категория BRP давала
+`3.00` в таблице и `4410.00` в общей карточке.
 
 ## Implemented contract
 
-- Source of truth: physical `StockLot` + physical `PartItem`; active reserve is
-  read from `ReservationLine`; `StockBalance` remains a rebuildable cache.
-- `StockTransfer` is one atomic/idempotent movement document with immutable
-  exact identity and location snapshots.
-- Bulk movement supports partial quantity and several procurement lots under
-  `transaction.atomic` and `select_for_update`.
-- Reserved quantity is excluded. Quarantine moves separately and stays in
-  quarantine.
-- Current cell cards, balances, and the live block in initial inventory use
-  live primary stock. Historical inventory rows remain unchanged.
-- Read-only command: `debug_stock_location_consistency`.
+- `get_warehouse_valuation()` один раз собирает physical quantity и текущую
+  клиентскую цену exact-карточки.
+- BRP/Polaris pricing services, текущие курс и наценки сохранены; manual price
+  читается из `PartType.recommended_price`.
+- Категории группируются по `Category.pk`, итог карточки складывается из этих
+  же округлённых строк.
+- Резерв и карантин входят как physical; продажа и списание не входят.
+- Позиции без клиентской цены остаются в количестве категории и показываются
+  отдельным счётчиком.
+- UI показывает количество и строку «Итого по категориям».
 
 ## Verification
 
-- Targeted movement suite: 55 passed, 0 failed.
-- Relevant stock/business suite: 520 passed, 0 failed.
-- Full pytest: 1129 passed, 0 failed.
+- Targeted statistics and finance: 45 passed, 0 failed.
+- Relevant pricing and stock suite: 421 passed, 0 failed.
+- Full pytest: 1216 passed, 0 failed.
 - `ruff check .`: passed.
-- `djlint templates --check`: passed after formatting.
+- `djlint templates --check`: passed, 95 files checked.
 - `manage.py check`: passed.
 - `makemigrations --check --dry-run`: no changes detected.
-- URL reverse: `/scanner/move/` and `/inventory/balance/`.
-- Added-line em dash audit and `git diff --check`: passed.
+- `git diff --check`: passed.
+- Replacement/superseded query regression: at most 8 queries for ten linked
+  BRP/Polaris positions with zero exact prices.
 
-No merge, push, SSH, VPS, production database, deploy, or data repair is part
-of this branch.
+Merge, push, SSH, VPS, production database and deploy are outside this task.

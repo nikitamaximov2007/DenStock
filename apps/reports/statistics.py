@@ -71,12 +71,6 @@ class StatsKpi:
 
 
 @dataclass
-class ValueRow:
-    name: str
-    value: Decimal
-
-
-@dataclass
 class PartValueRow:
     pk: int
     name: str
@@ -132,19 +126,18 @@ class Statistics:
 # --- Деньги в складе (срез сейчас; себестоимость из landed cost) ---------------
 
 
-def _value_maps():
-    """Стоимость доступного остатка: по видам деталей и по категориям.
+def _landed_value_by_part():
+    """Фактическая себестоимость доступного остатка по видам деталей.
 
     Экземпляры: сумма landed_cost_rub доступных. Лоты: quantity * unit_cost
-    доступных. Один проход по каждой таблице, слияние в Python (видов деталей
-    на складе немного относительно движений).
+    доступных. Используется для топа деталей и залежавшихся; оценка продажи по
+    категориям строится canonical-сервисом warehouse_finance.
     """
     by_part: dict[int, dict] = {}
-    by_category: dict[str, Decimal] = {}
 
     items = (
         PartItem.objects.filter(status=PartItem.Status.AVAILABLE)
-        .values("part_type_id", "part_type__name", "part_type__category__name")
+        .values("part_type_id", "part_type__name")
         .annotate(v=Sum("landed_cost_rub"))
     )
     lot_value = ExpressionWrapper(
@@ -152,7 +145,7 @@ def _value_maps():
     )
     lots = (
         StockLot.objects.filter(status=StockLot.Status.AVAILABLE, quantity__gt=0)
-        .values("part_type_id", "part_type__name", "part_type__category__name")
+        .values("part_type_id", "part_type__name")
         .annotate(v=Sum(lot_value))
     )
     for row in list(items) + list(lots):
@@ -161,9 +154,7 @@ def _value_maps():
             row["part_type_id"], {"name": row["part_type__name"], "value": DEC0}
         )
         part["value"] += value
-        cat = row["part_type__category__name"] or "Без категории"
-        by_category[cat] = by_category.get(cat, DEC0) + value
-    return by_part, by_category
+    return by_part
 
 
 def _unvalued_count() -> int:
@@ -308,7 +299,8 @@ def _activity(period: StatsPeriod):
 
 
 def get_statistics(period: StatsPeriod) -> Statistics:
-    by_part, by_category = _value_maps()
+    by_part = _landed_value_by_part()
+    valuation = get_warehouse_valuation()
 
     balances = StockBalance.objects.all()
     agg = balances.aggregate(avail=Sum("quantity_available"))
@@ -325,10 +317,6 @@ def get_statistics(period: StatsPeriod) -> Statistics:
     attention = _attention_reservations()
     activity, activity_total = _activity(period)
 
-    categories = sorted(
-        (ValueRow(name, money(v)) for name, v in by_category.items()),
-        key=lambda r: r.value, reverse=True,
-    )[:TOP_N]
     top_parts = sorted(
         (PartValueRow(pk, p["name"], money(p["value"])) for pk, p in by_part.items()),
         key=lambda r: r.value, reverse=True,
@@ -348,8 +336,8 @@ def get_statistics(period: StatsPeriod) -> Statistics:
     return Statistics(
         period=period,
         kpi=kpi,
-        valuation=get_warehouse_valuation(),
-        value_by_category=categories,
+        valuation=valuation,
+        value_by_category=valuation.sale_by_category,
         top_parts_by_value=top_parts,
         low_stock=low_stock,
         stale=stale,

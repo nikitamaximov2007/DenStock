@@ -57,7 +57,10 @@ def find_polaris_by_number(norm: str) -> PolarisCatalogPart | None:
 
 
 def find_polaris_price_source(
-    norm: str, selected: PolarisCatalogPart | None
+    norm: str,
+    selected: PolarisCatalogPart | None,
+    *,
+    candidates=None,
 ) -> PolarisCatalogPart | None:
     """Price source can differ from identity, but identity is never replaced."""
     if selected is not None and (
@@ -76,12 +79,50 @@ def find_polaris_price_source(
             related |= Q(superseded_number_norm=selected.part_number_norm)
     if not related:
         return selected
-    priced = (
-        PolarisCatalogPart.objects.filter(related, retail_price_usd__gt=0)
-        .order_by("pk")
-        .first()
-    )
+    if candidates is None:
+        priced = (
+            PolarisCatalogPart.objects.filter(related, retail_price_usd__gt=0)
+            .order_by("pk")
+            .first()
+        )
+    else:
+        superseded_norm = selected.superseded_number_norm if selected is not None else ""
+        priced = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.retail_price_usd is not None
+                and candidate.retail_price_usd > 0
+                and (
+                    candidate.part_number_norm == norm
+                    or candidate.superseded_number_norm == norm
+                    or candidate.part_number_norm == superseded_norm
+                )
+            ),
+            None,
+        )
     return priced or selected
+
+
+def load_polaris_price_candidates(selected_parts) -> list[PolarisCatalogPart]:
+    """Одним запросом загрузить retail/wholesale candidates связанных позиций."""
+    selected_parts = list(selected_parts)
+    exact_norms = {part.part_number_norm for part in selected_parts if part.part_number_norm}
+    superseded_norms = {
+        part.superseded_number_norm
+        for part in selected_parts
+        if part.superseded_number_norm
+    }
+    if not exact_norms and not superseded_norms:
+        return []
+    return list(
+        PolarisCatalogPart.objects.filter(
+            Q(part_number_norm__in=exact_norms | superseded_norms)
+            | Q(superseded_number_norm__in=exact_norms)
+        )
+        .filter(Q(retail_price_usd__gt=0) | Q(wholesale_price_usd__gt=0))
+        .order_by("pk")
+    )
 
 
 def effective_customer_price_rub(norm: str, polaris: PolarisCatalogPart):

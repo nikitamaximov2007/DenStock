@@ -16,12 +16,26 @@ from django.urls import reverse
 from apps.actions.services import cancel_warehouse_action, perform_action
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse as promote_brp
-from apps.inventory.services import add_found_stock, create_stock_lot, receive_stock_lot
+from apps.catalog.models import Category, PartType, Unit
+from apps.catalog.services import update_current_price_settings
+from apps.inventory.models import StockLot
+from apps.inventory.services import (
+    add_found_stock,
+    create_stock_lot,
+    receive_stock_lot,
+    write_off_stock_lot_quantity,
+)
 from apps.polaris.models import PolarisCatalogPart
 from apps.polaris.services import promote_to_warehouse as promote_polaris
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
-from apps.reports.warehouse_finance import get_warehouse_valuation
+from apps.reports.statistics import get_statistics, resolve_stats_period
+from apps.reports.warehouse_finance import _category_identity, get_warehouse_valuation
+from apps.sales.services import (
+    activate_reservation,
+    add_stock_lot_to_reservation,
+    create_reservation,
+)
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation, ValuationSettings
 
@@ -88,6 +102,16 @@ def _polaris_part(env, *, number="3610075", wholesale, retail="20", desc="SEAL")
     return promote_polaris(polaris, by=env["admin"]), polaris
 
 
+def _manual_part(*, name, category, price):
+    return PartType.objects.create(
+        name=name,
+        category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=price,
+    )
+
+
 # --- 1. BRP: базовый расчёт -----------------------------------------------------------
 
 
@@ -100,6 +124,51 @@ def test_brp_purchase_sale_and_profit(env):
     assert v.potential_profit == Decimal("1260.00")  # разница
     assert v.unpriced_positions == 0
     assert v.usd_rate == Decimal("105")
+
+
+def test_brp_category_sale_value_matches_total(env):
+    part, _brp = _brp_part(env, retail="10")
+    _stock(part, env["loc"], 3, env["sup"], env["admin"])
+
+    stats = get_statistics(resolve_stats_period({}))
+
+    assert [(row.name, row.value) for row in stats.value_by_category] == [
+        ("BRP", stats.valuation.sale_value)
+    ]
+    assert stats.value_by_category[0].quantity == Decimal("3")
+
+
+def test_multiple_lots_of_same_brp_part_are_summed_once(env):
+    part, _brp = _brp_part(env, retail="10")
+    _stock(part, env["loc"], Decimal("1.25"), env["sup"], env["admin"])
+    _stock(part, env["loc"], Decimal("2.75"), env["sup"], env["admin"])
+
+    valuation = get_warehouse_valuation()
+
+    assert valuation.physical_units == Decimal("4.00")
+    assert valuation.sale_by_category[0].quantity == Decimal("4.00")
+    assert valuation.sale_by_category[0].value == Decimal("5880.00")
+
+
+def test_multiple_parts_in_one_category_are_summed(env):
+    first, _ = _brp_part(env, material="700000001", retail="10")
+    second, _ = _brp_part(env, material="700000002", retail="20")
+    _stock(first, env["loc"], 1, env["sup"], env["admin"])
+    _stock(second, env["loc"], 2, env["sup"], env["admin"])
+
+    valuation = get_warehouse_valuation()
+
+    assert len(valuation.sale_by_category) == 1
+    assert valuation.sale_by_category[0].quantity == Decimal("3")
+    assert valuation.sale_by_category[0].value == Decimal("7350.00")
+
+
+def test_uncategorized_identity_has_explicit_label():
+    class PartWithoutCategory:
+        category_id = None
+        category = None
+
+    assert _category_identity(PartWithoutCategory()) == (None, "Без категории")
 
 
 # --- 2. BRP replacement как источник цены ----------------------------------------------
@@ -174,6 +243,11 @@ def test_mixed_brp_polaris_same_number_not_merged(env):
     # BRP: 10x105=1050; Polaris: 6x105=630. Не смешаны, итог = сумма.
     assert v.purchase_cost == Decimal("1680.00")
     assert v.sale_value == Decimal("1470.00") + Decimal("2940.00")
+    assert {row.name: row.value for row in v.sale_by_category} == {
+        "BRP": Decimal("1470.00"),
+        "POLARIS": Decimal("2940.00"),
+    }
+    assert sum((row.value for row in v.sale_by_category), Decimal("0")) == v.sale_value
     assert v.unpriced_positions == 0
 
 
@@ -198,6 +272,64 @@ def test_sale_and_cancel_move_all_three_numbers(env):
     assert restored.purchase_cost == before.purchase_cost
     assert restored.sale_value == before.sale_value
     assert restored.potential_profit == before.potential_profit
+
+
+def test_completed_sale_is_excluded_from_category_and_total(env):
+    part, _brp = _brp_part(env, retail="10")
+    _stock(part, env["loc"], 3, env["sup"], env["admin"])
+
+    perform_action(
+        part=part,
+        location=env["loc"],
+        action_type="sale",
+        quantity="1",
+        customer_comment="Иванов",
+        by=env["admin"],
+    )
+    valuation = get_warehouse_valuation()
+
+    assert valuation.physical_units == Decimal("2")
+    assert valuation.sale_value == Decimal("2940.00")
+    assert valuation.sale_by_category[0].value == valuation.sale_value
+
+
+def test_written_off_quantity_is_excluded_from_category_and_total(env):
+    part, _brp = _brp_part(env, retail="10")
+    lot = _stock(part, env["loc"], 3, env["sup"], env["admin"])
+
+    write_off_stock_lot_quantity(lot, Decimal("1"), by=env["admin"])
+    valuation = get_warehouse_valuation()
+
+    assert valuation.physical_units == Decimal("2")
+    assert valuation.sale_value == Decimal("2940.00")
+    assert valuation.sale_by_category[0].value == valuation.sale_value
+
+
+def test_active_reservation_keeps_physical_sale_value(env):
+    part, _brp = _brp_part(env, retail="10")
+    lot = _stock(part, env["loc"], 3, env["sup"], env["admin"])
+    before = get_warehouse_valuation()
+    reservation = create_reservation(customer_name="Иванов", by=env["admin"])
+    add_stock_lot_to_reservation(reservation, lot, Decimal("2"), by=env["admin"])
+    activate_reservation(reservation, by=env["admin"])
+
+    after = get_warehouse_valuation()
+
+    assert after.sale_value == before.sale_value
+    assert after.sale_by_category == before.sale_by_category
+
+
+def test_quarantine_keeps_physical_sale_value(env):
+    part, _brp = _brp_part(env, retail="10")
+    lot = _stock(part, env["loc"], 3, env["sup"], env["admin"])
+    before = get_warehouse_valuation()
+    lot.status = StockLot.Status.QUARANTINE
+    lot.save(update_fields=["status", "updated_at"])
+
+    after = get_warehouse_valuation()
+
+    assert after.sale_value == before.sale_value
+    assert after.sale_by_category == before.sale_by_category
 
 
 # --- 8. Добавление найденной детали ------------------------------------------------------
@@ -233,6 +365,100 @@ def test_unpriced_positions_do_not_break_dashboard(client, make_user, env):
     assert "—" not in html
 
 
+def test_missing_sale_price_is_visible_and_does_not_break_invariant(env):
+    category = Category.objects.create(name="Без цены")
+    part = _manual_part(name="Без клиентской цены", category=category, price=None)
+    _stock(part, env["loc"], 2, env["sup"], env["admin"])
+
+    valuation = get_warehouse_valuation()
+
+    assert valuation.sale_unpriced_positions == 1
+    assert valuation.sale_unpriced_units == Decimal("2")
+    assert valuation.sale_by_category[0].quantity == Decimal("2")
+    assert valuation.sale_by_category[0].value == Decimal("0.00")
+    assert sum((row.value for row in valuation.sale_by_category), Decimal("0")) == (
+        valuation.sale_value
+    )
+
+
+def test_missing_sale_price_notice_is_rendered(client, make_user, env):
+    category = Category.objects.create(name="Без цены")
+    part = _manual_part(name="Без клиентской цены", category=category, price=None)
+    _stock(part, env["loc"], 2, env["sup"], env["admin"])
+    make_user("boss-no-price", is_superuser=True)
+    client.login(username="boss-no-price", password=PASSWORD)
+
+    html = client.get(reverse("statistics_dashboard")).content.decode()
+
+    assert "Без клиентской цены: 1 позиций /" in html
+    assert "Итого по категориям" in html
+
+
+def test_fractional_quantity_uses_decimal_and_category_rounding(env):
+    category = Category.objects.create(name="Дробные")
+    part = _manual_part(name="Дробная деталь", category=category, price=Decimal("10.01"))
+    _stock(part, env["loc"], Decimal("1.111"), env["sup"], env["admin"])
+
+    valuation = get_warehouse_valuation()
+
+    assert valuation.sale_by_category[0].value == Decimal("11.12")
+    assert valuation.sale_value == Decimal("11.12")
+
+
+def test_duplicate_category_names_are_grouped_by_category_pk(env):
+    parent_a = Category.objects.create(name="Родитель A")
+    parent_b = Category.objects.create(name="Родитель B")
+    category_a = Category.objects.create(name="Одинаковая", parent=parent_a)
+    category_b = Category.objects.create(name="Одинаковая", parent=parent_b)
+    part_a = _manual_part(name="Первая", category=category_a, price=Decimal("100"))
+    part_b = _manual_part(name="Вторая", category=category_b, price=Decimal("200"))
+    _stock(part_a, env["loc"], 1, env["sup"], env["admin"])
+    _stock(part_b, env["loc"], 1, env["sup"], env["admin"])
+
+    valuation = get_warehouse_valuation()
+
+    assert len(valuation.sale_by_category) == 2
+    assert {row.category_id for row in valuation.sale_by_category} == {
+        category_a.pk,
+        category_b.pk,
+    }
+    assert valuation.sale_value == Decimal("300.00")
+
+
+def test_manual_brp_price_is_used_for_total_and_category(env):
+    brp = BrpCatalogPart.objects.create(
+        material_no="700000099",
+        part_desc="MANUAL",
+        retail_price_usd=Decimal("10"),
+    )
+    part = promote_brp(brp, by=env["admin"], manual_price=Decimal("1234"))
+    _stock(part, env["loc"], 2, env["sup"], env["admin"])
+
+    valuation = get_warehouse_valuation()
+
+    assert valuation.sale_value == Decimal("2468.00")
+    assert valuation.sale_by_category[0].value == Decimal("2468.00")
+
+
+def test_price_settings_change_total_and_categories_together(env):
+    part, _brp = _brp_part(env, retail="10")
+    _stock(part, env["loc"], 2, env["sup"], env["admin"])
+    update_current_price_settings(
+        current_usd_rate=Decimal("90.25"),
+        brp_markup_percent=Decimal("40"),
+        polaris_markup_percent=Decimal("35"),
+        by=env["admin"],
+    )
+
+    valuation = get_warehouse_valuation()
+
+    assert valuation.sale_value == Decimal("2528.00")
+    assert valuation.sale_by_category[0].value == valuation.sale_value
+    assert sum((row.value for row in valuation.sale_by_category), Decimal("0")) == (
+        valuation.sale_value
+    )
+
+
 def test_custom_rate_setting_used(env):
     settings_row = ValuationSettings.get()
     settings_row.current_usd_rate = Decimal("90")
@@ -255,4 +481,45 @@ def test_reasonable_query_count(env, django_assert_max_num_queries):
         _stock(part, env["loc"], 1, env["sup"], env["admin"])
     get_warehouse_valuation()  # прогрев настроек (get_or_create singleton)
     with django_assert_max_num_queries(8):
-        get_warehouse_valuation()
+        valuation = get_warehouse_valuation()
+    assert len(valuation.sale_by_category) == 1
+    assert valuation.sale_by_category[0].value == valuation.sale_value
+
+
+def test_replacement_sources_do_not_create_n_plus_one(env, django_assert_max_num_queries):
+    for i in range(5):
+        exact_number = f"71000000{i}"
+        BrpCatalogPart.objects.create(
+            material_no=f"71900000{i}",
+            part_desc="OLD",
+            retail_price_usd=Decimal("4"),
+            replacement_no_1=exact_number,
+        )
+        brp_part, _ = _brp_part(env, material=exact_number, retail="0")
+        _stock(brp_part, env["loc"], 1, env["sup"], env["admin"])
+
+        old_number = f"361100{i}"
+        exact_polaris_number = f"361200{i}"
+        PolarisCatalogPart.objects.create(
+            part_number=old_number,
+            part_name="OLD",
+            superseded_number=exact_polaris_number,
+            wholesale_price_usd=Decimal("8"),
+            retail_price_usd=Decimal("15"),
+        )
+        polaris_part, _ = _polaris_part(
+            env,
+            number=exact_polaris_number,
+            wholesale="0",
+            retail="0",
+        )
+        _stock(polaris_part, env["loc"], 1, env["sup"], env["admin"])
+
+    get_warehouse_valuation()
+    with django_assert_max_num_queries(8):
+        valuation = get_warehouse_valuation()
+
+    assert {row.name for row in valuation.sale_by_category} == {"BRP", "POLARIS"}
+    assert sum((row.value for row in valuation.sale_by_category), Decimal("0")) == (
+        valuation.sale_value
+    )

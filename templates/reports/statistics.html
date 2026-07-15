@@ -47,6 +47,14 @@
       {{ stats.valuation.unpriced_units|quantity_int }} единиц
     </p>
   {% endif %}
+  {% if stats.valuation.sale_unpriced_positions %}
+    <p class="muted"
+       title="Эти детали входят в количество по категориям, но не увеличивают оценку продажи.">
+      Без клиентской цены: {{ stats.valuation.sale_unpriced_positions }} позиций /
+      {{ stats.valuation.sale_unpriced_units|quantity_int }} единиц.
+      Заполните рекомендуемую цену в карточке детали.
+    </p>
+  {% endif %}
   <details class="muted">
     <summary>Как считаются показатели?</summary>
     <p class="muted">
@@ -101,14 +109,15 @@
   <div class="page-header reports-section">
     <h2 class="page-title">Деньги в складе</h2>
   </div>
-  {% if stats.kpi.stock_cost > 0 or stats.top_parts_by_value %}
+  {% if stats.value_by_category or stats.top_parts_by_value %}
     <div class="report-columns">
       <div>
-        <h3>Стоимость по категориям</h3>
+        <h3>Стоимость по категориям по цене продажи</h3>
         <table class="table">
           <thead>
             <tr>
               <th>Категория</th>
+              <th class="num">Количество</th>
               <th class="num--money">Стоимость (₽)</th>
             </tr>
           </thead>
@@ -116,13 +125,21 @@
             {% for row in stats.value_by_category %}
               <tr>
                 <td>{{ row.name }}</td>
+                <td class="num">{{ row.quantity|quantity_int }}</td>
                 <td class="num--money">{{ row.value|money_int }}</td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="2" class="muted">Нет оценённых остатков.</td>
+                <td colspan="3" class="muted">Нет остатков.</td>
               </tr>
             {% endfor %}
+            {% if stats.value_by_category %}
+              <tr>
+                <th>Итого по категориям</th>
+                <th class="num">{{ stats.valuation.physical_units|quantity_int }}</th>
+                <th class="num--money">{{ stats.valuation.sale_value|money_int }}</th>
+              </tr>
+            {% endif %}
           </tbody>
         </table>
       </div>

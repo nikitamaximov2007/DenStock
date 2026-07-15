@@ -96,7 +96,10 @@ def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
 
 
 def find_brp_price_source(
-    norm: str, selected: BrpCatalogPart | None
+    norm: str,
+    selected: BrpCatalogPart | None,
+    *,
+    candidates=None,
 ) -> BrpCatalogPart | None:
     """ИСТОЧНИК ЦЕНЫ для номера: сама позиция или связанная замена с ценой.
 
@@ -130,12 +133,59 @@ def find_brp_price_source(
                 related |= Q(material_no_norm=repl_norm)
     if not related:
         return selected
-    priced = (
-        BrpCatalogPart.objects.filter(related, retail_price_usd__gt=0)
-        .order_by("pk")
-        .first()
-    )
+    if candidates is None:
+        priced = (
+            BrpCatalogPart.objects.filter(related, retail_price_usd__gt=0)
+            .order_by("pk")
+            .first()
+        )
+    else:
+        selected_replacements = {
+            value
+            for value in (
+                selected.replacement_no_1_norm if selected is not None else "",
+                selected.replacement_no_2_norm if selected is not None else "",
+            )
+            if value
+        }
+        priced = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.retail_price_usd is not None
+                and candidate.retail_price_usd > 0
+                and (
+                    candidate.material_no_norm == norm
+                    or candidate.replacement_no_1_norm == norm
+                    or candidate.replacement_no_2_norm == norm
+                    or candidate.material_no_norm in selected_replacements
+                )
+            ),
+            None,
+        )
     return priced or selected
+
+
+def load_brp_price_candidates(selected_parts) -> list[BrpCatalogPart]:
+    """Одним запросом загрузить price-source candidates для набора exact-позиций."""
+    selected_parts = list(selected_parts)
+    exact_norms = {part.material_no_norm for part in selected_parts if part.material_no_norm}
+    forward_norms = {
+        norm
+        for part in selected_parts
+        for norm in (part.replacement_no_1_norm, part.replacement_no_2_norm)
+        if norm
+    }
+    if not exact_norms and not forward_norms:
+        return []
+    return list(
+        BrpCatalogPart.objects.filter(
+            Q(material_no_norm__in=exact_norms | forward_norms)
+            | Q(replacement_no_1_norm__in=exact_norms)
+            | Q(replacement_no_2_norm__in=exact_norms),
+            retail_price_usd__gt=0,
+        ).order_by("pk")
+    )
 
 
 def _effective_brp_price(
