@@ -1271,6 +1271,56 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
     return lot
 
 
+def reverse_stock_return_part_item(
+    item, *, source_document_type, by=None, document_id=None, comment=""
+) -> PartItem:
+    """Compensate a physical item return through the existing consume engine."""
+    if source_document_type == "sale":
+        new_status = PartItem.Status.SOLD
+        movement_type = StockMovement.MovementType.SALE_ITEM
+    elif source_document_type == "repair_order":
+        new_status = PartItem.Status.INSTALLED
+        movement_type = StockMovement.MovementType.ISSUE_ITEM
+    else:
+        raise InventoryError("Неизвестный источник отменяемого возврата.")
+    return _consume_part_item(
+        item,
+        new_status=new_status,
+        movement_type=movement_type,
+        document_type="stock_return_cancel",
+        allowed_statuses=(PartItem.Status.AVAILABLE, PartItem.Status.QUARANTINE),
+        unavailable_msg="Отменить возврат можно только пока экземпляр остаётся в ячейке.",
+        by=by,
+        document_id=document_id,
+        comment=comment,
+    )
+
+
+def reverse_stock_return_lot(
+    lot, quantity, *, source_document_type, by=None, document_id=None, comment=""
+) -> StockLot:
+    """Compensate a bulk return through the existing consume engine."""
+    if source_document_type == "sale":
+        movement_type = StockMovement.MovementType.SALE_LOT
+    elif source_document_type == "repair_order":
+        movement_type = StockMovement.MovementType.ISSUE_LOT
+    else:
+        raise InventoryError("Неизвестный источник отменяемого возврата.")
+    return _consume_stock_lot(
+        lot,
+        quantity,
+        movement_type=movement_type,
+        document_type="stock_return_cancel",
+        allowed_statuses=(StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE),
+        positive_msg="Количество отмены возврата должно быть больше нуля.",
+        unavailable_msg="Отменить возврат можно только пока лот остаётся в ячейке.",
+        over_msg="Нельзя отменить возврат {quantity}: в лоте осталось {in_lot}.",
+        by=by,
+        document_id=document_id,
+        comment=comment,
+    )
+
+
 # --- Пересборка и сверка кэша остатков ---------------------------------------
 
 

@@ -30,6 +30,7 @@ from .services import (
     ReturnError,
     add_repair_line_return,
     add_sale_line_return,
+    cancel_return,
     complete_return,
     create_return,
     get_source,
@@ -170,6 +171,10 @@ def return_detail(request, pk):
             "has_lines": bool(lines),
             "is_draft": is_draft,
             "can_manage": request.user.can_manage_returns,
+            "can_cancel": (
+                request.user.can_manage_returns
+                and ret.status != StockReturn.Status.CANCELED
+            ),
             "show_costs": request.user.can_view_purchase_cost,
             "restock_choices": StockReturnLine.RestockStatus.choices,
             "locations": (
@@ -295,4 +300,18 @@ def return_complete(request, pk):
         messages.error(request, str(exc))
     else:
         messages.success(request, f"Возврат {ret.number} проведён — остаток восстановлен.")
+    return redirect("return_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def return_cancel(request, pk):
+    _require_returns(request)
+    ret = get_object_or_404(StockReturn, pk=pk)
+    try:
+        cancel_return(ret, by=request.user, reason=request.POST.get("reason", ""))
+    except ReturnError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"Возврат {ret.number} отменён безопасно.")
     return redirect("return_detail", pk=pk)

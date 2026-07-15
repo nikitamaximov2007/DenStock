@@ -13,7 +13,9 @@ class StockReturn(models.Model):
     меняет и их статус `completed` не трогает. Физическое поступление идёт ТОЛЬКО
     через сервисы `apps.inventory` (`return_part_item`/`return_stock_lot_quantity`):
     сам возврат ledger (`StockMovement`/`StockBalance`/статусы/quantity) не пишет.
-    Проведённый возврат неизменяем; отмена проведённого — будущий слой корректировок.
+    Проведённый возврат отменяется только компенсирующим domain service:
+    он повторно списывает физически возвращённое через inventory services,
+    блокирует строки и отказывается, если остаток уже использован.
 
     Возврат оформляется из ОДНОГО документа-источника: `source_type` ∈
     {sale, repair_order}, `source_id` — id `Sale`/`RepairOrder` (лёгкий указатель,
@@ -23,6 +25,7 @@ class StockReturn(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Черновик"
         COMPLETED = "completed", "Проведён"
+        CANCELED = "canceled", "Отменён"
 
     class SourceType(models.TextChoices):
         SALE = "sale", "Продажа"
@@ -54,6 +57,16 @@ class StockReturn(models.Model):
         blank=True,
         related_name="+",
     )
+    canceled_at = models.DateTimeField("Отменён (когда)", null=True, blank=True)
+    canceled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто отменил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    cancel_reason = models.CharField("Причина отмены", max_length=255, blank=True)
 
     class Meta:
         verbose_name = "Возврат на склад"

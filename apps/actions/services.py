@@ -25,6 +25,12 @@ from apps.catalog.models import (
 from apps.core.part_lookup import lookup_part_by_id, resolve_part_lookup
 from apps.counting.services import find_brp_price_source
 from apps.inventory.models import PartItem, StockLot
+from apps.inventory.presentation import (
+    NO_EXACT_NUMBER,
+    manufacturer_display,
+    part_exact_number,
+    with_part_identity,
+)
 from apps.inventory.services import return_stock_lot_quantity
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.services import find_polaris_price_source
@@ -100,16 +106,17 @@ def identity_number(part: PartType, scanned_raw: str = "") -> str:
     norm = normalize_number(scanned_raw or "")
     if norm:
         matched = (
-            PartNumber.objects.filter(part=part, normalized_value=norm)
+            PartNumber.objects.filter(
+                part=part,
+                normalized_value=norm,
+                kind__in=(PartNumber.Kind.OEM, PartNumber.Kind.ARTICLE),
+            )
             .order_by("-is_primary", "pk")
             .first()
         )
         if matched is not None:
             return matched.value
-    primary = (
-        PartNumber.objects.filter(part=part).order_by("-is_primary", "pk").first()
-    )
-    return primary.value if primary else (scanned_raw or "").strip()
+    return part_exact_number(part, default="")
 
 
 def _price_source_number(part: PartType) -> str:
@@ -133,11 +140,7 @@ def _price_source_number(part: PartType) -> str:
 
 
 def _manufacturer_snapshot(part: PartType) -> str:
-    if _polaris_part_for(part) is not None:
-        return "POLARIS"
-    if _brp_part_for(part) is not None:
-        return "BRP"
-    return part.manufacturer.name if part.manufacturer else ""
+    return manufacturer_display(part)
 
 
 def _lot_available(lot: StockLot) -> Decimal:
@@ -485,9 +488,17 @@ def actions_report(
     Отменённые действия по умолчанию исключены (не входят в итоги, таможню и
     Excel); include_cancelled=True показывает их отдельно для аудита.
     """
-    qs = WarehouseAction.objects.select_related(
-        "part_type", "location", "created_by", "cancelled_by",
-        "sale", "reservation", "repair_order", "stock_return",
+    qs = with_part_identity(
+        WarehouseAction.objects.select_related(
+            "part_type",
+            "location",
+            "created_by",
+            "cancelled_by",
+            "sale",
+            "reservation",
+            "repair_order",
+            "stock_return",
+        )
     )
     if not include_cancelled:
         qs = qs.filter(status=WarehouseAction.Status.ACTIVE)
@@ -869,26 +880,57 @@ def excel_safe_text(value) -> str | None:
 
 
 def build_export_rows(actions) -> list[dict]:
-    """Строки экспорта: группировка по ТОЧНОМУ номеру продажи, количество сумм.
+    """Export active consumption grouped by manufacturer and exact snapshot.
 
-    Ключ группировки - производитель + снимок part_number, а не id детали:
-    BRP 123 и POLARIS 123 остаются разными строками. Отменённые действия сюда
-    не попадают (их не отдаёт actions_report).
+    Ordinary actions remain positive. Repair returns reduce only repair issues,
+    never sales/reserves of the same part. Net repair consumption is clamped at
+    zero for legacy/incomplete action history.
     """
     grouped: dict[tuple[str, str], dict] = {}
     for action in actions:
-        number = action.part_number or identity_number(action.part_type)
+        if action.status == WarehouseAction.Status.CANCELLED:
+            continue
+        number = action.part_number
+        if not number or number == NO_EXACT_NUMBER:
+            number = part_exact_number(action.part_type, default="")
         manufacturer = action.manufacturer_name or _manufacturer_snapshot(action.part_type)
         key = (manufacturer, number)
-        row = grouped.get(key)
-        if row is None:
-            row = part_export_data(action.part_type, number=number)
-            if manufacturer:
-                row["manufacturer"] = manufacturer.upper()
-            row["quantity"] = Decimal("0")
-            grouped[key] = row
-        row["quantity"] += action.quantity
-    return sorted(grouped.values(), key=lambda r: (r["number"], r["manufacturer"]))
+        row = grouped.setdefault(
+            key,
+            {
+                "action": action,
+                "manufacturer_snapshot": manufacturer,
+                "number_snapshot": number,
+                "ordinary_quantity": Decimal("0"),
+                "repair_issued_quantity": Decimal("0"),
+                "repair_returned_quantity": Decimal("0"),
+            },
+        )
+        if action.action_type == WarehouseAction.Type.REPAIR:
+            row["repair_issued_quantity"] += action.quantity
+        elif action.action_type == WarehouseAction.Type.REPAIR_RETURN:
+            row["repair_returned_quantity"] += action.quantity
+        else:
+            row["ordinary_quantity"] += action.quantity
+
+    rows = []
+    for group in grouped.values():
+        repair_net = max(
+            group["repair_issued_quantity"] - group["repair_returned_quantity"],
+            Decimal("0"),
+        )
+        quantity = group["ordinary_quantity"] + repair_net
+        if quantity <= 0:
+            continue
+        row = part_export_data(
+            group["action"].part_type,
+            number=group["number_snapshot"],
+        )
+        if group["manufacturer_snapshot"]:
+            row["manufacturer"] = group["manufacturer_snapshot"].upper()
+        row["quantity"] = quantity
+        rows.append(row)
+    return sorted(rows, key=lambda row: (row["number"], row["manufacturer"]))
 
 
 def _center_data_row(sheet, row: int) -> None:

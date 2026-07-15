@@ -139,6 +139,8 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
     если деталь успели продать/зарезервировать/выдать, падаем с понятной ошибкой.
     """
     order = RepairOrder.objects.select_for_update().get(pk=order.pk)
+    if order.status == RepairOrder.Status.COMPLETED:
+        return order
     if order.status != RepairOrder.Status.DRAFT:
         raise RepairError("Заказ уже проведён или отменён.")
     lines = list(order.lines.select_related("part_item", "stock_lot", "part_type"))

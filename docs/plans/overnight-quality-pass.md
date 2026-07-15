@@ -149,3 +149,16 @@ frontend framework, с обычным Django GET как fallback. Sidebar scroll
 - Добавлены миграции actions `0008` и counting `0004`, обе nullable/additive.
 - Targeted и warehouse regression suite: 432 passed. Отдельные проверки:
   ruff, djlint, Django check, migration check и `git diff --check`.
+
+## 9. Результат этапа B
+
+- Customs selector считает `ordinary + max(repair issued - repair returned, 0)`
+  по ключу manufacturer snapshot + exact number snapshot.
+- Return-only и полностью возвращённые repair groups не создают Excel-строку;
+  возвраты не уменьшают продажи или резервы той же детали.
+- `StockReturn` получил статус `canceled` и audit fields. Отмена проведённого
+  возврата использует compensating inventory services, locks и проверки
+  текущей ячейки, статуса, количества и активных резервов.
+- Повторные complete/cancel безопасны и не создают новых движений.
+- Миграция returns `0004` additive; production data не переписывается.
+- Repair/returns/customs/warehouse regression suite: 294 passed.

@@ -177,7 +177,7 @@ def actions_report_view(request):
     active_actions = [
         a
         for a in actions
-        if not a.is_cancelled and a.action_type != WarehouseAction.Type.REPAIR_RETURN
+        if not a.is_cancelled
     ]
     export_rows = build_export_rows(active_actions)
     ready = [r for r in export_rows if not r["warnings"]]
@@ -260,8 +260,7 @@ def actions_export(request):
 
     filters = _report_filters(request)
     actions, _totals = actions_report(**filters)  # include_cancelled=False
-    customs_actions = actions.exclude(action_type=WarehouseAction.Type.REPAIR_RETURN)
-    buffer = export_customs_xlsx(customs_actions)
+    buffer = export_customs_xlsx(actions)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()
     filename = f"customs_order_{date_from}_{date_to}.xlsx"

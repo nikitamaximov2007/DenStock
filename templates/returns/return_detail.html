@@ -55,6 +55,17 @@
           {% endif %}
         </td>
       </tr>
+      {% if ret.canceled_at %}
+        <tr>
+          <th>Отменён</th>
+          <td>
+            {{ ret.canceled_at|date:"d.m.Y H:i" }}
+            {% if ret.canceled_by %}· {{ ret.canceled_by }}{% endif %}
+            <br>
+            {{ ret.cancel_reason }}
+          </td>
+        </tr>
+      {% endif %}
     </tbody>
   </table>
   <h2>Позиции возврата</h2>
@@ -66,13 +77,9 @@
         <th>Кол-во</th>
         <th>Исходная ячейка</th>
         <th>Состояние</th>
-        {% if show_costs %}
-          <th>Себестоимость строки (₽)</th>
-        {% endif %}
+        {% if show_costs %}<th>Себестоимость строки (₽)</th>{% endif %}
         <th>Источник списания</th>
-        {% if can_manage and is_draft %}
-          <th></th>
-        {% endif %}
+        {% if can_manage and is_draft %}<th></th>{% endif %}
       </tr>
     </thead>
     <tbody>
@@ -153,6 +160,25 @@
                 data-return-complete-button>Провести возврат</button>
       </form>
     </div>
+  {% endif %}
+  {% if can_cancel %}
+    <div class="toolbar">
+      <form method="post"
+            action="{% url 'return_cancel' ret.pk %}"
+            class="inline-form"
+            data-idempotent-form>
+        {% csrf_token %}
+        <label for="return-cancel-reason">Причина отмены</label>
+        <input id="return-cancel-reason"
+               name="reason"
+               type="text"
+               maxlength="255"
+               required>
+        <button type="submit" class="btn btn--danger">Отменить возврат</button>
+      </form>
+    </div>
+  {% endif %}
+  {% if can_manage and is_draft and has_lines %}
     <h2>Добавить из источника</h2>
     {% if source_rows %}
       <table class="table">

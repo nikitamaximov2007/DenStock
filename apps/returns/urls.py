@@ -8,6 +8,7 @@ urlpatterns = [
     path("<int:pk>/", views.return_detail, name="return_detail"),
     path("<int:pk>/add-line/", views.return_add_line, name="return_add_line"),
     path("<int:pk>/complete/", views.return_complete, name="return_complete"),
+    path("<int:pk>/cancel/", views.return_cancel, name="return_cancel"),
     path(
         "lines/<int:pk>/status/",
         views.return_update_line_status,

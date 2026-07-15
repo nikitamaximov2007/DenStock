@@ -16,16 +16,19 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.actions.models import WarehouseAction
-from apps.inventory.models import PartItem
+from apps.inventory.models import PartItem, StockLot
 from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import (
     InventoryError,
     return_part_item,
     return_stock_lot_quantity,
+    reverse_stock_return_lot,
+    reverse_stock_return_part_item,
 )
 from apps.procurement.models import money
 from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.sales.models import Sale, SaleLine
+from apps.sales.services import active_reserved_for_lot, is_part_item_reserved
 
 from .models import StockReturn, StockReturnLine
 
@@ -139,7 +142,7 @@ def create_return(*, source, reason="", comment="", by=None) -> StockReturn:
 
 def _ensure_draft(ret: StockReturn) -> None:
     if ret.status != StockReturn.Status.DRAFT:
-        raise ReturnError("Возврат уже проведён — изменять состав нельзя.")
+        raise ReturnError("Возврат уже проведён или отменён, изменять состав нельзя.")
 
 
 def _source_belongs(ret: StockReturn, source_line) -> bool:
@@ -333,6 +336,8 @@ def complete_return(ret, *, by=None) -> StockReturn:
     (учитывая завершённые ранее возвраты и накопление по строкам этого документа).
     """
     ret = StockReturn.objects.select_for_update().get(pk=ret.pk)
+    if ret.status == StockReturn.Status.COMPLETED:
+        return ret
     if ret.status != StockReturn.Status.DRAFT:
         raise ReturnError("Возврат уже проведён.")
     line_ids = _locked_return_line_ids(ret)
@@ -436,6 +441,124 @@ def complete_return(ret, *, by=None) -> StockReturn:
         from apps.repairs.services import calculate_repair_costs
 
         for repair_order in RepairOrder.objects.select_for_update().filter(pk__in=repair_order_ids):
+            repair_order.cost_total = calculate_repair_costs(repair_order)
+            repair_order.save(update_fields=["cost_total", "updated_at"])
+    return ret
+
+
+@transaction.atomic
+def cancel_return(ret, *, by=None, reason="") -> StockReturn:
+    """Cancel a draft or compensate a completed physical stock return."""
+    ret = StockReturn.objects.select_for_update().get(pk=ret.pk)
+    if ret.status == StockReturn.Status.CANCELED:
+        return ret
+    reason = (reason or "").strip()
+    if not reason:
+        raise ReturnError("Укажите причину отмены возврата.")
+
+    repair_order_ids = set()
+    if ret.status == StockReturn.Status.COMPLETED:
+        line_ids = _locked_return_line_ids(ret)
+        lines = list(
+            StockReturnLine.objects.filter(pk__in=line_ids)
+            .select_related(
+                "part_item",
+                "returned_lot",
+                "stock_lot",
+                "to_location",
+                "source_repair_line",
+            )
+            .order_by("pk")
+        )
+        source_document_type = ret.source_type
+        for line in lines:
+            comment = f"Отмена возврата {ret.number}: {reason}"[:255]
+            try:
+                if line.part_item_id:
+                    item = PartItem.objects.select_for_update().get(pk=line.part_item_id)
+                    if (
+                        item.status != line.restock_status
+                        or item.current_location_id != line.to_location_id
+                    ):
+                        raise ReturnError(
+                            "Экземпляр уже изменён после возврата, безопасная отмена невозможна."
+                        )
+                    if item.status == PartItem.Status.AVAILABLE and is_part_item_reserved(item):
+                        raise ReturnError("Экземпляр зарезервирован, отмена возврата невозможна.")
+                    reverse_stock_return_part_item(
+                        item,
+                        source_document_type=source_document_type,
+                        by=by,
+                        document_id=ret.pk,
+                        comment=comment,
+                    )
+                else:
+                    target = line.returned_lot or line.stock_lot
+                    if target is None:
+                        raise ReturnError("Не найден лот проведённого возврата.")
+                    target = StockLot.objects.select_for_update().get(pk=target.pk)
+                    if (
+                        target.status != line.restock_status
+                        or target.location_id != line.to_location_id
+                    ):
+                        raise ReturnError(
+                            "Лот уже изменён после возврата, безопасная отмена невозможна."
+                        )
+                    reserved = (
+                        active_reserved_for_lot(target)
+                        if target.status == target.Status.AVAILABLE
+                        else Decimal("0")
+                    )
+                    if line.quantity > target.quantity - reserved:
+                        raise ReturnError(
+                            "Возвращённое количество уже использовано или зарезервировано."
+                        )
+                    reverse_stock_return_lot(
+                        target,
+                        line.quantity,
+                        source_document_type=source_document_type,
+                        by=by,
+                        document_id=ret.pk,
+                        comment=comment,
+                    )
+            except InventoryError as exc:
+                raise ReturnError(str(exc)) from exc
+            if line.source_repair_line_id:
+                repair_order_ids.add(line.source_repair_line.repair_order_id)
+    elif ret.status != StockReturn.Status.DRAFT:
+        raise ReturnError("Недопустимый статус возврата.")
+
+    now = timezone.now()
+    WarehouseAction.objects.select_for_update().filter(
+        stock_return=ret,
+        action_type=WarehouseAction.Type.REPAIR_RETURN,
+        status=WarehouseAction.Status.ACTIVE,
+    ).update(
+        status=WarehouseAction.Status.CANCELLED,
+        cancelled_at=now,
+        cancelled_by=by,
+        cancel_reason=reason,
+    )
+    ret.status = StockReturn.Status.CANCELED
+    ret.canceled_at = now
+    ret.canceled_by = by
+    ret.cancel_reason = reason
+    ret.save(
+        update_fields=[
+            "status",
+            "canceled_at",
+            "canceled_by",
+            "cancel_reason",
+            "updated_at",
+        ]
+    )
+
+    if repair_order_ids:
+        from apps.repairs.services import calculate_repair_costs
+
+        for repair_order in RepairOrder.objects.select_for_update().filter(
+            pk__in=repair_order_ids
+        ):
             repair_order.cost_total = calculate_repair_costs(repair_order)
             repair_order.save(update_fields=["cost_total", "updated_at"])
     return ret

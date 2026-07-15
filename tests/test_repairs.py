@@ -262,8 +262,9 @@ def test_completed_order_is_immutable(data):
     order = create_repair_order(customer_name="Иван", by=data["admin"])
     line = add_part_item_to_repair_order(order, data["item"], by=data["admin"])
     complete_repair_order(order, by=data["admin"])
-    with pytest.raises(RepairError):
-        complete_repair_order(order, by=data["admin"])
+    movements = StockMovement.objects.count()
+    assert complete_repair_order(order, by=data["admin"]).pk == order.pk
+    assert StockMovement.objects.count() == movements
     with pytest.raises(RepairError):
         remove_repair_line(line, by=data["admin"])
     with pytest.raises(RepairError):

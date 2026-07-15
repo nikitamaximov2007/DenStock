@@ -568,6 +568,7 @@ def test_identity_number_prefers_primary_not_analog(variant_part):
     assert identity_number(variant_part) == "420931285"
     # Точный отсканированный номер (в т.ч. замена) сохраняется как есть.
     assert identity_number(variant_part, "420931285") == "420931285"
+    assert identity_number(variant_part, "420931284") == "420931285"
 
 
 def test_sale_snapshots_exact_scanned_number(variant_part, data):

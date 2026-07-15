@@ -26,7 +26,7 @@ from django.urls import reverse
 
 from apps.accounts import roles
 from apps.actions.models import WarehouseAction
-from apps.actions.services import actions_report
+from apps.actions.services import actions_report, build_export_rows, perform_action
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse as promote_brp_to_warehouse
 from apps.catalog.models import Category, PartNumber, PartType, Unit
@@ -57,6 +57,7 @@ from apps.returns.services import (
     _return_line_locking_queryset,
     add_repair_line_return,
     add_sale_line_return,
+    cancel_return,
     complete_return,
     create_return,
     remove_return_line,
@@ -180,6 +181,32 @@ def data(db, admin):
 
 def _new_return(data, source):
     return create_return(source=source, by=data["admin"])
+
+
+def _scanner_repair(data, quantity="5"):
+    action = perform_action(
+        part=data["lot"].part_type,
+        location=data["loc"],
+        action_type=WarehouseAction.Type.REPAIR,
+        quantity=quantity,
+        customer_comment="Customs net repair",
+        by=data["admin"],
+        request_token=f"repair-{quantity}",
+    )
+    return action, action.repair_order.lines.get(stock_lot=data["lot"])
+
+
+def _complete_repair_return(data, order, line, quantity):
+    ret = _new_return(data, order)
+    add_repair_line_return(
+        ret,
+        line,
+        Decimal(quantity),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    return complete_return(ret, by=data["admin"])
 
 
 # --- Создание / проведение ----------------------------------------------------
@@ -562,7 +589,7 @@ def test_return_completion_rolls_back_after_critical_failure(data, failure_path)
 
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
-    """A 0002 draft remains operable after applying returns 0003/actions 0007."""
+    """A 0002 draft remains operable after applying current additive migrations."""
     ret = _new_return(data, data["order"])
     line = add_repair_line_return(
         ret,
@@ -597,8 +624,13 @@ def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
         assert OldStockReturnLine.objects.get(pk=line_id).restock_status == "quarantine"
 
         MigrationExecutor(connection).migrate(
-            [("returns", "0003_stockreturn_completed_by_and_more"),
-             ("actions", "0007_warehouseaction_repair_issue_line_and_more")]
+            [
+                (
+                    "returns",
+                    "0004_stockreturn_cancel_reason_stockreturn_canceled_at_and_more",
+                ),
+                ("actions", "0008_warehouseaction_request_token"),
+            ]
         )
         ret = StockReturn.objects.get(pk=ret_id)
         line = StockReturnLine.objects.get(pk=line_id)
@@ -757,7 +789,125 @@ def test_repair_return_partial_sources_are_restored_independently(data):
     assert order.cost_total == Decimal("0")
 
 
-def test_repair_return_is_visible_in_actions_report_but_not_customs(data, client):
+def test_customs_net_repair_consumption_after_partial_return(data):
+    action, line = _scanner_repair(data)
+    _complete_repair_return(data, action.repair_order, line, "2")
+
+    rows = build_export_rows(WarehouseAction.objects.all())
+    assert len(rows) == 1
+    assert rows[0]["quantity"] == Decimal("3")
+    assert rows[0]["number"] == action.part_number
+
+
+def test_customs_full_repair_return_removes_consumption(data):
+    action, line = _scanner_repair(data)
+    _complete_repair_return(data, action.repair_order, line, "5")
+    assert build_export_rows(WarehouseAction.objects.all()) == []
+
+
+def test_customs_multiple_partial_returns_are_summed(data):
+    action, line = _scanner_repair(data)
+    _complete_repair_return(data, action.repair_order, line, "2")
+    _complete_repair_return(data, action.repair_order, line, "1")
+    rows = build_export_rows(WarehouseAction.objects.all())
+    assert rows[0]["quantity"] == Decimal("2")
+
+
+def test_cancel_completed_repair_return_restores_stock_and_consumption(data):
+    action, line = _scanner_repair(data)
+    ret = _complete_repair_return(data, action.repair_order, line, "2")
+    data["lot"].refresh_from_db()
+    assert data["lot"].quantity == Decimal("2")
+
+    cancel_return(ret, by=data["admin"], reason="Ошибочный возврат")
+    ret.refresh_from_db()
+    data["lot"].refresh_from_db()
+    assert ret.status == StockReturn.Status.CANCELED
+    assert data["lot"].quantity == Decimal("0")
+    assert WarehouseAction.objects.get(stock_return=ret).status == WarehouseAction.Status.CANCELLED
+    assert build_export_rows(WarehouseAction.objects.all())[0]["quantity"] == Decimal("5")
+
+
+def test_repeated_return_cancel_is_idempotent(data):
+    action, line = _scanner_repair(data)
+    ret = _complete_repair_return(data, action.repair_order, line, "2")
+    cancel_return(ret, by=data["admin"], reason="Ошибочный возврат")
+    movement_count = StockMovement.objects.count()
+    assert cancel_return(ret, by=data["admin"], reason="Повтор").pk == ret.pk
+    assert StockMovement.objects.count() == movement_count
+
+
+def test_cancel_repair_item_return_restores_installed_status(data):
+    ret = _new_return(data, data["order"])
+    add_repair_line_return(
+        ret,
+        data["repair_item_line"],
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.QUARANTINE,
+        by=data["admin"],
+    )
+    complete_return(ret, by=data["admin"])
+    cancel_return(ret, by=data["admin"], reason="Экземпляр не возвращался")
+    data["item_b"].refresh_from_db()
+    assert data["item_b"].status == PartItem.Status.INSTALLED
+
+
+def test_cancel_return_rejects_quantity_already_consumed(data):
+    action, line = _scanner_repair(data)
+    ret = _complete_repair_return(data, action.repair_order, line, "2")
+    perform_action(
+        part=data["lot"].part_type,
+        location=data["loc"],
+        action_type=WarehouseAction.Type.SALE,
+        quantity="1",
+        customer_comment="Used after return",
+        by=data["admin"],
+        request_token="used-after-return",
+    )
+    with pytest.raises(ReturnError, match="использовано или зарезервировано"):
+        cancel_return(ret, by=data["admin"], reason="Поздняя отмена")
+    ret.refresh_from_db()
+    data["lot"].refresh_from_db()
+    assert ret.status == StockReturn.Status.COMPLETED
+    assert data["lot"].quantity == Decimal("1")
+
+
+def test_return_cancel_view_uses_compensating_service(data, client):
+    action, line = _scanner_repair(data)
+    ret = _complete_repair_return(data, action.repair_order, line, "2")
+    client.force_login(data["admin"])
+    html = client.get(reverse("return_detail", args=[ret.pk])).content.decode()
+    assert 'name="reason"' in html
+    response = client.post(
+        reverse("return_cancel", args=[ret.pk]),
+        {"reason": "Ошибка оператора"},
+    )
+    assert response.status_code == 302
+    ret.refresh_from_db()
+    assert ret.status == StockReturn.Status.CANCELED
+
+
+def test_repair_return_never_reduces_sale_bucket(data):
+    action, line = _scanner_repair(data)
+    _complete_repair_return(data, action.repair_order, line, "2")
+    WarehouseAction.objects.create(
+        action_type=WarehouseAction.Type.SALE,
+        part_type=action.part_type,
+        part_number=action.part_number,
+        part_name=action.part_name,
+        manufacturer_name=action.manufacturer_name,
+        location=action.location,
+        location_code=action.location_code,
+        quantity=Decimal("4"),
+        customer_comment="Existing sale",
+        created_by=data["admin"],
+    )
+    rows = build_export_rows(WarehouseAction.objects.all())
+    assert rows[0]["quantity"] == Decimal("7")
+
+
+def test_repair_return_is_visible_and_net_selector_ignores_return_only(data, client):
     ret = _new_return(data, data["order"])
     add_repair_line_return(
         ret, data["repair_lot_line"], Decimal("1"), to_location=data["loc"],
@@ -775,7 +925,8 @@ def test_repair_return_is_visible_in_actions_report_but_not_customs(data, client
     with patch("apps.actions.services.export_customs_xlsx", return_value=BytesIO()) as export:
         assert client.get(reverse("actions_export")).status_code == 200
     exported_actions = export.call_args.args[0]
-    assert not exported_actions.filter(pk=action.pk).exists()
+    assert exported_actions.filter(pk=action.pk).exists()
+    assert build_export_rows(exported_actions) == []
 
 
 def test_repair_return_draft_detail_shows_source_and_expected_cost(data, client):
@@ -1050,8 +1201,9 @@ def test_cannot_complete_return_twice(data):
         to_location=data["loc"], restock_status="quarantine", by=data["admin"],
     )
     complete_return(ret, by=data["admin"])
-    with pytest.raises(ReturnError):
-        complete_return(ret, by=data["admin"])
+    movements = StockMovement.objects.count()
+    assert complete_return(ret, by=data["admin"]).pk == ret.pk
+    assert StockMovement.objects.count() == movements
     with pytest.raises(ReturnError):
         remove_return_line(line, by=data["admin"])
 
