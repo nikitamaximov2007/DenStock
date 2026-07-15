@@ -33,6 +33,8 @@ from apps.inventory.presentation import (
 )
 from apps.inventory.services import (
     FOUND_ADDITION_DOC,
+    ITEM_PHYSICAL_STATUSES,
+    LOT_PHYSICAL_STATUSES,
     FoundStockAlreadyPosted,
     InventoryError,
     move_part_item,
@@ -235,7 +237,11 @@ def search_page(request: HttpRequest) -> HttpResponse:
         items_by_part: dict[int, list] = defaultdict(list)
         if serial_ids:
             for item in (
-                PartItem.objects.filter(part_type_id__in=serial_ids)
+                PartItem.objects.filter(
+                    part_type_id__in=serial_ids,
+                    status__in=ITEM_PHYSICAL_STATUSES,
+                    current_location__isnull=False,
+                )
                 .select_related("current_location", "batch")
                 .order_by("internal_number")
             ):
@@ -244,7 +250,11 @@ def search_page(request: HttpRequest) -> HttpResponse:
         lots_by_part: dict[int, list] = defaultdict(list)
         if bulk_ids:
             for lot in (
-                StockLot.objects.filter(part_type_id__in=bulk_ids)
+                StockLot.objects.filter(
+                    part_type_id__in=bulk_ids,
+                    status__in=LOT_PHYSICAL_STATUSES,
+                    quantity__gt=0,
+                )
                 .select_related("location", "batch", "batch_line")
                 .order_by("-created_at")
             ):

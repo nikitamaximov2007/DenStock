@@ -156,6 +156,35 @@ def test_duplicate_scan_increments_same_line(refs, location, admin):
     assert InventoryScanEvent.objects.filter(session=session).count() == 2  # оба события целы
 
 
+def test_repeated_scan_token_does_not_increment_twice(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    first = record_scan(
+        session,
+        "219800345\r\n",
+        by=admin,
+        request_token="count-token-1",
+    )
+    second = record_scan(
+        session,
+        "219800345\r\n",
+        by=admin,
+        request_token="count-token-1",
+    )
+
+    first.refresh_from_db()
+    assert second.pk == first.pk
+    assert first.quantity_counted == Decimal("1")
+    assert first.scan_count == 1
+    assert InventoryScanEvent.objects.filter(session=session).count() == 1
+
+
+def test_scan_token_cannot_be_reused_for_other_value(refs, location, admin):
+    session = start_session(location=location, by=admin)
+    record_scan(session, "219800345", by=admin, request_token="count-token-2")
+    with pytest.raises(CountingError, match="другого скана"):
+        record_scan(session, "503190", by=admin, request_token="count-token-2")
+
+
 def test_undo_decrements_then_removes(refs, location, admin):
     session = start_session(location=location, by=admin)
     record_scan(session, "219800345", by=admin)

@@ -21,10 +21,11 @@ from dataclasses import dataclass, field
 
 from django.urls import reverse
 
-from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
 from apps.inventory.models import PartItem
 from apps.procurement.models import Batch
 from apps.warehouse.models import StorageLocation
+
+from .part_lookup import PartLookupCandidate, clean_lookup_value, resolve_part_lookup
 
 
 @dataclass
@@ -38,6 +39,16 @@ class ScanResult:
     url: str | None = None
     message: str = ""
     candidates: list = field(default_factory=list)
+    exact_number: str = ""
+    manufacturer: str = ""
+    category: str = ""
+    match_source: str = ""
+    is_alias: bool = False
+    physical: object = 0
+    available: object = 0
+    reserved: object = 0
+    quarantine: object = 0
+    locations: list = field(default_factory=list)
 
     @property
     def found(self) -> bool:
@@ -85,10 +96,36 @@ def _batch_result(batch: Batch) -> ScanResult:
     )
 
 
-def _part_result(part: PartType, message: str) -> ScanResult:
+def _location_payload(candidate: PartLookupCandidate) -> list[dict]:
+    return [
+        {
+            "id": row.location.pk,
+            "code": row.location.code,
+            "physical": row.physical,
+            "available": row.available,
+            "reserved": row.reserved,
+            "quarantine": row.quarantine,
+        }
+        for row in candidate.location_rows
+    ]
+
+
+def _part_result(candidate: PartLookupCandidate, message: str = "") -> ScanResult:
+    part = candidate.part
     return ScanResult(
         status="found", type="part_type", id=part.pk, label=part.name,
-        url=reverse("part_detail", args=[part.pk]), message=message,
+        url=reverse("part_detail", args=[part.pk]),
+        message=message or candidate.alias_message or "Найдена деталь.",
+        exact_number=candidate.exact_number,
+        manufacturer=candidate.manufacturer,
+        category=candidate.category,
+        match_source=candidate.match_source,
+        is_alias=candidate.is_alias,
+        physical=candidate.physical,
+        available=candidate.available,
+        reserved=candidate.reserved,
+        quarantine=candidate.quarantine,
+        locations=_location_payload(candidate),
     )
 
 
@@ -99,10 +136,21 @@ def _item_candidate(item: PartItem) -> dict:
     }
 
 
-def _part_candidate(part: PartType) -> dict:
+def _part_candidate(candidate: PartLookupCandidate) -> dict:
+    part = candidate.part
     return {
         "type": "part_type", "id": part.pk, "label": part.name,
         "url": reverse("part_detail", args=[part.pk]),
+        "exact_number": candidate.exact_number,
+        "manufacturer": candidate.manufacturer,
+        "category": candidate.category,
+        "match_source": candidate.match_source,
+        "is_alias": candidate.is_alias,
+        "physical": candidate.physical,
+        "available": candidate.available,
+        "reserved": candidate.reserved,
+        "quarantine": candidate.quarantine,
+        "locations": _location_payload(candidate),
     }
 
 
@@ -111,7 +159,7 @@ def _part_candidate(part: PartType) -> dict:
 
 def resolve_scan(raw: str, *, user=None) -> ScanResult:
     """Распознать код. Чистая функция: ничего не пишет и не выполняет действий."""
-    code = (raw or "").strip()
+    code = clean_lookup_value(raw)
     if not code:
         return ScanResult(status="unknown", message="Пустой код.")
 
@@ -142,12 +190,7 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
     if loc:
         return _location_result(loc)
 
-    # 5. Заводской штрихкод (глобально уникален).
-    barcode = PartBarcode.objects.filter(value=code).select_related("part").first()
-    if barcode:
-        return _part_result(barcode.part, "Найдено по заводскому штрихкоду.")
-
-    # 6. Серийный номер (уникален в пределах вида; между видами — может быть много).
+    # 5. Серийный номер (уникален в пределах вида; между видами может быть много).
     items = list(
         PartItem.objects.filter(serial_number=code)
         .select_related("part_type")
@@ -162,24 +205,16 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
             candidates=[_item_candidate(i) for i in items],
         )
 
-    # 7. OEM/артикул через нормализацию (не уникален → возможна неоднозначность).
-    norm = normalize_number(code)
-    if norm:
-        part_ids = list(
-            PartNumber.objects.filter(normalized_value=norm)
-            .values_list("part_id", flat=True)
-            .distinct()
+    # 6. Exact number, factory barcode, replacement or superseded alias.
+    lookup = resolve_part_lookup(code)
+    if lookup.found:
+        return _part_result(lookup.candidate)
+    if lookup.ambiguous:
+        return ScanResult(
+            status="ambiguous",
+            message=lookup.message,
+            candidates=[_part_candidate(candidate) for candidate in lookup.candidates],
         )
-        if len(part_ids) == 1:
-            part = PartType.objects.get(pk=part_ids[0])
-            return _part_result(part, "Найдено по номеру детали.")
-        if len(part_ids) > 1:
-            parts = PartType.objects.filter(pk__in=part_ids).order_by("pk")
-            return ScanResult(
-                status="ambiguous",
-                message="Номер найден у нескольких видов деталей — уточните.",
-                candidates=[_part_candidate(p) for p in parts],
-            )
 
-    # 8. Не распознан.
+    # 7. Не распознан.
     return ScanResult(status="unknown", message="Код не распознан.")

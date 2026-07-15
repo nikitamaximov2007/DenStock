@@ -36,6 +36,9 @@ class WarehouseAction(models.Model):
         CANCELLED = "cancelled", "Отменено"
 
     action_type = models.CharField("Тип", max_length=20, choices=Type.choices)
+    request_token = models.CharField(
+        "Токен запроса", max_length=64, null=True, blank=True, unique=True, editable=False
+    )
     status = models.CharField(
         "Статус", max_length=10, choices=Status.choices, default=Status.ACTIVE, db_index=True
     )

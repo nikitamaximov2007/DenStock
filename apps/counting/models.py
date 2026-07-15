@@ -110,6 +110,9 @@ class InventoryScanEvent(models.Model):
     session = models.ForeignKey(
         InventoryCountingSession, on_delete=models.CASCADE, related_name="scans"
     )
+    request_token = models.CharField(
+        "Токен запроса", max_length=64, null=True, blank=True, unique=True, editable=False
+    )
     raw_value = models.CharField("Отсканировано", max_length=120)
     normalized_value = models.CharField(max_length=120, db_index=True)
     matched_line = models.ForeignKey(

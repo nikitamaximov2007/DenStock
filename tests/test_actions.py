@@ -33,7 +33,12 @@ from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import Category, PartBarcode, PartNumber, PartType, Unit
 from apps.inventory.models import StockLot, StockMovement
-from apps.inventory.services import create_stock_lot, receive_stock_lot
+from apps.inventory.services import (
+    create_part_items,
+    create_stock_lot,
+    receive_part_item,
+    receive_stock_lot,
+)
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.repairs.models import RepairOrder
@@ -144,6 +149,23 @@ def test_stock_overview_groups_by_location(data):
     assert first["available"] == Decimal("2")
 
 
+def test_stock_overview_does_not_offer_serial_item_as_bulk_action(data):
+    serial = PartType.objects.create(
+        name="Поштучная деталь",
+        category=data["cat"],
+        unit=data["unit"],
+        tracking_mode=PartType.TrackingMode.SERIAL,
+    )
+    line = _finalized_line(data["sup"], serial, data["admin"], qty="1")
+    item = create_part_items(line, 1)[0]
+    receive_part_item(item, to_location=data["loc1"], by=data["admin"])
+
+    overview = stock_overview(serial)
+    assert overview["unit_items"] == 1
+    assert overview["locations"] == []
+    assert overview["total_available"] == Decimal("0")
+
+
 # --- Продажа ---------------------------------------------------------------------------
 
 
@@ -165,6 +187,49 @@ def test_sale_decreases_stock_and_creates_records(data):
     # Ячейка-источник не тронута.
     data["lot1"].refresh_from_db()
     assert data["lot1"].quantity == Decimal("2")
+
+
+def test_repeated_action_token_does_not_sell_twice(data):
+    values = {
+        "part": data["single"],
+        "location": data["loc1"],
+        "action_type": "sale",
+        "quantity": "2",
+        "customer_comment": "Повторный Enter",
+        "by": data["admin"],
+        "request_token": "action-token-1",
+    }
+    first = perform_action(**values)
+    movements_after_first = StockMovement.objects.count()
+    second = perform_action(**values)
+
+    data["single_lot"].refresh_from_db()
+    assert second.pk == first.pk
+    assert data["single_lot"].quantity == Decimal("8")
+    assert StockMovement.objects.count() == movements_after_first
+    assert WarehouseAction.objects.filter(request_token="action-token-1").count() == 1
+
+
+def test_action_token_cannot_be_reused_for_other_payload(data):
+    perform_action(
+        part=data["single"],
+        location=data["loc1"],
+        action_type="sale",
+        quantity="1",
+        customer_comment="Первый запрос",
+        by=data["admin"],
+        request_token="action-token-2",
+    )
+    with pytest.raises(ActionError, match="другого действия"):
+        perform_action(
+            part=data["single"],
+            location=data["loc1"],
+            action_type="sale",
+            quantity="2",
+            customer_comment="Изменённый запрос",
+            by=data["admin"],
+            request_token="action-token-2",
+        )
 
 
 def test_sale_cannot_exceed_available(data):

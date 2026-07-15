@@ -7,14 +7,15 @@
 """
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from apps.brp.models import BrpCatalogPart, BrpPricingSettings
 from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
 from apps.brp.services import promote_to_warehouse
-from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.catalog.models import PartType, normalize_number
+from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
 from apps.inventory.models import NumberSequence
 from apps.polaris.models import PolarisCatalogPart, PolarisPricingSettings
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
@@ -228,32 +229,23 @@ def _effective_polaris_price(
 
 def _warehouse_part_by_scan(norm: str, raw: str) -> PartType | None:
     """Warehouse part by number/barcode. Ambiguous numbers require manual review."""
-    if norm:
-        part_ids = list(
-            PartNumber.objects.filter(normalized_value=norm)
-            .values_list("part_id", flat=True)
-            .distinct()[:2]
-        )
-        if len(part_ids) > 1:
-            return None
-        part_id = part_ids[0] if part_ids else None
-        if part_id is None and raw:
-            barcode_part_ids = list(
-                PartBarcode.objects.filter(value__iexact=raw)
-                .values_list("part_id", flat=True)
-                .distinct()[:2]
-            )
-            if len(barcode_part_ids) > 1:
-                return None
-            part_id = barcode_part_ids[0] if barcode_part_ids else None
-        if part_id:
-            return PartType.objects.filter(pk=part_id).first()
-    return None
+    lookup = resolve_part_lookup(raw)
+    return lookup.candidate.part if lookup.found else None
 
 
 def _match(norm: str, raw: str):
     """Find match: source, warehouse_part, brp_part, polaris_part, display, price."""
-    part = _warehouse_part_by_scan(norm, raw)
+    warehouse_lookup = resolve_part_lookup(raw)
+    if warehouse_lookup.ambiguous:
+        return (
+            "unknown",
+            None,
+            None,
+            None,
+            "Номер найден у нескольких складских карточек, выберите точную деталь",
+            None,
+        )
+    part = warehouse_lookup.candidate.part if warehouse_lookup.found else None
     if part is not None:
         return ("warehouse", part, None, None, part.name, part.recommended_price)
 
@@ -285,16 +277,47 @@ def _match(norm: str, raw: str):
     return ("unknown", None, None, None, UNKNOWN_NAME, None)
 
 
+def _scan_request_token(value) -> str | None:
+    token = str(value or "").strip()
+    if len(token) > 64:
+        raise CountingError("Некорректный токен запроса.")
+    return token or None
+
+
+def _existing_scan_line(event, *, session, raw, by):
+    if (
+        event.session_id != session.pk
+        or event.raw_value != raw
+        or (by is not None and event.created_by_id != by.pk)
+    ):
+        raise CountingError("Токен запроса уже использован для другого скана.")
+    if event.matched_line_id is None:
+        raise CountingError("Этот скан уже был обработан и отменён.")
+    return event.matched_line
+
+
 @transaction.atomic
-def record_scan(
-    session: InventoryCountingSession, raw_value: str, *, by=None
+def _record_scan_atomic(
+    session: InventoryCountingSession,
+    raw_value: str,
+    *,
+    by=None,
+    request_token=None,
 ) -> InventoryCountingLine:
     """Записать один скан: сырое событие + инкремент сгруппированной строки."""
+    session = InventoryCountingSession.objects.select_for_update().get(pk=session.pk)
     _ensure_draft(session)
-    raw = (raw_value or "").strip()
+    raw = clean_lookup_value(raw_value)
     if not raw:
         raise CountingError("Пустой скан.")
     norm = normalize_number(raw) or raw.upper()
+    token = _scan_request_token(request_token)
+    if token:
+        existing = InventoryScanEvent.objects.select_related("matched_line").filter(
+            request_token=token
+        ).first()
+        if existing:
+            return _existing_scan_line(existing, session=session, raw=raw, by=by)
 
     line = (
         InventoryCountingLine.objects.select_for_update()
@@ -324,10 +347,44 @@ def record_scan(
         line.save(update_fields=["quantity_counted", "scan_count", "last_scanned_at"])
 
     InventoryScanEvent.objects.create(
-        session=session, raw_value=raw, normalized_value=norm,
-        matched_line=line, created_by=by,
+        session=session,
+        request_token=token,
+        raw_value=raw,
+        normalized_value=norm,
+        matched_line=line,
+        created_by=by,
     )
     return line
+
+
+def record_scan(
+    session: InventoryCountingSession,
+    raw_value: str,
+    *,
+    by=None,
+    request_token=None,
+) -> InventoryCountingLine:
+    """Record a scan once; repeated durable tokens do not increment it."""
+    token = _scan_request_token(request_token)
+    raw = clean_lookup_value(raw_value)
+    try:
+        return _record_scan_atomic(
+            session,
+            raw,
+            by=by,
+            request_token=token,
+        )
+    except IntegrityError:
+        event = (
+            InventoryScanEvent.objects.select_related("matched_line")
+            .filter(request_token=token)
+            .first()
+            if token
+            else None
+        )
+        if event:
+            return _existing_scan_line(event, session=session, raw=raw, by=by)
+        raise
 
 
 @transaction.atomic

@@ -1,6 +1,4 @@
 """Polaris catalog screens."""
-from decimal import Decimal
-
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -8,9 +6,9 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.catalog.models import normalize_number
 from apps.catalog.services import get_current_price_settings
-from apps.inventory.models import StockBalance
+from apps.core.part_lookup import resolve_part_lookup
 
 from .models import PolarisCatalogPart, PolarisPartLink
 from .pricing import customer_price_rub
@@ -27,42 +25,17 @@ POLARIS_LIMIT = 50
 
 
 def _warehouse_matches(q: str, norm: str) -> list:
-    part_ids = set()
-    if norm:
-        part_ids |= set(
-            PartNumber.objects.filter(normalized_value=norm).values_list("part_id", flat=True)
-        )
-        part_ids |= set(
-            PartBarcode.objects.filter(value__iexact=q).values_list("part_id", flat=True)
-        )
-    parts = list(
-        PartType.objects.filter(Q(pk__in=part_ids) | Q(name__icontains=q))
-        .select_related("category", "manufacturer")
-        .order_by("name")[:WAREHOUSE_LIMIT]
-    )
-    balances = StockBalance.objects.filter(
-        part_type__in=parts, quantity_physical__gt=0
-    ).select_related("location")
-    stock_by_part: dict[int, list] = {}
-    for balance in balances:
-        stock_by_part.setdefault(balance.part_type_id, []).append(balance)
-    links = {
-        link.part_id: link
-        for link in PolarisPartLink.objects.filter(part__in=parts).select_related(
-            "polaris_part"
-        )
-    }
-    rows = []
-    for part in parts:
-        part_balances = stock_by_part.get(part.pk, [])
-        rows.append({
-            "part": part,
-            "balances": part_balances,
-            "available": sum((b.quantity_available for b in part_balances), Decimal("0")),
-            "physical": sum((b.quantity_physical for b in part_balances), Decimal("0")),
-            "link": links.get(part.pk),
-        })
-    return rows
+    lookup = resolve_part_lookup(q, allow_partial=True, allow_name=True)
+    return [
+        {
+            "part": candidate.part,
+            "balances": candidate.location_rows,
+            "available": candidate.available,
+            "physical": candidate.physical,
+            "link": getattr(candidate.part, "polaris_link", None),
+        }
+        for candidate in lookup.candidates[:WAREHOUSE_LIMIT]
+    ]
 
 
 def _polaris_matches(q: str, norm: str, settings) -> list:

@@ -37,4 +37,22 @@
       }
     });
   });
+
+  // UI guard for mutation forms. The database token remains authoritative;
+  // this prevents an accidental second Enter while the first POST is loading.
+  var forms = document.querySelectorAll("[data-idempotent-form]");
+  Array.prototype.forEach.call(forms, function (form) {
+    form.addEventListener("submit", function (event) {
+      if (form.dataset.submitting === "1") {
+        event.preventDefault();
+        return;
+      }
+      form.dataset.submitting = "1";
+      var button = form.querySelector('[type="submit"]');
+      if (button) {
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+      }
+    });
+  });
 })();

@@ -26,8 +26,10 @@
     <div class="action-panel">
       <form method="post"
             action="{% url 'counting_scan' session.pk %}"
-            class="search-form">
+            class="search-form"
+            data-idempotent-form>
         {% csrf_token %}
+        <input type="hidden" name="request_token" value="{{ request_token }}">
         <input id="scan"
                name="code"
                type="text"

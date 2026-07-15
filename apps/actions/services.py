@@ -11,18 +11,18 @@ from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
-    PartBarcode,
     PartNumber,
     PartType,
     VehicleType,
     normalize_number,
 )
+from apps.core.part_lookup import lookup_part_by_id, resolve_part_lookup
 from apps.counting.services import find_brp_price_source
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import return_stock_lot_quantity
@@ -82,38 +82,9 @@ class ActionError(Exception):
 
 
 def resolve_part(raw: str) -> PartType | None:
-    """Карточка склада по скану: номер (нормализованный) или штрихкод.
-
-    Тот же порядок, что в пересчёте ячейки: складские номера, затем штрихкод.
-    BRP-каталог здесь НЕ создаёт карточек: действия работают только с реальным
-    остатком.
-    """
-    raw = (raw or "").strip()
-    if not raw:
-        return None
-    norm = normalize_number(raw)
-    part_id = None
-    if norm:
-        part_ids = list(
-            PartNumber.objects.filter(normalized_value=norm)
-            .values_list("part_id", flat=True)
-            .distinct()[:2]
-        )
-        if len(part_ids) > 1:
-            return None
-        part_id = part_ids[0] if part_ids else None
-    if part_id is None:
-        part_ids = list(
-            PartBarcode.objects.filter(value__iexact=raw)
-            .values_list("part_id", flat=True)
-            .distinct()[:2]
-        )
-        if len(part_ids) > 1:
-            return None
-        part_id = part_ids[0] if part_ids else None
-    if part_id is None:
-        return None
-    return PartType.objects.filter(pk=part_id).first()
+    """Compatibility wrapper around the canonical warehouse lookup."""
+    result = resolve_part_lookup(raw)
+    return result.candidate.part if result.found else None
 
 
 def identity_number(part: PartType, scanned_raw: str = "") -> str:
@@ -179,6 +150,7 @@ def stock_overview(part: PartType) -> dict:
     Быстрые действия работают с количественными лотами; поштучные экземпляры
     показываются числом со ссылкой на существующий флоу карточки детали.
     """
+    candidate = lookup_part_by_id(part, include_price=True)
     lots = list(
         StockLot.objects.filter(part_type=part, status=StockLot.Status.AVAILABLE)
         .select_related("location")
@@ -201,14 +173,15 @@ def stock_overview(part: PartType) -> dict:
         row["reserved"] += reserved
         row["available"] += lot.quantity - reserved
         row["lots"].append(lot)
-    locations = sorted(by_location.values(), key=lambda r: r["location"].code)
+    locations = sorted(by_location.values(), key=lambda row: row["location"].code)
     unit_items = PartItem.objects.filter(
         part_type=part, status=PartItem.Status.AVAILABLE
     ).count()
     return {
-        "part": part,
+        "part": candidate.part,
+        "lookup": candidate,
         "locations": locations,
-        "total_available": sum((r["available"] for r in locations), Decimal("0")),
+        "total_available": sum((row["available"] for row in locations), Decimal("0")),
         "unit_items": unit_items,
     }
 
@@ -234,10 +207,35 @@ def _split_quantity_over_lots(lots, quantity: Decimal):
     return portions
 
 
+def _request_token(value) -> str | None:
+    token = str(value or "").strip()
+    if len(token) > 64:
+        raise ActionError("Некорректный токен запроса.")
+    return token or None
+
+
+def _same_action_request(action, *, part, location, action_type, quantity, comment, by) -> bool:
+    return (
+        action.part_type_id == part.pk
+        and action.location_id == location.pk
+        and action.action_type == action_type
+        and action.quantity == quantity
+        and action.customer_comment == comment
+        and (by is None or action.created_by_id == by.pk)
+    )
+
+
 @transaction.atomic
-def perform_action(
-    *, part: PartType, location, action_type: str, quantity, customer_comment: str,
-    scanned_number: str = "", by=None,
+def _perform_action_atomic(
+    *,
+    part: PartType,
+    location,
+    action_type: str,
+    quantity,
+    customer_comment: str,
+    scanned_number: str = "",
+    by=None,
+    request_token=None,
 ) -> WarehouseAction:
     """Провести действие со сканера: Продажа / Резерв / Ремонт.
 
@@ -258,6 +256,21 @@ def perform_action(
         raise ActionError("Некорректное количество.") from exc
     if quantity <= 0:
         raise ActionError("Количество должно быть больше нуля.")
+    token = _request_token(request_token)
+    if token:
+        existing = WarehouseAction.objects.filter(request_token=token).first()
+        if existing:
+            if not _same_action_request(
+                existing,
+                part=part,
+                location=location,
+                action_type=action_type,
+                quantity=quantity,
+                comment=customer_comment,
+                by=by,
+            ):
+                raise ActionError("Токен запроса уже использован для другого действия.")
+            return existing
 
     lots = list(
         StockLot.objects.select_for_update()
@@ -297,6 +310,7 @@ def perform_action(
 
     return WarehouseAction.objects.create(
         action_type=action_type,
+        request_token=token,
         part_type=part,
         # Снимок личности: точный номер, что сканировали/продали.
         part_number=identity_number(part, scanned_number),
@@ -314,6 +328,52 @@ def perform_action(
         repair_order=repair_order,
         created_by=by,
     )
+
+
+def perform_action(
+    *,
+    part: PartType,
+    location,
+    action_type: str,
+    quantity,
+    customer_comment: str,
+    scanned_number: str = "",
+    by=None,
+    request_token=None,
+) -> WarehouseAction:
+    """Run one scanner mutation and safely reuse a repeated request token."""
+    token = _request_token(request_token)
+    try:
+        return _perform_action_atomic(
+            part=part,
+            location=location,
+            action_type=action_type,
+            quantity=quantity,
+            customer_comment=customer_comment,
+            scanned_number=scanned_number,
+            by=by,
+            request_token=token,
+        )
+    except IntegrityError:
+        # A concurrent request can win the unique-token race. Its transaction
+        # is now visible and this request has been rolled back in full.
+        existing = WarehouseAction.objects.filter(request_token=token).first() if token else None
+        if existing:
+            try:
+                parsed_quantity = Decimal(str(quantity).replace(",", "."))
+            except (InvalidOperation, TypeError):
+                raise ActionError("Некорректное количество.") from None
+            if _same_action_request(
+                existing,
+                part=part,
+                location=location,
+                action_type=action_type,
+                quantity=parsed_quantity,
+                comment=(customer_comment or "").strip(),
+                by=by,
+            ):
+                return existing
+        raise
 
 
 # --- Отмена ошибочной продажи --------------------------------------------------------

@@ -113,10 +113,12 @@
         {% endif %}
       </p>
       <p class="muted">{{ row.part.category }} · {{ row.part.get_tracking_mode_display }}</p>
+      {% if row.alias_message %}<p class="notice notice--info">{{ row.alias_message }}</p>{% endif %}
       <p class="search-result__avail">
         Доступно: <strong>{{ row.available|quantity_int }}</strong> · всего:
         {{ row.physical|quantity_int }}
         {% if row.reserved %}· зарезервировано: {{ row.reserved|quantity_int }}{% endif %}
+        {% if row.quarantine %}· карантин: {{ row.quarantine|quantity_int }}{% endif %}
         {% if row.receiving %}· на приёмке: {{ row.receiving|quantity_int }}{% endif %}
       </p>
       <p>
@@ -127,6 +129,30 @@
         Ячейки: {{ row.locations|join:", "|default:"·" }} · Партии:
         {{ row.batches|join:", "|default:"·" }}
       </p>
+      {% if row.location_rows %}
+        <table class="table table--compact">
+          <thead>
+            <tr>
+              <th>Ячейка</th>
+              <th class="num--qty">Физически</th>
+              <th class="num--qty">Доступно</th>
+              <th class="num--qty">Резерв</th>
+              <th class="num--qty">Карантин</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for cell in row.location_rows %}
+              <tr>
+                <td><span class="code-pill">{{ cell.location.code }}</span></td>
+                <td class="num--qty">{{ cell.physical|quantity_int }}</td>
+                <td class="num--qty">{{ cell.available|quantity_int }}</td>
+                <td class="num--qty">{{ cell.reserved|quantity_int }}</td>
+                <td class="num--qty">{{ cell.quarantine|quantity_int }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
       {% if can_sell or can_repair or can_write_off %}
         <p>
           {% if can_sell %}<a href="{% url 'sale_create' %}">Продать</a>{% endif %}

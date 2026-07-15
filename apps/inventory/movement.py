@@ -54,6 +54,7 @@ class LiveStockRow:
     available: Decimal = DEC0
     reserved: Decimal = DEC0
     quarantine: Decimal = DEC0
+    receiving: Decimal = DEC0
     batches: set[str] = field(default_factory=set)
     states: set[str] = field(default_factory=set)
     part_exact_number: str = ""
@@ -99,10 +100,12 @@ def _identity_parts(part_ids) -> dict[int, PartType]:
     return {part.pk: part for part in parts}
 
 
-def _physical_lots(*, part_id=None, batch_id=None, location_id=None):
+def _physical_lots(*, part_id=None, part_ids=None, batch_id=None, location_id=None):
     qs = StockLot.objects.filter(status__in=LOT_PHYSICAL_STATUSES, quantity__gt=0)
     if part_id:
         qs = qs.filter(part_type_id=part_id)
+    if part_ids is not None:
+        qs = qs.filter(part_type_id__in=part_ids)
     if batch_id:
         qs = qs.filter(batch_id=batch_id)
     if location_id:
@@ -110,12 +113,14 @@ def _physical_lots(*, part_id=None, batch_id=None, location_id=None):
     return list(qs.select_related("location", "batch").order_by("created_at", "pk"))
 
 
-def _physical_items(*, part_id=None, batch_id=None, location_id=None):
+def _physical_items(*, part_id=None, part_ids=None, batch_id=None, location_id=None):
     qs = PartItem.objects.filter(
         status__in=ITEM_PHYSICAL_STATUSES, current_location__isnull=False
     )
     if part_id:
         qs = qs.filter(part_type_id=part_id)
+    if part_ids is not None:
+        qs = qs.filter(part_type_id__in=part_ids)
     if batch_id:
         qs = qs.filter(batch_id=batch_id)
     if location_id:
@@ -174,10 +179,16 @@ def movement_sources_for_part(part: PartType) -> tuple[list[MovementSource], lis
     )
 
 
-def live_stock_rows(*, part_id=None, batch_id=None, location_id=None) -> list[LiveStockRow]:
+def live_stock_rows(
+    *, part_id=None, part_ids=None, batch_id=None, location_id=None
+) -> list[LiveStockRow]:
     """Current physical stock grouped by exact part identity and cell."""
-    lots = _physical_lots(part_id=part_id, batch_id=batch_id, location_id=location_id)
-    items = _physical_items(part_id=part_id, batch_id=batch_id, location_id=location_id)
+    lots = _physical_lots(
+        part_id=part_id, part_ids=part_ids, batch_id=batch_id, location_id=location_id
+    )
+    items = _physical_items(
+        part_id=part_id, part_ids=part_ids, batch_id=batch_id, location_id=location_id
+    )
     reserved_lots, reserved_items = _reservation_maps(lots, items)
     grouped: dict[tuple[int, int], LiveStockRow] = {}
 
@@ -192,7 +203,9 @@ def live_stock_rows(*, part_id=None, batch_id=None, location_id=None) -> list[Li
         row.physical += lot.quantity
         row.batches.add(lot.batch.number)
         row.states.add(lot.status)
-        if lot.status == StockLot.Status.QUARANTINE:
+        if lot.status == StockLot.Status.RECEIVING:
+            row.receiving += lot.quantity
+        elif lot.status == StockLot.Status.QUARANTINE:
             row.quarantine += lot.quantity
         else:
             reserved = min(reserved_lots.get(lot.pk, DEC0), lot.quantity)
@@ -204,7 +217,9 @@ def live_stock_rows(*, part_id=None, batch_id=None, location_id=None) -> list[Li
         row.physical += Decimal("1")
         row.batches.add(item.batch.number)
         row.states.add(item.status)
-        if item.status == PartItem.Status.QUARANTINE:
+        if item.status == PartItem.Status.RECEIVING:
+            row.receiving += Decimal("1")
+        elif item.status == PartItem.Status.QUARANTINE:
             row.quarantine += Decimal("1")
         elif item.pk in reserved_items:
             row.reserved += Decimal("1")

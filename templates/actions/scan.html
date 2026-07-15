@@ -32,13 +32,28 @@
     </p>
   </div>
   {% if searched %}
-    {% if not_found %}
+    {% if lookup_candidates %}
+      {% include "partials/_status_block.html" with kind="warning" text=lookup_message %}
+      <div class="card">
+        <div class="card__body">
+          <ul>
+            {% for candidate in lookup_candidates %}
+              <li>
+                <a href="?q={{ candidate.exact_number|urlencode }}">
+                  {{ candidate.exact_number }} · {{ candidate.part.name }} · {{ candidate.manufacturer }}
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    {% elif not_found %}
       {% include "partials/_empty_state.html" with icon="search" title="Деталь не найдена в остатках склада." text="Действия работают только с реальным остатком. Если деталь новая, сначала примите её поступлением или инвентаризацией ячейки." compact=1 %}
     {% elif overview %}
       <div class="card">
         <div class="card__body">
           <p>
-            <span class="code-pill">{{ q }}</span>
+            <span class="code-pill">{{ overview.lookup.exact_number }}</span>
             <strong>{{ overview.part.name }}</strong>
             · Цена клиента:
             {% if overview.part.recommended_price %}
@@ -48,6 +63,9 @@
             {% endif %}
             · Доступно всего: {{ overview.total_available|quantity_int }}
           </p>
+          {% if overview.lookup.alias_message %}
+            <p class="muted">{{ overview.lookup.alias_message }}</p>
+          {% endif %}
           {% if overview.unit_items %}
             <p class="muted">
               Поштучных экземпляров: {{ overview.unit_items }}. Продажа и выдача
@@ -61,8 +79,12 @@
                 <strong>{{ multi_location_message }}</strong>
               </p>
             {% endif %}
-            <form method="post" action="{% url 'actions_perform' %}" class="form">
+            <form method="post"
+                  action="{% url 'actions_perform' %}"
+                  class="form"
+                  data-idempotent-form>
               {% csrf_token %}
+              <input type="hidden" name="request_token" value="{{ request_token }}">
               <input type="hidden" name="part_id" value="{{ overview.part.pk }}">
               <input type="hidden" name="q" value="{{ q }}">
               <table class="table">
@@ -101,7 +123,9 @@
                   <label for="action-type">Действие</label>
                   <br>
                   <select id="action-type" name="action_type">
-                    {% for value, label in allowed_actions %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                    {% for value, label in allowed_actions %}
+                      <option value="{{ value }}">{{ label }}</option>
+                    {% endfor %}
                   </select>
                 </p>
                 <p>

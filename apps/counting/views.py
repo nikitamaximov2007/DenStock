@@ -4,6 +4,7 @@
 поэтому фокус в поле сканера и Enter работают без всякого JS. Доступ —
 can_manage_inventory (роли склада).
 """
+import secrets
 from decimal import Decimal
 
 from django.contrib import messages
@@ -17,7 +18,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
-from apps.catalog.models import PartBarcode, PartNumber, PartType, normalize_number
+from apps.catalog.models import normalize_number
+from apps.core.part_lookup import resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
 from apps.polaris.services import find_polaris_by_number
 from apps.warehouse.services import StorageLocationCreateError
@@ -219,6 +221,7 @@ def counting_detail(request, pk):
             "value_sorts": VALUE_SORTS,
             "is_draft": session.is_draft,
             "can_rename_location": request.user.can_manage_warehouse,
+            "request_token": secrets.token_urlsafe(32),
         },
     )
 
@@ -230,7 +233,12 @@ def counting_scan(request, pk):
     _require_manage(request)
     code = request.POST.get("code", "")
     try:
-        line = record_scan(session, code, by=request.user)
+        line = record_scan(
+            session,
+            code,
+            by=request.user,
+            request_token=request.POST.get("request_token"),
+        )
     except CountingError as exc:
         messages.error(request, str(exc))
     else:
@@ -316,13 +324,15 @@ def counting_line_resolve(request, pk):
     _require_manage(request)
     code = (request.POST.get("code") or "").strip()
     norm = normalize_number(code)
-    part_id = (
-        PartNumber.objects.filter(normalized_value=norm).values_list("part_id", flat=True).first()
-        or PartBarcode.objects.filter(value__iexact=code).values_list("part_id", flat=True).first()
-    )
+    lookup = resolve_part_lookup(code)
     try:
-        if part_id:
-            resolve_unknown_to_part(line, PartType.objects.get(pk=part_id))
+        if lookup.ambiguous:
+            messages.error(
+                request,
+                "Номер найден у нескольких складских карточек. Используйте общий поиск.",
+            )
+        elif lookup.found:
+            resolve_unknown_to_part(line, lookup.candidate.part)
             messages.success(request, "Строка привязана к складской карточке.")
         else:
             brp = find_brp_by_number(norm)

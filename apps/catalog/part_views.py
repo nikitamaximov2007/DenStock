@@ -2,7 +2,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
-from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -12,6 +11,7 @@ from django.views.generic import CreateView, DetailView, ListView, UpdateView
 from apps.accounts.permissions import ManagePartsMixin
 from apps.core.forms import ImageUploadForm
 from apps.core.images import add_image, deactivate_image, set_primary
+from apps.core.part_lookup import resolve_part_lookup
 from apps.inventory.presentation import attach_part_identity, with_part_identity
 
 from .forms import PartBarcodeForm, PartCompatibilityForm, PartNumberForm, PartTypeForm
@@ -21,7 +21,6 @@ from .models import (
     PartNumber,
     PartType,
     PartTypeImage,
-    normalize_number,
 )
 
 
@@ -38,10 +37,8 @@ class PartTypeListView(LoginRequiredMixin, ListView):
         )
         query = self.request.GET.get("q", "").strip()
         if query:
-            qs = qs.filter(
-                Q(name__icontains=query)
-                | Q(numbers__normalized_value__icontains=normalize_number(query))
-            ).distinct()
+            lookup = resolve_part_lookup(query, allow_partial=True, allow_name=True)
+            qs = qs.filter(pk__in=[candidate.part.pk for candidate in lookup.candidates])
         if self.request.GET.get("show", "active") != "all":
             qs = qs.filter(is_active=True)
         return qs

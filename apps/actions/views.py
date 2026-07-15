@@ -5,6 +5,7 @@
 ремонта; каждый тип действия дополнительно проверяется по своему праву.
 """
 import datetime
+import secrets
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -16,6 +17,7 @@ from django.urls import reverse
 from django.utils.http import urlencode
 
 from apps.catalog.models import PartType
+from apps.core.part_lookup import resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
 from apps.warehouse.models import StorageLocation
 
@@ -31,7 +33,6 @@ from .services import (
     get_or_create_customs,
     parse_weight_kg,
     perform_action,
-    resolve_part,
     stock_overview,
     validate_weight_pair,
 )
@@ -91,12 +92,18 @@ def actions_scan(request):
         "multi_location_message": MULTI_LOCATION_MESSAGE,
     }
     if q:
-        part = resolve_part(q)
+        lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
+        if lookup.ambiguous:
+            ctx["lookup_candidates"] = lookup.candidates
+            ctx["lookup_message"] = lookup.message
+        part = lookup.candidate.part if lookup.found else None
         overview = stock_overview(part) if part else None
-        if part is None or (overview and not overview["locations"] and not overview["unit_items"]):
+        has_no_stock = overview and not overview["locations"] and not overview["unit_items"]
+        if not lookup.ambiguous and (part is None or has_no_stock):
             ctx["not_found"] = True
-        else:
+        elif not lookup.ambiguous:
             ctx["overview"] = overview
+            ctx["request_token"] = secrets.token_urlsafe(32)
     return render(request, "actions/scan.html", ctx)
 
 
@@ -127,6 +134,7 @@ def actions_perform(request):
             customer_comment=request.POST.get("customer_comment", ""),
             scanned_number=q,
             by=request.user,
+            request_token=request.POST.get("request_token"),
         )
     except ActionError as exc:
         messages.error(request, str(exc))

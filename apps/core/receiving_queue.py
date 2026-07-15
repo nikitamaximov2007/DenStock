@@ -21,6 +21,8 @@ from apps.polaris.pricing import customer_price_rub as polaris_customer_price_ru
 from apps.polaris.services import find_polaris_price_source
 from apps.warehouse.models import StorageLocation
 
+from .part_lookup import clean_lookup_value, resolve_part_lookup
+
 QUEUE_SESSION_KEY = "batch_receiving_queue_v1"
 PENDING_SESSION_KEY = "batch_receiving_candidates_v1"
 
@@ -116,40 +118,40 @@ def _warehouse_candidate(part: PartType, exact_number: str = "") -> ReceivingCan
 
 
 def find_receiving_candidates(raw: str, *, warehouse_part_id: int | None = None) -> list:
-    """Find exact warehouse/BRP/Polaris identities, excluding replacement fields."""
+    """Find receive candidates while preserving each warehouse exact identity."""
+    raw = clean_lookup_value(raw)
     norm = normalize_number(raw)
     pricing = get_current_price_settings()
     candidates: list[ReceivingCandidate] = []
 
-    brp = BrpCatalogPart.objects.filter(material_no_norm=norm).first() if norm else None
-    if brp is not None:
-        candidates.append(_brp_candidate(brp, pricing))
-    polaris = (
-        PolarisCatalogPart.objects.filter(part_number_norm=norm).first() if norm else None
-    )
-    if polaris is not None:
-        candidates.append(_polaris_candidate(polaris, pricing))
-
-    matched_numbers = []
     if norm:
-        matched_numbers = list(
-            PartNumber.objects.filter(normalized_value=norm)
-            .exclude(kind=PartNumber.Kind.ANALOG)
-            .select_related(
-                "part__manufacturer",
-                "part__brp_link__brp_part",
-                "part__polaris_link__polaris_part",
-            )
-            .order_by("-is_primary", "pk")
+        brp_parts = BrpCatalogPart.objects.filter(
+            Q(material_no_norm=norm)
+            | Q(replacement_no_1_norm=norm)
+            | Q(replacement_no_2_norm=norm)
         )
+        candidates.extend(_brp_candidate(part, pricing) for part in brp_parts[:25])
+        polaris_parts = PolarisCatalogPart.objects.filter(
+            Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
+        )
+        candidates.extend(_polaris_candidate(part, pricing) for part in polaris_parts[:25])
+
     seen_parts = {candidate.part_id for candidate in candidates if candidate.part_id}
-    for number in matched_numbers:
-        if number.part_id in seen_parts:
+    warehouse_lookup = resolve_part_lookup(raw)
+    matched_exact = {
+        number.part_id: number.value
+        for number in PartNumber.objects.filter(
+            part_id__in=[match.part.pk for match in warehouse_lookup.candidates],
+            normalized_value=norm,
+            kind__in=(PartNumber.Kind.OEM, PartNumber.Kind.ARTICLE),
+        ).order_by("-is_primary", "pk")
+    }
+    for match in warehouse_lookup.candidates:
+        if match.part.pk in seen_parts:
             continue
-        if hasattr(number.part, "brp_link") or hasattr(number.part, "polaris_link"):
-            continue
-        candidates.append(_warehouse_candidate(number.part, number.value))
-        seen_parts.add(number.part_id)
+        exact_number = matched_exact.get(match.part.pk, match.exact_number)
+        candidates.append(_warehouse_candidate(match.part, exact_number))
+        seen_parts.add(match.part.pk)
 
     if not candidates and warehouse_part_id is not None:
         part = (
