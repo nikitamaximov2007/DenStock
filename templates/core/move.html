@@ -25,11 +25,16 @@
           <th>Объект</th>
           <td>
             {% if object_kind == "part_item" %}
-              Экземпляр {{ object.internal_number }} · {{ object.part_type }}
+              Экземпляр {{ object.internal_number }} · {{ object.part_type.name }}
+              {% if object.part_exact_number %}
+                · <span class="code-pill">{{ object.part_exact_number }}</span>
+              {% endif %}
               ({{ object.get_status_display }})
             {% else %}
-              Лот #{{ object.pk }} · {{ object.part_type }} × {{ object.quantity|quantity_int }}
-              ({{ object.get_status_display }}), перемещается целиком
+              {{ object.part_type.name }} ·
+              <span class="code-pill">{{ object.part_exact_number }}</span>
+              {% if object.part_manufacturer %}· {{ object.part_manufacturer }}{% endif %}
+              ({{ object.state_label }})
             {% endif %}
           </td>
         </tr>
@@ -47,6 +52,18 @@
             {% endif %}
           </td>
         </tr>
+        {% if object_kind == "stock_quantity" %}
+          <tr>
+            <th>Остаток</th>
+            <td>
+              Физически {{ object.physical|quantity_int }} ·
+              доступно {{ object.available|quantity_int }} ·
+              резерв {{ object.reserved|quantity_int }} ·
+              карантин {{ object.quarantine|quantity_int }} ·
+              можно переместить {{ object.movable|quantity_int }}
+            </td>
+          </tr>
+        {% endif %}
         {% if location %}
           <tr>
             <th>Новая ячейка</th>
@@ -60,8 +77,29 @@
     <form method="post" class="form">
       {% csrf_token %}
       <input type="hidden" name="object_kind" value="{{ object_kind }}">
-      <input type="hidden" name="object_id" value="{{ object.pk }}">
+      {% if object_kind == "part_item" %}
+        <input type="hidden" name="object_id" value="{{ object.pk }}">
+      {% else %}
+        <input type="hidden" name="part_id" value="{{ object.part_type.pk }}">
+        <input type="hidden"
+               name="source_location_id"
+               value="{{ object.location.pk }}">
+        <input type="hidden" name="stock_state" value="{{ object.stock_state }}">
+      {% endif %}
       <input type="hidden" name="location_id" value="{{ location.pk }}">
+      <input type="hidden" name="move_token" value="{{ move_token }}">
+      {% if object_kind == "stock_quantity" %}
+        <label>
+          Количество
+          <input name="quantity"
+                 type="text"
+                 inputmode="decimal"
+                 value="{{ object.movable|floatformat:'-3' }}"
+                 required>
+        </label>
+      {% else %}
+        <input type="hidden" name="quantity" value="1">
+      {% endif %}
       <button type="submit" name="action" value="confirm" class="btn btn--primary">Подтвердить</button>
       <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
     </form>
@@ -70,8 +108,17 @@
       {% csrf_token %}
       {% if object %}
         <input type="hidden" name="object_kind" value="{{ object_kind }}">
-        <input type="hidden" name="object_id" value="{{ object.pk }}">
+        {% if object_kind == "part_item" %}
+          <input type="hidden" name="object_id" value="{{ object.pk }}">
+        {% else %}
+          <input type="hidden" name="part_id" value="{{ object.part_type.pk }}">
+          <input type="hidden"
+                 name="source_location_id"
+                 value="{{ object.location.pk }}">
+          <input type="hidden" name="stock_state" value="{{ object.stock_state }}">
+        {% endif %}
       {% endif %}
+      <input type="hidden" name="move_token" value="{{ move_token }}">
       <input id="move-scan-input"
              name="code"
              type="text"
@@ -94,11 +141,69 @@
             {% csrf_token %}
             <input type="hidden" name="candidate_kind" value="{{ c.type }}">
             <input type="hidden" name="candidate_id" value="{{ c.id }}">
-            <button type="submit" name="action" value="select_candidate">{{ c.label }}</button>
+            <input type="hidden" name="move_token" value="{{ move_token }}">
+            <button type="submit"
+                    name="action"
+                    value="select_candidate"
+                    {% if c.disabled %}disabled{% endif %}>
+              {{ c.label }}
+              {% if c.disabled %} (зарезервирован){% endif %}
+            </button>
           </form>
         </li>
       {% endfor %}
     </ul>
+  {% endif %}
+  {% if source_candidates %}
+    <h2>Выберите источник</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th>Артикул</th>
+          <th>Производитель</th>
+          <th>Ячейка</th>
+          <th>Состояние</th>
+          <th class="num--qty">Физически</th>
+          <th class="num--qty">Доступно</th>
+          <th class="num--qty">Резерв</th>
+          <th class="num--qty">Карантин</th>
+          <th class="num--qty">Можно переместить</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for source in source_candidates %}
+          <tr>
+            <td>{{ source.part_type.name }}</td>
+            <td><span class="code-pill">{{ source.part_exact_number }}</span></td>
+            <td>{{ source.part_manufacturer|default:"·" }}</td>
+            <td><span class="code-pill">{{ source.location.code }}</span></td>
+            <td>{{ source.state_label }}</td>
+            <td class="num--qty">{{ source.physical|quantity_int }}</td>
+            <td class="num--qty">{{ source.available|quantity_int }}</td>
+            <td class="num--qty">{{ source.reserved|quantity_int }}</td>
+            <td class="num--qty">{{ source.quarantine|quantity_int }}</td>
+            <td class="num--qty">{{ source.movable|quantity_int }}</td>
+            <td>
+              <form method="post" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="part_id" value="{{ source.part_type.pk }}">
+                <input type="hidden"
+                       name="source_location_id"
+                       value="{{ source.location.pk }}">
+                <input type="hidden" name="stock_state" value="{{ source.stock_state }}">
+                <input type="hidden" name="move_token" value="{{ move_token }}">
+                <button type="submit"
+                        name="action"
+                        value="select_source"
+                        {% if not source.movable %}disabled{% endif %}>Выбрать</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   {% endif %}
   {% if step == "scan_object" %}
     <h2>Размещённые лоты</h2>
@@ -131,6 +236,7 @@
               <form method="post" class="inline-form">
                 {% csrf_token %}
                 <input type="hidden" name="lot_id" value="{{ lot.pk }}">
+                <input type="hidden" name="move_token" value="{{ move_token }}">
                 <button type="submit" name="action" value="select_lot">Переместить</button>
               </form>
             </td>
@@ -148,36 +254,26 @@
     <thead>
       <tr>
         <th>Дата</th>
-        <th>Тип</th>
         <th>Деталь</th>
+        <th class="num--qty">Количество</th>
         <th>Откуда → Куда</th>
-        {% if show_costs %}
-          <th>Сумма (₽)</th>
-        {% endif %}
+        {% if show_costs %}<th class="num--money">Сумма (₽)</th>{% endif %}
       </tr>
     </thead>
     <tbody>
       {% for m in history %}
         <tr>
           <td>{{ m.created_at|date:"d.m.Y H:i" }}</td>
-          <td>{{ m.get_movement_type_display }}</td>
-          <td>{{ m.part_type }}</td>
           <td>
-            {% if m.from_location %}
-              {{ m.from_location.code }}
-            {% else %}
-              ·
-            {% endif %}
-            →
-            {% if m.to_location %}
-              {{ m.to_location.code }}
-            {% else %}
-              ·
-            {% endif %}
+            {{ m.part_name }} · <span class="code-pill">{{ m.part_number }}</span>
           </td>
-          {% if show_costs %}
-            <td>{{ m.total_cost_rub|money_int }}</td>
-          {% endif %}
+          <td class="num--qty">{{ m.quantity|quantity_int }}</td>
+          <td>
+            {{ m.from_location_code }}
+            →
+            {{ m.to_location_code }}
+          </td>
+          {% if show_costs %}<td class="num--money">{{ m.total_cost_rub|money_int }}</td>{% endif %}
         </tr>
       {% empty %}
         <tr>

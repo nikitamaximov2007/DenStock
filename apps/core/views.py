@@ -1,3 +1,4 @@
+import secrets
 from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
@@ -6,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import connection
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
@@ -16,7 +17,14 @@ from django.views.decorators.http import require_POST
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
 from apps.core.templatetags.number_format import quantity_int
-from apps.inventory.models import FoundStockPosting, PartItem, StockLot, StockMovement
+from apps.inventory.models import (
+    FoundStockPosting,
+    PartItem,
+    StockLot,
+    StockMovement,
+    StockTransfer,
+)
+from apps.inventory.movement import movement_sources_for_part, unplaced_stock_exists
 from apps.inventory.presentation import (
     attach_movement_identity,
     attach_part_identity,
@@ -29,6 +37,7 @@ from apps.inventory.services import (
     InventoryError,
     move_part_item,
     move_stock_lot,
+    perform_stock_transfer,
     post_found_stock_group,
     receive_part_item,
     receive_stock_lot,
@@ -688,7 +697,88 @@ def _move_block_reason(kind: str, obj) -> str:
 
 
 def _current_location_id(kind: str, obj):
-    return obj.current_location_id if kind == "part_item" else obj.location_id
+    if kind == "part_item":
+        return obj.current_location_id
+    if kind == "stock_quantity":
+        return obj.location.pk
+    return obj.location_id
+
+
+def _move_part(part_id):
+    if part_id is None:
+        return None
+    return (
+        with_part_identity(PartType.objects.filter(pk=part_id), part_field="")
+        .select_related("manufacturer")
+        .first()
+    )
+
+
+def _move_sources(part):
+    if part is None:
+        return [], []
+    return movement_sources_for_part(part)
+
+
+def _selected_bulk_source(part, location_id, stock_state):
+    sources, _items = _move_sources(part)
+    return next(
+        (
+            source
+            for source in sources
+            if source.location.pk == location_id and source.stock_state == stock_state
+        ),
+        None,
+    )
+
+
+def _load_move_operation(request: HttpRequest):
+    kind, obj, location = _load_operation(request)
+    if kind:
+        return kind, obj, location
+    if request.POST.get("object_kind") != "stock_quantity":
+        return "", None, location
+    part = _move_part(_int(request.POST.get("part_id")))
+    source = _selected_bulk_source(
+        part,
+        _int(request.POST.get("source_location_id")),
+        request.POST.get("stock_state", ""),
+    )
+    return ("stock_quantity", source, location) if source is not None else ("", None, location)
+
+
+def _repeated_transfer_from_post(request, token):
+    transfer = StockTransfer.objects.filter(token=token, created_by=request.user).first()
+    if transfer is None:
+        return None
+    try:
+        quantity = Decimal((request.POST.get("quantity") or "").replace(",", "."))
+    except Exception:  # noqa: BLE001 - malformed replay must not be accepted
+        return False
+    kind = request.POST.get("object_kind")
+    item_id = _int(request.POST.get("object_id")) if kind == "part_item" else None
+    part_id = (
+        transfer.part_type_id if kind == "part_item" else _int(request.POST.get("part_id"))
+    )
+    source_id = (
+        transfer.from_location_id
+        if kind == "part_item"
+        else _int(request.POST.get("source_location_id"))
+    )
+    stock_state = (
+        StockTransfer.StockState.SERIAL
+        if kind == "part_item"
+        else request.POST.get("stock_state", "")
+    )
+    matches = (
+        transfer.part_type_id == part_id
+        and transfer.part_item_id == item_id
+        and transfer.from_location_id == source_id
+        and transfer.to_location_id == _int(request.POST.get("location_id"))
+        and transfer.stock_state == stock_state
+        and transfer.quantity == quantity
+    )
+    return transfer if matches else False
 
 
 def _confirm_move(request: HttpRequest, kind: str, obj, location) -> tuple[str, str]:
@@ -711,17 +801,37 @@ def _confirm_move(request: HttpRequest, kind: str, obj, location) -> tuple[str, 
         return "info", "Объект уже в этой ячейке — перемещение не требуется."
     if not location.can_hold_stock():
         return "error", "Ячейка не предназначена для хранения остатка (неактивна или запрещена)."
+    token = (request.POST.get("move_token") or "").strip() or secrets.token_urlsafe(24)
     try:
         if kind == "part_item":
-            move_part_item(obj, location, by=request.user)
-            messages.success(
-                request, f"Экземпляр {obj.internal_number} перемещён в {location.code}."
+            transfer, _created = perform_stock_transfer(
+                part=obj.part_type,
+                part_item=obj,
+                from_location=obj.current_location,
+                to_location=location,
+                quantity=Decimal("1"),
+                stock_state=StockTransfer.StockState.SERIAL,
+                token=token,
+                by=request.user,
             )
-        elif kind == "stock_lot":
-            move_stock_lot(obj, location, by=request.user)
-            messages.success(request, f"Лот #{obj.pk} перемещён в {location.code}.")
+        elif kind == "stock_quantity":
+            transfer, _created = perform_stock_transfer(
+                part=obj.part_type,
+                from_location=obj.location,
+                to_location=location,
+                quantity=request.POST.get("quantity", ""),
+                stock_state=obj.stock_state,
+                token=token,
+                by=request.user,
+            )
         else:
             return "error", "Не выбран объект для перемещения."
+        messages.success(
+            request,
+            f"Перемещено {quantity_int(transfer.quantity)} шт. детали "
+            f"{transfer.part_number}: {transfer.from_location_code} -> "
+            f"{transfer.to_location_code}",
+        )
     except InventoryError as exc:
         return "error", str(exc)
     return "", ""
@@ -745,7 +855,10 @@ def _move_preselect(request: HttpRequest):
             .select_related("part_type", "location").first()
         )
         if picked is not None and not _move_block_reason("stock_lot", picked):
-            return "stock_lot", picked
+            part = _move_part(picked.part_type_id)
+            source = _selected_bulk_source(part, picked.location_id, picked.status)
+            if source is not None:
+                return "stock_quantity", source
     return "", None
 
 
@@ -758,15 +871,28 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
 
     kind, obj, location = "", None, None
     candidates: list = []
+    source_candidates: list = []
     error = ""
     info = ""
+    move_token = (request.POST.get("move_token") or "").strip() or secrets.token_urlsafe(24)
 
     if request.method == "POST":
         action = request.POST.get("action", "")
         if action == "reset":
             return redirect("scanner_move")
 
-        kind, obj, location = _load_operation(request)
+        if action == "confirm":
+            repeated = _repeated_transfer_from_post(request, move_token)
+            if repeated is False:
+                error = "Токен перемещения уже использован для другой операции."
+            elif repeated is not None:
+                messages.info(
+                    request,
+                    f"Перемещение {repeated.part_number} уже было проведено.",
+                )
+                return redirect("scanner_move")
+
+        kind, obj, location = _load_move_operation(request) if not error else ("", None, None)
 
         if action == "select_lot":
             lot = (
@@ -778,23 +904,71 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
                 error = "Лот не найден или недоступен для перемещения."
                 kind, obj, location = "", None, None
             else:
-                kind, obj, location = "stock_lot", lot, None
+                part = _move_part(lot.part_type_id)
+                source = _selected_bulk_source(part, lot.location_id, lot.status)
+                if source is None:
+                    error = "В выбранной строке больше нет перемещаемого остатка."
+                    kind, obj, location = "", None, None
+                else:
+                    kind, obj, location = "stock_quantity", source, None
+
+        elif action == "select_source":
+            part = _move_part(_int(request.POST.get("part_id")))
+            source = _selected_bulk_source(
+                part,
+                _int(request.POST.get("source_location_id")),
+                request.POST.get("stock_state", ""),
+            )
+            if source is None or source.movable <= 0:
+                error = "В выбранной ячейке больше нет перемещаемого остатка."
+                kind, obj, location = "", None, None
+            else:
+                kind, obj, location = "stock_quantity", source, None
 
         elif action == "select_candidate":
             cand_id = _int(request.POST.get("candidate_id"))
-            picked = (
-                PartItem.objects.filter(pk=cand_id)
-                .select_related("part_type", "current_location").first()
-                if cand_id is not None else None
-            )
-            if picked is None:
-                error = "Экземпляр не найден."
-            else:
-                reason = _move_block_reason("part_item", picked)
-                if reason:
-                    error = reason
+            candidate_kind = request.POST.get("candidate_kind", "part_item")
+            if candidate_kind == "part_type":
+                part = _move_part(cand_id)
+                sources, items = _move_sources(part)
+                if sources:
+                    if len(sources) == 1:
+                        kind, obj, location = "stock_quantity", sources[0], None
+                    else:
+                        source_candidates = sources
+                        error = "Выберите исходную ячейку и состояние остатка."
+                elif len(items) == 1 and not items[0].is_reserved_for_move:
+                    kind, obj, location = "part_item", items[0], None
+                elif items:
+                    candidates = [
+                        {
+                            "type": "part_item",
+                            "id": item.pk,
+                            "label": (
+                                f"{item.internal_number}, {item.current_location.code}, "
+                                f"{item.get_status_display()}"
+                            ),
+                            "disabled": item.is_reserved_for_move,
+                        }
+                        for item in items
+                    ]
+                    error = "Выберите экземпляр для перемещения."
                 else:
-                    kind, obj, location = "part_item", picked, None
+                    error = "Размещённого остатка этой детали нет."
+            else:
+                picked = (
+                    PartItem.objects.filter(pk=cand_id)
+                    .select_related("part_type", "current_location").first()
+                    if cand_id is not None else None
+                )
+                if picked is None:
+                    error = "Экземпляр не найден."
+                else:
+                    reason = _move_block_reason("part_item", picked)
+                    if reason:
+                        error = reason
+                    else:
+                        kind, obj, location = "part_item", picked, None
 
         elif action == "scan":
             code = (request.POST.get("code") or "").strip()
@@ -807,7 +981,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
                     error = "Код не распознан."
                 elif result.status == "ambiguous":
                     candidates = result.candidates
-                    error = "Уточните, какой экземпляр переместить."
+                    error = "Уточните точную деталь для перемещения."
                 elif result.type == "part_item":
                     picked = PartItem.objects.select_related(
                         "part_type", "current_location"
@@ -817,6 +991,38 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
                         error = reason
                     else:
                         kind, obj = "part_item", picked
+                elif result.type == "part_type":
+                    part = _move_part(result.id)
+                    sources, items = _move_sources(part)
+                    if sources:
+                        if len(sources) == 1:
+                            kind, obj = "stock_quantity", sources[0]
+                        else:
+                            source_candidates = sources
+                            error = "Выберите исходную ячейку и состояние остатка."
+                    elif len(items) == 1 and not items[0].is_reserved_for_move:
+                        kind, obj = "part_item", items[0]
+                    elif items:
+                        candidates = [
+                            {
+                                "type": "part_item",
+                                "id": item.pk,
+                                "label": (
+                                    f"{item.internal_number}, {item.current_location.code}, "
+                                    f"{item.get_status_display()}"
+                                ),
+                                "disabled": item.is_reserved_for_move,
+                            }
+                            for item in items
+                        ]
+                        error = "Выберите экземпляр для перемещения."
+                    elif unplaced_stock_exists(part):
+                        error = (
+                            "Деталь найдена, но остаток не размещён в ячейке. "
+                            "Сначала проведите приёмку."
+                        )
+                    else:
+                        error = "Размещённого остатка этой детали нет."
                 else:
                     error = _wrong_object_message(result)
             else:
@@ -856,20 +1062,35 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
         )[:50]
     )
     attach_part_identity(placed_lots)  # exact-артикул отдельной колонкой
+    history = list(
+        StockTransfer.objects.filter(created_by=request.user).select_related(
+            "part_type", "from_location", "to_location"
+        )[:10]
+    )
+    if request.user.can_view_purchase_cost and history:
+        costs = {
+            row["document_id"]: row["total"] or Decimal("0")
+            for row in StockMovement.objects.filter(
+                document_type="stock_transfer",
+                document_id__in=[transfer.pk for transfer in history],
+            )
+            .values("document_id")
+            .annotate(total=Sum("total_cost_rub"))
+        }
+        for transfer in history:
+            transfer.total_cost_rub = costs.get(transfer.pk, Decimal("0"))
     ctx = {
         "object": obj,
         "object_kind": kind,
         "location": location,
         "step": step,
         "candidates": candidates,
+        "source_candidates": source_candidates,
         "error": error,
         "info": info,
+        "move_token": move_token,
         "placed_lots": placed_lots,
-        "history": (
-            StockMovement.objects.filter(
-                created_by=request.user, movement_type__in=_MOVE_HISTORY_TYPES
-            ).select_related("part_type", "from_location", "to_location")[:10]
-        ),
+        "history": history,
         "show_costs": request.user.can_view_purchase_cost,
     }
     return render(request, "core/move.html", ctx)

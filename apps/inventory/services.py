@@ -19,6 +19,7 @@ from .models import (
     StockBalance,
     StockLot,
     StockMovement,
+    StockTransfer,
 )
 
 
@@ -388,13 +389,26 @@ def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
 
 
 @transaction.atomic
-def move_part_item(item: PartItem, to_location, *, by=None, comment="") -> PartItem:
+def move_part_item(
+    item: PartItem,
+    to_location,
+    *,
+    by=None,
+    comment="",
+    document_type="",
+    document_id=None,
+) -> PartItem:
     """Перенести экземпляр в другую ячейку (статус не меняется)."""
     if to_location is None or not to_location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
     item = PartItem.objects.select_for_update().get(pk=item.pk)
     if item.status not in ITEM_PHYSICAL_STATUSES:
         raise InventoryError("Экземпляр в недопустимом статусе для перемещения.")
+    if item.status == PartItem.Status.AVAILABLE:
+        from apps.sales.services import is_part_item_reserved
+
+        if is_part_item_reserved(item):
+            raise InventoryError("Зарезервированный экземпляр нельзя переместить.")
     from_location = item.current_location
     if from_location is None:
         raise InventoryError("Экземпляр не размещён — сначала проведите приёмку.")
@@ -405,6 +419,7 @@ def move_part_item(item: PartItem, to_location, *, by=None, comment="") -> PartI
     _record_movement(
         item, StockMovement.MovementType.MOVE_ITEM, Decimal("1"),
         from_location=from_location, to_location=to_location, by=by, comment=comment,
+        document_type=document_type, document_id=document_id,
     )
     _refresh_balance(item.batch_line, from_location)
     _refresh_balance(item.batch_line, to_location)
@@ -419,6 +434,11 @@ def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockL
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
     if lot.status not in LOT_PHYSICAL_STATUSES:
         raise InventoryError("Лот в недопустимом статусе для перемещения.")
+    if lot.status == StockLot.Status.AVAILABLE:
+        from apps.sales.services import active_reserved_for_lot
+
+        if active_reserved_for_lot(lot):
+            raise InventoryError("Лот с активным резервом нельзя переместить целиком.")
     from_location = lot.location
     if from_location.pk == to_location.pk:
         raise InventoryError("Лот уже в этой ячейке.")
@@ -440,6 +460,237 @@ def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockL
     _refresh_balance(lot.batch_line, from_location)
     _refresh_balance(lot.batch_line, to_location)
     return lot
+
+
+def _parse_transfer_quantity(value) -> Decimal:
+    try:
+        quantity = Decimal(str(value).replace(",", "."))
+    except (InvalidOperation, TypeError) as exc:
+        raise InventoryError("Некорректное количество.") from exc
+    if quantity <= 0:
+        raise InventoryError("Количество должно быть больше нуля.")
+    return quantity
+
+
+def _transfer_identity(part) -> tuple[str, str]:
+    from .presentation import manufacturer_display, part_exact_number
+
+    return part_exact_number(part), manufacturer_display(part)
+
+
+def _existing_transfer(token, expected) -> StockTransfer | None:
+    transfer = StockTransfer.objects.filter(token=token).first()
+    if transfer is None:
+        return None
+    actual = (
+        transfer.part_type_id,
+        transfer.part_item_id,
+        transfer.from_location_id,
+        transfer.to_location_id,
+        transfer.stock_state,
+        transfer.quantity,
+    )
+    if actual != expected:
+        raise InventoryError("Токен перемещения уже использован для другой операции.")
+    return transfer
+
+
+def _lock_transfer_locations(from_location, to_location):
+    if from_location is None or to_location is None:
+        raise InventoryError("Укажите исходную и целевую ячейки.")
+    locations = list(
+        StorageLocation.objects.select_for_update()
+        .filter(pk__in=sorted({from_location.pk, to_location.pk}))
+        .order_by("pk")
+    )
+    by_id = {location.pk: location for location in locations}
+    source = by_id.get(from_location.pk)
+    target = by_id.get(to_location.pk)
+    if source is None or target is None:
+        raise InventoryError("Ячейка перемещения не найдена.")
+    if source.pk == target.pk:
+        raise InventoryError("Исходная и целевая ячейки совпадают.")
+    if not target.can_hold_stock():
+        raise InventoryError("Целевая ячейка не предназначена для хранения остатка.")
+    return source, target
+
+
+def _move_locked_lot_portion(lot, target_location, quantity, *, transfer, by=None):
+    target = (
+        StockLot.objects.select_for_update()
+        .filter(batch_line=lot.batch_line, location=target_location)
+        .first()
+    )
+    if target is None:
+        target = StockLot.objects.create(
+            part_type=lot.part_type,
+            batch=lot.batch,
+            batch_line=lot.batch_line,
+            location=target_location,
+            quantity=quantity,
+            initial_quantity=quantity,
+            landed_unit_cost_rub=lot.landed_unit_cost_rub,
+            status=lot.status,
+            note=f"Перемещение #{transfer.pk} из {transfer.from_location_code}"[:255],
+        )
+    elif target.status == StockLot.Status.DEPLETED or target.status == lot.status:
+        target.quantity += quantity
+        target.status = lot.status
+        target.save(update_fields=["quantity", "status", "updated_at"])
+    elif target.status in LOT_PHYSICAL_STATUSES:
+        raise InventoryError(
+            f"В ячейке {target_location.code} уже есть остаток этой партии в статусе "
+            f"«{target.get_status_display()}»; состояния нельзя смешивать."
+        )
+    else:
+        raise InventoryError(
+            f"Лот этой партии в ячейке {target_location.code} недоступен для пополнения."
+        )
+
+    lot.quantity -= quantity
+    if lot.quantity == 0:
+        lot.status = StockLot.Status.DEPLETED
+    lot.save(update_fields=["quantity", "status", "updated_at"])
+    _record_movement(
+        lot,
+        StockMovement.MovementType.MOVE_LOT,
+        quantity,
+        from_location=transfer.from_location,
+        to_location=target_location,
+        by=by,
+        comment=f"Перемещение {transfer.part_number}"[:255],
+        document_type="stock_transfer",
+        document_id=transfer.pk,
+    )
+    _refresh_balance(lot.batch_line, transfer.from_location)
+    _refresh_balance(target.batch_line, target_location)
+
+
+@transaction.atomic
+def _perform_stock_transfer(
+    *,
+    part,
+    from_location,
+    to_location,
+    quantity,
+    stock_state,
+    token,
+    part_item=None,
+    by=None,
+) -> tuple[StockTransfer, bool]:
+    if not token or len(token) > 64:
+        raise InventoryError("Некорректный токен перемещения.")
+    quantity = _parse_transfer_quantity(quantity)
+    source, target = _lock_transfer_locations(from_location, to_location)
+    item_id = getattr(part_item, "pk", None)
+    expected = (part.pk, item_id, source.pk, target.pk, stock_state, quantity)
+    existing = _existing_transfer(token, expected)
+    if existing is not None:
+        return existing, False
+
+    number, manufacturer = _transfer_identity(part)
+    if part_item is not None:
+        if quantity != Decimal("1") or stock_state != StockTransfer.StockState.SERIAL:
+            raise InventoryError("Экземпляр перемещается только по одной штуке.")
+        locked_item = (
+            PartItem.objects.select_for_update()
+            .select_related("part_type", "current_location", "batch_line")
+            .get(pk=part_item.pk)
+        )
+        if locked_item.part_type_id != part.pk or locked_item.current_location_id != source.pk:
+            raise InventoryError("Экземпляр больше не находится в исходной ячейке.")
+        transfer = StockTransfer.objects.create(
+            token=token,
+            part_type=part,
+            part_item=locked_item,
+            stock_state=stock_state,
+            part_number=number,
+            part_name=part.name,
+            manufacturer_name=manufacturer,
+            from_location=source,
+            to_location=target,
+            from_location_code=source.code,
+            to_location_code=target.code,
+            quantity=quantity,
+            created_by=by,
+        )
+        move_part_item(
+            locked_item,
+            target,
+            by=by,
+            document_type="stock_transfer",
+            document_id=transfer.pk,
+        )
+        return transfer, True
+
+    if stock_state not in (StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE):
+        raise InventoryError("Недопустимое состояние остатка для перемещения.")
+    lots = list(
+        StockLot.objects.select_for_update()
+        .filter(
+            part_type=part,
+            location=source,
+            status=stock_state,
+            quantity__gt=0,
+        )
+        .select_related("batch", "batch_line")
+        .order_by("created_at", "pk")
+    )
+    from apps.sales.services import active_reserved_for_lots
+
+    reserved = active_reserved_for_lots(lots) if stock_state == StockLot.Status.AVAILABLE else {}
+    portions = []
+    remaining = quantity
+    for lot in lots:
+        movable = lot.quantity - reserved.get(lot.pk, Decimal("0"))
+        if movable <= 0:
+            continue
+        portion = min(movable, remaining)
+        portions.append((lot, portion))
+        remaining -= portion
+        if remaining == 0:
+            break
+    if remaining > 0:
+        raise InventoryError("Недостаточно доступного количества в исходной ячейке.")
+
+    transfer = StockTransfer.objects.create(
+        token=token,
+        part_type=part,
+        stock_state=stock_state,
+        part_number=number,
+        part_name=part.name,
+        manufacturer_name=manufacturer,
+        from_location=source,
+        to_location=target,
+        from_location_code=source.code,
+        to_location_code=target.code,
+        quantity=quantity,
+        created_by=by,
+    )
+    for lot, portion in portions:
+        _move_locked_lot_portion(lot, target, portion, transfer=transfer, by=by)
+    return transfer, True
+
+
+def perform_stock_transfer(**kwargs) -> tuple[StockTransfer, bool]:
+    """Atomically move serial or bulk stock with durable idempotency."""
+    try:
+        return _perform_stock_transfer(**kwargs)
+    except IntegrityError as exc:
+        token = kwargs.get("token")
+        transfer = StockTransfer.objects.filter(token=token).first()
+        if transfer is not None:
+            expected = (
+                kwargs["part"].pk,
+                getattr(kwargs.get("part_item"), "pk", None),
+                kwargs["from_location"].pk,
+                kwargs["to_location"].pk,
+                kwargs["stock_state"],
+                _parse_transfer_quantity(kwargs["quantity"]),
+            )
+            existing = _existing_transfer(token, expected)
+            return existing, False
+        raise exc
 
 
 # Тег движения для «добавления найденной детали» (приёмка сканером по артикулу).

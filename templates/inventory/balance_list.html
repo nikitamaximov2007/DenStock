@@ -34,9 +34,11 @@
           <th>Название детали</th>
           <th>Артикул</th>
           <th>Ячейка</th>
-          <th>Партия</th>
+          <th>Партии</th>
+          <th>Состояние</th>
           <th class="num--qty">Физически</th>
           <th class="num--qty">Доступно</th>
+          <th class="num--qty">Резерв</th>
           <th class="num--qty">Карантин</th>
         </tr>
       </thead>
@@ -44,7 +46,7 @@
         {% for b in balances %}
           <tr>
             <td>
-              <a href="{% url 'part_detail' b.part_type_id %}">{{ b.part_type.name }}</a>
+              <a href="{% url 'part_detail' b.part_type.pk %}">{{ b.part_type.name }}</a>
             </td>
             <td>
               {% if b.part_exact_number %}
@@ -54,9 +56,11 @@
               {% endif %}
             </td>
             <td>{{ b.location.code }}</td>
-            <td>{{ b.batch.number }}</td>
+            <td>{{ b.batches_label|default:"·" }}</td>
+            <td>{{ b.state_label|default:"·" }}</td>
             <td class="num--qty">{{ b.quantity_physical|quantity_int }}</td>
             <td class="num--qty">{{ b.quantity_available|quantity_int }}</td>
+            <td class="num--qty">{{ b.quantity_reserved|quantity_int }}</td>
             <td class="num--qty">{{ b.quantity_quarantine|quantity_int }}</td>
           </tr>
         {% endfor %}

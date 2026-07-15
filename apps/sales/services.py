@@ -103,6 +103,31 @@ def active_reserved_for_lot(lot) -> Decimal:
     return _active_reserved_for_lot(lot)
 
 
+def active_reserved_for_lots(lot_ids) -> dict[int, Decimal]:
+    """Active reserved quantities for many lots in one query."""
+    ids = [getattr(value, "pk", value) for value in lot_ids]
+    if not ids:
+        return {}
+    rows = (
+        ReservationLine.objects.filter(_active_q(), stock_lot_id__in=ids)
+        .values("stock_lot_id")
+        .annotate(quantity=Sum("quantity"))
+    )
+    return {row["stock_lot_id"]: row["quantity"] or Decimal("0") for row in rows}
+
+
+def active_reserved_item_ids(item_ids) -> set[int]:
+    """IDs of serial items held by an active reservation, in one query."""
+    ids = [getattr(value, "pk", value) for value in item_ids]
+    if not ids:
+        return set()
+    return set(
+        ReservationLine.objects.filter(_active_q(), part_item_id__in=ids)
+        .values_list("part_item_id", flat=True)
+        .distinct()
+    )
+
+
 # --- Пересчёт затронутых строк кэша ------------------------------------------
 
 

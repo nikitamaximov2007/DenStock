@@ -14,6 +14,7 @@ from django.views.decorators.http import require_POST
 
 from apps.counting.models import InventoryCountingSession
 from apps.counting.services import get_session_value_breakdown
+from apps.inventory.movement import live_stock_rows
 from apps.inventory.presentation import attach_part_identity, with_part_identity
 
 from .forms import AddCountLotForm, CountQuantityForm, InventoryCountForm
@@ -95,6 +96,7 @@ def initial_inventory_detail(request, pk):
         {
             "session": session,
             "breakdown": get_session_value_breakdown(session, sort="original"),
+            "live_stock_rows": live_stock_rows(location_id=session.storage_location_id),
         },
     )
 

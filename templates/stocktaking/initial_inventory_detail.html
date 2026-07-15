@@ -22,8 +22,9 @@
       <p class="muted">
         Позиции заполнены пересчётом сканером автоматически. Это первичный ввод
         фактического наличия, а не сверка: расхождений и корректировок нет,
-        остатки записаны по адресу при проведении пересчёта. Цены строк -
-        оценка по цене клиента, а не себестоимость закупки.
+        остатки записаны по адресу при проведении пересчёта. Таблица ниже хранит
+        исторический снимок и не меняется после перемещений. Цены строк - оценка
+        по цене клиента, а не себестоимость закупки.
       </p>
       <p>
         Позиций: {{ breakdown.positions_count }}
@@ -32,6 +33,36 @@
       </p>
     </div>
   </div>
+  <h2>Текущий остаток в ячейке</h2>
+  {% if live_stock_rows %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Артикул</th>
+          <th>Название</th>
+          <th class="num--qty">Физически</th>
+          <th class="num--qty">Доступно</th>
+          <th class="num--qty">Резерв</th>
+          <th class="num--qty">Карантин</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in live_stock_rows %}
+          <tr>
+            <td><span class="code-pill">{{ row.part_exact_number }}</span></td>
+            <td>{{ row.part_type.name }}</td>
+            <td class="num--qty">{{ row.physical|quantity_int }}</td>
+            <td class="num--qty">{{ row.available|quantity_int }}</td>
+            <td class="num--qty">{{ row.reserved|quantity_int }}</td>
+            <td class="num--qty">{{ row.quarantine|quantity_int }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Сейчас в этой ячейке нет физического остатка.</p>
+  {% endif %}
+  <h2>Снимок на момент первичного ввода</h2>
   {% if breakdown.rows %}
     <table class="table">
       <thead>

@@ -301,6 +301,85 @@ class FoundStockPosting(models.Model):
         return f"{self.location.code}: {self.quantity} шт."
 
 
+class StockTransfer(models.Model):
+    """One atomic warehouse transfer initiated by the movement scanner.
+
+    ``StockMovement`` remains the append-only ledger and can contain several
+    rows when one requested quantity is split over procurement lots. This
+    document keeps the user operation, immutable identity/location snapshots,
+    and the idempotency token as one coherent audit record.
+    """
+
+    class StockState(models.TextChoices):
+        AVAILABLE = "available", "Доступный остаток"
+        QUARANTINE = "quarantine", "Карантин"
+        SERIAL = "serial", "Экземпляр"
+
+    token = models.CharField("Одноразовый токен", max_length=64, unique=True)
+    part_type = models.ForeignKey(
+        "catalog.PartType",
+        verbose_name="Деталь",
+        on_delete=models.PROTECT,
+        related_name="stock_transfers",
+    )
+    part_item = models.ForeignKey(
+        "inventory.PartItem",
+        verbose_name="Экземпляр",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="stock_transfers",
+    )
+    stock_state = models.CharField("Состояние", max_length=20, choices=StockState.choices)
+    part_number = models.CharField("Номер детали (снимок)", max_length=100)
+    part_name = models.CharField("Название (снимок)", max_length=255)
+    manufacturer_name = models.CharField("Производитель (снимок)", max_length=80, blank=True)
+    from_location = models.ForeignKey(
+        "warehouse.StorageLocation",
+        verbose_name="Откуда",
+        on_delete=models.PROTECT,
+        related_name="stock_transfers_out",
+    )
+    to_location = models.ForeignKey(
+        "warehouse.StorageLocation",
+        verbose_name="Куда",
+        on_delete=models.PROTECT,
+        related_name="stock_transfers_in",
+    )
+    from_location_code = models.CharField("Откуда (снимок)", max_length=80)
+    to_location_code = models.CharField("Куда (снимок)", max_length=80)
+    quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто провёл",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField("Проведено", auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Перемещение склада"
+        verbose_name_plural = "Перемещения склада"
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0), name="stocktransfer_quantity_positive"
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(from_location=models.F("to_location")),
+                name="stocktransfer_locations_differ",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.part_number} x {self.quantity}: "
+            f"{self.from_location_code} -> {self.to_location_code}"
+        )
+
+
 class StockBalance(models.Model):
     """Read-optimized кэш текущих остатков. НЕ источник истины.
 

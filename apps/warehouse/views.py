@@ -8,6 +8,7 @@ from django.views.decorators.http import require_POST
 from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
 
 from apps.accounts.permissions import ManageWarehouseMixin
+from apps.inventory.movement import live_stock_rows
 
 from .forms import StorageLocationForm, StorageLocationRenameForm, StorageLocationUpdateForm
 from .models import StorageLocation
@@ -80,6 +81,7 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
         ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["children"] = self.object.children.all()
         ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
+        ctx["live_stock_rows"] = live_stock_rows(location_id=self.object.pk)
         return ctx
 
 

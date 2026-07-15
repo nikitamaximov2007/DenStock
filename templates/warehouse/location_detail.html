@@ -101,5 +101,35 @@
     <p class="muted">Переименований не было.</p>
   {% endif %}
   <h2>Содержимое</h2>
-  {% include "partials/_status_block.html" with kind="info" text="Остатки появятся в следующих слоях." %}
+  {% if live_stock_rows %}
+    <p class="muted">Текущий живой остаток. Исторические пересчёты показаны в разделе «Инвентаризация».</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Название</th>
+          <th>Артикул</th>
+          <th>Производитель</th>
+          <th class="num--qty">Физически</th>
+          <th class="num--qty">Доступно</th>
+          <th class="num--qty">Резерв</th>
+          <th class="num--qty">Карантин</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in live_stock_rows %}
+          <tr>
+            <td><a href="{% url 'part_detail' row.part_type.pk %}">{{ row.part_type.name }}</a></td>
+            <td><span class="code-pill">{{ row.part_exact_number }}</span></td>
+            <td>{{ row.part_manufacturer|default:"·" }}</td>
+            <td class="num--qty">{{ row.physical|quantity_int }}</td>
+            <td class="num--qty">{{ row.available|quantity_int }}</td>
+            <td class="num--qty">{{ row.reserved|quantity_int }}</td>
+            <td class="num--qty">{{ row.quarantine|quantity_int }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">В ячейке нет текущего физического остатка.</p>
+  {% endif %}
 {% endblock %}

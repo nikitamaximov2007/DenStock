@@ -6,6 +6,7 @@
 (тест-мок). Hidden/query-поля недоверенные — сервер всё перепроверяет.
 """
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -15,7 +16,7 @@ from django.urls import reverse
 from apps.accounts import roles
 from apps.catalog.models import Category, PartType, Unit
 from apps.core.models import UnresolvedScan
-from apps.inventory.models import PartItem, StockBalance, StockMovement
+from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
     create_part_items,
     create_stock_lot,
@@ -317,29 +318,35 @@ def test_tampered_object_id_rechecked_by_server(client, make_user, refs, admin):
 # --- StockLot: перемещение целиком -------------------------------------------
 
 
-def test_move_lot_whole(client, make_user, refs, admin):
+def test_move_lot_quantity(client, make_user, refs, admin):
     lot = _available_lot(refs, admin, refs["loc1"], qty="5")
     _login(client, make_user)
 
     r1 = client.post(URL, {"action": "select_lot", "lot_id": lot.pk})
     assert r1.status_code == 200
-    assert r1.context["object"].pk == lot.pk
+    assert r1.context["object"].part_type.pk == lot.part_type_id
     assert r1.context["step"] == "scan_location"
 
     r2 = client.post(URL, {
         "action": "scan", "code": refs["loc2"].code,
-        "object_kind": "stock_lot", "object_id": lot.pk,
+        "object_kind": "stock_quantity", "part_id": lot.part_type_id,
+        "source_location_id": refs["loc1"].pk, "stock_state": lot.status,
     })
     assert r2.context["step"] == "confirm"
 
     r3 = client.post(URL, {
-        "action": "confirm", "object_kind": "stock_lot",
-        "object_id": lot.pk, "location_id": refs["loc2"].pk,
+        "action": "confirm", "object_kind": "stock_quantity",
+        "part_id": lot.part_type_id, "source_location_id": refs["loc1"].pk,
+        "stock_state": lot.status, "location_id": refs["loc2"].pk,
+        "quantity": "5", "move_token": "lot-quantity-token",
     })
     assert r3.status_code == 302
 
     lot.refresh_from_db()
-    assert lot.location_id == refs["loc2"].pk
+    assert lot.location_id == refs["loc1"].pk
+    assert lot.quantity == 0
+    target_lot = StockLot.objects.get(batch_line=lot.batch_line, location=refs["loc2"])
+    assert target_lot.quantity == 5
     mv = StockMovement.objects.get(stock_lot=lot, movement_type=MOVE_LOT)
     assert mv.quantity == Decimal("5.000")  # лот целиком
     assert mv.from_location_id == refs["loc1"].pk
@@ -349,13 +356,24 @@ def test_move_lot_whole(client, make_user, refs, admin):
     assert not StockBalance.objects.filter(batch_line=bl, location=refs["loc1"]).exists()
 
 
-def test_no_partial_lot_move_ui(client, make_user, refs, admin):
+def test_partial_lot_move_ui(client, make_user, refs, admin):
     lot = _available_lot(refs, admin, refs["loc1"])
     _login(client, make_user)
-    html = client.get(f"{URL}?lot={lot.pk}").content.decode()
-    assert "целиком" in html
-    # Нет поля количества/частичного переноса на экране перемещения.
-    assert 'name="quantity"' not in html
+    selected = client.get(f"{URL}?lot={lot.pk}")
+    html = selected.content.decode()
+    assert "можно переместить" in html
+    confirmed = client.post(
+        URL,
+        {
+            "action": "scan",
+            "code": refs["loc2"].code,
+            "object_kind": "stock_quantity",
+            "part_id": lot.part_type_id,
+            "source_location_id": refs["loc1"].pk,
+            "stock_state": lot.status,
+        },
+    )
+    assert 'name="quantity"' in confirmed.content.decode()
     assert 'name="delta"' not in html
 
 
@@ -366,7 +384,15 @@ def test_view_uses_service_not_direct_ledger(client, make_user, refs, admin):
     item = _available_item(refs, admin, refs["loc1"])
     _login(client, make_user)
     before = StockMovement.objects.count()
-    with patch("apps.core.views.move_part_item") as mock_move:
+    transfer = SimpleNamespace(
+        quantity=Decimal("1"),
+        part_number="Артикул не указан",
+        from_location_code=refs["loc1"].code,
+        to_location_code=refs["loc2"].code,
+    )
+    with patch(
+        "apps.core.views.perform_stock_transfer", return_value=(transfer, True)
+    ) as mock_move:
         resp = client.post(URL, {
             "action": "confirm", "object_kind": "part_item",
             "object_id": item.pk, "location_id": refs["loc2"].pk,
