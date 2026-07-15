@@ -445,14 +445,14 @@ def test_price_settings_change_total_and_categories_together(env):
     _stock(part, env["loc"], 2, env["sup"], env["admin"])
     update_current_price_settings(
         current_usd_rate=Decimal("90.25"),
-        brp_markup_percent=Decimal("40"),
+        brp_markup_percent=Decimal("40.25"),
         polaris_markup_percent=Decimal("35"),
         by=env["admin"],
     )
 
     valuation = get_warehouse_valuation()
 
-    assert valuation.sale_value == Decimal("2528.00")
+    assert valuation.sale_value == Decimal("2532.00")
     assert valuation.sale_by_category[0].value == valuation.sale_value
     assert sum((row.value for row in valuation.sale_by_category), Decimal("0")) == (
         valuation.sale_value

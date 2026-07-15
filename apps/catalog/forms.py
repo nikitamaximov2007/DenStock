@@ -59,6 +59,11 @@ class CommaDecimalField(forms.DecimalField):
             value = value.strip().replace(",", ".")
         return super().to_python(value)
 
+    def prepare_value(self, value):
+        if isinstance(value, Decimal) and value.is_finite():
+            return format(value, "f").rstrip("0").rstrip(".") or "0"
+        return super().prepare_value(value)
+
 
 class PriceSettingsForm(forms.Form):
     current_usd_rate = CommaDecimalField(

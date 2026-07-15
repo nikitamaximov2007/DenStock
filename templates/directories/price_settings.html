@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Настройки цен · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -14,7 +15,7 @@
   </p>
   <div class="card">
     <div class="card__body">
-      <form method="post" class="form" novalidate>
+      <form method="post" class="form" novalidate data-price-settings-form>
         {% csrf_token %}
         {% if form.non_field_errors %}
           <div class="field__error">{{ form.non_field_errors }}</div>
@@ -47,12 +48,16 @@
         <div class="tiles dashboard-section" aria-label="Примеры расчёта">
           <div class="tile">
             <div class="tile__label">BRP пример</div>
-            <div class="tile__value num"><span data-price-example="brp">0</span> ₽</div>
+            <div class="tile__value num">
+              <span data-price-example="brp" data-usd-price="35.99">0</span> ₽
+            </div>
             <div class="tile__hint">35.99 $ x курс x наценка BRP</div>
           </div>
           <div class="tile">
             <div class="tile__label">Polaris пример</div>
-            <div class="tile__value num"><span data-price-example="polaris">0</span> ₽</div>
+            <div class="tile__value num">
+              <span data-price-example="polaris" data-usd-price="100">0</span> ₽
+            </div>
             <div class="tile__hint">100 $ x курс x наценка Polaris</div>
           </div>
         </div>
@@ -66,28 +71,5 @@
       </p>
     </div>
   </div>
-  <script>
-    (function () {
-      const rate = document.getElementById("{{ form.current_usd_rate.id_for_label }}");
-      const brp = document.getElementById("{{ form.brp_markup_percent.id_for_label }}");
-      const polaris = document.getElementById("{{ form.polaris_markup_percent.id_for_label }}");
-      const brpOut = document.querySelector('[data-price-example="brp"]');
-      const polarisOut = document.querySelector('[data-price-example="polaris"]');
-      const asNumber = (value) => Number(String(value || "").replace(",", "."));
-      const price = (usd, currentRate, markup) => Math.round(usd * currentRate * (1 + markup / 100));
-      const render = () => {
-        const currentRate = asNumber(rate.value);
-        const brpMarkup = asNumber(brp.value);
-        const polarisMarkup = asNumber(polaris.value);
-        brpOut.textContent = Number.isFinite(currentRate + brpMarkup)
-          ? price(35.99, currentRate, brpMarkup).toString()
-          : "0";
-        polarisOut.textContent = Number.isFinite(currentRate + polarisMarkup)
-          ? price(100, currentRate, polarisMarkup).toString()
-          : "0";
-      };
-      [rate, brp, polaris].forEach((input) => input.addEventListener("input", render));
-      render();
-    })();
-  </script>
+  <script defer src="{% static 'js/price_settings.js' %}"></script>
 {% endblock %}

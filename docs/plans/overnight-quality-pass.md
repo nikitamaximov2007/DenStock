@@ -101,6 +101,18 @@ export selector: active REPAIR добавляет, active REPAIR_RETURN вычи
 - Цены/себестоимость в документах имеют DecimalField(2); складские quantities
   DecimalField(3); sequence/capacity/year поля остаются целыми по смыслу.
 
+Результат этапа C:
+
+- схема данных не менялась: курс остаётся Decimal(10, 4), наценки Decimal(6, 2);
+- точка и запятая принимаются сервером без округления до целого, отрицательные,
+  слишком длинные и слишком точные значения отклоняются формой;
+- повторное открытие формы показывает сохранённую дробную часть без лишних
+  хвостовых нулей;
+- browser preview считает формулу через масштабированные целые `BigInt` и
+  ROUND_HALF_UP до целого рубля, без `Number`, `parseFloat` и `Math.round`;
+- BRP, Polaris и оценка склада продолжают использовать единые pricing services,
+  исторические price snapshots не переписываются.
+
 ## 6. Layout и navigation
 
 `templates/base.html` имеет стабильные `#app-sidebar` и `#content`, messages
