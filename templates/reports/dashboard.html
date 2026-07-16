@@ -38,6 +38,7 @@
     <h2 class="page-title">Продажи</h2>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
+         data-full-navigation
          href="{% url 'reports_export_sales' %}?{{ period_qs }}">Экспорт CSV</a>
     </div>
   </div>
@@ -138,6 +139,7 @@
     <h2 class="page-title">Выдачи в ремонт</h2>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
+         data-full-navigation
          href="{% url 'reports_export_repairs' %}?{{ period_qs }}">Экспорт CSV</a>
     </div>
   </div>
@@ -159,6 +161,7 @@
     <h2 class="page-title">Возвраты на склад</h2>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
+         data-full-navigation
          href="{% url 'reports_export_returns' %}?{{ period_qs }}">Экспорт CSV</a>
     </div>
   </div>
@@ -188,6 +191,7 @@
     <h2 class="page-title">Списания</h2>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
+         data-full-navigation
          href="{% url 'reports_export_writeoffs' %}?{{ period_qs }}">Экспорт CSV</a>
     </div>
   </div>
@@ -221,6 +225,7 @@
     <h2 class="page-title">Корректировки (инвентаризация)</h2>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
+         data-full-navigation
          href="{% url 'reports_export_stocktaking' %}?{{ period_qs }}">Экспорт CSV</a>
     </div>
   </div>

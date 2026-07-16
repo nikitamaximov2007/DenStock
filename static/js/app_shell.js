@@ -40,19 +40,33 @@
 
   // UI guard for mutation forms. The database token remains authoritative;
   // this prevents an accidental second Enter while the first POST is loading.
-  var forms = document.querySelectorAll("[data-idempotent-form]");
-  Array.prototype.forEach.call(forms, function (form) {
-    form.addEventListener("submit", function (event) {
-      if (form.dataset.submitting === "1") {
-        event.preventDefault();
+  function bindMutationForms(root) {
+    var forms = (root || document).querySelectorAll("[data-idempotent-form]");
+    Array.prototype.forEach.call(forms, function (form) {
+      if (form.dataset.idempotentBound === "1") {
         return;
       }
-      form.dataset.submitting = "1";
-      var button = form.querySelector('[type="submit"]');
-      if (button) {
-        button.disabled = true;
-        button.setAttribute("aria-busy", "true");
-      }
+      form.dataset.idempotentBound = "1";
+      form.addEventListener("submit", function (event) {
+        if (form.dataset.submitting === "1") {
+          event.preventDefault();
+          return;
+        }
+        form.dataset.submitting = "1";
+        var button = form.querySelector('[type="submit"]');
+        if (button) {
+          button.disabled = true;
+          button.setAttribute("aria-busy", "true");
+          if (button.dataset.progressLabel) {
+            button.textContent = button.dataset.progressLabel;
+          }
+        }
+      });
     });
+  }
+
+  bindMutationForms(document);
+  document.addEventListener("denstock:page-loaded", function (event) {
+    bindMutationForms(event.detail && event.detail.root ? event.detail.root : document);
   });
 })();

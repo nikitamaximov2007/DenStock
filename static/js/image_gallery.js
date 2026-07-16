@@ -5,10 +5,14 @@
   "use strict";
 
   function initBlock(block) {
+    if (block.dataset.galleryReady === "true") {
+      return;
+    }
     var main = block.querySelector("[data-gallery-main]");
     if (!main) {
       return;
     }
+    block.dataset.galleryReady = "true";
     var thumbs = block.querySelectorAll("[data-gallery-thumb]");
 
     thumbs.forEach(function (thumb) {
@@ -37,13 +41,18 @@
     });
   }
 
-  function init() {
-    document.querySelectorAll("[data-image-gallery]").forEach(initBlock);
+  function init(root) {
+    (root || document).querySelectorAll("[data-image-gallery]").forEach(initBlock);
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", function () {
+      init(document);
+    });
   } else {
-    init();
+    init(document);
   }
+  document.addEventListener("denstock:page-loaded", function (event) {
+    init(event.detail && event.detail.root ? event.detail.root : document);
+  });
 })();

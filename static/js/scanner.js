@@ -12,6 +12,9 @@
   }
 
   function initTopbar(field) {
+    if (field.dataset.scannerBound === "1") {
+      return;
+    }
     var input = field.querySelector(".scanfield__input");
     var resultBox = document.getElementById("scan-topbar-result");
     var url = field.getAttribute("data-scan-resolve-url");
@@ -19,6 +22,7 @@
     if (!input || !url) {
       return;
     }
+    field.dataset.scannerBound = "1";
     var lastCode = "";
     var lastTime = 0;
 
@@ -85,17 +89,24 @@
     });
   }
 
+  function initPage(root) {
+    var pageInput = (root || document).querySelector("#scanner-page-input");
+    if (pageInput) {
+      pageInput.focus(); // автофокус на странице сканера (fetch-резолв)
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     var field = document.querySelector(".scanfield[data-scan-resolve-url]");
     if (field) {
       initTopbar(field);
     }
-    var pageInput = document.getElementById("scanner-page-input");
-    if (pageInput) {
-      pageInput.focus(); // автофокус на странице сканера (fetch-резолв)
-    }
+    initPage(document);
     // Экраны непрерывного скана с перезагрузкой (приёмка/перемещение/
     // инвентаризация/действия) держит сфокусированными scan_focus.js по
     // общему селектору [data-scan-input] — здесь их не трогаем.
+  });
+  document.addEventListener("denstock:page-loaded", function (event) {
+    initPage(event.detail && event.detail.root ? event.detail.root : document);
   });
 })();

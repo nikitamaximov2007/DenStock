@@ -137,6 +137,33 @@ frontend framework, с обычным Django GET как fallback. Sidebar scroll
 дополнительно сохраняется в sessionStorage и восстанавливается при полной
 загрузке.
 
+Результат этапа D:
+
+- `partial_navigation.js` перехватывает только обычный левый клик по внутренней
+  GET-ссылке sidebar; POST, logout, export/download, target, modifier keys,
+  внешние адреса и `data-full-navigation` используют полную загрузку;
+- ответ проверяется как успешный неredirect HTML с `#content`, `#app-sidebar`
+  и `title`; любая ошибка или несовместимость вызывает переход браузера по URL;
+- sidebar DOM и `scrollTop` сохраняются, `#content`, title, active state и URL
+  обновляются, Back/Forward загружают соответствующую серверную страницу;
+- незавершённый fetch отменяется, content получает `aria-busy`, короткая
+  анимация отключается при reduced motion;
+- после замены публикуется `denstock:page-loaded`; scanner, scan focus,
+  galleries, price preview и mutation guard инициализируются идемпотентно;
+- внешнего frontend framework и CDN-зависимостей не добавлено.
+
+Manual browser checklist:
+
+1. Прокрутить левое меню вниз и открыть другой его раздел.
+2. Убедиться, что sidebar не заменился и его позиция не сбросилась.
+3. Проверить новый URL, active item и заголовок страницы.
+4. Нажать Back и Forward, проверить контент и сохранённый sidebar.
+5. Открыть сканер дважды через меню и выполнить один скан без двойного handler.
+6. Открыть настройки цен, изменить дробное поле и проверить живой preview.
+7. Скачать CSV и customs Excel: должен начаться обычный download.
+8. Обновить URL вручную и открыть его в новой вкладке: видна полная страница.
+9. Отключить JavaScript и повторить переходы меню как обычные Django GET.
+
 ## 7. Проверки по этапам
 
 - A: canonical lookup, scanner ambiguity/live quantities, idempotency и N+1.

@@ -8,6 +8,7 @@
       <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
       {% if actions %}
         <a class="btn btn--small btn--primary"
+           data-full-navigation
            href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
       {% endif %}
     </div>

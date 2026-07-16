@@ -153,11 +153,13 @@
       <form method="post"
             action="{% url 'return_complete' ret.pk %}"
             class="inline-form return-complete-form"
-            data-return-complete-form>
+            data-return-complete-form
+            data-idempotent-form>
         {% csrf_token %}
         <button type="submit"
                 class="btn btn--primary return-complete-button"
-                data-return-complete-button>Провести возврат</button>
+                data-return-complete-button
+                data-progress-label="Проводится...">Провести возврат</button>
       </form>
     </div>
   {% endif %}
@@ -251,19 +253,4 @@
       <p class="muted">Нет позиций, доступных к возврату по этому источнику.</p>
     {% endif %}
   {% endif %}
-  <script>
-    document.addEventListener("DOMContentLoaded", function () {
-      var form = document.querySelector("[data-return-complete-form]");
-      if (!form) return;
-      form.addEventListener("submit", function (event) {
-        var button = form.querySelector("[data-return-complete-button]");
-        if (button.disabled) {
-          event.preventDefault();
-          return;
-        }
-        button.disabled = true;
-        button.textContent = "Проводится...";
-      });
-    });
-  </script>
 {% endblock %}

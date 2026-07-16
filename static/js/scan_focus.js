@@ -133,16 +133,23 @@
     }
     bindForm(input);
     bindIndicator();
-    input.addEventListener("blur", function () {
-      // отложенно: клик в кнопку/строку не должен «мигать» индикатором
-      window.setTimeout(markReady, 0);
-    });
-    input.addEventListener("focus", markReady);
+    if (input.dataset.scanFocusInputBound !== "1") {
+      input.dataset.scanFocusInputBound = "1";
+      input.addEventListener("blur", function () {
+        // отложенно: клик в кнопку/строку не должен «мигать» индикатором
+        window.setTimeout(markReady, 0);
+      });
+      input.addEventListener("focus", markReady);
+    }
     focusScanInput(); // начальный фокус после (пере)загрузки
     markReady();
   }
 
   document.addEventListener("DOMContentLoaded", init);
+  document.addEventListener("denstock:page-loaded", function () {
+    submitting = false;
+    init();
+  });
   // Возврат Назад/Вперёд из bfcache: страница восстановлена — снова готова.
   window.addEventListener("pageshow", function () {
     submitting = false;

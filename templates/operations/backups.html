@@ -122,7 +122,8 @@
             </td>
             <td>
               {% for f in r.files %}
-                <a href="{% url 'operations:backup_download' r.run_id f.name %}">{{ f.name }}</a>
+                <a href="{% url 'operations:backup_download' r.run_id f.name %}"
+                   data-full-navigation>{{ f.name }}</a>
                 <span class="muted">({{ f.size }} б)</span>
                 {% if not forloop.last %}<br>{% endif %}
               {% empty %}

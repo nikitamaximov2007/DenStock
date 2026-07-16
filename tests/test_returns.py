@@ -958,10 +958,14 @@ def test_return_complete_button_has_scoped_visible_styles_and_double_post_guard(
     client.force_login(data["admin"])
     html = client.get(reverse("return_detail", args=[ret.pk])).content.decode()
     css = Path("static/css/app.css").read_text(encoding="utf-8")
+    shell_js = Path("static/js/app_shell.js").read_text(encoding="utf-8")
 
     assert 'class="btn btn--primary return-complete-button"' in html
     assert "data-return-complete-form" in html
-    assert "button.disabled = true" in html
+    assert "data-idempotent-form" in html
+    assert 'data-progress-label="Проводится..."' in html
+    assert "button.disabled = true" in shell_js
+    assert "idempotentBound" in shell_js
     assert ".return-complete-form .return-complete-button" in css
     assert "background: var(--accent); border-color: var(--accent); color: #fff;" in css
 
