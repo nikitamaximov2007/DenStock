@@ -79,6 +79,9 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["can_manage"] = self.request.user.can_manage_warehouse
         ctx["can_print_labels"] = self.request.user.can_print_labels
+        ctx["can_view_inventory"] = (
+            self.request.user.can_manage_inventory or self.request.user.is_viewer
+        )
         ctx["children"] = self.object.children.all()
         ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
         ctx["live_stock_rows"] = live_stock_rows(location_id=self.object.pk)

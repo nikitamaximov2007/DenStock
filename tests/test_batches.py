@@ -198,8 +198,9 @@ def test_navigation_batches_visible_to_right_roles(make_user, client):
     make_user("prodavec", role=roles.SELLER)
 
     client.login(username="sklad", password=PASSWORD)
-    assert "Партии" in client.get(reverse("dashboard")).content.decode()
+    assert ">Склад<" in client.get(reverse("dashboard")).content.decode()
+    assert "Партии поставок" in client.get(reverse("receipt_list")).content.decode()
 
     client.logout()
     client.login(username="prodavec", password=PASSWORD)
-    assert "Партии" not in client.get(reverse("dashboard")).content.decode()
+    assert ">Склад<" not in client.get(reverse("dashboard")).content.decode()

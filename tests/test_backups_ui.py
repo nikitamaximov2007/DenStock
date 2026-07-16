@@ -89,7 +89,7 @@ def test_anonymous_redirected(client, backups_root):
 
 def test_nav_item_only_for_admin(make_user, client, backups_root):
     _admin(make_user, client)
-    assert "Бэкапы" in client.get(reverse("dashboard")).content.decode()
+    assert "Бэкапы" in client.get(reverse("directory_index")).content.decode()
     client.logout()
     make_user("seller", role=roles.SELLER)
     client.login(username="seller", password=PASSWORD)

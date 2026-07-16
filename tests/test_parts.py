@@ -225,7 +225,7 @@ def test_navigation_shows_parts(make_user, client):
     make_user("sklad", role=roles.STOREKEEPER)
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("dashboard")).content.decode()
-    assert "Детали" in html
+    assert ">Каталог<" in html
 
 
 # --- Колонка «Артикул» на /parts/ (feature/parts-list-article-column) -----------------

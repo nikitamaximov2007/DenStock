@@ -382,9 +382,10 @@ def test_inline_part_creation_rejects_external_next(client, make_user, refs):
 
 def test_nav_receipt_is_link_not_stub(client, make_user, refs):
     _login(client, make_user, role=roles.STOREKEEPER, name="sklad")
-    html = client.get(reverse("dashboard")).content.decode()
+    html = client.get(reverse("receipt_list")).content.decode()
     assert 'href="/receipts/"' in html
     assert "nav__link--soon" not in html  # заглушек в меню не осталось
+    assert "Приёмка сканером" in html
 
 
 def test_page_has_no_em_dash(client, make_user, refs, admin):

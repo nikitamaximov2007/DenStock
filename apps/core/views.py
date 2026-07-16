@@ -2,6 +2,7 @@ import secrets
 from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -78,7 +79,7 @@ from .search import search_parts
 
 def _dashboard_actions(user) -> list[dict]:
     """Быстрые действия — только те, на которые у пользователя есть право."""
-    actions = [{"label": "Поиск детали", "url": reverse("part_search"), "primary": True}]
+    actions = [{"label": "Поиск", "url": reverse("part_search"), "primary": True}]
     if user.can_manage_inventory:
         actions.append({"label": "Приёмка сканером", "url": reverse("scanner_receiving")})
         actions.append({"label": "Перемещение", "url": reverse("scanner_move")})
@@ -171,16 +172,16 @@ def scanner_resolve(request: HttpRequest) -> JsonResponse:
 
 @login_required
 def scanner_page(request: HttpRequest) -> HttpResponse:
-    """Страница «Сканер» (4.5). No-JS fallback: POST резолвится сервером."""
-    result = None
-    code = ""
-    if request.method == "POST":
-        code = (request.POST.get("code") or "").strip()
-        if code:
-            result = resolve_scan(code, user=request.user)
-            if result.status == "unknown":
-                _record_unresolved(request, code)
-    return render(request, "core/scanner.html", {"result": result, "code": code})
+    """Совместимый вход старого общего сканера в единый read-only поиск."""
+    code = (request.POST.get("code") or request.GET.get("q") or "").strip()
+    if request.method == "POST" and code:
+        result = resolve_scan(code, user=request.user)
+        if result.status == "unknown":
+            _record_unresolved(request, code)
+    target = reverse("part_search")
+    if code:
+        target = f"{target}?{urlencode({'q': code})}"
+    return redirect(target)
 
 
 @login_required
@@ -222,6 +223,7 @@ def search_page(request: HttpRequest) -> HttpResponse:
     """
     q = request.GET.get("q", "").strip()
     rows = search_parts(q)
+    scan_result = resolve_scan(q, user=request.user) if q else None
     can_view_inventory = request.user.can_manage_inventory or request.user.is_viewer
     if can_view_inventory and rows:
         # Разворот одним запросом на все результаты (не по запросу на строку);
@@ -292,6 +294,7 @@ def search_page(request: HttpRequest) -> HttpResponse:
         "rows": rows,
         "brp_hits": brp_hits,
         "polaris_hits": polaris_hits,
+        "scan_result": scan_result,
         "show_costs": request.user.can_view_purchase_cost,
         "can_view_inventory": can_view_inventory,
         "can_sell": request.user.can_manage_sales,

@@ -169,6 +169,12 @@
       event.preventDefault();
       navigate(link.href, true);
     });
+    content.addEventListener("click", function (event) {
+      var link = event.target.closest("a[data-partial-link]");
+      if (!shouldHandle(event, link)) return;
+      event.preventDefault();
+      navigate(link.href, true);
+    });
     window.addEventListener("beforeunload", saveSidebarScroll);
     window.addEventListener("popstate", function () {
       navigate(window.location.href, false);

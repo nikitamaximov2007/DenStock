@@ -124,4 +124,5 @@ def test_navigation_shows_directories(make_user, client):
     make_user("sklad", role=roles.STOREKEEPER)
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("dashboard")).content.decode()
-    assert "Справочники" in html
+    assert ">Каталог<" in html
+    assert "Справочники" not in html

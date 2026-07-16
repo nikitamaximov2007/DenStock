@@ -25,20 +25,7 @@
           <span class="topbar__mark" aria-hidden="true">D</span>
           <span class="topbar__wordmark">DenisStock</span>
         </a>
-        <form class="topbar__searchform"
-              method="get"
-              action="{% url 'part_search' %}"
-              role="search">
-          <svg class="topbar__searchicon icon" aria-hidden="true">
-            <use href="#i-search"></use>
-          </svg>
-          <input class="topbar__search"
-                 type="search"
-                 name="q"
-                 placeholder="Поиск детали…"
-                 aria-label="Поиск детали">
-        </form>
-        {% include "partials/_scan_field.html" %}
+        <div class="topbar__spacer"></div>
         <div class="topbar__user">
           <span class="topbar__username">{{ user }}</span>
           <form action="{% url 'logout' %}" method="post" class="topbar__logout">
@@ -53,42 +40,23 @@
              id="app-sidebar"
              aria-label="Разделы"
              data-partial-navigation>
-          {% for group in nav_groups %}
-            <details class="nav__group" data-nav-group="{{ forloop.counter }}" open>
-              <summary class="nav__group-title">
-                <span>{{ group.title }}</span>
-                <svg class="nav__chevron icon" aria-hidden="true">
-                  <use href="#i-chevron"></use>
-                </svg>
-              </summary>
-              <ul class="nav__list">
-                {% for item in group.items %}
-                  <li>
-                    {% if item.stub %}
-                      <span class="nav__link nav__link--soon">
-                        <svg class="nav__icon icon" aria-hidden="true">
-                          <use href="#i-{{ item.icon }}"></use>
-                        </svg>
-                        <span class="nav__label">{{ item.label }}</span>
-                        <span class="nav__soon">скоро</span>
-                      </span>
-                    {% else %}
-                      <a class="nav__link{% if item.active %} is-active{% endif %}"
-                         href="{{ item.url }}"
-                         {% if item.active %}aria-current="page"{% endif %}>
-                        <svg class="nav__icon icon" aria-hidden="true">
-                          <use href="#i-{{ item.icon }}"></use>
-                        </svg>
-                        <span class="nav__label">{{ item.label }}</span>
-                      </a>
-                    {% endif %}
-                  </li>
-                {% endfor %}
-              </ul>
-            </details>
-          {% endfor %}
+          <ul class="nav__list nav__list--primary">
+            {% for item in nav_items %}
+              <li>
+                <a class="nav__link{% if item.active %} is-active{% endif %}"
+                   href="{{ item.url }}"
+                   {% if item.active %}aria-current="page"{% endif %}>
+                  <svg class="nav__icon icon" aria-hidden="true">
+                    <use href="#i-{{ item.icon }}"></use>
+                  </svg>
+                  <span class="nav__label">{{ item.label }}</span>
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
         </nav>
         <main class="content" id="content" tabindex="-1">
+          {% include "partials/_section_navigation.html" %}
           {% if messages %}
             <div class="messages">
               {% for message in messages %}

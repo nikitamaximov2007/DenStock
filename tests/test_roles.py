@@ -91,13 +91,15 @@ def test_navigation_changes_by_role(make_user, client):
     html = client.get(reverse("dashboard")).content.decode()
     assert "Статистика" not in html  # кладовщик не видит финансы
     assert "Пользователи" not in html
-    assert "Поступление" in html  # но видит склад
+    assert 'href="/inventory/balance/"' in html  # но видит основной раздел склада
+    assert ">Склад<" in html
 
     client.logout()
     make_user("ruk", role=roles.MANAGER)
     client.login(username="ruk", password=PASSWORD)
     html2 = client.get(reverse("dashboard")).content.decode()
-    assert "Статистика" in html2  # руководитель видит финансы
+    assert ">Отчёты<" in html2
+    assert client.get(reverse("statistics_dashboard")).status_code == 200
 
 
 def test_viewer_cannot_edit(make_user):

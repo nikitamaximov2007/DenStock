@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Быстрый поиск · DenisStock{% endblock %}
+{% block title %}Поиск · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Быстрый поиск детали</h1>
+    <h1 class="page-title">Поиск</h1>
   </div>
   <div class="action-panel">
     <form method="get" class="search-form" action="{% url 'part_search' %}">
@@ -13,15 +13,44 @@
              placeholder="Название, OEM, штрихкод, серийник, внутр. номер, техника…"
              autocomplete="off"
              autofocus
+             data-scan-input
              value="{{ q }}">
       <button type="submit" class="btn btn--primary">Найти</button>
     </form>
     <p class="action-panel__hint">
-      Поиск по названию, номерам (OEM/штрихкод), серийнику, внутреннему номеру и совместимой технике.
+      Введите название или номер либо отсканируйте код. Поддерживаются exact,
+      barcode, replacement, superseded, серийный и внутренний номера, партия и ячейка.
     </p>
+    <button type="button"
+            class="scan-readiness"
+            data-scan-indicator
+            data-ready-label="Сканер готов"
+            data-idle-label="Нажмите, чтобы продолжить сканирование">Сканер готов</button>
   </div>
   {% if too_short %}
     {% include "partials/_status_block.html" with kind="info" text="Введите минимум 2 символа." %}
+  {% elif scan_result.status == "found" %}
+    <div class="card search-locator">
+      <div class="card__body">
+        {% include "partials/_status_block.html" with kind="success" text=scan_result.message %}
+        <strong>{{ scan_result.label }}</strong>
+        {% if scan_result.exact_number %}
+          <span class="code-pill">{{ scan_result.exact_number }}</span>
+        {% endif %}
+        <p class="page-actions">
+          <a class="btn btn--secondary" href="{{ scan_result.url }}">Открыть</a>
+        </p>
+      </div>
+    </div>
+  {% elif scan_result.status == "ambiguous" %}
+    {% include "partials/_status_block.html" with kind="warning" text=scan_result.message %}
+    <ul class="scanner-candidates">
+      {% for candidate in scan_result.candidates %}
+        <li>
+          <a href="{{ candidate.url }}">{{ candidate.label }}</a>
+        </li>
+      {% endfor %}
+    </ul>
   {% elif q and not rows and not brp_hits and not polaris_hits %}
     {% include "partials/_status_block.html" with kind="warning" text="Ничего не найдено по запросу." %}
   {% endif %}

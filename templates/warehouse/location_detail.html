@@ -63,6 +63,16 @@
       {% endif %}
     </tbody>
   </table>
+  {% if can_view_inventory %}
+    <div class="page-actions">
+      <a class="btn btn--secondary"
+         href="{% url 'balance_list' %}?location={{ location.pk }}">Остатки ячейки</a>
+      <a class="btn btn--secondary"
+         href="{% url 'item_list' %}?location={{ location.pk }}">Экземпляры</a>
+      <a class="btn btn--secondary"
+         href="{% url 'lot_list' %}?location={{ location.pk }}">Лоты</a>
+    </div>
+  {% endif %}
   <h2>Вложенные места</h2>
   {% if children %}
     <ul>

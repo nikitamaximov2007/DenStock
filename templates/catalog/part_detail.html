@@ -156,5 +156,16 @@
   {% endif %}
   {% include "partials/_image_gallery.html" with images=images primary_image=primary_image can_manage_images=can_manage_images add_url="part_image_add" primary_url="part_image_primary" delete_url="part_image_delete" owner_pk=part.pk %}
   <h2>Остатки</h2>
-  {% include "partials/_status_block.html" with kind="info" text="Остатки появятся в следующих слоях." %}
+  {% if can_view_inventory %}
+    <div class="page-actions">
+      <a class="btn btn--secondary"
+         href="{% url 'balance_list' %}?part={{ part.pk }}">Остатки</a>
+      <a class="btn btn--secondary"
+         href="{% url 'item_list' %}?part={{ part.pk }}">Экземпляры</a>
+      <a class="btn btn--secondary"
+         href="{% url 'lot_list' %}?part={{ part.pk }}">Лоты</a>
+    </div>
+  {% else %}
+    <p class="muted">Наличие и ячейки показаны в разделе «Поиск».</p>
+  {% endif %}
 {% endblock %}

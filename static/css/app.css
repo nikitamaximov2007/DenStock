@@ -54,6 +54,7 @@ body.app {
   width: 30px; height: 30px; border-radius: 8px;
   background: var(--accent); color: #fff; font-weight: 800; font-size: 16px; }
 .topbar__wordmark { font-size: 18px; letter-spacing: -0.01em; }
+.topbar__spacer { flex: 1 1 auto; }
 .topbar__searchform { position: relative; flex: 1; max-width: 460px; }
 .topbar__searchicon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
   width: 16px; height: 16px; color: var(--muted); pointer-events: none; }
@@ -106,6 +107,8 @@ body.app {
   transition: transform .15s ease; transform: rotate(-90deg); }
 .nav__group[open] > .nav__group-title .nav__chevron { transform: none; }
 .nav__list { list-style: none; margin: 0; padding: 0; }
+.nav__list--primary { padding-top: 4px; }
+.nav__list--primary .nav__link { padding-top: 10px; padding-bottom: 10px; }
 .nav__list li { margin: 1px 0; }
 .nav__link { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
   border-radius: 8px; text-decoration: none; color: var(--text);
@@ -123,6 +126,29 @@ body.app {
 
 /* Мобильный бэкдроп (виден только при открытом меню на мобильном) */
 .nav-backdrop { display: none; }
+
+/* Локальная навигация внутри крупных пользовательских разделов. */
+.section-tabs,
+.section-subtabs {
+  display: flex; align-items: center; gap: 4px; overflow-x: auto;
+  margin: 0 0 18px; padding: 3px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.section-subtabs {
+  display: inline-flex; margin-top: -8px; background: transparent;
+}
+.section-tabs__link,
+.section-subtabs__link {
+  flex: 0 0 auto; padding: 8px 11px; border-radius: 6px;
+  color: var(--muted); font-size: 14px; font-weight: 600; text-decoration: none;
+}
+.section-subtabs__link { padding: 6px 9px; font-size: 13px; }
+.section-tabs__link:hover,
+.section-subtabs__link:hover { color: var(--text); background: var(--bg); }
+.section-tabs__link.is-active,
+.section-subtabs__link.is-active {
+  color: var(--accent); background: var(--nav-active-bg);
+}
 
 /* Спокойные текстовые ссылки в контенте (не «википедийная» ярко-синяя) */
 .content a:not([class]) { color: var(--link-quiet); font-weight: 500; text-decoration: none; }

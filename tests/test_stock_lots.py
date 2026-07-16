@@ -243,8 +243,9 @@ def test_nav_section_visibility(make_user, client):
     make_user("prodavec", role=roles.SELLER)
 
     client.login(username="sklad", password=PASSWORD)
-    assert "Лоты" in client.get(reverse("dashboard")).content.decode()
+    assert ">Склад<" in client.get(reverse("dashboard")).content.decode()
+    assert "Лоты" in client.get(reverse("balance_list")).content.decode()
 
     client.logout()
     client.login(username="prodavec", password=PASSWORD)
-    assert "Лоты" not in client.get(reverse("dashboard")).content.decode()
+    assert ">Склад<" not in client.get(reverse("dashboard")).content.decode()

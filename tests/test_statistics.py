@@ -138,13 +138,13 @@ def test_forbidden_without_finance(client, make_user, role):
 
 
 def test_nav_item_is_active_link(client, make_user):
-    """Пункт меню больше не заглушка: у руководителя это ссылка на /statistics/."""
+    """Статистика доступна руководителю внутри раздела отчётов."""
     _login(client, make_user, role=roles.MANAGER)
-    html = client.get(reverse("dashboard")).content.decode()
+    html = client.get(reverse("reports_dashboard")).content.decode()
     assert 'href="/statistics/"' in html
     client.logout()
     _login(client, make_user, role=roles.STOREKEEPER, name="sklad")
-    assert 'href="/statistics/"' not in client.get(reverse("dashboard")).content.decode()
+    assert 'href="/statistics/"' not in client.get(reverse("reports_dashboard")).content.decode()
 
 
 # --- Пустой склад ---------------------------------------------------------------

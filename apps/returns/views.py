@@ -71,6 +71,19 @@ def _resolve_source(request):
 @login_required
 def return_list(request):
     status = request.GET.get("status", "")
+    source_filter = request.GET.get("source", "")
+    if source_filter == "sale":
+        source_type = StockReturn.SourceType.SALE
+        request.navigation_section = "sales"
+        request.navigation_source = "sale"
+    elif source_filter == "repair":
+        source_type = StockReturn.SourceType.REPAIR_ORDER
+        request.navigation_section = "repairs"
+        request.navigation_source = "repair"
+    else:
+        source_type = ""
+        request.navigation_section = "warehouse"
+        request.navigation_source = ""
     qs = (
         StockReturn.objects.select_related("created_by")
         .prefetch_related(lines_with_identity_prefetch(StockReturnLine))
@@ -78,6 +91,8 @@ def return_list(request):
     )
     if status:
         qs = qs.filter(status=status)
+    if source_type:
+        qs = qs.filter(source_type=source_type)
     returns = list(qs[:100])
     repair_ids = {
         ret.source_id
@@ -112,6 +127,7 @@ def return_list(request):
         {
             "returns": returns,
             "status": status,
+            "source_filter": source_filter,
             "statuses": StockReturn.Status.choices,
             "can_manage": request.user.can_manage_returns,
             "show_costs": request.user.can_view_purchase_cost,
@@ -125,6 +141,16 @@ def return_detail(request, pk):
         StockReturn.objects.select_related("created_by", "completed_by"), pk=pk
     )
     source = get_source(ret)
+    request.navigation_section = (
+        "sales"
+        if ret.source_type == StockReturn.SourceType.SALE
+        else "repairs"
+    )
+    request.navigation_source = (
+        "sale"
+        if ret.source_type == StockReturn.SourceType.SALE
+        else "repair"
+    )
     is_draft = ret.status == StockReturn.Status.DRAFT
     source_rows = []
     if source is not None and is_draft:

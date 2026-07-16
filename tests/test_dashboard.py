@@ -55,7 +55,7 @@ def test_no_dead_placeholder_tiles(client, make_user):
     # Старые «мёртвые» плитки-плейсхолдеры убраны.
     assert "Прибыль за период" not in html
     assert "Продажи сегодня" not in html
-    assert "Поиск детали" in html
+    assert ">Поиск<" in html
 
 
 # --- Empty states вместо «—» -------------------------------------------------

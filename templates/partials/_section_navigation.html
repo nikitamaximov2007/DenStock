@@ -1,0 +1,20 @@
+{% if section_tabs %}
+  <nav class="section-tabs" aria-label="Раздел">
+    {% for tab in section_tabs %}
+      <a class="section-tabs__link{% if tab.active %} is-active{% endif %}"
+         href="{{ tab.url }}"
+         data-partial-link
+         {% if tab.active %}aria-current="page"{% endif %}>{{ tab.label }}</a>
+    {% endfor %}
+  </nav>
+{% endif %}
+{% if section_subtabs %}
+  <nav class="section-subtabs" aria-label="Режим">
+    {% for tab in section_subtabs %}
+      <a class="section-subtabs__link{% if tab.active %} is-active{% endif %}"
+         href="{{ tab.url }}"
+         data-partial-link
+         {% if tab.active %}aria-current="page"{% endif %}>{{ tab.label }}</a>
+    {% endfor %}
+  </nav>
+{% endif %}

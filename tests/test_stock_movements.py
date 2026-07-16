@@ -481,5 +481,7 @@ def test_nav_section_visibility(make_user, client):
     make_user("sklad", role=roles.STOREKEEPER)
     client.login(username="sklad", password=PASSWORD)
     dash = client.get(reverse("dashboard")).content.decode()
-    assert "Движения" in dash
-    assert "Остатки" in dash
+    assert ">Склад<" in dash
+    history = client.get(reverse("movement_list")).content.decode()
+    assert 'aria-current="page">История</a>' in history
+    assert "Журнал возвратов" in history

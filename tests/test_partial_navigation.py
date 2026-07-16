@@ -20,7 +20,7 @@ def nav_client(client, django_user_model):
     [
         "dashboard",
         "balance_list",
-        "scanner",
+        "part_search",
         "receipt_list",
         "scanner_move",
         "counting_list",
@@ -49,6 +49,7 @@ def test_navigation_shell_has_stable_progressive_enhancement_contract(nav_client
     assert "js/partial_navigation.js" in html
     assert f'action="{reverse("logout")}"' in html
     assert 'method="post" class="topbar__logout"' in html
+    assert "data-partial-link" in client_html(nav_client, "part_list")
 
 
 @pytest.mark.django_db
@@ -94,3 +95,7 @@ def test_partial_page_initializers_are_idempotent():
     assert "scanFocusInputBound" in (base / "scan_focus.js").read_text(encoding="utf-8")
     assert "galleryReady" in (base / "image_gallery.js").read_text(encoding="utf-8")
     assert "priceSettingsReady" in (base / "price_settings.js").read_text(encoding="utf-8")
+
+
+def client_html(client, url_name):
+    return client.get(reverse(url_name)).content.decode()

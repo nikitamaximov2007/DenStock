@@ -2,8 +2,8 @@
 
 Дешёвая, но ценная защита: любой обрыв view/шаблона на списковых и индексных
 страницах ловится здесь (нет 500). Также фиксирует инварианты оболочки v1.2.x
-(desktop sidebar, кнопка мобильного меню, раскрытые группы) и то, что серые пункты
-меню остаются заглушками, а в UI бэкапов нет web-restore/upload/import.
+(desktop sidebar, кнопка мобильного меню, основные разделы) и то, что в UI
+бэкапов нет web-restore/upload/import.
 
 Django test client (без тяжёлого браузерного фреймворка).
 """
@@ -19,7 +19,6 @@ PASSWORD = "parol-12345"
 ADMIN_PAGES = [
     "dashboard",
     "part_search",
-    "scanner",
     "part_list",
     "brp_search",
     "price_settings",
@@ -90,21 +89,32 @@ def test_shell_present_on_pages(admin_client):
     assert 'class="topbar__menu"' in html
 
 
-def test_desktop_sidebar_groups_open(admin_client):
-    """Группы меню на desktop раскрыты (details ... open) — как нравится заказчику."""
+def test_desktop_sidebar_has_approved_primary_sections(admin_client):
+    """Desktop sidebar содержит только утверждённые восемь разделов."""
     html = admin_client.get(reverse("dashboard")).content.decode()
-    groups = html.count('<details class="nav__group"')
-    open_groups = html.count(" open>")
-    assert groups >= 3
-    assert open_groups >= groups  # каждая группа раскрыта
+    assert html.count('class="nav__link') == 8
+    for label in (
+        "Главная",
+        "Поиск",
+        "Каталог",
+        "Склад",
+        "Продажи",
+        "Ремонты",
+        "Отчёты",
+        "Настройки",
+    ):
+        assert f'<span class="nav__label">{label}</span>' in html
+    assert "nav__group" not in html
 
 
 def test_no_stub_items_left(admin_client):
-    """С Layer 28 в меню не осталось заглушек: все пункты — активные ссылки."""
+    """Основные и локальные пункты остаются активными ссылками."""
     html = admin_client.get(reverse("dashboard")).content.decode()
     assert "nav__link--soon" not in html
-    assert 'href="/statistics/"' in html  # Статистика (Layer 27)
-    assert 'href="/receipts/"' in html  # Поступление (Layer 28)
+    reports = admin_client.get(reverse("reports_dashboard")).content.decode()
+    warehouse = admin_client.get(reverse("balance_list")).content.decode()
+    assert 'href="/statistics/"' in reports
+    assert 'href="/receipts/"' in warehouse
 
 
 def test_backups_ui_has_no_web_restore(admin_client):
@@ -125,6 +135,9 @@ def test_seller_blocked_from_admin_pages(seller_client):
 
 
 def test_seller_can_open_core_pages(seller_client):
-    """Рабочие страницы продавца открываются: поиск, сканер, продажи."""
-    for name in ("dashboard", "part_search", "scanner", "part_list", "sale_list"):
+    """Рабочие страницы продавца открываются: поиск, каталог, продажи."""
+    for name in ("dashboard", "part_search", "part_list", "sale_list"):
         assert seller_client.get(reverse(name)).status_code == 200, name
+    scanner = seller_client.get(reverse("scanner"))
+    assert scanner.status_code == 302
+    assert scanner.url == reverse("part_search")

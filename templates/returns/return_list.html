@@ -1,11 +1,28 @@
 {% extends "base.html" %}
-{% block title %}Возвраты · DenisStock{% endblock %}
+{% block title %}
+  {% if source_filter == "sale" %}
+    Возвраты покупателей · DenisStock
+  {% elif source_filter == "repair" %}
+    Возвраты из ремонта · DenisStock
+  {% else %}
+    Возвраты · DenisStock
+  {% endif %}
+{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Возвраты на склад</h1>
+    <h1 class="page-title">
+      {% if source_filter == "sale" %}
+        Возвраты покупателей
+      {% elif source_filter == "repair" %}
+        Возвраты из ремонта
+      {% else %}
+        Возвраты на склад
+      {% endif %}
+    </h1>
   </div>
   <p class="page-subtitle">Возврат оформляется из карточки продажи или ремонтного заказа кнопкой «Оформить возврат».</p>
   <form method="get" class="filter-toolbar filter-toolbar--compact">
+    {% if source_filter %}<input type="hidden" name="source" value="{{ source_filter }}">{% endif %}
     <label>
       Статус
       <select name="status" onchange="this.form.submit()">
@@ -35,7 +52,7 @@
         {% for r in returns %}
           <tr>
             <td>
-              <a href="{% url 'return_detail' r.pk %}">{{ r.number }}</a>
+              <a href="{% url 'return_detail' r.pk %}{% if source_filter %}?section={{ source_filter }}{% endif %}">{{ r.number }}</a>
             </td>
             <td>{{ r.get_status_display }}</td>
             <td>{% include "partials/_doc_composition.html" with doc=r %}</td>

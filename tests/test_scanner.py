@@ -221,15 +221,17 @@ def test_scanner_page_login_and_render(make_user, client):
     assert client.get(reverse("scanner")).status_code == 302
     make_user("u")
     client.login(username="u", password=PASSWORD)
-    assert client.get(reverse("scanner")).status_code == 200
+    response = client.get(reverse("scanner"))
+    assert response.status_code == 302
+    assert response.url == reverse("part_search")
 
 
-def test_scanner_page_post_renders_result(make_user, client, data):
+def test_scanner_page_post_redirects_code_to_unified_search(make_user, client, data):
     make_user("u")
     client.login(username="u", password=PASSWORD)
     resp = client.post(reverse("scanner"), {"code": data["batch"].number})
-    assert resp.status_code == 200
-    assert data["batch"].number in resp.content.decode()
+    assert resp.status_code == 302
+    assert resp.url == f"{reverse('part_search')}?q=%D0%9F-000001"
 
 
 def test_unresolved_list_admin_manager_only(make_user, client):
@@ -247,14 +249,17 @@ def test_nav_scanner_visible_unresolved_gated(make_user, client):
     make_user("prodavec", role=roles.SELLER)
     client.login(username="prodavec", password=PASSWORD)
     dash = client.get(reverse("dashboard")).content.decode()
-    assert 'href="/scanner/"' in dash  # пункт «Сканер» в навигации
+    assert 'href="/search/"' in dash
+    assert 'href="/scanner/"' not in dash
     assert "Нераспознанные" not in dash
 
     client.logout()
     make_user("boss", role=roles.MANAGER)
     client.login(username="boss", password=PASSWORD)
     dash2 = client.get(reverse("dashboard")).content.decode()
-    assert "Нераспознанные" in dash2
+    assert ">Настройки<" in dash2
+    tools = client.get(reverse("unresolved_list")).content.decode()
+    assert "Инструменты / Нераспознанные" in tools
 
 
 # --- Граница: резолв НЕ выполняет складских действий -------------------------
