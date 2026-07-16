@@ -51,8 +51,29 @@ def _item(key, label, url, icon, *, active=False):
     }
 
 
-def _tab(label, url, *, active=False):
-    return {"label": label, "url": url, "active": active}
+def _tab(label, url, *, active=False, sidebar_key="", icon=""):
+    return {
+        "label": label,
+        "url": url,
+        "active": active,
+        "sidebar_key": sidebar_key,
+        "icon": icon,
+    }
+
+
+def _group(key, label, icon, tabs, *, active=False):
+    items = [tab for tab in tabs if tab["sidebar_key"]]
+    if not items:
+        return None
+    for item in items:
+        item["active"] = active and item["active"]
+    return {
+        "key": key,
+        "label": label,
+        "icon": icon,
+        "items": items,
+        "active": active,
+    }
 
 
 def _can_use_actions(user):
@@ -85,11 +106,21 @@ def _settings_tabs(user, path):
             _tab(
                 "Цены",
                 reverse("price_settings"),
+                sidebar_key="prices",
+                icon="gauge",
                 active=path.startswith("/directories/price-settings/"),
             )
         )
     if user.can_manage_users:
-        tabs.append(_tab("Пользователи", reverse("user_list"), active=path.startswith("/users/")))
+        tabs.append(
+            _tab(
+                "Пользователи",
+                reverse("user_list"),
+                sidebar_key="users",
+                icon="users",
+                active=path.startswith("/users/"),
+            )
+        )
     if user.is_admin or user.is_manager:
         tabs.append(
             _tab(
@@ -103,6 +134,8 @@ def _settings_tabs(user, path):
             _tab(
                 "Бэкапы",
                 reverse("operations:backups"),
+                sidebar_key="backups",
+                icon="database",
                 active=path.startswith("/operations/backups/"),
             )
         )
@@ -160,8 +193,8 @@ def _section_key(request):
     return ""
 
 
-def _primary_items(user, active_key):
-    items = [
+def _primary_items(active_key):
+    return [
         _item("home", "Главная", reverse("dashboard"), "home", active=active_key == "home"),
         _item(
             "search",
@@ -170,85 +203,7 @@ def _primary_items(user, active_key):
             "search",
             active=active_key == "search",
         ),
-        _item(
-            "catalog",
-            "Каталог",
-            reverse("part_list"),
-            "book",
-            active=active_key == "catalog",
-        ),
     ]
-    if _can_open_warehouse(user):
-        items.append(
-            _item(
-                "warehouse",
-                "Склад",
-                reverse("balance_list"),
-                "warehouse",
-                active=active_key == "warehouse",
-            )
-        )
-    if user.can_manage_sales or user.can_manage_reservations or user.can_manage_returns:
-        sales_url = (
-            reverse("sale_list")
-            if user.can_manage_sales
-            else reverse("reservation_list")
-            if user.can_manage_reservations
-            else f"{reverse('return_list')}?source=sale"
-        )
-        items.append(
-            _item(
-                "sales",
-                "Продажи",
-                sales_url,
-                "cart",
-                active=active_key == "sales",
-            )
-        )
-    if user.can_manage_repairs or user.can_manage_returns:
-        repairs_url = (
-            reverse("repair_order_list")
-            if user.can_manage_repairs
-            else f"{reverse('return_list')}?source=repair"
-        )
-        items.append(
-            _item(
-                "repairs",
-                "Ремонты",
-                repairs_url,
-                "wrench",
-                active=active_key == "repairs",
-            )
-        )
-    if user.can_view_reports or user.can_view_finance or _can_use_actions(user):
-        reports_url = (
-            reverse("reports_dashboard")
-            if user.can_view_reports
-            else reverse("actions_report")
-            if _can_use_actions(user)
-            else reverse("statistics_dashboard")
-        )
-        items.append(
-            _item(
-                "reports",
-                "Отчёты",
-                reports_url,
-                "chart",
-                active=active_key == "reports",
-            )
-        )
-    if _settings_tabs(user, ""):
-        settings_url = _settings_tabs(user, "")[0]["url"]
-        items.append(
-            _item(
-                "settings",
-                "Настройки",
-                settings_url,
-                "gauge",
-                active=active_key == "settings",
-            )
-        )
-    return items
 
 
 def _catalog_tabs(path):
@@ -266,6 +221,8 @@ def _warehouse_tabs(user, path):
             _tab(
                 "Остатки",
                 reverse("balance_list"),
+                sidebar_key="balances",
+                icon="gauge",
                 active=path.startswith(("/inventory/balance/", "/inventory/lots/"))
                 or (
                     path.startswith("/inventory/")
@@ -280,13 +237,21 @@ def _warehouse_tabs(user, path):
             )
         )
         tabs.append(
-            _tab("Ячейки", reverse("warehouse_index"), active=path.startswith("/warehouse/"))
+            _tab(
+                "Ячейки",
+                reverse("warehouse_index"),
+                sidebar_key="locations",
+                icon="warehouse",
+                active=path.startswith("/warehouse/"),
+            )
         )
     if user.can_manage_inventory or user.can_manage_batches:
         tabs.append(
             _tab(
                 "Поступление",
                 reverse("receipt_list"),
+                sidebar_key="receiving",
+                icon="inbox",
                 active=path.startswith(("/receipts/", "/batches/", "/scanner/receiving/")),
             )
         )
@@ -295,6 +260,8 @@ def _warehouse_tabs(user, path):
             _tab(
                 "Перемещение",
                 reverse("scanner_move"),
+                sidebar_key="movement",
+                icon="swap",
                 active=path.startswith("/scanner/move/"),
             )
         )
@@ -308,6 +275,8 @@ def _warehouse_tabs(user, path):
             _tab(
                 "Инвентаризация",
                 inventory_url,
+                sidebar_key="stocktaking",
+                icon="clipboard",
                 active=path.startswith(("/inventory/counting/", "/stocktaking/")),
             )
         )
@@ -316,6 +285,8 @@ def _warehouse_tabs(user, path):
             _tab(
                 "Быстрые действия",
                 reverse("actions_scan"),
+                sidebar_key="quick-actions",
+                icon="scan",
                 active=path.startswith("/inventory/actions/")
                 and not path.startswith("/inventory/actions/report/"),
             )
@@ -325,6 +296,8 @@ def _warehouse_tabs(user, path):
             _tab(
                 "История",
                 reverse("movement_list"),
+                sidebar_key="history",
+                icon="swap",
                 active=path.startswith("/inventory/movements/") or path == reverse("return_list"),
             )
         )
@@ -416,12 +389,22 @@ def _warehouse_subtabs(user, path):
 def _sales_tabs(user, path, source):
     tabs = []
     if user.can_manage_sales:
-        tabs.append(_tab("Продажи", reverse("sale_list"), active=path.startswith("/sales/sales/")))
+        tabs.append(
+            _tab(
+                "Продажи",
+                reverse("sale_list"),
+                sidebar_key="sales",
+                icon="cart",
+                active=path.startswith("/sales/sales/"),
+            )
+        )
     if user.can_manage_reservations:
         tabs.append(
             _tab(
                 "Резервы",
                 reverse("reservation_list"),
+                sidebar_key="reservations",
+                icon="bookmark",
                 active=path.startswith("/sales/reservations/"),
             )
         )
@@ -430,6 +413,8 @@ def _sales_tabs(user, path, source):
             _tab(
                 "Возвраты покупателей",
                 f"{reverse('return_list')}?source=sale",
+                sidebar_key="customer-returns",
+                icon="undo",
                 active=path.startswith("/returns/") and source in {"sale", "sales"},
             )
         )
@@ -443,6 +428,8 @@ def _repairs_tabs(user, path, source):
             _tab(
                 "Ремонты",
                 reverse("repair_order_list"),
+                sidebar_key="repairs",
+                icon="wrench",
                 active=path.startswith("/repairs/"),
             )
         )
@@ -451,6 +438,8 @@ def _repairs_tabs(user, path, source):
             _tab(
                 "Возвраты из ремонта",
                 f"{reverse('return_list')}?source=repair",
+                sidebar_key="repair-returns",
+                icon="undo",
                 active=path.startswith("/returns/") and source in {"repair", "repairs"},
             )
         )
@@ -461,13 +450,21 @@ def _reports_tabs(user, path):
     tabs = []
     if user.can_view_reports:
         tabs.append(
-            _tab("Сводка", reverse("reports_dashboard"), active=path.startswith("/reports/"))
+            _tab(
+                "Сводка",
+                reverse("reports_dashboard"),
+                sidebar_key="summary",
+                icon="chart",
+                active=path.startswith("/reports/"),
+            )
         )
     if _can_use_actions(user):
         tabs.append(
             _tab(
                 "Складские действия / Таможня",
                 reverse("actions_report"),
+                sidebar_key="warehouse-actions",
+                icon="clipboard",
                 active=path.startswith("/inventory/actions/report/")
                 or path.startswith("/inventory/actions/customs/"),
             )
@@ -477,6 +474,8 @@ def _reports_tabs(user, path):
             _tab(
                 "Статистика",
                 reverse("statistics_dashboard"),
+                sidebar_key="statistics",
+                icon="gauge",
                 active=path.startswith("/statistics/"),
             )
         )
@@ -505,6 +504,57 @@ def _local_tabs(request, section, user):
     return [], []
 
 
+def _sidebar_groups(request, section, user):
+    path = request.path
+    source = (
+        getattr(request, "navigation_source", "")
+        or request.GET.get("source")
+        or request.GET.get("section")
+    )
+    candidates = [
+        (
+            _group(
+                "warehouse",
+                "Склад",
+                "warehouse",
+                _warehouse_tabs(user, path),
+                active=section == "warehouse",
+            )
+            if _can_open_warehouse(user)
+            else None
+        ),
+        _group(
+            "sales",
+            "Продажи",
+            "cart",
+            _sales_tabs(user, path, source),
+            active=section == "sales",
+        ),
+        _group(
+            "repairs",
+            "Ремонты",
+            "wrench",
+            _repairs_tabs(user, path, source),
+            active=section == "repairs",
+        ),
+        _group(
+            "reports",
+            "Отчёты",
+            "chart",
+            _reports_tabs(user, path),
+            active=section == "reports",
+        ),
+        _group(
+            "settings",
+            "Настройки",
+            "gauge",
+            _settings_tabs(user, path),
+            active=section == "settings",
+        ),
+    ]
+    return [group for group in candidates if group]
+
+
 def navigation(request):
     user = getattr(request, "user", None)
     if not user or not user.is_authenticated:
@@ -518,10 +568,10 @@ def navigation(request):
     access = _NavAccess(user)
     section = _section_key(request)
     section_tabs, section_subtabs = _local_tabs(request, section, access)
-    nav_items = _primary_items(access, section)
+    nav_items = _primary_items(section)
     return {
         "nav_items": nav_items,
-        "nav_groups": [],
+        "nav_groups": _sidebar_groups(request, section, access),
         "section_tabs": section_tabs,
         "section_subtabs": section_subtabs,
         "active_section": section,

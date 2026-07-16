@@ -1,6 +1,6 @@
 // App shell: только UI-поведение (без бизнес-логики). Мобильное меню открывается
 // pure-CSS чекбоксом #nav-toggle; здесь — прогрессивные улучшения: закрытие по Esc
-// и запоминание свёрнутых разделов меню между страницами.
+// и независимое состояние раскрывающихся разделов между страницами.
 (function () {
   "use strict";
 
@@ -13,30 +13,74 @@
     }
   });
 
-  // Запоминаем, какие разделы меню свёрнуты (по индексу), между переходами.
-  var KEY = "denstock.nav.groups";
+  // Stable section keys keep state valid when labels or permissions change.
+  var KEY = "denstock.nav.groups.v2";
   var state = {};
   try {
-    state = JSON.parse(localStorage.getItem(KEY) || "{}") || {};
+    var storedState = JSON.parse(localStorage.getItem(KEY) || "{}");
+    state =
+      storedState && typeof storedState === "object" && !Array.isArray(storedState)
+        ? storedState
+        : {};
   } catch (e) {
     state = {};
   }
 
-  var groups = document.querySelectorAll("[data-nav-group]");
-  Array.prototype.forEach.call(groups, function (group) {
-    var id = group.getAttribute("data-nav-group");
-    if (Object.prototype.hasOwnProperty.call(state, id)) {
-      group.open = !!state[id];
+  function saveGroupState() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+    } catch (e) {
+      // A disabled storage backend must not break the menu.
     }
-    group.addEventListener("toggle", function () {
-      state[id] = group.open;
-      try {
-        localStorage.setItem(KEY, JSON.stringify(state));
-      } catch (e) {
-        /* localStorage может быть недоступен — не критично */
-      }
+  }
+
+  function isActive(group) {
+    return group.getAttribute("data-nav-active") === "true";
+  }
+
+  function setGroupOpen(group, open) {
+    var button = group.querySelector("[data-nav-group-toggle]");
+    var panel = group.querySelector("[data-nav-group-panel]");
+    if (!button || !panel) return;
+    group.classList.toggle("is-collapsed", !open);
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+    panel.hidden = !open;
+  }
+
+  function applyGroupState() {
+    var groups = document.querySelectorAll("[data-nav-group]");
+    Array.prototype.forEach.call(groups, function (group) {
+      var id = group.getAttribute("data-nav-group");
+      var savedOpen = !Object.prototype.hasOwnProperty.call(state, id) || !!state[id];
+      setGroupOpen(group, isActive(group) || savedOpen);
     });
+  }
+
+  document.addEventListener("click", function (event) {
+    var button = event.target.closest("[data-nav-group-toggle]");
+    if (!button) return;
+    var group = button.closest("[data-nav-group]");
+    if (!group) return;
+    var id = group.getAttribute("data-nav-group");
+    var requestedOpen = button.getAttribute("aria-expanded") !== "true";
+    state[id] = requestedOpen;
+    saveGroupState();
+    setGroupOpen(group, isActive(group) || requestedOpen);
   });
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
+    var button = event.target.closest("[data-nav-group-toggle]");
+    if (!button) return;
+    event.preventDefault();
+    button.click();
+  });
+
+  applyGroupState();
+  window.DenStockSidebar = {
+    groupKey: KEY,
+    refresh: applyGroupState,
+  };
 
   // UI guard for mutation forms. The database token remains authoritative;
   // this prevents an accidental second Enter while the first POST is loading.

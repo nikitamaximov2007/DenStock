@@ -77,6 +77,7 @@
   }
 
   function fullNavigation(url) {
+    saveSidebarScroll();
     window.location.assign(url);
   }
 
@@ -93,6 +94,17 @@
         link.removeAttribute("aria-current");
       }
     });
+    var incomingGroups = {};
+    incomingSidebar.querySelectorAll("[data-nav-group]").forEach(function (group) {
+      incomingGroups[group.getAttribute("data-nav-group")] = group;
+    });
+    sidebar.querySelectorAll("[data-nav-group]").forEach(function (group) {
+      var incoming = incomingGroups[group.getAttribute("data-nav-group")];
+      var active = !!incoming && incoming.getAttribute("data-nav-active") === "true";
+      group.setAttribute("data-nav-active", active ? "true" : "false");
+      group.classList.toggle("is-active", active);
+    });
+    if (window.DenStockSidebar) window.DenStockSidebar.refresh();
   }
 
   function replacePage(parsed, url, push) {
@@ -114,6 +126,7 @@
     document.dispatchEvent(
       new CustomEvent("denstock:page-loaded", { detail: { root: content, url: url } })
     );
+    restoreSidebarScroll();
     saveSidebarScroll();
     return true;
   }
@@ -167,6 +180,7 @@
       var link = event.target.closest("a.nav__link");
       if (!shouldHandle(event, link)) return;
       event.preventDefault();
+      saveSidebarScroll();
       navigate(link.href, true);
     });
     content.addEventListener("click", function (event) {
@@ -177,6 +191,7 @@
     });
     window.addEventListener("beforeunload", saveSidebarScroll);
     window.addEventListener("popstate", function () {
+      saveSidebarScroll();
       navigate(window.location.href, false);
     });
     window.history.replaceState({ denstockPartial: true }, "", window.location.href);

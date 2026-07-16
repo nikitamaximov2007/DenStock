@@ -225,7 +225,8 @@ def test_navigation_shows_parts(make_user, client):
     make_user("sklad", role=roles.STOREKEEPER)
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("dashboard")).content.decode()
-    assert ">Каталог<" in html
+    assert ">Каталог<" not in html
+    assert client.get(reverse("part_list")).status_code == 200
 
 
 # --- Колонка «Артикул» на /parts/ (feature/parts-list-article-column) -----------------

@@ -41,28 +41,52 @@ def _login(client, user):
 
 
 def _sidebar_labels(html):
-    sidebar = html.split('id="app-sidebar"', 1)[1].split("</nav>", 1)[0]
+    sidebar = _sidebar(html)
     return re.findall(r'<span class="nav__label">([^<]+)</span>', sidebar)
+
+
+def _sidebar(html):
+    return html.split('id="app-sidebar"', 1)[1].split("</nav>", 1)[0]
+
+
+def _primary_labels(html):
+    primary = _sidebar(html).split("</ul>", 1)[0]
+    return re.findall(r'<span class="nav__label">([^<]+)</span>', primary)
+
+
+def _sidebar_groups(html):
+    groups = {}
+    pattern = r'<section class="nav__group[^>]*data-nav-group="([^"]+)"[^>]*>(.*?)</section>'
+    for key, body in re.findall(pattern, _sidebar(html), flags=re.DOTALL):
+        groups[key] = re.findall(r'<span class="nav__label">([^<]+)</span>', body)
+    return groups
 
 
 def _html(client, name, *, query=""):
     return client.get(f"{reverse(name)}{query}").content.decode()
 
 
-def test_admin_sidebar_has_exact_approved_primary_sections(client, make_nav_user):
+def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
     _login(client, make_nav_user("admin", superuser=True))
     html = _html(client, "dashboard")
-    assert _sidebar_labels(html) == [
-        "Главная",
-        "Поиск",
-        "Каталог",
-        "Склад",
-        "Продажи",
-        "Ремонты",
-        "Отчёты",
-        "Настройки",
-    ]
-    assert "nav__group" not in html
+    assert _primary_labels(html) == ["Главная", "Поиск"]
+    assert _sidebar_groups(html) == {
+        "warehouse": [
+            "Остатки",
+            "Ячейки",
+            "Поступление",
+            "Перемещение",
+            "Инвентаризация",
+            "Быстрые действия",
+            "История",
+        ],
+        "sales": ["Продажи", "Резервы", "Возвраты покупателей"],
+        "repairs": ["Ремонты", "Возвраты из ремонта"],
+        "reports": ["Сводка", "Складские действия / Таможня", "Статистика"],
+        "settings": ["Цены", "Пользователи", "Бэкапы"],
+    }
+    assert html.count('data-nav-group-toggle') == 5
+    assert html.count('aria-expanded="true"') >= 5
 
 
 @pytest.mark.parametrize(
@@ -70,35 +94,55 @@ def test_admin_sidebar_has_exact_approved_primary_sections(client, make_nav_user
     [
         (
             roles.STOREKEEPER,
-            ["Главная", "Поиск", "Каталог", "Склад", "Продажи", "Ремонты", "Отчёты"],
+            {
+                "warehouse": [
+                    "Остатки",
+                    "Ячейки",
+                    "Поступление",
+                    "Перемещение",
+                    "Инвентаризация",
+                    "Быстрые действия",
+                    "История",
+                ],
+                "sales": ["Возвраты покупателей"],
+                "repairs": ["Ремонты", "Возвраты из ремонта"],
+                "reports": ["Сводка", "Складские действия / Таможня"],
+            },
         ),
         (
             roles.SELLER,
-            ["Главная", "Поиск", "Каталог", "Продажи", "Ремонты", "Отчёты"],
+            {
+                "sales": ["Продажи", "Резервы"],
+                "repairs": ["Ремонты"],
+                "reports": ["Складские действия / Таможня"],
+            },
         ),
     ],
 )
 def test_sidebar_is_capability_aware(client, make_nav_user, role, expected):
     _login(client, make_nav_user(f"user-{role}", role=role))
-    assert _sidebar_labels(_html(client, "dashboard")) == expected
+    html = _html(client, "dashboard")
+    assert _primary_labels(html) == ["Главная", "Поиск"]
+    assert _sidebar_groups(html) == expected
 
 
 def test_seller_and_master_share_current_combined_role_menu(client, make_nav_user):
     seller = make_nav_user("seller", role=roles.SELLER)
     master = make_nav_user("master", role=roles.SELLER)
     _login(client, seller)
-    seller_labels = _sidebar_labels(_html(client, "dashboard"))
+    seller_labels = _sidebar_groups(_html(client, "dashboard"))
     client.logout()
     _login(client, master)
-    assert _sidebar_labels(_html(client, "dashboard")) == seller_labels
+    assert _sidebar_groups(_html(client, "dashboard")) == seller_labels
 
 
 def test_plain_user_has_no_empty_or_administrative_sections(client, make_nav_user):
     _login(client, make_nav_user("plain"))
     html = _html(client, "dashboard")
-    assert _sidebar_labels(html) == ["Главная", "Поиск", "Каталог"]
+    assert _primary_labels(html) == ["Главная", "Поиск"]
+    assert _sidebar_groups(html) == {}
     assert "Настройки" not in html
-    assert "nav__group" not in html
+    assert "data-nav-group=" not in html
 
 
 def test_unified_search_replaces_general_scanner(client, make_nav_user, db):
@@ -134,7 +178,7 @@ def test_unified_search_replaces_general_scanner(client, make_nav_user, db):
         ("polaris_search", "Polaris"),
     ],
 )
-def test_catalog_tabs_are_direct_and_mark_catalog_active(
+def test_catalog_tabs_are_direct_without_restoring_catalog_sidebar(
     client,
     make_nav_user,
     name,
@@ -142,12 +186,9 @@ def test_catalog_tabs_are_direct_and_mark_catalog_active(
 ):
     _login(client, make_nav_user(f"catalog-{name}"))
     html = _html(client, name)
-    assert re.search(
-        r'class="nav__link is-active"[^>]+href="/parts/"[^>]+aria-current="page"',
-        html,
-    )
     assert f'aria-current="page">{active_label}</a>' in html
     assert "Все детали" in html and "BRP" in html and "Polaris" in html
+    assert "Каталог" not in _sidebar(html)
 
 
 @pytest.mark.parametrize(
@@ -173,6 +214,13 @@ def test_warehouse_tabs_use_existing_direct_urls(
     html = _html(client, name)
     assert f'aria-current="page">{label}</a>' in html
     assert ">Склад<" in html
+    if label == "Списания":
+        assert label not in _sidebar_labels(html)
+        assert 'data-nav-group="warehouse" data-nav-active="true"' in " ".join(
+            _sidebar(html).split()
+        )
+    else:
+        assert label in _sidebar_groups(html)["warehouse"]
 
 
 def test_receiving_and_inventory_modes_are_nested(client, make_nav_user):
@@ -246,9 +294,22 @@ def test_reports_and_settings_tabs_follow_permissions(client, make_nav_user):
     client.logout()
     _login(client, make_nav_user("storekeeper", role=roles.STOREKEEPER))
     restricted = _html(client, "dashboard")
-    assert "Настройки" not in _sidebar_labels(restricted)
+    assert "settings" not in _sidebar_groups(restricted)
     assert client.get(reverse("price_settings")).status_code == 403
     assert client.get(reverse("statistics_dashboard")).status_code == 403
+
+
+def test_directories_stay_internal_without_sidebar_entry(client, make_nav_user):
+    _login(client, make_nav_user("directory-admin", superuser=True))
+    dashboard = _html(client, "dashboard")
+    assert _sidebar_groups(dashboard)["settings"] == ["Цены", "Пользователи", "Бэкапы"]
+    assert "Справочники" not in _sidebar_labels(dashboard)
+
+    directories = client.get(reverse("directory_index"))
+    assert directories.status_code == 200
+    html = directories.content.decode()
+    assert 'aria-current="page">Справочники</a>' in html
+    assert "Справочники" not in _sidebar_labels(html)
 
 
 def test_specialized_scanner_endpoints_remain_available(client, make_nav_user):
@@ -284,4 +345,42 @@ def test_navigation_context_has_constant_role_query_count(
     request.resolver_match = None
     with django_assert_num_queries(1):
         context = navigation(request)
-    assert len(context["nav_items"]) == 8
+    assert len(context["nav_items"]) == 2
+    assert [group["key"] for group in context["nav_groups"]] == [
+        "warehouse",
+        "sales",
+        "repairs",
+        "reports",
+        "settings",
+    ]
+
+
+def test_sidebar_omits_hidden_and_duplicate_navigation_entries(client, make_nav_user):
+    _login(client, make_nav_user("hidden-links", superuser=True))
+    labels = _sidebar_labels(_html(client, "dashboard"))
+    for hidden in (
+        "Каталог",
+        "Детали",
+        "BRP",
+        "Polaris",
+        "Партии",
+        "Лоты",
+        "Экземпляры",
+        "Нераспознанные",
+        "Инструменты / Нераспознанные",
+        "Справочники",
+        "Списания",
+        "Сканер",
+        "Поиск детали",
+    ):
+        assert hidden not in labels
+    assert labels.count("Поиск") == 1
+
+
+def test_active_sidebar_group_is_server_rendered_open(client, make_nav_user):
+    _login(client, make_nav_user("active-group", role=roles.STOREKEEPER))
+    html = _html(client, "scanner_move")
+    sidebar = " ".join(_sidebar(html).split())
+    assert 'class="nav__group is-active" data-nav-group="warehouse"' in sidebar
+    assert 'data-nav-active="true"' in sidebar
+    assert 'href="/scanner/move/" aria-current="page"' in sidebar
