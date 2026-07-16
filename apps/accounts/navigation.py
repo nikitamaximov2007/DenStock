@@ -97,8 +97,6 @@ def _settings_tabs(user, path):
             _tab(
                 "Справочники",
                 reverse("directory_index"),
-                sidebar_key="directories",
-                icon="book",
                 active=path.startswith("/directories/")
                 and not path.startswith("/directories/price-settings/"),
             )

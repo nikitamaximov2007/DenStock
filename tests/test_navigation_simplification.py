@@ -83,7 +83,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
         "sales": ["Продажи", "Резервы", "Возвраты покупателей"],
         "repairs": ["Ремонты", "Возвраты из ремонта"],
         "reports": ["Сводка", "Складские действия / Таможня", "Статистика"],
-        "settings": ["Справочники", "Цены", "Пользователи", "Бэкапы"],
+        "settings": ["Цены", "Пользователи", "Бэкапы"],
     }
     assert html.count('data-nav-group-toggle') == 5
     assert html.count('aria-expanded="true"') >= 5
@@ -299,6 +299,19 @@ def test_reports_and_settings_tabs_follow_permissions(client, make_nav_user):
     assert client.get(reverse("statistics_dashboard")).status_code == 403
 
 
+def test_directories_stay_internal_without_sidebar_entry(client, make_nav_user):
+    _login(client, make_nav_user("directory-admin", superuser=True))
+    dashboard = _html(client, "dashboard")
+    assert _sidebar_groups(dashboard)["settings"] == ["Цены", "Пользователи", "Бэкапы"]
+    assert "Справочники" not in _sidebar_labels(dashboard)
+
+    directories = client.get(reverse("directory_index"))
+    assert directories.status_code == 200
+    html = directories.content.decode()
+    assert 'aria-current="page">Справочники</a>' in html
+    assert "Справочники" not in _sidebar_labels(html)
+
+
 def test_specialized_scanner_endpoints_remain_available(client, make_nav_user):
     _login(client, make_nav_user("scanner-storekeeper", role=roles.STOREKEEPER))
     for name in ("scanner_receiving", "scanner_move", "counting_list", "actions_scan"):
@@ -355,6 +368,7 @@ def test_sidebar_omits_hidden_and_duplicate_navigation_entries(client, make_nav_
         "Экземпляры",
         "Нераспознанные",
         "Инструменты / Нераспознанные",
+        "Справочники",
         "Списания",
         "Сканер",
         "Поиск детали",
