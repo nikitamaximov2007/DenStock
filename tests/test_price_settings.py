@@ -37,6 +37,32 @@ def test_price_settings_form_keeps_decimal_input(rate, brp, polaris, expected):
     ) == expected
 
 
+def test_price_settings_form_does_not_trim_significant_integer_zeroes():
+    form = PriceSettingsForm(
+        initial={
+            "current_usd_rate": Decimal("105.0000"),
+            "brp_markup_percent": Decimal("40.00"),
+            "polaris_markup_percent": Decimal("100.00"),
+        }
+    )
+    assert form["current_usd_rate"].value() == "105"
+    assert form["brp_markup_percent"].value() == "40"
+    assert form["polaris_markup_percent"].value() == "100"
+
+
+def test_price_settings_inputs_accept_both_decimal_separators_in_any_browser_locale():
+    form = PriceSettingsForm()
+    for field_name, step in (
+        ("current_usd_rate", "0.0001"),
+        ("brp_markup_percent", "0.01"),
+        ("polaris_markup_percent", "0.01"),
+    ):
+        widget = form.fields[field_name].widget
+        assert widget.input_type == "text"
+        assert widget.attrs["inputmode"] == "decimal"
+        assert widget.attrs["step"] == step
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

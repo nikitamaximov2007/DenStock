@@ -61,7 +61,8 @@ class CommaDecimalField(forms.DecimalField):
 
     def prepare_value(self, value):
         if isinstance(value, Decimal) and value.is_finite():
-            return format(value, "f").rstrip("0").rstrip(".") or "0"
+            rendered = format(value, "f")
+            return rendered.rstrip("0").rstrip(".") if "." in rendered else rendered
         return super().prepare_value(value)
 
 
@@ -71,21 +72,27 @@ class PriceSettingsForm(forms.Form):
         max_digits=10,
         decimal_places=4,
         min_value=Decimal("0.0001"),
-        widget=forms.NumberInput(attrs={"step": "0.0001", "class": "form-control"}),
+        widget=forms.TextInput(
+            attrs={"inputmode": "decimal", "step": "0.0001", "class": "form-control"}
+        ),
     )
     brp_markup_percent = CommaDecimalField(
         label="Наценка BRP",
         max_digits=6,
         decimal_places=2,
         min_value=Decimal("0"),
-        widget=forms.NumberInput(attrs={"step": "0.01", "class": "form-control"}),
+        widget=forms.TextInput(
+            attrs={"inputmode": "decimal", "step": "0.01", "class": "form-control"}
+        ),
     )
     polaris_markup_percent = CommaDecimalField(
         label="Наценка Polaris",
         max_digits=6,
         decimal_places=2,
         min_value=Decimal("0"),
-        widget=forms.NumberInput(attrs={"step": "0.01", "class": "form-control"}),
+        widget=forms.TextInput(
+            attrs={"inputmode": "decimal", "step": "0.01", "class": "form-control"}
+        ),
     )
 
     def clean(self):
