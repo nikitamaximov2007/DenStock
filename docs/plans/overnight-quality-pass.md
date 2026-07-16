@@ -200,4 +200,19 @@ Manual browser checklist:
   текущей ячейки, статуса, количества и активных резервов.
 - Повторные complete/cancel безопасны и не создают новых движений.
 - Миграция returns `0004` additive; production data не переписывается.
+
+## 10. Финальная интеграционная проверка
+
+- Полный pytest: 1274 passed, 0 failed, 350.1 seconds.
+- Отдельный N+1 profile: 8 passed для lookup, counting list, lot/search,
+  repair/return/customs report и warehouse valuation.
+- `ruff check .`, `djlint templates --check` (95 files), Django check,
+  migration check и `git diff --check` прошли.
+- Локальный browser smoke подтвердил сохранение sidebar scrollTop 695.2,
+  центрального partial content, URL/title/active state, Back и Decimal preview.
+- Browser console не содержал warnings или errors. Временный пользователь,
+  SQLite database, logs и локальный runserver после проверки удалены.
+- `main` и `origin/main` остались на
+  `508a2bc47b66afd1adb075eb01beb8da0f102c0e`.
+- Merge, push, SSH, VPS, production database и deploy не выполнялись.
 - Repair/returns/customs/warehouse regression suite: 294 passed.
