@@ -54,6 +54,41 @@
               </li>
             {% endfor %}
           </ul>
+          {% for group in nav_groups %}
+            <section class="nav__group{% if group.active %} is-active{% endif %}"
+                     data-nav-group="{{ group.key }}"
+                     data-nav-active="{% if group.active %}true{% else %}false{% endif %}">
+              <button class="nav__group-title"
+                      type="button"
+                      aria-expanded="true"
+                      aria-controls="nav-group-{{ group.key }}"
+                      data-nav-group-toggle>
+                <span class="nav__group-heading">
+                  <svg class="nav__group-icon icon" aria-hidden="true">
+                    <use href="#i-{{ group.icon }}"></use>
+                  </svg>
+                  <span>{{ group.label }}</span>
+                </span>
+                <svg class="nav__chevron icon" aria-hidden="true">
+                  <use href="#i-chevron"></use>
+                </svg>
+              </button>
+              <ul class="nav__list" id="nav-group-{{ group.key }}" data-nav-group-panel>
+                {% for item in group.items %}
+                  <li>
+                    <a class="nav__link{% if item.active %} is-active{% endif %}"
+                       href="{{ item.url }}"
+                       {% if item.active %}aria-current="page"{% endif %}>
+                      <svg class="nav__icon icon" aria-hidden="true">
+                        <use href="#i-{{ item.icon }}"></use>
+                      </svg>
+                      <span class="nav__label">{{ item.label }}</span>
+                    </a>
+                  </li>
+                {% endfor %}
+              </ul>
+            </section>
+          {% endfor %}
         </nav>
         <main class="content" id="content" tabindex="-1">
           {% include "partials/_section_navigation.html" %}

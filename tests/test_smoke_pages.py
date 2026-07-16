@@ -89,22 +89,15 @@ def test_shell_present_on_pages(admin_client):
     assert 'class="topbar__menu"' in html
 
 
-def test_desktop_sidebar_has_approved_primary_sections(admin_client):
-    """Desktop sidebar содержит только утверждённые восемь разделов."""
+def test_desktop_sidebar_has_clean_expandable_sections(admin_client):
+    """Desktop sidebar содержит два входа и пять раскрывающихся разделов."""
     html = admin_client.get(reverse("dashboard")).content.decode()
-    assert html.count('class="nav__link') == 8
-    for label in (
-        "Главная",
-        "Поиск",
-        "Каталог",
-        "Склад",
-        "Продажи",
-        "Ремонты",
-        "Отчёты",
-        "Настройки",
-    ):
+    assert html.count('data-nav-group-toggle') == 5
+    for label in ("Главная", "Поиск"):
         assert f'<span class="nav__label">{label}</span>' in html
-    assert "nav__group" not in html
+    for label in ("Склад", "Продажи", "Ремонты", "Отчёты", "Настройки"):
+        assert f"<span>{label}</span>" in html
+    assert '<span class="nav__label">Каталог</span>' not in html
 
 
 def test_no_stub_items_left(admin_client):

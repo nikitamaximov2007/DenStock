@@ -86,6 +86,31 @@ def test_partial_navigation_controller_has_safe_fallback_and_history_contract():
     assert 'content.setAttribute("aria-busy"' in source
     assert "fullNavigation(url)" in source
     assert 'new CustomEvent("denstock:page-loaded"' in source
+    assert "saveSidebarScroll();" in source
+    assert "window.DenStockSidebar.refresh()" in source
+
+
+def test_expandable_sidebar_controller_has_accessible_persistent_contract():
+    source = (Path(settings.BASE_DIR) / "static" / "js" / "app_shell.js").read_text(
+        encoding="utf-8"
+    )
+    template = (Path(settings.BASE_DIR) / "templates" / "base.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'KEY = "denstock.nav.groups.v2"' in source
+    assert "Object.prototype.hasOwnProperty.call(state, id)" in source
+    assert "isActive(group) || savedOpen" in source
+    assert 'button.setAttribute("aria-expanded"' in source
+    assert "panel.hidden = !open" in source
+    assert "state[id] = requestedOpen" in source
+    assert 'event.key !== "Enter"' in source
+    assert 'event.key !== " "' in source
+    assert "button.click()" in source
+    assert "querySelectorAll(\"[data-nav-group]\")" in source
+    assert "data-nav-group-toggle" in template
+    assert 'type="button"' in template
+    assert 'aria-expanded="true"' in template
+    assert 'aria-controls="nav-group-{{ group.key }}"' in template
 
 
 def test_partial_page_initializers_are_idempotent():
