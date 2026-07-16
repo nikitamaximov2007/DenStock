@@ -218,12 +218,12 @@ def test_multiple_serial_items_require_item_choice(client, movement_data):
     assert len(response.context["candidates"]) == 2
 
 
-def test_analog_lookup_never_replaces_exact_identity(client, movement_data):
+def test_analog_lookup_is_not_an_operation_identity(client, movement_data):
     make_lot(movement_data)
     login(client, movement_data)
     response = client.post(URL, {"action": "scan", "code": "703500874"})
-    assert response.context["object"].part_exact_number == ARTICLE
-    assert "703500874" not in response.content.decode().split("Текущая ячейка")[0]
+    assert response.context["object"] is None
+    assert response.context["error"] == "Код не распознан."
 
 
 def test_multiple_source_cells_require_choice(client, movement_data):

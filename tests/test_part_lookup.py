@@ -157,7 +157,7 @@ def test_scanner_whitespace_crlf_and_nbsp_are_normalized(lookup_data):
 
 
 def test_brp_replacement_is_explicit_alias(lookup_data):
-    candidate = resolve_part_lookup("BRP 419").candidate
+    candidate = resolve_part_lookup("BRP 419", allow_alias=True).candidate
     assert candidate.part == lookup_data["brp"]
     assert candidate.exact_number == "BRP 420"
     assert candidate.match_source == MatchSource.REPLACEMENT
@@ -165,7 +165,7 @@ def test_brp_replacement_is_explicit_alias(lookup_data):
 
 
 def test_polaris_superseded_is_explicit_alias(lookup_data):
-    candidate = resolve_part_lookup("POL 400").candidate
+    candidate = resolve_part_lookup("POL 400", allow_alias=True).candidate
     assert candidate.part == lookup_data["polaris"]
     assert candidate.exact_number == "POL 500"
     assert candidate.match_source == MatchSource.SUPERSEDED
@@ -174,7 +174,7 @@ def test_polaris_superseded_is_explicit_alias(lookup_data):
 def test_ambiguous_alias_never_selects_random_part(lookup_data):
     second = _part(lookup_data["category"], lookup_data["unit"], "Other", "OTHER 1")
     PartNumber.objects.create(part=second, value="BRP 419", kind=PartNumber.Kind.ANALOG)
-    result = resolve_part_lookup("BRP 419")
+    result = resolve_part_lookup("BRP 419", allow_alias=True)
     assert result.ambiguous
     assert result.candidate is None
     assert {row.part for row in result.candidates} == {lookup_data["brp"], second}

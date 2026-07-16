@@ -38,7 +38,12 @@ STATUS_PILLS = {
 
 def _warehouse_matches(q: str, norm: str) -> list:
     """Карточки склада по номеру/штрихкоду/названию + остатки по ячейкам."""
-    lookup = resolve_part_lookup(q, allow_partial=True, allow_name=True)
+    lookup = resolve_part_lookup(
+        q,
+        allow_partial=True,
+        allow_name=True,
+        allow_alias=True,
+    )
     return [
         {
             "part": candidate.part,

@@ -135,12 +135,11 @@ def test_resolve_serial_number(data):
     assert r.type == "part_item" and r.id == item.pk
 
 
-def test_resolve_ambiguous_oem(data):
+def test_exact_oem_wins_over_same_normalized_alias(data):
     r = resolve_scan("ABC100")
-    assert r.status == "ambiguous"
-    assert r.found is False
-    assert len(r.candidates) == 2
-    assert {c["type"] for c in r.candidates} == {"part_type"}
+    assert r.status == "found"
+    assert r.id == data["amb_a"].pk
+    assert r.exact_number == "ABC-100"
 
 
 def test_resolve_unknown_is_pure(data):

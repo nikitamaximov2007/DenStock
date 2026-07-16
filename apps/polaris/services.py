@@ -1,6 +1,6 @@
 """Polaris catalog lookup and promotion services."""
 from django.db import transaction
-from django.db.models import Case, IntegerField, Q, Value, When
+from django.db.models import Q
 
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.procurement.models import money
@@ -32,28 +32,10 @@ def _default_unit() -> Unit:
 
 
 def find_polaris_by_number(norm: str) -> PolarisCatalogPart | None:
-    """Find by exact part_number first, then by superseded_number."""
+    """Find only an exact catalog part_number identity."""
     if not norm:
         return None
-    return (
-        PolarisCatalogPart.objects.filter(
-            Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
-        )
-        .order_by(
-            Case(
-                When(part_number_norm=norm, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            ),
-            Case(
-                When(retail_price_usd__gt=0, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            ),
-            "pk",
-        )
-        .first()
-    )
+    return PolarisCatalogPart.objects.filter(part_number_norm=norm).order_by("pk").first()
 
 
 def find_polaris_price_source(

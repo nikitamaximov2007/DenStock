@@ -57,7 +57,13 @@
   {% if brp_hits %}
     <div class="card">
       <div class="card__header">
-        <h2 class="card__title">Найдено в BRP-каталоге</h2>
+        <h2 class="card__title">
+          {% if brp_hits_are_related %}
+            Возможные связанные номера
+          {% else %}
+            Найдено в BRP-каталоге
+          {% endif %}
+        </h2>
         <span class="pill pill--info">справочник, не остаток</span>
       </div>
       <div class="card__body">
@@ -90,7 +96,13 @@
   {% if polaris_hits %}
     <div class="card">
       <div class="card__header">
-        <h2 class="card__title">Найдено в Polaris-каталоге</h2>
+        <h2 class="card__title">
+          {% if polaris_hits_are_related %}
+            Возможные связанные номера
+          {% else %}
+            Найдено в Polaris-каталоге
+          {% endif %}
+        </h2>
         <span class="pill pill--info">справочник, не остаток</span>
       </div>
       <div class="card__body">

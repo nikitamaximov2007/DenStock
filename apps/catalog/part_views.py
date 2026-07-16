@@ -37,7 +37,12 @@ class PartTypeListView(LoginRequiredMixin, ListView):
         )
         query = self.request.GET.get("q", "").strip()
         if query:
-            lookup = resolve_part_lookup(query, allow_partial=True, allow_name=True)
+            lookup = resolve_part_lookup(
+                query,
+                allow_partial=True,
+                allow_name=True,
+                allow_alias=True,
+            )
             qs = qs.filter(pk__in=[candidate.part.pk for candidate in lookup.candidates])
         if self.request.GET.get("show", "active") != "all":
             qs = qs.filter(is_active=True)

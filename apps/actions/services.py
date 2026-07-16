@@ -22,7 +22,12 @@ from apps.catalog.models import (
     VehicleType,
     normalize_number,
 )
-from apps.core.part_lookup import lookup_part_by_id, resolve_part_lookup
+from apps.core.part_lookup import (
+    MatchSource,
+    clean_lookup_value,
+    lookup_part_by_id,
+    resolve_part_lookup,
+)
 from apps.counting.services import find_brp_price_source
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.presentation import (
@@ -78,6 +83,7 @@ _EXCEL_MAX_TEXT = 32767
 NOT_FOUND_MESSAGE = "Деталь не найдена в остатках склада."
 MULTI_LOCATION_MESSAGE = "Деталь найдена в нескольких ячейках. Выберите, откуда списать."
 NOT_ENOUGH_MESSAGE = "Недостаточно доступного остатка в выбранной ячейке."
+IDENTITY_MISMATCH_MESSAGE = "Отсканированный номер не соответствует выбранной детали."
 
 
 class ActionError(Exception):
@@ -345,6 +351,18 @@ def perform_action(
     request_token=None,
 ) -> WarehouseAction:
     """Run one scanner mutation and safely reuse a repeated request token."""
+    scanned_value = clean_lookup_value(scanned_number)
+    if scanned_value:
+        lookup = resolve_part_lookup(scanned_value)
+        selected_is_exact = lookup.found and lookup.candidate.part.pk == part.pk
+        if lookup.ambiguous:
+            selected_is_exact = any(
+                candidate.part.pk == part.pk
+                and candidate.match_source in {MatchSource.EXACT, MatchSource.BARCODE}
+                for candidate in lookup.candidates
+            )
+        if not selected_is_exact:
+            raise ActionError(IDENTITY_MISMATCH_MESSAGE)
     token = _request_token(request_token)
     try:
         return _perform_action_atomic(

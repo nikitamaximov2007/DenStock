@@ -56,6 +56,7 @@ from apps.sales.models import Reservation
 from apps.warehouse.models import StorageLocation
 
 from .models import UnresolvedScan
+from .part_lookup import MatchSource
 from .receiving_queue import (
     ReceivingQueueError,
     add_candidate,
@@ -271,29 +272,37 @@ def search_page(request: HttpRequest) -> HttpResponse:
     # several catalogs, show every catalog hit instead of silently choosing one.
     brp_hits = []
     polaris_hits = []
+    brp_hits_are_related = False
+    polaris_hits_are_related = False
     if len(q) >= 2:
         norm = normalize_number(q)
-        number_q = Q(pk=None)
+        warehouse_exact = any(row.match_source == MatchSource.EXACT for row in rows)
         if norm:
-            number_q = (
-                Q(material_no_norm=norm)
-                | Q(replacement_no_1_norm=norm)
-                | Q(replacement_no_2_norm=norm)
+            brp_hits = list(BrpCatalogPart.objects.filter(material_no_norm=norm)[:5])
+            polaris_hits = list(
+                PolarisCatalogPart.objects.filter(part_number_norm=norm)[:5]
             )
-        if not rows and len(q) >= 3:
-            number_q = number_q | Q(part_desc__icontains=q)
-        brp_hits = list(BrpCatalogPart.objects.filter(number_q)[:5])
-        polaris_q = Q(pk=None)
-        if norm:
-            polaris_q = Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
-        if not rows and len(q) >= 3:
-            polaris_q = polaris_q | Q(part_name__icontains=q)
-        polaris_hits = list(PolarisCatalogPart.objects.filter(polaris_q)[:5])
+        if not warehouse_exact and not brp_hits:
+            brp_q = Q(pk=None)
+            if norm:
+                brp_q = Q(replacement_no_1_norm=norm) | Q(replacement_no_2_norm=norm)
+            if not rows and len(q) >= 3:
+                brp_q |= Q(part_desc__icontains=q)
+            brp_hits = list(BrpCatalogPart.objects.filter(brp_q)[:5])
+            brp_hits_are_related = bool(brp_hits)
+        if not warehouse_exact and not polaris_hits:
+            polaris_q = Q(superseded_number_norm=norm) if norm else Q(pk=None)
+            if not rows and len(q) >= 3:
+                polaris_q |= Q(part_name__icontains=q)
+            polaris_hits = list(PolarisCatalogPart.objects.filter(polaris_q)[:5])
+            polaris_hits_are_related = bool(polaris_hits)
     ctx = {
         "q": q,
         "rows": rows,
         "brp_hits": brp_hits,
         "polaris_hits": polaris_hits,
+        "brp_hits_are_related": brp_hits_are_related,
+        "polaris_hits_are_related": polaris_hits_are_related,
         "scan_result": scan_result,
         "show_costs": request.user.can_view_purchase_cost,
         "can_view_inventory": can_view_inventory,

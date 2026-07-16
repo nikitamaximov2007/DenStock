@@ -60,40 +60,10 @@ def start_session(*, location, comment="", by=None) -> InventoryCountingSession:
 
 
 def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
-    """Позиция BRP по нормализованному номеру (material_no и обе замены).
-
-    Приоритет (hotfix 32.3.1): ТОЧНОЕ совпадение material_no ВСЕГДА выше
-    совпадения по замене номера. Реальный кейс: у 417224458 (розница 0,
-    статус USE) замена 417224916; при скане 417224916 должна выбираться
-    сама позиция 417224916 с настоящей ценой, а не старый номер по замене.
-    Внутри группы предпочитается ненулевая розница, затем меньший pk:
-    выбор детерминирован.
-    """
+    """Позиция BRP только по точному material_no."""
     if not norm:
         return None
-    from django.db.models import Case, IntegerField, Value, When
-
-    return (
-        BrpCatalogPart.objects.filter(
-            Q(material_no_norm=norm)
-            | Q(replacement_no_1_norm=norm)
-            | Q(replacement_no_2_norm=norm)
-        )
-        .order_by(
-            Case(
-                When(material_no_norm=norm, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            ),
-            Case(
-                When(retail_price_usd__gt=0, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            ),
-            "pk",
-        )
-        .first()
-    )
+    return BrpCatalogPart.objects.filter(material_no_norm=norm).order_by("pk").first()
 
 
 def find_brp_price_source(

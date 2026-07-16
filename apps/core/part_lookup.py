@@ -119,7 +119,7 @@ class PartLookupResult:
         return self.candidates[0] if self.found else None
 
 
-def _strong_match(norm: str, raw: str):
+def _strong_match(norm: str, raw: str, *, allow_alias: bool):
     if norm:
         exact_ids = list(
             PartNumber.objects.filter(
@@ -129,16 +129,8 @@ def _strong_match(norm: str, raw: str):
             .distinct()[: RESULT_LIMIT + 1]
         )
         if exact_ids:
-            alias_ids = list(
-                PartNumber.objects.filter(
-                    normalized_value=norm, kind=PartNumber.Kind.ANALOG
-                )
-                .values_list("part_id", flat=True)
-                .distinct()[: RESULT_LIMIT + 1]
-            )
-            sources = {part_id: MatchSource.ALIAS for part_id in alias_ids}
-            sources.update({part_id: MatchSource.EXACT for part_id in exact_ids})
-            return list(sources), sources, raw, len(sources) > 1
+            sources = {part_id: MatchSource.EXACT for part_id in exact_ids}
+            return exact_ids, sources, raw, len(exact_ids) > 1
 
     barcode_ids = list(
         PartBarcode.objects.filter(value__iexact=raw)
@@ -149,7 +141,7 @@ def _strong_match(norm: str, raw: str):
         sources = {part_id: MatchSource.BARCODE for part_id in barcode_ids}
         return barcode_ids, sources, raw, len(barcode_ids) > 1
 
-    if norm:
+    if allow_alias and norm:
         alias_ids = list(
             PartNumber.objects.filter(
                 normalized_value=norm, kind=PartNumber.Kind.ANALOG
@@ -307,14 +299,20 @@ def resolve_part_lookup(
     *,
     allow_partial: bool = False,
     allow_name: bool = False,
+    allow_alias: bool = False,
     include_price: bool = False,
 ) -> PartLookupResult:
+    """Resolve warehouse identity with exact numbers taking absolute priority.
+
+    Scanner and mutation callers use the strict default. Read-only catalog and
+    search screens may opt into alias suggestions with ``allow_alias=True``.
+    """
     query = clean_lookup_value(raw)
     norm = normalize_number(query)
     if not query:
         return PartLookupResult(query, norm, "not_found", message="Пустой запрос.")
 
-    matched = _strong_match(norm, query)
+    matched = _strong_match(norm, query, allow_alias=allow_alias)
     strong = matched is not None
     if matched is None:
         matched = _secondary_match(

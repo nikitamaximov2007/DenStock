@@ -205,7 +205,8 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
             candidates=[_item_candidate(i) for i in items],
         )
 
-    # 6. Exact number, factory barcode, replacement or superseded alias.
+    # 6. Exact warehouse number or factory barcode. Catalog aliases are
+    # reference hints and never become scanner operation identity.
     lookup = resolve_part_lookup(code)
     if lookup.found:
         return _part_result(lookup.candidate)

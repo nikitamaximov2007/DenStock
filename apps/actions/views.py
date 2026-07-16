@@ -17,12 +17,13 @@ from django.urls import reverse
 from django.utils.http import urlencode
 
 from apps.catalog.models import PartType
-from apps.core.part_lookup import resolve_part_lookup
+from apps.core.part_lookup import MatchSource, resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
 from apps.warehouse.models import StorageLocation
 
 from .models import PartCustomsInfo, WarehouseAction
 from .services import (
+    IDENTITY_MISMATCH_MESSAGE,
     MANUAL_WEIGHT_NOTE,
     MULTI_LOCATION_MESSAGE,
     NOT_FOUND_MESSAGE,
@@ -93,15 +94,31 @@ def actions_scan(request):
     }
     if q:
         lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
+        selected_part = None
         if lookup.ambiguous:
-            ctx["lookup_candidates"] = lookup.candidates
-            ctx["lookup_message"] = lookup.message
-        part = lookup.candidate.part if lookup.found else None
+            selected_part_id = request.GET.get("part_id")
+            selected_part = next(
+                (
+                    candidate.part
+                    for candidate in lookup.candidates
+                    if str(candidate.part.pk) == selected_part_id
+                    and candidate.match_source in {
+                        MatchSource.EXACT,
+                        MatchSource.BARCODE,
+                    }
+                ),
+                None,
+            )
+            if selected_part is None:
+                ctx["lookup_candidates"] = lookup.candidates
+                ctx["lookup_message"] = lookup.message
+        part = selected_part or (lookup.candidate.part if lookup.found else None)
         overview = stock_overview(part) if part else None
         has_no_stock = overview and not overview["locations"] and not overview["unit_items"]
-        if not lookup.ambiguous and (part is None or has_no_stock):
+        unresolved_ambiguity = lookup.ambiguous and selected_part is None
+        if not unresolved_ambiguity and (part is None or has_no_stock):
             ctx["not_found"] = True
-        elif not lookup.ambiguous:
+        elif not unresolved_ambiguity:
             ctx["overview"] = overview
             ctx["request_token"] = secrets.token_urlsafe(32)
     return render(request, "actions/scan.html", ctx)
@@ -125,6 +142,9 @@ def actions_perform(request):
     permission = ACTION_PERMISSIONS.get(action_type)
     if permission is None or not getattr(request.user, permission):
         raise PermissionDenied
+    if not q:
+        messages.error(request, IDENTITY_MISMATCH_MESSAGE)
+        return redirect(back)
     try:
         action = perform_action(
             part=part,

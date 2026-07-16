@@ -125,15 +125,9 @@ def find_receiving_candidates(raw: str, *, warehouse_part_id: int | None = None)
     candidates: list[ReceivingCandidate] = []
 
     if norm:
-        brp_parts = BrpCatalogPart.objects.filter(
-            Q(material_no_norm=norm)
-            | Q(replacement_no_1_norm=norm)
-            | Q(replacement_no_2_norm=norm)
-        )
+        brp_parts = BrpCatalogPart.objects.filter(material_no_norm=norm)
         candidates.extend(_brp_candidate(part, pricing) for part in brp_parts[:25])
-        polaris_parts = PolarisCatalogPart.objects.filter(
-            Q(part_number_norm=norm) | Q(superseded_number_norm=norm)
-        )
+        polaris_parts = PolarisCatalogPart.objects.filter(part_number_norm=norm)
         candidates.extend(_polaris_candidate(part, pricing) for part in polaris_parts[:25])
 
     seen_parts = {candidate.part_id for candidate in candidates if candidate.part_id}

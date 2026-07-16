@@ -39,7 +39,7 @@
           <ul>
             {% for candidate in lookup_candidates %}
               <li>
-                <a href="?q={{ candidate.exact_number|urlencode }}">
+                <a href="?q={{ q|urlencode }}&amp;part_id={{ candidate.part.pk }}">
                   {{ candidate.exact_number }} · {{ candidate.part.name }} · {{ candidate.manufacturer }}
                 </a>
               </li>
@@ -55,6 +55,7 @@
           <p>
             <span class="code-pill">{{ overview.lookup.exact_number }}</span>
             <strong>{{ overview.part.name }}</strong>
+            · {{ overview.lookup.manufacturer }}
             · Цена клиента:
             {% if overview.part.recommended_price %}
               {{ overview.part.recommended_price|money_int }} ₽

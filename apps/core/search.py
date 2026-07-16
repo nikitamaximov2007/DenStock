@@ -17,5 +17,6 @@ def search_parts(query: str) -> list[PartLookupCandidate]:
         value,
         allow_partial=True,
         allow_name=True,
+        allow_alias=True,
         include_price=True,
     ).candidates

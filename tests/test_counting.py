@@ -41,6 +41,7 @@ from apps.counting.services import (
     record_scan,
     refresh_draft_prices,
     remove_line,
+    resolve_unknown_to_brp,
     set_line_quantity,
     start_session,
     undo_last_scan,
@@ -207,14 +208,18 @@ def test_warehouse_match_has_priority(refs, location, admin):
     assert line.warehouse_part == refs["wh"]
 
 
-def test_brp_material_and_replacement_match(refs, location, admin):
+def test_brp_material_matches_but_replacements_require_manual_resolution(
+    refs,
+    location,
+    admin,
+):
     session = start_session(location=location, by=admin)
     m = record_scan(session, "219800345", by=admin)
     assert m.source == "brp_catalog" and m.brp_catalog_part == refs["brp_main"]
-    r1 = record_scan(session, "417300571", by=admin)  # replacement_no_1
-    assert r1.brp_catalog_part == refs["brp_main"]
-    r2 = record_scan(session, "290420", by=admin)  # replacement_no_2
-    assert r2.brp_catalog_part == refs["brp_repl2"]
+    r1 = record_scan(session, "417300571", by=admin)
+    assert r1.source == "unknown" and r1.brp_catalog_part is None
+    r2 = record_scan(session, "290420", by=admin)
+    assert r2.source == "unknown" and r2.brp_catalog_part is None
     assert m.final_customer_price_rub == Decimal("14699")  # 14698.53 -> целые рубли
 
 
@@ -747,13 +752,17 @@ def test_lookup_exact_wins_even_with_zero_price(db):
     assert find_brp_by_number("417000002") == exact_zero
 
 
-def test_replacement_fallback_without_exact_match(refs, location, admin):
-    # Точной позиции 417224916 нет: скан находит старый номер по замене.
-    old = _make_old_replaced_417()
+def test_replacement_without_exact_match_requires_manual_resolution(
+    refs,
+    location,
+    admin,
+):
+    _make_old_replaced_417()
     session = start_session(location=location, by=admin)
     line = record_scan(session, "417224916", by=admin)
-    assert line.brp_catalog_part == old
-    assert line.final_customer_price_rub == Decimal("0")
+    assert line.source == "unknown"
+    assert line.brp_catalog_part is None
+    assert line.needs_review is True
 
 
 def test_scan_exact_outranks_replacement(refs, location, admin):
@@ -777,6 +786,8 @@ def test_refresh_relinks_wrong_draft_line(refs, location, admin):
     record_scan(session, "417224916", by=admin)
     record_scan(session, "417224916", by=admin)  # 3 скана, как в проде
     line = session.lines.get()
+    resolve_unknown_to_brp(line, old)
+    line.refresh_from_db()
     assert line.brp_catalog_part == old and line.final_customer_price_rub == Decimal("0")
     exact = _make_exact_417()  # реимпорт добавил настоящую позицию
     before = _stock_snapshot()
@@ -794,7 +805,8 @@ def test_refresh_relinks_wrong_draft_line(refs, location, admin):
 def test_refresh_does_not_relink_posted_session(refs, location, admin):
     old = _make_old_replaced_417()
     session = start_session(location=location, by=admin)
-    record_scan(session, "417224916", by=admin)
+    line = record_scan(session, "417224916", by=admin)
+    resolve_unknown_to_brp(line, old)
     post_session(session, by=admin)
     _make_exact_417()
     before = _stock_snapshot()
