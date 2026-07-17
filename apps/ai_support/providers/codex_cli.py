@@ -1,6 +1,5 @@
 import json
 import os
-import queue
 import re
 import signal
 import subprocess
@@ -151,12 +150,6 @@ class ProcessOutcome:
     error_code: str = ""
 
 
-@dataclass(frozen=True)
-class _ThreadHandle:
-    thread: threading.Thread
-    stream: object
-
-
 class CodexOutputError(ValueError):
     def __init__(self, code: str):
         super().__init__(code)
@@ -190,67 +183,6 @@ def _event_is_forbidden(line: bytes) -> bool:
     return event_type not in KNOWN_EVENT_TYPES
 
 
-def _drain_stream(stream, limit, chunks, overflow, forbidden_event=None):
-    total = 0
-    stored = 0
-    pending = bytearray()
-    read = getattr(stream, "read1", stream.read)
-    while True:
-        chunk = read(4096)
-        if not chunk:
-            break
-        total += len(chunk)
-        remaining = max(limit - stored, 0)
-        if remaining:
-            saved = chunk[:remaining]
-            chunks.append(saved)
-            stored += len(saved)
-        if total > limit:
-            overflow.set()
-            return
-        if forbidden_event is None:
-            continue
-        offset = 0
-        while offset < len(chunk):
-            newline = chunk.find(b"\n", offset)
-            end = len(chunk) if newline < 0 else newline
-            fragment = chunk[offset:end]
-            if len(pending) + len(fragment) > min(limit, MAX_JSONL_LINE_BYTES):
-                overflow.set()
-                return
-            pending.extend(fragment)
-            if newline < 0:
-                break
-            if pending and _event_is_forbidden(bytes(pending)):
-                forbidden_event.set()
-                return
-            pending.clear()
-            offset = newline + 1
-    if forbidden_event is not None and pending and _event_is_forbidden(bytes(pending)):
-        forbidden_event.set()
-
-
-def _write_stdin(stream, content: bytes) -> None:
-    try:
-        for offset in range(0, len(content), 64 * 1024):
-            stream.write(content[offset : offset + 64 * 1024])
-            stream.flush()
-    finally:
-        stream.close()
-
-
-def _capture_thread_error(
-    errors: queue.Queue[tuple[str, BaseException]], name: str, target, *args
-) -> None:
-    try:
-        target(*args)
-    except BaseException as exc:
-        try:
-            errors.put_nowait((name, exc))
-        except queue.Full:
-            pass
-
-
 def _close_stream(stream) -> None:
     try:
         stream.close()
@@ -258,18 +190,108 @@ def _close_stream(stream) -> None:
         pass
 
 
-def _join_io_threads(handles: list[_ThreadHandle], tree, *, timeout: float = 2) -> bool:
-    for handle in handles:
-        handle.thread.join(timeout=timeout)
-    alive = [handle for handle in handles if handle.thread.is_alive()]
-    if not alive:
+class _PipeReader:
+    def __init__(self, stream, limit, chunks, overflow, forbidden_event=None):
+        self.stream = stream
+        self.limit = limit
+        self.chunks = chunks
+        self.overflow = overflow
+        self.forbidden_event = forbidden_event
+        self.total = 0
+        self.stored = 0
+        self.pending = bytearray()
+        self.eof = False
+
+    def _inspect(self, chunk: bytes) -> None:
+        if self.forbidden_event is None:
+            return
+        offset = 0
+        while offset < len(chunk):
+            newline = chunk.find(b"\n", offset)
+            end = len(chunk) if newline < 0 else newline
+            fragment = chunk[offset:end]
+            if len(self.pending) + len(fragment) > min(self.limit, MAX_JSONL_LINE_BYTES):
+                self.overflow.set()
+                return
+            self.pending.extend(fragment)
+            if newline < 0:
+                return
+            if self.pending and _event_is_forbidden(bytes(self.pending)):
+                self.forbidden_event.set()
+                return
+            self.pending.clear()
+            offset = newline + 1
+
+    def read_available(self) -> bool:
+        if self.eof:
+            return False
+        progressed = False
+        while True:
+            try:
+                chunk = os.read(self.stream.fileno(), 4096)
+            except BlockingIOError:
+                return progressed
+            if not chunk:
+                self.eof = True
+                if (
+                    self.forbidden_event is not None
+                    and self.pending
+                    and _event_is_forbidden(bytes(self.pending))
+                ):
+                    self.forbidden_event.set()
+                _close_stream(self.stream)
+                return True
+            progressed = True
+            self.total += len(chunk)
+            remaining = max(self.limit - self.stored, 0)
+            if remaining:
+                saved = chunk[:remaining]
+                self.chunks.append(saved)
+                self.stored += len(saved)
+            if self.total > self.limit:
+                self.overflow.set()
+                return True
+            self._inspect(chunk)
+            if self.overflow.is_set() or (
+                self.forbidden_event is not None and self.forbidden_event.is_set()
+            ):
+                return True
+
+
+class _PipeWriter:
+    def __init__(self, stream, content: bytes):
+        self.stream = stream
+        self.content = memoryview(content)
+        self.offset = 0
+        self.closed = False
+
+    def close(self) -> None:
+        if not self.closed:
+            self.closed = True
+            _close_stream(self.stream)
+
+    def write_available(self) -> bool:
+        if self.closed:
+            return False
+        if self.offset >= len(self.content):
+            self.close()
+            return True
+        try:
+            written = os.write(
+                self.stream.fileno(), self.content[self.offset : self.offset + 64 * 1024]
+            )
+        except BlockingIOError:
+            return False
+        if written <= 0:
+            raise OSError("stdin pipe made no progress")
+        self.offset += written
+        if self.offset >= len(self.content):
+            self.close()
         return True
-    tree.terminate()
-    for handle in alive:
-        _close_stream(handle.stream)
-    for handle in alive:
-        handle.thread.join(timeout=timeout)
-    return not any(handle.thread.is_alive() for handle in handles)
+
+
+def _set_nonblocking(stream) -> None:
+    os.set_blocking(stream.fileno(), False)
 
 
 def _strict_deadline_error(error_code: str, deadline: float, *, now: float | None = None) -> str:
@@ -410,10 +432,18 @@ def _run_process(
     max_stdout_bytes: int,
     max_stderr_bytes: int,
     inspect_events: bool = False,
+    _clock=None,
+    _pause=None,
+    _process_factory=None,
+    _tree_factory=None,
 ) -> ProcessOutcome:
-    deadline = time.monotonic() + timeout_seconds
+    clock = _clock or time.monotonic
+    pause = _pause or time.sleep
+    process_factory = _process_factory or subprocess.Popen
+    tree_factory = _tree_factory or _ProcessTree
+    deadline = clock() + timeout_seconds
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    process = subprocess.Popen(
+    process = process_factory(
         args,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -426,66 +456,52 @@ def _run_process(
         umask=0o077 if os.name != "nt" else -1,
     )
     try:
-        tree = _ProcessTree(process)
+        tree = tree_factory(process)
     except Exception:
         process.kill()
         process.wait(timeout=5)
+        raise
+    try:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            _set_nonblocking(stream)
+    except (OSError, ValueError):
+        tree.terminate()
+        tree.close()
+        for stream in (process.stdin, process.stdout, process.stderr):
+            _close_stream(stream)
         raise
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
     stdout_overflow = threading.Event()
     stderr_overflow = threading.Event()
     forbidden_event = threading.Event()
-    thread_errors: queue.Queue[tuple[str, BaseException]] = queue.Queue(maxsize=3)
-    writer_thread = threading.Thread(
-        target=_capture_thread_error,
-        args=(thread_errors, "stdin", _write_stdin, process.stdin, stdin),
-        name="ai-support-codex-stdin",
-        daemon=True,
+    writer = _PipeWriter(process.stdin, stdin)
+    stdout_reader = _PipeReader(
+        process.stdout,
+        max_stdout_bytes,
+        stdout_chunks,
+        stdout_overflow,
+        forbidden_event if inspect_events else None,
     )
-    stdout_thread = threading.Thread(
-        target=_capture_thread_error,
-        args=(
-            thread_errors,
-            "stdout",
-            _drain_stream,
-            process.stdout,
-            max_stdout_bytes,
-            stdout_chunks,
-            stdout_overflow,
-            forbidden_event if inspect_events else None,
-        ),
-        name="ai-support-codex-stdout",
-        daemon=True,
+    stderr_reader = _PipeReader(
+        process.stderr,
+        max_stderr_bytes,
+        stderr_chunks,
+        stderr_overflow,
     )
-    stderr_thread = threading.Thread(
-        target=_capture_thread_error,
-        args=(
-            thread_errors,
-            "stderr",
-            _drain_stream,
-            process.stderr,
-            max_stderr_bytes,
-            stderr_chunks,
-            stderr_overflow,
-        ),
-        name="ai-support-codex-stderr",
-        daemon=True,
-    )
-    thread_handles = [
-        _ThreadHandle(writer_thread, process.stdin),
-        _ThreadHandle(stdout_thread, process.stdout),
-        _ThreadHandle(stderr_thread, process.stderr),
-    ]
-    writer_thread.start()
-    stdout_thread.start()
-    stderr_thread.start()
     error_code = ""
     try:
-        if time.monotonic() >= deadline:
-            error_code = "provider_timeout"
-        while process.poll() is None:
-            if error_code:
+        while True:
+            if clock() >= deadline:
+                error_code = "provider_timeout"
+                break
+            progressed = False
+            try:
+                progressed = writer.write_available()
+                progressed = stdout_reader.read_available() or progressed
+                progressed = stderr_reader.read_available() or progressed
+            except (BrokenPipeError, OSError, ValueError):
+                error_code = "provider_unavailable"
                 break
             if forbidden_event.is_set():
                 error_code = "codex_forbidden_tool_event"
@@ -493,22 +509,21 @@ def _run_process(
             if stdout_overflow.is_set() or stderr_overflow.is_set():
                 error_code = "provider_output_too_large"
                 break
-            if not thread_errors.empty():
-                error_code = "provider_unavailable"
-                break
-            if time.monotonic() >= deadline:
-                error_code = "provider_timeout"
-                break
-            time.sleep(0.01)
+            if process.poll() is not None:
+                tree.terminate()
+                writer.close()
+                if stdout_reader.eof and stderr_reader.eof:
+                    break
+            if not progressed:
+                pause(0.01)
         tree.terminate()
-        all_threads_stopped = _join_io_threads(thread_handles, tree)
+        if not error_code and (not stdout_reader.eof or not stderr_reader.eof):
+            error_code = "provider_unavailable"
         if not error_code and forbidden_event.is_set():
             error_code = "codex_forbidden_tool_event"
         if not error_code and (stdout_overflow.is_set() or stderr_overflow.is_set()):
             error_code = "provider_output_too_large"
-        if not error_code and (not thread_errors.empty() or not all_threads_stopped):
-            error_code = "provider_unavailable"
-        error_code = _strict_deadline_error(error_code, deadline)
+        error_code = _strict_deadline_error(error_code, deadline, now=clock())
         return ProcessOutcome(
             returncode=process.returncode if process.returncode is not None else -1,
             stdout=b"".join(stdout_chunks),
@@ -518,7 +533,8 @@ def _run_process(
     finally:
         tree.terminate()
         tree.close()
-        for stream in (process.stdin, process.stdout, process.stderr):
+        writer.close()
+        for stream in (process.stdout, process.stderr):
             _close_stream(stream)
 
 

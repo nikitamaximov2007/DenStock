@@ -102,6 +102,18 @@ def assert_error(stdout: bytes, code: str):
     assert captured.value.code == code
 
 
+def codex_io_threads():
+    return [
+        thread.name
+        for thread in threading.enumerate()
+        if thread.name.startswith("ai-support-codex-")
+    ]
+
+
+def assert_no_codex_io_threads():
+    assert codex_io_threads() == []
+
+
 def test_provider_contract_for_disabled_and_fake():
     disabled = DisabledProvider().generate(support_request())
     fake = FakeProvider().generate(support_request())
@@ -562,26 +574,25 @@ def test_run_process_uses_stdin_without_shell(tmp_path):
 
 
 @pytest.mark.parametrize("worker", ["stdout", "stderr", "writer"])
-def test_run_process_propagates_worker_errors_and_leaves_no_threads(
+def test_run_process_propagates_io_errors_and_leaves_no_threads(
     monkeypatch, tmp_path, worker
 ):
-    original_drain = codex_cli._drain_stream
-
     if worker == "writer":
         monkeypatch.setattr(
-            codex_cli,
-            "_write_stdin",
-            lambda *args: (_ for _ in ()).throw(OSError("writer failed")),
+            codex_cli._PipeWriter,
+            "write_available",
+            lambda self: (_ for _ in ()).throw(OSError("writer failed")),
         )
     else:
+        original_read = codex_cli._PipeReader.read_available
 
-        def drain(stream, limit, chunks, overflow, forbidden_event=None):
-            is_selected = (worker == "stdout") == (forbidden_event is not None)
+        def read_available(self):
+            is_selected = (worker == "stdout") == (self.forbidden_event is not None)
             if is_selected:
                 raise OSError(f"{worker} reader failed")
-            return original_drain(stream, limit, chunks, overflow, forbidden_event)
+            return original_read(self)
 
-        monkeypatch.setattr(codex_cli, "_drain_stream", drain)
+        monkeypatch.setattr(codex_cli._PipeReader, "read_available", read_available)
 
     script = "import time; time.sleep(10)"
     outcome = codex_cli._run_process(
@@ -595,63 +606,62 @@ def test_run_process_propagates_worker_errors_and_leaves_no_threads(
         inspect_events=True,
     )
     assert outcome.error_code == "provider_unavailable"
-    assert not any(
-        thread.name.startswith("ai-support-codex-") for thread in threading.enumerate()
-    )
+    assert_no_codex_io_threads()
 
 
-class FakeThread:
-    def __init__(self):
-        self.alive = True
-        self.joins = 0
-
-    def join(self, timeout):
-        self.joins += 1
-
-    def is_alive(self):
-        return self.alive
-
-
-class FakeStream:
-    def __init__(self, thread, *, releases=True):
-        self.thread = thread
-        self.releases = releases
-        self.closes = 0
-
-    def close(self):
-        self.closes += 1
-        if self.releases:
-            self.thread.alive = False
+def test_open_output_pipe_is_polled_without_blocking_or_threads():
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd, "rb", buffering=0)
+    overflow = threading.Event()
+    reader = codex_cli._PipeReader(stream, 1024, [], overflow)
+    try:
+        codex_cli._set_nonblocking(stream)
+        assert reader.read_available() is False
+        assert reader.eof is False
+        assert_no_codex_io_threads()
+    finally:
+        stream.close()
+        os.close(write_fd)
 
 
-class FakeTree:
-    def __init__(self):
-        self.terminations = 0
+def test_nonblocking_reader_consumes_data_and_observes_shutdown():
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd, "rb", buffering=0)
+    chunks = []
+    reader = codex_cli._PipeReader(stream, 1024, chunks, threading.Event())
+    try:
+        codex_cli._set_nonblocking(stream)
+        assert reader.read_available() is False
+        os.write(write_fd, b"ready")
+        assert reader.read_available() is True
+        assert chunks == [b"ready"]
+        assert reader.eof is False
+        os.close(write_fd)
+        write_fd = None
+        assert reader.read_available() is True
+        assert reader.eof is True
+        assert_no_codex_io_threads()
+    finally:
+        stream.close()
+        if write_fd is not None:
+            os.close(write_fd)
 
-    def terminate(self):
-        self.terminations += 1
 
-
-def test_second_join_closes_stream_and_releases_reader():
-    thread = FakeThread()
-    stream = FakeStream(thread)
-    tree = FakeTree()
-    handles = [codex_cli._ThreadHandle(thread, stream)]
-    assert codex_cli._join_io_threads(handles, tree, timeout=0) is True
-    assert thread.joins == 2
-    assert stream.closes == 1
-    assert tree.terminations == 1
-
-
-def test_thread_alive_after_second_join_fails_closed():
-    thread = FakeThread()
-    stream = FakeStream(thread, releases=False)
-    tree = FakeTree()
-    handles = [codex_cli._ThreadHandle(thread, stream)]
-    assert codex_cli._join_io_threads(handles, tree, timeout=0) is False
-    assert thread.joins == 2
-    assert stream.closes == 1
-    assert tree.terminations == 1
+def test_io_boundary_does_not_accumulate_threads_across_twenty_calls(tmp_path):
+    before = codex_io_threads()
+    for _ in range(20):
+        outcome = codex_cli._run_process(
+            [sys.executable, "-c", "pass"],
+            stdin=b"",
+            cwd=tmp_path,
+            env=os.environ.copy(),
+            timeout_seconds=3,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=1024,
+        )
+        assert outcome.error_code == ""
+        assert codex_io_threads() == before
+    assert codex_io_threads() == before
 
 
 def test_strict_deadline_accepts_before_and_rejects_at_or_after_boundary():
@@ -662,6 +672,245 @@ def test_strict_deadline_accepts_before_and_rejects_at_or_after_boundary():
         codex_cli._strict_deadline_error("codex_forbidden_tool_event", 10.0, now=11.0)
         == "codex_forbidden_tool_event"
     )
+
+
+class _SequenceClock:
+    def __init__(self, values):
+        self.values = list(values)
+        self.current = self.values[0]
+
+    def __call__(self):
+        if self.values:
+            self.current = self.values.pop(0)
+        return self.current
+
+    @staticmethod
+    def pause(_seconds):
+        return None
+
+
+class _MutableClock:
+    def __init__(self, current=0.0):
+        self.current = current
+
+    def __call__(self):
+        return self.current
+
+    @staticmethod
+    def pause(_seconds):
+        return None
+
+
+class _FakeProcess:
+    def __init__(
+        self,
+        *,
+        stdout=b"",
+        stderr=b"",
+        returncode=0,
+        hold_stdout=False,
+        hold_stderr=False,
+    ):
+        self.pid = 12345
+        self.returncode = returncode
+        self._stdin_read, stdin_write = os.pipe()
+        stdout_read, self._stdout_write = os.pipe()
+        stderr_read, self._stderr_write = os.pipe()
+        self.stdin = os.fdopen(stdin_write, "wb", buffering=0)
+        self.stdout = os.fdopen(stdout_read, "rb", buffering=0)
+        self.stderr = os.fdopen(stderr_read, "rb", buffering=0)
+        if stdout:
+            os.write(self._stdout_write, stdout)
+        if stderr:
+            os.write(self._stderr_write, stderr)
+        if not hold_stdout:
+            self._close_fd("_stdout_write")
+        if not hold_stderr:
+            self._close_fd("_stderr_write")
+
+    def _close_fd(self, name):
+        descriptor = getattr(self, name)
+        if descriptor is not None:
+            os.close(descriptor)
+            setattr(self, name, None)
+
+    def release_outputs(self):
+        self._close_fd("_stdout_write")
+        self._close_fd("_stderr_write")
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        if self.returncode is None:
+            self.returncode = -9
+        self.release_outputs()
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def cleanup(self):
+        self.release_outputs()
+        self._close_fd("_stdin_read")
+        for stream in (self.stdin, self.stdout, self.stderr):
+            codex_cli._close_stream(stream)
+
+
+class _FakeTree:
+    def __init__(self, process, *, release_on_terminate=True):
+        self.process = process
+        self.release_on_terminate = release_on_terminate
+        self.terminated = False
+        self.closed = False
+
+    def terminate(self):
+        if self.terminated:
+            return
+        self.terminated = True
+        if self.process.returncode is None:
+            self.process.kill()
+        elif self.release_on_terminate:
+            self.process.release_outputs()
+
+    def close(self):
+        self.closed = True
+
+
+def _run_fake_boundary(
+    tmp_path,
+    process,
+    clock_values,
+    *,
+    inspect_events=False,
+    release_on_terminate=True,
+):
+    clock = _SequenceClock(clock_values)
+    tree = _FakeTree(process, release_on_terminate=release_on_terminate)
+    try:
+        outcome = codex_cli._run_process(
+            ["codex-fixture"],
+            stdin=b"",
+            cwd=tmp_path,
+            env={},
+            timeout_seconds=10,
+            max_stdout_bytes=65536,
+            max_stderr_bytes=4096,
+            inspect_events=inspect_events,
+            _clock=clock,
+            _pause=clock.pause,
+            _process_factory=lambda *args, **kwargs: process,
+            _tree_factory=lambda created: tree,
+        )
+        streams_closed = (process.stdin.closed, process.stdout.closed, process.stderr.closed)
+        return outcome, tree, streams_closed
+    finally:
+        process.cleanup()
+
+
+@pytest.mark.parametrize(
+    ("exit_at", "expected"),
+    [
+        (9.999, ""),
+        (10.0, "provider_timeout"),
+        (10.001, "provider_timeout"),
+    ],
+)
+def test_process_returncode_respects_strict_deadline(tmp_path, exit_at, expected):
+    clock = _MutableClock()
+    process = _FakeProcess(stdout=b"complete", returncode=None)
+    tree = _FakeTree(process)
+
+    def complete_on_poll():
+        clock.current = exit_at
+        process.returncode = 0
+        return process.returncode
+
+    process.poll = complete_on_poll
+    try:
+        outcome = codex_cli._run_process(
+            ["codex-fixture"],
+            stdin=b"",
+            cwd=tmp_path,
+            env={},
+            timeout_seconds=10,
+            max_stdout_bytes=1024,
+            max_stderr_bytes=1024,
+            _clock=clock,
+            _pause=clock.pause,
+            _process_factory=lambda *args, **kwargs: process,
+            _tree_factory=lambda created: tree,
+        )
+        assert outcome.error_code == expected
+        assert tree.terminated is True
+        assert tree.closed is True
+        assert (process.stdin.closed, process.stdout.closed, process.stderr.closed) == (
+            True,
+            True,
+            True,
+        )
+        assert_no_codex_io_threads()
+    finally:
+        process.cleanup()
+
+
+def test_valid_jsonl_before_late_process_exit_is_timeout(tmp_path):
+    process = _FakeProcess(
+        stdout=jsonl(), returncode=None, hold_stdout=True, hold_stderr=True
+    )
+    outcome, tree, streams_closed = _run_fake_boundary(
+        tmp_path,
+        process,
+        [0.0, 0.0, 10.001, 10.001],
+        inspect_events=True,
+    )
+    assert outcome.stdout == jsonl()
+    assert outcome.error_code == "provider_timeout"
+    assert tree.terminated is True
+    assert streams_closed == (True, True, True)
+    assert_no_codex_io_threads()
+
+
+def test_process_exit_before_deadline_but_late_pipe_completion_is_timeout(tmp_path):
+    process = _FakeProcess(returncode=0, hold_stdout=True)
+    outcome, tree, streams_closed = _run_fake_boundary(
+        tmp_path,
+        process,
+        [0.0, 9.0, 10.0, 10.0],
+        release_on_terminate=False,
+    )
+    assert outcome.returncode == 0
+    assert outcome.error_code == "provider_timeout"
+    assert tree.terminated is True
+    assert streams_closed == (True, True, True)
+    assert_no_codex_io_threads()
+
+
+def test_deadline_simultaneous_with_last_turn_completed_is_timeout(tmp_path):
+    process = _FakeProcess(
+        stdout=jsonl(), returncode=None, hold_stdout=True, hold_stderr=True
+    )
+    outcome, _, _ = _run_fake_boundary(
+        tmp_path,
+        process,
+        [0.0, 0.0, 10.0, 10.0],
+        inspect_events=True,
+    )
+    assert b'"type": "turn.completed"' in outcome.stdout
+    assert outcome.error_code == "provider_timeout"
+    assert_no_codex_io_threads()
+
+
+def test_deadline_between_last_read_and_final_validation_is_timeout(tmp_path):
+    process = _FakeProcess(stdout=jsonl(), returncode=0)
+    outcome, _, _ = _run_fake_boundary(
+        tmp_path,
+        process,
+        [0.0, 9.999, 10.0],
+        inspect_events=True,
+    )
+    assert outcome.stdout == jsonl()
+    assert outcome.error_code == "provider_timeout"
+    assert_no_codex_io_threads()
 
 
 def test_valid_jsonl_does_not_override_process_timeout(tmp_path):
@@ -680,6 +929,7 @@ def test_valid_jsonl_does_not_override_process_timeout(tmp_path):
         inspect_events=True,
     )
     assert outcome.error_code == "provider_timeout"
+    assert_no_codex_io_threads()
 
 
 def test_timeout_covers_child_that_never_reads_stdin(tmp_path):
@@ -696,6 +946,7 @@ def test_timeout_covers_child_that_never_reads_stdin(tmp_path):
     )
     assert outcome.error_code == "provider_timeout"
     assert time.monotonic() - started < 5
+    assert_no_codex_io_threads()
 
 
 @pytest.mark.parametrize(
@@ -722,6 +973,7 @@ def test_stdout_stderr_and_unterminated_line_are_bounded(
     assert outcome.error_code == "provider_output_too_large"
     assert len(outcome.stdout) <= stdout_limit
     assert len(outcome.stderr) <= stderr_limit
+    assert_no_codex_io_threads()
 
 
 def test_forbidden_event_stops_process_immediately(tmp_path):
@@ -744,6 +996,7 @@ def test_forbidden_event_stops_process_immediately(tmp_path):
     )
     assert outcome.error_code == "codex_forbidden_tool_event"
     assert b"forbidden" in outcome.stdout
+    assert_no_codex_io_threads()
 
 
 def _heartbeat_child(heartbeat: Path) -> str:
@@ -778,6 +1031,7 @@ def test_timeout_kills_child_process_tree(tmp_path):
     )
     assert outcome.error_code == "provider_timeout"
     assert_heartbeat_stops(heartbeat)
+    assert_no_codex_io_threads()
 
 
 def test_cleanup_kills_child_after_parent_exits(tmp_path):
@@ -798,6 +1052,7 @@ def test_cleanup_kills_child_after_parent_exits(tmp_path):
     )
     assert outcome.returncode == 0
     assert_heartbeat_stops(heartbeat)
+    assert_no_codex_io_threads()
 
 
 def test_overflow_kills_live_child_process(tmp_path):
@@ -820,6 +1075,7 @@ def test_overflow_kills_live_child_process(tmp_path):
     )
     assert outcome.error_code == "provider_output_too_large"
     assert_heartbeat_stops(heartbeat)
+    assert_no_codex_io_threads()
 
 
 def test_retrieval_and_prompt_injection_boundaries():

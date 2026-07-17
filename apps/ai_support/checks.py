@@ -94,9 +94,19 @@ def _posix_path_errors(home: Path, workspace: Path, launch_mode: str) -> list[Er
 @register(Tags.security)
 def codex_runtime_is_isolated(app_configs, **kwargs):
     provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)
-    if not settings.AI_SUPPORT_ENABLED or provider != "codex_cli":
+    if not settings.AI_SUPPORT_ENABLED:
         return []
     errors = []
+    if not settings.DEBUG:
+        errors.append(
+            Error(
+                "AI support cannot be enabled in production until the audited Linux launcher "
+                "is implemented.",
+                id="ai_support.E015",
+            )
+        )
+    if provider != "codex_cli":
+        return errors
     binary = str(settings.AI_SUPPORT_CODEX_BINARY).strip()
     required_version = str(settings.AI_SUPPORT_CODEX_REQUIRED_VERSION)
     raw_home = str(settings.AI_SUPPORT_CODEX_HOME).strip()
@@ -146,14 +156,6 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
             Error(
                 "Shared CODEX_HOME requires AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY=1.",
                 id="ai_support.E010",
-            )
-        )
-    if not settings.DEBUG:
-        errors.append(
-            Error(
-                "AI support cannot be enabled in production until the audited Linux launcher "
-                "is implemented.",
-                id="ai_support.E015",
             )
         )
     if launch_mode == "external":

@@ -4,9 +4,9 @@
 
 ИИ-поддержка по умолчанию выключена. Текущая feature-ветка не создаёт Linux
 user, launcher или production-конфигурацию. В текущем commit production-включение
-ИИ-поддержки невозможно: при `DEBUG=false` Django system check всегда возвращает
-ошибку, а режим `external` запрещён. Сначала требуется отдельная реализация и
-security-аудит Linux launcher.
+ИИ-поддержки невозможно: `AI_SUPPORT_ENABLED` нельзя включать при `DEBUG=false`
+независимо от выбранного provider, а режим `external` запрещён. Сначала требуется
+отдельная реализация и security-аудит Linux launcher.
 
 Windows поддерживается только для разработки и тестов. Production runtime для
 этой интеграции должен быть Linux.
@@ -267,12 +267,14 @@ removed/no-op и не управляет доступностью input. Image i
 
 ## Subprocess и JSONL
 
-Общий deadline начинается до `Popen` и охватывает spawn, writer thread, bounded
-readers и ожидание. Ошибки workers передаются main thread через bounded queue;
-после bounded join обязательно проверяется `is_alive()`. На POSIX PGID
-сохраняется сразу после spawn. На Windows tests используют Job Object с
-kill-on-close, но Windows production не поддерживается. Process tree завершается
-при timeout, overflow, forbidden event и после раннего завершения parent.
+Общий deadline начинается до `Popen` и охватывает spawn, неблокирующие stdin,
+stdout, stderr и ожидание process. Pipe I/O обслуживается одним bounded polling
+loop без reader/writer threads: каждый шаг проверяет deadline, process state,
+output caps и forbidden events. Поэтому provider не может вернуть управление с
+оставшимся I/O worker. На POSIX PGID сохраняется сразу после spawn. На Windows
+tests используют Job Object с kill-on-close, но Windows production не
+поддерживается. Process tree завершается при timeout, overflow, forbidden event
+и после раннего завершения parent.
 
 Общий stdout, stderr и незавершённая JSONL-строка имеют отдельные caps. Event
 stream не сохраняется. Допустимы только lifecycle events 0.142.5, reasoning и

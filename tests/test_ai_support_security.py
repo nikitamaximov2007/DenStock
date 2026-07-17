@@ -157,13 +157,31 @@ def test_security_check_rejects_every_unaudited_required_version(
     assert "security audit" in errors[0].msg or "pinned semantic version" in errors[0].msg
 
 
-@pytest.mark.parametrize("launch_mode", ["external", "direct_dev"])
-def test_production_ai_support_is_always_rejected(settings, tmp_path, launch_mode):
-    configure_codex_security_check(settings, tmp_path)
+@pytest.mark.parametrize(
+    "provider",
+    ["codex_cli", "CODEX_CLI", " codex_cli ", "fake", "disabled", "unknown", ""],
+)
+def test_production_ai_support_is_always_rejected(settings, tmp_path, provider):
+    configure_codex_security_check(settings, tmp_path, provider=provider)
     settings.DEBUG = False
-    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = launch_mode
+    errors = [error for error in run_checks(tags=[Tags.security]) if error.id == "ai_support.E015"]
+    assert len(errors) == 1
+
+
+def test_production_guard_does_not_run_when_feature_is_disabled(settings, tmp_path):
+    configure_codex_security_check(settings, tmp_path)
+    settings.AI_SUPPORT_ENABLED = False
+    settings.DEBUG = False
+    assert "ai_support.E015" not in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+def test_debug_enabled_continues_with_provider_specific_checks(settings, tmp_path):
+    configure_codex_security_check(settings, tmp_path, provider="fake")
+    settings.DEBUG = True
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = ""
     error_ids = {error.id for error in run_checks(tags=[Tags.security])}
-    assert "ai_support.E015" in error_ids
+    assert "ai_support.E015" not in error_ids
+    assert "ai_support.E008" not in error_ids
 
 
 def test_external_mode_is_rejected_even_for_absolute_binary(settings, tmp_path):
