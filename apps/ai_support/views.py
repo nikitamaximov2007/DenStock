@@ -10,6 +10,7 @@ from django.views.decorators.http import require_GET, require_POST
 from apps.accounts import roles
 from apps.accounts.permissions import capability_required
 
+from .contracts import normalize_provider_name
 from .files import private_path
 from .forms import MessageForm, RatingForm, TicketForm, TicketStatusForm
 from .models import (
@@ -34,9 +35,14 @@ from .services import (
 def _provider_state():
     if not settings.AI_SUPPORT_ENABLED:
         return "disabled"
-    if settings.AI_SUPPORT_PROVIDER == "disabled":
+    provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)
+    if provider == "disabled":
         return "unavailable"
-    if settings.AI_SUPPORT_PROVIDER == "codex_cli" and not codex_configuration_ready():
+    if provider == "codex_cli" and not codex_configuration_ready():
+        return "unavailable"
+    if provider == "fake" and not settings.AI_SUPPORT_ALLOW_FAKE_PROVIDER:
+        return "unavailable"
+    if provider not in {"codex_cli", "fake"}:
         return "unavailable"
     return "ready"
 

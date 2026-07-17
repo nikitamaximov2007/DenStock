@@ -7,6 +7,8 @@ from pathlib import Path
 from django.conf import settings
 from django.core.checks import Error, Tags, register
 
+from .contracts import AUDITED_CODEX_CLI_VERSION, normalize_provider_name
+
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
@@ -91,11 +93,12 @@ def _posix_path_errors(home: Path, workspace: Path, launch_mode: str) -> list[Er
 
 @register(Tags.security)
 def codex_runtime_is_isolated(app_configs, **kwargs):
-    if not settings.AI_SUPPORT_ENABLED or settings.AI_SUPPORT_PROVIDER != "codex_cli":
+    provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)
+    if not settings.AI_SUPPORT_ENABLED or provider != "codex_cli":
         return []
     errors = []
     binary = str(settings.AI_SUPPORT_CODEX_BINARY).strip()
-    required_version = str(settings.AI_SUPPORT_CODEX_REQUIRED_VERSION).strip()
+    required_version = str(settings.AI_SUPPORT_CODEX_REQUIRED_VERSION)
     raw_home = str(settings.AI_SUPPORT_CODEX_HOME).strip()
     raw_workspace = str(settings.AI_SUPPORT_CODEX_WORKSPACE).strip()
     launch_mode = str(settings.AI_SUPPORT_CODEX_LAUNCH_MODE).strip().lower()
@@ -120,6 +123,15 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E008",
             )
         )
+    elif required_version != AUDITED_CODEX_CLI_VERSION:
+        errors.append(
+            Error(
+                "AI_SUPPORT_CODEX_REQUIRED_VERSION must equal the audited Codex CLI version "
+                f"{AUDITED_CODEX_CLI_VERSION}. Changing it requires code, tests, and a new "
+                "security audit.",
+                id="ai_support.E008",
+            )
+        )
     resolved_binary = _binary_path(binary) if binary else None
     if (
         resolved_binary is None
@@ -136,25 +148,22 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E010",
             )
         )
+    if not settings.DEBUG:
+        errors.append(
+            Error(
+                "AI support cannot be enabled in production until the audited Linux launcher "
+                "is implemented.",
+                id="ai_support.E015",
+            )
+        )
     if launch_mode == "external":
-        if settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION:
-            errors.append(
-                Error(
-                    "Direct execution must stay disabled in external launcher mode.",
-                    id="ai_support.E011",
-                )
+        errors.append(
+            Error(
+                "External launcher mode is unavailable until a separate launcher implementation "
+                "and security audit are complete.",
+                id="ai_support.E011",
             )
-        if not Path(binary).is_absolute():
-            errors.append(
-                Error(
-                    "External launcher mode requires an absolute binary path.",
-                    id="ai_support.E011",
-                )
-            )
-        if Path(binary).is_symlink():
-            errors.append(
-                Error("External launcher must not be a symlink.", id="ai_support.E011")
-            )
+        )
     elif launch_mode == "direct_dev":
         if not settings.DEBUG or not settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION:
             errors.append(
@@ -177,11 +186,6 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E011",
             )
         )
-    if os.name == "nt" and not settings.DEBUG:
-        errors.append(
-            Error("Windows is not a supported AI support production runtime.", id="ai_support.E015")
-        )
-
     limits = (
         settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS,
         settings.AI_SUPPORT_CODEX_MAX_OUTPUT_BYTES,

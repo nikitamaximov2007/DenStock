@@ -3,11 +3,13 @@ import logging
 import os
 import stat
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
+from apps.ai_support.contracts import AUDITED_CODEX_CLI_VERSION, normalize_provider_name
 from apps.ai_support.knowledge import KnowledgeChunk, retrieve
 from apps.ai_support.prompts import SYSTEM_RULES, build_system_instruction
 from apps.ai_support.providers import codex_cli
@@ -90,7 +92,7 @@ def successful_boundary(args, **kwargs):
     if args == ["codex-fixture", "--version"]:
         return ProcessOutcome(0, b"codex-cli 0.142.5\n", b"")
     if "login" in args:
-        return ProcessOutcome(0, b"Logged in using ChatGPT\n", b"")
+        return ProcessOutcome(0, b"", b"Logged in using ChatGPT\n")
     return ProcessOutcome(0, jsonl(), b"")
 
 
@@ -108,6 +110,20 @@ def test_provider_contract_for_disabled_and_fake():
     assert fake.status == "completed"
     assert fake.provider == "fake"
     assert set(fake.usage) == {"input_tokens", "output_tokens"}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("codex_cli", "codex_cli"),
+        ("CODEX_CLI", "codex_cli"),
+        ("Codex_Cli", "codex_cli"),
+        ("", ""),
+        ("unknown", "unknown"),
+    ],
+)
+def test_provider_name_normalization_is_shared(value, expected):
+    assert normalize_provider_name(value) == expected
 
 
 def test_registry_requires_explicit_safe_launch_mode(settings, tmp_path):
@@ -131,6 +147,42 @@ def test_registry_requires_explicit_safe_launch_mode(settings, tmp_path):
     assert isinstance(get_provider(), CodexCliProvider)
 
 
+@pytest.mark.parametrize("provider_name", ["codex_cli", "CODEX_CLI", "Codex_Cli", " codex_cli "])
+def test_registry_uses_shared_codex_provider_normalization(settings, tmp_path, provider_name):
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = provider_name
+    settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = AUDITED_CODEX_CLI_VERSION
+    settings.AI_SUPPORT_CODEX_HOME = str(tmp_path / "home")
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(tmp_path / "runtime")
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "direct_dev"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
+    settings.DEBUG = True
+    assert isinstance(get_provider(), CodexCliProvider)
+
+
+@pytest.mark.parametrize("provider_name", ["", "unknown"])
+def test_registry_rejects_empty_and_unknown_provider_names(settings, provider_name):
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = provider_name
+    assert isinstance(get_provider(), DisabledProvider)
+
+
+def test_registry_rejects_external_mode_until_launcher_exists(settings, tmp_path):
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = "codex_cli"
+    settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = AUDITED_CODEX_CLI_VERSION
+    settings.AI_SUPPORT_CODEX_HOME = str(tmp_path / "home")
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(tmp_path / "runtime")
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "external"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = False
+    settings.DEBUG = False
+    assert isinstance(get_provider(), DisabledProvider)
+
+
 def test_disabled_feature_never_checks_codex_version(settings, monkeypatch):
     settings.AI_SUPPORT_ENABLED = False
     monkeypatch.setattr(
@@ -151,7 +203,7 @@ def test_codex_provider_builds_pinned_safe_commands_and_file_modes(monkeypatch, 
         if args == ["codex-fixture", "--version"]:
             return ProcessOutcome(0, b"codex-cli 0.142.5\n", b"")
         if "login" in args:
-            return ProcessOutcome(0, b"Logged in using ChatGPT\n", b"")
+            return ProcessOutcome(0, b"", b"Logged in using ChatGPT\n")
         schema = Path(args[args.index("--output-schema") + 1])
         image = Path(args[args.index("--image") + 1])
         request_dir = Path(kwargs["cwd"])
@@ -233,6 +285,9 @@ def test_codex_provider_builds_pinned_safe_commands_and_file_modes(monkeypatch, 
     ("version", "expected_calls"),
     [
         (ProcessOutcome(0, b"codex-cli 0.142.4\n", b""), 1),
+        (ProcessOutcome(0, b"codex-cli 0.142.6\n", b""), 1),
+        (ProcessOutcome(0, b"codex-cli 0.143.0\n", b""), 1),
+        (ProcessOutcome(0, b"", b""), 1),
         (ProcessOutcome(0, b"Codex 0.142.5\n", b""), 1),
         (ProcessOutcome(0, b"codex-cli 0.142.5 extra\n", b""), 1),
         (ProcessOutcome(1, b"codex-cli 0.142.5\n", b""), 1),
@@ -255,15 +310,52 @@ def test_codex_version_mismatch_fails_before_auth(monkeypatch, tmp_path, version
 
 
 @pytest.mark.parametrize(
+    "required_version",
+    ["0.142.4", "0.142.6", "0.143.0", "", "not-a-version"],
+)
+def test_unaudited_required_version_fails_before_any_process(
+    monkeypatch, tmp_path, required_version
+):
+    provider, _, _ = make_provider(tmp_path, required_version=required_version)
+    monkeypatch.setattr(
+        codex_cli,
+        "_run_process",
+        lambda *args, **kwargs: pytest.fail("process must not start"),
+    )
+    result = provider.generate(support_request())
+    assert AUDITED_CODEX_CLI_VERSION == "0.142.5"
+    assert result.error_code == "codex_cli_incompatible"
+
+
+@pytest.mark.parametrize(
     ("auth", "expected"),
     [
-        (ProcessOutcome(0, b"Not logged in\n", b""), "codex_not_authenticated"),
-        (ProcessOutcome(0, b"Logged in using an API key\n", b""), "codex_wrong_auth_method"),
-        (ProcessOutcome(0, b"Logged in using Agent Identity\n", b""), "codex_wrong_auth_method"),
+        (ProcessOutcome(1, b"", b"Not logged in\n"), "codex_not_authenticated"),
+        (
+            ProcessOutcome(0, b"", b"Logged in using an API key - sk-proj-***ABCDE\n"),
+            "codex_wrong_auth_method",
+        ),
+        (ProcessOutcome(0, b"", b"Logged in using access token\n"), "codex_wrong_auth_method"),
+        (
+            ProcessOutcome(0, b"", b"Logged in using Agent Identity\n"),
+            "codex_wrong_auth_method",
+        ),
         (ProcessOutcome(0, b"", b""), "codex_auth_status_unknown"),
-        (ProcessOutcome(0, b"Logged in using ChatGPT extra\n", b""), "codex_auth_status_unknown"),
-        (ProcessOutcome(0, b"Logged in using ChatGPT\n", b"warning"), "codex_auth_status_unknown"),
-        (ProcessOutcome(1, b"Logged in using ChatGPT\n", b""), "codex_auth_status_unknown"),
+        (ProcessOutcome(0, b"Logged in using ChatGPT\n", b""), "codex_auth_status_unknown"),
+        (ProcessOutcome(0, b"", b"unknown status\n"), "codex_auth_status_unknown"),
+        (
+            ProcessOutcome(
+                0,
+                b"",
+                b"Logged in using ChatGPT\nLogged in using an API key - sk-proj-***ABCDE\n",
+            ),
+            "codex_auth_status_unknown",
+        ),
+        (
+            ProcessOutcome(0, b"", b"warning\nLogged in using ChatGPT\n"),
+            "codex_auth_status_unknown",
+        ),
+        (ProcessOutcome(1, b"", b"Logged in using ChatGPT\n"), "codex_auth_status_unknown"),
         (ProcessOutcome(-1, b"", b"", "provider_timeout"), "provider_timeout"),
     ],
 )
@@ -304,7 +396,7 @@ def test_codex_provider_normalizes_exec_failures(monkeypatch, tmp_path, outcome,
         if args == ["codex-fixture", "--version"]:
             return ProcessOutcome(0, b"codex-cli 0.142.5\n", b"")
         if "login" in args:
-            return ProcessOutcome(0, b"Logged in using ChatGPT\n", b"")
+            return ProcessOutcome(0, b"", b"Logged in using ChatGPT\n")
         return outcome
 
     monkeypatch.setattr(codex_cli, "_run_process", fake_run)
@@ -321,7 +413,7 @@ def test_codex_provider_does_not_log_prompt_auth_or_stderr(monkeypatch, tmp_path
         if args == ["codex-fixture", "--version"]:
             return ProcessOutcome(0, b"codex-cli 0.142.5\n", b"")
         if "login" in args:
-            return ProcessOutcome(0, b"Logged in using ChatGPT\n", b"")
+            return ProcessOutcome(0, b"", b"Logged in using ChatGPT\n")
         return ProcessOutcome(1, b"", b"STDERR_SECRET")
 
     monkeypatch.setattr(codex_cli, "_run_process", fake_run)
@@ -467,6 +559,127 @@ def test_run_process_uses_stdin_without_shell(tmp_path):
     )
     assert outcome.returncode == 0
     assert outcome.stdout == b"prompt-through-stdin"
+
+
+@pytest.mark.parametrize("worker", ["stdout", "stderr", "writer"])
+def test_run_process_propagates_worker_errors_and_leaves_no_threads(
+    monkeypatch, tmp_path, worker
+):
+    original_drain = codex_cli._drain_stream
+
+    if worker == "writer":
+        monkeypatch.setattr(
+            codex_cli,
+            "_write_stdin",
+            lambda *args: (_ for _ in ()).throw(OSError("writer failed")),
+        )
+    else:
+
+        def drain(stream, limit, chunks, overflow, forbidden_event=None):
+            is_selected = (worker == "stdout") == (forbidden_event is not None)
+            if is_selected:
+                raise OSError(f"{worker} reader failed")
+            return original_drain(stream, limit, chunks, overflow, forbidden_event)
+
+        monkeypatch.setattr(codex_cli, "_drain_stream", drain)
+
+    script = "import time; time.sleep(10)"
+    outcome = codex_cli._run_process(
+        [sys.executable, "-c", script],
+        stdin=b"prompt",
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=3,
+        max_stdout_bytes=1024,
+        max_stderr_bytes=1024,
+        inspect_events=True,
+    )
+    assert outcome.error_code == "provider_unavailable"
+    assert not any(
+        thread.name.startswith("ai-support-codex-") for thread in threading.enumerate()
+    )
+
+
+class FakeThread:
+    def __init__(self):
+        self.alive = True
+        self.joins = 0
+
+    def join(self, timeout):
+        self.joins += 1
+
+    def is_alive(self):
+        return self.alive
+
+
+class FakeStream:
+    def __init__(self, thread, *, releases=True):
+        self.thread = thread
+        self.releases = releases
+        self.closes = 0
+
+    def close(self):
+        self.closes += 1
+        if self.releases:
+            self.thread.alive = False
+
+
+class FakeTree:
+    def __init__(self):
+        self.terminations = 0
+
+    def terminate(self):
+        self.terminations += 1
+
+
+def test_second_join_closes_stream_and_releases_reader():
+    thread = FakeThread()
+    stream = FakeStream(thread)
+    tree = FakeTree()
+    handles = [codex_cli._ThreadHandle(thread, stream)]
+    assert codex_cli._join_io_threads(handles, tree, timeout=0) is True
+    assert thread.joins == 2
+    assert stream.closes == 1
+    assert tree.terminations == 1
+
+
+def test_thread_alive_after_second_join_fails_closed():
+    thread = FakeThread()
+    stream = FakeStream(thread, releases=False)
+    tree = FakeTree()
+    handles = [codex_cli._ThreadHandle(thread, stream)]
+    assert codex_cli._join_io_threads(handles, tree, timeout=0) is False
+    assert thread.joins == 2
+    assert stream.closes == 1
+    assert tree.terminations == 1
+
+
+def test_strict_deadline_accepts_before_and_rejects_at_or_after_boundary():
+    assert codex_cli._strict_deadline_error("", 10.0, now=9.999) == ""
+    assert codex_cli._strict_deadline_error("", 10.0, now=10.0) == "provider_timeout"
+    assert codex_cli._strict_deadline_error("", 10.0, now=10.001) == "provider_timeout"
+    assert (
+        codex_cli._strict_deadline_error("codex_forbidden_tool_event", 10.0, now=11.0)
+        == "codex_forbidden_tool_event"
+    )
+
+
+def test_valid_jsonl_does_not_override_process_timeout(tmp_path):
+    script = (
+        "import sys,time; "
+        f"sys.stdout.buffer.write({jsonl()!r}); sys.stdout.flush(); time.sleep(10)"
+    )
+    outcome = codex_cli._run_process(
+        [sys.executable, "-c", script],
+        stdin=b"",
+        cwd=tmp_path,
+        env=os.environ.copy(),
+        timeout_seconds=1,
+        max_stdout_bytes=65536,
+        max_stderr_bytes=1024,
+        inspect_events=True,
+    )
+    assert outcome.error_code == "provider_timeout"
 
 
 def test_timeout_covers_child_that_never_reads_stdin(tmp_path):

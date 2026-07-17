@@ -333,6 +333,7 @@ def test_stale_active_request_is_recovered(support_user, support_settings):
     "error_code",
     [
         "provider_timeout",
+        "provider_unavailable",
         "codex_not_authenticated",
         "codex_cli_incompatible",
         "provider_invalid_output",

@@ -27,7 +27,7 @@ class Command(BaseCommand):
                 workspace,
                 older_than_hours=options["older_than_hours"],
             )
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             raise CommandError("Codex runtime workspace небезопасен или недоступен.") from exc
         self.stdout.write(f"AI SUPPORT RUNTIME PURGE PLAN: directories={len(candidates)}")
         for candidate in candidates:
@@ -38,7 +38,7 @@ class Command(BaseCommand):
         for candidate in candidates:
             try:
                 delete_request_directory(workspace, candidate)
-            except (OSError, ValueError) as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 raise CommandError(
                     "Runtime directory changed during cleanup; deletion stopped."
                 ) from exc

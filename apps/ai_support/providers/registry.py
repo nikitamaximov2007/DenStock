@@ -1,11 +1,13 @@
 from django.conf import settings
 
+from apps.ai_support.contracts import normalize_provider_name
+
 from .disabled import DisabledProvider
 
 
 def codex_configuration_ready() -> bool:
     launch_mode = settings.AI_SUPPORT_CODEX_LAUNCH_MODE.strip().lower()
-    launch_allowed = launch_mode == "external" or (
+    launch_allowed = (
         launch_mode == "direct_dev"
         and settings.DEBUG
         and settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION
@@ -24,7 +26,7 @@ def codex_configuration_ready() -> bool:
 def get_provider():
     if not settings.AI_SUPPORT_ENABLED:
         return DisabledProvider("feature_disabled")
-    provider = settings.AI_SUPPORT_PROVIDER.strip().lower()
+    provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)
     if provider == "disabled":
         return DisabledProvider("provider_disabled")
     if provider == "fake":

@@ -1,5 +1,6 @@
 import json
 import os
+import queue
 import re
 import signal
 import subprocess
@@ -10,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from apps.ai_support.contracts import AUDITED_CODEX_CLI_VERSION
 from apps.ai_support.runtime import validated_local_directory
 
 from .base import SupportRequest, SupportResult
@@ -25,11 +27,18 @@ SAFE_THREAD_ID_PATTERN = re.compile(
 CHATGPT_AUTH_OUTPUTS = {b"Logged in using ChatGPT\n", b"Logged in using ChatGPT\r\n"}
 SIGNED_OUT_OUTPUTS = {b"Not logged in\n", b"Not logged in\r\n"}
 WRONG_AUTH_OUTPUTS = {
-    b"Logged in using an API key\n",
-    b"Logged in using an API key\r\n",
     b"Logged in using Agent Identity\n",
     b"Logged in using Agent Identity\r\n",
+    b"Logged in using access token\n",
+    b"Logged in using access token\r\n",
+    b"Logged in using personal access token\n",
+    b"Logged in using personal access token\r\n",
+    b"Logged in using Amazon Bedrock API key\n",
+    b"Logged in using Amazon Bedrock API key\r\n",
 }
+API_KEY_AUTH_PATTERN = re.compile(
+    rb"Logged in using an API key - (?:\*{3}|[A-Za-z0-9_-]{8}\*{3}[A-Za-z0-9_-]{5})\r?\n"
+)
 QUOTA_MARKERS = ("usage limit", "quota exceeded", "rate limit", "limit reached")
 PASSIVE_ITEM_TYPES = {"agent_message", "reasoning"}
 KNOWN_EVENT_TYPES = {
@@ -142,6 +151,12 @@ class ProcessOutcome:
     error_code: str = ""
 
 
+@dataclass(frozen=True)
+class _ThreadHandle:
+    thread: threading.Thread
+    stream: object
+
+
 class CodexOutputError(ValueError):
     def __init__(self, code: str):
         super().__init__(code)
@@ -220,13 +235,48 @@ def _write_stdin(stream, content: bytes) -> None:
         for offset in range(0, len(content), 64 * 1024):
             stream.write(content[offset : offset + 64 * 1024])
             stream.flush()
-    except (BrokenPipeError, OSError, ValueError):
-        pass
     finally:
+        stream.close()
+
+
+def _capture_thread_error(
+    errors: queue.Queue[tuple[str, BaseException]], name: str, target, *args
+) -> None:
+    try:
+        target(*args)
+    except BaseException as exc:
         try:
-            stream.close()
-        except (OSError, ValueError):
+            errors.put_nowait((name, exc))
+        except queue.Full:
             pass
+
+
+def _close_stream(stream) -> None:
+    try:
+        stream.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _join_io_threads(handles: list[_ThreadHandle], tree, *, timeout: float = 2) -> bool:
+    for handle in handles:
+        handle.thread.join(timeout=timeout)
+    alive = [handle for handle in handles if handle.thread.is_alive()]
+    if not alive:
+        return True
+    tree.terminate()
+    for handle in alive:
+        _close_stream(handle.stream)
+    for handle in alive:
+        handle.thread.join(timeout=timeout)
+    return not any(handle.thread.is_alive() for handle in handles)
+
+
+def _strict_deadline_error(error_code: str, deadline: float, *, now: float | None = None) -> str:
+    current = time.monotonic() if now is None else now
+    if not error_code and current >= deadline:
+        return "provider_timeout"
+    return error_code
 
 
 if os.name == "nt":
@@ -386,27 +436,47 @@ def _run_process(
     stdout_overflow = threading.Event()
     stderr_overflow = threading.Event()
     forbidden_event = threading.Event()
+    thread_errors: queue.Queue[tuple[str, BaseException]] = queue.Queue(maxsize=3)
     writer_thread = threading.Thread(
-        target=_write_stdin,
-        args=(process.stdin, stdin),
+        target=_capture_thread_error,
+        args=(thread_errors, "stdin", _write_stdin, process.stdin, stdin),
+        name="ai-support-codex-stdin",
         daemon=True,
     )
     stdout_thread = threading.Thread(
-        target=_drain_stream,
+        target=_capture_thread_error,
         args=(
+            thread_errors,
+            "stdout",
+            _drain_stream,
             process.stdout,
             max_stdout_bytes,
             stdout_chunks,
             stdout_overflow,
             forbidden_event if inspect_events else None,
         ),
+        name="ai-support-codex-stdout",
         daemon=True,
     )
     stderr_thread = threading.Thread(
-        target=_drain_stream,
-        args=(process.stderr, max_stderr_bytes, stderr_chunks, stderr_overflow),
+        target=_capture_thread_error,
+        args=(
+            thread_errors,
+            "stderr",
+            _drain_stream,
+            process.stderr,
+            max_stderr_bytes,
+            stderr_chunks,
+            stderr_overflow,
+        ),
+        name="ai-support-codex-stderr",
         daemon=True,
     )
+    thread_handles = [
+        _ThreadHandle(writer_thread, process.stdin),
+        _ThreadHandle(stdout_thread, process.stdout),
+        _ThreadHandle(stderr_thread, process.stderr),
+    ]
     writer_thread.start()
     stdout_thread.start()
     stderr_thread.start()
@@ -423,20 +493,22 @@ def _run_process(
             if stdout_overflow.is_set() or stderr_overflow.is_set():
                 error_code = "provider_output_too_large"
                 break
+            if not thread_errors.empty():
+                error_code = "provider_unavailable"
+                break
             if time.monotonic() >= deadline:
                 error_code = "provider_timeout"
                 break
             time.sleep(0.01)
         tree.terminate()
-        writer_thread.join(timeout=2)
-        stdout_thread.join(timeout=2)
-        stderr_thread.join(timeout=2)
+        all_threads_stopped = _join_io_threads(thread_handles, tree)
         if not error_code and forbidden_event.is_set():
             error_code = "codex_forbidden_tool_event"
         if not error_code and (stdout_overflow.is_set() or stderr_overflow.is_set()):
             error_code = "provider_output_too_large"
-        if not error_code and time.monotonic() >= deadline and process.returncode is None:
-            error_code = "provider_timeout"
+        if not error_code and (not thread_errors.empty() or not all_threads_stopped):
+            error_code = "provider_unavailable"
+        error_code = _strict_deadline_error(error_code, deadline)
         return ProcessOutcome(
             returncode=process.returncode if process.returncode is not None else -1,
             stdout=b"".join(stdout_chunks),
@@ -447,10 +519,7 @@ def _run_process(
         tree.terminate()
         tree.close()
         for stream in (process.stdin, process.stdout, process.stderr):
-            try:
-                stream.close()
-            except (OSError, ValueError):
-                pass
+            _close_stream(stream)
 
 
 def _minimal_environment(codex_home: Path, temporary_root: Path) -> dict[str, str]:
@@ -648,32 +717,40 @@ class CodexCliProvider:
         if outcome.error_code or outcome.returncode != 0 or outcome.stderr:
             return False
         match = VERSION_PATTERN.fullmatch(outcome.stdout)
-        return bool(match and match.group(1).decode("ascii") == self.required_version)
+        return bool(
+            self.required_version == AUDITED_CODEX_CLI_VERSION
+            and match
+            and match.group(1).decode("ascii") == AUDITED_CODEX_CLI_VERSION
+        )
 
     @staticmethod
     def _auth_error(outcome: ProcessOutcome) -> str:
         if outcome.error_code:
             return outcome.error_code
-        if outcome.returncode != 0 or outcome.stderr:
+        if outcome.stdout:
             return "codex_auth_status_unknown"
-        if outcome.stdout in CHATGPT_AUTH_OUTPUTS:
+        if outcome.returncode == 0 and outcome.stderr in CHATGPT_AUTH_OUTPUTS:
             return ""
-        if outcome.stdout in SIGNED_OUT_OUTPUTS:
+        if outcome.returncode == 1 and outcome.stderr in SIGNED_OUT_OUTPUTS:
             return "codex_not_authenticated"
-        if outcome.stdout in WRONG_AUTH_OUTPUTS:
+        if outcome.returncode == 0 and (
+            outcome.stderr in WRONG_AUTH_OUTPUTS
+            or API_KEY_AUTH_PATTERN.fullmatch(outcome.stderr)
+        ):
             return "codex_wrong_auth_method"
         return "codex_auth_status_unknown"
 
     def generate(self, request: SupportRequest) -> SupportResult:
         started = time.monotonic()
-        configured = (
-            self.model
-            and self.binary
-            and SETTING_VERSION_PATTERN.fullmatch(self.required_version)
-        )
-        if not configured or not self.slots.acquire(blocking=False):
-            code = "provider_capacity" if configured else "provider_not_configured"
-            return self._error(code, started)
+        if not self.model or not self.binary:
+            return self._error("provider_not_configured", started)
+        if (
+            not SETTING_VERSION_PATTERN.fullmatch(self.required_version)
+            or self.required_version != AUDITED_CODEX_CLI_VERSION
+        ):
+            return self._error("codex_cli_incompatible", started)
+        if not self.slots.acquire(blocking=False):
+            return self._error("provider_capacity", started)
         try:
             try:
                 home, workspace = self._validated_paths()

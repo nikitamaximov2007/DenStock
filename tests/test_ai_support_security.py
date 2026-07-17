@@ -14,6 +14,7 @@ from django.urls import reverse
 from PIL import Image, ImageDraw
 
 from apps.accounts import roles
+from apps.ai_support.contracts import AUDITED_CODEX_CLI_VERSION
 from apps.ai_support.diagnostics import (
     canonical_public_url,
     safe_diagnostic_snapshot,
@@ -39,6 +40,27 @@ FORBIDDEN_SERVICE_MODULES = {
     "apps.warehouse.services",
     "apps.writeoffs.services",
 }
+
+
+def configure_codex_security_check(settings, tmp_path, *, provider="codex_cli"):
+    home = tmp_path / "codex-home"
+    workspace = tmp_path / "runtime"
+    home.mkdir(exist_ok=True)
+    workspace.mkdir(exist_ok=True)
+    if os.name != "nt":
+        home.chmod(0o700)
+        workspace.chmod(0o700)
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = provider
+    settings.DEBUG = True
+    settings.AI_SUPPORT_CODEX_BINARY = sys.executable
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = AUDITED_CODEX_CLI_VERSION
+    settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
+    settings.AI_SUPPORT_CODEX_HOME = str(home)
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(workspace)
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "direct_dev"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
 
 
 def test_ai_support_has_no_mutation_service_sql_or_url_fetch_imports(settings):
@@ -115,6 +137,46 @@ def test_codex_runtime_security_check_requires_isolated_paths(settings, tmp_path
     } & {f"ai_support.E{number:03d}" for number in range(2, 16)}
     settings.AI_SUPPORT_CODEX_WORKSPACE = str(Path(settings.BASE_DIR) / "runtime")
     assert "ai_support.E006" in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+@pytest.mark.parametrize("provider", ["codex_cli", "CODEX_CLI", "Codex_Cli", " codex_cli "])
+def test_codex_provider_variants_run_the_same_security_checks(settings, tmp_path, provider):
+    configure_codex_security_check(settings, tmp_path, provider=provider)
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = ""
+    assert "ai_support.E008" in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+@pytest.mark.parametrize("required_version", ["0.142.4", "0.142.6", "0.143.0", "", "bad"])
+def test_security_check_rejects_every_unaudited_required_version(
+    settings, tmp_path, required_version
+):
+    configure_codex_security_check(settings, tmp_path)
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = required_version
+    errors = [error for error in run_checks(tags=[Tags.security]) if error.id == "ai_support.E008"]
+    assert len(errors) == 1
+    assert "security audit" in errors[0].msg or "pinned semantic version" in errors[0].msg
+
+
+@pytest.mark.parametrize("launch_mode", ["external", "direct_dev"])
+def test_production_ai_support_is_always_rejected(settings, tmp_path, launch_mode):
+    configure_codex_security_check(settings, tmp_path)
+    settings.DEBUG = False
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = launch_mode
+    error_ids = {error.id for error in run_checks(tags=[Tags.security])}
+    assert "ai_support.E015" in error_ids
+
+
+def test_external_mode_is_rejected_even_for_absolute_binary(settings, tmp_path):
+    configure_codex_security_check(settings, tmp_path)
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "external"
+    settings.AI_SUPPORT_CODEX_BINARY = sys.executable
+    assert "ai_support.E011" in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+def test_direct_dev_requires_explicit_opt_in(settings, tmp_path):
+    configure_codex_security_check(settings, tmp_path)
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = False
+    assert "ai_support.E011" in {error.id for error in run_checks(tags=[Tags.security])}
 
 
 def test_codex_security_checks_pin_binary_concurrency_and_launcher(settings, tmp_path):

@@ -9,6 +9,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from .contracts import normalize_provider_name
 from .diagnostics import canonical_public_url, safe_diagnostic_snapshot, safe_route_context
 from .files import NormalizedImage, delete_private_file, normalize_image, save_normalized_image
 from .knowledge import retrieve
@@ -290,7 +291,7 @@ def _provider_failure(code: str = "provider_unavailable") -> SupportResult:
             f"{SAFE_ERROR_TEXT.get(code, 'ИИ-поддержка временно недоступна')} "
             "Вы можете создать ручное обращение разработчику."
         ),
-        provider=str(settings.AI_SUPPORT_PROVIDER or "disabled")[:40],
+        provider=(normalize_provider_name(settings.AI_SUPPORT_PROVIDER) or "disabled")[:40],
         model=str(settings.AI_SUPPORT_CODEX_MODEL or "")[:120],
         status="failed",
         error_code=code,
