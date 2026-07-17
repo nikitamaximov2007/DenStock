@@ -22,7 +22,6 @@ class SupportRequest:
     route_context: dict[str, str]
     user_role: str
     public_base_url: str
-    max_output_tokens: int
     history: tuple[SupportTurn, ...] = ()
     image: SupportImage | None = None
 

@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import timedelta
 
@@ -59,6 +60,7 @@ def support_settings(settings, tmp_path):
     settings.AI_SUPPORT_ALLOW_FAKE_PROVIDER = True
     settings.AI_SUPPORT_CODEX_MODEL = "fake-model"
     settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS = 20
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
     settings.DENSTOCK_PUBLIC_BASE_URL = "https://185-250-44-206.sslip.io/"
     settings.PRIVATE_MEDIA_ROOT = tmp_path / "private"
     settings.AI_SUPPORT_RATE_LIMIT = 5
@@ -278,7 +280,7 @@ def test_global_runtime_capacity_blocks_another_user(
 ):
     first = make_support_user("capacity-first")
     second = make_support_user("capacity-second")
-    support_settings.AI_SUPPORT_CODEX_MAX_CONCURRENT = 1
+    support_settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
     SupportRuntimeGate.objects.get(pk=1)
     SupportUsageDay.objects.create(
         user=first,
@@ -325,6 +327,121 @@ def test_stale_active_request_is_recovered(support_user, support_settings):
     assert stale.error_code == "stale_processing"
     assert usage.active_request_token is None
     assert result.assistant_message is not None
+
+
+@pytest.mark.parametrize(
+    "error_code",
+    [
+        "provider_timeout",
+        "codex_not_authenticated",
+        "codex_cli_incompatible",
+        "provider_invalid_output",
+        "codex_forbidden_tool_event",
+        "provider_output_too_large",
+        "codex_invalid_usage",
+    ],
+)
+def test_global_gate_is_released_for_every_provider_failure(
+    monkeypatch, support_user, support_settings, error_code
+):
+    class FailedProvider:
+        def generate(self, request):
+            return SupportResult(
+                text="safe failure",
+                provider="codex_cli",
+                model="test",
+                status="failed",
+                error_code=error_code,
+            )
+
+    monkeypatch.setattr("apps.ai_support.services.get_provider", lambda: FailedProvider())
+    conversation = SupportConversation.objects.create(owner=support_user)
+    send_message(
+        conversation=conversation,
+        user=support_user,
+        text="Проверка освобождения слота",
+        token=uuid.uuid4(),
+    )
+    usage = SupportUsageDay.objects.get(user=support_user, date=timezone.localdate())
+    assert usage.active_request_token is None
+    assert usage.active_started_at is None
+
+
+def test_invalid_provider_usage_is_not_stored_or_added_to_quota(
+    monkeypatch, support_user, support_settings
+):
+    class InvalidUsageProvider:
+        def generate(self, request):
+            return SupportResult(
+                text="Ответ",
+                provider="fixture",
+                model="fixture",
+                status="completed",
+                usage={"input_tokens": True, "output_tokens": 10**30},
+            )
+
+    monkeypatch.setattr(
+        "apps.ai_support.services.get_provider", lambda: InvalidUsageProvider()
+    )
+    conversation = SupportConversation.objects.create(owner=support_user)
+    result = send_message(
+        conversation=conversation,
+        user=support_user,
+        text="Проверка usage",
+        token=uuid.uuid4(),
+    )
+    usage = SupportUsageDay.objects.get(user=support_user, date=timezone.localdate())
+    assert result.assistant_message.usage == {}
+    assert usage.input_tokens == 0
+    assert usage.output_tokens == 0
+
+
+def test_untrusted_provider_request_id_cannot_inject_logs(
+    monkeypatch, caplog, support_user, support_settings
+):
+    class InjectedRequestIdProvider:
+        def generate(self, request):
+            return SupportResult(
+                text="Ответ",
+                provider="fixture",
+                model="fixture",
+                status="completed",
+                request_id="safe\nFORGED_LOG_ENTRY\tvalue",
+            )
+
+    monkeypatch.setattr(
+        "apps.ai_support.services.get_provider", lambda: InjectedRequestIdProvider()
+    )
+    conversation = SupportConversation.objects.create(owner=support_user)
+    with caplog.at_level(logging.INFO, logger="denstock.ai_support"):
+        send_message(
+            conversation=conversation,
+            user=support_user,
+            text="Проверка request id",
+            token=uuid.uuid4(),
+        )
+    assert "FORGED_LOG_ENTRY" not in caplog.text
+
+
+def test_global_gate_is_released_after_unexpected_provider_exception(
+    monkeypatch, support_user, support_settings
+):
+    class BrokenProvider:
+        def generate(self, request):
+            raise RuntimeError("internal secret")
+
+    monkeypatch.setattr("apps.ai_support.services.get_provider", lambda: BrokenProvider())
+    conversation = SupportConversation.objects.create(owner=support_user)
+    result = send_message(
+        conversation=conversation,
+        user=support_user,
+        text="Неожиданная ошибка provider",
+        token=uuid.uuid4(),
+    )
+    usage = SupportUsageDay.objects.get(user=support_user, date=timezone.localdate())
+    assert result.assistant_message.status == SupportMessage.Status.FAILED
+    assert result.assistant_message.error_code == "provider_unavailable"
+    assert usage.active_request_token is None
 
 
 def test_rate_and_daily_quotas(support_user, support_settings):

@@ -1,116 +1,178 @@
 # ИИ-поддержка: архитектура и эксплуатация
 
+## Статус production
+
+ИИ-поддержка по умолчанию выключена. Текущая feature-ветка не создаёт Linux
+user, launcher или production-конфигурацию. В production Django system check не
+позволяет включить provider в режиме прямого запуска. До отдельной реализации и
+аудита внешнего launcher функция должна оставаться выключенной.
+
+Windows поддерживается только для разработки и тестов. Production runtime для
+этой интеграции должен быть Linux.
+
 ## Граница безопасности
 
-`apps.ai_support` является отдельным read-only приложением. HTTP views вызывают
-только собственный service layer, provider interface, локальный лексический
-retrieval и сборщик безопасной диагностики. Генерация выполняется отдельным
-процессом Codex CLI с авторизацией через подписку ChatGPT. OpenAI Python SDK и
-usage-based API в этой схеме не используются. Отдельный API key не требуется,
-отдельная оплата API usage не выполняется. При этом действуют лимиты Codex,
-включённые в конкретную подписку ChatGPT, и они не являются безграничными.
+`apps.ai_support` является read-only приложением. Генерация выполняется Codex
+CLI с авторизацией через подписку ChatGPT. OpenAI Python SDK, API key и
+usage-based API в этой схеме не используются. Действуют лимиты Codex в подписке,
+они не являются безграничными.
 
-У provider нет разрешённых tools, command execution, SQL, web search, MCP,
-plugins, apps, hooks или доступа к изменяющим сервисам DenisStock. Ответ
-сохраняется и выводится как обычный escaped text. Если JSONL содержит tool event,
-процесс останавливается, а пользователю показывается безопасная ошибка.
+Provider не получает mutation services DenisStock, SQL, repository, `.env`, DB,
+Docker socket, SSH, backup, media или server logs. Prompt передаётся через stdin,
+изображение передаётся только как нормализованная временная копия. В application
+log не попадают prompt, stderr, auth output, event stream или изображение.
 
-Prompt injection нельзя исключить полностью. Основные рубежи: отдельный
-системный пользователь, изолированные `CODEX_HOME` и runtime, отсутствие
-репозитория и production-данных в runtime, read-only sandbox, минимальный
-environment, timeout, лимиты вывода и завершение всей process group.
+Защита строится несколькими рубежами:
 
-Никогда не передаются cookies, session/CSRF/Authorization tokens, произвольные
-headers, query string, environment, SQL, логи, дампы БД, email пользователя,
-system prompt как сохранённые данные или полный event stream Codex. Prompt,
-stderr, auth output и изображения не пишутся в application log.
+- pinned Codex CLI version;
+- exact ChatGPT auth status;
+- внешний unprivileged launcher в production;
+- отдельные `CODEX_HOME` и runtime;
+- `read-only` sandbox и `approval_policy="never"`;
+- отключённые tools, apps, plugins, MCP, browser и web search;
+- bounded stdin, stdout, stderr и JSONL line;
+- общий deadline и завершение process tree;
+- строгие JSON Schema и JSONL parser;
+- DB-backed global concurrency gate.
+
+## Требуемая версия
+
+Проверенная и обязательная версия:
+
+```text
+codex-cli 0.142.5
+```
+
+Настройка:
+
+```text
+AI_SUPPORT_CODEX_REQUIRED_VERSION=0.142.5
+```
+
+Перед auth и каждым `exec` provider выполняет `<binary> --version`. При
+несовпадении, неожиданном формате, stderr или non-zero exit дальнейшие процессы
+не запускаются, результат получает `codex_cli_incompatible`.
+
+Ручная проверка выполняется администратором без публикации других данных:
+
+```bash
+sudo -u denstock-ai env CODEX_HOME=/var/lib/denstock-ai/codex-home \
+  /usr/local/libexec/denstock-codex-launcher --version
+```
+
+Автоматическое обновление CLI запрещено. Любая смена версии требует повторного
+compatibility и security audit, проверки config keys, JSONL fixtures, полного
+test suite и отдельной staging-приёмки.
 
 ## Авторизация ChatGPT
 
-Авторизацию выполняет администратор отдельно от HTTP-запроса:
+Login выполняется администратором отдельно от HTTP request:
 
 ```bash
 sudo -u denstock-ai env CODEX_HOME=/var/lib/denstock-ai/codex-home codex login
-sudo -u denstock-ai env CODEX_HOME=/var/lib/denstock-ai/codex-home codex login status
+sudo -u denstock-ai env CODEX_HOME=/var/lib/denstock-ai/codex-home \
+  codex login --device-auth
 ```
 
-Для headless-сервера:
+Ручная проверка:
 
 ```bash
-sudo -u denstock-ai env CODEX_HOME=/var/lib/denstock-ai/codex-home codex login --device-auth
+sudo -u denstock-ai env CODEX_HOME=/var/lib/denstock-ai/codex-home \
+  codex -c 'forced_login_method="chatgpt"' login status
 ```
 
-Provider перед каждым запуском выполняет только неинтерактивный
-`codex login status`. Он не запускает login из web request и принимает только
-статус авторизации через ChatGPT. При отсутствии авторизации пользователь видит
-сообщение о временно не настроенной поддержке и может создать ручное обращение.
+Для 0.142.5 provider принимает только точный stdout
+`Logged in using ChatGPT` с ожидаемым завершением строки, пустым stderr и exit
+code 0. API key или Agent Identity дают `codex_wrong_auth_method`, signed out
+даёт `codex_not_authenticated`, любой изменившийся или смешанный формат даёт
+`codex_auth_status_unknown`. Интерактивный login из Django не запускается.
 
-Файлы credentials находятся только в отдельном `CODEX_HOME`. В частности,
-`auth.json` нельзя копировать в репозиторий, `.env`, Django DB, application log,
-обычный backup DenisStock или пользовательский ответ. Каталог должен принадлежать
-`denstock-ai` и иметь минимальные filesystem permissions.
-
-## Изолированный runtime
-
-До production-включения создайте отдельного Linux user `denstock-ai`. Он не
-должен иметь доступ к `/opt/denstock`, Docker socket, PostgreSQL, SSH, systemd,
-backup, media, deployment directories и домашнему каталогу основного
-пользователя. Настройка пользователя, sudoers и production launcher не входит в
-данную feature-ветку.
-
-`AI_SUPPORT_CODEX_BINARY` в production может указывать на root-owned launcher,
-который передаёт только аргументы Codex и запускает CLI от `denstock-ai`. Не
-разрешайте произвольную командную строку. Web user может иметь доступ только к
-изолированному runtime для создания request-каталога; `CODEX_HOME` с credentials
-ему читать нельзя.
-
-Runtime не должен пересекаться с `BASE_DIR`, public/private media, backup или
-`CODEX_HOME`. Django security check отклоняет такие конфигурации. В request-каталог
-попадают только schema, нормализованная временная копия изображения и временные
-файлы одного запуска. Каталог удаляется после success, timeout, non-zero exit и
-ошибки parsing.
+`auth.json` хранится только в отдельном `CODEX_HOME`. Его запрещено копировать в
+git, `.env`, Django DB, application logs, tickets и backup DenisStock.
 
 ## Настройки
 
-Функция по умолчанию выключена:
+Безопасные defaults:
 
 ```text
 AI_SUPPORT_ENABLED=false
 AI_SUPPORT_PROVIDER=disabled
 AI_SUPPORT_CODEX_BINARY=codex
+AI_SUPPORT_CODEX_REQUIRED_VERSION=0.142.5
 AI_SUPPORT_CODEX_MODEL=
 AI_SUPPORT_CODEX_HOME=/var/lib/denstock-ai/codex-home
 AI_SUPPORT_CODEX_WORKSPACE=/var/lib/denstock-ai/runtime
+AI_SUPPORT_CODEX_LAUNCH_MODE=disabled
+AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION=false
 AI_SUPPORT_CODEX_TIMEOUT_SECONDS=60
 AI_SUPPORT_CODEX_MAX_OUTPUT_BYTES=65536
 AI_SUPPORT_CODEX_MAX_STDERR_BYTES=16384
 AI_SUPPORT_CODEX_MAX_PROMPT_CHARS=24000
 AI_SUPPORT_CODEX_MAX_HISTORY_CHARS=12000
-AI_SUPPORT_CODEX_MAX_CONCURRENT=2
+AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY=1
+AI_SUPPORT_CODEX_RUNTIME_RETENTION_HOURS=24
 ```
 
-После подготовки изоляции задайте `AI_SUPPORT_PROVIDER=codex_cli` и включите
-feature flag. Модель намеренно не зашита: пустой `AI_SUPPORT_CODEX_MODEL`
-считается configuration error. Fake provider разрешается только тестовыми
-settings.
+Модель не зашита. Пустая модель является configuration error. Отдельной
+настройки output tokens нет: CLI 0.142.5 не предоставляет проверенного
+version-pinned ограничения для этого provider. Фактические ограничения задают
+JSON Schema `maxLength`, stdout cap, prompt cap и timeout.
 
-Глобальный лимит процессов сериализуется DB-backed singleton gate и активными
-usage rows. Дополнительный process-local semaphore защищает каждый Django worker.
-Один пользователь не может иметь два активных запроса.
-
-## Команда Codex CLI
-
-Для текущей проверенной версии CLI provider строит массив аргументов, а prompt
-передаёт через stdin. `--image` добавляется только для backend-пути временной
-нормализованной копии:
+Для локальной разработки прямой запуск требует одновременно:
 
 ```text
-codex exec
+DEBUG=true
+AI_SUPPORT_CODEX_LAUNCH_MODE=direct_dev
+AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION=true
+```
+
+Ни одна из этих настроек не подходит production.
+На Windows дополнительно укажите абсолютный путь к native `codex.exe`; npm
+`.cmd`, `.ps1` и extensionless shims не принимаются безопасным subprocess.
+
+## Production launcher contract
+
+Production использует:
+
+```text
+AI_SUPPORT_CODEX_LAUNCH_MODE=external
+AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION=false
+AI_SUPPORT_CODEX_BINARY=/usr/local/libexec/denstock-codex-launcher
+```
+
+Launcher должен быть отдельным root-owned audited executable, а не shell-wrapper
+из этой ветки. Контракт launcher:
+
+- Django web user не запускает Codex напрямую;
+- Codex запускается как отдельный unprivileged user `denstock-ai`;
+- binary Codex и набор допустимых аргументов зафиксированы;
+- произвольная команда, cwd или environment не принимаются;
+- отдельный `CODEX_HOME` недоступен Django user;
+- user не имеет доступа к `/opt/denstock`, `.env`, DB, Docker, SSH, backup и media;
+- доступ разрешён только к request directory текущего запроса;
+- ownership request directory передаётся безопасным механизмом launcher;
+- после процесса доступ отзывается, request directory удаляется;
+- `--version`, `login status` и `exec` проверяются allowlist;
+- launcher не ослабляет config overrides, sandbox или process limits.
+
+До реализации этого контракта `AI_SUPPORT_ENABLED` в production остаётся false.
+
+## Итоговая команда
+
+Provider строит argv, никогда shell string. Сначала запускаются:
+
+```text
+<binary> --version
+<binary> <config-overrides> login status
+```
+
+Затем:
+
+```text
+<binary> <config-overrides> exec
   --ephemeral
   --sandbox read-only
   -c approval_policy="never"
-  -c web_search="disabled"
-  -c mcp_servers={}
   --strict-config
   --skip-git-repo-check
   --ignore-user-config
@@ -123,80 +185,177 @@ codex exec
   -
 ```
 
-У установленной версии нет отдельного флага `--ask-for-approval`, поэтому
-запрет задаётся strict config override `approval_policy="never"`. Запуск всегда
-использует `shell=False`, фиксированный cwd, минимальный environment и новый
-process group. `--output-schema` допускает только непустое строковое поле
-`answer` ограниченной длины. Reasoning и progress игнорируются, hidden reasoning
-и event stream не сохраняются.
+`<config-overrides>` для 0.142.5:
 
-## Knowledge, история и изображения
+```text
+forced_login_method="chatgpt"
+history.persistence="none"
+hide_agent_reasoning=true
+show_raw_agent_reasoning=false
+check_for_update_on_startup=false
+web_search="disabled"
+mcp_servers={}
+apps._default.enabled=false
+analytics.enabled=false
+feedback.enabled=false
+features.apps=false
+features.apply_patch_streaming_events=false
+features.artifact=false
+features.auth_elicitation=false
+features.auto_compaction=false
+features.browser_use=false
+features.browser_use_external=false
+features.browser_use_full_cdp_access=false
+features.chronicle=false
+features.code_mode=false
+features.code_mode_only=false
+features.computer_use=false
+features.current_time_reminder=false
+features.default_mode_request_user_input=false
+features.deferred_executor=false
+features.enable_fanout=false
+features.enable_mcp_apps=false
+features.enable_request_compression=false
+features.exec_permission_approvals=false
+features.fast_mode=false
+features.goals=false
+features.guardian_approval=false
+features.hooks=false
+features.image_generation=false
+features.imagegenext=false
+features.in_app_browser=false
+features.item_ids=false
+features.local_thread_store_compression=false
+features.memories=false
+features.mentions_v2=false
+features.multi_agent=false
+features.multi_agent_v2=false
+features.network_proxy=false
+features.non_prefixed_mcp_tool_names=false
+features.personality=false
+features.plugin_sharing=false
+features.plugins=false
+features.prevent_idle_sleep=false
+features.realtime_conversation=false
+features.remote_compaction_v2=false
+features.remote_plugin=false
+features.request_permissions_tool=false
+features.respect_system_proxy=false
+features.rollout_budget=false
+features.runtime_metrics=false
+features.shell_snapshot=false
+features.shell_tool=false
+features.shell_zsh_fork=false
+features.skill_mcp_dependency_install=false
+features.sleep_tool=false
+features.standalone_web_search=false
+features.terminal_visualization_instructions=false
+features.token_budget=false
+features.tool_call_mcp_elicitation=false
+features.tool_suggest=false
+features.unavailable_dummy_tools=false
+features.unified_exec=false
+features.unified_exec_zsh_fork=false
+features.use_agent_identity=false
+features.use_legacy_landlock=false
+features.web_search_cached=false
+features.web_search_request=false
+features.workspace_dependencies=false
+features.workspace_owner_usage_nudge=false
+```
 
-Production retrieval читает только allowlisted Markdown из
-`apps/ai_support/knowledge_pack/`. Он детерминированный, без сети, выбирает не
-более четырёх фрагментов общим размером до 6000 символов. Репозиторий, тесты,
-старые design docs и operational secrets не индексируются.
+Каждая строка передаётся отдельной парой `-c`, а prompt только через stdin.
+Единственный включённый non-removed feature-флаг: `secret_auth_storage`,
+необходимый для ChatGPT login. `resize_all_images` в 0.142.5 уже помечен как
+removed/no-op и не управляет доступностью input. Image input остаётся явно
+разрешён только через `--image`; image generation выключен.
 
-Каждый запрос является `--ephemeral`. Ограниченная история формируется из Django
-DB, а `codex exec resume` не используется. Разрешено одно JPG, PNG или WEBP
-изображение до 5 МБ и 20 мегапикселей. Pillow полностью декодирует файл,
-запрещает анимацию, удаляет метаданные повторным кодированием и сохраняет файл
-под UUID. Исходное имя не сохраняется.
+## Subprocess и JSONL
 
-`PRIVATE_MEDIA_ROOT` не должен совпадать с `MEDIA_ROOT`. Caddy не получает доступ
-к private media. Файл выдаёт authenticated Django view с ownership или manager
-ticket capability, `Cache-Control: private, no-store` и `nosniff`.
+Общий deadline начинается до `Popen` и охватывает spawn, writer thread, bounded
+readers и ожидание. На POSIX PGID сохраняется сразу после spawn. На Windows tests
+используют Job Object с kill-on-close, но Windows production не поддерживается.
+Process tree завершается при timeout, overflow, forbidden event и после раннего
+завершения parent.
 
-## Права, квоты и деградация
+Общий stdout, stderr и незавершённая JSONL-строка имеют отдельные caps. Event
+stream не сохраняется. Допустимы только lifecycle events 0.142.5, reasoning и
+ровно один completed `agent_message`. Обязателен один `turn.completed`. Command,
+file change, MCP, app, plugin, web search, plan и collaboration items дают
+`codex_forbidden_tool_event`. Неизвестные события fail closed.
 
-`use_ai_support` получают все рабочие роли. `manage_ai_support_tickets` получают
-Администратор и Руководитель. Каждый view проверяет capability на сервере.
-Обычный пользователь видит только свои разговоры и вложения. Manager получает
-только явно выбранный snapshot обращения.
+Usage принимается только как non-boolean integer в диапазоне от 0 до
+1 000 000 000 для каждого поля. Обязательны `input_tokens` и `output_tokens`.
+Некорректный usage даёт `codex_invalid_usage`; service дополнительно не записывает
+невалидные метрики других provider в DB.
 
-DB-backed quota ограничивает запросы в минуту и сутки, числовой token usage,
-один активный запрос пользователя и общий уровень параллельности. Django не
-знает остаток подписки. Usage limit Codex нормализуется как
-`subscription_quota_exceeded`; stderr и credential details не показываются.
-При timeout, ошибке авторизации, исчерпании лимита или выключенном feature flag
-ручное обращение остаётся доступным.
+Thread ID логируется только как валидный UUID. Control characters, newline, tab
+и неизвестный формат отбрасываются.
 
-## Retention
+## Runtime и permissions
 
-Значения по умолчанию: вложения 30 дней, разговоры и обращения 180 дней.
-Команда всегда начинает с dry-run:
+`CODEX_HOME` и workspace должны быть абсолютными, существующими каталогами без
+symlink. Они не могут пересекаться друг с другом, repository, public/private
+media или backup. На POSIX `CODEX_HOME` не доступен group/others, workspace не
+доступен others. Django checks проверяют доступные ownership/mode свойства.
+
+Каждый request directory получает mode `0700`. Schema и screenshot создаются
+через exclusive open с mode `0600`. Prompt не записывается в файл. Обычный
+cleanup выполняется `TemporaryDirectory` после любого результата.
+
+Старые request directories очищаются только ручной dry-run командой:
+
+```bash
+python manage.py purge_ai_support_runtime
+python manage.py purge_ai_support_runtime --confirm
+```
+
+Команда рассматривает только старые реальные каталоги `request-*` внутри
+resolved workspace, не следует по symlink и повторно проверяет containment перед
+удалением. Scheduler не добавлен.
+
+## Concurrency и staging PostgreSQL
+
+Для shared `CODEX_HOME` допустимо только
+`AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY=1`. DB singleton row сериализует claims
+между workers, active usage row удерживает глобальный slot вне транзакции во
+время provider call, а process-local semaphore является дополнительной защитой.
+Slot снимается через `finally` flow при success и всех ошибках. Отдельного
+отрицательного счётчика нет; capacity вычисляется по active tokens. Stale
+recovery сохранён.
+
+Перед production выполните только на staging PostgreSQL:
+
+```bash
+DATABASE_URL=postgres://denstock_test:<password>@127.0.0.1:5432/denstock_test \
+  python -m pytest tests/test_ai_support_postgresql.py -m postgresql \
+  --ds=config.settings.base -q
+```
+
+Production DB для этого теста использовать запрещено.
+
+## Retention и деградация
+
+Приватные вложения и разговоры очищаются существующей dry-run командой:
 
 ```bash
 python manage.py purge_ai_support_data
 python manage.py purge_ai_support_data --confirm
 ```
 
-Текущий offsite backup pipeline не изменён и private screenshots автоматически
-в него не включены. `CODEX_HOME` и credentials также не должны включаться в
-backup DenisStock.
+При incompatible version, auth error, quota, timeout, malformed JSONL или
+выключенном feature flag ручное обращение разработчику остаётся доступным.
 
-## Обновление Codex CLI
+## Контролируемое обновление CLI
 
-1. Оставьте `AI_SUPPORT_ENABLED=false` или `AI_SUPPORT_PROVIDER=disabled`.
-2. Установите новую версию CLI штатным package manager вне репозитория.
-3. Проверьте `codex --version`, `codex exec --help` и наличие используемых флагов.
-4. От `denstock-ai` выполните `codex login status`, не публикуя вывод credentials.
-5. Запустите unit tests с fake subprocess и Django checks.
-6. Выполните отдельную staging-проверку без production data.
-7. Только после ручного решения включите feature flag.
+1. Оставить feature выключенной.
+2. Установить candidate version вне repository без auto-update.
+3. Проверить `codex --version`, `codex exec --help` и `codex features list`.
+4. Сверить каждый config override с reference candidate version.
+5. Обновить pin и реальные JSONL fixtures только после compatibility audit.
+6. Запустить targeted, полный pytest и PostgreSQL staging test.
+7. Выполнить отдельный launcher/security review.
+8. Включать feature только по новому ручному решению владельца.
 
-Если флаги или JSONL contract изменились, provider сначала обновляется и
-проходит полный test suite. Автоматический fallback на API или другой cloud
-provider запрещён.
-
-## Диагностика
-
-Route принимается только как path без query/fragment, проверяется через Django
-`resolve` и allowlist route names. Browser family и viewport нормализуются. App
-commit читается из `DENSTOCK_APP_COMMIT`; HTTP request не запускает git. В логах
-допустимы только UUID, user id, provider/model, status, latency, числовой usage,
-безопасный request id и safe error code.
-
-При недоступности проверьте feature flag, provider, обязательную модель,
-существование и изоляцию runtime-каталогов, права launcher и результат
-`codex login status`. Не запускайте реальный provider из pytest.
+Fallback на API, другой cloud provider или автоматическое ослабление config
+запрещены.

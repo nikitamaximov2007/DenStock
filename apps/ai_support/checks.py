@@ -1,7 +1,13 @@
+import os
+import re
+import shutil
+import stat
 from pathlib import Path
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
+
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
 @register(Tags.security)
@@ -23,13 +29,77 @@ def _overlaps(first: Path, second: Path) -> bool:
     return first == second or first in second.parents or second in first.parents
 
 
+def _contains_symlink(path: Path) -> bool:
+    current = path
+    while True:
+        if current.is_symlink() or current.is_junction():
+            return True
+        if current == current.parent:
+            return False
+        current = current.parent
+
+
+def _positive_integer(value) -> bool:
+    return type(value) is int and value > 0
+
+
+def _binary_path(binary: str) -> Path | None:
+    found = shutil.which(binary)
+    return Path(found).resolve() if found else None
+
+
+def _posix_path_errors(home: Path, workspace: Path, launch_mode: str) -> list[Error]:
+    if os.name == "nt":
+        return []
+    errors = []
+    home_stat = home.stat()
+    workspace_stat = workspace.stat()
+    if stat.S_IMODE(home_stat.st_mode) & 0o077:
+        errors.append(
+            Error(
+                "AI_SUPPORT_CODEX_HOME must not be accessible by group or others.",
+                id="ai_support.E013",
+            )
+        )
+    if stat.S_IMODE(workspace_stat.st_mode) & 0o007:
+        errors.append(
+            Error(
+                "AI_SUPPORT_CODEX_WORKSPACE must not be accessible by others.",
+                id="ai_support.E013",
+            )
+        )
+    if launch_mode == "direct_dev" and (
+        home_stat.st_uid != os.getuid() or workspace_stat.st_uid != os.getuid()
+    ):
+        errors.append(
+            Error(
+                "Direct development Codex paths must be owned by the Django user.",
+                id="ai_support.E013",
+            )
+        )
+    for parent in {home.parent, workspace.parent}:
+        mode = stat.S_IMODE(parent.stat().st_mode)
+        if mode & 0o002 and not mode & stat.S_ISVTX:
+            errors.append(
+                Error(
+                    "Codex runtime parent directories must not be world-writable.",
+                    id="ai_support.E013",
+                )
+            )
+    return errors
+
+
 @register(Tags.security)
 def codex_runtime_is_isolated(app_configs, **kwargs):
     if not settings.AI_SUPPORT_ENABLED or settings.AI_SUPPORT_PROVIDER != "codex_cli":
         return []
     errors = []
+    binary = str(settings.AI_SUPPORT_CODEX_BINARY).strip()
+    required_version = str(settings.AI_SUPPORT_CODEX_REQUIRED_VERSION).strip()
     raw_home = str(settings.AI_SUPPORT_CODEX_HOME).strip()
     raw_workspace = str(settings.AI_SUPPORT_CODEX_WORKSPACE).strip()
+    launch_mode = str(settings.AI_SUPPORT_CODEX_LAUNCH_MODE).strip().lower()
+
     if not settings.AI_SUPPORT_CODEX_MODEL:
         errors.append(Error("AI_SUPPORT_CODEX_MODEL is required.", id="ai_support.E002"))
     if not raw_home or not Path(raw_home).is_absolute():
@@ -43,18 +113,99 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E004",
             )
         )
-    if errors:
-        return errors
-
-    home = Path(raw_home).resolve()
-    workspace = Path(raw_workspace).resolve()
-    if not home.is_dir() or not workspace.is_dir():
+    if not required_version or not VERSION_PATTERN.fullmatch(required_version):
         errors.append(
             Error(
-                "Codex home and workspace must already exist as directories.",
-                id="ai_support.E005",
+                "AI_SUPPORT_CODEX_REQUIRED_VERSION must be a pinned semantic version.",
+                id="ai_support.E008",
             )
         )
+    resolved_binary = _binary_path(binary) if binary else None
+    if (
+        resolved_binary is None
+        or not resolved_binary.is_file()
+        or (os.name != "nt" and not os.access(resolved_binary, os.X_OK))
+    ):
+        errors.append(
+            Error("AI_SUPPORT_CODEX_BINARY does not exist.", id="ai_support.E009")
+        )
+    if settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY != 1:
+        errors.append(
+            Error(
+                "Shared CODEX_HOME requires AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY=1.",
+                id="ai_support.E010",
+            )
+        )
+    if launch_mode == "external":
+        if settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION:
+            errors.append(
+                Error(
+                    "Direct execution must stay disabled in external launcher mode.",
+                    id="ai_support.E011",
+                )
+            )
+        if not Path(binary).is_absolute():
+            errors.append(
+                Error(
+                    "External launcher mode requires an absolute binary path.",
+                    id="ai_support.E011",
+                )
+            )
+        if Path(binary).is_symlink():
+            errors.append(
+                Error("External launcher must not be a symlink.", id="ai_support.E011")
+            )
+    elif launch_mode == "direct_dev":
+        if not settings.DEBUG or not settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION:
+            errors.append(
+                Error(
+                    "Direct Codex execution is allowed only by an explicit development opt-in.",
+                    id="ai_support.E011",
+                )
+            )
+        if os.name == "nt" and (resolved_binary is None or resolved_binary.suffix != ".exe"):
+            errors.append(
+                Error(
+                    "Windows direct_dev mode requires an explicit codex.exe path.",
+                    id="ai_support.E011",
+                )
+            )
+    else:
+        errors.append(
+            Error(
+                "AI support requires external launcher mode or explicit direct_dev mode.",
+                id="ai_support.E011",
+            )
+        )
+    if os.name == "nt" and not settings.DEBUG:
+        errors.append(
+            Error("Windows is not a supported AI support production runtime.", id="ai_support.E015")
+        )
+
+    limits = (
+        settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS,
+        settings.AI_SUPPORT_CODEX_MAX_OUTPUT_BYTES,
+        settings.AI_SUPPORT_CODEX_MAX_STDERR_BYTES,
+        settings.AI_SUPPORT_CODEX_MAX_PROMPT_CHARS,
+        settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY,
+        settings.AI_SUPPORT_CODEX_RUNTIME_RETENTION_HOURS,
+    )
+    if not all(_positive_integer(value) for value in limits):
+        errors.append(
+            Error("Codex runtime limits must be positive integers.", id="ai_support.E007")
+        )
+
+    if (
+        not raw_home
+        or not raw_workspace
+        or not Path(raw_home).is_absolute()
+        or not Path(raw_workspace).is_absolute()
+    ):
+        return errors
+    home_path = Path(raw_home)
+    workspace_path = Path(raw_workspace)
+    home = home_path.resolve()
+    workspace = workspace_path.resolve()
     protected = {
         Path(settings.BASE_DIR).resolve(),
         Path(settings.MEDIA_ROOT).resolve(),
@@ -72,13 +223,17 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E006",
             )
         )
-    limits = (
-        settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS,
-        settings.AI_SUPPORT_CODEX_MAX_OUTPUT_BYTES,
-        settings.AI_SUPPORT_CODEX_MAX_STDERR_BYTES,
-        settings.AI_SUPPORT_CODEX_MAX_PROMPT_CHARS,
-        settings.AI_SUPPORT_CODEX_MAX_CONCURRENT,
-    )
-    if any(value <= 0 for value in limits):
-        errors.append(Error("Codex runtime limits must be positive.", id="ai_support.E007"))
+    if not home_path.is_dir() or not workspace_path.is_dir():
+        errors.append(
+            Error(
+                "Codex home and workspace must already exist as directories.",
+                id="ai_support.E005",
+            )
+        )
+        return errors
+    if _contains_symlink(home_path) or _contains_symlink(workspace_path):
+        errors.append(
+            Error("Codex home and workspace must not use symlinks.", id="ai_support.E012")
+        )
+    errors.extend(_posix_path_errors(home, workspace, launch_mode))
     return errors

@@ -25,6 +25,8 @@ from .providers import get_provider
 from .providers.base import SupportImage, SupportRequest, SupportResult, SupportTurn
 
 logger = logging.getLogger("denstock.ai_support")
+MAX_STORED_USAGE_TOKENS = 1_000_000_000
+POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807
 
 
 class SupportError(Exception):
@@ -68,12 +70,16 @@ SAFE_ERROR_TEXT = {
     "provider_not_configured": "Провайдер ИИ не настроен.",
     "provider_disabled": "Провайдер ИИ выключен.",
     "feature_disabled": "ИИ-поддержка выключена.",
-    "codex_auth_missing": "ИИ-поддержка временно не настроена.",
+    "codex_cli_incompatible": "Версия ИИ-поддержки несовместима с настройками.",
+    "codex_not_authenticated": "ИИ-поддержка временно не настроена.",
+    "codex_wrong_auth_method": "ИИ-поддержка требует авторизацию через ChatGPT.",
+    "codex_auth_status_unknown": "Не удалось безопасно проверить авторизацию ИИ.",
     "subscription_quota_exceeded": "Лимит Codex в подписке временно исчерпан.",
     "provider_output_too_large": "Ответ ИИ превысил безопасный размер.",
     "provider_input_too_large": "Запрос превысил безопасный размер.",
     "provider_invalid_output": "ИИ-поддержка вернула некорректный ответ.",
-    "provider_tool_event": "ИИ-поддержка остановила небезопасное действие.",
+    "codex_forbidden_tool_event": "ИИ-поддержка остановила небезопасное действие.",
+    "codex_invalid_usage": "ИИ-поддержка вернула некорректные метрики.",
     "provider_capacity": "ИИ-поддержка сейчас занята.",
 }
 
@@ -114,16 +120,6 @@ def _claim_request(*, conversation, user, token: uuid.UUID, text: str):
             _recover_stale_usage(previous_active)
             if previous_active.active_request_token:
                 raise ConcurrentRequest
-        active_rows = list(
-            SupportUsageDay.objects.select_for_update().filter(
-                active_request_token__isnull=False
-            )
-        )
-        for active_row in active_rows:
-            _recover_stale_usage(active_row)
-        active_count = sum(bool(row.active_request_token) for row in active_rows)
-        if active_count >= settings.AI_SUPPORT_CODEX_MAX_CONCURRENT:
-            raise ProviderCapacity
         locked_conversation = SupportConversation.objects.select_for_update().get(
             pk=conversation.pk, owner=user
         )
@@ -141,6 +137,16 @@ def _claim_request(*, conversation, user, token: uuid.UUID, text: str):
             return duplicate, assistant, True
         if usage.active_request_token:
             raise ConcurrentRequest
+        active_rows = list(
+            SupportUsageDay.objects.select_for_update().filter(
+                active_request_token__isnull=False
+            )
+        )
+        for active_row in active_rows:
+            _recover_stale_usage(active_row)
+        active_count = sum(bool(row.active_request_token) for row in active_rows)
+        if active_count >= settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY:
+            raise ProviderCapacity
         minute_ago = timezone.now() - timedelta(minutes=1)
         recent = SupportMessage.objects.filter(
             conversation__owner=user,
@@ -191,9 +197,13 @@ def _release_request(
         ).first()
         if not row:
             return
-        usage = usage or {}
-        row.input_tokens += max(int(usage.get("input_tokens", 0) or 0), 0)
-        row.output_tokens += max(int(usage.get("output_tokens", 0) or 0), 0)
+        usage = _safe_usage(usage)
+        row.input_tokens = min(
+            row.input_tokens + usage.get("input_tokens", 0), POSTGRES_BIGINT_MAX
+        )
+        row.output_tokens = min(
+            row.output_tokens + usage.get("output_tokens", 0), POSTGRES_BIGINT_MAX
+        )
         row.active_request_token = None
         row.active_started_at = None
         row.save(
@@ -205,6 +215,27 @@ def _release_request(
                 "updated_at",
             ]
         )
+
+
+def _safe_usage(usage) -> dict[str, int]:
+    if not isinstance(usage, dict):
+        return {}
+    values = {}
+    for key in ("input_tokens", "output_tokens"):
+        value = usage.get(key)
+        if type(value) is not int or not 0 <= value <= MAX_STORED_USAGE_TOKENS:
+            return {}
+        values[key] = value
+    return values
+
+
+def _safe_request_id(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return ""
 
 
 def _attach_image(message: SupportMessage, image: NormalizedImage) -> SupportAttachment:
@@ -248,7 +279,6 @@ def _request_for(
         route_context=route_context,
         user_role=", ".join(roles),
         public_base_url=canonical_public_url(),
-        max_output_tokens=settings.AI_SUPPORT_MAX_OUTPUT_TOKENS,
         history=_history_for(message),
         image=(SupportImage(image.content, image.mime_type) if image else None),
     )
@@ -314,6 +344,7 @@ def send_message(
             if result.status == "completed"
             else SupportMessage.Status.FAILED
         )
+        safe_usage = _safe_usage(result.usage)
         with transaction.atomic():
             locked = SupportMessage.objects.select_for_update().get(pk=message.pk)
             assistant = SupportMessage.objects.create(
@@ -325,14 +356,14 @@ def send_message(
                 provider=result.provider[:40],
                 model=result.model[:120],
                 latency_ms=max(result.latency_ms, 0),
-                usage=result.usage,
+                usage=safe_usage,
                 error_code=result.error_code[:64],
             )
             locked.status = assistant_status
             locked.error_code = result.error_code[:64]
             locked.save(update_fields=["status", "error_code"])
             locked.conversation.save(update_fields=["updated_at"])
-        _release_request(token, user=user, usage=result.usage)
+        _release_request(token, user=user, usage=safe_usage)
         logger.info(
             "ai_support_request conversation=%s message=%s user=%s provider=%s model=%s "
             "status=%s latency_ms=%s input_tokens=%s output_tokens=%s request_id=%s error=%s",
@@ -343,9 +374,9 @@ def send_message(
             result.model,
             result.status,
             result.latency_ms,
-            result.usage.get("input_tokens", 0),
-            result.usage.get("output_tokens", 0),
-            result.request_id,
+            safe_usage.get("input_tokens", 0),
+            safe_usage.get("output_tokens", 0),
+            _safe_request_id(result.request_id),
             result.error_code,
         )
         return SupportFlowResult(message, assistant)

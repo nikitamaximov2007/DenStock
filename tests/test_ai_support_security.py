@@ -1,6 +1,8 @@
 import ast
 import io
 import logging
+import os
+import sys
 import uuid
 from pathlib import Path
 
@@ -72,6 +74,7 @@ def test_ai_support_has_no_mutation_service_sql_or_url_fetch_imports(settings):
     assert "workspace-write" not in source
     assert "--search" not in source
     assert "--yolo" not in source
+    assert "pending +=" not in source
 
 
 def test_api_sdk_and_key_configuration_are_absent(settings):
@@ -93,16 +96,71 @@ def test_codex_runtime_security_check_requires_isolated_paths(settings, tmp_path
     workspace = tmp_path / "runtime"
     home.mkdir()
     workspace.mkdir()
+    if os.name != "nt":
+        home.chmod(0o700)
+        workspace.chmod(0o700)
     settings.AI_SUPPORT_ENABLED = True
     settings.AI_SUPPORT_PROVIDER = "codex_cli"
+    settings.DEBUG = True
+    settings.AI_SUPPORT_CODEX_BINARY = sys.executable
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = "0.142.5"
     settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
     settings.AI_SUPPORT_CODEX_HOME = str(home)
     settings.AI_SUPPORT_CODEX_WORKSPACE = str(workspace)
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "direct_dev"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
     assert not {
         error.id for error in run_checks(tags=[Tags.security])
-    } & {f"ai_support.E{number:03d}" for number in range(2, 8)}
+    } & {f"ai_support.E{number:03d}" for number in range(2, 16)}
     settings.AI_SUPPORT_CODEX_WORKSPACE = str(Path(settings.BASE_DIR) / "runtime")
     assert "ai_support.E006" in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+def test_codex_security_checks_pin_binary_concurrency_and_launcher(settings, tmp_path):
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    if os.name != "nt":
+        home.chmod(0o700)
+        workspace.chmod(0o700)
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = "codex_cli"
+    settings.AI_SUPPORT_CODEX_MODEL = "model"
+    settings.AI_SUPPORT_CODEX_HOME = str(home)
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(workspace)
+    settings.AI_SUPPORT_CODEX_RUNTIME_RETENTION_HOURS = 24
+    settings.AI_SUPPORT_CODEX_BINARY = str(tmp_path / "missing-codex")
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = ""
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 2
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "direct_dev"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
+    settings.DEBUG = False
+    error_ids = {error.id for error in run_checks(tags=[Tags.security])}
+    assert {"ai_support.E008", "ai_support.E009", "ai_support.E010", "ai_support.E011"} <= error_ids
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Symlink creation is privilege-dependent on Windows")
+def test_codex_security_check_rejects_symlinked_runtime(settings, tmp_path):
+    real_home = tmp_path / "real-home"
+    workspace = tmp_path / "workspace"
+    real_home.mkdir(mode=0o700)
+    workspace.mkdir(mode=0o700)
+    linked_home = tmp_path / "linked-home"
+    linked_home.symlink_to(real_home, target_is_directory=True)
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = "codex_cli"
+    settings.DEBUG = True
+    settings.AI_SUPPORT_CODEX_BINARY = sys.executable
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = "0.142.5"
+    settings.AI_SUPPORT_CODEX_MODEL = "model"
+    settings.AI_SUPPORT_CODEX_HOME = str(linked_home)
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(workspace)
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "direct_dev"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
+    assert "ai_support.E012" in {error.id for error in run_checks(tags=[Tags.security])}
 
 
 @pytest.mark.parametrize(

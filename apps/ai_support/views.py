@@ -19,6 +19,7 @@ from .models import (
     SupportMessage,
     SupportRating,
 )
+from .providers.registry import codex_configuration_ready
 from .services import (
     ConcurrentRequest,
     FeatureDisabled,
@@ -35,11 +36,7 @@ def _provider_state():
         return "disabled"
     if settings.AI_SUPPORT_PROVIDER == "disabled":
         return "unavailable"
-    if settings.AI_SUPPORT_PROVIDER == "codex_cli" and (
-        not settings.AI_SUPPORT_CODEX_MODEL
-        or not str(settings.AI_SUPPORT_CODEX_HOME)
-        or not str(settings.AI_SUPPORT_CODEX_WORKSPACE)
-    ):
+    if settings.AI_SUPPORT_PROVIDER == "codex_cli" and not codex_configuration_ready():
         return "unavailable"
     return "ready"
 
