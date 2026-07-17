@@ -407,6 +407,54 @@ th.num, td.num, .table th.num, .table td.num,
   .table { white-space: nowrap; }
 }
 
+/* --- Read-only AI support ------------------------------------------------ */
+.ai-support__header { align-items: flex-start; }
+.ai-support__warning, .ai-support__provider-state { display: flex; margin-bottom: 12px; }
+.ai-support { display: grid; grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+  gap: 16px; align-items: start; }
+.ai-support__history, .ai-support__chat { min-width: 0; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-md); }
+.ai-support__history { padding: 12px; }
+.ai-support__panel-title { margin: 0 0 10px; font-size: 15px; }
+.ai-support__conversation-list { list-style: none; margin: 0; padding: 0; }
+.ai-support__conversation-link { display: block; padding: 8px 10px; border-radius: var(--radius-sm);
+  color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.ai-support__conversation-link:hover, .ai-support__conversation-link.is-active {
+  background: var(--nav-active-bg); color: var(--accent); }
+.ai-support__chat { padding: 14px; }
+.ai-support__messages { display: flex; flex-direction: column; gap: 12px; }
+.ai-message { max-width: min(760px, 92%); padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-md); background: var(--bg); }
+.ai-message--user { align-self: flex-end; background: var(--nav-active-bg); }
+.ai-message--assistant { align-self: flex-start; }
+.ai-message__meta { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 6px;
+  color: var(--muted); font-size: 12px; }
+.ai-message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-message__attachment, .ai-message__rating { margin: 10px 0 0; }
+.ai-message__rating { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ai-support__quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+.ai-support__composer { border-top: 1px solid var(--border); padding-top: 14px; }
+.ai-support__composer textarea, .ai-support__ticket textarea { width: 100%; resize: vertical;
+  min-height: 96px; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); font: inherit; }
+.ai-support__upload { margin-top: 12px; }
+.ai-support__consent { display: block; margin-top: 8px; font-size: 13px; }
+.ai-support__ticket { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+.ai-support__ticket summary { cursor: pointer; font-weight: 600; }
+.ai-support__ticket form { display: grid; gap: 8px; margin-top: 12px; }
+.ai-support__diagnostics { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-support__history-toggle { display: none; margin-bottom: 10px; }
+
+@media (max-width: 760px) {
+  .ai-support { grid-template-columns: 1fr; }
+  .ai-support__history-toggle { display: inline-block; }
+  .ai-support__history { display: none; }
+  .ai-support__history.is-open { display: block; }
+  .ai-message { max-width: 100%; }
+  .ai-support__chat { padding: 10px; }
+}
+
 /* ===========================================================================
    v1.2.1 — Product-grade screens: единый filter-toolbar, таблицы, empty-states,
    кнопки без подчёркивания, code-pill, status-card, action-panel, segmented.

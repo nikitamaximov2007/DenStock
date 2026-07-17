@@ -26,6 +26,7 @@ services:
       - "8000"
     volumes:
       - media:/app/mediafiles          # загруженные фото сохраняются между пересборками
+      - private_media:/app/private_media # приватные скриншоты ИИ; не подключать к proxy
       - ./backups:/app/backups         # бэкапы видны на хосте (Слой 25)
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
@@ -53,5 +54,6 @@ services:
 volumes:
   pgdata:
   media:
+  private_media:
   caddy_data:
   caddy_config:

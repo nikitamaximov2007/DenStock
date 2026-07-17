@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Обращения ИИ-поддержки · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Обращения ИИ-поддержки</h1>
+    <a class="btn btn--secondary" href="{% url 'ai_support:home' %}">К поддержке</a>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Создано</th>
+            <th>Автор</th>
+            <th>Статус</th>
+            <th>Описание</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ticket in tickets %}
+            <tr>
+              <td><a href="{% url 'ai_support:ticket_detail' ticket.id %}">{{ ticket.created_at|date:"d.m.Y H:i" }}</a></td>
+              <td>{{ ticket.author }}</td>
+              <td>{{ ticket.get_status_display }}</td>
+              <td>{{ ticket.description|truncatechars:100 }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="4">Обращений пока нет.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

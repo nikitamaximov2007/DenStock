@@ -90,10 +90,10 @@ def test_shell_present_on_pages(admin_client):
 
 
 def test_desktop_sidebar_has_clean_expandable_sections(admin_client):
-    """Desktop sidebar содержит два входа и пять раскрывающихся разделов."""
+    """Desktop sidebar содержит три входа и пять раскрывающихся разделов."""
     html = admin_client.get(reverse("dashboard")).content.decode()
     assert html.count('data-nav-group-toggle') == 5
-    for label in ("Главная", "Поиск"):
+    for label in ("Главная", "Поиск", "ИИ-поддержка"):
         assert f'<span class="nav__label">{label}</span>' in html
     for label in ("Склад", "Продажи", "Ремонты", "Отчёты", "Настройки"):
         assert f"<span>{label}</span>" in html

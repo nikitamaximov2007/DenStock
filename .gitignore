@@ -18,6 +18,7 @@ db.sqlite3-journal
 /staticfiles/
 /mediafiles/
 /media/
+/private_media/
 
 # Secrets / local config
 .env
