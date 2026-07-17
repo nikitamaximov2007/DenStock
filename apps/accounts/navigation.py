@@ -23,6 +23,8 @@ class _NavAccess:
         "can_view_reports": roles.VIEW_REPORTS,
         "can_view_finance": roles.VIEW_FINANCE,
         "can_view_purchase_cost": roles.VIEW_PURCHASE_COST,
+        "can_use_ai_support": roles.USE_AI_SUPPORT,
+        "can_manage_ai_support_tickets": roles.MANAGE_AI_SUPPORT_TICKETS,
     }
 
     def __init__(self, user):
@@ -151,6 +153,8 @@ def _section_key(request):
 
     if path == "/":
         return "home"
+    if path.startswith("/ai-support/"):
+        return "ai-support"
     if path.startswith("/scanner/unresolved/"):
         return "settings"
     if path.startswith("/inventory/actions/report/") or path.startswith(
@@ -193,8 +197,8 @@ def _section_key(request):
     return ""
 
 
-def _primary_items(active_key):
-    return [
+def _primary_items(active_key, user):
+    items = [
         _item("home", "Главная", reverse("dashboard"), "home", active=active_key == "home"),
         _item(
             "search",
@@ -204,6 +208,17 @@ def _primary_items(active_key):
             active=active_key == "search",
         ),
     ]
+    if user.can_use_ai_support:
+        items.append(
+            _item(
+                "ai-support",
+                "ИИ-поддержка",
+                reverse("ai_support:home"),
+                "message",
+                active=active_key == "ai-support",
+            )
+        )
+    return items
 
 
 def _catalog_tabs(path):
@@ -568,7 +583,7 @@ def navigation(request):
     access = _NavAccess(user)
     section = _section_key(request)
     section_tabs, section_subtabs = _local_tabs(request, section, access)
-    nav_items = _primary_items(section)
+    nav_items = _primary_items(section, access)
     return {
         "nav_items": nav_items,
         "nav_groups": _sidebar_groups(request, section, access),

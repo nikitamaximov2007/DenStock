@@ -32,6 +32,7 @@ urlpatterns = [
     path("statistics/", include("apps.reports.statistics_urls")),
     path("labels/", include("apps.labels.urls")),
     path("operations/", include("apps.operations.urls")),
+    path("ai-support/", include("apps.ai_support.urls")),
     path("", include("apps.core.urls")),
 ]
 

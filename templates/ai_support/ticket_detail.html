@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Обращение · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Обращение {{ ticket.id }}</h1>
+    <a class="btn btn--secondary" href="{% url 'ai_support:ticket_list' %}">К списку</a>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <p><strong>Автор:</strong> {{ ticket.author }}</p>
+      <p><strong>Создано:</strong> {{ ticket.created_at|date:"d.m.Y H:i" }}</p>
+      <div class="ai-message__text">{{ ticket.description }}</div>
+      <form method="post"
+            action="{% url 'ai_support:ticket_status' ticket.id %}"
+            class="form-actions">
+        {% csrf_token %}
+        <select name="status">
+          {% for value, label in ticket.Status.choices %}
+            <option value="{{ value }}"
+                    {% if ticket.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn--secondary" type="submit">Изменить статус</button>
+      </form>
+    </div>
+  </div>
+  {% if ticket.conversation_snapshot %}
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">Явно переданные сообщения</h2>
+      </div>
+      <div class="card__body">
+        {% for row in ticket.conversation_snapshot %}
+          <article class="ai-message ai-message--{{ row.role }}">
+            <div class="ai-message__meta">{{ row.role }}</div>
+            <div class="ai-message__text">{{ row.text }}</div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% endif %}
+  {% if ticket.diagnostic_snapshot %}
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">Безопасная диагностика</h2>
+      </div>
+      <div class="card__body">
+        <pre class="ai-support__diagnostics">{{ ticket.diagnostic_snapshot }}</pre>
+      </div>
+    </section>
+  {% endif %}
+  {% if ticket.attachment %}
+    <p><a class="btn btn--secondary"
+   href="{% url 'ai_support:attachment' ticket.attachment.id %}"
+   data-full-navigation>Открыть переданный скриншот</a></p>
+  {% endif %}
+{% endblock %}

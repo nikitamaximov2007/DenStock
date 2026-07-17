@@ -69,7 +69,7 @@ def _html(client, name, *, query=""):
 def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
     _login(client, make_nav_user("admin", superuser=True))
     html = _html(client, "dashboard")
-    assert _primary_labels(html) == ["Главная", "Поиск"]
+    assert _primary_labels(html) == ["Главная", "Поиск", "ИИ-поддержка"]
     assert _sidebar_groups(html) == {
         "warehouse": [
             "Остатки",
@@ -122,7 +122,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
 def test_sidebar_is_capability_aware(client, make_nav_user, role, expected):
     _login(client, make_nav_user(f"user-{role}", role=role))
     html = _html(client, "dashboard")
-    assert _primary_labels(html) == ["Главная", "Поиск"]
+    assert _primary_labels(html) == ["Главная", "Поиск", "ИИ-поддержка"]
     assert _sidebar_groups(html) == expected
 
 
@@ -345,7 +345,7 @@ def test_navigation_context_has_constant_role_query_count(
     request.resolver_match = None
     with django_assert_num_queries(1):
         context = navigation(request)
-    assert len(context["nav_items"]) == 2
+    assert len(context["nav_items"]) == 3
     assert [group["key"] for group in context["nav_groups"]] == [
         "warehouse",
         "sales",

@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}ИИ-поддержка · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header ai-support__header">
+    <div>
+      <h1 class="page-title">ИИ-поддержка</h1>
+      <p class="muted">Помощь по работе DenisStock и разбор ошибок простыми шагами.</p>
+    </div>
+    <div class="page-actions">
+      {% if can_manage_tickets %}
+        <a class="btn btn--secondary" href="{% url 'ai_support:ticket_list' %}">Обращения</a>
+      {% endif %}
+      <form method="post" action="{% url 'ai_support:conversation_create' %}">
+        {% csrf_token %}
+        <button class="btn btn--secondary" type="submit">Новый разговор</button>
+      </form>
+    </div>
+  </div>
+  <div class="status status--warning ai-support__warning" role="status">
+    <span class="status__icon" aria-hidden="true">!</span>
+    <span class="status__text">ИИ может ошибаться. Он не выполняет операции и не изменяет данные DenisStock.</span>
+  </div>
+  {% if provider_state == "disabled" %}
+    <div class="status status--warning ai-support__provider-state"
+         role="status">
+      <span class="status__icon" aria-hidden="true">!</span>
+      <span class="status__text">ИИ-поддержка выключена. Ручное обращение остаётся доступным.</span>
+    </div>
+  {% elif provider_state == "unavailable" %}
+    <div class="status status--error ai-support__provider-state" role="status">
+      <span class="status__icon" aria-hidden="true">✕</span>
+      <span class="status__text">Провайдер не настроен или недоступен. Создайте ручное обращение.</span>
+    </div>
+  {% endif %}
+  {% if not conversation %}
+    <div class="empty ai-support__empty">
+      <span class="empty__icon" aria-hidden="true">
+        <svg class="icon">
+          <use href="#i-message"></use>
+        </svg>
+      </span>
+      <h2 class="empty__title">Начните разговор</h2>
+      <p class="empty__text">Опишите проблему или вопрос по работе DenisStock.</p>
+      <form method="post" action="{% url 'ai_support:conversation_create' %}">
+        {% csrf_token %}
+        <button class="btn btn--primary" type="submit">Создать разговор</button>
+      </form>
+    </div>
+  {% else %}
+    <button class="btn btn--secondary ai-support__history-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="ai-support-history"
+            data-support-history-toggle>История разговоров</button>
+    <div class="ai-support" data-ai-support>
+      <aside class="ai-support__history"
+             id="ai-support-history"
+             data-support-history>
+        <h2 class="ai-support__panel-title">Разговоры</h2>
+        <ul class="ai-support__conversation-list">
+          {% for item in conversations %}
+            <li>
+              <a class="ai-support__conversation-link{% if item.pk == conversation.pk %} is-active{% endif %}"
+                 href="{% url 'ai_support:conversation' item.id %}">{{ item.title|default:"Новый разговор" }}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      </aside>
+      <section class="ai-support__chat" aria-label="Диалог">
+        <div class="ai-support__messages" aria-live="polite">
+          {% for message in support_messages %}
+            <article class="ai-message ai-message--{{ message.role }}"
+                     data-message-status="{{ message.status }}"
+                     {% if message.error_code %}data-error-code="{{ message.error_code }}"{% endif %}>
+              <div class="ai-message__meta">
+                {% if message.role == "user" %}
+                  Вы
+                {% else %}
+                  ИИ-поддержка
+                {% endif %}
+                <time datetime="{{ message.created_at|date:'c' }}">{{ message.created_at|date:"d.m.Y H:i" }}</time>
+              </div>
+              <div class="ai-message__text">{{ message.text }}</div>
+              {% if message.attachment %}
+                <p class="ai-message__attachment">
+                  <a class="btn btn--small btn--secondary"
+                     href="{% url 'ai_support:attachment' message.attachment.id %}"
+                     data-full-navigation>Открыть приложенный скриншот</a>
+                </p>
+              {% endif %}
+              {% if message.role == "assistant" %}
+                <form class="ai-message__rating"
+                      method="post"
+                      action="{% url 'ai_support:message_rating' message.id %}">
+                  {% csrf_token %}
+                  <span>Ответ помог?</span>
+                  <button class="btn btn--small btn--secondary"
+                          name="value"
+                          value="helpful"
+                          type="submit">Да</button>
+                  <button class="btn btn--small btn--secondary"
+                          name="value"
+                          value="unhelpful"
+                          type="submit">Нет</button>
+                </form>
+              {% endif %}
+            </article>
+          {% empty %}
+            <div class="empty empty--compact">
+              <h2 class="empty__title">Сообщений пока нет</h2>
+              <p class="empty__text">Выберите быстрый вопрос или опишите проблему своими словами.</p>
+            </div>
+          {% endfor %}
+        </div>
+        <div class="ai-support__quick" aria-label="Быстрые вопросы">
+          {% for question in quick_questions %}
+            <button class="btn btn--small btn--secondary"
+                    type="button"
+                    data-support-question="{{ question }}">{{ question }}</button>
+          {% endfor %}
+        </div>
+        <form class="ai-support__composer"
+              method="post"
+              enctype="multipart/form-data"
+              action="{% url 'ai_support:message_send' conversation.id %}"
+              data-idempotent-form
+              data-support-composer>
+          {% csrf_token %}
+          {{ message_form.idempotency_token }}
+          {{ message_form.route_path }}
+          {{ message_form.browser_family }}
+          {{ message_form.viewport }}
+          <label class="field__label" for="id_text">Сообщение</label>
+          <textarea id="id_text"
+                    name="text"
+                    maxlength="{{ max_message_chars }}"
+                    rows="4"
+                    required
+                    {% if provider_state != "ready" %}disabled{% endif %}>{{ message_form.text.value|default:"" }}</textarea>
+          {% if message_form.errors %}<div class="field__error">Проверьте сообщение, файл и согласие.</div>{% endif %}
+          <div class="ai-support__upload">
+            <label class="field__label" for="id_image">Скриншот, необязательно</label>
+            <input id="id_image"
+                   type="file"
+                   name="image"
+                   accept="image/jpeg,image/png,image/webp"
+                   {% if provider_state != "ready" %}disabled{% endif %}>
+            <p class="field__hint">JPG, PNG или WEBP до 5 МБ. Не загружайте пароли, cookies, API keys и токены.</p>
+            <label class="ai-support__consent">
+              <input type="checkbox" name="image_consent" value="1">
+              Я понимаю, что скриншот будет отправлен настроенному внешнему AI provider.
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn--primary"
+                    type="submit"
+                    data-progress-label="Отправка..."
+                    {% if provider_state != "ready" %}disabled{% endif %}>Отправить</button>
+          </div>
+        </form>
+        <details class="ai-support__ticket">
+          <summary>Создать обращение разработчику</summary>
+          <form method="post"
+                action="{% url 'ai_support:ticket_create' conversation.id %}"
+                data-support-ticket-form>
+            {% csrf_token %}
+            <label class="field__label" for="ticket-description">Описание проблемы</label>
+            <textarea id="ticket-description"
+                      name="description"
+                      rows="4"
+                      maxlength="4000"
+                      required></textarea>
+            {% if latest_question %}
+              <input type="hidden"
+                     name="question_message"
+                     value="{{ latest_question.id }}">
+              <label>
+                <input type="checkbox" name="include_question" value="1">
+                Передать выбранный последний вопрос
+              </label>
+              {% if latest_question.attachment %}
+                <label>
+                  <input type="checkbox" name="include_screenshot" value="1">
+                  Передать выбранный скриншот
+                </label>
+              {% endif %}
+            {% endif %}
+            {% if latest_answer %}
+              <input type="hidden" name="answer_message" value="{{ latest_answer.id }}">
+              <label>
+                <input type="checkbox" name="include_answer" value="1">
+                Передать выбранный последний ответ ИИ
+              </label>
+            {% endif %}
+            <label>
+              <input type="checkbox" name="include_diagnostics" value="1">
+              Передать безопасную диагностику
+            </label>
+            <input type="hidden" name="route_path" value="" data-support-route-path>
+            <input type="hidden" name="browser_family" value="" data-support-browser>
+            <input type="hidden" name="viewport" value="" data-support-viewport>
+            <div class="form-actions">
+              <button class="btn btn--secondary" type="submit">Создать обращение</button>
+            </div>
+          </form>
+        </details>
+      </section>
+    </div>
+  {% endif %}
+{% endblock %}

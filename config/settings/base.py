@@ -52,6 +52,7 @@ LOCAL_APPS = [
     "apps.reports",
     "apps.labels",
     "apps.operations",
+    "apps.ai_support",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS
@@ -128,6 +129,34 @@ STORAGES = {
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "mediafiles"
+
+# Private AI support screenshots are served only through authenticated Django
+# views. This directory must never be mounted into the public Caddy media path.
+PRIVATE_MEDIA_ROOT = Path(
+    env("PRIVATE_MEDIA_ROOT", default=str(BASE_DIR / "private_media"))
+)
+
+# --- Read-only AI support ---------------------------------------------------
+AI_SUPPORT_ENABLED = env.bool("AI_SUPPORT_ENABLED", default=False)
+AI_SUPPORT_PROVIDER = env("AI_SUPPORT_PROVIDER", default="disabled")
+AI_SUPPORT_ALLOW_FAKE_PROVIDER = False
+AI_SUPPORT_MODEL = env("AI_SUPPORT_MODEL", default="")
+AI_SUPPORT_API_KEY = env("AI_SUPPORT_API_KEY", default="")
+AI_SUPPORT_TIMEOUT_SECONDS = env.int("AI_SUPPORT_TIMEOUT_SECONDS", default=20)
+AI_SUPPORT_MAX_MESSAGE_CHARS = env.int("AI_SUPPORT_MAX_MESSAGE_CHARS", default=8000)
+AI_SUPPORT_MAX_OUTPUT_TOKENS = env.int("AI_SUPPORT_MAX_OUTPUT_TOKENS", default=1200)
+AI_SUPPORT_RATE_LIMIT = env.int("AI_SUPPORT_RATE_LIMIT", default=5)
+AI_SUPPORT_DAILY_REQUEST_LIMIT = env.int("AI_SUPPORT_DAILY_REQUEST_LIMIT", default=50)
+AI_SUPPORT_DAILY_TOKEN_LIMIT = env.int("AI_SUPPORT_DAILY_TOKEN_LIMIT", default=100000)
+AI_SUPPORT_MAX_IMAGE_BYTES = env.int("AI_SUPPORT_MAX_IMAGE_BYTES", default=5 * 1024 * 1024)
+AI_SUPPORT_ATTACHMENT_RETENTION_DAYS = env.int(
+    "AI_SUPPORT_ATTACHMENT_RETENTION_DAYS", default=30
+)
+AI_SUPPORT_CONVERSATION_RETENTION_DAYS = env.int(
+    "AI_SUPPORT_CONVERSATION_RETENTION_DAYS", default=180
+)
+DENSTOCK_PUBLIC_BASE_URL = env("DENSTOCK_PUBLIC_BASE_URL", default="")
+DENSTOCK_APP_COMMIT = env("DENSTOCK_APP_COMMIT", default="")
 
 # --- Эксплуатация (Слой 25) -------------------------------------------------
 # Каталог резервных копий (БД + media). Не коммитится (см. .gitignore).
