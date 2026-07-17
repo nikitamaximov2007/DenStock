@@ -1,4 +1,6 @@
+import json
 import logging
+import subprocess
 import uuid
 from datetime import timedelta
 
@@ -20,7 +22,9 @@ from apps.ai_support.models import (
     SupportRuntimeGate,
     SupportUsageDay,
 )
+from apps.ai_support.providers import codex_cli
 from apps.ai_support.providers.base import SupportResult
+from apps.ai_support.providers.codex_cli import CodexCliProvider, ProcessOutcome
 from apps.ai_support.providers.fake import FakeProvider
 from apps.ai_support.services import (
     ConcurrentRequest,
@@ -366,6 +370,111 @@ def test_global_gate_is_released_for_every_provider_failure(
     usage = SupportUsageDay.objects.get(user=support_user, date=timezone.localdate())
     assert usage.active_request_token is None
     assert usage.active_started_at is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    [("late_parse", "provider_timeout"), ("tree_setup", "provider_unavailable")],
+)
+def test_codex_runtime_failures_do_not_persist_late_answer_and_release_gate(
+    monkeypatch,
+    support_user,
+    support_settings,
+    tmp_path,
+    failure,
+    expected_error,
+):
+    class Clock:
+        current = 0.0
+
+        def __call__(self):
+            return self.current
+
+    clock = Clock()
+    home = tmp_path / "codex-home"
+    workspace = tmp_path / "runtime"
+    home.mkdir()
+    workspace.mkdir()
+    provider = CodexCliProvider(
+        binary="codex-fixture",
+        required_version="0.142.5",
+        model="configured-model",
+        codex_home=home,
+        workspace=workspace,
+        timeout_seconds=10,
+        max_output_bytes=65536,
+        max_stderr_bytes=16384,
+        max_prompt_chars=24000,
+        max_history_chars=12000,
+        global_concurrency=1,
+        _clock=clock,
+    )
+    late_answer = "late answer must not be stored"
+
+    def fake_run(args, **kwargs):
+        if args == ["codex-fixture", "--version"]:
+            return ProcessOutcome(0, b"codex-cli 0.142.5\n", b"")
+        if "login" in args:
+            return ProcessOutcome(0, b"", b"Logged in using ChatGPT\n")
+        if failure == "tree_setup":
+            raise subprocess.SubprocessError("process tree setup failed")
+        events = [
+            {
+                "type": "thread.started",
+                "thread_id": "0199a213-81c0-7800-8aa1-bbab2a035a53",
+            },
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {
+                    "type": "agent_message",
+                    "text": '{"answer": "late answer must not be stored"}',
+                },
+            },
+            {
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "output_tokens": 20},
+            },
+        ]
+        return ProcessOutcome(
+            0,
+            b"\n".join(json.dumps(event).encode() for event in events) + b"\n",
+            b"",
+        )
+
+    if failure == "late_parse":
+        original_parse = codex_cli._parse_result
+
+        def delayed_parse(stdout, **kwargs):
+            result = original_parse(stdout, **kwargs)
+            clock.current = 10.0
+            return result
+
+        monkeypatch.setattr(codex_cli, "_parse_result", delayed_parse)
+    monkeypatch.setattr(codex_cli, "_run_process", fake_run)
+    monkeypatch.setattr("apps.ai_support.services.get_provider", lambda: provider)
+    conversation = SupportConversation.objects.create(owner=support_user)
+    result = send_message(
+        conversation=conversation,
+        user=support_user,
+        text="Проверка позднего ответа",
+        token=uuid.uuid4(),
+    )
+    usage = SupportUsageDay.objects.get(user=support_user, date=timezone.localdate())
+    assert result.assistant_message.status == SupportMessage.Status.FAILED
+    assert result.assistant_message.error_code == expected_error
+    assert late_answer not in result.assistant_message.text
+    assert not SupportMessage.objects.filter(
+        conversation=conversation,
+        role=SupportMessage.Role.ASSISTANT,
+        status=SupportMessage.Status.COMPLETED,
+    ).exists()
+    assert not SupportMessage.objects.filter(text__contains=late_answer).exists()
+    assert usage.active_request_token is None
+    assert usage.active_started_at is None
+    assert list(workspace.iterdir()) == []
+    assert provider.slots.acquire(blocking=False) is True
+    provider.slots.release()
 
 
 def test_invalid_provider_usage_is_not_stored_or_added_to_quota(

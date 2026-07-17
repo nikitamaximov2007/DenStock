@@ -190,6 +190,11 @@ def _close_stream(stream) -> None:
         pass
 
 
+def _close_process_streams(process) -> None:
+    for stream in (process.stdin, process.stdout, process.stderr):
+        _close_stream(stream)
+
+
 class _PipeReader:
     def __init__(self, stream, limit, chunks, overflow, forbidden_event=None):
         self.stream = stream
@@ -299,6 +304,11 @@ def _strict_deadline_error(error_code: str, deadline: float, *, now: float | Non
     if not error_code and current >= deadline:
         return "provider_timeout"
     return error_code
+
+
+def _raise_if_deadline_expired(deadline: float | None, clock) -> None:
+    if deadline is not None and clock() >= deadline:
+        raise CodexOutputError("provider_timeout")
 
 
 if os.name == "nt":
@@ -432,6 +442,7 @@ def _run_process(
     max_stdout_bytes: int,
     max_stderr_bytes: int,
     inspect_events: bool = False,
+    _deadline: float | None = None,
     _clock=None,
     _pause=None,
     _process_factory=None,
@@ -441,7 +452,7 @@ def _run_process(
     pause = _pause or time.sleep
     process_factory = _process_factory or subprocess.Popen
     tree_factory = _tree_factory or _ProcessTree
-    deadline = clock() + timeout_seconds
+    deadline = _deadline if _deadline is not None else clock() + timeout_seconds
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     process = process_factory(
         args,
@@ -458,17 +469,25 @@ def _run_process(
     try:
         tree = tree_factory(process)
     except Exception:
-        process.kill()
-        process.wait(timeout=5)
-        raise
+        try:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            try:
+                process.wait(timeout=5)
+            except Exception:
+                pass
+        finally:
+            _close_process_streams(process)
+        raise subprocess.SubprocessError("process tree setup failed") from None
     try:
         for stream in (process.stdin, process.stdout, process.stderr):
             _set_nonblocking(stream)
     except (OSError, ValueError):
         tree.terminate()
         tree.close()
-        for stream in (process.stdin, process.stdout, process.stderr):
-            _close_stream(stream)
+        _close_process_streams(process)
         raise
     stdout_chunks: list[bytes] = []
     stderr_chunks: list[bytes] = []
@@ -534,8 +553,7 @@ def _run_process(
         tree.terminate()
         tree.close()
         writer.close()
-        for stream in (process.stdout, process.stderr):
-            _close_stream(stream)
+        _close_process_streams(process)
 
 
 def _minimal_environment(codex_home: Path, temporary_root: Path) -> dict[str, str]:
@@ -610,7 +628,14 @@ def _safe_thread_id(value) -> str:
         return ""
 
 
-def _parse_result(stdout: bytes) -> tuple[str, dict[str, int], str]:
+def _parse_result(
+    stdout: bytes,
+    *,
+    deadline: float | None = None,
+    _clock=None,
+) -> tuple[str, dict[str, int], str]:
+    clock = _clock or time.monotonic
+    _raise_if_deadline_expired(deadline, clock)
     answers: list[str] = []
     usage: dict[str, int] | None = None
     request_id = ""
@@ -619,12 +644,15 @@ def _parse_result(stdout: bytes) -> tuple[str, dict[str, int], str]:
     turn_completed = 0
     completed = False
     for raw_line in stdout.splitlines():
+        _raise_if_deadline_expired(deadline, clock)
         if not raw_line.strip():
             continue
         try:
             event = json.loads(raw_line)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            _raise_if_deadline_expired(deadline, clock)
             raise CodexOutputError("provider_invalid_output") from exc
+        _raise_if_deadline_expired(deadline, clock)
         if not isinstance(event, dict) or not isinstance(event.get("type"), str):
             raise CodexOutputError("provider_invalid_output")
         event_type = event["type"]
@@ -633,11 +661,13 @@ def _parse_result(stdout: bytes) -> tuple[str, dict[str, int], str]:
         if event_type == "thread.started":
             thread_started += 1
             request_id = _safe_thread_id(event.get("thread_id"))
+            _raise_if_deadline_expired(deadline, clock)
         elif event_type == "turn.started":
             turn_started += 1
         elif event_type == "turn.completed":
             turn_completed += 1
             usage = _validate_usage(event.get("usage"))
+            _raise_if_deadline_expired(deadline, clock)
             completed = True
         elif event_type in {"turn.failed", "error"}:
             raise CodexOutputError("provider_invalid_output")
@@ -660,10 +690,13 @@ def _parse_result(stdout: bytes) -> tuple[str, dict[str, int], str]:
         or usage is None
     ):
         raise CodexOutputError("provider_invalid_output")
+    _raise_if_deadline_expired(deadline, clock)
     try:
         payload = json.loads(answers[0])
     except json.JSONDecodeError as exc:
+        _raise_if_deadline_expired(deadline, clock)
         raise CodexOutputError("provider_invalid_output") from exc
+    _raise_if_deadline_expired(deadline, clock)
     if (
         not isinstance(payload, dict)
         or set(payload) != {"answer"}
@@ -674,6 +707,7 @@ def _parse_result(stdout: bytes) -> tuple[str, dict[str, int], str]:
     answer = payload["answer"].strip()
     if len(answer) > ANSWER_MAX_CHARS:
         raise CodexOutputError("provider_invalid_output")
+    _raise_if_deadline_expired(deadline, clock)
     return answer, usage, request_id
 
 
@@ -699,6 +733,7 @@ class CodexCliProvider:
         max_prompt_chars: int,
         max_history_chars: int,
         global_concurrency: int,
+        _clock=None,
     ):
         self.binary = binary
         self.required_version = required_version
@@ -711,6 +746,7 @@ class CodexCliProvider:
         self.max_prompt_chars = max(max_prompt_chars, 1000)
         self.max_history_chars = max(max_history_chars, 0)
         self.slots = _semaphore(max(global_concurrency, 1))
+        self._clock = _clock or time.monotonic
 
     def _error(self, code: str, started: float) -> SupportResult:
         return SupportResult(
@@ -718,7 +754,7 @@ class CodexCliProvider:
             provider="codex_cli",
             model=self.model,
             status="failed",
-            latency_ms=int((time.monotonic() - started) * 1000),
+            latency_ms=int((self._clock() - started) * 1000),
             error_code=code,
         )
 
@@ -757,7 +793,7 @@ class CodexCliProvider:
         return "codex_auth_status_unknown"
 
     def generate(self, request: SupportRequest) -> SupportResult:
-        started = time.monotonic()
+        started = self._clock()
         if not self.model or not self.binary:
             return self._error("provider_not_configured", started)
         if (
@@ -849,6 +885,7 @@ class CodexCliProvider:
                     _secure_write(image_path, request.image.content)
                     args.extend(["--image", str(image_path)])
                 args.append("-")
+                exec_deadline = self._clock() + self.timeout_seconds
                 try:
                     outcome = _run_process(
                         args,
@@ -859,9 +896,13 @@ class CodexCliProvider:
                         max_stdout_bytes=self.max_output_bytes,
                         max_stderr_bytes=self.max_stderr_bytes,
                         inspect_events=True,
+                        _deadline=exec_deadline,
+                        _clock=self._clock,
                     )
                 except (OSError, subprocess.SubprocessError):
                     return self._error("provider_unavailable", started)
+                if self._clock() >= exec_deadline:
+                    return self._error("provider_timeout", started)
                 if outcome.error_code:
                     return self._error(outcome.error_code, started)
                 combined_error = (outcome.stdout + outcome.stderr).decode(
@@ -874,18 +915,29 @@ class CodexCliProvider:
                         else "provider_unavailable"
                     )
                     return self._error(code, started)
+                if self._clock() >= exec_deadline:
+                    return self._error("provider_timeout", started)
                 try:
-                    answer, usage, request_id = _parse_result(outcome.stdout)
+                    answer, usage, request_id = _parse_result(
+                        outcome.stdout,
+                        deadline=exec_deadline,
+                        _clock=self._clock,
+                    )
                 except CodexOutputError as exc:
                     return self._error(exc.code, started)
-                return SupportResult(
+                if self._clock() >= exec_deadline:
+                    return self._error("provider_timeout", started)
+                result = SupportResult(
                     text=answer,
                     provider="codex_cli",
                     model=self.model,
                     status="completed",
-                    latency_ms=int((time.monotonic() - started) * 1000),
+                    latency_ms=int((self._clock() - started) * 1000),
                     usage=usage,
                     request_id=request_id,
                 )
+                if self._clock() >= exec_deadline:
+                    return self._error("provider_timeout", started)
+                return result
         finally:
             self.slots.release()

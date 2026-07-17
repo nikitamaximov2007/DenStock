@@ -93,18 +93,26 @@ def _posix_path_errors(home: Path, workspace: Path, launch_mode: str) -> list[Er
 
 @register(Tags.security)
 def codex_runtime_is_isolated(app_configs, **kwargs):
-    provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)
     if not settings.AI_SUPPORT_ENABLED:
         return []
-    errors = []
     if not settings.DEBUG:
-        errors.append(
+        return [
             Error(
                 "AI support cannot be enabled in production until the audited Linux launcher "
                 "is implemented.",
                 id="ai_support.E015",
             )
-        )
+        ]
+    try:
+        provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)
+    except Exception:
+        return [
+            Error(
+                "AI_SUPPORT_PROVIDER must be a valid provider name.",
+                id="ai_support.E014",
+            )
+        ]
+    errors = []
     if provider != "codex_cli":
         return errors
     binary = str(settings.AI_SUPPORT_CODEX_BINARY).strip()

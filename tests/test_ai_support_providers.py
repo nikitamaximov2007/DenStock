@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import stat
+import subprocess
 import sys
 import threading
 import time
@@ -701,6 +702,117 @@ class _MutableClock:
         return None
 
 
+def _deadline_boundary(args, **kwargs):
+    if args == ["codex-fixture", "--version"]:
+        return ProcessOutcome(0, b"codex-cli 0.142.5\n", b"")
+    if "login" in args:
+        return ProcessOutcome(0, b"", b"Logged in using ChatGPT\n")
+    return ProcessOutcome(0, jsonl(answer="late validated answer"), b"")
+
+
+@pytest.mark.parametrize(
+    ("parse_finished_at", "expected_status"),
+    [(9.999, "completed"), (10.0, "failed"), (10.001, "failed")],
+)
+def test_provider_exec_deadline_covers_parse_completion(
+    monkeypatch, tmp_path, parse_finished_at, expected_status
+):
+    clock = _MutableClock()
+    provider, _, _ = make_provider(
+        tmp_path, timeout_seconds=10, _clock=clock
+    )
+    original_parse = codex_cli._parse_result
+
+    def delayed_parse(stdout, **kwargs):
+        result = original_parse(stdout, **kwargs)
+        clock.current = parse_finished_at
+        return result
+
+    def fake_run(args, **kwargs):
+        if args[-1:] == ["-"]:
+            assert kwargs["_deadline"] == 10.0
+            assert kwargs["_clock"] is clock
+        return _deadline_boundary(args, **kwargs)
+
+    monkeypatch.setattr(codex_cli, "_run_process", fake_run)
+    monkeypatch.setattr(codex_cli, "_parse_result", delayed_parse)
+    result = provider.generate(support_request())
+    assert result.status == expected_status
+    if expected_status == "completed":
+        assert result.text == "late validated answer"
+        assert result.error_code == ""
+    else:
+        assert result.error_code == "provider_timeout"
+        assert "late validated answer" not in result.text
+
+
+@pytest.mark.parametrize("validation", ["usage", "thread_id", "answer"])
+def test_provider_exec_deadline_covers_internal_validation(
+    monkeypatch, tmp_path, validation
+):
+    clock = _MutableClock()
+    provider, _, _ = make_provider(
+        tmp_path, timeout_seconds=10, _clock=clock
+    )
+    monkeypatch.setattr(codex_cli, "_run_process", _deadline_boundary)
+    if validation == "usage":
+        original = codex_cli._validate_usage
+
+        def delayed_usage(value):
+            result = original(value)
+            clock.current = 10.0
+            return result
+
+        monkeypatch.setattr(codex_cli, "_validate_usage", delayed_usage)
+    elif validation == "thread_id":
+        original = codex_cli._safe_thread_id
+
+        def delayed_thread_id(value):
+            result = original(value)
+            clock.current = 10.0
+            return result
+
+        monkeypatch.setattr(codex_cli, "_safe_thread_id", delayed_thread_id)
+    else:
+        original = json.loads
+
+        def delayed_answer(value, *args, **kwargs):
+            result = original(value, *args, **kwargs)
+            if isinstance(value, str) and result == {"answer": "late validated answer"}:
+                clock.current = 10.0
+            return result
+
+        monkeypatch.setattr(codex_cli.json, "loads", delayed_answer)
+
+    result = provider.generate(support_request())
+    assert result.status == "failed"
+    assert result.error_code == "provider_timeout"
+    assert "late validated answer" not in result.text
+
+
+def test_provider_checks_deadline_after_success_result_construction(
+    monkeypatch, tmp_path
+):
+    clock = _MutableClock()
+    provider, _, _ = make_provider(
+        tmp_path, timeout_seconds=10, _clock=clock
+    )
+    original_result = codex_cli.SupportResult
+
+    def delayed_result(**kwargs):
+        result = original_result(**kwargs)
+        if kwargs["status"] == "completed":
+            clock.current = 10.0
+        return result
+
+    monkeypatch.setattr(codex_cli, "_run_process", _deadline_boundary)
+    monkeypatch.setattr(codex_cli, "SupportResult", delayed_result)
+    result = provider.generate(support_request())
+    assert result.status == "failed"
+    assert result.error_code == "provider_timeout"
+    assert "late validated answer" not in result.text
+
+
 class _FakeProcess:
     def __init__(
         self,
@@ -713,6 +825,8 @@ class _FakeProcess:
     ):
         self.pid = 12345
         self.returncode = returncode
+        self.kill_calls = 0
+        self.wait_timeouts = []
         self._stdin_read, stdin_write = os.pipe()
         stdout_read, self._stdout_write = os.pipe()
         stderr_read, self._stderr_write = os.pipe()
@@ -742,11 +856,13 @@ class _FakeProcess:
         return self.returncode
 
     def kill(self):
+        self.kill_calls += 1
         if self.returncode is None:
             self.returncode = -9
         self.release_outputs()
 
     def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
         return self.returncode
 
     def cleanup(self):
@@ -774,6 +890,103 @@ class _FakeTree:
 
     def close(self):
         self.closed = True
+
+
+@pytest.mark.parametrize("failing_stream", ["stdin", "stdout"])
+def test_close_process_streams_continues_after_close_error(failing_stream):
+    class Stream:
+        def __init__(self, fails):
+            self.fails = fails
+            self.close_calls = 0
+            self.closed = False
+
+        def close(self):
+            self.close_calls += 1
+            if self.fails:
+                raise OSError("close failed")
+            self.closed = True
+
+    class Process:
+        pass
+
+    process = Process()
+    process.stdin = Stream(failing_stream == "stdin")
+    process.stdout = Stream(failing_stream == "stdout")
+    process.stderr = Stream(False)
+    codex_cli._close_process_streams(process)
+    assert process.stdin.close_calls == 1
+    assert process.stdout.close_calls == 1
+    assert process.stderr.close_calls == 1
+    for name in {"stdin", "stdout", "stderr"} - {failing_stream}:
+        assert getattr(process, name).closed is True
+
+
+def test_tree_factory_failure_kills_waits_and_closes_every_pipe(tmp_path):
+    processes = []
+    for _ in range(20):
+        process = _FakeProcess(returncode=None)
+        processes.append(process)
+        try:
+            with pytest.raises(subprocess.SubprocessError):
+                codex_cli._run_process(
+                    ["codex-fixture"],
+                    stdin=b"prompt",
+                    cwd=tmp_path,
+                    env={},
+                    timeout_seconds=10,
+                    max_stdout_bytes=1024,
+                    max_stderr_bytes=1024,
+                    _process_factory=lambda *args, created=process, **kwargs: created,
+                    _tree_factory=lambda created: (_ for _ in ()).throw(
+                        OSError("tree setup failed")
+                    ),
+                )
+            assert process.kill_calls == 1
+            assert process.wait_timeouts == [5]
+            assert (process.stdin.closed, process.stdout.closed, process.stderr.closed) == (
+                True,
+                True,
+                True,
+            )
+        finally:
+            process.cleanup()
+
+
+def test_provider_normalizes_tree_setup_failure_and_cleans_runtime(
+    monkeypatch, tmp_path
+):
+    provider, _, workspace = make_provider(tmp_path)
+    process = _FakeProcess(returncode=None)
+    real_run = codex_cli._run_process
+
+    def fake_run(args, **kwargs):
+        if args == ["codex-fixture", "--version"] or "login" in args:
+            return _deadline_boundary(args, **kwargs)
+        return real_run(
+            args,
+            **kwargs,
+            _process_factory=lambda *factory_args, **factory_kwargs: process,
+            _tree_factory=lambda created: (_ for _ in ()).throw(
+                OSError("tree setup secret")
+            ),
+        )
+
+    monkeypatch.setattr(codex_cli, "_run_process", fake_run)
+    try:
+        result = provider.generate(support_request())
+        assert result.status == "failed"
+        assert result.error_code == "provider_unavailable"
+        assert "tree setup secret" not in result.text
+        assert (process.stdin.closed, process.stdout.closed, process.stderr.closed) == (
+            True,
+            True,
+            True,
+        )
+        assert list(workspace.iterdir()) == []
+        assert provider.slots.acquire(blocking=False) is True
+        provider.slots.release()
+    finally:
+        process.cleanup()
 
 
 def _run_fake_boundary(
