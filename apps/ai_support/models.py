@@ -167,3 +167,12 @@ class SupportUsageDay(models.Model):
 
     def __str__(self):
         return f"{self.user_id}: {self.date}"
+
+
+class SupportRuntimeGate(models.Model):
+    """Singleton row used to serialize global provider capacity claims."""
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "AI support runtime gate"

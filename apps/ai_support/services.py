@@ -17,6 +17,7 @@ from .models import (
     SupportAttachment,
     SupportConversation,
     SupportMessage,
+    SupportRuntimeGate,
     SupportUsageDay,
 )
 from .prompts import build_system_instruction
@@ -42,6 +43,10 @@ class ConcurrentRequest(SupportError):
     code = "concurrent_request"
 
 
+class ProviderCapacity(SupportError):
+    code = "provider_capacity"
+
+
 class ImageRejected(SupportError):
     code = "rejected_image"
 
@@ -63,11 +68,18 @@ SAFE_ERROR_TEXT = {
     "provider_not_configured": "Провайдер ИИ не настроен.",
     "provider_disabled": "Провайдер ИИ выключен.",
     "feature_disabled": "ИИ-поддержка выключена.",
+    "codex_auth_missing": "ИИ-поддержка временно не настроена.",
+    "subscription_quota_exceeded": "Лимит Codex в подписке временно исчерпан.",
+    "provider_output_too_large": "Ответ ИИ превысил безопасный размер.",
+    "provider_input_too_large": "Запрос превысил безопасный размер.",
+    "provider_invalid_output": "ИИ-поддержка вернула некорректный ответ.",
+    "provider_tool_event": "ИИ-поддержка остановила небезопасное действие.",
+    "provider_capacity": "ИИ-поддержка сейчас занята.",
 }
 
 
 def _stale_before():
-    seconds = max(settings.AI_SUPPORT_TIMEOUT_SECONDS * 2, 120)
+    seconds = max(settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS * 2, 120)
     return timezone.now() - timedelta(seconds=seconds)
 
 
@@ -87,6 +99,7 @@ def _recover_stale_usage(usage: SupportUsageDay) -> None:
 
 def _claim_request(*, conversation, user, token: uuid.UUID, text: str):
     with transaction.atomic():
+        SupportRuntimeGate.objects.select_for_update().get(pk=1)
         usage, _ = SupportUsageDay.objects.select_for_update().get_or_create(
             user=user, date=timezone.localdate()
         )
@@ -101,6 +114,16 @@ def _claim_request(*, conversation, user, token: uuid.UUID, text: str):
             _recover_stale_usage(previous_active)
             if previous_active.active_request_token:
                 raise ConcurrentRequest
+        active_rows = list(
+            SupportUsageDay.objects.select_for_update().filter(
+                active_request_token__isnull=False
+            )
+        )
+        for active_row in active_rows:
+            _recover_stale_usage(active_row)
+        active_count = sum(bool(row.active_request_token) for row in active_rows)
+        if active_count >= settings.AI_SUPPORT_CODEX_MAX_CONCURRENT:
+            raise ProviderCapacity
         locked_conversation = SupportConversation.objects.select_for_update().get(
             pk=conversation.pk, owner=user
         )
@@ -238,7 +261,7 @@ def _provider_failure(code: str = "provider_unavailable") -> SupportResult:
             "Вы можете создать ручное обращение разработчику."
         ),
         provider=str(settings.AI_SUPPORT_PROVIDER or "disabled")[:40],
-        model=str(settings.AI_SUPPORT_MODEL or "")[:120],
+        model=str(settings.AI_SUPPORT_CODEX_MODEL or "")[:120],
         status="failed",
         error_code=code,
     )

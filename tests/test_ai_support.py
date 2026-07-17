@@ -16,11 +16,18 @@ from apps.ai_support.models import (
     SupportConversation,
     SupportMessage,
     SupportRating,
+    SupportRuntimeGate,
     SupportUsageDay,
 )
 from apps.ai_support.providers.base import SupportResult
 from apps.ai_support.providers.fake import FakeProvider
-from apps.ai_support.services import ConcurrentRequest, QuotaExceeded, create_ticket, send_message
+from apps.ai_support.services import (
+    ConcurrentRequest,
+    ProviderCapacity,
+    QuotaExceeded,
+    create_ticket,
+    send_message,
+)
 from apps.inventory.models import StockBalance, StockMovement
 from apps.sales.models import Sale
 
@@ -50,7 +57,8 @@ def support_settings(settings, tmp_path):
     settings.AI_SUPPORT_ENABLED = True
     settings.AI_SUPPORT_PROVIDER = "fake"
     settings.AI_SUPPORT_ALLOW_FAKE_PROVIDER = True
-    settings.AI_SUPPORT_MODEL = "fake-model"
+    settings.AI_SUPPORT_CODEX_MODEL = "fake-model"
+    settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS = 20
     settings.DENSTOCK_PUBLIC_BASE_URL = "https://185-250-44-206.sslip.io/"
     settings.PRIVATE_MEDIA_ROOT = tmp_path / "private"
     settings.AI_SUPPORT_RATE_LIMIT = 5
@@ -261,6 +269,29 @@ def test_previous_day_active_request_still_blocks_user(support_user, support_set
             conversation=conversation,
             user=support_user,
             text="Запрос после полуночи",
+            token=uuid.uuid4(),
+        )
+
+
+def test_global_runtime_capacity_blocks_another_user(
+    make_support_user, support_settings
+):
+    first = make_support_user("capacity-first")
+    second = make_support_user("capacity-second")
+    support_settings.AI_SUPPORT_CODEX_MAX_CONCURRENT = 1
+    SupportRuntimeGate.objects.get(pk=1)
+    SupportUsageDay.objects.create(
+        user=first,
+        date=timezone.localdate(),
+        active_request_token=uuid.uuid4(),
+        active_started_at=timezone.now(),
+    )
+    conversation = SupportConversation.objects.create(owner=second)
+    with pytest.raises(ProviderCapacity):
+        send_message(
+            conversation=conversation,
+            user=second,
+            text="Запрос при занятом общем слоте",
             token=uuid.uuid4(),
         )
 

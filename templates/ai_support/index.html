@@ -145,10 +145,11 @@
                    name="image"
                    accept="image/jpeg,image/png,image/webp"
                    {% if provider_state != "ready" %}disabled{% endif %}>
-            <p class="field__hint">JPG, PNG или WEBP до 5 МБ. Не загружайте пароли, cookies, API keys и токены.</p>
+            <p class="field__hint">JPG, PNG или WEBP до 5 МБ. Не загружайте пароли, cookies, ключи доступа и токены.</p>
             <label class="ai-support__consent">
               <input type="checkbox" name="image_consent" value="1">
-              Я понимаю, что скриншот будет отправлен настроенному внешнему AI provider.
+              Я понимаю, что скриншот будет передан локально запущенному Codex CLI,
+              авторизованному через подписку ChatGPT.
             </label>
           </div>
           <div class="form-actions">

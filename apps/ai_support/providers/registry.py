@@ -15,14 +15,25 @@ def get_provider():
         from .fake import FakeProvider
 
         return FakeProvider()
-    if provider == "openai":
-        if not settings.AI_SUPPORT_API_KEY or not settings.AI_SUPPORT_MODEL:
+    if provider == "codex_cli":
+        if (
+            not settings.AI_SUPPORT_CODEX_MODEL
+            or not str(settings.AI_SUPPORT_CODEX_HOME)
+            or not str(settings.AI_SUPPORT_CODEX_WORKSPACE)
+        ):
             return DisabledProvider("provider_not_configured")
-        from .openai import OpenAIProvider
+        from .codex_cli import CodexCliProvider
 
-        return OpenAIProvider(
-            api_key=settings.AI_SUPPORT_API_KEY,
-            model=settings.AI_SUPPORT_MODEL,
-            timeout_seconds=settings.AI_SUPPORT_TIMEOUT_SECONDS,
+        return CodexCliProvider(
+            binary=settings.AI_SUPPORT_CODEX_BINARY,
+            model=settings.AI_SUPPORT_CODEX_MODEL,
+            codex_home=settings.AI_SUPPORT_CODEX_HOME,
+            workspace=settings.AI_SUPPORT_CODEX_WORKSPACE,
+            timeout_seconds=settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS,
+            max_output_bytes=settings.AI_SUPPORT_CODEX_MAX_OUTPUT_BYTES,
+            max_stderr_bytes=settings.AI_SUPPORT_CODEX_MAX_STDERR_BYTES,
+            max_prompt_chars=settings.AI_SUPPORT_CODEX_MAX_PROMPT_CHARS,
+            max_history_chars=settings.AI_SUPPORT_CODEX_MAX_HISTORY_CHARS,
+            max_concurrent=settings.AI_SUPPORT_CODEX_MAX_CONCURRENT,
         )
     return DisabledProvider("provider_not_configured")

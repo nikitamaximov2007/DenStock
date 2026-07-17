@@ -23,6 +23,7 @@ from .services import (
     ConcurrentRequest,
     FeatureDisabled,
     ImageRejected,
+    ProviderCapacity,
     QuotaExceeded,
     create_ticket,
     send_message,
@@ -34,8 +35,10 @@ def _provider_state():
         return "disabled"
     if settings.AI_SUPPORT_PROVIDER == "disabled":
         return "unavailable"
-    if settings.AI_SUPPORT_PROVIDER == "openai" and (
-        not settings.AI_SUPPORT_API_KEY or not settings.AI_SUPPORT_MODEL
+    if settings.AI_SUPPORT_PROVIDER == "codex_cli" and (
+        not settings.AI_SUPPORT_CODEX_MODEL
+        or not str(settings.AI_SUPPORT_CODEX_HOME)
+        or not str(settings.AI_SUPPORT_CODEX_WORKSPACE)
     ):
         return "unavailable"
     return "ready"
@@ -130,6 +133,8 @@ def message_send(request, conversation_id):
         messages.warning(request, "Лимит запросов исчерпан. Создайте ручное обращение.")
     except ConcurrentRequest:
         messages.warning(request, "Предыдущий запрос ещё обрабатывается. Подождите его завершения.")
+    except ProviderCapacity:
+        messages.warning(request, "ИИ-поддержка сейчас занята. Попробуйте немного позже.")
     except ImageRejected:
         messages.error(request, "Изображение отклонено безопасной проверкой.")
     except ValidationError as exc:

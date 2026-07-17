@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group
+from django.core.checks import Tags, run_checks
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from PIL import Image, ImageDraw
@@ -38,7 +39,7 @@ FORBIDDEN_SERVICE_MODULES = {
 }
 
 
-def test_ai_support_has_no_mutation_service_shell_sql_or_url_fetch_imports(settings):
+def test_ai_support_has_no_mutation_service_sql_or_url_fetch_imports(settings):
     root = Path(settings.BASE_DIR) / "apps" / "ai_support"
     imported = set()
     for path in root.rglob("*.py"):
@@ -49,11 +50,59 @@ def test_ai_support_has_no_mutation_service_shell_sql_or_url_fetch_imports(setti
             if isinstance(node, ast.Import):
                 imported.update(alias.name for alias in node.names)
     assert not (imported & FORBIDDEN_SERVICE_MODULES)
-    assert not ({"subprocess", "socket", "urllib.request", "requests"} & imported)
+    assert not ({"socket", "urllib.request", "requests"} & imported)
+    subprocess_importers = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        modules = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        if "subprocess" in modules:
+            subprocess_importers.append(path.relative_to(root).as_posix())
+    assert subprocess_importers == ["providers/codex_cli.py"]
     source = "\n".join(path.read_text(encoding="utf-8") for path in root.rglob("*.py"))
     assert "cursor.execute" not in source
     assert "os.system" not in source
     assert "tools=" not in source
+    assert "shell=True" not in source
+    assert "danger-full-access" not in source
+    assert "workspace-write" not in source
+    assert "--search" not in source
+    assert "--yolo" not in source
+
+
+def test_api_sdk_and_key_configuration_are_absent(settings):
+    root = Path(settings.BASE_DIR)
+    package = root / "apps" / "ai_support"
+    source = "\n".join(path.read_text(encoding="utf-8") for path in package.rglob("*.py"))
+    forbidden = (
+        "import " + "openai",
+        "from " + "openai",
+        "OpenAI" + "Provider",
+        "responses" + ".create",
+        "AI_SUPPORT_" + "API_KEY",
+    )
+    assert not any(value in source for value in forbidden)
+
+
+def test_codex_runtime_security_check_requires_isolated_paths(settings, tmp_path):
+    home = tmp_path / "codex-home"
+    workspace = tmp_path / "runtime"
+    home.mkdir()
+    workspace.mkdir()
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = "codex_cli"
+    settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
+    settings.AI_SUPPORT_CODEX_HOME = str(home)
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(workspace)
+    assert not {
+        error.id for error in run_checks(tags=[Tags.security])
+    } & {f"ai_support.E{number:03d}" for number in range(2, 8)}
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(Path(settings.BASE_DIR) / "runtime")
+    assert "ai_support.E006" in {error.id for error in run_checks(tags=[Tags.security])}
 
 
 @pytest.mark.parametrize(
@@ -120,7 +169,7 @@ def test_https_playbook_integration_with_fake_provider_is_read_only(
     settings.AI_SUPPORT_ENABLED = True
     settings.AI_SUPPORT_PROVIDER = "fake"
     settings.AI_SUPPORT_ALLOW_FAKE_PROVIDER = True
-    settings.AI_SUPPORT_MODEL = "fake"
+    settings.AI_SUPPORT_CODEX_MODEL = "fake"
     settings.DENSTOCK_PUBLIC_BASE_URL = "https://185-250-44-206.sslip.io/"
     settings.PRIVATE_MEDIA_ROOT = tmp_path / "private"
     conversation = SupportConversation.objects.create(owner=user)
