@@ -257,7 +257,7 @@ def validate_launcher_socket(path: Path) -> Path:
         or stat.S_ISLNK(parent.st_mode)
         or not stat.S_ISDIR(parent.st_mode)
         or parent.st_uid != 0
-        or stat.S_IMODE(parent.st_mode) & 0o002
+        or stat.S_IMODE(parent.st_mode) & 0o022
     ):
         raise ExternalLauncherError("provider_not_configured")
     return path
