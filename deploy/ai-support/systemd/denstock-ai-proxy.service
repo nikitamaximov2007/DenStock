@@ -1,0 +1,41 @@
+[Unit]
+Description=DenisStock AI local-only MAXINIK proxy
+Documentation=file:/usr/local/share/doc/denstock-ai/ai-support-maxinik-network.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=denstock-ai-proxy
+Group=denstock-ai-proxy
+UMask=0077
+ExecStartPre=/usr/local/lib/denstock-ai/bin/sing-box check --config /etc/denstock-ai/sing-box.json
+ExecStart=/usr/local/lib/denstock-ai/bin/sing-box run --config /etc/denstock-ai/sing-box.json
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadOnlyPaths=/etc/denstock-ai/sing-box.json
+
+[Install]
+WantedBy=multi-user.target

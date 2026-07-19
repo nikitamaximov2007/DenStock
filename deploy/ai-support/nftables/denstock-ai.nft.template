@@ -1,0 +1,9 @@
+table inet denstock_ai {
+    chain output {
+        type filter hook output priority -150; policy accept;
+
+        meta skuid ${DENSTOCK_AI_UID} ip daddr 127.0.0.1 tcp dport ${MAXINIK_LOCAL_PROXY_PORT} counter accept comment "denstock-ai:allow-loopback-proxy"
+        meta skuid != 0 meta skuid != ${DENSTOCK_AI_UID} ip daddr 127.0.0.1 tcp dport ${MAXINIK_LOCAL_PROXY_PORT} counter reject with icmpx type admin-prohibited comment "denstock-ai:block-other-local-users"
+        meta skuid ${DENSTOCK_AI_UID} counter reject with icmpx type admin-prohibited comment "denstock-ai:block-all-direct"
+    }
+}
