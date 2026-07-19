@@ -48,6 +48,7 @@ INSTALL_PACKAGE = INSTALL_ROOT / "denstock_ai_network"
 INSTALL_BIN = INSTALL_ROOT / "bin"
 SING_BOX_BINARY = INSTALL_BIN / "sing-box"
 CODEX_BINARY = Path("/usr/local/bin/codex")
+CODEX_MARKER = INSTALL_ROOT / "codex.sha256"
 SYSTEMD_ROOT = Path("/etc/systemd/system")
 TMPFILES_ROOT = Path("/etc/tmpfiles.d")
 DOC_ROOT = Path("/usr/local/share/doc/denstock-ai")
@@ -129,6 +130,32 @@ def verify_installed_codex_binary(path: Path = CODEX_BINARY) -> None:
         raise InstallationError("Codex binary does not match the pinned artifact")
     if os.name == "posix" and (info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022):
         raise InstallationError("Codex binary metadata is unsafe")
+
+
+def verify_codex_install_marker(path: Path = CODEX_MARKER) -> None:
+    try:
+        info = path.lstat()
+        content = path.read_text(encoding="ascii")
+    except (OSError, UnicodeError) as exc:
+        raise InstallationError("Codex install marker is unavailable") from exc
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or not stat.S_ISREG(info.st_mode)
+        or content != f"{CODEX_BINARY_SHA256}\n"
+        or os.name == "posix"
+        and (info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o644)
+    ):
+        raise InstallationError("Codex install marker is unsafe")
+
+
+def _write_codex_install_marker() -> None:
+    descriptor = os.open(CODEX_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    with os.fdopen(descriptor, "wb") as file:
+        file.write(f"{CODEX_BINARY_SHA256}\n".encode("ascii"))
+        file.flush()
+        os.fsync(file.fileno())
+    os.chown(CODEX_MARKER, 0, 0)
+    os.chmod(CODEX_MARKER, 0o644)
 
 
 def _run(argv: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
@@ -221,9 +248,17 @@ def extract_codex_binary(archive: Path, destination: Path) -> None:
 
 def _download_and_install_codex(runner=_run) -> None:
     if installed_codex_version(runner) == CODEX_CLI_VERSION:
+        if not CODEX_MARKER.exists() or CODEX_MARKER.is_symlink():
+            raise InstallationError("refusing to manage an existing unmarked Codex binary")
         verify_installed_codex_binary()
+        verify_codex_install_marker()
         return
-    if CODEX_BINARY.exists() or CODEX_BINARY.is_symlink():
+    if (
+        CODEX_BINARY.exists()
+        or CODEX_BINARY.is_symlink()
+        or CODEX_MARKER.exists()
+        or CODEX_MARKER.is_symlink()
+    ):
         raise InstallationError("refusing to replace an existing unpinned Codex binary")
     temporary_directory = Path(tempfile.mkdtemp(prefix="denstock-ai-codex-"))
     try:
@@ -248,6 +283,11 @@ def _download_and_install_codex(runner=_run) -> None:
             CODEX_BINARY.unlink(missing_ok=True)
             raise InstallationError("installed Codex version is not pinned")
         verify_installed_codex_binary()
+        try:
+            _write_codex_install_marker()
+        except OSError as exc:
+            CODEX_BINARY.unlink(missing_ok=True)
+            raise InstallationError("Codex install marker could not be written") from exc
     finally:
         shutil.rmtree(temporary_directory)
 
@@ -358,7 +398,7 @@ def launcher_payload(model: str, request_creator_uid: int, proxy_port: int) -> d
         "proxy_host": DEFAULT_PROXY_HOST,
         "proxy_port": proxy_port,
         "timeout_seconds": 60,
-        "max_prompt_bytes": 24000,
+        "max_prompt_bytes": 64 * 1024,
         "max_stdout_bytes": 65536,
         "max_stderr_bytes": 16384,
         "max_image_bytes": 10 * 1024 * 1024,

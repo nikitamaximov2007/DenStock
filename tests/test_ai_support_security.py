@@ -22,6 +22,7 @@ from apps.ai_support.diagnostics import (
 )
 from apps.ai_support.knowledge import retrieve
 from apps.ai_support.models import SupportConversation
+from apps.ai_support.providers.external_launcher import ExternalLauncherError
 from apps.ai_support.services import send_message
 from apps.inventory.models import StockBalance, StockMovement
 from apps.receipts.models import Receipt
@@ -83,7 +84,19 @@ def test_ai_support_has_no_mutation_service_sql_or_url_fetch_imports(settings):
             if isinstance(node, ast.Import):
                 imported.update(alias.name for alias in node.names)
     assert not (imported & FORBIDDEN_SERVICE_MODULES)
-    assert not ({"socket", "urllib.request", "requests"} & imported)
+    assert not ({"urllib.request", "requests"} & imported)
+    socket_importers = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        modules = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        if "socket" in modules:
+            socket_importers.append(path.relative_to(root).as_posix())
+    assert socket_importers == ["providers/external_launcher.py"]
     subprocess_importers = []
     for path in root.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -230,11 +243,72 @@ def test_debug_enabled_continues_with_provider_specific_checks(settings, tmp_pat
     assert "ai_support.E008" not in error_ids
 
 
-def test_external_mode_is_rejected_even_for_absolute_binary(settings, tmp_path):
+def test_external_mode_requires_the_fixed_linux_socket(settings, tmp_path):
     configure_codex_security_check(settings, tmp_path)
     settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "external"
-    settings.AI_SUPPORT_CODEX_BINARY = sys.executable
+    settings.AI_SUPPORT_CODEX_LAUNCHER_SOCKET = str(tmp_path / "launcher.sock")
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = False
     assert "ai_support.E011" in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+def configure_external_security_check(settings, tmp_path):
+    workspace = tmp_path / "requests"
+    workspace.mkdir(exist_ok=True)
+    settings.AI_SUPPORT_ENABLED = True
+    settings.AI_SUPPORT_PROVIDER = "codex_cli"
+    settings.DEBUG = False
+    settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = AUDITED_CODEX_CLI_VERSION
+    settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
+    settings.AI_SUPPORT_CODEX_WORKSPACE = str(workspace)
+    settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 1
+    settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "external"
+    settings.AI_SUPPORT_CODEX_LAUNCHER_SOCKET = "/run/denstock-ai/launcher.sock"
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = False
+
+
+def test_production_external_mode_requires_successful_handshake(
+    settings, tmp_path, monkeypatch
+):
+    configure_external_security_check(settings, tmp_path)
+    monkeypatch.setattr("apps.ai_support.checks._is_posix_platform", lambda: True)
+    monkeypatch.setattr("apps.ai_support.checks.validate_launcher_socket", lambda path: path)
+    monkeypatch.setattr("apps.ai_support.checks._external_workspace_errors", lambda path: [])
+    monkeypatch.setattr(
+        "apps.ai_support.checks.query_launcher_ready",
+        lambda *args, **kwargs: {"proxy_health": "ok"},
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("CODEX_API_KEY", raising=False)
+
+    error_ids = {error.id for error in run_checks(tags=[Tags.security])}
+
+    assert not error_ids & {"ai_support.E011", "ai_support.E015", "ai_support.E016"}
+
+
+def test_production_external_mode_fails_closed_on_launcher_error(
+    settings, tmp_path, monkeypatch
+):
+    configure_external_security_check(settings, tmp_path)
+    monkeypatch.setattr("apps.ai_support.checks._is_posix_platform", lambda: True)
+    monkeypatch.setattr("apps.ai_support.checks.validate_launcher_socket", lambda path: path)
+    monkeypatch.setattr("apps.ai_support.checks._external_workspace_errors", lambda path: [])
+
+    def fail(*_args, **_kwargs):
+        raise ExternalLauncherError("provider_unavailable")
+
+    monkeypatch.setattr("apps.ai_support.checks.query_launcher_ready", fail)
+    assert "ai_support.E015" in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+def test_production_external_mode_rejects_api_key_environment(
+    settings, tmp_path, monkeypatch
+):
+    configure_external_security_check(settings, tmp_path)
+    monkeypatch.setattr("apps.ai_support.checks._is_posix_platform", lambda: True)
+    monkeypatch.setattr("apps.ai_support.checks._external_workspace_errors", lambda path: [])
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-be-used")
+
+    assert "ai_support.E016" in {error.id for error in run_checks(tags=[Tags.security])}
 
 
 def test_direct_dev_requires_explicit_opt_in(settings, tmp_path):

@@ -401,17 +401,20 @@ def test_static_sing_box_template_is_json_and_has_no_tun(deploy_root):
     assert "default_route" not in encoded
 
 
-def test_deployment_layer_does_not_edit_existing_ai_or_django_settings(project_root):
-    status_paths = {
-        line[3:]
-        for line in subprocess.check_output(
-            ["git", "status", "--short"], cwd=project_root, text=True
-        ).splitlines()
-    }
+def test_external_compose_override_mounts_only_launcher_ipc(deploy_root):
+    compose = (deploy_root / "docker-compose.external.yml").read_text(encoding="utf-8")
 
-    assert not any(path.startswith("apps/ai_support/") for path in status_paths)
-    assert "config/settings/base.py" not in status_paths
-    assert "docker-compose.yml" not in status_paths
+    assert "/run/denstock-ai/launcher.sock" in compose
+    assert "/var/lib/denstock-ai/requests" in compose
+    assert "DENSTOCK_WEB_UID" in compose
+    assert "DENSTOCK_AI_CLIENT_GID" in compose
+    for forbidden in (
+        "/etc/denstock-ai",
+        "/var/lib/denstock-ai/codex-home",
+        "/run/docker.sock",
+        "/var/lib/postgresql",
+    ):
+        assert forbidden not in compose
 
 
 def test_install_and_rollback_code_has_no_shell_or_ssh(project_root):

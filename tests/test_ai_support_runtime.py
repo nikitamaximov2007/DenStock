@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,15 @@ def test_runtime_purge_rejects_similar_prefix_and_workspace_root(settings, tmp_p
     assert stale_request_directories(workspace, older_than_hours=24) == []
     with pytest.raises(ValueError, match="unsafe_candidate"):
         delete_request_directory(workspace, workspace)
+
+
+def test_runtime_purge_includes_stale_canonical_external_request(tmp_path):
+    workspace = tmp_path / "runtime"
+    request = workspace / str(uuid.uuid4())
+    request.mkdir(parents=True)
+    age(request, hours=48)
+
+    assert stale_request_directories(workspace, older_than_hours=24) == [request]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Confirmed deletion is Linux-only")

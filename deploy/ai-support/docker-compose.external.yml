@@ -1,0 +1,16 @@
+services:
+  web:
+    build:
+      args:
+        DENSTOCK_WEB_UID: ${DENSTOCK_WEB_UID:-2001}
+        DENSTOCK_WEB_GID: ${DENSTOCK_WEB_GID:-2001}
+    user: "${DENSTOCK_WEB_UID:-2001}:${DENSTOCK_WEB_GID:-2001}"
+    group_add:
+      - "${DENSTOCK_AI_CLIENT_GID}"
+    volumes:
+      - type: bind
+        source: /run/denstock-ai/launcher.sock
+        target: /run/denstock-ai/launcher.sock
+      - type: bind
+        source: /var/lib/denstock-ai/requests
+        target: /var/lib/denstock-ai/requests

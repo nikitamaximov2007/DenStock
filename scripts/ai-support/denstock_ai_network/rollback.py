@@ -9,12 +9,14 @@ from pathlib import Path
 from .constants import FIREWALL_TABLE, NFTABLES_CONFIG_PATH
 from .installer import (
     CODEX_BINARY,
+    CODEX_MARKER,
     INSTALL_ROOT,
     SYSTEMD_ROOT,
     TMPFILES_ROOT,
     UNIT_FILES,
     WRAPPERS,
     InstallationError,
+    verify_codex_install_marker,
     verify_installed_codex_binary,
 )
 
@@ -41,10 +43,15 @@ def rollback_plan() -> list[str]:
 
 
 def apply_rollback(runner=_run) -> None:
-    remove_codex = CODEX_BINARY.exists() or CODEX_BINARY.is_symlink()
+    marker_present = CODEX_MARKER.exists() or CODEX_MARKER.is_symlink()
+    binary_present = CODEX_BINARY.exists() or CODEX_BINARY.is_symlink()
+    remove_codex = marker_present and binary_present
+    if marker_present and not binary_present:
+        raise RollbackError("refusing rollback with an incomplete managed Codex installation")
     if remove_codex:
         try:
             verify_installed_codex_binary()
+            verify_codex_install_marker()
         except InstallationError as exc:
             raise RollbackError("refusing to remove an unrecognized Codex binary") from exc
 

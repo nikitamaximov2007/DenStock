@@ -426,3 +426,18 @@ def test_ownership_transfer_revalidates_open_file_descriptors(project_root):
     assert "schema_data = os.read(file_fd, 64 * 1024 + 1)" in source
     assert "shutil.rmtree.avoids_symlink_attacks is not True" in source
     assert "shutil.rmtree(request.request_id, dir_fd=parent_fd)" in source
+
+
+def test_launcher_handshake_revalidates_its_root_owned_installation(project_root):
+    source = (
+        project_root
+        / "scripts"
+        / "ai-support"
+        / "denstock_ai_network"
+        / "launcher.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'Path("/usr/local/sbin/denstock-ai-launcher")' in source
+    assert 'raise LauncherConfigurationError("launcher_permissions")' in source
+    assert "info.st_uid != 0" in source
+    assert "stat.S_IMODE(info.st_mode) & 0o022" in source

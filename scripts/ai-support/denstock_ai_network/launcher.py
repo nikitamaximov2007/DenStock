@@ -495,6 +495,33 @@ def cleanup_request(request: PreparedRequest) -> None:
 
 
 def validate_runtime_permissions(config: LauncherConfig, *, ai_uid: int) -> None:
+    package_root = Path(__file__).parent
+    trusted_launcher_paths = (
+        Path("/usr/local/sbin/denstock-ai-launcher"),
+        package_root,
+        *(package_root / name for name in (
+            "__init__.py",
+            "config.py",
+            "constants.py",
+            "firewall.py",
+            "health.py",
+            "launcher.py",
+            "protocol.py",
+        )),
+    )
+    for path in trusted_launcher_paths:
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise LauncherConfigurationError("launcher_permissions") from exc
+        expected_type = stat.S_ISDIR if path == package_root else stat.S_ISREG
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not expected_type(info.st_mode)
+            or info.st_uid != 0
+            or stat.S_IMODE(info.st_mode) & 0o022
+        ):
+            raise LauncherConfigurationError("launcher_permissions")
     checks = (
         (config.codex_binary, stat.S_ISREG, 0, None, "codex_binary_permissions"),
         (config.codex_home, stat.S_ISDIR, ai_uid, 0o700, "codex_home_permissions"),
