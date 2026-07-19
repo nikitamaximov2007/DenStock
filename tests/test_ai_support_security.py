@@ -63,6 +63,15 @@ def configure_codex_security_check(settings, tmp_path, *, provider="codex_cli"):
     settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
 
 
+class BrokenProviderName:
+    def __init__(self):
+        self.string_calls = 0
+
+    def __str__(self):
+        self.string_calls += 1
+        raise RuntimeError("provider normalization failed")
+
+
 def test_ai_support_has_no_mutation_service_sql_or_url_fetch_imports(settings):
     root = Path(settings.BASE_DIR) / "apps" / "ai_support"
     imported = set()
@@ -168,11 +177,48 @@ def test_production_ai_support_is_always_rejected(settings, tmp_path, provider):
     assert len(errors) == 1
 
 
+@pytest.mark.parametrize("provider", [None, object()])
+def test_production_guard_rejects_non_string_provider_without_normalizing(
+    settings, tmp_path, provider
+):
+    configure_codex_security_check(settings, tmp_path, provider=provider)
+    settings.DEBUG = False
+    assert {error.id for error in run_checks(tags=[Tags.security])} == {
+        "ai_support.E015"
+    }
+
+
+def test_production_guard_precedes_broken_provider_normalization(settings, tmp_path):
+    provider = BrokenProviderName()
+    configure_codex_security_check(settings, tmp_path, provider=provider)
+    settings.DEBUG = False
+    assert {error.id for error in run_checks(tags=[Tags.security])} == {
+        "ai_support.E015"
+    }
+    assert provider.string_calls == 0
+
+
+def test_debug_broken_provider_fails_closed(settings, tmp_path):
+    provider = BrokenProviderName()
+    configure_codex_security_check(settings, tmp_path, provider=provider)
+    errors = run_checks(tags=[Tags.security])
+    assert {error.id for error in errors} == {"ai_support.E014"}
+    assert provider.string_calls == 1
+
+
 def test_production_guard_does_not_run_when_feature_is_disabled(settings, tmp_path):
     configure_codex_security_check(settings, tmp_path)
     settings.AI_SUPPORT_ENABLED = False
     settings.DEBUG = False
     assert "ai_support.E015" not in {error.id for error in run_checks(tags=[Tags.security])}
+
+
+def test_disabled_feature_does_not_normalize_provider(settings, tmp_path):
+    provider = BrokenProviderName()
+    configure_codex_security_check(settings, tmp_path, provider=provider)
+    settings.AI_SUPPORT_ENABLED = False
+    assert run_checks(tags=[Tags.security]) == []
+    assert provider.string_calls == 0
 
 
 def test_debug_enabled_continues_with_provider_specific_checks(settings, tmp_path):
@@ -215,8 +261,8 @@ def test_codex_security_checks_pin_binary_concurrency_and_launcher(settings, tmp
     settings.AI_SUPPORT_CODEX_REQUIRED_VERSION = ""
     settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY = 2
     settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "direct_dev"
-    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = True
-    settings.DEBUG = False
+    settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = False
+    settings.DEBUG = True
     error_ids = {error.id for error in run_checks(tags=[Tags.security])}
     assert {"ai_support.E008", "ai_support.E009", "ai_support.E010", "ai_support.E011"} <= error_ids
 
