@@ -143,6 +143,55 @@ def test_installer_refuses_to_replace_an_active_unit():
         installer._require_units_inactive(runner)
 
 
+def test_installer_refuses_to_replace_an_active_launcher_instance():
+    calls = []
+
+    def runner(argv, *, check=True):
+        calls.append(argv)
+        returncode = 0 if argv[-1] == "denstock-ai-launcher@*.service" else 3
+        return subprocess.CompletedProcess(argv, returncode, stdout=b"", stderr=b"")
+
+    with pytest.raises(InstallationError, match="active launcher instance"):
+        installer._require_units_inactive(runner)
+
+    assert calls[-1][-1] == "denstock-ai-launcher@*.service"
+
+
+def test_existing_codex_is_verified_before_version_execution(monkeypatch, tmp_path):
+    binary = tmp_path / "codex"
+    marker = tmp_path / "codex.sha256"
+    binary.write_bytes(b"binary")
+    marker.write_text("marker\n", encoding="ascii")
+    events = []
+
+    monkeypatch.setattr(installer, "CODEX_BINARY", binary)
+    monkeypatch.setattr(installer, "CODEX_MARKER", marker)
+    monkeypatch.setattr(
+        installer,
+        "verify_installed_codex_binary",
+        lambda path: events.append(("verify_binary", path)),
+    )
+    monkeypatch.setattr(
+        installer,
+        "verify_codex_install_marker",
+        lambda path: events.append(("verify_marker", path)),
+    )
+
+    def installed_version(_runner):
+        events.append(("execute_version", binary))
+        return CODEX_CLI_VERSION
+
+    monkeypatch.setattr(installer, "installed_codex_version", installed_version)
+
+    installer._download_and_install_codex()
+
+    assert [event[0] for event in events] == [
+        "verify_binary",
+        "verify_marker",
+        "execute_version",
+    ]
+
+
 def test_launcher_server_config_is_fixed_and_local_only():
     payload = launcher_payload("fixed-model", 2001, 2080)
 
@@ -356,6 +405,37 @@ def test_runtime_verification_contract_is_exact():
     }
 
 
+def test_installed_verification_checks_codex_before_execution(monkeypatch):
+    events = []
+
+    monkeypatch.setattr(verification, "load_launcher_config", lambda _path: object())
+    monkeypatch.setattr(verification, "_require_root_file", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        verification,
+        "verify_installed_codex_binary",
+        lambda _path: events.append("verify_binary"),
+    )
+    monkeypatch.setattr(
+        verification,
+        "verify_codex_install_marker",
+        lambda: events.append("verify_marker"),
+    )
+
+    def codex_version(_runner):
+        events.append("execute_version")
+        return CODEX_CLI_VERSION
+
+    monkeypatch.setattr(verification, "installed_codex_version", codex_version)
+    monkeypatch.setattr(
+        verification,
+        "installed_sing_box_version",
+        lambda _runner: SING_BOX_VERSION,
+    )
+
+    assert verification.verify_installed()["installed"] is True
+    assert events == ["verify_binary", "verify_marker", "execute_version"]
+
+
 def test_runtime_verification_rejects_non_chatgpt_login(monkeypatch):
     monkeypatch.setattr(
         "denstock_ai_network.verification.verify_installed",
@@ -408,6 +488,7 @@ def test_external_compose_override_mounts_only_launcher_ipc(deploy_root):
     assert "/var/lib/denstock-ai/requests" in compose
     assert "DENSTOCK_WEB_UID" in compose
     assert "DENSTOCK_AI_CLIENT_GID" in compose
+    assert compose.count("create_host_path: false") == 2
     for forbidden in (
         "/etc/denstock-ai",
         "/var/lib/denstock-ai/codex-home",

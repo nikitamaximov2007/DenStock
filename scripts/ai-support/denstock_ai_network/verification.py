@@ -72,13 +72,13 @@ def verify_installed(runner=_run) -> dict[str, object]:
         (INSTALL_PACKAGE / "launcher.py", False),
     ):
         _require_root_file(path, executable=executable)
-    if installed_codex_version(runner) != CODEX_CLI_VERSION:
-        raise VerificationError("Codex version is not pinned")
     try:
-        verify_installed_codex_binary()
+        verify_installed_codex_binary(CODEX_BINARY)
         verify_codex_install_marker()
     except InstallationError as exc:
         raise VerificationError("Codex binary does not match the pinned artifact") from exc
+    if installed_codex_version(runner) != CODEX_CLI_VERSION:
+        raise VerificationError("Codex version is not pinned")
     if installed_sing_box_version(runner) != SING_BOX_VERSION:
         raise VerificationError("sing-box version is not pinned")
     return {

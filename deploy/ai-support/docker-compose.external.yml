@@ -11,6 +11,10 @@ services:
       - type: bind
         source: /run/denstock-ai/launcher.sock
         target: /run/denstock-ai/launcher.sock
+        bind:
+          create_host_path: false
       - type: bind
         source: /var/lib/denstock-ai/requests
         target: /var/lib/denstock-ai/requests
+        bind:
+          create_host_path: false

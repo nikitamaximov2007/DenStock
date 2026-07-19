@@ -1,7 +1,9 @@
 import base64
 import json
+import stat
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +18,7 @@ from apps.ai_support.providers.external_launcher import (
     _decode_response,
     _encode_request,
     query_launcher_ready,
+    validate_launcher_socket,
 )
 
 THREAD_ID = "0199a213-81c0-7800-8aa1-bbab2a035a53"
@@ -260,3 +263,22 @@ def test_launcher_readiness_rejects_api_key_auth_status():
             clock=lambda: 0,
             transport=transport,
         )
+
+
+def test_launcher_socket_rejects_group_writable_parent(monkeypatch):
+    socket_path = Path("F:/run/denstock-ai/launcher.sock")
+    socket_info = SimpleNamespace(st_mode=stat.S_IFSOCK | 0o660, st_uid=0)
+    parent_info = SimpleNamespace(st_mode=stat.S_IFDIR | 0o770, st_uid=0)
+
+    monkeypatch.setattr(
+        "apps.ai_support.providers.external_launcher.os.name",
+        "posix",
+    )
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda path: socket_info if path == socket_path else parent_info,
+    )
+
+    with pytest.raises(ExternalLauncherError, match="provider_not_configured"):
+        validate_launcher_socket(socket_path)

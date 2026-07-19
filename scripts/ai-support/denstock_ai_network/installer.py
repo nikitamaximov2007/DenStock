@@ -172,6 +172,13 @@ def _require_units_inactive(runner=_run) -> None:
         result = runner(["/usr/bin/systemctl", "is-active", "--quiet", unit], check=False)
         if result.returncode == 0:
             raise InstallationError(f"refusing to update active unit: {unit}")
+    launcher_instances = "denstock-ai-launcher@*.service"
+    result = runner(
+        ["/usr/bin/systemctl", "is-active", "--quiet", launcher_instances],
+        check=False,
+    )
+    if result.returncode == 0:
+        raise InstallationError("refusing to update an active launcher instance")
 
 
 def installed_sing_box_version(runner=_run) -> str:
@@ -247,19 +254,16 @@ def extract_codex_binary(archive: Path, destination: Path) -> None:
 
 
 def _download_and_install_codex(runner=_run) -> None:
-    if installed_codex_version(runner) == CODEX_CLI_VERSION:
-        if not CODEX_MARKER.exists() or CODEX_MARKER.is_symlink():
-            raise InstallationError("refusing to manage an existing unmarked Codex binary")
-        verify_installed_codex_binary()
-        verify_codex_install_marker()
+    binary_present = CODEX_BINARY.exists() or CODEX_BINARY.is_symlink()
+    marker_present = CODEX_MARKER.exists() or CODEX_MARKER.is_symlink()
+    if binary_present or marker_present:
+        if not binary_present or not marker_present:
+            raise InstallationError("refusing to manage an incomplete Codex installation")
+        verify_installed_codex_binary(CODEX_BINARY)
+        verify_codex_install_marker(CODEX_MARKER)
+        if installed_codex_version(runner) != CODEX_CLI_VERSION:
+            raise InstallationError("installed Codex version is not pinned")
         return
-    if (
-        CODEX_BINARY.exists()
-        or CODEX_BINARY.is_symlink()
-        or CODEX_MARKER.exists()
-        or CODEX_MARKER.is_symlink()
-    ):
-        raise InstallationError("refusing to replace an existing unpinned Codex binary")
     temporary_directory = Path(tempfile.mkdtemp(prefix="denstock-ai-codex-"))
     try:
         os.chmod(temporary_directory, 0o700)
@@ -279,10 +283,10 @@ def _download_and_install_codex(runner=_run) -> None:
         ):
             raise InstallationError("Codex binary does not match the pinned artifact")
         _copy(extracted_binary, CODEX_BINARY, 0o755)
+        verify_installed_codex_binary(CODEX_BINARY)
         if installed_codex_version(runner) != CODEX_CLI_VERSION:
             CODEX_BINARY.unlink(missing_ok=True)
             raise InstallationError("installed Codex version is not pinned")
-        verify_installed_codex_binary()
         try:
             _write_codex_install_marker()
         except OSError as exc:
