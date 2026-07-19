@@ -7,7 +7,10 @@ import time
 from pathlib import Path
 
 REQUEST_DIRECTORY_PREFIX = "request-"
-REQUEST_DIRECTORY_PATTERN = re.compile(r"request-[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+REQUEST_DIRECTORY_PATTERN = re.compile(
+    r"(?:request-[A-Za-z0-9][A-Za-z0-9_-]*|"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\Z"
+)
 
 
 def _contains_link(path: Path) -> bool:

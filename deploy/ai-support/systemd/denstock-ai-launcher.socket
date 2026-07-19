@@ -1,0 +1,16 @@
+[Unit]
+Description=Socket for the DenisStock AI launcher
+Requires=denstock-ai-firewall.service denstock-ai-proxy.service
+After=denstock-ai-firewall.service denstock-ai-proxy.service
+
+[Socket]
+ListenStream=/run/denstock-ai/launcher.sock
+Accept=yes
+SocketUser=root
+SocketGroup=denstock-ai-client
+SocketMode=0660
+DirectoryMode=0750
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

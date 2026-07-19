@@ -1,0 +1,45 @@
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "local-mixed",
+      "listen": "${MAXINIK_LOCAL_PROXY_HOST}",
+      "listen_port": "${MAXINIK_LOCAL_PROXY_PORT}",
+      "set_system_proxy": false
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "maxinik-vless",
+      "server": "${MAXINIK_SERVER}",
+      "server_port": "${MAXINIK_PORT}",
+      "uuid": "${MAXINIK_UUID}",
+      "flow": "${MAXINIK_FLOW}",
+      "network": "tcp",
+      "packet_encoding": "${MAXINIK_PACKET_ENCODING}",
+      "tls": {
+        "enabled": true,
+        "server_name": "${MAXINIK_REALITY_SNI}",
+        "alpn": ["${MAXINIK_ALPN}"],
+        "utls": {
+          "enabled": true,
+          "fingerprint": "${MAXINIK_FINGERPRINT}"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "${MAXINIK_REALITY_PUBLIC_KEY}",
+          "short_id": "${MAXINIK_REALITY_SHORT_ID}"
+        }
+      }
+    }
+  ],
+  "route": {
+    "final": "maxinik-vless",
+    "auto_detect_interface": true
+  }
+}

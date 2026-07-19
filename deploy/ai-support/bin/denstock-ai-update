@@ -1,0 +1,8 @@
+#!/usr/bin/python3
+import sys
+
+sys.path.insert(0, "/usr/local/lib/denstock-ai")
+
+from denstock_ai_network.installer import main  # noqa: E402
+
+raise SystemExit(main())

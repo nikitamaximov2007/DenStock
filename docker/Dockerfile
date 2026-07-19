@@ -2,6 +2,9 @@
 # на UI-слоях). Один и тот же образ работает локально и на VPS.
 FROM python:3.12-slim
 
+ARG DENSTOCK_WEB_UID=2001
+ARG DENSTOCK_WEB_GID=2001
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -35,6 +38,14 @@ RUN pip install --upgrade pip && pip install .
 
 # Затем исходный код.
 COPY . .
+
+# The production AI override runs Django as this fixed non-root identity. Code
+# remains root-owned; only application data directories are writable.
+RUN groupadd --gid "${DENSTOCK_WEB_GID}" denstock-web \
+    && useradd --uid "${DENSTOCK_WEB_UID}" --gid denstock-web \
+        --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin denstock-web \
+    && install -d -o denstock-web -g denstock-web -m 0755 \
+        /app/staticfiles /app/mediafiles /app/private_media /app/backups
 
 # Миграции, сборка статики и создание администратора выполняются в entrypoint
 # при запуске, когда переменные окружения уже доступны.

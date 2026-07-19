@@ -23,6 +23,7 @@ from apps.ai_support.providers.codex_cli import (
     _parse_result,
 )
 from apps.ai_support.providers.disabled import DisabledProvider
+from apps.ai_support.providers.external_launcher import ExternalCodexProvider
 from apps.ai_support.providers.fake import FakeProvider
 from apps.ai_support.providers.registry import get_provider
 
@@ -182,7 +183,7 @@ def test_registry_rejects_empty_and_unknown_provider_names(settings, provider_na
     assert isinstance(get_provider(), DisabledProvider)
 
 
-def test_registry_rejects_external_mode_until_launcher_exists(settings, tmp_path):
+def test_registry_selects_external_provider_without_direct_execution(settings, tmp_path):
     settings.AI_SUPPORT_ENABLED = True
     settings.AI_SUPPORT_PROVIDER = "codex_cli"
     settings.AI_SUPPORT_CODEX_MODEL = "configured-model"
@@ -193,7 +194,7 @@ def test_registry_rejects_external_mode_until_launcher_exists(settings, tmp_path
     settings.AI_SUPPORT_CODEX_LAUNCH_MODE = "external"
     settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION = False
     settings.DEBUG = False
-    assert isinstance(get_provider(), DisabledProvider)
+    assert isinstance(get_provider(), ExternalCodexProvider)
 
 
 def test_disabled_feature_never_checks_codex_version(settings, monkeypatch):

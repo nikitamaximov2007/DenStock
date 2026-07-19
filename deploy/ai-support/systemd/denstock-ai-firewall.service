@@ -1,0 +1,33 @@
+[Unit]
+Description=Fail-closed egress policy for denstock-ai
+Before=denstock-ai-launcher.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+UMask=0077
+Environment=PYTHONPATH=/usr/local/lib/denstock-ai
+ExecStart=/usr/bin/python3 -m denstock_ai_network.firewall install
+ExecStop=/usr/bin/python3 -m denstock_ai_network.firewall remove
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+AmbientCapabilities=
+ReadOnlyPaths=/etc/denstock-ai/launcher.json
+ReadWritePaths=/run/denstock-ai
+
+[Install]
+WantedBy=multi-user.target

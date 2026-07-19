@@ -2,12 +2,18 @@ import os
 import re
 import shutil
 import stat
+import time
 from pathlib import Path
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
 
 from .contracts import AUDITED_CODEX_CLI_VERSION, normalize_provider_name
+from .providers.external_launcher import (
+    ExternalLauncherError,
+    query_launcher_ready,
+    validate_launcher_socket,
+)
 
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
@@ -43,6 +49,10 @@ def _contains_symlink(path: Path) -> bool:
 
 def _positive_integer(value) -> bool:
     return type(value) is int and value > 0
+
+
+def _is_posix_platform() -> bool:
+    return os.name == "posix"
 
 
 def _binary_path(binary: str) -> Path | None:
@@ -91,15 +101,31 @@ def _posix_path_errors(home: Path, workspace: Path, launch_mode: str) -> list[Er
     return errors
 
 
+def _external_workspace_errors(workspace: Path) -> list[Error]:
+    workspace_info = workspace.stat()
+    if (
+        workspace != Path("/var/lib/denstock-ai/requests")
+        or workspace_info.st_uid != 0
+        or stat.S_IMODE(workspace_info.st_mode) != 0o1731
+        or not os.access(workspace, os.W_OK | os.X_OK)
+    ):
+        return [
+            Error(
+                "External request workspace has unsafe ownership, mode, or access.",
+                id="ai_support.E013",
+            )
+        ]
+    return []
+
+
 @register(Tags.security)
 def codex_runtime_is_isolated(app_configs, **kwargs):
     if not settings.AI_SUPPORT_ENABLED:
         return []
-    if not settings.DEBUG:
+    if not settings.DEBUG and not isinstance(settings.AI_SUPPORT_PROVIDER, str):
         return [
             Error(
-                "AI support cannot be enabled in production until the audited Linux launcher "
-                "is implemented.",
+                "Production AI support requires the audited external Codex launcher.",
                 id="ai_support.E015",
             )
         ]
@@ -112,18 +138,35 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E014",
             )
         ]
-    errors = []
+    if not settings.DEBUG and provider != "codex_cli":
+        return [
+            Error(
+                "Production AI support requires the audited external Codex launcher.",
+                id="ai_support.E015",
+            )
+        ]
     if provider != "codex_cli":
-        return errors
+        return []
+    errors = []
     binary = str(settings.AI_SUPPORT_CODEX_BINARY).strip()
     required_version = str(settings.AI_SUPPORT_CODEX_REQUIRED_VERSION)
     raw_home = str(settings.AI_SUPPORT_CODEX_HOME).strip()
     raw_workspace = str(settings.AI_SUPPORT_CODEX_WORKSPACE).strip()
     launch_mode = str(settings.AI_SUPPORT_CODEX_LAUNCH_MODE).strip().lower()
 
+    if not settings.DEBUG and launch_mode != "external":
+        return [
+            Error(
+                "Production AI support requires external launcher mode.",
+                id="ai_support.E015",
+            )
+        ]
+
     if not settings.AI_SUPPORT_CODEX_MODEL:
         errors.append(Error("AI_SUPPORT_CODEX_MODEL is required.", id="ai_support.E002"))
-    if not raw_home or not Path(raw_home).is_absolute():
+    if launch_mode == "direct_dev" and (
+        not raw_home or not Path(raw_home).is_absolute()
+    ):
         errors.append(
             Error("AI_SUPPORT_CODEX_HOME must be an absolute path.", id="ai_support.E003")
         )
@@ -150,15 +193,6 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E008",
             )
         )
-    resolved_binary = _binary_path(binary) if binary else None
-    if (
-        resolved_binary is None
-        or not resolved_binary.is_file()
-        or (os.name != "nt" and not os.access(resolved_binary, os.X_OK))
-    ):
-        errors.append(
-            Error("AI_SUPPORT_CODEX_BINARY does not exist.", id="ai_support.E009")
-        )
     if settings.AI_SUPPORT_CODEX_GLOBAL_CONCURRENCY != 1:
         errors.append(
             Error(
@@ -167,14 +201,57 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
             )
         )
     if launch_mode == "external":
-        errors.append(
-            Error(
-                "External launcher mode is unavailable until a separate launcher implementation "
-                "and security audit are complete.",
-                id="ai_support.E011",
+        socket_path = Path(str(settings.AI_SUPPORT_CODEX_LAUNCHER_SOCKET).strip())
+        api_key_names = ("OPENAI" + "_API_KEY", "CODEX" + "_API_KEY")
+        if any(os.environ.get(name) for name in api_key_names):
+            errors.append(
+                Error(
+                    "External AI support must use ChatGPT login, not an API key.",
+                    id="ai_support.E016",
+                )
             )
-        )
+        if settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION:
+            errors.append(
+                Error(
+                    "Direct Codex execution must be disabled in external mode.",
+                    id="ai_support.E011",
+                )
+            )
+        if (
+            not _is_posix_platform()
+            or socket_path != Path("/run/denstock-ai/launcher.sock")
+        ):
+            errors.append(
+                Error(
+                    "External launcher requires the audited Linux Unix socket path.",
+                    id="ai_support.E011",
+                )
+            )
+        elif not errors:
+            try:
+                validate_launcher_socket(socket_path)
+                query_launcher_ready(
+                    socket_path,
+                    deadline=time.monotonic()
+                    + min(settings.AI_SUPPORT_CODEX_TIMEOUT_SECONDS, 15),
+                )
+            except ExternalLauncherError:
+                errors.append(
+                    Error(
+                        "External launcher handshake or ChatGPT login check failed closed.",
+                        id="ai_support.E015",
+                    )
+                )
     elif launch_mode == "direct_dev":
+        resolved_binary = _binary_path(binary) if binary else None
+        if (
+            resolved_binary is None
+            or not resolved_binary.is_file()
+            or (os.name != "nt" and not os.access(resolved_binary, os.X_OK))
+        ):
+            errors.append(
+                Error("AI_SUPPORT_CODEX_BINARY does not exist.", id="ai_support.E009")
+            )
         if not settings.DEBUG or not settings.AI_SUPPORT_CODEX_ALLOW_DIRECT_DEV_EXECUTION:
             errors.append(
                 Error(
@@ -209,16 +286,9 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
             Error("Codex runtime limits must be positive integers.", id="ai_support.E007")
         )
 
-    if (
-        not raw_home
-        or not raw_workspace
-        or not Path(raw_home).is_absolute()
-        or not Path(raw_workspace).is_absolute()
-    ):
+    if not raw_workspace or not Path(raw_workspace).is_absolute():
         return errors
-    home_path = Path(raw_home)
     workspace_path = Path(raw_workspace)
-    home = home_path.resolve()
     workspace = workspace_path.resolve()
     protected = {
         Path(settings.BASE_DIR).resolve(),
@@ -226,10 +296,14 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
         Path(settings.PRIVATE_MEDIA_ROOT).resolve(),
         Path(settings.BACKUP_ROOT).resolve(),
     }
-    if _overlaps(home, workspace) or any(
-        _overlaps(path, protected_path)
-        for path in (home, workspace)
-        for protected_path in protected
+    paths = (workspace,)
+    home_path = None
+    if launch_mode == "direct_dev" and raw_home and Path(raw_home).is_absolute():
+        home_path = Path(raw_home)
+        home = home_path.resolve()
+        paths = (home, workspace)
+    if (home_path is not None and _overlaps(home, workspace)) or any(
+        _overlaps(path, protected_path) for path in paths for protected_path in protected
     ):
         errors.append(
             Error(
@@ -237,7 +311,7 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
                 id="ai_support.E006",
             )
         )
-    if not home_path.is_dir() or not workspace_path.is_dir():
+    if not workspace_path.is_dir() or (home_path is not None and not home_path.is_dir()):
         errors.append(
             Error(
                 "Codex home and workspace must already exist as directories.",
@@ -245,9 +319,14 @@ def codex_runtime_is_isolated(app_configs, **kwargs):
             )
         )
         return errors
-    if _contains_symlink(home_path) or _contains_symlink(workspace_path):
+    if _contains_symlink(workspace_path) or (
+        home_path is not None and _contains_symlink(home_path)
+    ):
         errors.append(
             Error("Codex home and workspace must not use symlinks.", id="ai_support.E012")
         )
-    errors.extend(_posix_path_errors(home, workspace, launch_mode))
+    if launch_mode == "direct_dev" and home_path is not None:
+        errors.extend(_posix_path_errors(home, workspace, launch_mode))
+    elif launch_mode == "external" and _is_posix_platform():
+        errors.extend(_external_workspace_errors(workspace))
     return errors
