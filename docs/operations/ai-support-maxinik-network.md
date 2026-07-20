@@ -339,8 +339,10 @@ Root launcher сохраняет `CAP_NET_ADMIN` только для фикси�
 может менять argv этого вызова. Codex запускается после drop UID/GID, с пустыми
 supplementary groups и без ambient capabilities, поэтому capability ему не
 передаётся. Изменение firewall выполняет только отдельный firewall unit.
-`AF_NETLINK` разрешён launcher unit только потому, что `nft` и `ss` используют
-его для read-only health inspection.
+`AF_NETLINK` разрешён launcher unit потому, что `nft` и `ss` используют его для
+read-only health inspection. Proxy unit также разрешает `AF_NETLINK`: sing-box
+подписывается через него на route updates даже без TUN. У proxy по-прежнему
+пустой capability set, поэтому менять routes или firewall он не может.
 
 ## Host installation
 
