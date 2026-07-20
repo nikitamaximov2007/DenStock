@@ -428,10 +428,14 @@ th.num, td.num, .table th.num, .table td.num,
   border-radius: var(--radius-md); background: var(--bg); }
 .ai-message--user { align-self: flex-end; background: var(--nav-active-bg); }
 .ai-message--assistant { align-self: flex-start; }
+.ai-message--processing { color: var(--muted); }
+.ai-message--processing .ai-message__text::after { content: ""; display: inline-block;
+  width: 6px; height: 6px; margin-left: 8px; border-radius: 50%; background: currentColor;
+  animation: ai-support-pulse 1.2s ease-in-out infinite; }
 .ai-message__meta { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 6px;
   color: var(--muted); font-size: 12px; }
 .ai-message__text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.ai-message__attachment, .ai-message__rating { margin: 10px 0 0; }
+.ai-message__attachment, .ai-message__rating, .ai-message__retry { margin: 10px 0 0; }
 .ai-message__rating { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .ai-support__quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
 .ai-support__composer { border-top: 1px solid var(--border); padding-top: 14px; }
@@ -445,6 +449,15 @@ th.num, td.num, .table th.num, .table td.num,
 .ai-support__ticket form { display: grid; gap: 8px; margin-top: 12px; }
 .ai-support__diagnostics { white-space: pre-wrap; overflow-wrap: anywhere; }
 .ai-support__history-toggle { display: none; margin-bottom: 10px; }
+
+@keyframes ai-support-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.75); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-message--processing .ai-message__text::after { animation: none; }
+}
 
 @media (max-width: 760px) {
   .ai-support { grid-template-columns: 1fr; }

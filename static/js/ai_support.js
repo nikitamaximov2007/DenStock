@@ -42,6 +42,77 @@
     });
   }
 
+  function newToken() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (char) {
+      var random = Math.floor(Math.random() * 16);
+      var value = char === "x" ? random : (random & 3) | 8;
+      return value.toString(16);
+    });
+  }
+
+  function messageArticle(role, textValue, processing) {
+    var article = document.createElement("article");
+    article.className = "ai-message ai-message--" + role;
+    article.dataset.supportOptimistic = "1";
+    if (processing) {
+      article.classList.add("ai-message--processing");
+      article.dataset.supportProcessing = "1";
+    }
+
+    var meta = document.createElement("div");
+    meta.className = "ai-message__meta";
+    meta.textContent = role === "user" ? "Вы - сейчас" : "ИИ-поддержка";
+    article.appendChild(meta);
+
+    var textNode = document.createElement("div");
+    textNode.className = "ai-message__text";
+    textNode.textContent = textValue;
+    if (processing) textNode.setAttribute("role", "status");
+    article.appendChild(textNode);
+    return article;
+  }
+
+  function bindComposer(scope) {
+    var form = scope.querySelector("[data-support-composer]");
+    if (!form || form.dataset.supportComposerBound === "1") return;
+    form.dataset.supportComposerBound = "1";
+    form.addEventListener("submit", function (event) {
+      if (event.defaultPrevented || form.dataset.supportOptimistic === "1") return;
+      var input = form.querySelector('textarea[name="text"]');
+      var list = scope.querySelector(".ai-support__messages");
+      var textValue = input ? input.value.trim() : "";
+      if (!list || !textValue) return;
+
+      form.dataset.supportOptimistic = "1";
+      form.setAttribute("aria-busy", "true");
+      input.readOnly = true;
+      list.appendChild(messageArticle("user", textValue, false));
+      list.appendChild(messageArticle("assistant", "ИИ анализирует вопрос...", true));
+      list.lastElementChild.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function retryQuestion(button, scope) {
+    var article = button.closest(".ai-message");
+    var question = article;
+    while (question && !question.classList.contains("ai-message--user")) {
+      question = question.previousElementSibling;
+    }
+    var textNode = question && question.querySelector(".ai-message__text");
+    var form = scope.querySelector("[data-support-composer]");
+    var input = form && form.querySelector('textarea[name="text"]');
+    if (!textNode || !input) return;
+    input.value = textNode.textContent.trim();
+    input.readOnly = false;
+    var token = form.querySelector('[name="idempotency_token"]');
+    if (token) token.value = newToken();
+    input.focus();
+    input.scrollIntoView({ block: "center" });
+  }
+
   function bind(root) {
     var scope = root || document;
     scope.querySelectorAll("[data-support-question]").forEach(function (button) {
@@ -54,6 +125,18 @@
         input.focus();
       });
     });
+    scope.querySelectorAll("[data-support-retry]").forEach(function (button) {
+      if (button.dataset.supportBound === "1") return;
+      button.dataset.supportBound = "1";
+      button.addEventListener("click", function () {
+        retryQuestion(button, scope);
+      });
+    });
+    var pageQuestion = scope.querySelector("[data-support-page-question]");
+    var sourcePath = storageGet();
+    if (pageQuestion) {
+      pageQuestion.hidden = !sourcePath || sourcePath.indexOf("/ai-support/") === 0;
+    }
     var toggle = scope.querySelector("[data-support-history-toggle]");
     var history = scope.querySelector("[data-support-history]");
     if (toggle && history && toggle.dataset.supportBound !== "1") {
@@ -65,6 +148,7 @@
       });
     }
     setSafeContext(scope);
+    bindComposer(scope);
   }
 
   document.addEventListener("click", function (event) {
@@ -78,6 +162,11 @@
   });
   window.addEventListener("resize", function () {
     setSafeContext(document);
+  });
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted && document.querySelector("[data-support-optimistic]")) {
+      window.location.reload();
+    }
   });
   bind(document);
 })();

@@ -12,7 +12,7 @@ from django.utils import timezone
 from .contracts import normalize_provider_name
 from .diagnostics import canonical_public_url, safe_diagnostic_snapshot, safe_route_context
 from .files import NormalizedImage, delete_private_file, normalize_image, save_normalized_image
-from .knowledge import retrieve
+from .knowledge import detect_intent, retrieve
 from .models import (
     DeveloperTicket,
     SupportAttachment,
@@ -270,12 +270,13 @@ def _history_for(message: SupportMessage) -> tuple[SupportTurn, ...]:
 def _request_for(
     *, message: SupportMessage, user, route_path: str, image: NormalizedImage | None
 ) -> SupportRequest:
-    chunks = retrieve(message.text)
     route_context = safe_route_context(route_path)
+    intent = detect_intent(message.text)
+    chunks = retrieve(message.text, route_context=route_context)
     roles = sorted(user.role_names) if not user.is_superuser else ["Администратор"]
     return SupportRequest(
         user_text=message.text,
-        system_instruction=build_system_instruction(chunks),
+        system_instruction=build_system_instruction(chunks, intent=intent),
         knowledge_chunks=tuple(chunk.text for chunk in chunks),
         route_context=route_context,
         user_role=", ".join(roles),
