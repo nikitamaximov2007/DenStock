@@ -252,6 +252,7 @@ def test_proxy_unit_has_hardening_without_blocking_required_vpn_egress(deploy_ro
         "MemoryDenyWriteExecute=true",
         "RestrictRealtime=true",
         "SystemCallArchitectures=native",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
         "CapabilityBoundingSet=",
         "AmbientCapabilities=",
     ):
