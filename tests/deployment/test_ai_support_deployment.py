@@ -284,7 +284,9 @@ def test_launcher_unit_adds_cgroup_network_defense_and_hardening(deploy_root):
         "CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_KILL CAP_CHOWN CAP_FOWNER "
         "CAP_DAC_OVERRIDE CAP_NET_ADMIN"
     ) in unit
-    assert "AmbientCapabilities=" in unit
+    assert [
+        line for line in unit.splitlines() if line.startswith("AmbientCapabilities=")
+    ] == ["AmbientCapabilities=CAP_SETUID"]
     for inaccessible in (
         "/opt/denstock",
         "/var/backups",
@@ -294,6 +296,15 @@ def test_launcher_unit_adds_cgroup_network_defense_and_hardening(deploy_root):
         "/run/postgresql",
     ):
         assert inaccessible in unit
+
+
+def test_launcher_unit_retains_only_cap_setuid_for_codex_privilege_drop(deploy_root):
+    unit = (deploy_root / "systemd" / "denstock-ai-launcher@.service").read_text()
+
+    assert "User=root" in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "AmbientCapabilities=CAP_SETUID" in unit
+    assert "AmbientCapabilities=CAP_SETUID " not in unit
 
 
 def test_socket_is_local_unix_ipc_with_narrow_group_access(deploy_root):

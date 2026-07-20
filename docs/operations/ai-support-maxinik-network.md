@@ -330,15 +330,17 @@ Launcher service дополнительно использует `IPAddressDeny=
 `IPAddressAllow=localhost`. Это cgroup defense поверх nftables. `PrivateNetwork`
 не используется, так как отдельный namespace не видел бы host loopback proxy.
 Proxy service не получает `IPAddressDeny`, потому что ему нужен VLESS egress.
-Оба сервиса имеют `ProtectSystem`, `ProtectHome`, kernel protections, empty
-ambient capabilities и ограниченный address-family set. Proxy не получает
-network/admin capabilities и не может создавать TUN.
+Оба сервиса имеют `ProtectSystem`, `ProtectHome`, kernel protections и
+ограниченный address-family set. Proxy имеет empty ambient capabilities и не
+получает network/admin capabilities, поэтому не может создавать TUN.
 
 Root launcher сохраняет `CAP_NET_ADMIN` только для фиксированного read-only
 вызова `nft -nn list chain inet denstock_ai output` в health-check. Клиент не
-может менять argv этого вызова. Codex запускается после drop UID/GID, с пустыми
-supplementary groups и без ambient capabilities, поэтому capability ему не
-передаётся. Изменение firewall выполняет только отдельный firewall unit.
+может менять argv этого вызова. Launcher получает только ambient `CAP_SETUID`,
+необходимый Python `subprocess` для drop UID внутри systemd seccomp sandbox.
+Codex запускается после drop UID/GID, с пустыми supplementary groups и с
+обнулёнными permitted, effective и ambient capability sets. Изменение firewall
+выполняет только отдельный firewall unit.
 `AF_NETLINK` разрешён launcher unit для read-only health inspection через `nft`
 и `ss`. Proxy unit использует его без network capabilities, потому что sing-box
 подписывается на route updates при запуске даже без TUN и изменения маршрутов.
