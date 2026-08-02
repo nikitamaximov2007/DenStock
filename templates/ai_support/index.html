@@ -88,7 +88,7 @@
                      data-full-navigation>Открыть приложенный скриншот</a>
                 </p>
               {% endif %}
-              {% if message.role == "assistant" %}
+              {% if message.role == "assistant" and message.status == "completed" %}
                 <form class="ai-message__rating"
                       method="post"
                       action="{% url 'ai_support:message_rating' message.id %}">
@@ -104,7 +104,27 @@
                           type="submit">Нет</button>
                 </form>
               {% endif %}
+              {% if message.role == "assistant" and message.status == "failed" %}
+                <p class="ai-message__retry">
+                  <button class="btn btn--small btn--secondary"
+                          type="button"
+                          data-support-retry>Повторить запрос</button>
+                </p>
+              {% elif message.role == "user" and message.status == "failed" and forloop.last %}
+                <p class="ai-message__retry">
+                  <button class="btn btn--small btn--secondary"
+                          type="button"
+                          data-support-retry>Повторить запрос</button>
+                </p>
+              {% endif %}
             </article>
+            {% if message.role == "user" and message.status == "processing" %}
+              <article class="ai-message ai-message--assistant ai-message--processing"
+                       data-support-processing>
+                <div class="ai-message__meta">ИИ-поддержка</div>
+                <div class="ai-message__text" role="status">ИИ анализирует вопрос...</div>
+              </article>
+            {% endif %}
           {% empty %}
             <div class="empty empty--compact">
               <h2 class="empty__title">Сообщений пока нет</h2>
@@ -113,6 +133,11 @@
           {% endfor %}
         </div>
         <div class="ai-support__quick" aria-label="Быстрые вопросы">
+          <button class="btn btn--small btn--secondary"
+                  type="button"
+                  data-support-page-question
+                  data-support-question="Что я могу сделать на этой странице?"
+                  hidden>Спросить об этой странице</button>
           {% for question in quick_questions %}
             <button class="btn btn--small btn--secondary"
                     type="button"
@@ -137,7 +162,9 @@
                     rows="4"
                     required
                     {% if provider_state != "ready" %}disabled{% endif %}>{{ message_form.text.value|default:"" }}</textarea>
-          {% if message_form.errors %}<div class="field__error">Проверьте сообщение, файл и согласие.</div>{% endif %}
+          {% if message_form.errors %}
+            <div class="field__error">Проверьте сообщение, файл и согласие.</div>
+          {% endif %}
           <div class="ai-support__upload">
             <label class="field__label" for="id_image">Скриншот, необязательно</label>
             <input id="id_image"
@@ -155,7 +182,8 @@
           <div class="form-actions">
             <button class="btn btn--primary"
                     type="submit"
-                    data-progress-label="Отправка..."
+                    data-idle-label="Отправка..."
+                    data-progress-label="ИИ анализирует вопрос..."
                     {% if provider_state != "ready" %}disabled{% endif %}>Отправить</button>
           </div>
         </form>
