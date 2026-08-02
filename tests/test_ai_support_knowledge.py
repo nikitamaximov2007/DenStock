@@ -27,6 +27,7 @@ from apps.ai_support.services import _request_for
 QUALITY_QUESTIONS = (
     ("Как провести инвентаризацию ячейки с нуля?", "inventory"),
     ("Как принять новую деталь на склад?", "receiving"),
+    ("У нас пришел груз, как его заприходовать?", "receiving"),
     ("Как найти, в какой ячейке лежит деталь?", "search-parts"),
     ("Как переместить деталь в другую ячейку?", "movements"),
     ("Как отменить ошибочную продажу?", "sales-reservations"),
@@ -45,6 +46,19 @@ def test_quality_questions_select_factual_topic(question, expected_source):
     assert first[0].source_id == expected_source
     assert sum(len(chunk.text) for chunk in first) <= 6000
     assert first == retrieve(question)
+
+
+def test_colloquial_receiving_question_gets_exact_workflow():
+    chunks = retrieve("у нас пришел груз, как его заприходовать?")
+
+    assert chunks[0].source_id == "receiving"
+    for label in (
+        "«Склад» - «Поступление»",
+        "«Новое поступление»",
+        "«Добавить позицию»",
+        "«Провести поступление»",
+    ):
+        assert label in chunks[0].text
 
 
 @pytest.mark.parametrize(
