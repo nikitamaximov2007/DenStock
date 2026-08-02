@@ -162,7 +162,9 @@
                     rows="4"
                     required
                     {% if provider_state != "ready" %}disabled{% endif %}>{{ message_form.text.value|default:"" }}</textarea>
-          {% if message_form.errors %}<div class="field__error">Проверьте сообщение, файл и согласие.</div>{% endif %}
+          {% if message_form.errors %}
+            <div class="field__error">Проверьте сообщение, файл и согласие.</div>
+          {% endif %}
           <div class="ai-support__upload">
             <label class="field__label" for="id_image">Скриншот, необязательно</label>
             <input id="id_image"
