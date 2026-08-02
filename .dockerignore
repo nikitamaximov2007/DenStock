@@ -17,5 +17,9 @@ node_modules
 .idea
 .vscode
 docs
+!docs/
+docs/*
+!docs/ai-support/
+!docs/ai-support/**
 
 .pytest-tmp/

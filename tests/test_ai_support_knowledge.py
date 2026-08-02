@@ -86,6 +86,28 @@ def test_knowledge_documents_are_external_to_app_and_complete(settings):
     assert not list(legacy.glob("*.md"))
 
 
+def test_docker_image_includes_runtime_knowledge_documents(settings):
+    root = Path(settings.BASE_DIR)
+    ignore_lines = (root / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    required_order = [
+        "docs",
+        "!docs/",
+        "docs/*",
+        "!docs/ai-support/",
+        "!docs/ai-support/**",
+    ]
+    positions = [ignore_lines.index(line) for line in required_order]
+    assert positions == sorted(positions)
+
+    dockerfile = (root / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    for path in (
+        "/app/docs/ai-support/overview.md",
+        "/app/docs/ai-support/receiving.md",
+        "/app/docs/ai-support/inventory.md",
+    ):
+        assert f"test -f {path}" in dockerfile
+
+
 def test_new_system_prompt_is_natural_specific_and_read_only(monkeypatch):
     secret = "production-openai-secret-that-must-not-leak"
     monkeypatch.setenv("OPENAI_API_KEY", secret)

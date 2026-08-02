@@ -38,6 +38,9 @@ RUN pip install --upgrade pip && pip install .
 
 # Затем исходный код.
 COPY . .
+RUN test -f /app/docs/ai-support/overview.md \
+    && test -f /app/docs/ai-support/receiving.md \
+    && test -f /app/docs/ai-support/inventory.md
 
 # The production AI override runs Django as this fixed non-root identity. Code
 # remains root-owned; only application data directories are writable.
