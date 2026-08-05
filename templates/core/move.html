@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Перемещение сканером · DenisStock{% endblock %}
+{% block title %}Перемещение деталей · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Перемещение сканером</h1>
+  <h1 class="page-title">Перемещение деталей</h1>
   {% if error %}
     {% include "partials/_status_block.html" with kind="error" text=error %}
   {% endif %}
@@ -13,7 +13,7 @@
     {% if step == "scan_object" %}
       1 · сканируйте деталь
     {% elif step == "scan_location" %}
-      2 · сканируйте новую ячейку
+      2 · выберите новую ячейку
     {% else %}
       3 · подтвердите
     {% endif %}
@@ -52,6 +52,15 @@
             {% endif %}
           </td>
         </tr>
+        {% if object_kind == "part_item" %}
+          <tr>
+            <th>Остаток</th>
+            <td>
+              Физически {{ object_physical|quantity_int }} ·
+              доступно {{ object_available|quantity_int }}
+            </td>
+          </tr>
+        {% endif %}
         {% if object_kind == "stock_quantity" %}
           <tr>
             <th>Остаток</th>
@@ -100,37 +109,87 @@
       {% else %}
         <input type="hidden" name="quantity" value="1">
       {% endif %}
-      <button type="submit" name="action" value="confirm" class="btn btn--primary">Подтвердить</button>
+      <button type="submit" name="action" value="confirm" class="btn btn--primary">Переместить</button>
+      <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
+    </form>
+  {% elif step == "scan_location" %}
+    <form method="post"
+          class="form move-destination-form"
+          data-move-destination-form>
+      {% csrf_token %}
+      <input type="hidden" name="object_kind" value="{{ object_kind }}">
+      {% if object_kind == "part_item" %}
+        <input type="hidden" name="object_id" value="{{ object.pk }}">
+      {% else %}
+        <input type="hidden" name="part_id" value="{{ object.part_type.pk }}">
+        <input type="hidden"
+               name="source_location_id"
+               value="{{ object.location.pk }}">
+        <input type="hidden" name="stock_state" value="{{ object.stock_state }}">
+      {% endif %}
+      <input type="hidden" name="move_token" value="{{ move_token }}">
+      <div class="move-destination"
+           data-move-destination
+           data-search-url="{% url 'scanner_move_locations' %}"
+           data-exclude-location="{% if object_kind == 'part_item' %}{{ object.current_location.pk }}{% else %}{{ object.location.pk }}{% endif %}">
+        <label for="move-destination-input">Новая ячейка</label>
+        <div class="move-destination__control">
+          <input id="move-destination-input"
+                 name="destination_code"
+                 type="text"
+                 class="move-destination__input"
+                 placeholder="Начните вводить код, например S03-L03"
+                 autocomplete="off"
+                 role="combobox"
+                 aria-autocomplete="list"
+                 aria-haspopup="listbox"
+                 aria-expanded="false"
+                 aria-controls="move-destination-options"
+                 aria-describedby="move-destination-status"
+                 required
+                 autofocus
+                 data-move-destination-input>
+          <input type="hidden" name="location_id" data-move-destination-id>
+          <ul id="move-destination-options"
+              class="move-destination__options"
+              role="listbox"
+              hidden
+              data-move-destination-options>
+          </ul>
+        </div>
+        <p id="move-destination-status"
+           class="move-destination__status muted"
+           aria-live="polite"
+           data-move-destination-status>Начните вводить код или откройте список.</p>
+      </div>
+      {% if object_kind == "stock_quantity" %}
+        <label>
+          Количество
+          <input name="quantity"
+                 type="text"
+                 inputmode="decimal"
+                 value="{{ object.movable|floatformat:'-3' }}"
+                 required>
+        </label>
+      {% else %}
+        <input type="hidden" name="quantity" value="1">
+      {% endif %}
+      <button type="submit" name="action" value="confirm" class="btn btn--primary">Переместить</button>
       <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
     </form>
   {% else %}
     <form method="post" class="form">
       {% csrf_token %}
-      {% if object %}
-        <input type="hidden" name="object_kind" value="{{ object_kind }}">
-        {% if object_kind == "part_item" %}
-          <input type="hidden" name="object_id" value="{{ object.pk }}">
-        {% else %}
-          <input type="hidden" name="part_id" value="{{ object.part_type.pk }}">
-          <input type="hidden"
-                 name="source_location_id"
-                 value="{{ object.location.pk }}">
-          <input type="hidden" name="stock_state" value="{{ object.stock_state }}">
-        {% endif %}
-      {% endif %}
       <input type="hidden" name="move_token" value="{{ move_token }}">
       <input id="move-scan-input"
              name="code"
              type="text"
              class="scanner-page__input"
-             placeholder="{% if step == 'scan_object' %}Отсканируйте деталь…{% else %}Отсканируйте новую ячейку…{% endif %}"
+             placeholder="Отсканируйте или введите деталь"
              autocomplete="off"
              autofocus
              data-scan-input>
-      <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
-      {% if object %}
-        <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
-      {% endif %}
+      <button type="submit" name="action" value="scan" class="btn btn--primary">Найти деталь</button>
     </form>
   {% endif %}
   {% if candidates %}

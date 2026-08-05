@@ -30,6 +30,7 @@ from apps.warehouse.models import StorageLocation
 
 PASSWORD = "parol-12345"
 URL = reverse("scanner_move")
+LOCATIONS_URL = reverse("scanner_move_locations")
 MOVE_ITEM = StockMovement.MovementType.MOVE_ITEM
 MOVE_LOT = StockMovement.MovementType.MOVE_LOT
 
@@ -146,6 +147,71 @@ def test_seller_cannot_open(client, make_user):
     assert client.get(URL).status_code == 403
 
 
+def test_seller_cannot_search_move_destinations(client, make_user):
+    _login(client, make_user, role=roles.SELLER, username="prodavec")
+    assert client.get(LOCATIONS_URL, {"q": "A-01"}).status_code == 403
+
+
+def test_destination_search_filters_by_code_and_availability(client, make_user, refs):
+    current = StorageLocation.objects.create(
+        name="Текущая", code="S03-L03-D02-C01", storage_allowed=True, is_active=True
+    )
+    second = StorageLocation.objects.create(
+        name="Вторая", code="S03-L03-D02-C02", storage_allowed=True, is_active=True
+    )
+    third = StorageLocation.objects.create(
+        name="Третья", code="S03-L03-D02-C03", storage_allowed=True, is_active=True
+    )
+    StorageLocation.objects.create(
+        name="Архив", code="S03-L03-D02-C04", storage_allowed=True, is_active=False
+    )
+    StorageLocation.objects.create(
+        name="Служебная", code="S03-L03-D02-C05", storage_allowed=False, is_active=True
+    )
+    _login(client, make_user)
+
+    response = client.get(
+        LOCATIONS_URL,
+        {"q": "  s03-l03\r\n", "exclude": current.pk},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["results"] == [
+        {
+            "id": second.pk,
+            "code": second.code,
+            "barcode": second.barcode,
+            "name": second.name,
+        },
+        {
+            "id": third.pk,
+            "code": third.code,
+            "barcode": third.barcode,
+            "name": third.name,
+        },
+    ]
+
+    barcode_response = client.get(
+        LOCATIONS_URL,
+        {"q": "  loc:s03-l03-d02-c02\r\n", "exclude": current.pk},
+    )
+    assert barcode_response.json()["results"] == [
+        {
+            "id": second.pk,
+            "code": second.code,
+            "barcode": second.barcode,
+            "name": second.name,
+        }
+    ]
+
+
+def test_destination_search_returns_empty_result(client, make_user, refs):
+    _login(client, make_user)
+    response = client.get(LOCATIONS_URL, {"q": "NO-SUCH-CELL"})
+    assert response.status_code == 200
+    assert response.json() == {"results": []}
+
+
 def test_nav_hidden_for_seller(client, make_user):
     make_user("sklad", role=roles.STOREKEEPER)
     make_user("prodavec", role=roles.SELLER)
@@ -195,6 +261,155 @@ def test_move_item_scan_location_confirm(client, make_user, refs, admin):
     assert mv.created_by_id is not None
 
 
+@pytest.mark.parametrize(
+    "destination_code", ["B-01", "  b-01  ", "B-01\r\n", "LOC:B-01"]
+)
+def test_move_item_accepts_exact_destination_code(
+    client, make_user, refs, admin, destination_code
+):
+    item = _available_item(refs, admin, refs["loc1"])
+    _login(client, make_user)
+
+    response = client.post(
+        URL,
+        {
+            "action": "confirm",
+            "object_kind": "part_item",
+            "object_id": item.pk,
+            "destination_code": destination_code,
+            "quantity": "1",
+            "move_token": "destination-code-token",
+        },
+    )
+
+    assert response.status_code == 302
+    item.refresh_from_db()
+    assert item.current_location_id == refs["loc2"].pk
+    assert StockMovement.objects.filter(part_item=item, movement_type=MOVE_ITEM).count() == 1
+
+
+def test_legacy_location_scan_accepts_case_and_scanner_newline(client, make_user, refs, admin):
+    item = _available_item(refs, admin, refs["loc1"])
+    _login(client, make_user)
+
+    response = client.post(
+        URL,
+        {
+            "action": "scan",
+            "code": "  b-01\r\n",
+            "object_kind": "part_item",
+            "object_id": item.pk,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.context["step"] == "confirm"
+    assert response.context["location"].pk == refs["loc2"].pk
+
+
+@pytest.mark.parametrize(
+    ("destination_code", "message"),
+    [
+        ("", "Выберите новую ячейку"),
+        ("NO-SUCH-CELL", "не найдена"),
+    ],
+)
+def test_invalid_destination_code_is_rejected(
+    client, make_user, refs, admin, destination_code, message
+):
+    item = _available_item(refs, admin, refs["loc1"])
+    _login(client, make_user)
+
+    response = client.post(
+        URL,
+        {
+            "action": "confirm",
+            "object_kind": "part_item",
+            "object_id": item.pk,
+            "destination_code": destination_code,
+            "quantity": "1",
+            "move_token": "invalid-destination-token",
+        },
+    )
+
+    assert response.status_code == 200
+    assert message in response.context["error"]
+    item.refresh_from_db()
+    assert item.current_location_id == refs["loc1"].pk
+    assert StockMovement.objects.filter(movement_type=MOVE_ITEM).count() == 0
+
+
+def test_destination_code_and_hidden_id_must_match(client, make_user, refs, admin):
+    item = _available_item(refs, admin, refs["loc1"])
+    _login(client, make_user)
+
+    response = client.post(
+        URL,
+        {
+            "action": "confirm",
+            "object_kind": "part_item",
+            "object_id": item.pk,
+            "destination_code": refs["loc2"].code,
+            "location_id": refs["loc_bad"].pk,
+            "quantity": "1",
+            "move_token": "mismatched-destination-token",
+        },
+    )
+
+    assert "изменилась" in response.context["error"]
+    assert StockMovement.objects.filter(movement_type=MOVE_ITEM).count() == 0
+
+
+def test_move_destination_template_has_combined_accessible_field(
+    client, make_user, refs, admin
+):
+    item = _available_item(refs, admin, refs["loc1"])
+    _login(client, make_user)
+
+    response = client.post(URL, {"action": "scan", "code": item.internal_number})
+    html = response.content.decode()
+
+    assert "Перемещение деталей" in html
+    assert "2 · выберите новую ячейку" in html
+    assert 'name="destination_code"' in html
+    assert 'role="combobox"' in html
+    assert 'aria-autocomplete="list"' in html
+    assert 'aria-haspopup="listbox"' in html
+    assert 'data-search-url="/scanner/move/locations/"' in html
+    assert "Начните вводить код, например S03-L03" in html
+    assert "Физически 1" in html
+    assert "доступно 1" in html
+    assert "сканируйте новую ячейку" not in html
+
+
+def test_move_destination_frontend_supports_keyboard_scanner_and_mobile(settings):
+    javascript = (
+        settings.BASE_DIR / "static" / "js" / "move_destination.js"
+    ).read_text(encoding="utf-8")
+    stylesheet = (settings.BASE_DIR / "static" / "css" / "app.css").read_text(
+        encoding="utf-8"
+    )
+
+    for marker in (
+        'event.key === "ArrowDown"',
+        'event.key === "ArrowUp"',
+        'event.key === "Enter"',
+        "event.preventDefault()",
+        "window.clearTimeout(timer);\n        timer = null;",
+        "load(input.value.trim(), true)",
+        '(row.barcode || "").toLocaleLowerCase("ru-RU")',
+        "document.activeElement === input",
+        'event.key === "Escape"',
+        'document.addEventListener("denstock:page-loaded"',
+        'setStatus("Загрузка ячеек..."',
+        'setStatus("Ячейки не найдены."',
+    ):
+        assert marker in javascript
+    assert ".move-destination__options { position: absolute" in stylesheet
+    assert ".move-destination__input { max-width: 100%; }" in stylesheet
+    assert "max-height: min(240px, 42vh)" in stylesheet
+
+
 def test_move_item_updates_balance(client, make_user, refs, admin):
     item = _available_item(refs, admin, refs["loc1"])
     _login(client, make_user)
@@ -223,7 +438,8 @@ def test_same_location_is_noop(client, make_user, refs, admin):
     _login(client, make_user)
     resp = client.post(URL, {
         "action": "confirm", "object_kind": "part_item",
-        "object_id": item.pk, "location_id": refs["loc1"].pk,
+        "object_id": item.pk, "destination_code": refs["loc1"].code,
+        "quantity": "1", "move_token": "same-location-token",
     })
     assert resp.status_code == 200  # не redirect: no-op, не успех
     assert resp.context["info"]
@@ -258,7 +474,8 @@ def test_cannot_move_to_storage_forbidden(client, make_user, refs, admin):
     _login(client, make_user)
     resp = client.post(URL, {
         "action": "confirm", "object_kind": "part_item",
-        "object_id": item.pk, "location_id": refs["loc_bad"].pk,
+        "object_id": item.pk, "destination_code": refs["loc_bad"].code,
+        "quantity": "1", "move_token": "forbidden-location-token",
     })
     assert resp.status_code == 200
     assert resp.context["error"]
@@ -272,7 +489,8 @@ def test_cannot_move_to_inactive_location(client, make_user, refs, admin):
     _login(client, make_user)
     resp = client.post(URL, {
         "action": "confirm", "object_kind": "part_item",
-        "object_id": item.pk, "location_id": refs["loc_inactive"].pk,
+        "object_id": item.pk, "destination_code": refs["loc_inactive"].code,
+        "quantity": "1", "move_token": "inactive-location-token",
     })
     assert resp.status_code == 200
     assert resp.context["error"]
