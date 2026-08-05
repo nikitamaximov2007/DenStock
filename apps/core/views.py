@@ -13,7 +13,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType, normalize_number
@@ -56,7 +56,7 @@ from apps.sales.models import Reservation
 from apps.warehouse.models import StorageLocation
 
 from .models import UnresolvedScan
-from .part_lookup import MatchSource
+from .part_lookup import MatchSource, clean_lookup_value
 from .receiving_queue import (
     ReceivingQueueError,
     add_candidate,
@@ -726,6 +726,91 @@ def _current_location_id(kind: str, obj):
     return obj.location_id
 
 
+def _move_destination_queryset(user):
+    """Locations this user may target in the movement workflow."""
+    if not user.can_manage_inventory:
+        return StorageLocation.objects.none()
+    return StorageLocation.objects.filter(is_active=True, storage_allowed=True)
+
+
+def _resolve_move_destination(raw):
+    """Resolve keyboard/scanner input without changing a meaningful cell code."""
+    code = clean_lookup_value(raw)
+    if not code:
+        return None, "Выберите новую ячейку."
+    location = StorageLocation.objects.filter(code__iexact=code).first()
+    if location is None:
+        location = StorageLocation.objects.filter(barcode__iexact=code).first()
+    if location is None:
+        return None, "Ячейка с таким кодом не найдена."
+    if not location.can_hold_stock():
+        return None, "Ячейка неактивна или недоступна для хранения остатка."
+    return location, ""
+
+
+def _move_object_totals(kind, obj):
+    if obj is None:
+        return None, None
+    if kind == "stock_quantity":
+        return obj.physical, obj.available
+    if kind == "part_item":
+        from apps.sales.services import active_reserved_item_ids
+
+        reserved = obj.pk in active_reserved_item_ids([obj.pk])
+        available = obj.status == PartItem.Status.AVAILABLE and not reserved
+        return Decimal("1"), Decimal("1") if available else Decimal("0")
+    return None, None
+
+
+def _move_destination_from_post(request):
+    code = request.POST.get("destination_code", "")
+    posted_id = _int(request.POST.get("location_id"))
+    if clean_lookup_value(code):
+        location, error = _resolve_move_destination(code)
+        if error:
+            return None, error
+        if posted_id is not None and posted_id != location.pk:
+            return None, "Выбранная ячейка изменилась. Выберите её повторно."
+        return location, ""
+    if posted_id is not None:
+        # Backward compatibility for the former scan-then-confirm POST.
+        location = StorageLocation.objects.filter(pk=posted_id).first()
+        if location is None:
+            return None, "Ячейка с таким кодом не найдена."
+        if not location.can_hold_stock():
+            return None, "Ячейка неактивна или недоступна для хранения остатка."
+        return location, ""
+    return None, "Выберите новую ячейку."
+
+
+@login_required
+@require_GET
+def scanner_move_locations(request: HttpRequest) -> JsonResponse:
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    query = clean_lookup_value(request.GET.get("q", ""))
+    exclude_id = _int(request.GET.get("exclude"))
+    locations = _move_destination_queryset(request.user)
+    if exclude_id is not None:
+        locations = locations.exclude(pk=exclude_id)
+    if query:
+        locations = locations.filter(Q(code__icontains=query) | Q(barcode__icontains=query))
+    rows = locations.order_by("code", "pk")[:50]
+    return JsonResponse(
+        {
+            "results": [
+                {
+                    "id": location.pk,
+                    "code": location.code,
+                    "barcode": location.barcode,
+                    "name": location.name,
+                }
+                for location in rows
+            ]
+        }
+    )
+
+
 def _move_part(part_id):
     if part_id is None:
         return None
@@ -769,7 +854,7 @@ def _load_move_operation(request: HttpRequest):
     return ("stock_quantity", source, location) if source is not None else ("", None, location)
 
 
-def _repeated_transfer_from_post(request, token):
+def _repeated_transfer_from_post(request, token, *, destination_id=None):
     transfer = StockTransfer.objects.filter(token=token, created_by=request.user).first()
     if transfer is None:
         return None
@@ -796,7 +881,8 @@ def _repeated_transfer_from_post(request, token):
         transfer.part_type_id == part_id
         and transfer.part_item_id == item_id
         and transfer.from_location_id == source_id
-        and transfer.to_location_id == _int(request.POST.get("location_id"))
+        and transfer.to_location_id
+        == (destination_id or _int(request.POST.get("location_id")))
         and transfer.stock_state == stock_state
         and transfer.quantity == quantity
     )
@@ -904,17 +990,22 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
             return redirect("scanner_move")
 
         if action == "confirm":
-            repeated = _repeated_transfer_from_post(request, move_token)
-            if repeated is False:
-                error = "Токен перемещения уже использован для другой операции."
-            elif repeated is not None:
-                messages.info(
-                    request,
-                    f"Перемещение {repeated.part_number} уже было проведено.",
+            kind, obj, _posted_location = _load_move_operation(request)
+            location, error = _move_destination_from_post(request)
+            if not error:
+                repeated = _repeated_transfer_from_post(
+                    request, move_token, destination_id=location.pk
                 )
-                return redirect("scanner_move")
-
-        kind, obj, location = _load_move_operation(request) if not error else ("", None, None)
+                if repeated is False:
+                    error = "Токен перемещения уже использован для другой операции."
+                elif repeated is not None:
+                    messages.info(
+                        request,
+                        f"Перемещение {repeated.part_number} уже было проведено.",
+                    )
+                    return redirect("scanner_move")
+        else:
+            kind, obj, location = _load_move_operation(request)
 
         if action == "select_lot":
             lot = (
@@ -1048,24 +1139,18 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
                 else:
                     error = _wrong_object_message(result)
             else:
-                result = resolve_scan(code, user=request.user)
-                if result.status == "unknown":
-                    _record_unresolved(request, code)
-                    error = "Код не распознан."
-                elif result.type == "location":
-                    location = StorageLocation.objects.get(pk=result.id)
-                else:
-                    error = "Ожидается ячейка (LOC:/код)."
+                location, error = _resolve_move_destination(code)
 
         elif action == "confirm":
-            level, text = _confirm_move(request, kind, obj, location)
-            if level == "":
-                return redirect("scanner_move")  # успех → messages + PRG
-            if level == "info":
-                info = text
-                location = None  # вернуть на шаг «скан ячейки», объект сохранить
-            else:
-                error = text
+            if not error:
+                level, text = _confirm_move(request, kind, obj, location)
+                if level == "":
+                    return redirect("scanner_move")  # успех → messages + PRG
+                if level == "info":
+                    info = text
+                    location = None  # вернуть к выбору ячейки, объект сохранить
+                else:
+                    error = text
     else:
         kind, obj = _move_preselect(request)
 
@@ -1101,6 +1186,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
         }
         for transfer in history:
             transfer.total_cost_rub = costs.get(transfer.pk, Decimal("0"))
+    object_physical, object_available = _move_object_totals(kind, obj)
     ctx = {
         "object": obj,
         "object_kind": kind,
@@ -1114,5 +1200,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
         "placed_lots": placed_lots,
         "history": history,
         "show_costs": request.user.can_view_purchase_cost,
+        "object_physical": object_physical,
+        "object_available": object_available,
     }
     return render(request, "core/move.html", ctx)

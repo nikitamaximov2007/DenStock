@@ -468,6 +468,29 @@ th.num, td.num, .table th.num, .table td.num,
   .ai-support__chat { padding: 10px; }
 }
 
+/* Movement destination combobox. The option panel overlays content so a long
+   warehouse list never stretches the page. */
+.move-destination-form { width: min(100%, 680px); }
+.move-destination { width: 100%; min-width: 0; }
+.move-destination > label { display: block; margin-bottom: 6px; font-weight: 600; }
+.move-destination__control { position: relative; width: 100%; min-width: 0; }
+.move-destination__input { width: 100%; min-width: 0; }
+.move-destination__options { position: absolute; z-index: 30; top: calc(100% + 4px);
+  right: 0; left: 0; max-height: 240px; margin: 0; padding: 4px; overflow-y: auto;
+  list-style: none; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); box-shadow: 0 8px 24px rgba(17, 24, 39, .14); }
+.move-destination__option { padding: 9px 10px; overflow-wrap: anywhere;
+  border-radius: 4px; cursor: pointer; }
+.move-destination__option:hover, .move-destination__option.is-active {
+  background: var(--info-bg); color: var(--accent); }
+.move-destination__status { min-height: 20px; margin: 6px 0 0; font-size: 13px; }
+
+@media (max-width: 760px) {
+  .move-destination-form, .move-destination, .move-destination__control,
+  .move-destination__input { max-width: 100%; }
+  .move-destination__options { max-height: min(240px, 42vh); }
+}
+
 /* ===========================================================================
    v1.2.1 — Product-grade screens: единый filter-toolbar, таблицы, empty-states,
    кнопки без подчёркивания, code-pill, status-card, action-panel, segmented.

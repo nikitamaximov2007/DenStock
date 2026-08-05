@@ -382,7 +382,7 @@ def test_repeated_confirm_post_after_full_move_is_idempotent(client, movement_da
         "part_id": movement_data["part"].pk,
         "source_location_id": movement_data["source"].pk,
         "stock_state": StockLot.Status.AVAILABLE,
-        "location_id": movement_data["target"].pk,
+        "destination_code": movement_data["target"].code,
         "quantity": "3",
         "move_token": "double-post-token",
     }

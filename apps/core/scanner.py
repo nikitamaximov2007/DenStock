@@ -186,7 +186,7 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
         return _batch_result(batch)
 
     # 4. Код ячейки.
-    loc = StorageLocation.objects.filter(code=code).first()
+    loc = StorageLocation.objects.filter(code__iexact=code).first()
     if loc:
         return _location_result(loc)
 
