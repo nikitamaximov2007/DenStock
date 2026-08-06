@@ -3,8 +3,7 @@
 1. Закупочная стоимость склада — во сколько обойдётся повторно заказать весь
    текущий физический остаток по БАЗОВЫМ ценам прайсов производителей и курсу
    из настройки «Курс для оценки закупочной стоимости» (по умолчанию 105 ₽/$).
-   BRP: retail_price_usd (база формулы клиентской цены, ДО наценки);
-   Polaris: wholesale_price_usd («ОПТОВАЯ»; «РОЗНИЦА» закупкой не считается).
+   BRP и Polaris: wholesale_price_usd («ОПТОВАЯ»; «РОЗНИЦА» не используется).
 2. Оценка склада по цене продажи — весь физический остаток по действующим
    клиентским ценам (существующие effective-price сервисы BRP/Polaris;
    формулы цен здесь НЕ дублируются).
@@ -137,8 +136,8 @@ def _polaris_wholesale_usd(
 def _brp_base_usd(brp, candidates=None) -> Decimal | None:
     """Базовая долларовая цена BRP (до наценки): exact, иначе replacement-источник."""
     source = find_brp_price_source(brp.material_no_norm, brp, candidates=candidates)
-    if source is not None and source.retail_price_usd and source.retail_price_usd > 0:
-        return source.retail_price_usd
+    if source is not None and source.wholesale_price_usd and source.wholesale_price_usd > 0:
+        return source.wholesale_price_usd
     return None
 
 
@@ -176,9 +175,9 @@ def _sale_price_rub(
         source = find_polaris_price_source(
             polaris.part_number_norm, polaris, candidates=polaris_candidates
         )
-        if source is not None and source.retail_price_usd and source.retail_price_usd > 0:
+        if source is not None and source.wholesale_price_usd and source.wholesale_price_usd > 0:
             return polaris_customer_price_rub(
-                source.retail_price_usd,
+                source.wholesale_price_usd,
                 rate,
                 polaris_settings.polaris_markup_percent,
             )

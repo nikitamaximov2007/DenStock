@@ -129,7 +129,7 @@ def _price_source_number(part: PartType) -> str:
     """Catalog number that supplied price when it differs from identity."""
     brp = _brp_part_for(part)
     if brp is not None:
-        if brp.retail_price_usd and brp.retail_price_usd > 0:
+        if brp.wholesale_price_usd and brp.wholesale_price_usd > 0:
             return ""
         source = find_brp_price_source(brp.material_no_norm, brp)
         if source is not None and source.pk != brp.pk:
@@ -137,7 +137,7 @@ def _price_source_number(part: PartType) -> str:
         return ""
     polaris = _polaris_part_for(part)
     if polaris is not None:
-        if polaris.retail_price_usd and polaris.retail_price_usd > 0:
+        if polaris.wholesale_price_usd and polaris.wholesale_price_usd > 0:
             return ""
         source = find_polaris_price_source(polaris.part_number_norm, polaris)
         if source is not None and source.pk != polaris.pk:
@@ -784,7 +784,7 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     `number` — ТОЧНЫЙ артикул проданной детали (снимок действия); он идёт в
     колонку B без изменений. Замены/источник цены номер НЕ подменяют. Если
     number не передан, берётся основной номер детали (НЕ аналог).
-    K (стоимость за шт) - розница каталога в USD от эффективного источника
+    K (стоимость за шт) - оптовая цена каталога в USD от эффективного источника
     цены. Рублёвые цены в таможенную форму не подмешиваются.
     """
     customs = read_customs(part)  # read-only: экспорт/отчёт не пишут в базу

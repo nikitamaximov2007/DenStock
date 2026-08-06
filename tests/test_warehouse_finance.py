@@ -1,6 +1,6 @@
 """Финансовая оценка склада: закупочная стоимость, оценка продажи, прибыль.
 
-Гарантии: закупка BRP — retail USD (база до наценки) x курс настройки (105);
+Гарантии: закупка BRP — wholesale USD (база до наценки) x курс настройки (105);
 закупка Polaris — ТОЛЬКО «ОПТОВАЯ»; replacement/superseded — только источник
 цены, identity не меняется; позиции без закупочной цены не считаются нулём,
 а идут в отдельный счётчик; BRP и Polaris не смешиваются; продажа/отмена/
@@ -85,10 +85,15 @@ def _stock(part, location, qty, sup, admin):
     return lot
 
 
-def _brp_part(env, *, material="219800345", retail="10", replacement="", desc="BELT"):
+def _brp_part(
+    env, *, material="219800345", retail="10", wholesale=None, replacement="", desc="BELT"
+):
+    wholesale = retail if wholesale is None else wholesale
     brp = BrpCatalogPart.objects.create(
         material_no=material, part_desc=desc,
-        retail_price_usd=Decimal(retail), replacement_no_1=replacement,
+        retail_price_usd=Decimal(retail),
+        wholesale_price_usd=Decimal(wholesale),
+        replacement_no_1=replacement,
     )
     return promote_brp(brp, by=env["admin"]), brp
 
@@ -116,7 +121,7 @@ def _manual_part(*, name, category, price):
 
 
 def test_brp_purchase_sale_and_profit(env):
-    part, _brp = _brp_part(env, retail="10")  # клиентская 10*105*1.4 = 1470
+    part, _brp = _brp_part(env, retail="10")  # оптовая 10*105*1.4 = 1470
     _stock(part, env["loc"], 3, env["sup"], env["admin"])
     v = get_warehouse_valuation()
     assert v.purchase_cost == Decimal("3150.00")  # 3 x 10 x 105
@@ -177,7 +182,8 @@ def test_uncategorized_identity_has_explicit_label():
 def test_brp_replacement_price_source_keeps_identity(env):
     # Exact 420931285 с ценой 0; replacement 420931284 имеет цену 4 USD.
     BrpCatalogPart.objects.create(
-        material_no="420931284", part_desc="OLD SEAL", retail_price_usd=Decimal("4"),
+        material_no="420931284", part_desc="OLD SEAL", retail_price_usd=Decimal("20"),
+        wholesale_price_usd=Decimal("4"),
         replacement_no_1="420931285",
     )
     part, brp = _brp_part(env, material="420931285", retail="0", desc="OIL SEAL")
@@ -200,9 +206,8 @@ def test_polaris_uses_wholesale_only(env):
     _stock(part, env["loc"], 4, env["sup"], env["admin"])
     v = get_warehouse_valuation()
     assert v.purchase_cost == Decimal("2520.00")  # 4 x 6 x 105 (НЕ retail 20)
-    # Оценка продажи — существующая клиентская цена Polaris (retail-база):
-    # 20 * 105 * 1.4 = 2940; 4 шт = 11760.
-    assert v.sale_value == Decimal("11760.00")
+    # Оценка продажи также исходит из оптовой: 6 * 105 * 1.4 = 882; 4 шт = 3528.
+    assert v.sale_value == Decimal("3528.00")
     assert v.unpriced_positions == 0
 
 
@@ -213,7 +218,7 @@ def test_polaris_without_wholesale_goes_to_unpriced(env):
     assert v.purchase_cost == Decimal("0.00")  # не фиктивные 0 за 5 единиц, а исключение
     assert v.unpriced_positions == 1
     assert v.unpriced_units == Decimal("5")
-    assert v.sale_value == Decimal("14700.00")  # продажная оценка всё равно считается
+    assert v.sale_value == Decimal("0.00")  # без опта цена продажи не выдумывается
 
 
 def test_polaris_superseded_wholesale_source(env):
@@ -242,10 +247,10 @@ def test_mixed_brp_polaris_same_number_not_merged(env):
     v = get_warehouse_valuation()
     # BRP: 10x105=1050; Polaris: 6x105=630. Не смешаны, итог = сумма.
     assert v.purchase_cost == Decimal("1680.00")
-    assert v.sale_value == Decimal("1470.00") + Decimal("2940.00")
+    assert v.sale_value == Decimal("1470.00") + Decimal("882.00")
     assert {row.name: row.value for row in v.sale_by_category} == {
         "BRP": Decimal("1470.00"),
-        "POLARIS": Decimal("2940.00"),
+        "POLARIS": Decimal("882.00"),
     }
     assert sum((row.value for row in v.sale_by_category), Decimal("0")) == v.sale_value
     assert v.unpriced_positions == 0
@@ -492,7 +497,8 @@ def test_replacement_sources_do_not_create_n_plus_one(env, django_assert_max_num
         BrpCatalogPart.objects.create(
             material_no=f"71900000{i}",
             part_desc="OLD",
-            retail_price_usd=Decimal("4"),
+            retail_price_usd=Decimal("20"),
+            wholesale_price_usd=Decimal("4"),
             replacement_no_1=exact_number,
         )
         brp_part, _ = _brp_part(env, material=exact_number, retail="0")

@@ -609,11 +609,16 @@ def test_export_writes_exact_number(variant_part, data):
 
 def test_price_source_does_not_change_identity(db, data):
     zero = BrpCatalogPart.objects.create(
-        material_no="250000059", part_desc="SCREW", retail_price_usd=Decimal("0"),
+        material_no="250000059",
+        part_desc="SCREW",
+        retail_price_usd=Decimal("0"),
+        wholesale_price_usd=Decimal("0"),
     )
     BrpCatalogPart.objects.create(
         material_no="250000418", part_desc="SCREW PRICED",
-        retail_price_usd=Decimal("4.19"), replacement_no_1="250000059",
+        retail_price_usd=Decimal("4.19"),
+        wholesale_price_usd=Decimal("3.29"),
+        replacement_no_1="250000059",
     )
     part = promote_to_warehouse(zero, by=data["admin"])
     _stock(part, data["loc1"], 3, data["sup"], data["admin"])

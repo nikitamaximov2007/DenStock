@@ -81,7 +81,7 @@ def _brp_matches(q: str, norm: str, status: str, settings) -> list:
         rows.append({
             "brp": brp,
             "customer_price": customer_price_rub(
-                brp.retail_price_usd,
+                brp.wholesale_price_usd,
                 settings.current_usd_rate,
                 settings.brp_markup_percent,
             ),

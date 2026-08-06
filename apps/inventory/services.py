@@ -818,11 +818,11 @@ def _found_part_from_entry(entry: dict, *, by=None):
         if link:
             return link.part, catalog.material_no
         manual = None
-        if not catalog.retail_price_usd or catalog.retail_price_usd <= 0:
+        if not catalog.wholesale_price_usd or catalog.wholesale_price_usd <= 0:
             price_source = find_brp_price_source(catalog.material_no_norm, catalog)
             if price_source is not None:
                 manual = brp_customer_price_rub(
-                    price_source.retail_price_usd,
+                    price_source.wholesale_price_usd,
                     pricing.current_usd_rate,
                     pricing.brp_markup_percent,
                 )
@@ -840,11 +840,11 @@ def _found_part_from_entry(entry: dict, *, by=None):
         if link:
             return link.part, catalog.part_number
         manual = None
-        if not catalog.retail_price_usd or catalog.retail_price_usd <= 0:
+        if not catalog.wholesale_price_usd or catalog.wholesale_price_usd <= 0:
             price_source = find_polaris_price_source(catalog.part_number_norm, catalog)
             if price_source is not None:
                 manual = polaris_customer_price_rub(
-                    price_source.retail_price_usd,
+                    price_source.wholesale_price_usd,
                     pricing.current_usd_rate,
                     pricing.polaris_markup_percent,
                 )
