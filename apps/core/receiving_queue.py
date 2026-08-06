@@ -6,15 +6,13 @@ import secrets
 from dataclasses import asdict, dataclass
 from decimal import Decimal
 
-from django.db.models import Count, Q
-
 from apps.actions.services import stock_overview
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
 from apps.catalog.models import PartNumber, PartType, normalize_number
 from apps.catalog.services import get_current_price_settings
 from apps.counting.services import find_brp_price_source
-from apps.inventory.models import StockLot
+from apps.inventory.models import PartPreferredLocation
 from apps.inventory.presentation import part_exact_number
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
@@ -228,9 +226,70 @@ def _serialized_locations(part_id: int | None) -> list[dict]:
             "physical": str(row["physical"]),
             "reserved": str(row["reserved"]),
             "available": str(row["available"]),
+            "is_usable": row["location"].can_hold_stock(),
         }
         for row in overview["locations"]
     ]
+
+
+def _location_guidance(part_id: int | None) -> dict:
+    """Separate current physical cells from the durable receiving suggestion."""
+    choices = _serialized_locations(part_id)
+    preference = (
+        PartPreferredLocation.objects.select_related("location")
+        .filter(part_type_id=part_id)
+        .first()
+        if part_id
+        else None
+    )
+    preferred = None
+    if preference is not None:
+        preferred = {
+            "id": preference.location_id,
+            "code": preference.location.code,
+            "name": preference.location.name,
+            "is_usable": preference.location.can_hold_stock(),
+        }
+
+    if len(choices) == 1 and choices[0]["is_usable"]:
+        return {
+            "location_id": choices[0]["id"],
+            "location_choices": choices,
+            "location_mode": "current",
+            "location_recommended": True,
+            "preferred_location": preferred,
+        }
+    if len(choices) > 1:
+        return {
+            "location_id": None,
+            "location_choices": choices,
+            "location_mode": "multiple",
+            "location_recommended": False,
+            "preferred_location": preferred,
+        }
+    if preferred and preferred["is_usable"]:
+        return {
+            "location_id": preferred["id"],
+            "location_choices": choices,
+            "location_mode": "preferred",
+            "location_recommended": True,
+            "preferred_location": preferred,
+        }
+    if preferred:
+        return {
+            "location_id": None,
+            "location_choices": choices,
+            "location_mode": "preferred_unavailable",
+            "location_recommended": False,
+            "preferred_location": preferred,
+        }
+    return {
+        "location_id": None,
+        "location_choices": choices,
+        "location_mode": "new",
+        "location_recommended": False,
+        "preferred_location": None,
+    }
 
 
 def _queue_merge_key(source: str, source_id: int, exact_number: str, location_id) -> tuple:
@@ -244,8 +303,8 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
             "Эта карточка учитывается по экземплярам. Сканируйте ITEM:/DS-номер или серийник."
         )
     queue = load_queue(session)
-    choices = _serialized_locations(candidate.part_id)
-    location_id = choices[0]["id"] if len(choices) == 1 else None
+    guidance = _location_guidance(candidate.part_id)
+    location_id = guidance["location_id"]
     candidate_key = _queue_merge_key(
         candidate.source, candidate.source_id, candidate.exact_number, location_id
     )
@@ -270,9 +329,7 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
             name=candidate.name,
             unit_price=str(candidate.unit_price or Decimal("0")),
             exact_number=candidate.exact_number,
-            location_choices=choices,
-            location_mode="existing" if choices else "new",
-            location_recommended=len(choices) == 1,
+            **guidance,
         )
         added_new = False
         line = existing
@@ -288,10 +345,7 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
             "name": candidate.name,
             "unit_price": str(candidate.unit_price or Decimal("0")),
             "quantity": 1,
-            "location_id": location_id,
-            "location_choices": choices,
-            "location_mode": "existing" if choices else "new",
-            "location_recommended": len(choices) == 1,
+            **guidance,
             "created_order": queue["next_order"],
         }
         queue["next_order"] += 1
@@ -372,18 +426,31 @@ def assign_location(session, line_id: str, *, location_id=None, location_code=""
     if line is None:
         raise ReceivingQueueError("Строка очереди не найдена.")
     candidate = resolve_queue_reference(line)
-    location = None
-    if location_id:
-        location = StorageLocation.objects.filter(pk=location_id).first()
-    if location is None and location_code:
-        location = StorageLocation.objects.filter(code__iexact=location_code.strip()).first()
+    selected_by_id = (
+        StorageLocation.objects.filter(pk=location_id).first()
+        if location_id is not None
+        else None
+    )
+    selected_by_code = (
+        StorageLocation.objects.filter(code__iexact=location_code.strip()).first()
+        if location_code.strip()
+        else None
+    )
+    if location_id is not None and selected_by_id is None:
+        raise ReceivingQueueError("Выбранная ячейка больше не существует.")
+    if location_code.strip() and selected_by_code is None:
+        raise ReceivingQueueError("Ячейка с таким кодом не найдена.")
+    if (
+        selected_by_id is not None
+        and selected_by_code is not None
+        and selected_by_id.pk != selected_by_code.pk
+    ):
+        raise ReceivingQueueError("Код ячейки не соответствует выбранной ячейке.")
+    location = selected_by_id or selected_by_code
     if location is None or not location.can_hold_stock():
         raise ReceivingQueueError("Выберите существующую активную ячейку для хранения.")
 
-    choices = _serialized_locations(candidate.part_id)
-    allowed = {choice["id"] for choice in choices}
-    if allowed and location.pk not in allowed:
-        raise ReceivingQueueError("Для этой детали выберите одну из ячеек текущего остатка.")
+    guidance = _location_guidance(candidate.part_id)
 
     line["exact_number"] = candidate.exact_number
     target_key = _queue_merge_key(
@@ -410,8 +477,11 @@ def assign_location(session, line_id: str, *, location_id=None, location_code=""
     else:
         line["location_id"] = location.pk
         line["part_id"] = candidate.part_id
-        line["location_choices"] = choices
+        line.update(guidance)
+        line["location_id"] = location.pk
+        line["location_mode"] = "selected"
         line["location_recommended"] = False
+        line.pop("location_change_previous", None)
     queue["group_tokens"] = {}
     save_queue(session, queue)
     return location.code
@@ -422,15 +492,49 @@ def unassign_location(session, line_id: str) -> None:
     line = queue["lines"].get(line_id)
     if line is None:
         raise ReceivingQueueError("Строка очереди не найдена.")
+    previous_location_id = line.get("location_id")
+    if previous_location_id is not None:
+        line["location_change_previous"] = {
+            "location_id": previous_location_id,
+            "location_mode": line.get("location_mode", "selected"),
+            "location_recommended": line.get("location_recommended", False),
+        }
+
     candidate = resolve_queue_reference(line)
-    choices = _serialized_locations(candidate.part_id)
+    guidance = _location_guidance(candidate.part_id)
     line["location_id"] = None
     line["part_id"] = candidate.part_id
-    line["location_choices"] = choices
-    line["location_mode"] = "existing" if choices else "new"
+    line.update(guidance)
+    line["location_id"] = None
+    line["location_mode"] = "change"
     line["location_recommended"] = False
     queue["group_tokens"] = {}
     save_queue(session, queue)
+
+
+def cancel_location_change(session, line_id: str) -> str:
+    """Return an unposted queue line to the cell selected before editing it."""
+    queue = load_queue(session)
+    line = queue["lines"].get(line_id)
+    if line is None:
+        raise ReceivingQueueError("Строка очереди не найдена.")
+    previous = line.get("location_change_previous")
+    if not isinstance(previous, dict) or previous.get("location_id") is None:
+        raise ReceivingQueueError("Для этой строки нет изменения ячейки для отмены.")
+
+    location = StorageLocation.objects.filter(pk=previous["location_id"]).first()
+    if location is None or not location.can_hold_stock():
+        raise ReceivingQueueError(
+            "Прежняя ячейка больше недоступна. Выберите другую активную ячейку."
+        )
+
+    line["location_id"] = location.pk
+    line["location_mode"] = previous.get("location_mode", "selected")
+    line["location_recommended"] = previous.get("location_recommended", False)
+    line.pop("location_change_previous", None)
+    queue["group_tokens"] = {}
+    save_queue(session, queue)
+    return location.code
 
 
 def _line_context(line: dict) -> dict:
@@ -457,22 +561,7 @@ def _group_fingerprint(lines: list[dict]) -> str:
 
 def queue_context(session) -> dict:
     queue = load_queue(session)
-    active_locations = list(
-        StorageLocation.objects.filter(is_active=True, storage_allowed=True)
-        .annotate(
-            part_kinds=Count(
-                "stock_lots__part_type",
-                filter=Q(
-                    stock_lots__status__in=(
-                        StockLot.Status.AVAILABLE,
-                        StockLot.Status.QUARANTINE,
-                    )
-                ),
-                distinct=True,
-            )
-        )
-        .order_by("code")
-    )
+    active_locations = list(StorageLocation.objects.filter(is_active=True, storage_allowed=True))
     location_map = {location.pk: location for location in active_locations}
     groups: dict[int, dict] = {}
     unassigned = []
@@ -506,7 +595,6 @@ def queue_context(session) -> dict:
     return {
         "groups": result_groups,
         "unassigned": unassigned,
-        "active_locations": active_locations,
         "line_count": len(queue["lines"]),
         "quantity": sum(line["quantity"] for line in queue["lines"].values()),
     }

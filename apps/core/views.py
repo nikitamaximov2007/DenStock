@@ -61,6 +61,7 @@ from .receiving_queue import (
     ReceivingQueueError,
     add_candidate,
     assign_location,
+    cancel_location_change,
     clear_pending,
     clear_queue,
     find_receiving_candidates,
@@ -523,6 +524,10 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
             if action == "queue_unassign":
                 unassign_location(request.session, request.POST.get("line_id", ""))
                 messages.success(request, "Выберите другую ячейку до проведения группы.")
+                return redirect("scanner_receiving")
+            if action == "queue_cancel_location_change":
+                code = cancel_location_change(request.session, request.POST.get("line_id", ""))
+                messages.success(request, f"Смена ячейки отменена. Оставлена {code}.")
                 return redirect("scanner_receiving")
             if action == "queue_select_candidate":
                 candidate = pop_pending_candidate(

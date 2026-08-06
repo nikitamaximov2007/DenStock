@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  var nextWidgetId = 1;
+
   function initWidget(widget) {
     if (widget.dataset.moveDestinationBound === "1") return;
     var input = widget.querySelector("[data-move-destination-input]");
@@ -13,6 +15,7 @@
     if (!input || !hidden || !list || !status || !form || !searchUrl) return;
 
     widget.dataset.moveDestinationBound = "1";
+    var widgetId = "move-destination-" + nextWidgetId++;
     var rows = [];
     var activeIndex = -1;
     var timer = null;
@@ -67,7 +70,7 @@
       list.replaceChildren();
       rows.forEach(function (row, index) {
         var option = document.createElement("li");
-        option.id = "move-destination-option-" + row.id;
+        option.id = widgetId + "-option-" + row.id;
         option.className = "move-destination__option";
         option.setAttribute("role", "option");
         option.setAttribute("aria-selected", "false");
@@ -167,7 +170,13 @@
       if (!widget.contains(event.target)) closeList();
     });
     form.addEventListener("submit", function (event) {
-      if (event.submitter && event.submitter.value === "reset") return;
+      if (
+        event.submitter &&
+        (event.submitter.value === "reset" ||
+          event.submitter.hasAttribute("data-move-destination-cancel"))
+      ) {
+        return;
+      }
       if (!input.value.trim()) {
         event.preventDefault();
         setStatus("Выберите новую ячейку.", false);
