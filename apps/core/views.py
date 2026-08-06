@@ -59,6 +59,7 @@ from .models import UnresolvedScan
 from .part_lookup import MatchSource, clean_lookup_value
 from .receiving_queue import (
     ReceivingQueueError,
+    _location_guidance,
     add_candidate,
     assign_location,
     cancel_location_change,
@@ -170,6 +171,49 @@ def scanner_resolve(request: HttpRequest) -> JsonResponse:
     if result.status == "unknown":
         _record_unresolved(request, code)
     return JsonResponse(result.to_dict())
+
+
+@login_required
+@require_GET
+def scanner_receiving_location_guidance(request: HttpRequest) -> JsonResponse:
+    """Return the existing receiving-cell rule for the ordinary receipt form.
+
+    This is read-only guidance only. The form still submits the selected
+    location through the normal receipt flow, which remains the sole place
+    that can create stock or update a preferred location.
+    """
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    part_id = _int(request.GET.get("part"))
+    if part_id is None:
+        return JsonResponse({"detail": "Не выбрана деталь."}, status=400)
+    part = PartType.objects.filter(pk=part_id, is_active=True).first()
+    if part is None:
+        return JsonResponse({"detail": "Деталь не найдена."}, status=404)
+
+    guidance = _location_guidance(part.pk)
+    selected = next(
+        (
+            location
+            for location in guidance["location_choices"]
+            if location["id"] == guidance["location_id"]
+        ),
+        None,
+    )
+    if selected is None and guidance["preferred_location"]:
+        preferred = guidance["preferred_location"]
+        if preferred["id"] == guidance["location_id"]:
+            selected = preferred
+    return JsonResponse(
+        {
+            "mode": guidance["location_mode"],
+            "location": (
+                {"id": selected["id"], "code": selected["code"], "name": selected["name"]}
+                if selected
+                else None
+            ),
+        }
+    )
 
 
 @login_required

@@ -117,9 +117,15 @@
       <div class="card__body">
         <form method="post"
               action="{% url 'receipt_add_line' receipt.pk %}"
-              class="form">
+              class="form"
+              data-receipt-location-guidance
+              data-location-guidance-url="{% url 'scanner_receiving_location_guidance' %}">
           {% csrf_token %}
           <div class="form-grid form-grid--2">{{ line_form.as_p }}</div>
+          <p class="muted"
+             data-receipt-location-guidance-status
+             role="status"
+             aria-live="polite"></p>
           <div class="form-actions">
             <button type="submit" class="btn btn--secondary">Добавить позицию</button>
           </div>
