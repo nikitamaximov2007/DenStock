@@ -54,7 +54,9 @@ def promote_to_warehouse(
     valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
     calculated = customer_price_rub(
-        brp_part.retail_price_usd, valuation.current_usd_rate, settings.brp_markup_percent
+        brp_part.wholesale_price_usd,
+        valuation.current_usd_rate,
+        settings.brp_markup_percent,
     )
     final = manual_price if manual_price is not None else calculated
     source = (

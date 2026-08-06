@@ -38,8 +38,9 @@ class Command(BaseCommand):
         write(f"Обновлено: {summary.updated}")
         write(f"Пропущено без изменений: {summary.skipped_unchanged}")
         write(f"Пропущено пустых: {summary.skipped_empty}")
-        write(f"Без retail-цены: {summary.no_retail_price}")
+        write(f"Без оптовой цены: {summary.no_wholesale_price}")
         write(f"С superseded_number: {summary.with_superseded}")
+        write(f"Обновлено текущих рекомендованных цен: {summary.recommended_prices_refreshed}")
         write(f"Ошибок: {summary.errors}")
         if summary.error_examples:
             write("Примеры ошибок:")

@@ -46,7 +46,7 @@ def find_polaris_price_source(
 ) -> PolarisCatalogPart | None:
     """Price source can differ from identity, but identity is never replaced."""
     if selected is not None and (
-        selected.retail_price_usd is not None and selected.retail_price_usd > 0
+        selected.wholesale_price_usd is not None and selected.wholesale_price_usd > 0
     ):
         return selected
     if not norm and selected is None:
@@ -63,7 +63,7 @@ def find_polaris_price_source(
         return selected
     if candidates is None:
         priced = (
-            PolarisCatalogPart.objects.filter(related, retail_price_usd__gt=0)
+            PolarisCatalogPart.objects.filter(related, wholesale_price_usd__gt=0)
             .order_by("pk")
             .first()
         )
@@ -73,8 +73,8 @@ def find_polaris_price_source(
             (
                 candidate
                 for candidate in candidates
-                if candidate.retail_price_usd is not None
-                and candidate.retail_price_usd > 0
+                if candidate.wholesale_price_usd is not None
+                and candidate.wholesale_price_usd > 0
                 and (
                     candidate.part_number_norm == norm
                     or candidate.superseded_number_norm == norm
@@ -87,7 +87,7 @@ def find_polaris_price_source(
 
 
 def load_polaris_price_candidates(selected_parts) -> list[PolarisCatalogPart]:
-    """Одним запросом загрузить retail/wholesale candidates связанных позиций."""
+    """Одним запросом загрузить оптовые candidates связанных позиций."""
     selected_parts = list(selected_parts)
     exact_norms = {part.part_number_norm for part in selected_parts if part.part_number_norm}
     superseded_norms = {
@@ -102,7 +102,7 @@ def load_polaris_price_candidates(selected_parts) -> list[PolarisCatalogPart]:
             Q(part_number_norm__in=exact_norms | superseded_norms)
             | Q(superseded_number_norm__in=exact_norms)
         )
-        .filter(Q(retail_price_usd__gt=0) | Q(wholesale_price_usd__gt=0))
+        .filter(wholesale_price_usd__gt=0)
         .order_by("pk")
     )
 
@@ -111,7 +111,7 @@ def effective_customer_price_rub(norm: str, polaris: PolarisCatalogPart):
     source = find_polaris_price_source(norm, polaris)
     if source is None:
         return None
-    return current_customer_price_rub(source.retail_price_usd)
+    return current_customer_price_rub(source.wholesale_price_usd)
 
 
 @transaction.atomic
@@ -130,7 +130,7 @@ def promote_to_warehouse(
     valuation = ValuationSettings.get()
     settings = PolarisPricingSettings.get()
     calculated = customer_price_rub(
-        polaris_part.retail_price_usd,
+        polaris_part.wholesale_price_usd,
         valuation.current_usd_rate,
         settings.polaris_markup_percent,
     )

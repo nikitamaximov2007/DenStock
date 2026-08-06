@@ -1,8 +1,8 @@
-"""Layer 31/32.1 — расчёт цены клиента из розницы BRP. Decimal, целые рубли.
+"""Layer 31/32.1 — расчёт цены клиента из оптовой цены BRP. Decimal, целые рубли.
 
 Формула (весь расчёт на Decimal, float запрещён):
 
-    сырая_цена_руб = розница_USD * курс * (1 + наценка_% / 100)
+    сырая_цена_руб = оптовая_USD * курс * (1 + наценка_% / 100)
     цена_клиента_руб = сырая_цена_руб, округлённая до ЦЕЛОГО рубля
                        (ROUND_HALF_UP, без копеек)
 
@@ -12,7 +12,7 @@
     9.03 USD  -> 1327.41  -> 1327 ₽
     99.99 USD -> 14698.53 -> 14699 ₽
 
-Терминология: 40% — это НАЦЕНКА поверх пересчитанной розницы (не «маржа»).
+Терминология: 40% — это НАЦЕНКА поверх пересчитанной оптовой цены (не «маржа»).
 Историческая безопасность: уже проведённые документы и старые снимки цен
 задним числом не переписываются; правило действует для новых расчётов.
 """
@@ -27,28 +27,28 @@ ONE = Decimal("1")
 WHOLE_RUB = Decimal("1")
 
 
-def customer_price_rub(retail_price_usd, usd_rate, markup_percent):
-    """Цена клиента в целых рублях. None, если розничной цены нет.
+def customer_price_rub(wholesale_price_usd, usd_rate, markup_percent):
+    """Цена клиента в целых рублях. None, если оптовой цены нет.
 
     Только Decimal-математика (float запрещён); до целого рубля квантуется
     ТОЛЬКО итог (ROUND_HALF_UP), исходные значения не трогаются.
     """
-    if retail_price_usd in (None, ""):
+    if wholesale_price_usd in (None, ""):
         return None
     try:
-        retail = Decimal(str(retail_price_usd))
+        wholesale = Decimal(str(wholesale_price_usd))
         rate = Decimal(str(usd_rate))
         markup = Decimal(str(markup_percent))
     except InvalidOperation:
         return None
-    raw = retail * rate * (ONE + markup / HUNDRED)
+    raw = wholesale * rate * (ONE + markup / HUNDRED)
     return raw.quantize(WHOLE_RUB, rounding=ROUND_HALF_UP)
 
 
-def current_customer_price_rub(retail_price_usd):
+def current_customer_price_rub(wholesale_price_usd):
     """Цена клиента по ТЕКУЩИМ настройкам (для превью каталога)."""
     valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
     return customer_price_rub(
-        retail_price_usd, valuation.current_usd_rate, settings.brp_markup_percent
+        wholesale_price_usd, valuation.current_usd_rate, settings.brp_markup_percent
     )

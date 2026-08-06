@@ -61,9 +61,9 @@ def _brp_candidate(part: BrpCatalogPart, pricing) -> ReceivingCandidate:
     price = warehouse_part.recommended_price if warehouse_part else None
     if warehouse_part is None:
         source = find_brp_price_source(part.material_no_norm, part)
-        retail = source.retail_price_usd if source else part.retail_price_usd
+        wholesale = source.wholesale_price_usd if source else part.wholesale_price_usd
         price = brp_customer_price_rub(
-            retail, pricing.current_usd_rate, pricing.brp_markup_percent
+            wholesale, pricing.current_usd_rate, pricing.brp_markup_percent
         )
     return ReceivingCandidate(
         source="brp",
@@ -87,9 +87,9 @@ def _polaris_candidate(part: PolarisCatalogPart, pricing) -> ReceivingCandidate:
     price = warehouse_part.recommended_price if warehouse_part else None
     if warehouse_part is None:
         source = find_polaris_price_source(part.part_number_norm, part)
-        retail = source.retail_price_usd if source else part.retail_price_usd
+        wholesale = source.wholesale_price_usd if source else part.wholesale_price_usd
         price = polaris_customer_price_rub(
-            retail, pricing.current_usd_rate, pricing.polaris_markup_percent
+            wholesale, pricing.current_usd_rate, pricing.polaris_markup_percent
         )
     return ReceivingCandidate(
         source="polaris",

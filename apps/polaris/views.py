@@ -58,11 +58,13 @@ def _polaris_matches(q: str, norm: str, settings) -> list:
     rows = []
     for polaris in parts:
         price_source = find_polaris_price_source(norm, polaris)
-        retail = price_source.retail_price_usd if price_source else polaris.retail_price_usd
+        wholesale = (
+            price_source.wholesale_price_usd if price_source else polaris.wholesale_price_usd
+        )
         rows.append({
             "polaris": polaris,
             "customer_price": customer_price_rub(
-                retail,
+                wholesale,
                 settings.current_usd_rate,
                 settings.polaris_markup_percent,
             ),

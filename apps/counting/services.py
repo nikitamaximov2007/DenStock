@@ -75,18 +75,18 @@ def find_brp_price_source(
     """ИСТОЧНИК ЦЕНЫ для номера: сама позиция или связанная замена с ценой.
 
     Личность строки и источник цены разделены (hotfix 32.3.2): строка
-    остаётся привязанной к точному номеру, но если у него розница 0, цена
-    берётся из связанной по цепочке замен позиции с розницей > 0. Реальный
-    кейс: у 250000059 розница 0, а у 250000418 (замена указывает на
+    остаётся привязанной к точному номеру, но если у него оптовая цена 0, цена
+    берётся из связанной по цепочке замен позиции с оптовой ценой > 0. Реальный
+    кейс: у 250000059 оптовая цена 0, а у 250000418 (замена указывает на
     250000059) розница 4.19 $ -> 616 ₽.
 
     Кандидаты: позиции, связанные с отсканированным номером (material_no
     или замены = номеру), плюс позиции, на которые ссылаются замены самой
-    выбранной позиции. Порядок детерминирован: розница > 0, меньший pk.
-    Если ни у кого розницы нет, источником остаётся выбранная позиция (0).
+    выбранной позиции. Порядок детерминирован: оптовая цена > 0, меньший pk.
+    Если ни у кого оптовой цены нет, источником остаётся выбранная позиция (0).
     """
     if selected is not None and (
-        selected.retail_price_usd is not None and selected.retail_price_usd > 0
+        selected.wholesale_price_usd is not None and selected.wholesale_price_usd > 0
     ):
         return selected
     if not norm and selected is None:
@@ -106,7 +106,7 @@ def find_brp_price_source(
         return selected
     if candidates is None:
         priced = (
-            BrpCatalogPart.objects.filter(related, retail_price_usd__gt=0)
+            BrpCatalogPart.objects.filter(related, wholesale_price_usd__gt=0)
             .order_by("pk")
             .first()
         )
@@ -123,8 +123,8 @@ def find_brp_price_source(
             (
                 candidate
                 for candidate in candidates
-                if candidate.retail_price_usd is not None
-                and candidate.retail_price_usd > 0
+                if candidate.wholesale_price_usd is not None
+                and candidate.wholesale_price_usd > 0
                 and (
                     candidate.material_no_norm == norm
                     or candidate.replacement_no_1_norm == norm
@@ -154,7 +154,7 @@ def load_brp_price_candidates(selected_parts) -> list[BrpCatalogPart]:
             Q(material_no_norm__in=exact_norms | forward_norms)
             | Q(replacement_no_1_norm__in=exact_norms)
             | Q(replacement_no_2_norm__in=exact_norms),
-            retail_price_usd__gt=0,
+            wholesale_price_usd__gt=0,
         ).order_by("pk")
     )
 
@@ -175,7 +175,7 @@ def _effective_brp_price(
         settings = BrpPricingSettings.get()
         usd_rate = valuation.current_usd_rate
         markup_percent = settings.brp_markup_percent
-    return brp_customer_price_rub(price_source.retail_price_usd, usd_rate, markup_percent)
+    return brp_customer_price_rub(price_source.wholesale_price_usd, usd_rate, markup_percent)
 
 
 def _effective_polaris_price(
@@ -194,7 +194,9 @@ def _effective_polaris_price(
         settings = PolarisPricingSettings.get()
         usd_rate = valuation.current_usd_rate
         markup_percent = settings.polaris_markup_percent
-    return polaris_customer_price_rub(price_source.retail_price_usd, usd_rate, markup_percent)
+    return polaris_customer_price_rub(
+        price_source.wholesale_price_usd, usd_rate, markup_percent
+    )
 
 
 def _warehouse_part_by_scan(norm: str, raw: str) -> PartType | None:
@@ -678,24 +680,24 @@ def convert_to_receipt(
         part = line.warehouse_part
         if part is None and line.brp_catalog_part is not None:
             # Автосоздание карточки из BRP (без ручного «Создать карточку»).
-            # Личность карточки — отсканированная позиция; если у неё розница
-            # 0, а в пересчёте показана эффективная цена от замены (32.3.2),
+            # Личность карточки — отсканированная позиция; если у неё оптовая
+            # цена 0, а в пересчёте показана эффективная цена от замены,
             # эта цена фиксируется в снимке (manual override), чтобы карточка
             # не получила 0 ₽ вопреки тому, что видел пользователь.
-            identity_retail = line.brp_catalog_part.retail_price_usd
+            identity_wholesale = line.brp_catalog_part.wholesale_price_usd
             effective = line.final_customer_price_rub
             manual = None
-            if (identity_retail is None or identity_retail <= 0) and effective:
+            if (identity_wholesale is None or identity_wholesale <= 0) and effective:
                 manual = effective
             part = promote_to_warehouse(line.brp_catalog_part, by=by, manual_price=manual)
             line.warehouse_part = part
             line.source = InventoryCountingLine.Source.WAREHOUSE
             line.save(update_fields=["warehouse_part", "source"])
         if part is None and line.polaris_catalog_part is not None:
-            identity_retail = line.polaris_catalog_part.retail_price_usd
+            identity_wholesale = line.polaris_catalog_part.wholesale_price_usd
             effective = line.final_customer_price_rub
             manual = None
-            if (identity_retail is None or identity_retail <= 0) and effective:
+            if (identity_wholesale is None or identity_wholesale <= 0) and effective:
                 manual = effective
             part = promote_polaris(line.polaris_catalog_part, by=by, manual_price=manual)
             line.warehouse_part = part

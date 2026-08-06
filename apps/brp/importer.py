@@ -5,15 +5,15 @@
 изменившиеся строки. 127 тысяч строк обрабатываются чанками через bulk-операции.
 
 Дубликаты Material_No (hotfix 32.3): в файле встречаются повторы одного
-номера, где у одной строки розница 0, а у другой — реальная цена. Правило
+номера, где у одной строки оптовая цена 0, а у другой — реальная цена. Правило
 выбора лучшей строки детерминировано:
-1) предпочесть строку с retail_price_usd > 0;
-2) при равенстве — строку с wholesale_price_usd > 0;
+1) предпочесть строку с wholesale_price_usd > 0;
+2) при равенстве — строку с retail_price_usd > 0;
 3) при полном равенстве — первую по порядку в файле;
-4) если у всех дубликатов розница 0, остаётся 0.
+4) если у всех дубликатов оптовая цена 0, остаётся 0.
 Повторный импорт того же файла ЧИНИТ существующие записи с нулевой ценой:
 логика «пропустить без изменений» сравнивает выбранную лучшую строку с базой
-и обновляет отличающиеся записи (счётчик zero_price_repaired).
+и обновляет отличающиеся записи (счётчик zero_wholesale_price_repaired).
 
 Формат файла (проверен на реальном прайсе):
 - первый лист; строка 1 — заголовки; строка 2 — примечания (пустая в колонках
@@ -70,12 +70,13 @@ class ImportSummary:
     skipped_empty: int = 0
     duplicates: int = 0
     duplicates_price_resolved: int = 0  # дубликат выиграл по правилу ненулевой цены
-    zero_price_repaired: int = 0  # записи базы, где нулевая розница стала ненулевой
+    zero_wholesale_price_repaired: int = 0
     unique_materials: int = 0
     with_retail_price: int = 0
     with_wholesale_price: int = 0
     with_replacement: int = 0
     status_counts: Counter = field(default_factory=Counter)
+    recommended_prices_refreshed: int = 0
 
 
 def _text(value) -> str:
@@ -115,15 +116,15 @@ def _row_dict(cells, row_no: int) -> dict:
 def _price_score(row: dict) -> tuple[int, int]:
     """Ранг строки для выбора среди дубликатов: только Decimal, без float.
 
-    (розница > 0, оптовая > 0); лексикографическое сравнение кортежей даёт
-    правило «сначала ненулевая розница, затем ненулевая оптовая». Побеждает
+    (оптовая > 0, розница > 0); лексикографическое сравнение кортежей даёт
+    правило «сначала ненулевая оптовая, затем ненулевая розница». Побеждает
     строго больший ранг, при равенстве остаётся более ранняя строка файла.
     """
-    retail = row["retail_price_usd"]
     wholesale = row["wholesale_price_usd"]
+    retail = row["retail_price_usd"]
     return (
-        1 if retail is not None and retail > ZERO else 0,
         1 if wholesale is not None and wholesale > ZERO else 0,
+        1 if retail is not None and retail > ZERO else 0,
     )
 
 
@@ -159,12 +160,12 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
             to_create.append(obj)
             summary.created += 1
         elif _differs(obj, row):
-            old_retail = obj.retail_price_usd
-            new_retail = row["retail_price_usd"]
-            if (old_retail is None or old_retail == ZERO) and (
-                new_retail is not None and new_retail > ZERO
+            old_wholesale = obj.wholesale_price_usd
+            new_wholesale = row["wholesale_price_usd"]
+            if (old_wholesale is None or old_wholesale == ZERO) and (
+                new_wholesale is not None and new_wholesale > ZERO
             ):
-                summary.zero_price_repaired += 1
+                summary.zero_wholesale_price_repaired += 1
             _apply(obj, row, source_file=source_file, batch=batch)
             to_update.append(obj)
             summary.updated += 1
@@ -258,6 +259,16 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
                 chunk = []
         if chunk:
             _flush(chunk, summary, commit=commit, source_file=path.name, batch=batch)
+        if commit:
+            from apps.catalog.services import get_current_price_settings, refresh_linked_part_prices
+
+            pricing = get_current_price_settings()
+            summary.recommended_prices_refreshed = refresh_linked_part_prices(
+                usd_rate=pricing.current_usd_rate,
+                brp_markup=pricing.brp_markup_percent,
+                polaris_markup=pricing.polaris_markup_percent,
+                catalogs=frozenset({"brp"}),
+            )
         return summary
     finally:
         workbook.close()

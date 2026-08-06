@@ -35,7 +35,7 @@ python manage.py import_polaris_catalog --file "/path/to/POLARIS DEALER PRICE 20
 `part_number`, но не создаёт дубли.
 
 Отчёт команды показывает: строк просмотрено, строк данных, создано, обновлено,
-пропущено без изменений, пустые строки, строки без retail-цены,
+пропущено без изменений, пустые строки, строки без оптовой цены,
 строки с `superseded_number`, количество ошибок и примеры ошибок.
 
 ## Цена
@@ -43,13 +43,13 @@ python manage.py import_polaris_catalog --file "/path/to/POLARIS DEALER PRICE 20
 Курс доллара общий для BRP, Polaris и финансовой оценки склада. Наценка Polaris отдельная от BRP:
 
 ```text
-цена клиента = розница USD x общий курс x (1 + наценка Polaris / 100)
+цена клиента = оптовая цена USD x общий курс x (1 + наценка Polaris / 100)
 ```
 
 Итог округляется до целого рубля `ROUND_HALF_UP`. Термин в UI: «Наценка».
 
-Если у exact part_number розница 0, система может взять цену из связанной
-superseded/source позиции с ненулевой розницей. Номер в пересчёте, продаже,
+Если у exact part_number оптовая цена 0, система может взять цену из связанной
+superseded/source позиции с ненулевой оптовой ценой. Номер в пересчёте, продаже,
 отчёте и Excel остаётся exact part_number.
 
 ## Production import
@@ -70,6 +70,15 @@ docker compose exec -T web python manage.py backup_all
 docker compose exec -T web python manage.py import_polaris_catalog --file "/opt/denstock/import/POLARIS DEALER PRICE 2023 ATV, UTV (1).xlsx" --commit
 docker compose exec -T web python manage.py ops_check
 docker compose exec -T web python manage.py backup_all
+```
+
+`--commit` пересчитывает только текущие `recommended_price` уже связанных
+Polaris-карточек. Исторические снимки цен, продажи и склад не меняются; если
+оптовая цена пустая, существующая рекомендованная цена сохраняется. Для
+существующих карточек без повторного импорта сначала используйте dry-run:
+
+```bash
+python manage.py recalculate_linked_part_prices --catalog polaris
 ```
 
 ## Ручная проверка

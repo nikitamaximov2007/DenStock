@@ -54,7 +54,7 @@ SAMPLE_ROWS = [
     ["042", "BUSHING              ", 2025, None, 6.49, 5.29, "204130036", 460041],
     [324816, "SCREW", 2025, None, 2.01, 1.77, "769244", "423324816"],
     [335220, "SCREW OLD", 2005, "USE", 0, 0, None, 463185],
-    [353589, "SCREW M6X16", 2025, "LIQ", 9.03, None, None, None],
+    [353589, "SCREW M6X16", 2025, "LIQ", 9.03, 9.03, None, None],
     [324816, "SCREW DUPLICATE", 2025, None, 9.99, 9.99, None, None],  # дубль
     [None, None, None, None, None, None, None, None],  # пустая строка
 ]
@@ -118,7 +118,7 @@ def test_commit_parses_all_fields(db, sample_file):
     assert summary.skipped_empty == 2  # строка 2 (примечания) + пустая строка
     assert summary.unique_materials == 4
     assert summary.with_retail_price == 4
-    assert summary.with_wholesale_price == 3
+    assert summary.with_wholesale_price == 4
     assert summary.with_replacement == 3
     assert summary.status_counts == {"USE": 1, "LIQ": 1}
 
@@ -146,13 +146,13 @@ def test_duplicate_material_first_wins_on_price_tie(imported):
 # --- Дубликаты Material_No: предпочтение ненулевой цены (hotfix 32.3) -----------------
 
 DUP_417_ROWS = [
-    # Реальный кейс: первая строка с нулевой розницей, дубликат с настоящей ценой.
+    # Реальный кейс: первая строка с нулевой оптовой, дубликат с настоящей ценой.
     ["417224916", "ROLLER ZERO", 2020, None, 0, 0, None, None],
     ["417224916", "ROLLER PULLEY EXT", 2025, None, 35.99, 28.15, None, None],
 ]
 
 
-def test_duplicate_prefers_nonzero_retail(db, tmp_path):
+def test_duplicate_prefers_nonzero_wholesale(db, tmp_path):
     summary = import_catalog(_make_xlsx(tmp_path, DUP_417_ROWS), commit=True)
     assert summary.duplicates == 1
     assert summary.duplicates_price_resolved == 1
@@ -160,8 +160,8 @@ def test_duplicate_prefers_nonzero_retail(db, tmp_path):
     assert part.retail_price_usd == Decimal("35.99")
     assert part.wholesale_price_usd == Decimal("28.15")
     assert part.part_desc == "ROLLER PULLEY EXT"
-    # 35.99 * 105 * 1.40 = 5290.53 -> 5291 ₽ (целые рубли).
-    assert customer_price_rub(part.retail_price_usd, 105, 40) == Decimal("5291")
+    # 28.15 * 105 * 1.40 = 4138.05 -> 4138 ₽ (целые рубли).
+    assert customer_price_rub(part.wholesale_price_usd, 105, 40) == Decimal("4138")
 
 
 def test_duplicate_wholesale_tiebreak(db, tmp_path):
@@ -198,12 +198,12 @@ def test_reimport_repairs_zero_price_record(db, tmp_path):
     # Dry-run сообщает, что запись будет обновлена, но ничего не пишет.
     dry = import_catalog(path, commit=False)
     assert dry.updated == 1
-    assert dry.zero_price_repaired == 1
+    assert dry.zero_wholesale_price_repaired == 1
     assert BrpCatalogPart.objects.get(material_no="417224916").retail_price_usd == Decimal("0")
     # Commit реально чинит запись.
     summary = import_catalog(path, commit=True)
     assert summary.updated == 1
-    assert summary.zero_price_repaired == 1
+    assert summary.zero_wholesale_price_repaired == 1
     part = BrpCatalogPart.objects.get(material_no="417224916")
     assert part.retail_price_usd == Decimal("35.99")
     # Повторный импорт стабилен: уже выбранная ненулевая строка не меняется.
@@ -217,7 +217,7 @@ def test_brp_search_shows_repaired_price(client, make_user, db, tmp_path):
     _login(client, make_user, superuser=True)
     html = client.get(reverse("brp_search") + "?q=417224916").content.decode()
     assert "ROLLER PULLEY EXT" in html
-    assert "5 291" in html  # не 0: выбрана строка с настоящей розницей
+    assert "4 138" in html  # не 0: выбрана строка с настоящей оптовой ценой
 
 
 def test_reimport_is_idempotent(db, sample_file):
@@ -237,6 +237,37 @@ def test_reimport_updates_changed_rows(db, tmp_path, sample_file):
     assert summary.updated == 1
     assert summary.skipped_unchanged == 3
     assert BrpCatalogPart.objects.get(material_no="042").retail_price_usd == Decimal("7.99")
+
+
+def test_reimport_refreshes_linked_current_price_from_wholesale(db, refs, admin, tmp_path):
+    rows = [["WHOLESALE-REIMPORT", "PRICE TEST", 2025, None, 100, 10, None, None]]
+    path = _make_xlsx(tmp_path, rows)
+    import_catalog(path, commit=True)
+    source = BrpCatalogPart.objects.get(material_no="WHOLESALE-REIMPORT")
+    part = promote_to_warehouse(source, by=admin)
+    link = part.brp_link
+    assert part.recommended_price == Decimal("1470")
+    assert link.final_customer_price_rub == Decimal("1470")
+
+    rows[0][5] = 12  # F = ОПТОВАЯ, не E = РОЗНИЦА.
+    summary = import_catalog(_make_xlsx(tmp_path, rows, "brp-updated.xlsx"), commit=True)
+
+    part.refresh_from_db()
+    link.refresh_from_db()
+    assert summary.recommended_prices_refreshed == 1
+    assert part.recommended_price == Decimal("1764")
+    assert link.final_customer_price_rub == Decimal("1470")
+
+    part.recommended_price = Decimal("14700")
+    part.save(update_fields=["recommended_price"])
+    repeated = import_catalog(_make_xlsx(tmp_path, rows, "brp-repeated.xlsx"), commit=True)
+    part.refresh_from_db()
+    assert repeated.recommended_prices_refreshed == 1
+    assert repeated.skipped_unchanged == 1
+    assert part.recommended_price == Decimal("1764")
+
+    stable = import_catalog(_make_xlsx(tmp_path, rows, "brp-stable.xlsx"), commit=True)
+    assert stable.recommended_prices_refreshed == 0
 
 
 def test_import_never_touches_stock(db, sample_file):
@@ -277,14 +308,14 @@ def test_price_formula_configurable():
 
 
 def test_price_rounding_keeps_usd_sources(db):
-    """Округляется только итог: исходная розница USD не меняется."""
+    """Округляется только итог: исходная оптовая цена USD не меняется."""
     brp = _brp()
-    customer_price_rub(brp.retail_price_usd, 105, 40)
+    customer_price_rub(brp.wholesale_price_usd, 105, 40)
     brp.refresh_from_db()
-    assert brp.retail_price_usd == Decimal("99.99")
+    assert brp.wholesale_price_usd == Decimal("80")
 
 
-def test_price_none_without_retail():
+def test_price_none_without_wholesale():
     assert customer_price_rub(None, 105, 40) is None
     assert customer_price_rub("", 105, 40) is None
 
@@ -307,11 +338,11 @@ def refs(db):
     return {}
 
 
-def _brp(material="219800345", retail="99.99", **kwargs):
+def _brp(material="219800345", retail="99.99", wholesale="80", **kwargs):
     defaults = {
         "part_desc": "BELT DRIVE",
         "retail_price_usd": Decimal(retail) if retail else None,
-        "wholesale_price_usd": Decimal("80"),
+        "wholesale_price_usd": Decimal(wholesale) if wholesale else None,
         "replacement_no_1": "417300571",
         "brp_status": "LIQ",
     }
@@ -325,15 +356,15 @@ def test_promote_creates_card_without_stock(db, refs, admin):
     part = promote_to_warehouse(brp, by=admin)
     assert part.name == "BELT DRIVE"
     assert part.tracking_mode == PartType.TrackingMode.BULK
-    assert part.recommended_price == Decimal("14699")  # целые рубли, без копеек
+    assert part.recommended_price == Decimal("11760")  # целые рубли, без копеек
     numbers = set(PartNumber.objects.filter(part=part).values_list("value", flat=True))
     assert numbers == {"219800345", "417300571"}
     link = BrpPartLink.objects.get(part=part)
     assert link.brp_retail_price_usd == Decimal("99.99")
     assert link.usd_rate_used == Decimal("105")
     assert link.markup_percent_used == Decimal("40")
-    assert link.calculated_customer_price_rub == Decimal("14699")
-    assert link.final_customer_price_rub == Decimal("14699")
+    assert link.calculated_customer_price_rub == Decimal("11760")
+    assert link.final_customer_price_rub == Decimal("11760")
     assert link.price_source == BrpPartLink.PriceSource.CALCULATED
     after = _stock_snapshot()
     assert after["balances"] == before["balances"]  # остатков НЕ появилось
@@ -358,7 +389,7 @@ def test_manual_price_keeps_sources(db, refs, admin):
     assert link.final_customer_price_rub == Decimal("15000")
     # Исходники не потеряны: и USD, и рассчитанная цена сохранены.
     assert link.brp_retail_price_usd == Decimal("99.99")
-    assert link.calculated_customer_price_rub == Decimal("14699")
+    assert link.calculated_customer_price_rub == Decimal("11760")
 
 
 def test_settings_change_affects_future_not_past(db, refs, admin):
@@ -372,10 +403,10 @@ def test_settings_change_affects_future_not_past(db, refs, admin):
     new_part = promote_to_warehouse(_brp("222"), by=admin)
     old_link, new_link = old_part.brp_link, new_part.brp_link
     assert old_link.usd_rate_used == Decimal("105")  # история не изменилась
-    assert old_link.calculated_customer_price_rub == Decimal("14699")
+    assert old_link.calculated_customer_price_rub == Decimal("11760")
     assert new_link.usd_rate_used == Decimal("90")
-    # 99.99 * 90 * 1.5 = 13498.65 -> 13499 (целые рубли).
-    assert new_link.calculated_customer_price_rub == Decimal("13499")
+    # 80 * 90 * 1.5 = 10800 (целые рубли).
+    assert new_link.calculated_customer_price_rub == Decimal("10800")
 
 
 # --- Поиск -----------------------------------------------------------------------
@@ -523,10 +554,10 @@ def test_settings_page_gated_and_saves(client, make_user, db):
 def test_price_settings_refreshes_current_brp_card_without_link_snapshot(
     client, make_user, db, refs, admin
 ):
-    part = promote_to_warehouse(_brp(retail="100"), by=admin)
+    part = promote_to_warehouse(_brp(retail="100", wholesale="80"), by=admin)
     link = part.brp_link
-    assert part.recommended_price == Decimal("14700")
-    assert link.final_customer_price_rub == Decimal("14700")
+    assert part.recommended_price == Decimal("11760")
+    assert link.final_customer_price_rub == Decimal("11760")
 
     _login(client, make_user, superuser=True)
     resp = client.post(
@@ -541,10 +572,10 @@ def test_price_settings_refreshes_current_brp_card_without_link_snapshot(
 
     part.refresh_from_db()
     link.refresh_from_db()
-    assert part.recommended_price == Decimal("13500")
+    assert part.recommended_price == Decimal("10800")
     assert link.usd_rate_used == Decimal("105")
     assert link.markup_percent_used == Decimal("40")
-    assert link.final_customer_price_rub == Decimal("14700")
+    assert link.final_customer_price_rub == Decimal("11760")
 
 
 def test_price_settings_rejects_non_finite_values(client, make_user, db):
