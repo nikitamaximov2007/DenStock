@@ -12,13 +12,14 @@ from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.core.receiving_queue import PENDING_SESSION_KEY, QUEUE_SESSION_KEY
-from apps.inventory.models import FoundStockPosting, StockLot, StockMovement
+from apps.inventory.models import FoundStockPosting, PartPreferredLocation, StockLot, StockMovement
 from apps.inventory.services import (
     InventoryError,
     add_found_stock,
     create_stock_lot,
     post_found_stock_group,
     receive_stock_lot,
+    sell_stock_lot,
 )
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.procurement.models import Batch, BatchLine
@@ -290,7 +291,7 @@ def test_multiple_cells_require_explicit_choice(client, make_user, data):
         data["loc3"].pk,
         data["loc4"].pk,
     }
-    assert "Деталь найдена в нескольких ячейках" in html
+    assert "Сейчас деталь находится в нескольких ячейках" in html
     assert "checked" not in html
 
 
@@ -305,6 +306,109 @@ def test_assign_choice_places_line_in_correct_group(client, make_user, data):
     )
     assert _single_line(client)["location_id"] == data["loc3"].pk
     assert "Ячейка <span class=\"code-pill\">S04-L03-D01-C03" in client.get(URL).content.decode()
+
+
+def test_change_cell_can_select_another_active_cell_and_updates_preference_after_post(
+    client, make_user, data
+):
+    _login(client, make_user, superuser=True, name="boss")
+    preference = PartPreferredLocation.objects.get(part_type=data["part"])
+    assert preference.location == data["loc4"]
+
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    client.post(URL, {"action": "queue_unassign", "line_id": line["id"]})
+    line = _single_line(client)
+    assert line["location_id"] is None
+    assert line["location_mode"] == "change"
+
+    client.post(
+        URL,
+        {
+            "action": "queue_assign",
+            "line_id": line["id"],
+            "location_id": data["loc3"].pk,
+            "location_code": data["loc3"].code,
+        },
+    )
+    assert _single_line(client)["location_id"] == data["loc3"].pk
+    preference.refresh_from_db()
+    assert preference.location == data["loc4"]
+
+    client.post(URL, _group_payload(client, data["loc3"]))
+    preference.refresh_from_db()
+    assert preference.location == data["loc3"]
+
+
+def test_cancel_cell_change_restores_unposted_choice_without_updating_preference(
+    client, make_user, data
+):
+    _login(client, make_user, superuser=True, name="boss")
+    preference = PartPreferredLocation.objects.get(part_type=data["part"])
+    before_movements = StockMovement.objects.count()
+
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    assert line["location_id"] == data["loc4"].pk
+
+    client.post(URL, {"action": "queue_unassign", "line_id": line["id"]})
+    changing = _single_line(client)
+    assert changing["location_id"] is None
+    assert changing["location_change_previous"]["location_id"] == data["loc4"].pk
+
+    client.post(URL, {"action": "queue_cancel_location_change", "line_id": line["id"]})
+    restored = _single_line(client)
+    assert restored["location_id"] == data["loc4"].pk
+    assert "location_change_previous" not in restored
+    preference.refresh_from_db()
+    assert preference.location == data["loc4"]
+    assert StockMovement.objects.count() == before_movements
+
+
+def test_queue_rejects_mismatched_location_id_and_code(client, make_user, data):
+    _login(client, make_user, superuser=True, name="boss")
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    before = StockMovement.objects.count()
+
+    response = client.post(
+        URL,
+        {
+            "action": "queue_assign",
+            "line_id": line["id"],
+            "location_id": data["loc3"].pk,
+            "location_code": data["loc4"].code,
+        },
+    )
+
+    assert "не соответствует выбранной ячейке" in response.content.decode()
+    assert _single_line(client)["location_id"] == data["loc4"].pk
+    assert StockMovement.objects.count() == before
+
+
+def test_zero_stock_uses_preferred_cell_and_archived_preference_requires_selection(
+    client, make_user, data
+):
+    sell_stock_lot(data["lot4"], Decimal("3"), by=data["admin"])
+    _login(client, make_user, superuser=True, name="boss")
+
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    html = client.get(URL).content.decode()
+    assert line["location_id"] == data["loc4"].pk
+    assert line["location_mode"] == "preferred"
+    assert "закреплённая ячейка" in html.lower()
+    assert "ещё не размещалась на складе" not in html
+
+    client.post(URL, {"action": "queue_clear"})
+    data["loc4"].is_active = False
+    data["loc4"].save(update_fields=["is_active"])
+    client.post(URL, {"action": "scan", "code": "420931285"})
+    line = _single_line(client)
+    html = client.get(URL).content.decode()
+    assert line["location_id"] is None
+    assert line["location_mode"] == "preferred_unavailable"
+    assert "недоступна" in html
 
 
 def test_cannot_assign_inactive_or_unrelated_location(client, make_user, data):

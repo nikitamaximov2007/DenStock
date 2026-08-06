@@ -1,6 +1,13 @@
 from django.contrib import admin
 
-from .models import NumberSequence, PartItem, StockBalance, StockLot, StockMovement
+from .models import (
+    NumberSequence,
+    PartItem,
+    PartPreferredLocation,
+    StockBalance,
+    StockLot,
+    StockMovement,
+)
 
 
 @admin.register(PartItem)
@@ -67,6 +74,25 @@ class StockBalanceAdmin(admin.ModelAdmin):
     )
     list_filter = ("part_type", "location", "batch")
     search_fields = ("part_type__name", "location__code")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(PartPreferredLocation)
+class PartPreferredLocationAdmin(admin.ModelAdmin):
+    """Просмотр подсказок размещения без ручного обхода складских сервисов."""
+
+    list_display = ("part_type", "location", "updated_by", "updated_at")
+    list_select_related = ("part_type", "location", "updated_by")
+    search_fields = ("part_type__name", "location__code")
+    readonly_fields = ("part_type", "location", "updated_by", "created_at", "updated_at")
 
     def has_add_permission(self, request):
         return False

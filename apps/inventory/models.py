@@ -439,6 +439,45 @@ class StockBalance(models.Model):
         return f"{self.part_type} @ {self.location.code}: {self.quantity_physical}"
 
 
+class PartPreferredLocation(models.Model):
+    """Последняя подтверждённая предпочтительная ячейка карточки детали.
+
+    Это не остаток и не складское движение. Связь нужна только как безопасная
+    подсказка для следующего размещения, поэтому нулевой остаток её не удаляет.
+    """
+
+    part_type = models.OneToOneField(
+        "catalog.PartType",
+        verbose_name="Деталь",
+        on_delete=models.PROTECT,
+        related_name="preferred_location",
+    )
+    location = models.ForeignKey(
+        "warehouse.StorageLocation",
+        verbose_name="Предпочтительная ячейка",
+        on_delete=models.PROTECT,
+        related_name="preferred_for_parts",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто подтвердил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Предпочтительная ячейка детали"
+        verbose_name_plural = "Предпочтительные ячейки деталей"
+        ordering = ["part_type_id"]
+
+    def __str__(self) -> str:
+        return f"{self.part_type} -> {self.location.code}"
+
+
 class StockLot(models.Model):
     """Количественный складской лот: количество bulk-детали в конкретной ячейке.
 

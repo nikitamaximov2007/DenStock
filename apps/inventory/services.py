@@ -9,6 +9,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 
+from apps.catalog.models import PartType
 from apps.procurement.models import BatchLine
 from apps.warehouse.models import StorageLocation
 
@@ -16,6 +17,7 @@ from .models import (
     FoundStockPosting,
     NumberSequence,
     PartItem,
+    PartPreferredLocation,
     StockBalance,
     StockLot,
     StockMovement,
@@ -29,6 +31,27 @@ class InventoryError(Exception):
 
 class FoundStockAlreadyPosted(InventoryError):
     """Группа пакетной приёмки с этим токеном уже проведена."""
+
+
+def set_preferred_part_location(part, location, *, by=None) -> PartPreferredLocation:
+    """Запомнить подтверждённую ячейку, не меняя складскую физику.
+
+    Вызывается только из уже успешных складских транзакций. Блокировка карточки
+    детали сериализует конкурирующие размещения одной позиции и защищает
+    OneToOne-связь без отдельного фиктивного остатка.
+    """
+    if location is None or not location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+    locked_part = PartType.objects.select_for_update().get(pk=part.pk)
+    preference, created = PartPreferredLocation.objects.get_or_create(
+        part_type=locked_part,
+        defaults={"location": location, "updated_by": by},
+    )
+    if not created:
+        preference.location = location
+        preference.updated_by = by
+        preference.save(update_fields=["location", "updated_by", "updated_at"])
+    return preference
 
 
 def _validate_line(line: BatchLine) -> None:
@@ -367,6 +390,7 @@ def receive_part_item(item: PartItem, *, to_location=None, by=None, comment="") 
         to_location=location, by=by, comment=comment,
     )
     _refresh_balance(item.batch_line, location)
+    set_preferred_part_location(item.part_type, location, by=by)
     return item
 
 
@@ -385,6 +409,7 @@ def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
         to_location=lot.location, by=by, comment=comment,
     )
     _refresh_balance(lot.batch_line, lot.location)
+    set_preferred_part_location(lot.part_type, lot.location, by=by)
     return lot
 
 
@@ -423,6 +448,7 @@ def move_part_item(
     )
     _refresh_balance(item.batch_line, from_location)
     _refresh_balance(item.batch_line, to_location)
+    set_preferred_part_location(item.part_type, to_location, by=by)
     return item
 
 
@@ -459,6 +485,7 @@ def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockL
     )
     _refresh_balance(lot.batch_line, from_location)
     _refresh_balance(lot.batch_line, to_location)
+    set_preferred_part_location(lot.part_type, to_location, by=by)
     return lot
 
 
@@ -564,6 +591,7 @@ def _move_locked_lot_portion(lot, target_location, quantity, *, transfer, by=Non
     )
     _refresh_balance(lot.batch_line, transfer.from_location)
     _refresh_balance(target.batch_line, target_location)
+    set_preferred_part_location(lot.part_type, target_location, by=by)
 
 
 @transaction.atomic
@@ -1003,6 +1031,8 @@ def adjust_stock_lot_quantity(
         document_type=document_type, document_id=document_id,
     )
     _refresh_balance(lot.batch_line, lot.location)
+    if delta > 0:
+        set_preferred_part_location(lot.part_type, lot.location, by=by)
     return movement
 
 
@@ -1207,6 +1237,7 @@ def return_part_item(item, to_location, *, restock_status, by=None,
         comment=comment, document_type="stock_return", document_id=document_id,
     )
     _refresh_balance(item.batch_line, to_location)
+    set_preferred_part_location(item.part_type, to_location, by=by)
     return item
 
 
@@ -1268,6 +1299,7 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
         comment=comment, document_type="stock_return", document_id=document_id,
     )
     _refresh_balance(batch_line, to_location)
+    set_preferred_part_location(batch_line.part_type, to_location, by=by)
     return lot
 
 

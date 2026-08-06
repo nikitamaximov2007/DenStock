@@ -124,58 +124,94 @@
                 · {{ line.quantity|quantity_int }} шт.
                 · {{ line.unit_price_decimal|money_int }} ₽ за ед.
               </p>
-              {% if line.location_mode == "existing" and line.location_choices %}
-                <p class="muted">Деталь найдена в нескольких ячейках. Выбор обязателен.</p>
-                <form method="post" class="form">
-                  {% csrf_token %}
-                  <input type="hidden" name="line_id" value="{{ line.id }}">
-                  <table class="table table--compact">
-                    <thead>
-                      <tr>
-                        <th>Ячейка</th>
-                        <th class="num--qty">Физически</th>
-                        <th class="num--qty">Резерв</th>
-                        <th class="num--qty">Доступно</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for choice in line.location_choices %}
-                        <tr>
-                          <td>
-                            <label>
-                              <input type="radio" name="location_id" value="{{ choice.id }}" required>
-                              <span class="code-pill">{{ choice.code }}</span>
-                            </label>
-                          </td>
-                          <td class="num--qty">{{ choice.physical|quantity_int }}</td>
-                          <td class="num--qty">{{ choice.reserved|quantity_int }}</td>
-                          <td class="num--qty">{{ choice.available|quantity_int }}</td>
-                        </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                  <button type="submit"
-                          name="action"
-                          value="queue_assign"
-                          class="btn btn--primary">Назначить ячейку</button>
-                </form>
-              {% else %}
-                <p class="muted">Эта деталь ещё не размещалась на складе. Выберите ячейку.</p>
-                <form method="post" class="form receiving-location-form">
-                  {% csrf_token %}
-                  <input type="hidden" name="line_id" value="{{ line.id }}">
-                  <input type="text"
-                         name="location_code"
-                         list="active-storage-locations"
-                         placeholder="Начните вводить код ячейки"
-                         autocomplete="off"
-                         required>
-                  <button type="submit"
-                          name="action"
-                          value="queue_assign"
-                          class="btn btn--primary">Назначить ячейку</button>
-                </form>
+              {% if line.location_mode == "multiple" %}
+                <p class="muted">Сейчас деталь находится в нескольких ячейках. Выберите ячейку для приёмки.</p>
+              {% elif line.location_mode == "change" %}
+                <p class="muted">Выберите другую активную ячейку для этой приёмки.</p>
+              {% elif line.location_mode == "preferred_unavailable" %}
+                <p class="muted">
+                  Закреплённая ячейка <span class="code-pill">{{ line.preferred_location.code }}</span>
+                  недоступна. Выберите новую активную ячейку.
+                </p>
+              {% elif line.location_mode == "new" %}
+                <p class="muted">Ячейка не назначена. Выберите существующую активную ячейку.</p>
               {% endif %}
+              {% if line.location_choices %}
+                <table class="table table--compact">
+                  <thead>
+                    <tr>
+                      <th>Сейчас находится в ячейке</th>
+                      <th class="num--qty">Физически</th>
+                      <th class="num--qty">Резерв</th>
+                      <th class="num--qty">Доступно</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for choice in line.location_choices %}
+                      <tr>
+                        <td><span class="code-pill">{{ choice.code }}</span></td>
+                        <td class="num--qty">{{ choice.physical|quantity_int }}</td>
+                        <td class="num--qty">{{ choice.reserved|quantity_int }}</td>
+                        <td class="num--qty">{{ choice.available|quantity_int }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              {% endif %}
+              {% if line.preferred_location and line.location_mode != "preferred_unavailable" %}
+                <p class="muted">
+                  Закреплённая ячейка: <span class="code-pill">{{ line.preferred_location.code }}</span>.
+                </p>
+              {% endif %}
+              <form method="post"
+                    class="form receiving-location-form move-destination-form"
+                    data-move-destination-form>
+                {% csrf_token %}
+                <input type="hidden" name="line_id" value="{{ line.id }}">
+                <div class="move-destination"
+                     data-move-destination
+                     data-search-url="{% url 'scanner_move_locations' %}">
+                  <label for="receiving-location-input-{{ line.id }}">Ячейка приёмки</label>
+                  <div class="move-destination__control">
+                    <input id="receiving-location-input-{{ line.id }}"
+                           name="location_code"
+                           type="text"
+                           class="move-destination__input"
+                           placeholder="Начните вводить код, например S03-L03"
+                           autocomplete="off"
+                           role="combobox"
+                           aria-autocomplete="list"
+                           aria-haspopup="listbox"
+                           aria-expanded="false"
+                           aria-controls="receiving-location-options-{{ line.id }}"
+                           aria-describedby="receiving-location-status-{{ line.id }}"
+                           required
+                           data-move-destination-input>
+                    <input type="hidden" name="location_id" data-move-destination-id>
+                    <ul id="receiving-location-options-{{ line.id }}"
+                        class="move-destination__options"
+                        role="listbox"
+                        hidden
+                        data-move-destination-options>
+                    </ul>
+                  </div>
+                  <p id="receiving-location-status-{{ line.id }}"
+                     class="move-destination__status muted"
+                     aria-live="polite"
+                     data-move-destination-status>Начните вводить код или отсканируйте ячейку.</p>
+                </div>
+                <button type="submit"
+                        name="action"
+                        value="queue_assign"
+                        class="btn btn--primary">Назначить ячейку</button>
+                {% if line.location_mode == "change" and line.location_change_previous %}
+                  <button type="submit"
+                          name="action"
+                          value="queue_cancel_location_change"
+                          data-move-destination-cancel
+                          formnovalidate>Отменить изменение</button>
+                {% endif %}
+              </form>
               <div class="form-actions">
                 <form method="post" class="inline-form">
                   {% csrf_token %}
@@ -202,15 +238,6 @@
         </div>
       </div>
     {% endif %}
-    <datalist id="active-storage-locations">
-      {% for storage in receiving_queue.active_locations %}
-        <option value="{{ storage.code }}">
-          {{ storage.name }}
-          {% if storage.description %} · {{ storage.description }}{% endif %}
-          · видов: {{ storage.part_kinds }}
-        </option>
-      {% endfor %}
-    </datalist>
     {% for group in receiving_queue.groups %}
       <div class="card receiving-group">
         <div class="card__body">
@@ -235,7 +262,11 @@
                   <td><span class="code-pill">{{ line.exact_number }}</span></td>
                   <td>
                     {{ line.name }}
-                    {% if line.location_recommended %}<span class="muted">· рекомендуемая ячейка</span>{% endif %}
+                    {% if line.location_mode == "current" %}
+                      <span class="muted">· сейчас находится в этой ячейке</span>
+                    {% elif line.location_mode == "preferred" %}
+                      <span class="muted">· закреплённая ячейка</span>
+                    {% endif %}
                   </td>
                   <td class="num--qty">
                     <form method="post" class="inline-form">
@@ -374,7 +405,9 @@
               ·
             {% endif %}
           </td>
-          {% if show_costs %}<td>{{ m.total_cost_rub|money_int }}</td>{% endif %}
+          {% if show_costs %}
+            <td>{{ m.total_cost_rub|money_int }}</td>
+          {% endif %}
         </tr>
       {% empty %}
         <tr>
