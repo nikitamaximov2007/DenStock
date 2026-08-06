@@ -115,6 +115,36 @@ def test_import_polaris_commit_and_idempotent_update(db, tmp_path):
     assert part.retail_price_usd == Decimal("35")
 
 
+def test_reimport_refreshes_linked_current_price_from_wholesale(db, tmp_path, admin):
+    rows = [["WHOLESALE-REIMPORT", "PRICE TEST", "", 10, 100, "EA"]]
+    import_catalog(_make_xlsx(tmp_path, rows), commit=True)
+    source = PolarisCatalogPart.objects.get(part_number="WHOLESALE-REIMPORT")
+    part = promote_to_warehouse(source, by=admin)
+    link = part.polaris_link
+    assert part.recommended_price == Decimal("1470")
+    assert link.final_customer_price_rub == Decimal("1470")
+
+    rows[0][3] = 12  # D = ОПТОВАЯ, не E = РОЗНИЦА.
+    summary = import_catalog(_make_xlsx(tmp_path, rows, "polaris-updated.xlsx"), commit=True)
+
+    part.refresh_from_db()
+    link.refresh_from_db()
+    assert summary.recommended_prices_refreshed == 1
+    assert part.recommended_price == Decimal("1764")
+    assert link.final_customer_price_rub == Decimal("1470")
+
+    part.recommended_price = Decimal("14700")
+    part.save(update_fields=["recommended_price"])
+    repeated = import_catalog(_make_xlsx(tmp_path, rows, "polaris-repeated.xlsx"), commit=True)
+    part.refresh_from_db()
+    assert repeated.recommended_prices_refreshed == 1
+    assert repeated.skipped_unchanged == 1
+    assert part.recommended_price == Decimal("1764")
+
+    stable = import_catalog(_make_xlsx(tmp_path, rows, "polaris-stable.xlsx"), commit=True)
+    assert stable.recommended_prices_refreshed == 0
+
+
 def test_polaris_exact_part_number_wins_before_superseded(db):
     exact = PolarisCatalogPart.objects.create(
         part_number="100", part_name="EXACT", retail_price_usd=Decimal("9")
@@ -128,11 +158,11 @@ def test_polaris_exact_part_number_wins_before_superseded(db):
 
 def test_polaris_price_source_can_differ_from_identity(db):
     exact = PolarisCatalogPart.objects.create(
-        part_number="250000059", part_name="SCREW OLD", retail_price_usd=Decimal("0")
+        part_number="250000059", part_name="SCREW OLD", wholesale_price_usd=Decimal("0")
     )
     priced = PolarisCatalogPart.objects.create(
         part_number="250000418", part_name="SCREW NEW",
-        superseded_number="250000059", retail_price_usd=Decimal("4.19"),
+        superseded_number="250000059", wholesale_price_usd=Decimal("4.19"),
     )
     found = find_polaris_by_number("250000059")
     assert found == exact
@@ -153,7 +183,7 @@ def test_core_search_shows_polaris_and_brp_collision(client, make_user, db):
 
 def test_counting_accepts_polaris_scan_and_counts_value(db, admin):
     polaris = PolarisCatalogPart.objects.create(
-        part_number="3610030", part_name="OIL SEAL", retail_price_usd=Decimal("10")
+        part_number="3610030", part_name="OIL SEAL", wholesale_price_usd=Decimal("10")
     )
     location = get_or_create_location("S01-L02-D03-C08")
     session = start_session(location=location, by=admin)
@@ -174,7 +204,7 @@ def test_counting_accepts_polaris_scan_and_counts_value(db, admin):
 def test_actions_sale_polaris_snapshots_exact_number_and_manufacturer(db, admin):
     polaris = PolarisCatalogPart.objects.create(
         part_number="420931285", part_name="OIL SEAL",
-        superseded_number="420931284", retail_price_usd=Decimal("24.49"),
+        superseded_number="420931284", wholesale_price_usd=Decimal("24.49"),
     )
     part = promote_to_warehouse(polaris, by=admin)
     location = StorageLocation.objects.create(
@@ -198,11 +228,11 @@ def test_actions_sale_polaris_snapshots_exact_number_and_manufacturer(db, admin)
 
 def test_actions_polaris_price_source_does_not_replace_identity(db, admin):
     exact = PolarisCatalogPart.objects.create(
-        part_number="250000059", part_name="SCREW OLD", retail_price_usd=Decimal("0")
+        part_number="250000059", part_name="SCREW OLD", wholesale_price_usd=Decimal("0")
     )
     PolarisCatalogPart.objects.create(
         part_number="250000418", part_name="SCREW NEW",
-        superseded_number="250000059", retail_price_usd=Decimal("4.19"),
+        superseded_number="250000059", wholesale_price_usd=Decimal("4.19"),
     )
     part = promote_to_warehouse(exact, by=admin, manual_price=Decimal("616"))
     location = StorageLocation.objects.create(
@@ -251,7 +281,7 @@ def test_customs_export_polaris_exact_number_country_and_application(db, admin):
 
 def test_polaris_search_page_settings_gated_and_visible(client, make_user, db):
     PolarisCatalogPart.objects.create(
-        part_number="3022082", part_name="GASKET", retail_price_usd=Decimal("12")
+        part_number="3022082", part_name="GASKET", wholesale_price_usd=Decimal("12")
     )
     _login(client, make_user, role=roles.SELLER, name="seller")
     assert client.get(reverse("polaris_settings")).status_code == 403
@@ -268,7 +298,7 @@ def test_price_settings_refreshes_current_polaris_card_without_link_snapshot(
     client, make_user, db, admin
 ):
     polaris = PolarisCatalogPart.objects.create(
-        part_number="5550001", part_name="SEAL", retail_price_usd=Decimal("100")
+        part_number="5550001", part_name="SEAL", wholesale_price_usd=Decimal("100")
     )
     part = promote_to_warehouse(polaris, by=admin)
     link = part.polaris_link

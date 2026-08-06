@@ -50,10 +50,11 @@ class ImportSummary:
     updated: int = 0
     skipped_unchanged: int = 0
     skipped_empty: int = 0
-    no_retail_price: int = 0
+    no_wholesale_price: int = 0
     with_superseded: int = 0
     errors: int = 0
     error_examples: list[str] = field(default_factory=list)
+    recommended_prices_refreshed: int = 0
 
 
 def _text(value) -> str:
@@ -185,9 +186,9 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
             if row is None:
                 continue
             summary.data_rows += 1
-            retail = row["retail_price_usd"]
-            if retail is None or retail <= ZERO:
-                summary.no_retail_price += 1
+            wholesale = row["wholesale_price_usd"]
+            if wholesale is None or wholesale <= ZERO:
+                summary.no_wholesale_price += 1
             if row["superseded_number"]:
                 summary.with_superseded += 1
             chunk.append(row)
@@ -196,6 +197,16 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
                 chunk = []
         if chunk:
             _flush(chunk, summary, commit=commit, source_file=path.name, batch=batch)
+        if commit:
+            from apps.catalog.services import get_current_price_settings, refresh_linked_part_prices
+
+            pricing = get_current_price_settings()
+            summary.recommended_prices_refreshed = refresh_linked_part_prices(
+                usd_rate=pricing.current_usd_rate,
+                brp_markup=pricing.brp_markup_percent,
+                polaris_markup=pricing.polaris_markup_percent,
+                catalogs=frozenset({"polaris"}),
+            )
         return summary
     finally:
         workbook.close()

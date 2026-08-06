@@ -93,6 +93,7 @@ def refs(db):
     )
     brp_repl2 = BrpCatalogPart.objects.create(
         material_no="503190", part_desc="SEAL", retail_price_usd=Decimal("10"),
+        wholesale_price_usd=Decimal("10"),
         replacement_no_2="290420",
     )
     # BRP-позиция с тем же номером, что складская карточка -> проверяем приоритет.
@@ -220,7 +221,7 @@ def test_brp_material_matches_but_replacements_require_manual_resolution(
     assert r1.source == "unknown" and r1.brp_catalog_part is None
     r2 = record_scan(session, "290420", by=admin)
     assert r2.source == "unknown" and r2.brp_catalog_part is None
-    assert m.final_customer_price_rub == Decimal("14699")  # 14698.53 -> целые рубли
+    assert m.final_customer_price_rub == Decimal("11760")  # 80 * 105 * 1.4
 
 
 def test_unknown_line_created(refs, location, admin):
@@ -253,7 +254,7 @@ def test_convert_autocreates_brp_card_with_price_snapshot(refs, location, admin)
     link = BrpPartLink.objects.get(brp_part=refs["brp_main"])
     assert link.usd_rate_used == Decimal("105")
     assert link.markup_percent_used == Decimal("40")
-    assert link.calculated_customer_price_rub == Decimal("14699")  # целые рубли
+    assert link.calculated_customer_price_rub == Decimal("11760")  # целые рубли
     line = session.lines.get()
     assert line.source == "warehouse"  # после конвертации привязана к складу
     assert line.warehouse_part == link.part
@@ -630,14 +631,14 @@ def test_empty_draft_totals_are_zero(refs, location, admin):
 
 def test_totals_follow_scans_and_manual_quantity(refs, location, admin):
     session = start_session(location=location, by=admin)
-    line = record_scan(session, "219800345", by=admin)  # цена клиента 14699
+    line = record_scan(session, "219800345", by=admin)  # цена клиента 11760
     c = session.counters()
     assert c["total_quantity"] == Decimal("1")
-    assert c["total_value"] == Decimal("14699")
+    assert c["total_value"] == Decimal("11760")
     record_scan(session, "219800345", by=admin)
     c = session.counters()
     assert c["total_quantity"] == Decimal("2")
-    assert c["total_value"] == Decimal("29398")
+    assert c["total_value"] == Decimal("23520")
     # Отпикали одну заводскую упаковку и вручную поставили 13 штук.
     line.refresh_from_db()
     set_line_quantity(line, 13)
@@ -645,34 +646,34 @@ def test_totals_follow_scans_and_manual_quantity(refs, location, admin):
     assert c["total_scans"] == 2  # сканы остаются сырыми сканами
     assert c["unique"] == 1  # позиций
     assert c["total_quantity"] == Decimal("13")  # деталей
-    assert c["total_value"] == Decimal("13") * Decimal("14699")  # 191087
+    assert c["total_value"] == Decimal("13") * Decimal("11760")  # 152880
 
 
 def test_totals_sum_multiple_lines_and_line_removal(refs, location, admin):
     session = start_session(location=location, by=admin)
-    line1 = record_scan(session, "219800345", by=admin)  # 14699
+    line1 = record_scan(session, "219800345", by=admin)  # 11760
     line2 = record_scan(session, "503190", by=admin)  # 10 * 105 * 1.4 = 1470
     record_scan(session, "NO-SUCH-999", by=admin)  # неизвестная: цены нет
     set_line_quantity(line1, 13)
     c = session.counters()
     assert c["total_quantity"] == Decimal("15")  # 13 + 1 + 1
-    assert c["total_value"] == Decimal("13") * Decimal("14699") + Decimal("1470")
+    assert c["total_value"] == Decimal("13") * Decimal("11760") + Decimal("1470")
     remove_line(line2)
     c = session.counters()
     assert c["total_quantity"] == Decimal("14")
-    assert c["total_value"] == Decimal("13") * Decimal("14699")
+    assert c["total_value"] == Decimal("13") * Decimal("11760")
 
 
-def test_spec_example_5291_times_13(refs, location, admin):
+def test_wholesale_price_example_4138_times_13(refs, location, admin):
     BrpCatalogPart.objects.create(
         material_no="417224916", part_desc="ROLLER PULLEY EXT",
         retail_price_usd=Decimal("35.99"), wholesale_price_usd=Decimal("28.15"),
     )
     session = start_session(location=location, by=admin)
     line = record_scan(session, "417224916", by=admin)
-    assert line.final_customer_price_rub == Decimal("5291")  # 5290.53 -> 5291
+    assert line.final_customer_price_rub == Decimal("4138")  # 28.15*105*1.4 = 4138.05
     set_line_quantity(line, 13)
-    assert session.counters()["total_value"] == Decimal("68783")  # 13 * 5291
+    assert session.counters()["total_value"] == Decimal("53794")  # 13 * 4138
 
 
 def test_detail_page_shows_totals_without_warehouse_tile(client, make_user, refs, location, admin):
@@ -686,7 +687,7 @@ def test_detail_page_shows_totals_without_warehouse_tile(client, make_user, refs
     html = resp.content.decode()
     assert "Итоговое количество" in html  # Layer 34: переименовано
     assert "Стоимость ячейки" in html
-    assert "191 087" in html  # 13 * 14699: итог обновился после правки
+    assert "152 880" in html  # 13 * 11760: итог обновился после правки
     assert "13" in html
     # «Найдено в складе» убрано из сводки, источник в таблице строк остался.
     assert "Найдено в складе" not in html
@@ -702,7 +703,7 @@ def test_list_page_shows_details_and_value_columns(client, make_user, refs, loca
     html = client.get(reverse("counting_list")).content.decode()
     assert "Деталей" in html
     assert "Стоимость" in html
-    assert "191 087" in html
+    assert "152 880" in html
     assert "Сканов" in html  # сырые сканы отдельной колонкой
 
 
@@ -710,7 +711,7 @@ def test_list_page_shows_details_and_value_columns(client, make_user, refs, loca
 
 
 def _make_old_replaced_417(**overrides):
-    """Старый номер 417224458 (розница 0, USE), замена указывает на 417224916."""
+    """Старый номер 417224458 (оптовая цена 0, USE), замена указывает на 417224916."""
     defaults = dict(
         material_no="417224458", part_desc="ROLLER PULLEY EXT",
         retail_price_usd=Decimal("0"), wholesale_price_usd=Decimal("0"),
@@ -721,7 +722,7 @@ def _make_old_replaced_417(**overrides):
 
 
 def _make_exact_417(**overrides):
-    """Настоящая позиция 417224916 с реальной ценой (35.99 $ -> 5291 ₽)."""
+    """Настоящая позиция 417224916 с оптовой ценой 28.15 $ -> 4138 ₽."""
     defaults = dict(
         material_no="417224916", part_desc="ROLLER_PULLEY EXT",
         retail_price_usd=Decimal("35.99"), wholesale_price_usd=Decimal("28.15"),
@@ -741,7 +742,7 @@ def test_lookup_exact_material_outranks_replacement(db):
 
 
 def test_lookup_exact_wins_even_with_zero_price(db):
-    # Точный номер ВСЕГДА выше замены, даже если у точного розница 0.
+    # Точный номер ВСЕГДА выше замены, даже если у точного оптовая цена 0.
     _make_old_replaced_417(
         material_no="417000001", retail_price_usd=Decimal("99"),
         replacement_no_1="417000002",
@@ -771,7 +772,7 @@ def test_scan_exact_outranks_replacement(refs, location, admin):
     session = start_session(location=location, by=admin)
     line = record_scan(session, "417224916", by=admin)
     assert line.brp_catalog_part == exact
-    assert line.final_customer_price_rub == Decimal("5291")  # 35.99*105*1.4
+    assert line.final_customer_price_rub == Decimal("4138")  # 28.15*105*1.4
 
 
 def test_refresh_relinks_wrong_draft_line(refs, location, admin):
@@ -795,10 +796,10 @@ def test_refresh_relinks_wrong_draft_line(refs, location, admin):
     line.refresh_from_db()
     assert line.brp_catalog_part == exact  # перепривязана
     assert line.display_name == "ROLLER_PULLEY EXT"
-    assert line.final_customer_price_rub == Decimal("5291")
+    assert line.final_customer_price_rub == Decimal("4138")
     assert line.quantity_counted == Decimal("3")  # количество не тронуто
     assert line.scan_count == 3  # сканы не тронуты
-    assert session.counters()["total_value"] == Decimal("15873")  # 3 * 5291
+    assert session.counters()["total_value"] == Decimal("12414")  # 3 * 4138
     assert _stock_snapshot() == before  # склад не изменился
 
 
@@ -838,7 +839,7 @@ def _make_priced_screw_418():
 
 
 def test_scan_zero_exact_uses_priced_replacement_as_price_source(refs, location, admin):
-    """Case A: личность строки — точный номер, цена — от замены с розницей."""
+    """Case A: личность строки — точный номер, цена — от замены с оптом."""
     exact = _make_zero_screw_059()
     priced = _make_priced_screw_418()
     assert find_brp_price_source("250000059", exact) == priced
@@ -846,7 +847,7 @@ def test_scan_zero_exact_uses_priced_replacement_as_price_source(refs, location,
     line = record_scan(session, "250000059", by=admin)
     assert line.brp_catalog_part == exact  # личность НЕ перепривязана
     assert line.brp_catalog_part.material_no == "250000059"
-    assert line.final_customer_price_rub == Decimal("616")  # 4.19*105*1.4=615.93
+    assert line.final_customer_price_rub == Decimal("484")  # 3.29*105*1.4=483.63
 
 
 def test_refresh_fixes_zero_price_keeping_identity(refs, location, admin):
@@ -861,22 +862,22 @@ def test_refresh_fixes_zero_price_keeping_identity(refs, location, admin):
     assert refresh_draft_prices(session) == 1
     line.refresh_from_db()
     assert line.brp_catalog_part == exact  # осталась 250000059
-    assert line.final_customer_price_rub == Decimal("616")
+    assert line.final_customer_price_rub == Decimal("484")
     assert line.quantity_counted == Decimal("1")
     assert line.scan_count == 1
-    assert session.counters()["total_value"] == Decimal("616")  # итог включает 616
+    assert session.counters()["total_value"] == Decimal("484")  # итог включает 484
     assert _stock_snapshot() == before
 
 
 def test_exact_nonzero_price_source_is_itself(refs, location, admin):
     """Case B: у точного номера есть цена — нулевая замена не используется."""
-    _make_old_replaced_417()  # 417224458, розница 0
-    exact = _make_exact_417()  # 417224916, розница 35.99
+    _make_old_replaced_417()  # 417224458, оптовая цена 0
+    exact = _make_exact_417()  # 417224916, оптовая цена 28.15
     assert find_brp_price_source("417224916", exact) == exact
     session = start_session(location=location, by=admin)
     line = record_scan(session, "417224916", by=admin)
     assert line.brp_catalog_part == exact
-    assert line.final_customer_price_rub == Decimal("5291")
+    assert line.final_customer_price_rub == Decimal("4138")
 
 
 def test_all_related_zero_keeps_zero_price(refs, location, admin):
@@ -897,10 +898,12 @@ def test_forward_replacement_of_selected_part_is_price_source(refs, location, ad
     """Замены самой позиции тоже кандидаты: старый номер 0 ссылается на новый с ценой."""
     old = BrpCatalogPart.objects.create(
         material_no="333000111", part_desc="OLD ZERO", brp_status="USE",
-        retail_price_usd=Decimal("0"), replacement_no_1="333000222",
+        retail_price_usd=Decimal("0"), wholesale_price_usd=Decimal("0"),
+        replacement_no_1="333000222",
     )
     new = BrpCatalogPart.objects.create(
-        material_no="333000222", part_desc="NEW PRICED", retail_price_usd=Decimal("10"),
+        material_no="333000222", part_desc="NEW PRICED", retail_price_usd=Decimal("20"),
+        wholesale_price_usd=Decimal("10"),
     )
     session = start_session(location=location, by=admin)
     line = record_scan(session, "333000111", by=admin)  # точный номер: старый
@@ -956,7 +959,7 @@ def test_value_breakdown_helper_math(refs, location, admin):
 def test_detail_page_value_breakdown_modal(client, make_user, refs, location, admin):
     client.login(username="admin", password=PASSWORD)
     session = start_session(location=location, by=admin)
-    record_scan(session, "219800345", by=admin)  # 14699
+    record_scan(session, "219800345", by=admin)  # 11760
     before = _stock_snapshot()
     html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
     assert _stock_snapshot() == before  # открытие страницы/модалки склад не меняет
@@ -967,14 +970,14 @@ def test_detail_page_value_breakdown_modal(client, make_user, refs, location, ad
     assert "Расчёт стоимости ячейки" in html
     assert "Стоимость считается как количество × цена клиента" in html
     assert "Всего позиций: 1" in html
-    assert "Итоговая стоимость: 14 699 ₽" in html
+    assert "Итоговая стоимость: 11 760 ₽" in html
     # Колонки таблицы разбора.
     for col in ("Номер", "Название", "Источник", "Кол-во", "Цена клиента", "Расчёт", "Сумма"):
         assert col in html
     # Расчёт строки и итог; итог модалки равен значению плитки.
-    assert "1 × 14 699 ₽" in html
-    assert "Итого: 14 699 ₽" in html
-    assert html.count("14 699 ₽") >= 3  # плитка + строка + итог
+    assert "1 × 11 760 ₽" in html
+    assert "Итого: 11 760 ₽" in html
+    assert html.count("11 760 ₽") >= 3  # плитка + строка + итог
     assert "Закрыть" in html
 
 
@@ -986,38 +989,38 @@ def test_manual_quantity_updates_card_and_modal(client, make_user, refs, locatio
         reverse("counting_line_qty", args=[line.pk]), {"quantity": "13"}, follow=True
     )
     html = resp.content.decode()
-    assert html.count("191 087 ₽") >= 3  # плитка, сумма строки, итог модалки
-    assert "13 × 14 699 ₽" in html  # расчёт строки
+    assert html.count("152 880 ₽") >= 3  # плитка, сумма строки, итог модалки
+    assert "13 × 11 760 ₽" in html  # расчёт строки
 
 
 def test_zero_price_row_visible_in_breakdown(client, make_user, refs, location, admin):
     client.login(username="admin", password=PASSWORD)
     session = start_session(location=location, by=admin)
-    record_scan(session, "219800345", by=admin)  # 14699
+    record_scan(session, "219800345", by=admin)  # 11760
     record_scan(session, "NO-SUCH-999", by=admin)  # неизвестная, цены нет
     data = get_session_value_breakdown(session)
     assert data["positions_count"] == 2  # нулевая строка НЕ скрыта
     zero_row = next(r for r in data["rows"] if r["number"] == "NO-SUCH-999")
     assert zero_row["line_total_rub"] == Decimal("0")
     assert zero_row["source_label"] == "Требует разбора"
-    assert data["total_value_rub"] == Decimal("14699")  # нулевая даёт 0
+    assert data["total_value_rub"] == Decimal("11760")  # нулевая даёт 0
     html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
     assert "цена 0" in html
 
 
-def test_convert_promotes_with_effective_price_616(refs, location, admin):
-    """Case 250000059: карточка получает 616 ₽ (цена из замены), а не 0."""
+def test_convert_promotes_with_effective_price_484(refs, location, admin):
+    """Case 250000059: карточка получает 484 ₽ (цена из замены), а не 0."""
     exact = _make_zero_screw_059()
     _make_priced_screw_418()
     session = start_session(location=location, by=admin)
     record_scan(session, "250000059", by=admin)
     line = session.lines.get()
-    assert line.final_customer_price_rub == Decimal("616")
+    assert line.final_customer_price_rub == Decimal("484")
     convert_to_receipt(session, by=admin)
     link = BrpPartLink.objects.get(brp_part=exact)  # личность: 250000059
-    assert link.final_customer_price_rub == Decimal("616")  # не 0
-    assert link.manual_customer_price_rub == Decimal("616")  # эффективная цена
-    assert link.part.recommended_price == Decimal("616")
+    assert link.final_customer_price_rub == Decimal("484")  # не 0
+    assert link.manual_customer_price_rub == Decimal("484")  # эффективная цена
+    assert link.part.recommended_price == Decimal("484")
     # Карточка представляет отсканированный номер, не источник цены.
     assert link.part.name == "HEX. FLANGED SCEW M6 X 18"
     numbers = set(PartNumber.objects.filter(part=link.part).values_list("value", flat=True))
@@ -1036,10 +1039,10 @@ def test_convert_promotes_exact_nonzero_as_calculated(refs, location, admin):
     record_scan(session, "417224916", by=admin)
     convert_to_receipt(session, by=admin)
     link = BrpPartLink.objects.get(brp_part=exact)
-    assert link.final_customer_price_rub == Decimal("5291")
+    assert link.final_customer_price_rub == Decimal("4138")
     assert link.price_source == BrpPartLink.PriceSource.CALCULATED
     assert link.manual_customer_price_rub is None
-    assert link.part.recommended_price == Decimal("5291")
+    assert link.part.recommended_price == Decimal("4138")
 
 
 def test_convert_all_zero_promotes_zero(refs, location, admin):
@@ -1136,40 +1139,44 @@ def test_breakdown_sort_via_view_keeps_main_table_order(client, make_user, refs,
 def test_draft_refreshes_corrected_brp_price(client, make_user, refs, location, admin):
     """Реимпорт прайса починил нулевую цену: черновик показывает её БЕЗ пересканирования."""
     brp = BrpCatalogPart.objects.create(
-        material_no="417224916", part_desc="ROLLER ZERO", retail_price_usd=Decimal("0"),
+        material_no="417224916",
+        part_desc="ROLLER ZERO",
+        retail_price_usd=Decimal("0"),
+        wholesale_price_usd=Decimal("0"),
     )
     session = start_session(location=location, by=admin)
     line = record_scan(session, "417224916", by=admin)
     set_line_quantity(line, 13)
-    assert line.final_customer_price_rub == Decimal("0")  # старый нулевой снимок
+    assert line.final_customer_price_rub == Decimal("0")  # нулевая оптовая цена не выдумывает цену
     # Реимпорт BRP исправил запись каталога.
     brp.part_desc = "ROLLER PULLEY EXT"
     brp.retail_price_usd = Decimal("35.99")
+    brp.wholesale_price_usd = Decimal("28.15")
     brp.save()
     before = _stock_snapshot()
     assert refresh_draft_prices(session) == 1
     line.refresh_from_db()
-    assert line.final_customer_price_rub == Decimal("5291")
-    assert session.counters()["total_value"] == Decimal("68783")  # 13 * 5291
+    assert line.final_customer_price_rub == Decimal("4138")
+    assert session.counters()["total_value"] == Decimal("53794")  # 13 * 4138
     assert _stock_snapshot() == before  # освежение цен склад не трогает
     # Страница сессии показывает исправленную цену (refresh зовётся во view).
     client.login(username="admin", password=PASSWORD)
     html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
-    assert "5 291" in html
-    assert "68 783" in html
+    assert "4 138" in html
+    assert "53 794" in html
 
 
 def test_posted_session_prices_not_refreshed(refs, location, admin):
     """Проведённые сессии — история: смена цен каталога их не переписывает."""
     session = start_session(location=location, by=admin)
-    line = record_scan(session, "219800345", by=admin)  # снимок 14699
+    line = record_scan(session, "219800345", by=admin)  # снимок 11760
     post_session(session, by=admin)
-    refs["brp_main"].retail_price_usd = Decimal("199.99")
+    refs["brp_main"].wholesale_price_usd = Decimal("199.99")
     refs["brp_main"].save()
     before = _stock_snapshot()
     assert refresh_draft_prices(session) == 0
     line.refresh_from_db()
-    assert line.final_customer_price_rub == Decimal("14699")  # снимок цел
+    assert line.final_customer_price_rub == Decimal("11760")  # снимок цел
     assert _stock_snapshot() == before
 
 
@@ -1177,7 +1184,7 @@ def test_posted_session_prices_not_refreshed(refs, location, admin):
 
 
 def _session_with_priced_lines(location, admin):
-    """Сессия: 417224916 x 3 по 5291 ₽ и 250000059 x 1 по 616 ₽ (итог 16489)."""
+    """Сессия: 417224916 x 3 по 4138 ₽ и 250000059 x 1 по 484 ₽ (итог 12898)."""
     _make_old_replaced_417()
     _make_exact_417()
     _make_zero_screw_059()
@@ -1191,17 +1198,17 @@ def _session_with_priced_lines(location, admin):
 
 def test_convert_uses_per_line_customer_prices(refs, location, admin):
     session = _session_with_priced_lines(location, admin)
-    assert session.counters()["total_value"] == Decimal("16489")  # 3*5291 + 616
+    assert session.counters()["total_value"] == Decimal("12898")  # 3*4138 + 484
     receipt = convert_to_receipt(session, by=admin)  # глобальный unit_cost = 0
     prices = {
         line.part_type.brp_link.brp_part.material_no: (line.unit_cost_rub, line.quantity)
         for line in receipt.lines.select_related("part_type__brp_link__brp_part")
     }
     # Глобальный ноль из формы НЕ затирает цены строк пересчёта.
-    assert prices["417224916"] == (Decimal("5291.00"), Decimal("3"))
-    assert prices["250000059"] == (Decimal("616.00"), Decimal("1"))
+    assert prices["417224916"] == (Decimal("4138.00"), Decimal("3"))
+    assert prices["250000059"] == (Decimal("484.00"), Decimal("1"))
     # Итог документа равен «Стоимости ячейки».
-    assert receipt_totals(receipt)["cost"] == Decimal("16489.00")
+    assert receipt_totals(receipt)["cost"] == Decimal("12898.00")
 
 
 def test_convert_zero_price_line_keeps_zero(refs, location, admin):
@@ -1215,12 +1222,12 @@ def test_convert_zero_price_line_keeps_zero(refs, location, admin):
 def test_convert_fallback_only_for_unpriced_lines(refs, location, admin):
     _make_zero_screw_059()
     session = start_session(location=location, by=admin)
-    record_scan(session, "219800345", by=admin)  # цена 14699
+    record_scan(session, "219800345", by=admin)  # цена 11760
     record_scan(session, "250000059", by=admin)  # цены нет
     receipt = convert_to_receipt(session, by=admin, unit_cost=Decimal("50"))
     prices = sorted(line.unit_cost_rub for line in receipt.lines.all())
     # Запасная цена применяется ТОЛЬКО к строке без цены.
-    assert prices == [Decimal("50.00"), Decimal("14699.00")]
+    assert prices == [Decimal("50.00"), Decimal("11760.00")]
 
 
 def test_repair_command_dry_run_and_commit(refs, location, admin):
@@ -1237,16 +1244,16 @@ def test_repair_command_dry_run_and_commit(refs, location, admin):
     text = out.getvalue()
     assert "DRY-RUN" in text
     assert receipt.number in text
-    assert "5291" in text and "616" in text  # новые цены
+    assert "4138" in text and "484" in text  # новые цены
     assert "0.00" in text  # старые цены
-    assert "16489" in text  # новый итог документа
+    assert "12898" in text  # новый итог документа
     assert set(receipt.lines.values_list("unit_cost_rub", flat=True)) == {Decimal("0.00")}
     # Commit (по id документа): цены обновлены, склад и количества целы.
     call_command(
         "repair_counting_receipt_prices",
         receipt_id=receipt.pk, commit=True, stdout=io.StringIO(),
     )
-    assert receipt_totals(receipt)["cost"] == Decimal("16489.00")
+    assert receipt_totals(receipt)["cost"] == Decimal("12898.00")
     assert sorted(receipt.lines.values_list("quantity", flat=True)) == before_qty
     assert _stock_snapshot() == before_stock  # остатки/движения/карточки не тронуты
     # Повторный запуск: менять нечего.
@@ -1269,7 +1276,7 @@ def test_convert_page_explains_prices_from_counting(client, make_user, refs, loc
     assert "Документ первичного ввода" in html
     assert "Цены будут взяты из пересчёта ячейки" in html
     assert "Итоговая стоимость документа" in html
-    assert "14 699" in html
+    assert "11 760" in html
     assert "Запасная цена только для строк без цены" in html
     assert "по желанию" not in html  # старая формулировка убрана
 
@@ -1284,7 +1291,7 @@ def test_receipt_detail_labels_for_counting_receipt(client, make_user, refs, loc
     assert "Сумма оценки" in html
     assert "Документ первичного ввода из пересчёта ячейки" in html
     assert "Сумма себестоимости" not in html
-    assert "14 699" in html  # итог совпадает со стоимостью пересчёта
+    assert "11 760" in html  # итог совпадает со стоимостью пересчёта
 
 
 def test_receipt_detail_labels_for_supplier_receipt(client, make_user, refs, admin):
@@ -1343,7 +1350,7 @@ def test_receipts_list_hides_counting_documents(client, make_user, refs, locatio
 def test_stocktaking_shows_initial_inventory_with_lines(client, make_user, refs, location, admin):
     client.login(username="admin", password=PASSWORD)
     session = start_session(location=location, by=admin)
-    line = record_scan(session, "219800345", by=admin)  # 14699
+    line = record_scan(session, "219800345", by=admin)  # 11760
     set_line_quantity(line, 13)  # ручная правка количества
     record_scan(session, "700700", by=admin)
     post_session(session, by=admin)
@@ -1360,7 +1367,7 @@ def test_stocktaking_shows_initial_inventory_with_lines(client, make_user, refs,
     assert "219800345" in html and "BELT DRIVE" in html
     assert "Оценка за ед. (₽)" in html and "Сумма оценки" in html
     assert "13" in html  # ручная правка попала в документ
-    assert "191 087" in html  # итог = сумме количество x оценка
+    assert "152 880" in html  # итог = сумме количество x оценка
     assert "Технический документ проведения" in html
     assert "—" not in html
 

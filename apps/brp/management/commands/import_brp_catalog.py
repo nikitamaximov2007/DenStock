@@ -48,10 +48,14 @@ class Command(BaseCommand):
         write(f"Пропущено пустых: {summary.skipped_empty}")
         write(f"Дубликатов Material_No: {summary.duplicates}")
         write(f"Дубликатов решено по ненулевой цене: {summary.duplicates_price_resolved}")
-        write(f"Нулевых цен исправлено из дубликатов: {summary.zero_price_repaired}")
+        write(
+            "Нулевых оптовых цен исправлено из дубликатов: "
+            f"{summary.zero_wholesale_price_repaired}"
+        )
         write(f"Уникальных номеров: {summary.unique_materials}")
         write(f"С розничной ценой: {summary.with_retail_price}")
         write(f"С оптовой ценой: {summary.with_wholesale_price}")
+        write(f"Обновлено текущих рекомендованных цен: {summary.recommended_prices_refreshed}")
         write(f"С заменой номера: {summary.with_replacement}")
         statuses = ", ".join(
             f"{name}={count}" for name, count in sorted(summary.status_counts.items())
