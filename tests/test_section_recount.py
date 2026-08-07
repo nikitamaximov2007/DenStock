@@ -65,10 +65,11 @@ def section_data(db, admin):
     _target_locations()
     supplier = Supplier.objects.create(name="Поставщик пересчёта")
     category = Category.objects.create(name="Категория пересчёта")
+    unit, _ = Unit.objects.get_or_create(name="Штука", defaults={"short_name": "шт"})
     part = PartType.objects.create(
         name="Деталь пересчёта",
         category=category,
-        unit=Unit.objects.get(name="Штука"),
+        unit=unit,
         tracking_mode=PartType.TrackingMode.BULK,
     )
     PartNumber.objects.create(part=part, value="RC-0001", kind=PartNumber.Kind.OEM, is_primary=True)
