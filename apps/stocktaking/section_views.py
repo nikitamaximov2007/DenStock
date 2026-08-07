@@ -9,6 +9,7 @@ from .models import SectionRecount, SectionRecountLine
 from .section_recount import (
     SectionRecountError,
     _candidate_batch_lines,
+    _source_statuses,
     allocate_section_line,
     apply_section_recount,
     build_section_dry_run,
@@ -37,6 +38,14 @@ def _detail_context(doc):
     lines = list(doc.lines.all())
     for line in lines:
         line.batch_candidates = _candidate_batch_lines(line)
+        for batch_line in line.batch_candidates:
+            batch_line.section_statuses = _source_statuses(doc, batch_line.pk)
+        line.show_allocation_form = any(
+            len(batch_line.section_statuses) > 0 for batch_line in line.batch_candidates
+        ) and (
+            len(line.batch_candidates) > 1
+            or any(len(batch_line.section_statuses) > 1 for batch_line in line.batch_candidates)
+        )
     return {
         "doc": doc,
         "cells": list(doc.cells.all()),
@@ -163,10 +172,13 @@ def section_recount_remove_line(request, pk, line_pk):
 def section_recount_allocate(request, pk, line_pk):
     _require_section_recount(request)
     try:
+        source = request.POST.get("allocation_source", "")
+        batch_line_id, lot_status = source.split(":", 1)
         allocate_section_line(
             get_object_or_404(SectionRecountLine, pk=line_pk),
-            batch_line_id=int(request.POST.get("batch_line_id", "0")),
+            batch_line_id=int(batch_line_id),
             quantity=request.POST.get("quantity", ""),
+            lot_status=lot_status,
             by=request.user,
         )
     except (SectionRecountError, ValueError) as exc:

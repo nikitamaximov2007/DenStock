@@ -127,18 +127,24 @@
                     </td>
                     <td>
                       {% for allocation in line.allocations.all %}
-                        {{ allocation.batch_line_id }}: {{ allocation.quantity|quantity_int }}
+                        {{ allocation.batch_line_id }} / {{ allocation.lot_status }}:
+                        {{ allocation.quantity|quantity_int }}
                         {% if not forloop.last %},{% endif %}
                       {% empty %}не распределено
                       {% endfor %}
-                      {% if can_edit and line.batch_candidates|length > 1 %}
+                      {% if can_edit and line.show_allocation_form %}
                         <form method="post"
                               action="{% url 'section_recount_allocate' doc.pk line.pk %}"
                               class="inline-form">
                           {% csrf_token %}
-                          <select name="batch_line_id" required>
+                          <select name="allocation_source" required>
                             {% for batch_line in line.batch_candidates %}
-                              <option value="{{ batch_line.pk }}">Партия {{ batch_line.batch.number }} · {{ batch_line.landed_unit_cost_rub|money_int }} ₽</option>
+                              {% for lot_status in batch_line.section_statuses %}
+                                <option value="{{ batch_line.pk }}:{{ lot_status }}">
+                                  Партия {{ batch_line.batch.number }} / {{ lot_status }} ·
+                                  {{ batch_line.landed_unit_cost_rub|money_int }} ₽
+                                </option>
+                              {% endfor %}
                             {% endfor %}
                           </select>
                           <input name="quantity"

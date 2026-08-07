@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 
-from apps.inventory.models import NumberSequence
+from apps.inventory.models import NumberSequence, StockLot
 
 
 class InventoryCountDocument(models.Model):
@@ -148,6 +148,9 @@ class SectionRecount(models.Model):
     )
     operation_key = models.CharField("Ключ операции", max_length=64, unique=True, editable=False)
     snapshot = models.JSONField("Исходный snapshot", default=dict, editable=False)
+    snapshot_fingerprint = models.CharField(
+        "Fingerprint snapshot", max_length=64, blank=True, editable=False
+    )
     result = models.JSONField("Результат", default=dict, editable=False)
     error_message = models.CharField("Ошибка", max_length=500, blank=True, editable=False)
     created_by = models.ForeignKey(
@@ -254,6 +257,10 @@ class SectionRecountAllocation(models.Model):
     quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
     unit_cost_rub = models.DecimalField(
         "Себестоимость (snapshot)", max_digits=12, decimal_places=2, editable=False
+    )
+    lot_status = models.CharField(
+        "Статус лота (snapshot)", max_length=20, choices=StockLot.Status.choices,
+        default=StockLot.Status.AVAILABLE, editable=False,
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

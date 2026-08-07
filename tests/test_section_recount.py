@@ -1,18 +1,35 @@
 """Безопасный workflow полного пересчёта фиксированного участка."""
 
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
+from django.db import close_old_connections, connection
 from django.urls import reverse
 
 from apps.catalog.models import Category, PartNumber, PartType, Unit
-from apps.inventory.models import StockBalance, StockLocationLock, StockLot, StockMovement
-from apps.inventory.services import InventoryError, create_stock_lot, receive_stock_lot
+from apps.inventory.models import (
+    PartPreferredLocation,
+    StockBalance,
+    StockLocationLock,
+    StockLot,
+    StockMovement,
+)
+from apps.inventory.services import (
+    InventoryError,
+    create_stock_lot,
+    move_stock_lot,
+    receive_stock_lot,
+    set_preferred_part_location,
+)
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
+from apps.sales.models import Reservation, ReservationLine
 from apps.stocktaking.models import SectionRecount
 from apps.stocktaking.section_recount import (
     SectionRecountError,
+    allocate_section_line,
     apply_section_recount,
     build_section_dry_run,
     cancel_section_recount,
@@ -81,6 +98,26 @@ def _start(data):
 def _complete_all_cells(doc):
     for number in range(1, 11):
         complete_section_cell(doc, cell_number=number)
+
+
+def _ready(data):
+    doc = _start(data)
+    record_section_scan(doc, cell_number=2, raw_value="RC-0001", by=data["admin"])
+    _complete_all_cells(doc)
+    return mark_section_ready(doc)
+
+
+def _active_reservation(data, quantity="1"):
+    reservation = Reservation.objects.create(
+        customer_name="Клиент пересчёта", status=Reservation.Status.ACTIVE
+    )
+    ReservationLine.objects.create(
+        reservation=reservation,
+        part_type=data["part"],
+        stock_lot=data["lot"],
+        quantity=Decimal(quantity),
+    )
+    return reservation
 
 
 def test_start_creates_only_missing_c05_and_durable_locks(section_data):
@@ -185,6 +222,17 @@ def test_locked_section_rejects_new_lot_without_changing_stock(section_data):
     assert doc.status == SectionRecount.Status.COUNTING
 
 
+def test_locked_section_rejects_preferred_location_update(section_data):
+    data = section_data
+    _start(data)
+    target = StorageLocation.objects.get(code="S03-L03-D02-C02")
+    before = PartPreferredLocation.objects.get(part_type=data["part"])
+    with pytest.raises(InventoryError, match="заблокирована"):
+        set_preferred_part_location(data["part"], target, by=data["admin"])
+    after = PartPreferredLocation.objects.get(part_type=data["part"])
+    assert after.location_id == before.location_id
+
+
 def test_snapshot_change_fails_without_partial_apply(section_data):
     data = section_data
     doc = _start(data)
@@ -193,7 +241,7 @@ def test_snapshot_change_fails_without_partial_apply(section_data):
     doc = mark_section_ready(doc)
     StockLot.objects.filter(pk=data["lot"].pk).update(quantity=Decimal("4"))
 
-    with pytest.raises(SectionRecountError, match="snapshot"):
+    with pytest.raises(SectionRecountError, match="Snapshot"):
         apply_section_recount(doc)
     doc.refresh_from_db()
     assert doc.status == SectionRecount.Status.FAILED
@@ -201,6 +249,252 @@ def test_snapshot_change_fails_without_partial_apply(section_data):
         document_type="section_recount", document_id=doc.pk
     ).count() == 0
     assert StockLot.objects.get(pk=data["lot"].pk).quantity == Decimal("4")
+
+
+def test_reserve_before_snapshot_is_shown_and_blocks_ready(section_data):
+    data = section_data
+    _active_reservation(data, "2")
+    doc = _start(data)
+    assert doc.snapshot["reservations"][0]["quantity"] == "2.000"
+    _complete_all_cells(doc)
+    with pytest.raises(SectionRecountError, match="активные резервы"):
+        mark_section_ready(doc)
+    assert StockMovement.objects.filter(document_type="section_recount").count() == 0
+
+
+def test_reserve_added_after_snapshot_blocks_apply_without_movements(section_data):
+    data = section_data
+    doc = _ready(data)
+    _active_reservation(data, "1")
+    with pytest.raises(SectionRecountError, match="Snapshot mismatch"):
+        apply_section_recount(doc)
+    doc.refresh_from_db()
+    assert doc.status == SectionRecount.Status.FAILED
+    assert not StockMovement.objects.filter(document_type="section_recount").exists()
+
+
+def test_reserve_changed_after_snapshot_blocks_apply_without_movements(section_data):
+    data = section_data
+    doc = _ready(data)
+    reservation = _active_reservation(data, "1")
+    ReservationLine.objects.filter(reservation=reservation).update(quantity=Decimal("2"))
+    with pytest.raises(SectionRecountError, match="Snapshot mismatch"):
+        apply_section_recount(doc)
+    assert not StockMovement.objects.filter(document_type="section_recount").exists()
+
+
+@pytest.mark.parametrize("fail_after", [1, 2])
+def test_apply_fault_after_adjust_rolls_back_everything(section_data, fail_after):
+    data = section_data
+    doc = _ready(data)
+    before_lots = list(StockLot.objects.values_list("pk", "quantity", "status"))
+    before_balances = list(
+        StockBalance.objects.values_list("pk", "quantity_physical", "quantity_available")
+    )
+    before_movements = StockMovement.objects.count()
+    calls = 0
+
+    from apps.inventory.services import adjust_stock_lot_quantity as original_adjust
+
+    def fail_after_adjust(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = original_adjust(*args, **kwargs)
+        if calls == fail_after:
+            raise RuntimeError("fault injection")
+        return result
+
+    with patch(
+        "apps.stocktaking.section_recount.adjust_stock_lot_quantity",
+        side_effect=fail_after_adjust,
+    ):
+        with pytest.raises(SectionRecountError):
+            apply_section_recount(doc)
+    doc.refresh_from_db()
+    assert doc.status == SectionRecount.Status.FAILED
+    assert list(StockLot.objects.values_list("pk", "quantity", "status")) == before_lots
+    assert list(
+        StockBalance.objects.values_list("pk", "quantity_physical", "quantity_available")
+    ) == before_balances
+    assert StockMovement.objects.count() == before_movements
+
+
+def test_apply_fault_during_preferred_update_rolls_back_everything(section_data):
+    data = section_data
+    doc = _ready(data)
+    before_lots = list(StockLot.objects.values_list("pk", "quantity", "status"))
+    before_preferences = list(
+        PartPreferredLocation.objects.values_list("part_type_id", "location_id")
+    )
+    with patch(
+        "apps.stocktaking.section_recount.set_preferred_part_location",
+        side_effect=RuntimeError("preferred fault"),
+    ):
+        with pytest.raises(SectionRecountError):
+            apply_section_recount(doc)
+    doc.refresh_from_db()
+    assert doc.status == SectionRecount.Status.FAILED
+    assert list(StockLot.objects.values_list("pk", "quantity", "status")) == before_lots
+    assert list(
+        PartPreferredLocation.objects.values_list("part_type_id", "location_id")
+    ) == before_preferences
+
+
+def test_location_and_preferred_changes_after_snapshot_block_apply(section_data):
+    data = section_data
+    doc = _ready(data)
+    location = StorageLocation.objects.get(code="S03-L03-D02-C01")
+    location.name = "Переименовано после snapshot"
+    location.save(update_fields=["name"])
+    with pytest.raises(SectionRecountError, match="ячейк"):
+        apply_section_recount(doc)
+    doc.refresh_from_db()
+    assert doc.status == SectionRecount.Status.FAILED
+    cancel_section_recount(doc)
+
+    doc = _ready(data)
+    preference = PartPreferredLocation.objects.get(part_type=data["part"])
+    preference.location = StorageLocation.objects.get(code="S03-L03-D02-C02")
+    preference.save(update_fields=["location", "updated_at"])
+    with pytest.raises(SectionRecountError, match="предпочтительная"):
+        apply_section_recount(doc)
+
+
+def test_quarantine_status_is_preserved_in_target(section_data):
+    data = section_data
+    data["lot"].status = StockLot.Status.QUARANTINE
+    data["lot"].save(update_fields=["status"])
+    doc = _ready(data)
+    assert doc.result["allocations"][0]["status"] == StockLot.Status.QUARANTINE
+    completed = apply_section_recount(doc)
+    target = StockLot.objects.get(batch_line=data["batch_line"], location__code="S03-L03-D02-C02")
+    assert completed.status == SectionRecount.Status.COMPLETED
+    assert target.status == StockLot.Status.QUARANTINE
+
+
+def test_allocation_global_limit_and_invalid_batch_are_rejected(section_data):
+    data = section_data
+    doc = _start(data)
+    first = record_section_scan(doc, cell_number=2, raw_value="RC-0001", by=data["admin"])
+    second = record_section_scan(doc, cell_number=3, raw_value="RC-0001", by=data["admin"])
+    with pytest.raises(SectionRecountError, match="snapshot-остаток"):
+        allocate_section_line(
+            first, batch_line_id=data["batch_line"].pk, quantity="4", lot_status="available"
+        )
+        allocate_section_line(
+            second, batch_line_id=data["batch_line"].pk, quantity="2", lot_status="available"
+        )
+
+    data["batch_line"].batch.status = Batch.Status.CANCELED
+    data["batch_line"].batch.save(update_fields=["status"])
+    with pytest.raises(SectionRecountError, match="разрешена"):
+        allocate_section_line(
+            first, batch_line_id=data["batch_line"].pk, quantity="1", lot_status="available"
+        )
+
+
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
+)
+def test_postgresql_row_lock_integration_marker():
+    """Executed in the PostgreSQL test environment, skipped on local SQLite."""
+    assert connection.vendor == "postgresql"
+
+
+def _parallel_call(function, *args):
+    close_old_connections()
+    try:
+        return function(*args)
+    finally:
+        close_old_connections()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
+)
+def test_postgresql_two_starts_are_serialized(section_data):
+    data = section_data
+    doc = create_section_recount(by=data["admin"])
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: _parallel_call(start_section_recount, doc), range(2)))
+    assert all(result.status == SectionRecount.Status.COUNTING for result in results)
+    assert (
+        StockLocationLock.objects.filter(
+            document_id=doc.pk, released_at__isnull=True
+        ).count()
+        == 10
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
+)
+def test_postgresql_start_races_movement_and_never_commits_partial_move(section_data):
+    data = section_data
+    target = StorageLocation.objects.get(code="S03-L03-D02-C02")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _parallel_call,
+                start_section_recount,
+                create_section_recount(by=data["admin"]),
+            ),
+            pool.submit(_parallel_call, move_stock_lot, data["lot"], target),
+        ]
+        results = [future.result() for future in futures]
+    assert any(isinstance(result, SectionRecount) for result in results)
+    assert data["lot"].pk in StockLot.objects.values_list("pk", flat=True)
+    assert StockLot.objects.get(pk=data["lot"].pk).location_id in {
+        StorageLocation.objects.get(code="S03-L03-D02-C01").pk,
+        target.pk,
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
+)
+def test_postgresql_start_races_receiving(section_data):
+    data = section_data
+    receiving_lot = create_stock_lot(
+        data["batch_line"],
+        StorageLocation.objects.get(code="S03-L03-D02-C03"),
+        Decimal("1"),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _parallel_call,
+                start_section_recount,
+                create_section_recount(by=data["admin"]),
+            ),
+            pool.submit(_parallel_call, receive_stock_lot, receiving_lot),
+        ]
+        results = [future.result() for future in futures]
+    assert any(isinstance(result, SectionRecount) for result in results)
+    assert StockLot.objects.get(pk=receiving_lot.pk).status in {
+        StockLot.Status.RECEIVING,
+        StockLot.Status.AVAILABLE,
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
+)
+def test_postgresql_two_applies_are_idempotent(section_data):
+    doc = _ready(section_data)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: _parallel_call(apply_section_recount, doc), range(2)))
+    assert all(result.status == SectionRecount.Status.COMPLETED for result in results)
+    assert (
+        StockMovement.objects.filter(
+            document_type="section_recount", document_id=doc.pk
+        ).count()
+        == 2
+    )
 
 
 def test_cancel_releases_lock_and_completed_cannot_be_canceled(section_data):

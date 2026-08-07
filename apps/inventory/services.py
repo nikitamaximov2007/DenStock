@@ -35,9 +35,13 @@ class FoundStockAlreadyPosted(InventoryError):
 
 
 def ensure_location_operation_allowed(location, *, section_recount_id=None) -> None:
-    """Запретить складскую мутацию заблокированной ячейки."""
+    """Сериализовать складскую мутацию с пересчётом участка."""
     if location is None:
         return
+    # The recount start locks the same rows before taking its snapshot. Every
+    # physical write therefore waits for that transaction and re-checks the
+    # durable lock instead of racing a plain flag read.
+    location = StorageLocation.objects.select_for_update().get(pk=location.pk)
     lock = (
         StockLocationLock.objects.filter(location_id=location.pk, released_at__isnull=True)
         .only("document_id", "section_code")
@@ -50,7 +54,9 @@ def ensure_location_operation_allowed(location, *, section_recount_id=None) -> N
         )
 
 
-def set_preferred_part_location(part, location, *, by=None) -> PartPreferredLocation:
+def set_preferred_part_location(
+    part, location, *, by=None, section_recount_id=None
+) -> PartPreferredLocation:
     """Запомнить подтверждённую ячейку, не меняя складскую физику.
 
     Вызывается только из уже успешных складских транзакций. Блокировка карточки
@@ -59,6 +65,7 @@ def set_preferred_part_location(part, location, *, by=None) -> PartPreferredLoca
     """
     if location is None or not location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
+    ensure_location_operation_allowed(location, section_recount_id=section_recount_id)
     locked_part = PartType.objects.select_for_update().get(pk=part.pk)
     preference, created = PartPreferredLocation.objects.get_or_create(
         part_type=locked_part,
@@ -121,6 +128,8 @@ def create_part_items(
 
     if current_location is not None and not current_location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
+    if current_location is not None:
+        ensure_location_operation_allowed(current_location)
 
     items: list[PartItem] = []
     for _ in range(count):
@@ -1062,11 +1071,21 @@ def adjust_stock_lot_quantity(
 
 
 @transaction.atomic
-def get_or_create_section_recount_lot(batch_line, location, *, section_recount_id=None) -> StockLot:
-    """Получить bulk-лот для факта пересчёта без создания новой партии."""
+def get_or_create_section_recount_lot(
+    batch_line, location, *, lot_status, section_recount_id=None
+) -> StockLot:
+    """Получить bulk-лот для факта пересчёта с сохранением статуса."""
     ensure_location_operation_allowed(location, section_recount_id=section_recount_id)
     if batch_line.part_type.tracking_mode != batch_line.part_type.TrackingMode.BULK:
         raise InventoryError("Пересчёт участка поддерживает только количественные лоты.")
+    if lot_status not in (StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE):
+        raise InventoryError("Недопустимый статус лота для пересчёта.")
+    if batch_line.batch.status not in {
+        batch_line.batch.Status.ACCEPTED,
+        batch_line.batch.Status.COST_CALCULATED,
+        batch_line.batch.Status.CLOSED,
+    } or not batch_line.batch.cost_finalized:
+        raise InventoryError("Партия не разрешена для складского остатка.")
     lot = (
         StockLot.objects.select_for_update()
         .filter(batch_line=batch_line, location=location)
@@ -1081,12 +1100,18 @@ def get_or_create_section_recount_lot(batch_line, location, *, section_recount_i
             quantity=Decimal("0"),
             initial_quantity=Decimal("0"),
             landed_unit_cost_rub=batch_line.landed_unit_cost_rub,
-            status=StockLot.Status.AVAILABLE,
+            status=lot_status,
             note="Создан сервисом пересчёта участка",
         )
     elif lot.status == StockLot.Status.DEPLETED:
-        lot.status = StockLot.Status.AVAILABLE
+        lot.status = lot_status
         lot.save(update_fields=["status", "updated_at"])
+    elif lot.status != lot_status:
+        if lot.quantity == 0:
+            lot.status = lot_status
+            lot.save(update_fields=["status", "updated_at"])
+        else:
+            raise InventoryError("Нельзя смешивать разные статусы лота в одной ячейке.")
     elif lot.status not in LOT_PHYSICAL_STATUSES:
         raise InventoryError("Нельзя использовать списанный или карантинный лот для этого факта.")
     return lot
