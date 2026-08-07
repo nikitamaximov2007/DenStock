@@ -423,7 +423,7 @@ def _add_available_source(data):
 def _allocate_concurrently(barrier, line_id, batch_line_id, quantity, lot_status):
     close_old_connections()
     try:
-        assert barrier.wait(10)
+        barrier.wait(10)
         return allocate_section_line(
             SectionRecountLine.objects.get(pk=line_id),
             batch_line_id=batch_line_id,
