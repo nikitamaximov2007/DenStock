@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}Пересчёт участка #{{ doc.pk }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Пересчёт участка #{{ doc.pk }}</h1>
+      <p class="page-subtitle"><span class="code-pill">{{ doc.section_code }}</span> · {{ doc.get_status_display }}</p>
+    </div>
+    <div class="page-header__actions">
+      <a class="btn btn--secondary" href="{% url 'section_recount_list' %}">К списку</a>
+      {% if doc.status == "draft" %}
+        <form method="post" action="{% url 'section_recount_start' doc.pk %}">
+          {% csrf_token %}
+          <button class="btn btn--primary" type="submit">Начать пересчёт</button>
+        </form>
+      {% endif %}
+      {% if doc.status == "draft" or doc.status == "counting" or doc.status == "ready" or doc.status == "failed" %}
+        <form method="post" action="{% url 'section_recount_cancel' doc.pk %}">
+          {% csrf_token %}
+          <button class="btn btn--secondary" type="submit">Отменить</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+  {% if doc.status != "draft" %}
+    <div class="card">
+      <div class="card__body">
+        <h2 class="card__title">Прогресс: {{ cells|length }} ячеек</h2>
+        <div class="table-card">
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>Ячейка</th>
+                <th>Статус</th>
+                <th>Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for cell in cells %}
+                <tr>
+                  <td><span class="code-pill">{{ cell.location.code }}</span></td>
+                  <td>{{ cell.get_status_display }}</td>
+                  <td>
+                    {% if can_edit and cell.status != "completed" %}
+                      <form method="post"
+                            action="{% url 'section_recount_complete_cell' doc.pk cell.sequence %}"
+                            class="inline-form">
+                        {% csrf_token %}
+                        <button class="btn btn--secondary btn--small" type="submit">Ячейка пересчитана</button>
+                      </form>
+                    {% else %}
+                      ·
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    {% if can_edit %}
+      <div class="card">
+        <div class="card__body">
+          <h2 class="card__title">Сканирование детали</h2>
+          <form method="post"
+                action="{% url 'section_recount_scan' doc.pk %}"
+                class="form-actions">
+            {% csrf_token %}
+            <label>
+              Номер ячейки
+              <select name="cell_number" required>
+                {% for cell in cells %}<option value="{{ cell.sequence }}">{{ cell.location.code }}</option>{% endfor %}
+              </select>
+            </label>
+            <label>
+              Артикул или штрихкод
+              <input name="raw_value"
+                     type="text"
+                     inputmode="search"
+                     autocomplete="off"
+                     autofocus
+                     required>
+            </label>
+            <button class="btn btn--primary" type="submit">Добавить +1</button>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+    <div class="card">
+      <div class="card__body">
+        <h2 class="card__title">Фактические строки</h2>
+        {% if lines %}
+          <div class="table-card">
+            <table class="table table--compact">
+              <thead>
+                <tr>
+                  <th>Ячейка</th>
+                  <th>Артикул</th>
+                  <th>Количество</th>
+                  <th>Партии</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for line in lines %}
+                  <tr>
+                    <td>{{ line.cell.location.code }}</td>
+                    <td>{{ line.part_number }}</td>
+                    <td>
+                      {% if can_edit %}
+                        <form method="post"
+                              action="{% url 'section_recount_set_quantity' doc.pk line.pk %}"
+                              class="inline-form">
+                          {% csrf_token %}
+                          <input name="quantity"
+                                 type="number"
+                                 min="0"
+                                 step="0.001"
+                                 value="{{ line.quantity }}"
+                                 required>
+                          <button type="submit">OK</button>
+                        </form>
+                      {% else %}
+                        {{ line.quantity|quantity_int }}
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% for allocation in line.allocations.all %}
+                        {{ allocation.batch_line_id }}: {{ allocation.quantity|quantity_int }}
+                        {% if not forloop.last %},{% endif %}
+                      {% empty %}не распределено
+                      {% endfor %}
+                      {% if can_edit and line.batch_candidates|length > 1 %}
+                        <form method="post"
+                              action="{% url 'section_recount_allocate' doc.pk line.pk %}"
+                              class="inline-form">
+                          {% csrf_token %}
+                          <select name="batch_line_id" required>
+                            {% for batch_line in line.batch_candidates %}
+                              <option value="{{ batch_line.pk }}">Партия {{ batch_line.batch.number }} · {{ batch_line.landed_unit_cost_rub|money_int }} ₽</option>
+                            {% endfor %}
+                          </select>
+                          <input name="quantity"
+                                 type="number"
+                                 min="0.001"
+                                 step="0.001"
+                                 value="{{ line.quantity }}"
+                                 required>
+                          <button type="submit">Распределить</button>
+                        </form>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if can_edit %}
+                        <form method="post"
+                              action="{% url 'section_recount_remove_line' doc.pk line.pk %}"
+                              class="inline-form">
+                          {% csrf_token %}
+                          <button class="btn btn--secondary btn--small" type="submit">Удалить</button>
+                        </form>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="muted">Сканов пока нет.</p>
+        {% endif %}
+      </div>
+    </div>
+    {% if doc.status == "counting" %}
+      <form method="post"
+            action="{% url 'section_recount_ready' doc.pk %}"
+            class="card card__body">
+        {% csrf_token %}
+        <h2 class="card__title">Подготовить dry-run</h2>
+        <p>Проверьте все десять ячеек и распределение партий. Остатки пока не изменяются.</p>
+        <button class="btn btn--primary" type="submit">Показать dry-run</button>
+      </form>
+    {% endif %}
+    {% if dry_run %}
+      <div class="card">
+        <div class="card__body">
+          <h2 class="card__title">Dry-run</h2>
+          <p>Было: {{ dry_run.before_total|quantity_int }} · станет: {{ dry_run.after_total|quantity_int }} · разница: {{ dry_run.difference|quantity_int }}</p>
+          <p>ADJUST_OUT: {{ dry_run.adjust_out }} · ADJUST_IN: {{ dry_run.adjust_in }} · затронуто деталей: {{ dry_run.touched_parts }}</p>
+          {% if dry_run.warnings %}
+            <p class="status-block status-block--warning">Есть предупреждения: распределите все партии.</p>
+          {% endif %}
+          {% if doc.status == "ready" %}
+            <form method="post"
+                  action="{% url 'section_recount_apply' doc.pk %}"
+                  class="form-actions">
+              {% csrf_token %}
+              <label>
+                Подтверждение
+                <input name="confirm" type="text" placeholder="APPLY" required>
+              </label>
+              <button class="btn btn--danger" type="submit">Применить атомарно</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  {% else %}
+    <div class="card">
+      <div class="card__body">
+        <p>Snapshot ещё не создан. После запуска будут созданы C05 и блокировки C01-C10.</p>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

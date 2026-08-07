@@ -15,7 +15,12 @@ from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockLot
-from apps.inventory.services import recompute_balance_row, sell_part_item, sell_stock_lot
+from apps.inventory.services import (
+    ensure_location_operation_allowed,
+    recompute_balance_row,
+    sell_part_item,
+    sell_stock_lot,
+)
 from apps.procurement.models import BatchLine, money
 from apps.warehouse.models import StorageLocation
 
@@ -187,6 +192,7 @@ def add_part_item_to_reservation(reservation, item, *, by=None) -> ReservationLi
     item = PartItem.objects.select_for_update().get(pk=item.pk)
     if item.status != PartItem.Status.AVAILABLE:
         raise ReservationError("Зарезервировать можно только доступный экземпляр.")
+    ensure_location_operation_allowed(item.current_location)
     if ReservationLine.objects.filter(reservation=reservation, part_item=item).exists():
         raise ReservationError("Этот экземпляр уже в этом резерве.")
     if _item_actively_reserved(item, exclude=reservation):
@@ -211,6 +217,7 @@ def add_stock_lot_to_reservation(reservation, lot, quantity, *, by=None) -> Rese
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
     if lot.status != StockLot.Status.AVAILABLE:
         raise ReservationError("Зарезервировать можно только доступный лот.")
+    ensure_location_operation_allowed(lot.location)
     committed = _active_reserved_for_lot(lot)
     if reservation.status == Reservation.Status.DRAFT:
         # Активные брони не включают черновик — добавим уже намеченное в нём.
@@ -245,6 +252,8 @@ def remove_reservation_line(line, *, by=None) -> None:
     _ensure_open(reservation)
     was_active = reservation.status == Reservation.Status.ACTIVE
     pair = _line_pair(line)
+    if was_active and pair is not None:
+        ensure_location_operation_allowed(pair[1])
     line.delete()
     if was_active and pair is not None:
         _recompute_pairs([pair])
@@ -261,6 +270,12 @@ def activate_reservation(reservation, *, by=None) -> Reservation:
     lines = list(reservation.lines.select_related("part_item", "stock_lot"))
     if not lines:
         raise ReservationError("Нельзя активировать пустой резерв.")
+
+    for line in lines:
+        location = (
+            line.part_item.current_location if line.part_item_id else line.stock_lot.location
+        )
+        ensure_location_operation_allowed(location)
 
     # Блокируем и проверяем каждый объект; суммируем количество по лотам.
     lot_demand: dict[int, Decimal] = {}
@@ -303,6 +318,12 @@ def cancel_reservation(reservation, *, by=None, reason="") -> Reservation:
         raise ReservationError("Резерв уже продан — отмена недоступна.")
     was_active = reservation.status == Reservation.Status.ACTIVE
     lines = list(reservation.lines.select_related("part_item", "stock_lot"))
+    if was_active:
+        for line in lines:
+            location = (
+                line.part_item.current_location if line.part_item_id else line.stock_lot.location
+            )
+            ensure_location_operation_allowed(location)
     reservation.status = Reservation.Status.CANCELED
     reservation.canceled_at = timezone.now()
     reservation.save(update_fields=["status", "canceled_at", "updated_at"])
@@ -328,6 +349,11 @@ def expire_reservations(*, now=None, by=None) -> int:
     )
     for reservation in expired:
         lines = list(reservation.lines.select_related("part_item", "stock_lot"))
+        for line in lines:
+            location = (
+                line.part_item.current_location if line.part_item_id else line.stock_lot.location
+            )
+            ensure_location_operation_allowed(location)
         reservation.status = Reservation.Status.EXPIRED
         reservation.canceled_at = now
         reservation.save(update_fields=["status", "canceled_at", "updated_at"])

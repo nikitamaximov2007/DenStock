@@ -15,6 +15,7 @@ from apps.catalog.models import PartType
 from apps.inventory.services import (
     create_part_items,
     create_stock_lot,
+    ensure_location_operation_allowed,
     receive_part_item,
     receive_stock_lot,
 )
@@ -137,6 +138,7 @@ def post_receipt(receipt: Receipt, *, by=None) -> Receipt:
         _validate_line_values(
             line.part_type, line.quantity, line.unit_cost_rub, line.location
         )
+        ensure_location_operation_allowed(line.location)
 
     # 1. Партия из документа (валюта RUB, курс 1: цены вводятся в рублях).
     batch = Batch.objects.create(

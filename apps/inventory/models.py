@@ -380,6 +380,37 @@ class StockTransfer(models.Model):
         )
 
 
+class StockLocationLock(models.Model):
+    """Operational lock used by a section recount.
+
+    The document reference follows the existing immutable-ledger
+    ``document_type``/``document_id`` pattern. This avoids a migration cycle
+    between ``inventory`` and ``stocktaking`` while keeping the lock durable.
+    """
+
+    location = models.ForeignKey(
+        "warehouse.StorageLocation", on_delete=models.PROTECT, related_name="stock_locks"
+    )
+    section_code = models.CharField("Участок", max_length=60)
+    document_id = models.PositiveIntegerField("ID пересчёта")
+    created_at = models.DateTimeField(auto_now_add=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Блокировка ячейки склада"
+        verbose_name_plural = "Блокировки ячеек склада"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["location"],
+                condition=models.Q(released_at__isnull=True),
+                name="uniq_active_stock_location_lock",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.location.code}: пересчёт {self.section_code} #{self.document_id}"
+
+
 class StockBalance(models.Model):
     """Read-optimized кэш текущих остатков. НЕ источник истины.
 

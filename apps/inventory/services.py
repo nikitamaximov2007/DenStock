@@ -19,6 +19,7 @@ from .models import (
     PartItem,
     PartPreferredLocation,
     StockBalance,
+    StockLocationLock,
     StockLot,
     StockMovement,
     StockTransfer,
@@ -31,6 +32,22 @@ class InventoryError(Exception):
 
 class FoundStockAlreadyPosted(InventoryError):
     """Группа пакетной приёмки с этим токеном уже проведена."""
+
+
+def ensure_location_operation_allowed(location, *, section_recount_id=None) -> None:
+    """Запретить складскую мутацию заблокированной ячейки."""
+    if location is None:
+        return
+    lock = (
+        StockLocationLock.objects.filter(location_id=location.pk, released_at__isnull=True)
+        .only("document_id", "section_code")
+        .first()
+    )
+    if lock is not None and lock.document_id != section_recount_id:
+        raise InventoryError(
+            f"Ячейка временно заблокирована: выполняется пересчёт участка "
+            f"{lock.section_code}."
+        )
 
 
 def set_preferred_part_location(part, location, *, by=None) -> PartPreferredLocation:
@@ -157,6 +174,7 @@ def create_stock_lot(line: BatchLine, location, quantity, *, note: str = "") -> 
         raise InventoryError("Количество должно быть больше нуля.")
     if location is None or not location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
+    ensure_location_operation_allowed(location)
 
     # Блокируем строку, чтобы лимит соблюдался при параллельных запросах.
     line = BatchLine.objects.select_for_update().get(pk=line.pk)
@@ -196,6 +214,8 @@ def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> St
         raise InventoryError("Количество должно быть больше нуля.")
     if location is None or not location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
+    ensure_location_operation_allowed(lot.location)
+    ensure_location_operation_allowed(location)
 
     line = BatchLine.objects.select_for_update().get(pk=lot.batch_line_id)
     others = (
@@ -270,6 +290,7 @@ def _record_movement(
     comment="",
     document_type="",
     document_id=None,
+    section_recount_id=None,
 ) -> StockMovement:
     """Единая точка создания движения: источник копируется из объекта.
 
@@ -277,6 +298,8 @@ def _record_movement(
     `document_type`/`document_id` связывают движение с документом-источником
     (например, продажей: `document_type="sale"`, `document_id=Sale.id`).
     """
+    ensure_location_operation_allowed(from_location, section_recount_id=section_recount_id)
+    ensure_location_operation_allowed(to_location, section_recount_id=section_recount_id)
     if isinstance(obj, PartItem):
         part_item, stock_lot = obj, None
         unit_cost = obj.landed_cost_rub
@@ -993,7 +1016,8 @@ def post_found_stock_group(*, entries, location, token: str, by=None):
 
 @transaction.atomic
 def adjust_stock_lot_quantity(
-    lot: StockLot, delta, *, by=None, comment="", document_type="", document_id=None
+    lot: StockLot, delta, *, by=None, comment="", document_type="", document_id=None,
+    section_recount_id=None, update_preferred=True,
 ) -> StockMovement:
     """Скорректировать количество лота на delta (±). При нуле — статус depleted.
 
@@ -1029,11 +1053,43 @@ def adjust_stock_lot_quantity(
         lot, movement_type, abs(delta),
         from_location=from_location, to_location=to_location, by=by, comment=comment,
         document_type=document_type, document_id=document_id,
+        section_recount_id=section_recount_id,
     )
     _refresh_balance(lot.batch_line, lot.location)
-    if delta > 0:
+    if delta > 0 and update_preferred:
         set_preferred_part_location(lot.part_type, lot.location, by=by)
     return movement
+
+
+@transaction.atomic
+def get_or_create_section_recount_lot(batch_line, location, *, section_recount_id=None) -> StockLot:
+    """Получить bulk-лот для факта пересчёта без создания новой партии."""
+    ensure_location_operation_allowed(location, section_recount_id=section_recount_id)
+    if batch_line.part_type.tracking_mode != batch_line.part_type.TrackingMode.BULK:
+        raise InventoryError("Пересчёт участка поддерживает только количественные лоты.")
+    lot = (
+        StockLot.objects.select_for_update()
+        .filter(batch_line=batch_line, location=location)
+        .first()
+    )
+    if lot is None:
+        lot = StockLot.objects.create(
+            part_type=batch_line.part_type,
+            batch=batch_line.batch,
+            batch_line=batch_line,
+            location=location,
+            quantity=Decimal("0"),
+            initial_quantity=Decimal("0"),
+            landed_unit_cost_rub=batch_line.landed_unit_cost_rub,
+            status=StockLot.Status.AVAILABLE,
+            note="Создан сервисом пересчёта участка",
+        )
+    elif lot.status == StockLot.Status.DEPLETED:
+        lot.status = StockLot.Status.AVAILABLE
+        lot.save(update_fields=["status", "updated_at"])
+    elif lot.status not in LOT_PHYSICAL_STATUSES:
+        raise InventoryError("Нельзя использовать списанный или карантинный лот для этого факта.")
+    return lot
 
 
 # --- Расход со склада: общий механизм для продажи (Слой 16) и выдачи в --------
