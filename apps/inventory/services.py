@@ -653,8 +653,9 @@ def _perform_stock_transfer(
         if quantity != Decimal("1") or stock_state != StockTransfer.StockState.SERIAL:
             raise InventoryError("Экземпляр перемещается только по одной штуке.")
         locked_item = (
-            PartItem.objects.select_for_update()
+            PartItem.objects
             .select_related("part_type", "current_location", "batch_line")
+            .select_for_update(of=("self",))
             .get(pk=part_item.pk)
         )
         if locked_item.part_type_id != part.pk or locked_item.current_location_id != source.pk:
