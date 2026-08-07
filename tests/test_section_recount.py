@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier, Event
 from unittest.mock import patch
 
 import pytest
@@ -409,19 +410,63 @@ def _parallel_call(function, *args):
         close_old_connections()
 
 
+def _parallel_call_captured(function, *args):
+    try:
+        return _parallel_call(function, *args)
+    except Exception as exc:  # noqa: BLE001 - the assertion checks the exact outcome.
+        return exc
+
+
+def _create_and_start_concurrently(admin, barrier):
+    close_old_connections()
+    try:
+        barrier.wait(10)
+        doc = create_section_recount(by=admin)
+        return start_section_recount(doc)
+    except Exception as exc:  # noqa: BLE001 - the assertion checks the exact outcome.
+        return exc
+    finally:
+        close_old_connections()
+
+
+def _start_with_snapshot_gate(doc, entered, release):
+    import apps.stocktaking.section_recount as recount_module
+
+    original_capture = recount_module._capture_snapshot
+
+    def gated_capture(*args, **kwargs):
+        entered.set()
+        assert release.wait(10), "start transaction did not receive the release signal"
+        return original_capture(*args, **kwargs)
+
+    with patch.object(recount_module, "_capture_snapshot", gated_capture):
+        return _parallel_call(start_section_recount, doc)
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.skipif(
     connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
 )
-def test_postgresql_two_starts_are_serialized(section_data):
+def test_postgresql_concurrent_start_has_one_owner(section_data):
     data = section_data
-    doc = create_section_recount(by=data["admin"])
+    # The active-document constraint prevents two pre-created drafts; race the
+    # real create-and-start workflow instead.
+    barrier = Barrier(2)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda _: _parallel_call(start_section_recount, doc), range(2)))
-    assert all(result.status == SectionRecount.Status.COUNTING for result in results)
+        results = list(
+            pool.map(
+                lambda _: _create_and_start_concurrently(data["admin"], barrier),
+                range(2),
+            )
+        )
+    assert sum(isinstance(result, SectionRecount) for result in results) == 1
+    conflicts = [result for result in results if isinstance(result, SectionRecountError)]
+    assert len(conflicts) == 1
+    assert "незавершённый" in str(conflicts[0])
+    owner = SectionRecount.objects.get(status=SectionRecount.Status.COUNTING)
     assert (
         StockLocationLock.objects.filter(
-            document_id=doc.pk, released_at__isnull=True
+            document_id=owner.pk, released_at__isnull=True
         ).count()
         == 10
     )
@@ -431,53 +476,50 @@ def test_postgresql_two_starts_are_serialized(section_data):
 @pytest.mark.skipif(
     connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
 )
-def test_postgresql_start_races_movement_and_never_commits_partial_move(section_data):
+def test_postgresql_start_blocks_movement_deterministically(section_data):
     data = section_data
     target = StorageLocation.objects.get(code="S03-L03-D02-C02")
+    entered = Event()
+    release = Event()
+    doc = create_section_recount(by=data["admin"])
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [
-            pool.submit(
-                _parallel_call,
-                start_section_recount,
-                create_section_recount(by=data["admin"]),
-            ),
-            pool.submit(_parallel_call, move_stock_lot, data["lot"], target),
-        ]
-        results = [future.result() for future in futures]
-    assert any(isinstance(result, SectionRecount) for result in results)
-    assert data["lot"].pk in StockLot.objects.values_list("pk", flat=True)
-    assert StockLot.objects.get(pk=data["lot"].pk).location_id in {
-        StorageLocation.objects.get(code="S03-L03-D02-C01").pk,
-        target.pk,
-    }
+        start = pool.submit(_start_with_snapshot_gate, doc, entered, release)
+        assert entered.wait(10)
+        move = pool.submit(_parallel_call_captured, move_stock_lot, data["lot"], target)
+        release.set()
+        assert isinstance(start.result(), SectionRecount)
+        move_result = move.result()
+    assert isinstance(move_result, InventoryError)
+    assert "заблокирован" in str(move_result)
+    assert StockLot.objects.get(pk=data["lot"].pk).location_id == StorageLocation.objects.get(
+        code="S03-L03-D02-C01"
+    ).pk
 
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.skipif(
     connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
 )
-def test_postgresql_start_races_receiving(section_data):
+def test_postgresql_start_blocks_receiving_deterministically(section_data):
     data = section_data
     receiving_lot = create_stock_lot(
         data["batch_line"],
         StorageLocation.objects.get(code="S03-L03-D02-C03"),
         Decimal("1"),
     )
+    entered = Event()
+    release = Event()
+    doc = create_section_recount(by=data["admin"])
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [
-            pool.submit(
-                _parallel_call,
-                start_section_recount,
-                create_section_recount(by=data["admin"]),
-            ),
-            pool.submit(_parallel_call, receive_stock_lot, receiving_lot),
-        ]
-        results = [future.result() for future in futures]
-    assert any(isinstance(result, SectionRecount) for result in results)
-    assert StockLot.objects.get(pk=receiving_lot.pk).status in {
-        StockLot.Status.RECEIVING,
-        StockLot.Status.AVAILABLE,
-    }
+        start = pool.submit(_start_with_snapshot_gate, doc, entered, release)
+        assert entered.wait(10)
+        receiving = pool.submit(_parallel_call_captured, receive_stock_lot, receiving_lot)
+        release.set()
+        assert isinstance(start.result(), SectionRecount)
+        receiving_result = receiving.result()
+    assert isinstance(receiving_result, InventoryError)
+    assert "заблокирован" in str(receiving_result)
+    assert StockLot.objects.get(pk=receiving_lot.pk).status == StockLot.Status.RECEIVING
 
 
 @pytest.mark.django_db(transaction=True)
@@ -488,7 +530,8 @@ def test_postgresql_two_applies_are_idempotent(section_data):
     doc = _ready(section_data)
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: _parallel_call(apply_section_recount, doc), range(2)))
-    assert all(result.status == SectionRecount.Status.COMPLETED for result in results)
+    assert all(isinstance(result, SectionRecount) for result in results)
+    assert {result.status for result in results} == {SectionRecount.Status.COMPLETED}
     assert (
         StockMovement.objects.filter(
             document_type="section_recount", document_id=doc.pk
