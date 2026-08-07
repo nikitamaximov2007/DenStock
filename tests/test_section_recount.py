@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from django.db import close_old_connections, connection
+from django.db.models import Sum
 from django.urls import reverse
 
 from apps.catalog.models import Category, PartNumber, PartType, Unit
@@ -27,7 +28,11 @@ from apps.inventory.services import (
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.sales.models import Reservation, ReservationLine
-from apps.stocktaking.models import SectionRecount
+from apps.stocktaking.models import (
+    SectionRecount,
+    SectionRecountAllocation,
+    SectionRecountLine,
+)
 from apps.stocktaking.section_recount import (
     SectionRecountError,
     allocate_section_line,
@@ -393,6 +398,225 @@ def test_allocation_global_limit_and_invalid_batch_are_rejected(section_data):
         allocate_section_line(
             first, batch_line_id=data["batch_line"].pk, quantity="1", lot_status="available"
         )
+
+
+def _allocation_lines(data, quantities):
+    doc = _start(data)
+    lines = []
+    for cell_number, quantity in zip((2, 3), quantities, strict=True):
+        line = record_section_scan(
+            doc, cell_number=cell_number, raw_value="RC-0001", by=data["admin"]
+        )
+        lines.append(set_section_line_quantity(line, quantity))
+    return doc, lines
+
+
+def _add_available_source(data):
+    lot = create_stock_lot(
+        data["batch_line"],
+        StorageLocation.objects.get(code="S03-L03-D02-C04"),
+        Decimal("5"),
+    )
+    return receive_stock_lot(lot, by=data["admin"])
+
+
+def _allocate_concurrently(barrier, line_id, batch_line_id, quantity, lot_status):
+    close_old_connections()
+    try:
+        assert barrier.wait(10)
+        return allocate_section_line(
+            SectionRecountLine.objects.get(pk=line_id),
+            batch_line_id=batch_line_id,
+            quantity=quantity,
+            lot_status=lot_status,
+        )
+    except Exception as exc:  # noqa: BLE001 - worker result is asserted by the test.
+        return exc
+    finally:
+        close_old_connections()
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL allocation lock integration test"
+)
+def test_postgresql_allocation_limit_serializes_three_plus_three(section_data):
+    data = section_data
+    doc, lines = _allocation_lines(data, ("3", "3"))
+    barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _allocate_concurrently,
+                barrier,
+                line.pk,
+                data["batch_line"].pk,
+                "3",
+                StockLot.Status.AVAILABLE,
+            )
+            for line in lines
+        ]
+        results = [future.result() for future in futures]
+    assert sum(isinstance(result, SectionRecountAllocation) for result in results) == 1
+    assert sum(isinstance(result, SectionRecountError) for result in results) == 1
+    total = SectionRecountAllocation.objects.filter(
+        line__recount=doc,
+        batch_line=data["batch_line"],
+        lot_status=StockLot.Status.AVAILABLE,
+    ).aggregate(total=Sum("quantity"))["total"]
+    assert total == Decimal("3")
+    assert total <= Decimal("5")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL allocation lock integration test"
+)
+def test_postgresql_allocation_limit_serializes_four_plus_six(section_data):
+    data = section_data
+    _add_available_source(data)
+    doc, lines = _allocation_lines(data, ("4", "6"))
+    barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _allocate_concurrently,
+                barrier,
+                line.pk,
+                data["batch_line"].pk,
+                quantity,
+                StockLot.Status.AVAILABLE,
+            )
+            for line, quantity in zip(lines, ("4", "6"), strict=True)
+        ]
+        results = [future.result() for future in futures]
+    assert all(isinstance(result, SectionRecountAllocation) for result in results)
+    total = SectionRecountAllocation.objects.filter(
+        line__recount=doc,
+        batch_line=data["batch_line"],
+        lot_status=StockLot.Status.AVAILABLE,
+    ).aggregate(total=Sum("quantity"))["total"]
+    assert total == Decimal("10")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL allocation lock integration test"
+)
+def test_postgresql_allocation_limit_rejects_six_plus_six(section_data):
+    data = section_data
+    _add_available_source(data)
+    doc, lines = _allocation_lines(data, ("6", "6"))
+    barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _allocate_concurrently,
+                barrier,
+                line.pk,
+                data["batch_line"].pk,
+                "6",
+                StockLot.Status.AVAILABLE,
+            )
+            for line in lines
+        ]
+        results = [future.result() for future in futures]
+    assert sum(isinstance(result, SectionRecountAllocation) for result in results) == 1
+    assert sum(isinstance(result, SectionRecountError) for result in results) == 1
+    total = SectionRecountAllocation.objects.filter(
+        line__recount=doc,
+        batch_line=data["batch_line"],
+        lot_status=StockLot.Status.AVAILABLE,
+    ).aggregate(total=Sum("quantity"))["total"]
+    assert total == Decimal("6")
+    assert total <= Decimal("10")
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL allocation lock integration test"
+)
+def test_postgresql_allocation_limit_is_separate_by_lot_status(section_data):
+    data = section_data
+    second_lot = create_stock_lot(
+        data["batch_line"],
+        StorageLocation.objects.get(code="S03-L03-D02-C04"),
+        Decimal("5"),
+    )
+    receive_stock_lot(second_lot, by=data["admin"])
+    StockLot.objects.filter(pk=second_lot.pk).update(status=StockLot.Status.QUARANTINE)
+    doc, lines = _allocation_lines(data, ("5", "5"))
+    barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _allocate_concurrently,
+                barrier,
+                lines[0].pk,
+                data["batch_line"].pk,
+                "5",
+                StockLot.Status.AVAILABLE,
+            ),
+            pool.submit(
+                _allocate_concurrently,
+                barrier,
+                lines[1].pk,
+                data["batch_line"].pk,
+                "5",
+                StockLot.Status.QUARANTINE,
+            ),
+        ]
+        results = [future.result() for future in futures]
+    assert all(isinstance(result, SectionRecountAllocation) for result in results)
+    totals = dict(
+        SectionRecountAllocation.objects.filter(line__recount=doc)
+        .values("lot_status")
+        .annotate(total=Sum("quantity"))
+        .values_list("lot_status", "total")
+    )
+    assert totals == {
+        StockLot.Status.AVAILABLE: Decimal("5"),
+        StockLot.Status.QUARANTINE: Decimal("5"),
+    }
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql", reason="PostgreSQL allocation lock integration test"
+)
+def test_postgresql_allocation_limit_serializes_concurrent_updates(section_data):
+    data = section_data
+    _add_available_source(data)
+    doc, lines = _allocation_lines(data, ("4", "4"))
+    for line in lines:
+        allocate_section_line(
+            line,
+            batch_line_id=data["batch_line"].pk,
+            quantity="4",
+            lot_status=StockLot.Status.AVAILABLE,
+        )
+    barrier = Barrier(2)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                _allocate_concurrently,
+                barrier,
+                line.pk,
+                data["batch_line"].pk,
+                "7",
+                StockLot.Status.AVAILABLE,
+            )
+            for line in lines
+        ]
+        results = [future.result() for future in futures]
+    assert sum(isinstance(result, SectionRecountAllocation) for result in results) == 1
+    assert sum(isinstance(result, SectionRecountError) for result in results) == 1
+    total = SectionRecountAllocation.objects.filter(
+        line__recount=doc,
+        batch_line=data["batch_line"],
+        lot_status=StockLot.Status.AVAILABLE,
+    ).aggregate(total=Sum("quantity"))["total"]
+    assert total <= Decimal("10")
 
 
 @pytest.mark.skipif(

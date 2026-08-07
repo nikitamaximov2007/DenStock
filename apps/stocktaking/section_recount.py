@@ -388,6 +388,14 @@ def remove_section_line(line: SectionRecountLine, *, by=None) -> None:
     line = SectionRecountLine.objects.select_for_update().select_related("recount").get(pk=line.pk)
     _ensure_counting(line.recount)
     _reopen_ready(line.recount)
+    batch_line_ids = list(line.allocations.values_list("batch_line_id", flat=True))
+    # Deletion frees capacity in the same global bucket as allocation create or
+    # update, so it must participate in the same BatchLine lock protocol.
+    list(
+        BatchLine.objects.select_for_update()
+        .filter(pk__in=batch_line_ids)
+        .order_by("pk")
+    )
     line.delete()
 
 
@@ -465,7 +473,14 @@ def allocate_section_line(
         raise SectionRecountError("Количество партии должно быть числом.") from exc
     if quantity <= 0:
         raise SectionRecountError("Распределение партии должно быть больше нуля.")
-    batch_line = BatchLine.objects.select_related("part_type").get(pk=batch_line_id)
+    # BatchLine is the stable row shared by every allocation competing for the
+    # same global source quantity. Lock it before reading the aggregate so a
+    # second recount line waits and then observes the committed allocation.
+    batch_line = (
+        BatchLine.objects.select_for_update()
+        .select_related("part_type", "batch")
+        .get(pk=batch_line_id)
+    )
     if batch_line.part_type_id != line.part_type_id:
         raise SectionRecountError("Партия не относится к этой детали.")
     if batch_line.batch.status not in VALID_BATCH_STATUSES or not batch_line.batch.cost_finalized:
@@ -513,16 +528,32 @@ def _prepare_allocations(doc: SectionRecount) -> None:
             continue
         candidates = _candidate_batch_lines(line)
         if len(candidates) == 1:
-            candidate = candidates[0]
+            candidate = (
+                BatchLine.objects.select_for_update()
+                .select_related("part_type", "batch")
+                .get(pk=candidates[0].pk)
+            )
             statuses = _source_statuses(doc, candidate.pk)
             if len(statuses) != 1:
+                continue
+            status = statuses[0]
+            source_quantity = _snapshot_source_quantities(doc).get(
+                (candidate.pk, status), Decimal("0")
+            )
+            allocated = (
+                SectionRecountAllocation.objects.filter(
+                    line__recount=doc, batch_line=candidate, lot_status=status
+                ).aggregate(total=Sum("quantity"))["total"]
+                or Decimal("0")
+            )
+            if allocated + line.quantity > source_quantity:
                 continue
             SectionRecountAllocation.objects.create(
                 line=line,
                 batch_line=candidate,
                 quantity=line.quantity,
-                unit_cost_rub=_snapshot_source_costs(doc)[(candidate.pk, statuses[0])],
-                lot_status=statuses[0],
+                unit_cost_rub=_snapshot_source_costs(doc)[(candidate.pk, status)],
+                lot_status=status,
             )
 
 
