@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% load number_format %}
+{% block title %}Пересчитать {{ location.code }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Пересчитать ячейку</h1>
+      <p class="page-subtitle"><span class="code-pill">{{ location.code }}</span> · {{ location.name }}</p>
+    </div>
+    <a class="btn btn--secondary"
+       href="{% url 'location_detail' location.pk %}">Отмена</a>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <h2 class="card__title">Перед началом</h2>
+      <dl class="recount-metrics">
+        <div>
+          <dt>Позиций в системе</dt>
+          <dd>
+            {{ preview.position_count }}
+          </dd>
+        </div>
+        <div>
+          <dt>Единиц в системе</dt>
+          <dd>
+            {{ preview.unit_count|quantity_int }}
+          </dd>
+        </div>
+      </dl>
+      <div class="status status--warning">
+        <span class="status__icon">!</span>
+        <span>На время пересчёта ячейка будет заблокирована для приёмки, перемещения, продажи, списания, резервирования и других складских изменений.</span>
+      </div>
+      {% if preview.serial_count %}
+        <div class="status status--error">
+          <span class="status__icon">!</span>
+          <span>В ячейке есть поштучные экземпляры: {{ preview.serial_count }}. Количественный пересчёт не запустится, чтобы не потерять их идентичность.</span>
+        </div>
+      {% endif %}
+      <form method="post" class="page-actions">
+        {% csrf_token %}
+        <button class="btn btn--primary" type="submit">Начать пересчёт</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

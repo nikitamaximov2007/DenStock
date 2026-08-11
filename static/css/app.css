@@ -707,7 +707,39 @@ form.toolbar input:focus, form.toolbar select:focus {
 .receiving-location-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .receiving-location-form input { flex: 1 1 260px; min-width: 0; }
 
+/* Повседневный пересчёт одной ячейки. */
+.recount-metrics { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px; margin: 0 0 16px; }
+.recount-metrics > div { padding: 12px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--radius-md); }
+.recount-metrics dt { color: var(--muted); font-size: 12px; font-weight: 600; }
+.recount-metrics dd { margin: 4px 0 0; font-size: 20px; font-weight: 700; }
+.qty-input { width: 88px; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: var(--radius-md); }
+.allocation-form, .stack-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: 8px; }
+.allocation-form select { min-width: 220px; max-width: 100%; padding: 8px 32px 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-md); background-color: var(--panel); }
+.cell-recount .scanner-candidates { list-style: none; padding: 0; }
+.cell-recount .scanner-candidates li { display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.empty-state { padding: 20px; color: var(--muted); }
+.danger-panel { margin-top: 28px; border-color: var(--err-line); }
+.danger-panel .stack-form { align-items: flex-start; flex-direction: column; }
+.danger-panel .stack-form input { width: min(360px, 100%); padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-md); }
+.recount-finish { margin-top: 16px; }
+
 @media (max-width: 560px) {
+  .recount-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recount-lines { white-space: normal; }
+  .recount-lines thead { display: none; }
+  .recount-lines tbody, .recount-lines tr, .recount-lines td { display: block; }
+  .recount-lines tr { padding: 12px; border-bottom: 1px solid var(--line); }
+  .recount-lines td { padding: 4px 0; border: 0; white-space: normal; }
+  .recount-lines .inline-form { display: flex; margin: 0; gap: 8px; }
+  .allocation-form select { min-width: 0; width: 100%; }
+  .cell-recount .scanner-candidates li { align-items: flex-start; flex-direction: column; }
   .receiving-group .card__body, .receiving-queue-line { padding-left: 0; padding-right: 0; }
   .receiving-group .table { white-space: normal; }
   .receiving-group .table thead { display: none; }

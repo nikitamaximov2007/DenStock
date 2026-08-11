@@ -1,7 +1,8 @@
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
@@ -12,7 +13,13 @@ from apps.inventory.movement import live_stock_rows
 
 from .forms import StorageLocationForm, StorageLocationRenameForm, StorageLocationUpdateForm
 from .models import StorageLocation
-from .services import StorageLocationRenameError, rename_storage_location
+from .services import (
+    StorageLocationRemovalError,
+    StorageLocationRenameError,
+    remove_or_archive_storage_location,
+    rename_storage_location,
+    storage_location_removal_preview,
+)
 
 
 def _safe_internal_next(request, candidate: str) -> str:
@@ -81,6 +88,13 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
         ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["can_view_inventory"] = (
             self.request.user.can_manage_inventory or self.request.user.is_viewer
+        )
+        ctx["can_remove"] = (
+            self.request.user.can_manage_warehouse
+            and self.object.level == StorageLocation.Level.CELL
+        )
+        ctx["can_recount"] = (
+            self.request.user.can_manage_stocktaking and self.object.can_hold_stock()
         )
         ctx["children"] = self.object.children.all()
         ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
@@ -190,3 +204,37 @@ def location_toggle(request, pk):
     state = "активировано" if loc.is_active else "деактивировано"
     messages.success(request, f"Место {state}: {loc}")
     return redirect("warehouse_index")
+
+
+@login_required
+def location_remove(request, pk):
+    if not request.user.can_manage_warehouse:
+        raise PermissionDenied
+    location = get_object_or_404(
+        StorageLocation,
+        pk=pk,
+        level=StorageLocation.Level.CELL,
+    )
+    if request.method == "POST":
+        try:
+            result, code = remove_or_archive_storage_location(
+                location,
+                action=request.POST.get("action", ""),
+                expected_code=request.POST.get("expected_code", ""),
+            )
+        except StorageLocationRemovalError as exc:
+            messages.error(request, str(exc))
+        else:
+            if result == "deleted":
+                messages.success(request, f"Новая пустая ячейка {code} удалена.")
+            else:
+                messages.success(request, f"Историческая ячейка {code} архивирована.")
+            return redirect("warehouse_index")
+    return render(
+        request,
+        "warehouse/location_remove.html",
+        {
+            "location": location,
+            "preview": storage_location_removal_preview(location),
+        },
+    )

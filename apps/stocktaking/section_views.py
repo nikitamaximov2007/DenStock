@@ -5,18 +5,24 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
 
+from apps.core.part_lookup import resolve_part_lookup
+from apps.warehouse.models import StorageLocation
+
 from .models import SectionRecount, SectionRecountLine
 from .section_recount import (
     SectionRecountError,
+    _allocation_statuses,
     _candidate_batch_lines,
-    _source_statuses,
     allocate_section_line,
     apply_section_recount,
     build_section_dry_run,
     cancel_section_recount,
+    cell_recount_preview,
     complete_section_cell,
+    create_cell_recount,
     create_section_recount,
     mark_section_ready,
+    record_section_part,
     record_section_scan,
     remove_section_line,
     set_section_line_quantity,
@@ -29,7 +35,7 @@ def _require_section_recount(request) -> None:
         raise PermissionDenied
 
 
-def _detail_context(doc):
+def _detail_context(doc, *, query=""):
     doc = (
         SectionRecount.objects.select_related("created_by")
         .prefetch_related("cells__location", "lines__cell__location", "lines__part_type")
@@ -39,13 +45,18 @@ def _detail_context(doc):
     for line in lines:
         line.batch_candidates = _candidate_batch_lines(line)
         for batch_line in line.batch_candidates:
-            batch_line.section_statuses = _source_statuses(doc, batch_line.pk)
+            batch_line.section_statuses = _allocation_statuses(doc, batch_line.pk)
         line.show_allocation_form = any(
             len(batch_line.section_statuses) > 0 for batch_line in line.batch_candidates
         ) and (
             len(line.batch_candidates) > 1
             or any(len(batch_line.section_statuses) > 1 for batch_line in line.batch_candidates)
         )
+    search_result = (
+        resolve_part_lookup(query, allow_partial=True, allow_name=True)
+        if query.strip()
+        else None
+    )
     return {
         "doc": doc,
         "cells": list(doc.cells.all()),
@@ -56,6 +67,10 @@ def _detail_context(doc):
             else None
         ),
         "can_edit": doc.is_mutable,
+        "counted_positions": len([line for line in lines if line.quantity > 0]),
+        "counted_units": sum((line.quantity for line in lines), 0),
+        "query": query,
+        "search_result": search_result,
     }
 
 
@@ -86,10 +101,38 @@ def section_recount_new(request):
 
 
 @login_required
+def cell_recount_new(request, location_pk):
+    _require_section_recount(request)
+    location = get_object_or_404(StorageLocation, pk=location_pk)
+    preview = cell_recount_preview(location)
+    if request.method == "POST":
+        try:
+            doc = create_cell_recount(location=location, by=request.user)
+        except SectionRecountError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(
+                request,
+                f"Ячейка {location.code} заблокирована. Можно начинать физический пересчёт.",
+            )
+            return redirect("section_recount_detail", pk=doc.pk)
+    return render(
+        request,
+        "stocktaking/cell_recount_new.html",
+        {"location": location, "preview": preview},
+    )
+
+
+@login_required
 def section_recount_detail(request, pk):
     _require_section_recount(request)
     doc = get_object_or_404(SectionRecount, pk=pk)
-    return render(request, "stocktaking/section_recount_detail.html", _detail_context(doc))
+    template = (
+        "stocktaking/cell_recount_detail.html"
+        if doc.is_cell_recount
+        else "stocktaking/section_recount_detail.html"
+    )
+    return render(request, template, _detail_context(doc, query=request.GET.get("q", "")))
 
 
 @login_required
@@ -110,12 +153,22 @@ def section_recount_start(request, pk):
 def section_recount_scan(request, pk):
     _require_section_recount(request)
     try:
-        record_section_scan(
-            get_object_or_404(SectionRecount, pk=pk),
-            cell_number=int(request.POST.get("cell_number", "0")),
-            raw_value=request.POST.get("raw_value", ""),
-            by=request.user,
-        )
+        doc = get_object_or_404(SectionRecount, pk=pk)
+        cell_number = int(request.POST.get("cell_number", "0"))
+        if request.POST.get("part_id"):
+            record_section_part(
+                doc,
+                cell_number=cell_number,
+                part_id=int(request.POST["part_id"]),
+                by=request.user,
+            )
+        else:
+            record_section_scan(
+                doc,
+                cell_number=cell_number,
+                raw_value=request.POST.get("raw_value", ""),
+                by=request.user,
+            )
     except (SectionRecountError, ValueError) as exc:
         messages.error(request, str(exc))
     else:
@@ -127,14 +180,18 @@ def section_recount_scan(request, pk):
 @require_POST
 def section_recount_complete_cell(request, pk, cell_number):
     _require_section_recount(request)
+    doc = get_object_or_404(SectionRecount, pk=pk)
     try:
-        complete_section_cell(
-            get_object_or_404(SectionRecount, pk=pk), cell_number=cell_number, by=request.user
-        )
+        complete_section_cell(doc, cell_number=cell_number, by=request.user)
     except SectionRecountError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, f"C{cell_number:02d} отмечена как пересчитанная.")
+        message = (
+            "Физический пересчёт ячейки завершён. Теперь проверьте расхождения."
+            if doc.is_cell_recount
+            else f"C{cell_number:02d} отмечена как пересчитанная."
+        )
+        messages.success(request, message)
     return redirect("section_recount_detail", pk=pk)
 
 
@@ -144,7 +201,7 @@ def section_recount_set_quantity(request, pk, line_pk):
     _require_section_recount(request)
     try:
         set_section_line_quantity(
-            get_object_or_404(SectionRecountLine, pk=line_pk),
+            get_object_or_404(SectionRecountLine, pk=line_pk, recount_id=pk),
             request.POST.get("quantity", ""), by=request.user,
         )
     except SectionRecountError as exc:
@@ -159,7 +216,10 @@ def section_recount_set_quantity(request, pk, line_pk):
 def section_recount_remove_line(request, pk, line_pk):
     _require_section_recount(request)
     try:
-        remove_section_line(get_object_or_404(SectionRecountLine, pk=line_pk), by=request.user)
+        remove_section_line(
+            get_object_or_404(SectionRecountLine, pk=line_pk, recount_id=pk),
+            by=request.user,
+        )
     except SectionRecountError as exc:
         messages.error(request, str(exc))
     else:
@@ -175,7 +235,7 @@ def section_recount_allocate(request, pk, line_pk):
         source = request.POST.get("allocation_source", "")
         batch_line_id, lot_status = source.split(":", 1)
         allocate_section_line(
-            get_object_or_404(SectionRecountLine, pk=line_pk),
+            get_object_or_404(SectionRecountLine, pk=line_pk, recount_id=pk),
             batch_line_id=int(batch_line_id),
             quantity=request.POST.get("quantity", ""),
             lot_status=lot_status,
@@ -205,15 +265,16 @@ def section_recount_ready(request, pk):
 @require_POST
 def section_recount_apply_view(request, pk):
     _require_section_recount(request)
+    doc = get_object_or_404(SectionRecount, pk=pk)
     if request.POST.get("confirm") != "APPLY":
         messages.error(request, "Для применения введите подтверждение APPLY.")
     else:
         try:
-            apply_section_recount(get_object_or_404(SectionRecount, pk=pk))
+            apply_section_recount(doc)
         except SectionRecountError as exc:
             messages.error(request, str(exc))
         else:
-            messages.success(request, "Пересчёт участка применён атомарно.")
+            messages.success(request, f"{doc.operation_label} применён атомарно.")
     return redirect("section_recount_detail", pk=pk)
 
 

@@ -192,7 +192,7 @@
         <div class="card__body">
           <h2 class="card__title">Dry-run</h2>
           <p>Было: {{ dry_run.before_total|quantity_int }} · станет: {{ dry_run.after_total|quantity_int }} · разница: {{ dry_run.difference|quantity_int }}</p>
-          <p>ADJUST_OUT: {{ dry_run.adjust_out }} · ADJUST_IN: {{ dry_run.adjust_in }} · затронуто деталей: {{ dry_run.touched_parts }}</p>
+          <p>ADJUST_OUT: {{ dry_run.adjust_out|quantity_int }} · ADJUST_IN: {{ dry_run.adjust_in|quantity_int }} · затронуто деталей: {{ dry_run.touched_parts }}</p>
           {% if dry_run.warnings %}
             <p class="status-block status-block--warning">Есть предупреждения: распределите все партии.</p>
           {% endif %}

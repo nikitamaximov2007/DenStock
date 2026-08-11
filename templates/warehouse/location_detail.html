@@ -65,6 +65,10 @@
   </table>
   {% if can_view_inventory %}
     <div class="page-actions">
+      {% if can_recount %}
+        <a class="btn btn--primary"
+           href="{% url 'cell_recount_new' location.pk %}">Пересчитать ячейку</a>
+      {% endif %}
       <a class="btn btn--secondary"
          href="{% url 'balance_list' %}?location={{ location.pk }}">Остатки ячейки</a>
       <a class="btn btn--secondary"
@@ -141,5 +145,15 @@
     </table>
   {% else %}
     <p class="muted">В ячейке нет текущего физического остатка.</p>
+  {% endif %}
+  {% if can_remove %}
+    <div class="card danger-panel">
+      <div class="card__body">
+        <h2 class="card__title">Опасные действия</h2>
+        <p class="muted">Удаление возможно только для новой пустой ячейки без истории. Использованная ячейка сохраняется в истории и может быть только архивирована.</p>
+        <a class="btn btn--danger"
+           href="{% url 'location_remove' location.pk %}">Удалить ячейку</a>
+      </div>
+    </div>
   {% endif %}
 {% endblock %}

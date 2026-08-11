@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Пересчёт участка · DenisStock{% endblock %}
+{% block title %}Пересчёты склада · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Пересчёт участка</h1>
+    <h1 class="page-title">Пересчёты склада</h1>
     <div class="page-header__actions">
       <a class="btn btn--primary" href="{% url 'section_recount_new' %}">Новый пересчёт</a>
     </div>
   </div>
   <p class="page-subtitle">
-    Полная сверка участка S03-L03-D02. До отдельного подтверждения dry-run остатки не меняются.
+    Здесь сохраняются полные пересчёты участка и повседневные пересчёты отдельных ячеек. До отдельного подтверждения dry-run остатки не меняются.
   </p>
   {% if documents %}
     <div class="table-card">
@@ -16,7 +16,7 @@
         <thead>
           <tr>
             <th>ID</th>
-            <th>Участок</th>
+            <th>Область</th>
             <th>Статус</th>
             <th>Создан</th>
             <th>Результат</th>
@@ -26,7 +26,7 @@
           {% for doc in documents %}
             <tr>
               <td><a href="{% url 'section_recount_detail' doc.pk %}">#{{ doc.pk }}</a></td>
-              <td><span class="code-pill">{{ doc.section_code }}</span></td>
+              <td>{{ doc.get_scope_display }} · <span class="code-pill">{{ doc.section_code }}</span></td>
               <td>{{ doc.get_status_display }}</td>
               <td>{{ doc.created_at|ru_dt }}</td>
               <td>
@@ -42,6 +42,6 @@
       </table>
     </div>
   {% else %}
-    {% include "partials/_empty_state.html" with icon="clipboard" title="Пересчётов участков нет" text="Создайте документ для физического пересчёта всех десяти ячеек." action_url=new_url action_label="Новый пересчёт" compact=1 %}
+    {% include "partials/_empty_state.html" with icon="clipboard" title="Пересчётов нет" text="Полный пересчёт запускается здесь, а пересчёт одной ячейки - из её карточки." action_url=new_url action_label="Новый пересчёт участка" compact=1 %}
   {% endif %}
 {% endblock %}
