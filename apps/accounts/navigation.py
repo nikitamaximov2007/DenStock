@@ -394,7 +394,15 @@ def _warehouse_subtabs(user, path):
                 _tab(
                     "Сверочные документы",
                     reverse("inventory_count_list"),
-                    active=path.startswith("/stocktaking/"),
+                    active=path.startswith("/stocktaking/")
+                    and not path.startswith("/stocktaking/section/"),
+                )
+            )
+            tabs.append(
+                _tab(
+                    "Пересчёт участка",
+                    reverse("section_recount_list"),
+                    active=path.startswith("/stocktaking/section/"),
                 )
             )
         return tabs

@@ -6,6 +6,7 @@
     {% if can_manage %}
       <div class="page-actions">
         <a class="btn btn--primary" href="{% url 'inventory_count_create' %}">Создать инвентаризацию</a>
+        <a class="btn btn--secondary" href="{% url 'section_recount_list' %}">Пересчёт участка</a>
       </div>
     {% endif %}
   </div>
