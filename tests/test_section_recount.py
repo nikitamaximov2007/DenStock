@@ -587,12 +587,12 @@ def test_postgresql_allocation_limit_is_separate_by_lot_status(section_data):
 def test_postgresql_allocation_limit_serializes_concurrent_updates(section_data):
     data = section_data
     _add_available_source(data)
-    doc, lines = _allocation_lines(data, ("4", "4"))
+    doc, lines = _allocation_lines(data, ("3", "3"))
     for line in lines:
         allocate_section_line(
             line,
             batch_line_id=data["batch_line"].pk,
-            quantity="4",
+            quantity="3",
             lot_status=StockLot.Status.AVAILABLE,
         )
     barrier = Barrier(2)
