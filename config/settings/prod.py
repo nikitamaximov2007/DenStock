@@ -4,6 +4,9 @@ from .base import env
 
 DEBUG = False
 
+DENSTOCK_MODE = env("DENSTOCK_MODE", default="production").strip().lower()
+DENSTOCK_INSTANCE_ID = env("DENSTOCK_INSTANCE_ID", default="production").strip()
+
 # В проде секреты обязаны приходить из окружения.
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 ALLOWED_HOSTS = env("DJANGO_ALLOWED_HOSTS")

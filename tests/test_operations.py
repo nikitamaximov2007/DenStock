@@ -108,7 +108,7 @@ def test_backup_db_postgres_builds_command_without_password(tmp_path, monkeypatc
 # --- Backup all + manifest ---------------------------------------------------
 
 
-def test_backup_all_structure_and_manifest(tmp_path):
+def test_backup_all_structure_and_manifest(tmp_path, db):
     db = _make_db_file(tmp_path / "src.sqlite3")
     media = tmp_path / "media"
     media.mkdir()
@@ -127,7 +127,7 @@ def test_backup_all_structure_and_manifest(tmp_path):
     assert "password" not in json.dumps(manifest).lower()
 
 
-def test_backup_all_trigger_automatic(tmp_path):
+def test_backup_all_trigger_automatic(tmp_path, db):
     db = _make_db_file(tmp_path / "src.sqlite3")
     media = tmp_path / "media"
     media.mkdir()

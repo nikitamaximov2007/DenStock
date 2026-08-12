@@ -7,17 +7,27 @@
 Безопасность: пароль БД передаётся в `pg_dump`/`pg_restore` через переменную окружения
 `PGPASSWORD` (не в argv), в вывод/манифест секреты не пишутся.
 """
-import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tarfile
+import uuid
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
 
 from django.conf import settings
 from django.db import connection
+
+from .emergency_manifest import SCHEMA_VERSION, write_manifest
+from .emergency_state import (
+    business_state_marker,
+    media_tree_sha256,
+    migration_state,
+    sha256_file,
+)
+from .models import DeploymentState
 
 
 class OperationsError(Exception):
@@ -126,7 +136,64 @@ def backup_db(dest_dir, *, settings_dict=None) -> Path:
 
 
 # Тип бэкапа (пишется в manifest["type"]). manual — ручной экспорт из UI/CLI.
-BACKUP_TYPES = ("manual", "automatic", "pre_restore", "uploaded")
+BACKUP_TYPES = (
+    "manual",
+    "automatic",
+    "pre_restore",
+    "uploaded",
+    "emergency_final",
+)
+
+
+def verify_database_payload(path: str | Path, engine: str) -> None:
+    """Reject a corrupt dump before marking a backup as verified."""
+    path = Path(path)
+    if engine == "sqlite":
+        try:
+            with sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True) as database:
+                result = database.execute("PRAGMA quick_check").fetchone()
+        except sqlite3.Error as exc:
+            raise OperationsError(f"SQLite backup повреждён: {exc}") from exc
+        if not result or result[0] != "ok":
+            raise OperationsError("SQLite backup не прошёл PRAGMA quick_check.")
+        return
+    if engine == "postgresql":
+        binary = pg_binary("pg_restore", RESTORE_PG_VERSION)
+        if binary is None:
+            raise OperationsError("pg_restore 16 недоступен для проверки backup.")
+        result = subprocess.run(
+            [binary, "--list", str(path)], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            fallback = pg_binary("pg_restore", RESTORE_FALLBACK_PG_VERSION)
+            if (
+                UNSUPPORTED_ARCHIVE_MARKER in (result.stderr or "")
+                and fallback
+                and fallback != binary
+            ):
+                result = subprocess.run(
+                    [fallback, "--list", str(path)], capture_output=True, text=True
+                )
+        if result.returncode != 0:
+            raise OperationsError(
+                f"PostgreSQL backup не прошёл pg_restore --list: "
+                f"{result.stderr or result.returncode}"
+            )
+        return
+    raise OperationsError(f"Неизвестный движок БД: {engine}")
+
+
+def verify_media_payload(path: str | Path | None) -> None:
+    if path is None:
+        return
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            for member in archive.getmembers():
+                member_path = Path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise OperationsError("Media backup содержит небезопасный путь.")
+    except (OSError, tarfile.TarError) as exc:
+        raise OperationsError(f"Media backup повреждён: {exc}") from exc
 
 
 def backup_all(
@@ -140,20 +207,64 @@ def backup_all(
     """
     s = settings_dict or connection.settings_dict
     run = new_run_dir(root)
+    migrations = migration_state()
+    data_marker = business_state_marker()
+    media_source = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
+    media_tree_hash = media_tree_sha256(media_source)
     db_path = backup_db(run, settings_dict=s)
     media_path = backup_media(run, media_root=media_root)
+    engine = _engine_name(s["ENGINE"])
+    verify_database_payload(db_path, engine)
+    verify_media_payload(media_path)
+    state = DeploymentState.objects.get(pk=DeploymentState.SINGLETON_PK)
+    app_commit = getattr(settings, "DENSTOCK_APP_COMMIT", "") or _git_commit()
+    if not app_commit:
+        raise OperationsError("Не удалось определить application commit для manifest.")
+    created_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    db_sha256 = sha256_file(db_path)
+    media_sha256 = sha256_file(media_path) if media_path else None
     manifest = {
-        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "schema_version": SCHEMA_VERSION,
+        "backup_run_id": str(uuid.uuid4()),
+        "created_at": created_at,
+        "source_environment": settings.DENSTOCK_MODE,
+        "source_instance_id": settings.DENSTOCK_INSTANCE_ID,
+        "app_commit": app_commit,
+        "database_name": Path(str(s.get("NAME") or "")).name,
+        "database_identity": str(state.database_identity),
+        "database_dump_filename": db_path.name,
+        "database_sha256": db_sha256,
+        "media_filename": media_path.name if media_path else None,
+        "media_sha256": media_sha256,
+        "media_tree_sha256": media_tree_hash,
+        "migration_fingerprint": migrations["fingerprint"],
+        "migration_state": migrations["applied"],
+        "data_state": data_marker,
+        "storage_origin": getattr(settings, "DENSTOCK_BACKUP_STORAGE_ORIGIN", "local"),
+        "verification_status": "verified",
+        "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "consistency": (
+            "single_writer_locked"
+            if state.write_state
+            in {
+                DeploymentState.WriteState.MAINTENANCE,
+                DeploymentState.WriteState.EMERGENCY_FROZEN,
+            }
+            else "database_snapshot"
+        ),
+        # Legacy/UI compatibility. Emergency tooling uses the versioned fields above.
         "type": trigger,
-        "engine": _engine_name(s["ENGINE"]),
+        "engine": engine,
         "db_file": db_path.name if db_path else None,
         "media_file": media_path.name if media_path else None,
         "version": _project_version(),
-        "git_commit": _git_commit(),
+        "git_commit": app_commit,
+        "sha256": {
+            db_path.name: db_sha256,
+            **({media_path.name: media_sha256} if media_path else {}),
+        },
     }
-    (run / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_manifest(run / "manifest.json", manifest)
     if keep_last:
         prune_old_runs(run.parent, keep_last)
     return run
@@ -311,7 +422,7 @@ def _project_version() -> str | None:
 def _git_commit() -> str | None:
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git", "rev-parse", "HEAD"],
             cwd=str(settings.BASE_DIR), capture_output=True, text=True, check=True,
         )
         return out.stdout.strip() or None
