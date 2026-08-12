@@ -11,7 +11,7 @@
     </select>
     <button type="submit">Показать</button>
     {% if can_manage %}
-      <a class="btn btn--primary" href="{% url 'location_create' %}">Добавить место</a>
+      <a class="btn btn--primary" href="{% url 'location_create' %}">Добавить S/D/C</a>
     {% endif %}
   </form>
   <table class="table">
@@ -19,7 +19,7 @@
       <tr>
         <th>Код</th>
         <th>Название</th>
-        <th>Уровень</th>
+        <th>Тип места</th>
         <th>Назначение</th>
         <th>Хранение</th>
         <th>Статус</th>

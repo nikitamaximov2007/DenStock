@@ -6,8 +6,14 @@
     <a href="{% url 'warehouse_index' %}">← К структуре склада</a>
     {% if can_manage %}
       · <a href="{% url 'location_edit' location.pk %}">Изменить</a>
+    {% endif %}
+    {% if can_rename_cell %}
       · <a class="btn btn--secondary btn--small"
     href="{% url 'location_rename' location.pk %}">Переименовать ячейку</a>
+    {% endif %}
+    {% if can_rename_drawer %}
+      · <a class="btn btn--secondary btn--small"
+    href="{% url 'location_drawer_rename' location.pk %}">Переименовать ящик</a>
     {% endif %}
     {% if can_print_labels %}
       · <a href="{% url 'label_location' location.pk %}" target="_blank">Печать этикетки</a>
@@ -24,7 +30,7 @@
         <td>{{ location.barcode }}</td>
       </tr>
       <tr>
-        <th>Уровень</th>
+        <th>Тип места</th>
         <td>{{ location.get_level_display }}</td>
       </tr>
       <tr>
@@ -98,6 +104,7 @@
           <th>Старый код</th>
           <th>Новый код</th>
           <th>Кто</th>
+          <th>Причина</th>
         </tr>
       </thead>
       <tbody>
@@ -107,6 +114,7 @@
             <td>{{ entry.old_code }}</td>
             <td>{{ entry.new_code }}</td>
             <td>{{ entry.renamed_by|default:"Система" }}</td>
+            <td>{{ entry.get_reason_display }}</td>
           </tr>
         {% endfor %}
       </tbody>

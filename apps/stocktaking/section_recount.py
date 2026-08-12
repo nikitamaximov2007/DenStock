@@ -33,7 +33,11 @@ from apps.inventory.services import (
 )
 from apps.procurement.models import Batch, BatchLine
 from apps.sales.models import Reservation, ReservationLine
-from apps.warehouse.addresses import get_or_create_location
+from apps.warehouse.addresses import (
+    AddressError,
+    get_or_create_location,
+    parse_address,
+)
 from apps.warehouse.models import StorageLocation
 
 from .models import (
@@ -65,6 +69,27 @@ class SectionRecountError(ValueError):
 
 
 def canonical_cell_codes(section_code: str = SECTION_CODE) -> list[str]:
+    try:
+        parsed = parse_address(section_code)
+    except AddressError:
+        parsed = None
+    if parsed is not None and parsed.drawer is not None and parsed.cell is None:
+        drawer = StorageLocation.objects.filter(
+            code=parsed.code,
+            level=StorageLocation.Level.DRAWER,
+            is_active=True,
+        ).first()
+        if drawer is None:
+            return []
+        return list(
+            drawer.children.filter(
+                level=StorageLocation.Level.CELL,
+                is_active=True,
+                storage_allowed=True,
+            )
+            .order_by("code", "pk")
+            .values_list("code", flat=True)
+        )
     return [f"{section_code}-C{number:02d}" for number in range(1, CELL_COUNT + 1)]
 
 
@@ -140,6 +165,30 @@ def _format_reservations(reservations) -> str:
 
 def _active_locations(section_code: str) -> list[StorageLocation]:
     codes = canonical_cell_codes(section_code)
+    try:
+        parsed = parse_address(section_code)
+    except AddressError:
+        parsed = None
+    if parsed is not None and parsed.drawer is not None and parsed.cell is None:
+        if not codes:
+            raise SectionRecountError(
+                "В выбранном V2-ящике нет активных ячеек, доступных для хранения."
+            )
+        locations = list(
+            StorageLocation.objects.filter(code__in=codes)
+            .select_related("parent")
+            .order_by("code", "pk")
+        )
+        if any(
+            location.parent is None
+            or location.parent.code != section_code
+            or location.level != StorageLocation.Level.CELL
+            for location in locations
+        ):
+            raise SectionRecountError("Иерархия V2-ящика не соответствует его адресам.")
+        if [location.code for location in locations] != codes:
+            raise SectionRecountError("Структура V2-ячеек изменилась во время проверки.")
+        return locations
     locations = list(StorageLocation.objects.filter(code__in=codes).order_by("code", "pk"))
     present = {location.code for location in locations}
     missing = [code for code in codes if code not in present]
@@ -149,7 +198,7 @@ def _active_locations(section_code: str) -> list[StorageLocation]:
             f"получено: {', '.join(missing) or 'ничего'}."
         )
     if missing:
-        location = get_or_create_location(missing[0], name=missing[0])
+        location = get_or_create_location(missing[0], name=missing[0], allow_legacy=True)
         if not location.is_active or not location.storage_allowed:
             raise SectionRecountError("C05 существует, но недоступна для хранения.")
         locations.append(location)
@@ -249,8 +298,18 @@ def _capture_snapshot(
 
 def create_section_recount(*, section_code=SECTION_CODE, by=None) -> SectionRecount:
     """Создать незапущенный документ без структуры и остатков."""
+    section_code = (section_code or "").strip().upper()
     if section_code != SECTION_CODE:
-        raise SectionRecountError(f"Для этого workflow разрешён только участок {SECTION_CODE}.")
+        try:
+            parsed = parse_address(section_code)
+        except AddressError as exc:
+            raise SectionRecountError("Выберите canonical V2-ящик Sxx-Dxx.") from exc
+        if parsed.drawer is None or parsed.cell is not None:
+            raise SectionRecountError("Пересчёт участка запускается для V2-ящика Sxx-Dxx.")
+        if not canonical_cell_codes(parsed.code):
+            raise SectionRecountError(
+                "В выбранном V2-ящике нет активных ячеек, доступных для хранения."
+            )
     try:
         with transaction.atomic():
             return SectionRecount.objects.create(
@@ -324,7 +383,7 @@ def start_section_recount(doc: SectionRecount) -> SectionRecount:
         .filter(pk__in=[location.pk for location in locations])
         .order_by("pk")
     )
-    expected_count = 1 if doc.is_cell_recount else CELL_COUNT
+    expected_count = 1 if doc.is_cell_recount else len(canonical_cell_codes(doc.section_code))
     if len(locations) != expected_count:
         raise SectionRecountError("Не удалось захватить все ячейки пересчёта.")
     if (

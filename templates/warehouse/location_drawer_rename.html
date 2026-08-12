@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Переименование ящика · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Переименовать ящик</h1>
+  <p>
+    Изменятся только code и auto-barcode существующего ящика и его ячеек.
+    IDs, остатки, партии, движения и закреплённые ячейки не меняются.
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.expected_code }}
+    {{ form.expected_fingerprint }}
+    {{ form.non_field_errors }}
+    <p>
+      <label for="current-drawer-code">Текущий ящик</label>
+      <input id="current-drawer-code"
+             type="text"
+             value="{{ drawer.code }}"
+             readonly>
+    </p>
+    <p>
+      {{ form.new_number.label_tag }}
+      {{ form.new_number }}
+      {{ form.new_number.errors }}
+    </p>
+    {% if preview %}
+      <div class="status-block status-block--warning">
+        <strong>{{ preview.old_code }} → {{ preview.new_code }}</strong>
+        <br>
+        Будут обновлены адреса ячеек: {{ preview.changes|length|add:"-1" }}.
+      </div>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Сейчас</th>
+            <th>После переименования</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for change in preview.changes %}
+            <tr>
+              <td>{{ change.old_code }}</td>
+              <td>{{ change.new_code }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" name="action" value="apply" class="btn btn--danger">Применить переименование</button>
+    {% else %}
+      <button type="submit" name="action" value="preview" class="btn btn--primary">Проверить изменения</button>
+    {% endif %}
+    <a class="btn btn--secondary"
+       href="{% url 'location_detail' drawer.pk %}">Отмена</a>
+  </form>
+{% endblock %}

@@ -18,6 +18,10 @@ from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
 from apps.polaris.services import find_polaris_price_source
 from apps.warehouse.models import StorageLocation
+from apps.warehouse.services import (
+    StorageLocationResolutionError,
+    resolve_storage_location,
+)
 
 from .part_lookup import clean_lookup_value, resolve_part_lookup
 
@@ -431,11 +435,13 @@ def assign_location(session, line_id: str, *, location_id=None, location_code=""
         if location_id is not None
         else None
     )
-    selected_by_code = (
-        StorageLocation.objects.filter(code__iexact=location_code.strip()).first()
-        if location_code.strip()
-        else None
-    )
+    try:
+        selected_by_code, _is_alias = resolve_storage_location(
+            location_code,
+            allow_barcode=False,
+        )
+    except StorageLocationResolutionError as exc:
+        raise ReceivingQueueError(str(exc)) from exc
     if location_id is not None and selected_by_id is None:
         raise ReceivingQueueError("Выбранная ячейка больше не существует.")
     if location_code.strip() and selected_by_code is None:

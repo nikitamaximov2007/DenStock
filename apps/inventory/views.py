@@ -13,6 +13,7 @@ from apps.core.forms import ImageUploadForm
 from apps.core.images import add_image, deactivate_image, set_primary
 from apps.procurement.models import Batch, BatchLine
 from apps.warehouse.models import StorageLocation
+from apps.warehouse.services import attach_movement_location_history
 
 from .forms import (
     AdjustLotForm,
@@ -131,9 +132,10 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
         ctx["can_manage_images"] = self.request.user.can_manage_images
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, PartItem.Status(s).label) for s in allowed]
-        ctx["movements"] = self.object.movements.select_related(
+        ctx["movements"] = list(self.object.movements.select_related(
             "from_location", "to_location", "created_by"
-        )[:10]
+        )[:10])
+        attach_movement_location_history(ctx["movements"])
         images = list(self.object.images.filter(is_active=True))
         ctx["images"] = images
         primary = next((i for i in images if i.is_primary), None)
@@ -344,9 +346,10 @@ class StockLotDetailView(InventoryViewMixin, DetailView):
         ctx["can_stocktake"] = self.request.user.can_manage_stocktaking
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
         ctx["next_statuses"] = [(s, StockLot.Status(s).label) for s in allowed]
-        ctx["movements"] = self.object.movements.select_related(
+        ctx["movements"] = list(self.object.movements.select_related(
             "from_location", "to_location", "created_by"
-        )[:10]
+        )[:10])
+        attach_movement_location_history(ctx["movements"])
         return ctx
 
 
@@ -480,6 +483,7 @@ class MovementListView(InventoryViewMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         attach_movement_identity(ctx["movements"])
+        attach_movement_location_history(ctx["movements"])
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["types"] = StockMovement.MovementType.choices
         ctx["parts"] = PartType.objects.filter(movements__isnull=False).distinct()
@@ -509,6 +513,7 @@ class MovementDetailView(InventoryViewMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         attach_movement_identity([ctx["movement"]])
+        attach_movement_location_history([ctx["movement"]])
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         return ctx
 

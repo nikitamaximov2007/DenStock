@@ -8,7 +8,7 @@ from django.db.models import Q, Sum
 from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 
-from .models import StorageLocation, StorageLocationRenameHistory
+from .models import StorageLocation, StorageLocationAlias, StorageLocationRenameHistory
 
 
 class StorageLocationRenameError(ValueError):
@@ -21,6 +21,10 @@ class StorageLocationCreateError(ValueError):
 
 class StorageLocationRemovalError(ValueError):
     """Безопасное удаление или архивирование ячейки невозможно."""
+
+
+class StorageLocationResolutionError(ValueError):
+    """Code/barcode указывает более чем на одну physical identity."""
 
 
 _LOCATION_CODE_RE = re.compile(r"^[A-ZА-ЯЁ0-9]+(?:-[A-ZА-ЯЁ0-9]+)*$")
@@ -56,6 +60,171 @@ def auto_location_barcode(code: str) -> str:
 def is_auto_location_barcode(barcode: str, code: str) -> bool:
     """Определить, можно ли безопасно обновить штрихкод при переименовании."""
     return not barcode or barcode == auto_location_barcode(normalize_storage_location_code(code))
+
+
+def resolve_storage_location(
+    raw: str, *, allow_code: bool = True, allow_barcode: bool = True
+) -> tuple[StorageLocation | None, bool]:
+    """Точно разрешить canonical code/barcode или уникальный historical alias."""
+    value = (raw or "").strip().upper()
+    if not value:
+        return None, False
+    canonical_filter = Q()
+    alias_filter = Q()
+    if allow_code:
+        canonical_filter |= Q(code__iexact=value)
+        alias_filter |= Q(code__iexact=value)
+    if allow_barcode:
+        canonical_filter |= Q(barcode__iexact=value)
+        alias_filter |= Q(barcode__iexact=value)
+    if not allow_code and not allow_barcode:
+        return None, False
+    canonical = list(StorageLocation.objects.filter(canonical_filter)[:2])
+    aliases = list(
+        StorageLocationAlias.objects.filter(alias_filter).select_related("location")[:2]
+    )
+    owners = {location.pk: location for location in canonical}
+    owners.update({alias.location_id: alias.location for alias in aliases})
+    if len(owners) > 1:
+        raise StorageLocationResolutionError(
+            "Адрес неоднозначен: canonical и historical alias относятся к разным ячейкам."
+        )
+    if not owners:
+        return None, False
+    location = next(iter(owners.values()))
+    return location, not any(item.pk == location.pk for item in canonical)
+
+
+def _assert_location_identity_available(
+    *, code: str, barcode: str | None, exclude_location_id: int | None = None
+) -> None:
+    canonical = StorageLocation.objects.all()
+    aliases = StorageLocationAlias.objects.all()
+    if exclude_location_id is not None:
+        canonical = canonical.exclude(pk=exclude_location_id)
+        aliases = aliases.exclude(location_id=exclude_location_id)
+    code_collision = Q(code__iexact=code) | Q(barcode__iexact=code)
+    if canonical.filter(code_collision).exists() or aliases.filter(code_collision).exists():
+        raise StorageLocationRenameError("Место или historical alias с таким кодом уже существует.")
+    if barcode and (
+        canonical.filter(Q(code__iexact=barcode) | Q(barcode__iexact=barcode)).exists()
+        or aliases.filter(Q(code__iexact=barcode) | Q(barcode__iexact=barcode)).exists()
+    ):
+        raise StorageLocationRenameError(
+            "Штрихкод уже используется местом или historical alias."
+        )
+
+
+def create_location_alias(
+    location: StorageLocation,
+    *,
+    code: str,
+    barcode: str | None,
+    kind=StorageLocationAlias.Kind.RENAME,
+    by=None,
+) -> StorageLocationAlias:
+    """Сохранить старый адрес без возможности направить его на другую identity."""
+    code = normalize_storage_location_code(code)
+    barcode = barcode.strip().upper() if barcode else None
+    existing = StorageLocationAlias.objects.filter(code__iexact=code).first()
+    if existing is not None:
+        if existing.location_id != location.pk or (
+            barcode and existing.barcode != barcode
+        ):
+            raise StorageLocationRenameError(
+                "Historical alias уже принадлежит другой ячейке."
+            )
+        return existing
+    if (
+        StorageLocation.objects.filter(Q(code__iexact=code) | Q(barcode__iexact=code))
+        .exclude(pk=location.pk)
+        .exists()
+        or StorageLocationAlias.objects.filter(
+            Q(code__iexact=code) | Q(barcode__iexact=code)
+        )
+        .exclude(location_id=location.pk)
+        .exists()
+    ):
+        raise StorageLocationRenameError(
+            "Старый код уже занят другой ячейкой или alias."
+        )
+    if barcode and (
+        StorageLocation.objects.filter(
+            Q(code__iexact=barcode) | Q(barcode__iexact=barcode)
+        )
+        .exclude(pk=location.pk)
+        .exists()
+        or StorageLocationAlias.objects.filter(
+            Q(code__iexact=barcode) | Q(barcode__iexact=barcode)
+        )
+        .exclude(location_id=location.pk)
+        .exists()
+    ):
+        raise StorageLocationRenameError(
+            "Старый штрихкод уже занят другой ячейкой или alias."
+        )
+    return StorageLocationAlias.objects.create(
+        location=location,
+        code=code,
+        barcode=barcode,
+        kind=kind,
+        created_by=by,
+    )
+
+
+def location_code_at(location: StorageLocation | None, moment) -> str:
+    """Восстановить code Location на момент исторической операции."""
+    if location is None:
+        return ""
+    code = location.code
+    history = location.rename_history.filter(renamed_at__gt=moment).order_by(
+        "-renamed_at", "-pk"
+    )
+    for entry in history:
+        code = entry.old_code
+    return code
+
+
+def attach_movement_location_history(movements) -> None:
+    """Attach address-at-event and current address without changing the ledger."""
+    movements = list(movements)
+    location_ids = {
+        location_id
+        for movement in movements
+        for location_id in (movement.from_location_id, movement.to_location_id)
+        if location_id is not None
+    }
+    history_by_location = {}
+    histories = StorageLocationRenameHistory.objects.filter(
+        location_id__in=location_ids
+    ).order_by("location_id", "-renamed_at", "-pk")
+    for entry in histories:
+        history_by_location.setdefault(entry.location_id, []).append(entry)
+
+    def code_at(location, moment):
+        if location is None:
+            return ""
+        code = location.code
+        for entry in history_by_location.get(location.pk, []):
+            if entry.renamed_at > moment:
+                code = entry.old_code
+        return code
+
+    for movement in movements:
+        movement.from_location_historical_code = code_at(
+            movement.from_location, movement.created_at
+        )
+        movement.to_location_historical_code = code_at(
+            movement.to_location, movement.created_at
+        )
+        movement.from_location_was_renamed = bool(
+            movement.from_location
+            and movement.from_location_historical_code != movement.from_location.code
+        )
+        movement.to_location_was_renamed = bool(
+            movement.to_location
+            and movement.to_location_historical_code != movement.to_location.code
+        )
 
 
 def _location_reference_counts(location: StorageLocation) -> list[dict]:
@@ -196,17 +365,40 @@ def _persist_location_rename(
     new_code: str,
     new_barcode: str | None,
     by,
+    reason=StorageLocationRenameHistory.Reason.MANUAL,
+    operation_key: str = "",
 ) -> None:
     """Записать изменение кода и его аудит в одной транзакции."""
     updates = {"code": new_code}
     if new_barcode is not None:
         updates["barcode"] = new_barcode
+    create_location_alias(
+        location,
+        code=old_code,
+        barcode=(location.barcode if new_barcode is not None else None),
+        kind=(
+            StorageLocationAlias.Kind.ADDRESS_V2
+            if reason == StorageLocationRenameHistory.Reason.ADDRESS_V2
+            else StorageLocationAlias.Kind.DRAWER
+            if reason == StorageLocationRenameHistory.Reason.DRAWER
+            else StorageLocationAlias.Kind.RENAME
+        ),
+        by=by,
+    )
+    promoted_filter = Q(code__iexact=new_code)
+    if new_barcode is not None:
+        promoted_filter |= Q(barcode__iexact=new_barcode)
+    StorageLocationAlias.objects.filter(location=location).filter(
+        promoted_filter
+    ).delete()
     StorageLocation.objects.filter(pk=location.pk).update(**updates)
     StorageLocationRenameHistory.objects.create(
         location=location,
         old_code=old_code,
         new_code=new_code,
         renamed_by=by,
+        reason=reason,
+        operation_key=operation_key,
     )
 
 
@@ -224,6 +416,11 @@ def rename_storage_location(
     Отдельный снимок ``WarehouseAction.location_code`` намеренно не меняется.
     """
     locked_location = StorageLocation.objects.select_for_update().get(pk=location.pk)
+    if locked_location.level != StorageLocation.Level.CELL:
+        raise StorageLocationRenameError(
+            "Одиночное переименование разрешено только для ячейки. "
+            "Ящик переименовывается вместе с дочерними ячейками."
+        )
     if expected_code != locked_location.code:
         raise StorageLocationRenameError(
             "Код ячейки уже изменён другим пользователем. Обновите страницу."
@@ -234,26 +431,16 @@ def rename_storage_location(
     normalized_code = normalize_storage_location_code(new_code)
     if normalized_code == normalize_storage_location_code(old_code):
         raise StorageLocationRenameError("Новый код совпадает с текущим кодом ячейки.")
-    if (
-        StorageLocation.objects.filter(code__iexact=normalized_code)
-        .exclude(pk=locked_location.pk)
-        .exists()
-    ):
-        raise StorageLocationRenameError("Ячейка с таким кодом уже существует.")
-
     new_barcode = (
         auto_location_barcode(normalized_code)
         if is_auto_location_barcode(old_barcode, old_code)
         else None
     )
-    if new_barcode and (
-        StorageLocation.objects.filter(barcode=new_barcode)
-        .exclude(pk=locked_location.pk)
-        .exists()
-    ):
-        raise StorageLocationRenameError(
-            "Штрихкод для нового кода уже используется другой ячейкой."
-        )
+    _assert_location_identity_available(
+        code=normalized_code,
+        barcode=new_barcode,
+        exclude_location_id=locked_location.pk,
+    )
 
     try:
         # Savepoint leaves the outer transaction usable after a concurrent unique conflict.

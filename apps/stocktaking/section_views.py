@@ -10,6 +10,7 @@ from apps.warehouse.models import StorageLocation
 
 from .models import SectionRecount, SectionRecountLine
 from .section_recount import (
+    SECTION_CODE,
     SectionRecountError,
     _allocation_statuses,
     _candidate_batch_lines,
@@ -90,14 +91,29 @@ def section_recount_list(request):
 @login_required
 def section_recount_new(request):
     _require_section_recount(request)
+    drawers = StorageLocation.objects.filter(
+        level=StorageLocation.Level.DRAWER,
+        is_active=True,
+    ).order_by("code", "pk")
     if request.method == "POST":
         try:
-            doc = create_section_recount(by=request.user)
+            drawer_id = request.POST.get("drawer_id")
+            section_code = None
+            if drawer_id:
+                section_code = get_object_or_404(drawers, pk=drawer_id).code
+            doc = create_section_recount(
+                section_code=section_code or SECTION_CODE,
+                by=request.user,
+            )
         except SectionRecountError as exc:
             messages.error(request, str(exc))
         else:
             return redirect("section_recount_detail", pk=doc.pk)
-    return render(request, "stocktaking/section_recount_new.html")
+    return render(
+        request,
+        "stocktaking/section_recount_new.html",
+        {"drawers": drawers},
+    )
 
 
 @login_required

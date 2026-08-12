@@ -24,6 +24,10 @@ from django.urls import reverse
 from apps.inventory.models import PartItem
 from apps.procurement.models import Batch
 from apps.warehouse.models import StorageLocation
+from apps.warehouse.services import (
+    StorageLocationResolutionError,
+    resolve_storage_location,
+)
 
 from .part_lookup import PartLookupCandidate, clean_lookup_value, resolve_part_lookup
 
@@ -81,11 +85,17 @@ def _item_result(item: PartItem, message: str) -> ScanResult:
     )
 
 
-def _location_result(loc: StorageLocation) -> ScanResult:
+def _location_result(loc: StorageLocation, *, is_alias=False) -> ScanResult:
     return ScanResult(
         status="found", type="location", id=loc.pk,
         label=f"Ячейка {loc.code} — {loc.name}",
-        url=reverse("location_detail", args=[loc.pk]), message="Найдена ячейка склада.",
+        url=reverse("location_detail", args=[loc.pk]),
+        message=(
+            f"Старый адрес распознан. Текущий адрес: {loc.code}."
+            if is_alias
+            else "Найдена ячейка склада."
+        ),
+        is_alias=is_alias,
     )
 
 
@@ -169,9 +179,12 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
     )
     if item:
         return _item_result(item, "Найден экземпляр детали.")
-    loc = StorageLocation.objects.filter(barcode=code).first()
+    try:
+        loc, location_is_alias = resolve_storage_location(code, allow_code=False)
+    except StorageLocationResolutionError as exc:
+        return ScanResult(status="ambiguous", message=str(exc))
     if loc:
-        return _location_result(loc)
+        return _location_result(loc, is_alias=location_is_alias)
 
     # 2. Внутренний номер экземпляра (DS-…).
     item = (
@@ -186,9 +199,12 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
         return _batch_result(batch)
 
     # 4. Код ячейки.
-    loc = StorageLocation.objects.filter(code__iexact=code).first()
+    try:
+        loc, location_is_alias = resolve_storage_location(code, allow_barcode=False)
+    except StorageLocationResolutionError as exc:
+        return ScanResult(status="ambiguous", message=str(exc))
     if loc:
-        return _location_result(loc)
+        return _location_result(loc, is_alias=location_is_alias)
 
     # 5. Серийный номер (уникален в пределах вида; между видами может быть много).
     items = list(

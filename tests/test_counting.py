@@ -103,7 +103,7 @@ def refs(db):
 
 @pytest.fixture
 def location(db):
-    return get_or_create_location("B-S01-L02-D03-C08", name="Ящик 3 ячейка 8")
+    return get_or_create_location("S01-D03-C08", name="Ящик 3 ячейка 8")
 
 
 def _stock_snapshot():
@@ -118,18 +118,16 @@ def _stock_snapshot():
 
 
 def test_address_composed_and_reused(db):
-    # Новый формат без зоны (по умолчанию) и легаси-формат с зоной.
-    assert compose_address("", 1, 2, kind="drawer", unit_no=3, cell_no=8) == "S01-L02-D03-C08"
-    assert compose_address("B", 1, 2, kind="drawer", unit_no=3, cell_no=8) == "B-S01-L02-D03-C08"
-    loc1 = get_or_create_location("B-S01-L02-D03-C08")
-    loc2 = get_or_create_location("B-S01-L02-D03-C08")
+    assert compose_address(1, drawer_no=3, cell_no=8) == "S01-D03-C08"
+    loc1 = get_or_create_location("S01-D03-C08")
+    loc2 = get_or_create_location("S01-D03-C08")
     assert loc1.pk == loc2.pk  # дубликат кода не создаётся
-    assert StorageLocation.objects.filter(code="B-S01-L02-D03-C08").count() == 1
+    assert StorageLocation.objects.filter(code="S01-D03-C08").count() == 1
 
 
 def test_start_session_snapshots_address(refs, location, admin):
     session = start_session(location=location, by=admin)
-    assert session.full_address == "B-S01-L02-D03-C08"
+    assert session.full_address == "S01-D03-C08"
     assert session.status == InventoryCountingSession.Status.DRAFT
     assert session.storage_location == location
 
@@ -307,8 +305,8 @@ def test_double_post_is_blocked(refs, location, admin):
 
 
 def test_same_part_two_locations(refs, admin):
-    loc1 = get_or_create_location("B-S01-L02-D03-C08")
-    loc2 = get_or_create_location("A-S02-L01-K04-C02")
+    loc1 = get_or_create_location("S01-D03-C08")
+    loc2 = get_or_create_location("S02-D04-C02")
     s1 = start_session(location=loc1, by=admin)
     record_scan(s1, "219800345", by=admin)
     record_scan(s1, "219800345", by=admin)
@@ -321,7 +319,7 @@ def test_same_part_two_locations(refs, admin):
         b.location.code: b.quantity_available
         for b in StockBalance.objects.filter(part_type=part)
     }
-    assert balances == {"B-S01-L02-D03-C08": Decimal("2"), "A-S02-L01-K04-C02": Decimal("1")}
+    assert balances == {"S01-D03-C08": Decimal("2"), "S02-D04-C02": Decimal("1")}
 
 
 def test_cancel_session(refs, location, admin):
@@ -467,32 +465,36 @@ def test_scan_endpoint_enter_handling(client, make_user, refs, location):
 
 
 def test_new_session_creates_location_without_zone(client, make_user, refs):
-    """Hotfix 32.1: зона не требуется, адрес собирается без неё, коробка = B."""
+    """Новая сессия создаёт canonical S-D-C hierarchy без уровня L."""
     _login(client, make_user, superuser=True, name="boss")
     resp = client.post(
         reverse("counting_new"),
         {
-            "rack_number": "1", "level_number": "1",
-            "place_type": "box", "place_number": "1", "cell_number": "3", "comment": "",
+            "rack_number": "1",
+            "drawer_number": "1",
+            "cell_number": "3",
+            "comment": "",
         },
     )
     assert resp.status_code == 302
-    assert StorageLocation.objects.filter(code="S01-L01-B01-C03").exists()
+    cell = StorageLocation.objects.get(code="S01-D01-C03")
+    assert cell.parent.code == "S01-D01"
+    assert cell.parent.parent.code == "S01"
 
 
-def test_new_session_reuses_code_released_by_location_rename(client, make_user):
-    """A renamed cell must release its old automatic barcode for a new physical cell."""
+def test_new_session_resolves_historical_alias_after_location_rename(client, make_user):
+    """A renamed address remains bound to the same physical identity."""
     user = make_user("rename-counting", is_superuser=True)
     old_location = StorageLocation.objects.create(
         name="Старая ячейка",
-        code="S04-L03-D02-C07",
+        code="S04-D02-C07",
         level=StorageLocation.Level.CELL,
     )
     old_location_id = old_location.pk
     rename_storage_location(
         old_location,
-        new_code="S04-L03-D02-C08",
-        expected_code="S04-L03-D02-C07",
+        new_code="S04-D02-C08",
+        expected_code="S04-D02-C07",
         by=user,
     )
 
@@ -501,47 +503,41 @@ def test_new_session_reuses_code_released_by_location_rename(client, make_user):
         reverse("counting_new"),
         {
             "rack_number": "4",
-            "level_number": "3",
-            "place_type": "drawer",
-            "place_number": "2",
+            "drawer_number": "2",
             "cell_number": "7",
             "comment": "",
         },
     )
 
     assert response.status_code == 302
-    new_location = StorageLocation.objects.get(code="S04-L03-D02-C07")
-    session = InventoryCountingSession.objects.get(storage_location=new_location)
-    assert new_location.pk != old_location_id
-    assert new_location.barcode == "LOC:S04-L03-D02-C07"
-    assert session.full_address == "S04-L03-D02-C07"
+    session = InventoryCountingSession.objects.get(storage_location=old_location_id)
+    assert session.storage_location_id == old_location_id
+    assert session.full_address == "S04-D02-C08"
     old_location.refresh_from_db()
-    assert old_location.barcode == "LOC:S04-L03-D02-C08"
+    assert old_location.barcode == "LOC:S04-D02-C08"
 
 
 def test_new_session_shows_barcode_conflict_without_partial_records(client, make_user):
     _login(client, make_user, superuser=True, name="conflict-operator")
     StorageLocation.objects.create(
         name="Занятый штрихкод",
-        code="S04-L03-D02-C08",
-        barcode="LOC:S04-L03-D02-C07",
+        code="S04-D02-C08",
+        barcode="LOC:S04-D02-C07",
     )
 
     response = client.post(
         reverse("counting_new"),
         {
             "rack_number": "4",
-            "level_number": "3",
-            "place_type": "drawer",
-            "place_number": "2",
+            "drawer_number": "2",
             "cell_number": "7",
             "comment": "",
         },
     )
 
     assert response.status_code == 200
-    assert "штрихкод уже используется другой ячейкой" in response.content.decode()
-    assert not StorageLocation.objects.filter(code="S04-L03-D02-C07").exists()
+    assert response.context["form"].non_field_errors()
+    assert not StorageLocation.objects.filter(code="S04-D02-C07").exists()
     assert not InventoryCountingSession.objects.exists()
 
 
@@ -550,13 +546,10 @@ def test_new_page_shows_address_legend(client, make_user, db):
     html = client.get(reverse("counting_new")).content.decode()
     assert "Легенда адреса склада" in html
     assert "S - стеллаж (shelving unit)" in html
-    assert "L - уровень, снизу вверх (level)" in html
     assert "D - выдвижной ящик (drawer)" in html
-    assert "B - коробка или контейнер (box/bin)" in html
-    assert "C - ячейка внутри ящика или контейнера (cell/compartment)" in html
-    assert "S01-L02-D03-C08" in html
-    assert "S02-L01-B04-C02" in html
-    assert "S04-L02" in html
+    assert "C - ячейка внутри ящика (cell/compartment)" in html
+    assert "S01-D03-C08" in html
+    assert "L - уровень" not in html
 
 
 def test_comment_editable_and_safe(client, make_user, refs, location):
@@ -1359,7 +1352,7 @@ def test_stocktaking_shows_initial_inventory_with_lines(client, make_user, refs,
     html = client.get(reverse("inventory_count_list")).content.decode()
     assert "Первичный ввод ячеек" in html
     assert session.inventory_number in html
-    assert "B-S01-L02-D03-C08" in html
+    assert "S01-D03-C08" in html
     assert "Итоговое количество" in html
     # Документ: строки заполнены автоматически, ручное количество на месте.
     html = client.get(reverse("initial_inventory_detail", args=[session.pk])).content.decode()
@@ -1452,7 +1445,7 @@ def test_empty_draft_can_be_deleted(refs, location, admin):
     session = start_session(location=location, by=admin)
     assert can_delete_session(session) is True
     address = delete_session(session)
-    assert address == "B-S01-L02-D03-C08"
+    assert address == "S01-D03-C08"
     assert InventoryCountingSession.objects.count() == 0
 
 
@@ -1470,7 +1463,7 @@ def test_draft_with_scans_deleted_with_events_and_lines(refs, location, admin):
 
     assert InventoryCountingLine.objects.count() == 0  # строки удалены
     # Место хранения остаётся: адрес переиспользуется.
-    assert StorageLocation.objects.filter(code="B-S01-L02-D03-C08").exists()
+    assert StorageLocation.objects.filter(code="S01-D03-C08").exists()
     assert _stock_snapshot() == before  # склад не изменился
 
 
@@ -1524,7 +1517,7 @@ def test_delete_confirmation_page(client, make_user, refs, location, admin):
     record_scan(session, "219800345", by=admin)
     html = client.get(reverse("counting_delete", args=[session.pk])).content.decode()
     assert "Удалить черновик инвентаризации ячейки" in html
-    assert "B-S01-L02-D03-C08" in html
+    assert "S01-D03-C08" in html
     assert "Черновик" in html  # статус
     assert "Тестовая ячейка" in html  # описание
     assert "Остатки склада не изменятся" in html
@@ -1550,7 +1543,7 @@ def test_post_delete_redirects_with_message(client, make_user, refs, location, a
     resp = client.post(reverse("counting_delete", args=[session.pk]), follow=True)
     assert resp.redirect_chain[-1][0] == reverse("counting_list")
     text = resp.content.decode()
-    assert "Черновик инвентаризации ячейки B-S01-L02-D03-C08 удалён." in text
+    assert "Черновик инвентаризации ячейки S01-D03-C08 удалён." in text
     assert InventoryCountingSession.objects.count() == 0
 
 
@@ -1612,10 +1605,10 @@ def _list_session(*, code, user, created_at, posted_at=None, line_count=0, quant
 
 def test_counting_list_uses_live_location_code_after_rename(client, make_user):
     user = make_user("live-location", is_superuser=True)
-    location = StorageLocation.objects.create(name="C07", code="S04-L03-D02-C07")
+    location = StorageLocation.objects.create(name="C07", code="S04-D02-C07")
     session = InventoryCountingSession.objects.create(
         storage_location=location,
-        full_address="S04-L03-D02-C07",
+        full_address="S04-D02-C07",
         title="Пересчёт C07",
         status=InventoryCountingSession.Status.POSTED,
         created_by=user,
@@ -1624,11 +1617,11 @@ def test_counting_list_uses_live_location_code_after_rename(client, make_user):
     original_location_id = location.pk
     rename_storage_location(
         location,
-        new_code="S04-L03-D02-C08",
-        expected_code="S04-L03-D02-C07",
+        new_code="S04-D02-C08",
+        expected_code="S04-D02-C07",
         by=user,
     )
-    replacement = get_or_create_location("S04-L03-D02-C07")
+    historical_alias = get_or_create_location("S04-D02-C07")
 
     client.force_login(user)
     detail = client.get(reverse("counting_detail", args=[session.pk]))
@@ -1636,14 +1629,13 @@ def test_counting_list_uses_live_location_code_after_rename(client, make_user):
     session.refresh_from_db()
 
     assert detail.status_code == listed.status_code == 200
-    assert "S04-L03-D02-C08" in detail.content.decode()
+    assert "S04-D02-C08" in detail.content.decode()
     text = listed.content.decode()
-    assert "S04-L03-D02-C08" in text
-    assert "На момент пересчёта: S04-L03-D02-C07" in text
-    assert session.full_address == "S04-L03-D02-C07"
+    assert "S04-D02-C08" in text
+    assert "На момент пересчёта: S04-D02-C07" in text
+    assert session.full_address == "S04-D02-C07"
     assert session.storage_location_id == original_location_id
-    assert replacement.pk != original_location_id
-    assert session.storage_location_id != replacement.pk
+    assert historical_alias.pk == original_location_id
 
 
 def test_counting_list_sorting_and_conducted_null_order(client, make_user):

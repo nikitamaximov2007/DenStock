@@ -53,11 +53,12 @@ Companion documents:
 
 ## Warehouse addresses
 
-- Default format: `S01-L02-D03-C08` (no zones). Letters: S = shelving
-  unit, L = level counted bottom-up, D = drawer, B = box/bin, C = cell.
-- Do not use K, X, or zone prefixes for NEW addresses.
+- Default format: `S01-D03-C08` (no zones and no L). Letters: S = shelving
+  unit, D = drawer counted bottom-up, C = cell.
+- Do not use L, B, K, X, or zone prefixes for NEW addresses.
 - Legacy codes (with zones or K/X letters) must remain readable and
-  searchable; never migrate or delete existing `StorageLocation` codes.
+  searchable. Migrate them only through the explicit dry-run mapping command;
+  preserve `StorageLocation` IDs and historical aliases.
 - Single source of truth: `apps/warehouse/addresses.py` (`compose_address`).
 
 ## Before starting any task

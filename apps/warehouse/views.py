@@ -1,17 +1,23 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
-from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
+from django.views.generic import DetailView, FormView, ListView, UpdateView
 
 from apps.accounts.permissions import ManageWarehouseMixin
 from apps.inventory.movement import live_stock_rows
 
-from .forms import StorageLocationForm, StorageLocationRenameForm, StorageLocationUpdateForm
+from .drawer_rename import build_drawer_rename_plan, rename_storage_drawer
+from .forms import (
+    StorageAddressV2CreateForm,
+    StorageDrawerRenameForm,
+    StorageLocationRenameForm,
+    StorageLocationUpdateForm,
+)
 from .models import StorageLocation
 from .services import (
     StorageLocationRemovalError,
@@ -93,6 +99,14 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
             self.request.user.can_manage_warehouse
             and self.object.level == StorageLocation.Level.CELL
         )
+        ctx["can_rename_cell"] = (
+            self.request.user.can_manage_warehouse
+            and self.object.level == StorageLocation.Level.CELL
+        )
+        ctx["can_rename_drawer"] = (
+            self.request.user.can_manage_warehouse
+            and self.object.level == StorageLocation.Level.DRAWER
+        )
         ctx["can_recount"] = (
             self.request.user.can_manage_stocktaking and self.object.can_hold_stock()
         )
@@ -102,11 +116,9 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
         return ctx
 
 
-class LocationCreateView(ManageWarehouseMixin, CreateView):
-    model = StorageLocation
-    form_class = StorageLocationForm
+class LocationCreateView(ManageWarehouseMixin, FormView):
+    form_class = StorageAddressV2CreateForm
     template_name = "directories/form.html"
-    success_url = reverse_lazy("warehouse_index")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -114,8 +126,13 @@ class LocationCreateView(ManageWarehouseMixin, CreateView):
         return ctx
 
     def form_valid(self, form):
+        try:
+            location = form.save()
+        except ValidationError as exc:
+            form.add_error(None, exc)
+            return self.form_invalid(form)
         messages.success(self.request, "Место хранения создано.")
-        return super().form_valid(form)
+        return redirect("location_detail", pk=location.pk)
 
 
 class LocationUpdateView(ManageWarehouseMixin, UpdateView):
@@ -139,7 +156,11 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
     template_name = "warehouse/location_rename.html"
 
     def dispatch(self, request, *args, **kwargs):
-        self.location = get_object_or_404(StorageLocation, pk=kwargs["pk"])
+        self.location = get_object_or_404(
+            StorageLocation,
+            pk=kwargs["pk"],
+            level=StorageLocation.Level.CELL,
+        )
         return super().dispatch(request, *args, **kwargs)
 
     def get_initial(self):
@@ -180,6 +201,68 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
             _safe_internal_next(self.request, form.cleaned_data.get("next", ""))
             or reverse("location_detail", args=[location.pk])
         )
+
+
+class LocationDrawerRenameView(ManageWarehouseMixin, FormView):
+    form_class = StorageDrawerRenameForm
+    template_name = "warehouse/location_drawer_rename.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        self.drawer = get_object_or_404(StorageLocation, pk=kwargs["pk"])
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_initial(self):
+        initial = super().get_initial()
+        initial["expected_code"] = self.drawer.code
+        return initial
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["drawer"] = self.drawer
+        return ctx
+
+    def form_valid(self, form):
+        try:
+            plan = build_drawer_rename_plan(
+                self.drawer,
+                form.cleaned_data["new_number"],
+            )
+        except StorageLocationRenameError as exc:
+            form.add_error("new_number", str(exc))
+            return self.form_invalid(form)
+        if not plan.can_apply:
+            for conflict in plan.conflicts:
+                form.add_error(None, conflict)
+            return self.form_invalid(form)
+        if self.request.POST.get("action") != "apply":
+            confirmation = self.form_class(
+                initial={
+                    "expected_code": plan.old_code,
+                    "expected_fingerprint": plan.fingerprint,
+                    "new_number": form.cleaned_data["new_number"],
+                }
+            )
+            return self.render_to_response(
+                self.get_context_data(form=confirmation, preview=plan)
+            )
+        try:
+            renamed = rename_storage_drawer(
+                self.drawer,
+                new_number=form.cleaned_data["new_number"],
+                expected_code=form.cleaned_data["expected_code"],
+                expected_fingerprint=form.cleaned_data["expected_fingerprint"],
+                by=self.request.user,
+            )
+        except StorageLocationRenameError as exc:
+            form.add_error(None, str(exc))
+            return self.form_invalid(form)
+        messages.success(
+            self.request,
+            f"Ящик {plan.old_code} переименован в {renamed.code}. "
+            f"Обновлено ячеек: {len(plan.changes) - 1}.",
+        )
+        messages.warning(self.request, "Распечатайте новые этикетки ящика и ячеек.")
+        return redirect("location_detail", pk=renamed.pk)
 
 
 @require_POST

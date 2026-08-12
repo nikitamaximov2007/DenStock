@@ -14,10 +14,11 @@ class StorageLocation(models.Model):
 
     class Level(models.TextChoices):
         WAREHOUSE = "warehouse", "Склад"
-        ZONE = "zone", "Зона"
+        ZONE = "zone", "Зона (legacy)"
         RACK = "rack", "Стеллаж"
-        SECTION = "section", "Секция"
-        SHELF = "shelf", "Полка"
+        DRAWER = "drawer", "Ящик"
+        SECTION = "section", "Секция (legacy)"
+        SHELF = "shelf", "Полка (legacy)"
         CELL = "cell", "Ячейка"
 
     class Purpose(models.TextChoices):
@@ -29,7 +30,9 @@ class StorageLocation(models.Model):
     name = models.CharField("Название", max_length=150)
     code = models.CharField("Код", max_length=60, unique=True)
     barcode = models.CharField("Штрихкод", max_length=80, unique=True, blank=True)
-    level = models.CharField("Уровень", max_length=20, choices=Level.choices, default=Level.CELL)
+    level = models.CharField(
+        "Тип места", max_length=20, choices=Level.choices, default=Level.CELL
+    )
     purpose = models.CharField(
         "Назначение", max_length=20, choices=Purpose.choices, default=Purpose.NORMAL
     )
@@ -110,6 +113,11 @@ class StorageLocation(models.Model):
 class StorageLocationRenameHistory(models.Model):
     """Неизменяемый аудит переименований физической ячейки."""
 
+    class Reason(models.TextChoices):
+        MANUAL = "manual", "Ручное переименование"
+        DRAWER = "drawer", "Переименование ящика"
+        ADDRESS_V2 = "address_v2", "Миграция адреса V2"
+
     location = models.ForeignKey(
         StorageLocation,
         verbose_name="Ячейка",
@@ -127,6 +135,12 @@ class StorageLocationRenameHistory(models.Model):
         related_name="+",
     )
     renamed_at = models.DateTimeField("Переименовано", auto_now_add=True, db_index=True)
+    reason = models.CharField(
+        "Причина", max_length=20, choices=Reason.choices, default=Reason.MANUAL
+    )
+    operation_key = models.CharField(
+        "Ключ групповой операции", max_length=64, blank=True, db_index=True
+    )
 
     class Meta:
         verbose_name = "История переименования ячейки"
@@ -135,6 +149,51 @@ class StorageLocationRenameHistory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.old_code} -> {self.new_code}"
+
+
+class StorageLocationAlias(models.Model):
+    """Уникальный исторический code/barcode той же физической Location."""
+
+    class Kind(models.TextChoices):
+        RENAME = "rename", "Переименование"
+        DRAWER = "drawer", "Переименование ящика"
+        ADDRESS_V2 = "address_v2", "Миграция адреса V2"
+
+    location = models.ForeignKey(
+        StorageLocation,
+        verbose_name="Текущее место",
+        on_delete=models.PROTECT,
+        related_name="aliases",
+    )
+    code = models.CharField("Исторический код", max_length=60, unique=True)
+    barcode = models.CharField(
+        "Исторический штрихкод", max_length=80, unique=True, null=True, blank=True
+    )
+    kind = models.CharField(
+        "Источник", max_length=20, choices=Kind.choices, default=Kind.RENAME
+    )
+    created_by = models.ForeignKey(
+        django_settings.AUTH_USER_MODEL,
+        verbose_name="Кто создал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Исторический адрес места"
+        verbose_name_plural = "Исторические адреса мест"
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self) -> str:
+        return f"{self.code} -> {self.location.code}"
+
+    def save(self, *args, **kwargs):
+        self.code = self.code.strip().upper()
+        self.barcode = self.barcode.strip().upper() if self.barcode else None
+        super().save(*args, **kwargs)
 
 
 class ValuationSettings(models.Model):
