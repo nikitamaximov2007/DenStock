@@ -312,7 +312,7 @@ def send_message(
     *, conversation, user, text: str, token: uuid.UUID, route_path: str = "", upload=None,
     image_consent: bool = False,
 ) -> SupportFlowResult:
-    if not settings.AI_SUPPORT_ENABLED:
+    if settings.DENSTOCK_MODE == "emergency-local" or not settings.AI_SUPPORT_ENABLED:
         raise FeatureDisabled
     text = (text or "").strip()
     if not text or len(text) > settings.AI_SUPPORT_MAX_MESSAGE_CHARS:

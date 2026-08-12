@@ -33,6 +33,8 @@ from .services import (
 
 
 def _provider_state():
+    if settings.DENSTOCK_MODE == "emergency-local":
+        return "offline"
     if not settings.AI_SUPPORT_ENABLED:
         return "disabled"
     provider = normalize_provider_name(settings.AI_SUPPORT_PROVIDER)

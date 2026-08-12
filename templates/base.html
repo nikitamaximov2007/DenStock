@@ -34,6 +34,25 @@
           </form>
         </div>
       </header>
+      {% if emergency_mode.enabled %}
+        <section class="emergency-banner{% if not emergency_mode.writable %} emergency-banner--frozen{% endif %}"
+                 role="status"
+                 aria-live="polite">
+          <strong>АВТОНОМНЫЙ РЕЖИМ</strong>
+          <span>
+            {% if emergency_mode.writable %}
+              Данные работают локально и ещё не синхронизированы с сервером.
+            {% else %}
+              Локальные данные заморожены. Новые складские операции запрещены.
+            {% endif %}
+          </span>
+          {% if emergency_mode.session %}
+            <span>Начало: {{ emergency_mode.session.started_at|ru_dt }}</span>
+            <span>Base backup: {{ emergency_mode.session.base_backup_created_at|ru_dt }}</span>
+          {% endif %}
+          <span>Instance: {{ emergency_mode.instance_id }}</span>
+        </section>
+      {% endif %}
       <div class="layout">
         <label class="nav-backdrop" for="nav-toggle" aria-hidden="true"></label>
         <nav class="sidebar"
