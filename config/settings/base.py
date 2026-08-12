@@ -188,6 +188,35 @@ AI_SUPPORT_CONVERSATION_RETENTION_DAYS = env.int(
 DENSTOCK_PUBLIC_BASE_URL = env("DENSTOCK_PUBLIC_BASE_URL", default="")
 DENSTOCK_APP_COMMIT = env("DENSTOCK_APP_COMMIT", default="")
 
+# --- Deployment identity and controlled failover ----------------------------
+DENSTOCK_MODE = env("DENSTOCK_MODE", default="development").strip().lower()
+DENSTOCK_INSTANCE_ID = env("DENSTOCK_INSTANCE_ID", default="development").strip()
+DENSTOCK_EMERGENCY_ROOT = Path(
+    env("DENSTOCK_EMERGENCY_ROOT", default=str(BASE_DIR / ".emergency"))
+)
+DENSTOCK_EMERGENCY_DB_PREFIX = env(
+    "DENSTOCK_EMERGENCY_DB_PREFIX", default="denstock_emergency_"
+)
+DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS = env.list(
+    "DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS",
+    default=["localhost", "127.0.0.1", "::1", "emergency-db"],
+)
+DENSTOCK_PRODUCTION_DB_HOSTS = env.list(
+    "DENSTOCK_PRODUCTION_DB_HOSTS", default=["185.250.44.206"]
+)
+DENSTOCK_EMERGENCY_STALE_WARNING_HOURS = env.int(
+    "DENSTOCK_EMERGENCY_STALE_WARNING_HOURS", default=24
+)
+DENSTOCK_EMERGENCY_KEEP_STANDBY = env.int(
+    "DENSTOCK_EMERGENCY_KEEP_STANDBY", default=2
+)
+DENSTOCK_EMERGENCY_PROBE_TOKEN = env(
+    "DENSTOCK_EMERGENCY_PROBE_TOKEN", default=""
+)
+DENSTOCK_BACKUP_STORAGE_ORIGIN = env(
+    "DENSTOCK_BACKUP_STORAGE_ORIGIN", default="local"
+)
+
 # --- Эксплуатация (Слой 25) -------------------------------------------------
 # Каталог резервных копий (БД + media). Не коммитится (см. .gitignore).
 BACKUP_ROOT = Path(env("BACKUP_ROOT", default=str(BASE_DIR / "backups")))
