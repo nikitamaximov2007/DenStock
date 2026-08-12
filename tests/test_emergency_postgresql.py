@@ -10,7 +10,7 @@ import pytest
 from django.db import close_old_connections, connection, connections, transaction
 
 from apps.catalog.models import Category, PartType, Unit
-from apps.inventory.models import StockLot
+from apps.inventory.models import NumberSequence, StockLot
 from apps.operations import backup
 from apps.operations.emergency_lifecycle import (
     EmergencyLifecycleError,
@@ -260,6 +260,9 @@ def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
         username="postgres-emergency", password="test"
     )
     supplier = Supplier.objects.create(name="PostgreSQL source supplier")
+    NumberSequence.objects.update_or_create(
+        key="receipt", defaults={"prefix": "ПОС-", "last_value": 0}
+    )
     category = Category.objects.create(name="PostgreSQL source category")
     unit, _ = Unit.objects.get_or_create(name="Штука", defaults={"short_name": "шт"})
     part = PartType.objects.create(
