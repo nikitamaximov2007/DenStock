@@ -51,7 +51,7 @@ def part(db):
 
 @pytest.fixture
 def session(db):
-    loc = get_or_create_location("B-S01-L02-D03-C08", name="Ящик")
+    loc = get_or_create_location("S01-D03-C08", name="Ящик")
     return InventoryCountingSession.objects.create(
         storage_location=loc, full_address=loc.code, title="t",
     )

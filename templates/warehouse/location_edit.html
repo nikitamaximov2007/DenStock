@@ -5,21 +5,28 @@
   <form method="post" class="form">
     {% csrf_token %}
     <p>
-      <label for="location-code">Код ячейки</label>
+      <label for="location-code">Код места</label>
       <input id="location-code" type="text" value="{{ object.code }}" readonly>
-      <span class="muted">Код существующей ячейки изменяется через отдельную операцию переименования.</span>
+      <span class="muted">Код существующего места изменяется через отдельную операцию переименования.</span>
     </p>
-    <p>
-      <a class="btn btn--secondary btn--small"
-         href="{% url 'location_rename' object.pk %}">Переименовать ячейку</a>
-    </p>
+    {% if object.level == "cell" %}
+      <p>
+        <a class="btn btn--secondary btn--small"
+           href="{% url 'location_rename' object.pk %}">Переименовать ячейку</a>
+      </p>
+    {% elif object.level == "drawer" %}
+      <p>
+        <a class="btn btn--secondary btn--small"
+           href="{% url 'location_drawer_rename' object.pk %}">Переименовать ящик</a>
+      </p>
+    {% endif %}
     <p>
       <label for="location-barcode">Штрихкод</label>
       <input id="location-barcode"
              type="text"
              value="{{ object.barcode }}"
              readonly>
-      <span class="muted">Автоматический штрихкод меняется вместе с кодом ячейки. После переименования распечатайте новую этикетку.</span>
+      <span class="muted">Автоматический штрихкод меняется вместе с кодом места. После переименования распечатайте новую этикетку.</span>
     </p>
     {{ form.as_p }}
     <button type="submit" class="btn btn--primary">Сохранить</button>

@@ -136,13 +136,15 @@
           <td>{{ m.quantity|quantity_int }}</td>
           <td>
             {% if m.from_location %}
-              {{ m.from_location.code }}
+              {{ m.from_location_historical_code }}
+              {% if m.from_location_was_renamed %}<span class="muted">(сейчас {{ m.from_location.code }})</span>{% endif %}
             {% else %}
               ·
             {% endif %}
             →
             {% if m.to_location %}
-              {{ m.to_location.code }}
+              {{ m.to_location_historical_code }}
+              {% if m.to_location_was_renamed %}<span class="muted">(сейчас {{ m.to_location.code }})</span>{% endif %}
             {% else %}
               ·
             {% endif %}

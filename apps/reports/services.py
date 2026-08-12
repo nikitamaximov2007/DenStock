@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Count, Max, Sum
+from django.db.models.functions import Trim
 from django.utils import timezone
 
 from apps.inventory.models import StockBalance, StockMovement
@@ -207,6 +208,81 @@ def get_sales_report(period: Period) -> SalesReport:
             )
             for r in top_qty
         ],
+    )
+
+
+def _completed_sale_lines(period: Period):
+    """Frozen completed sale lines for customer reports."""
+    start, end = _bounds(period)
+    return SaleLine.objects.filter(
+        sale__status=Sale.Status.COMPLETED,
+        sale__sold_at__range=(start, end),
+    )
+
+
+def get_sales_by_customer(period: Period):
+    """Aggregate completed line snapshots by the stored customer name."""
+    return (
+        _completed_sale_lines(period)
+        .annotate(report_customer=Trim("sale__customer_name"))
+        .values("report_customer")
+        .annotate(
+            sale_count=Count("sale_id", distinct=True),
+            unique_parts=Count("part_type_id", distinct=True),
+            quantity=Sum("quantity"),
+            revenue=Sum("total_price"),
+            last_sale=Max("sale__sold_at"),
+        )
+        .order_by("-revenue", "report_customer")
+    )
+
+
+def _customer_sale_lines(period: Period, *, customer_name: str, missing: bool):
+    customer_name = (customer_name or "").strip()
+    expected = "" if missing else customer_name
+    return _completed_sale_lines(period).annotate(
+        report_customer=Trim("sale__customer_name")
+    ).filter(report_customer=expected)
+
+
+def get_customer_part_sales(period: Period, *, customer_name: str, missing: bool):
+    """Aggregate one customer's completed snapshots by current part identity."""
+    return (
+        _customer_sale_lines(period, customer_name=customer_name, missing=missing)
+        .values("part_type_id", "part_type__name")
+        .annotate(
+            quantity=Sum("quantity"),
+            revenue=Sum("total_price"),
+            operation_count=Count("sale_id", distinct=True),
+            last_sale=Max("sale__sold_at"),
+        )
+        .order_by("-revenue", "part_type__name", "part_type_id")
+    )
+
+
+def attach_customer_part_identity(rows) -> list[dict]:
+    """Attach canonical exact numbers in fixed queries, without per-row lookup."""
+    rows = list(rows)
+    identities = identity_for_part_ids({row["part_type_id"] for row in rows})
+    for row in rows:
+        identity = identities.get(row["part_type_id"])
+        row["exact_number"] = identity.exact_number if identity else ""
+    return rows
+
+
+def get_customer_part_operations(
+    period: Period,
+    *,
+    customer_name: str,
+    missing: bool,
+    part_type_id: int,
+):
+    """Individual completed operations with frozen unit and line prices."""
+    return (
+        _customer_sale_lines(period, customer_name=customer_name, missing=missing)
+        .filter(part_type_id=part_type_id)
+        .select_related("sale", "sale__sold_by", "part_type")
+        .order_by("-sale__sold_at", "-sale_id", "pk")
     )
 
 

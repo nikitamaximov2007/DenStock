@@ -3,6 +3,11 @@ from django.urls import path
 from . import section_views, views
 
 urlpatterns = [
+    path(
+        "cell/<int:location_pk>/new/",
+        section_views.cell_recount_new,
+        name="cell_recount_new",
+    ),
     path("section/", section_views.section_recount_list, name="section_recount_list"),
     path("section/new/", section_views.section_recount_new, name="section_recount_new"),
     path(

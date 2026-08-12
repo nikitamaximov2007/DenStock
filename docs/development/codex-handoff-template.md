@@ -71,5 +71,5 @@ Hard rules:
 - Do not change production infrastructure (Docker, deploy scripts, env)
   unless explicitly requested.
 - Money is `Decimal`; BRP customer RUB prices are whole rubles
-  (ROUND_HALF_UP). New warehouse addresses use `S01-L02-D03-C08`
-  (no zones, no K/X letters); legacy codes stay readable.
+  (ROUND_HALF_UP). New warehouse addresses use `S01-D03-C08`
+  (no L, zones, B/K/X letters); legacy codes stay readable through aliases.

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% load number_format %}
+{% block title %}Удалить {{ location.code }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Удалить ячейку {{ location.code }}</h1>
+      <p class="page-subtitle">Сначала проверьте остаток и исторические ссылки.</p>
+    </div>
+    <a class="btn btn--secondary"
+       href="{% url 'location_detail' location.pk %}">Отмена</a>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <h2 class="card__title">Текущее состояние</h2>
+      <dl class="recount-metrics">
+        <div>
+          <dt>Физически</dt>
+          <dd>
+            {{ preview.physical|quantity_int }}
+          </dd>
+        </div>
+        <div>
+          <dt>Доступно</dt>
+          <dd>
+            {{ preview.available|quantity_int }}
+          </dd>
+        </div>
+        <div>
+          <dt>Зарезервировано</dt>
+          <dd>
+            {{ preview.reserved|quantity_int }}
+          </dd>
+        </div>
+        <div>
+          <dt>Исторических ссылок</dt>
+          <dd>
+            {{ preview.reference_count }}
+          </dd>
+        </div>
+      </dl>
+      {% if preview.references %}
+        <details>
+          <summary>Показать исторические ссылки</summary>
+          <ul>
+            {% for item in preview.references %}
+              <li>{{ item.label }}: {{ item.count }}</li>
+            {% endfor %}
+          </ul>
+        </details>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card danger-panel">
+    <div class="card__body">
+      <h2 class="card__title">Подтверждение</h2>
+      <p>Вы уверены, что хотите удалить ячейку <strong>{{ location.code }}</strong>?</p>
+      {% if preview.has_stock %}
+        <div class="alert alert--danger">Действие запрещено, пока в ячейке есть физический, доступный или зарезервированный остаток.</div>
+      {% elif preview.active_lock %}
+        <div class="alert alert--danger">Ячейка временно заблокирована активным пересчётом.</div>
+      {% elif preview.active_children %}
+        <div class="alert alert--danger">Сначала обработайте активные вложенные места.</div>
+      {% elif preview.can_hard_delete %}
+        <p>Ячейка никогда не использовалась. Она будет удалена без затрагивания складской истории.</p>
+      {% else %}
+        <p>Ячейка использовалась исторически. Hard delete запрещён; она будет деактивирована и останется во всех документах и движениях.</p>
+      {% endif %}
+      {% if preview.can_hard_delete or preview.can_archive %}
+        <form method="post" class="stack-form">
+          {% csrf_token %}
+          <label for="expected-code">Введите код ячейки для подтверждения</label>
+          <input id="expected-code"
+                 name="expected_code"
+                 required
+                 autocomplete="off"
+                 placeholder="{{ location.code }}">
+          <input type="hidden"
+                 name="action"
+                 value="{% if preview.can_hard_delete %}delete{% else %}archive{% endif %}">
+          <button class="btn btn--danger" type="submit">
+            {% if preview.can_hard_delete %}
+              Удалить безвозвратно
+            {% else %}
+              Архивировать ячейку
+            {% endif %}
+          </button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

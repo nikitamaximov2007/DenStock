@@ -25,7 +25,11 @@ from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import get_or_create_location
 from apps.warehouse.forms import StorageLocationForm
-from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
+from apps.warehouse.models import (
+    StorageLocation,
+    StorageLocationAlias,
+    StorageLocationRenameHistory,
+)
 from apps.warehouse.services import StorageLocationRenameError, rename_storage_location
 
 PASSWORD = "parol-12345"
@@ -60,28 +64,34 @@ def _create_payload(**over):
     return data
 
 
-def test_create_warehouse(make_user, client):
+def test_create_v2_rack(make_user, client):
     make_user("admin", is_superuser=True)
     client.login(username="admin", password=PASSWORD)
     resp = client.post(
         reverse("location_create"),
-        _create_payload(name="Основной склад", code="СКЛАД-1", level=L.WAREHOUSE),
+        {"location_type": "rack", "rack_number": "1", "name": "Стеллаж 1"},
     )
     assert resp.status_code == 302
-    assert StorageLocation.objects.filter(code="СКЛАД-1", level=L.WAREHOUSE).exists()
+    assert StorageLocation.objects.filter(code="S01", level=L.RACK).exists()
 
 
-def test_create_zone_inside_warehouse(make_user, client):
+def test_create_v2_drawer_inside_rack(make_user, client):
     make_user("admin", is_superuser=True)
     client.login(username="admin", password=PASSWORD)
-    wh = StorageLocation.objects.create(name="Склад", code="СКЛАД-1", level=L.WAREHOUSE)
     resp = client.post(
         reverse("location_create"),
-        _create_payload(name="Зона A", code="A", level=L.ZONE, parent=wh.pk),
+        {
+            "location_type": "drawer",
+            "rack_number": "1",
+            "drawer_number": "2",
+            "name": "Ящик 2",
+        },
     )
     assert resp.status_code == 302
-    zone = StorageLocation.objects.get(code="A")
-    assert zone.parent == wh
+    rack = StorageLocation.objects.get(code="S01")
+    drawer = StorageLocation.objects.get(code="S01-D02")
+    assert drawer.parent == rack
+    assert drawer.level == L.DRAWER
 
 
 def test_create_nested_levels(db):
@@ -121,14 +131,15 @@ def test_parent_cycle_rejected(db):
         a.full_clean()
 
 
-def test_toggle_deactivates_without_delete(make_user, client):
+def test_cell_toggle_requires_safe_remove_or_archive_flow(make_user, client):
     make_user("admin", is_superuser=True)
     client.login(username="admin", password=PASSWORD)
     loc = StorageLocation.objects.create(name="Ячейка", code="C1", level=L.CELL)
     resp = client.post(reverse("location_toggle", args=[loc.pk]))
     assert resp.status_code == 302
+    assert resp.url == reverse("location_remove", args=[loc.pk])
     loc.refresh_from_db()
-    assert loc.is_active is False
+    assert loc.is_active is True
     assert StorageLocation.objects.filter(pk=loc.pk).exists()
 
 
@@ -350,14 +361,18 @@ def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_invent
         renamed_by=data["admin"],
     ).count() == 1
 
-    assert resolve_scan(old_code).status == "unknown"
+    assert resolve_scan(old_code).id == location.pk
+    assert resolve_scan(old_code).is_alias is True
     assert resolve_scan(location.code).id == location.pk
-    assert resolve_scan(original_barcode).status == "unknown"
+    assert resolve_scan(original_barcode).id == location.pk
     assert resolve_scan(location.barcode).id == location.pk
-    replacement_location = get_or_create_location(old_code)
-    assert replacement_location.pk != location.pk
-    assert replacement_location.barcode == original_barcode
-    assert not StockBalance.objects.filter(location=replacement_location).exists()
+    resolved_location = get_or_create_location(old_code, allow_legacy=True)
+    assert resolved_location.pk == location.pk
+    assert StorageLocationAlias.objects.filter(
+        location=location,
+        code=old_code,
+        barcode=original_barcode,
+    ).exists()
     balance.refresh_from_db()
     action.refresh_from_db()
     assert balance.location_id == location.pk
@@ -598,7 +613,7 @@ def test_existing_location_edit_keeps_code_and_barcode_server_side(renamed_inven
     html = page.content.decode()
     assert page.status_code == 200
     assert f'value="{original_code}"' in html
-    assert "Код существующей ячейки изменяется через отдельную операцию" in html
+    assert "Код существующего места изменяется через отдельную операцию" in html
     assert reverse("location_rename", args=[location.pk]) in html
     assert f'value="{original_barcode}"' in html
 
@@ -621,7 +636,7 @@ def test_existing_location_edit_keeps_code_and_barcode_server_side(renamed_inven
     assert location.code == original_code
     assert location.barcode == original_barcode
     assert location.name == "Ячейка после правки"
-    assert location.level == L.SHELF
+    assert location.level == L.CELL
     assert location.purpose == P.QUARANTINE
     assert location.sort_order == 7
     assert location.description == "Проверенная административная настройка"

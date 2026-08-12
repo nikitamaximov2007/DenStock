@@ -6,15 +6,31 @@
   </div>
   <div class="card">
     <div class="card__body">
-      <p>Будет пересчитан участок <span class="code-pill">S03-L03-D02</span> из десяти ячеек C01-C10.</p>
+      {% if drawers %}
+        <p>Выберите ящик. В пересчёт войдут все его активные ячейки.</p>
+      {% else %}
+        <p>Будет использован текущий legacy-участок из десяти ячеек.</p>
+      {% endif %}
       <p class="status-block status-block--warning">
         После запуска ячейки будут заблокированы для приёмки, перемещений, продаж,
         резервов, списаний и других операций, меняющих остаток.
       </p>
-      <form method="post" class="form-actions">
+      <form method="post">
         {% csrf_token %}
-        <button class="btn btn--primary" type="submit">Создать документ</button>
-        <a class="btn btn--secondary" href="{% url 'section_recount_list' %}">Отмена</a>
+        {% if drawers %}
+          <div class="form-group">
+            <label for="drawer_id">Ящик</label>
+            <select id="drawer_id" name="drawer_id" required>
+              {% for drawer in drawers %}
+                <option value="{{ drawer.pk }}">{{ drawer.code }} · {{ drawer.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        {% endif %}
+        <div class="form-actions">
+          <button class="btn btn--primary" type="submit">Создать документ</button>
+          <a class="btn btn--secondary" href="{% url 'section_recount_list' %}">Отмена</a>
+        </div>
       </form>
     </div>
   </div>

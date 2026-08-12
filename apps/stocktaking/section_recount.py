@@ -15,22 +15,29 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from apps.catalog.models import PartType
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
 from apps.inventory.models import (
+    PartItem,
     PartPreferredLocation,
     StockBalance,
     StockLocationLock,
     StockLot,
 )
-from apps.inventory.presentation import part_exact_number
+from apps.inventory.presentation import part_exact_number, with_part_identity
 from apps.inventory.services import (
+    ITEM_PHYSICAL_STATUSES,
     adjust_stock_lot_quantity,
     get_or_create_section_recount_lot,
     set_preferred_part_location,
 )
 from apps.procurement.models import Batch, BatchLine
 from apps.sales.models import Reservation, ReservationLine
-from apps.warehouse.addresses import get_or_create_location
+from apps.warehouse.addresses import (
+    AddressError,
+    get_or_create_location,
+    parse_address,
+)
 from apps.warehouse.models import StorageLocation
 
 from .models import (
@@ -62,6 +69,27 @@ class SectionRecountError(ValueError):
 
 
 def canonical_cell_codes(section_code: str = SECTION_CODE) -> list[str]:
+    try:
+        parsed = parse_address(section_code)
+    except AddressError:
+        parsed = None
+    if parsed is not None and parsed.drawer is not None and parsed.cell is None:
+        drawer = StorageLocation.objects.filter(
+            code=parsed.code,
+            level=StorageLocation.Level.DRAWER,
+            is_active=True,
+        ).first()
+        if drawer is None:
+            return []
+        return list(
+            drawer.children.filter(
+                level=StorageLocation.Level.CELL,
+                is_active=True,
+                storage_allowed=True,
+            )
+            .order_by("code", "pk")
+            .values_list("code", flat=True)
+        )
     return [f"{section_code}-C{number:02d}" for number in range(1, CELL_COUNT + 1)]
 
 
@@ -137,6 +165,30 @@ def _format_reservations(reservations) -> str:
 
 def _active_locations(section_code: str) -> list[StorageLocation]:
     codes = canonical_cell_codes(section_code)
+    try:
+        parsed = parse_address(section_code)
+    except AddressError:
+        parsed = None
+    if parsed is not None and parsed.drawer is not None and parsed.cell is None:
+        if not codes:
+            raise SectionRecountError(
+                "В выбранном V2-ящике нет активных ячеек, доступных для хранения."
+            )
+        locations = list(
+            StorageLocation.objects.filter(code__in=codes)
+            .select_related("parent")
+            .order_by("code", "pk")
+        )
+        if any(
+            location.parent is None
+            or location.parent.code != section_code
+            or location.level != StorageLocation.Level.CELL
+            for location in locations
+        ):
+            raise SectionRecountError("Иерархия V2-ящика не соответствует его адресам.")
+        if [location.code for location in locations] != codes:
+            raise SectionRecountError("Структура V2-ячеек изменилась во время проверки.")
+        return locations
     locations = list(StorageLocation.objects.filter(code__in=codes).order_by("code", "pk"))
     present = {location.code for location in locations}
     missing = [code for code in codes if code not in present]
@@ -146,7 +198,7 @@ def _active_locations(section_code: str) -> list[StorageLocation]:
             f"получено: {', '.join(missing) or 'ничего'}."
         )
     if missing:
-        location = get_or_create_location(missing[0], name=missing[0])
+        location = get_or_create_location(missing[0], name=missing[0], allow_legacy=True)
         if not location.is_active or not location.storage_allowed:
             raise SectionRecountError("C05 существует, но недоступна для хранения.")
         locations.append(location)
@@ -156,7 +208,9 @@ def _active_locations(section_code: str) -> list[StorageLocation]:
     return locations
 
 
-def _capture_snapshot(locations: list[StorageLocation], *, section_code=SECTION_CODE) -> dict:
+def _capture_snapshot(
+    locations: list[StorageLocation], *, section_code=SECTION_CODE, scope="section"
+) -> dict:
     location_ids = [location.pk for location in locations]
     balances = list(
         StockBalance.objects.filter(location_id__in=location_ids)
@@ -164,13 +218,17 @@ def _capture_snapshot(locations: list[StorageLocation], *, section_code=SECTION_
         .order_by("location_id", "part_type_id", "batch_line_id")
     )
     lots = list(
-        StockLot.objects.filter(location_id__in=location_ids, quantity__gt=0)
-        .select_related("part_type", "batch", "batch_line", "location")
-        .order_by("location_id", "part_type_id", "batch_line_id", "pk")
+        with_part_identity(
+            StockLot.objects.filter(location_id__in=location_ids, quantity__gt=0)
+            .select_related("part_type", "batch", "batch_line", "location"),
+            part_field="part_type",
+        ).order_by("location_id", "part_type_id", "batch_line_id", "pk")
     )
     part_ids = {item.part_type_id for item in balances} | {item.part_type_id for item in lots}
     preferred = list(
-        PartPreferredLocation.objects.filter(part_type_id__in=part_ids)
+        PartPreferredLocation.objects.filter(
+            Q(part_type_id__in=part_ids) | Q(location_id__in=location_ids)
+        )
         .values("part_type_id", "location_id", "updated_at")
         .order_by("part_type_id")
     )
@@ -179,6 +237,7 @@ def _capture_snapshot(locations: list[StorageLocation], *, section_code=SECTION_
     reservations = _reservation_snapshot(_active_reservation_lines(location_ids))
     snapshot = {
         "section_code": section_code,
+        "scope": scope,
         "locations": [
             {
                 "id": location.pk,
@@ -219,6 +278,12 @@ def _capture_snapshot(locations: list[StorageLocation], *, section_code=SECTION_
                 "available": lot.status == StockLot.Status.AVAILABLE,
                 "status": lot.status,
                 "unit_cost_rub": str(lot.landed_unit_cost_rub),
+                "batch_line_quantity": str(lot.batch_line.quantity),
+                "batch_line_landed_unit_cost_rub": str(
+                    lot.batch_line.landed_unit_cost_rub
+                ),
+                "batch_line_updated_at": lot.batch_line.updated_at.isoformat(),
+                "batch_updated_at": lot.batch.updated_at.isoformat(),
                 "batch_status": lot.batch.status,
                 "batch_cost_finalized": lot.batch.cost_finalized,
             }
@@ -233,12 +298,23 @@ def _capture_snapshot(locations: list[StorageLocation], *, section_code=SECTION_
 
 def create_section_recount(*, section_code=SECTION_CODE, by=None) -> SectionRecount:
     """Создать незапущенный документ без структуры и остатков."""
+    section_code = (section_code or "").strip().upper()
     if section_code != SECTION_CODE:
-        raise SectionRecountError(f"Для этого workflow разрешён только участок {SECTION_CODE}.")
+        try:
+            parsed = parse_address(section_code)
+        except AddressError as exc:
+            raise SectionRecountError("Выберите canonical V2-ящик Sxx-Dxx.") from exc
+        if parsed.drawer is None or parsed.cell is not None:
+            raise SectionRecountError("Пересчёт участка запускается для V2-ящика Sxx-Dxx.")
+        if not canonical_cell_codes(parsed.code):
+            raise SectionRecountError(
+                "В выбранном V2-ящике нет активных ячеек, доступных для хранения."
+            )
     try:
         with transaction.atomic():
             return SectionRecount.objects.create(
                 section_code=section_code,
+                scope=SectionRecount.Scope.SECTION,
                 operation_key=uuid4().hex,
                 created_by=by,
             )
@@ -246,22 +322,73 @@ def create_section_recount(*, section_code=SECTION_CODE, by=None) -> SectionReco
         raise SectionRecountError("Для участка уже есть незавершённый пересчёт.") from exc
 
 
+def create_cell_recount(*, location: StorageLocation, by=None) -> SectionRecount:
+    """Создать, захватить и сразу запустить пересчёт одной ячейки."""
+    try:
+        with transaction.atomic():
+            location = StorageLocation.objects.select_for_update().get(pk=location.pk)
+            if (
+                location.level != StorageLocation.Level.CELL
+                or not location.can_hold_stock()
+            ):
+                raise SectionRecountError("Пересчитать можно только активную складскую ячейку.")
+            doc = SectionRecount.objects.create(
+                section_code=location.code,
+                scope=SectionRecount.Scope.CELL,
+                operation_key=uuid4().hex,
+                created_by=by,
+            )
+            SectionRecountCell.objects.create(recount=doc, location=location, sequence=1)
+            return start_section_recount(doc)
+    except IntegrityError as exc:
+        raise SectionRecountError("Для этой ячейки уже есть незавершённый пересчёт.") from exc
+
+
+def cell_recount_preview(location: StorageLocation) -> dict:
+    lots = list(
+        StockLot.objects.filter(
+            location=location, status__in=PHYSICAL_LOT_STATUSES, quantity__gt=0
+        ).values("part_type_id", "quantity")
+    )
+    items = list(
+        PartItem.objects.filter(
+            current_location=location, status__in=ITEM_PHYSICAL_STATUSES
+        ).values_list("part_type_id", flat=True)
+    )
+    return {
+        "position_count": len({item["part_type_id"] for item in lots} | set(items)),
+        "unit_count": sum((item["quantity"] for item in lots), Decimal("0"))
+        + Decimal(len(items)),
+        "serial_count": len(items),
+    }
+
+
+def _recount_locations(doc: SectionRecount) -> tuple[list[StorageLocation], bool]:
+    if doc.is_cell_recount:
+        locations = list(doc.cells.select_related("location").values_list("location_id", flat=True))
+        if len(locations) != 1:
+            raise SectionRecountError("Пересчёт ячейки должен содержать ровно одну цель.")
+        return list(StorageLocation.objects.filter(pk__in=locations)), False
+    return _active_locations(doc.section_code), True
+
+
 @transaction.atomic
 def start_section_recount(doc: SectionRecount) -> SectionRecount:
-    """Создать C05, snapshot и десять durable-lock записей."""
+    """Зафиксировать цели, snapshot и durable-lock записи."""
     doc = SectionRecount.objects.select_for_update().get(pk=doc.pk)
     if doc.status != SectionRecount.Status.DRAFT:
         if doc.status in ACTIVE_STATUSES:
             return doc
         raise SectionRecountError("Этот пересчёт уже закрыт.")
-    locations = _active_locations(doc.section_code)
+    locations, create_cells = _recount_locations(doc)
     locations = list(
         StorageLocation.objects.select_for_update()
         .filter(pk__in=[location.pk for location in locations])
         .order_by("pk")
     )
-    if len(locations) != CELL_COUNT:
-        raise SectionRecountError("Не удалось захватить все десять ячеек участка.")
+    expected_count = 1 if doc.is_cell_recount else len(canonical_cell_codes(doc.section_code))
+    if len(locations) != expected_count:
+        raise SectionRecountError("Не удалось захватить все ячейки пересчёта.")
     if (
         StockLocationLock.objects.filter(
             location_id__in=[location.pk for location in locations], released_at__isnull=True
@@ -270,13 +397,31 @@ def start_section_recount(doc: SectionRecount) -> SectionRecount:
         .exists()
     ):
         raise SectionRecountError("Участок уже заблокирован другой складской операцией.")
-    codes = canonical_cell_codes(doc.section_code)
+    codes = [doc.section_code] if doc.is_cell_recount else canonical_cell_codes(doc.section_code)
     if [location.code for location in sorted(locations, key=lambda item: item.code)] != codes:
-        raise SectionRecountError("Структура участка изменилась до захвата блокировки.")
+        raise SectionRecountError("Структура ячеек изменилась до захвата блокировки.")
     if any(not location.can_hold_stock() for location in locations):
         raise SectionRecountError("Одна из ячеек участка недоступна для хранения.")
+    if doc.is_cell_recount and StockLot.objects.filter(
+        location_id__in=[location.pk for location in locations],
+        status=StockLot.Status.RECEIVING,
+        quantity__gt=0,
+    ).exists():
+        raise SectionRecountError(
+            "В ячейке есть незавершённая приёмка. Сначала завершите или отмените её."
+        )
+    if PartItem.objects.filter(
+        current_location_id__in=[location.pk for location in locations],
+        status__in=ITEM_PHYSICAL_STATUSES,
+    ).exists():
+        raise SectionRecountError(
+            "В ячейке есть поштучные экземпляры. Для них нужен пересчёт с идентификацией "
+            "каждого экземпляра; количественный пересчёт не запущен."
+        )
     ordered_locations = sorted(locations, key=lambda item: item.code)
-    snapshot = _capture_snapshot(ordered_locations, section_code=doc.section_code)
+    snapshot = _capture_snapshot(
+        ordered_locations, section_code=doc.section_code, scope=doc.scope
+    )
     doc.status = SectionRecount.Status.COUNTING
     doc.started_at = timezone.now()
     doc.snapshot = snapshot
@@ -284,12 +429,13 @@ def start_section_recount(doc: SectionRecount) -> SectionRecount:
     doc.save(
         update_fields=["status", "started_at", "snapshot", "snapshot_fingerprint", "updated_at"]
     )
-    SectionRecountCell.objects.bulk_create(
-        [
-            SectionRecountCell(recount=doc, location=location, sequence=number)
-            for number, location in enumerate(ordered_locations, start=1)
-        ]
-    )
+    if create_cells:
+        SectionRecountCell.objects.bulk_create(
+            [
+                SectionRecountCell(recount=doc, location=location, sequence=number)
+                for number, location in enumerate(ordered_locations, start=1)
+            ]
+        )
     try:
         StockLocationLock.objects.bulk_create(
             [
@@ -335,6 +481,20 @@ def _resolve_exact_part(raw):
     return result.candidate.part, _part_number(result.candidate.part)
 
 
+def _preferred_snapshot_for_part(part_id: int) -> dict:
+    preferred = (
+        PartPreferredLocation.objects.filter(part_type_id=part_id)
+        .values("location_id", "updated_at")
+        .first()
+    )
+    if preferred is None:
+        return {}
+    return {
+        "location_id": preferred["location_id"],
+        "updated_at": preferred["updated_at"].isoformat(),
+    }
+
+
 @transaction.atomic
 def record_section_scan(doc: SectionRecount, *, cell_number: int, raw_value: str, by=None):
     doc = SectionRecount.objects.select_for_update().get(pk=doc.pk)
@@ -342,6 +502,10 @@ def record_section_scan(doc: SectionRecount, *, cell_number: int, raw_value: str
     _reopen_ready(doc)
     cell = _get_cell(doc, cell_number)
     part, part_number = _resolve_exact_part(raw_value)
+    return _record_part(doc, cell, part, part_number)
+
+
+def _record_part(doc, cell, part, part_number):
     line = (
         SectionRecountLine.objects.select_for_update()
         .filter(recount=doc, cell=cell, part_type=part)
@@ -349,7 +513,12 @@ def record_section_scan(doc: SectionRecount, *, cell_number: int, raw_value: str
     )
     if line is None:
         line = SectionRecountLine.objects.create(
-            recount=doc, cell=cell, part_type=part, part_number=part_number, quantity=1
+            recount=doc,
+            cell=cell,
+            part_type=part,
+            part_number=part_number,
+            preferred_snapshot=_preferred_snapshot_for_part(part.pk),
+            quantity=1,
         )
     else:
         line.quantity += Decimal("1")
@@ -358,6 +527,20 @@ def record_section_scan(doc: SectionRecount, *, cell_number: int, raw_value: str
         cell.status = SectionRecountCell.Status.COUNTING
         cell.save(update_fields=["status"])
     return line
+
+
+@transaction.atomic
+def record_section_part(doc: SectionRecount, *, cell_number: int, part_id: int, by=None):
+    """Добавить выбранный read-only поиском PartType без подмены его identity."""
+    doc = SectionRecount.objects.select_for_update().get(pk=doc.pk)
+    _ensure_counting(doc)
+    _reopen_ready(doc)
+    cell = _get_cell(doc, cell_number)
+    try:
+        part = PartType.objects.get(pk=part_id)
+    except PartType.DoesNotExist as exc:
+        raise SectionRecountError("Выбранная деталь больше не существует.") from exc
+    return _record_part(doc, cell, part, _part_number(part))
 
 
 @transaction.atomic
@@ -447,6 +630,46 @@ def _source_statuses(doc: SectionRecount, batch_line_id: int) -> list[str]:
     )
 
 
+def _allocation_statuses(doc: SectionRecount, batch_line_id: int) -> list[str]:
+    statuses = _source_statuses(doc, batch_line_id)
+    if statuses or not doc.is_cell_recount:
+        return statuses
+    return list(PHYSICAL_LOT_STATUSES)
+
+
+def _cell_batch_capacity(doc: SectionRecount, batch_line: BatchLine) -> Decimal:
+    """Максимальный факт по партии в одной ячейке без превышения закупки."""
+    source_total = sum(
+        (
+            quantity
+            for (batch_line_id, _status), quantity in _snapshot_source_quantities(doc).items()
+            if batch_line_id == batch_line.pk
+        ),
+        Decimal("0"),
+    )
+    global_physical = (
+        StockLot.objects.filter(
+            batch_line=batch_line,
+            status__in=PHYSICAL_LOT_STATUSES,
+            quantity__gt=0,
+        ).aggregate(total=Sum("quantity"))["total"]
+        or Decimal("0")
+    )
+    recoverable = max(batch_line.quantity - global_physical, Decimal("0"))
+    return source_total + recoverable
+
+
+def _allocation_cost(
+    doc: SectionRecount, batch_line: BatchLine, lot_status: str
+) -> Decimal | None:
+    snapshot_cost = _snapshot_source_costs(doc).get((batch_line.pk, lot_status))
+    if snapshot_cost is not None:
+        return snapshot_cost
+    if doc.is_cell_recount and batch_line.batch.cost_finalized:
+        return batch_line.landed_unit_cost_rub
+    return None
+
+
 def _allocation_summary(doc: SectionRecount) -> dict[tuple[int, str], Decimal]:
     totals = defaultdict(Decimal)
     for item in SectionRecountAllocation.objects.filter(
@@ -490,12 +713,7 @@ def allocate_section_line(
     source_quantity = _snapshot_source_quantities(line.recount).get(
         (batch_line.pk, lot_status), Decimal("0")
     )
-    if source_quantity <= 0:
-        raise SectionRecountError(
-            "Для выбранной партии и статуса нет подтверждённого исходного лота "
-            "в snapshot. Создание остатка из воздуха запрещено."
-        )
-    source_cost = _snapshot_source_costs(line.recount).get((batch_line.pk, lot_status))
+    source_cost = _allocation_cost(line.recount, batch_line, lot_status)
     if source_cost is None:
         raise SectionRecountError("Для выбранной партии нет подтверждённой себестоимости.")
     existing = SectionRecountAllocation.objects.filter(
@@ -504,10 +722,24 @@ def allocate_section_line(
         lot_status=lot_status,
     ).exclude(line=line)
     allocated_elsewhere = existing.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
-    if allocated_elsewhere + quantity > source_quantity:
+    capacity = (
+        _cell_batch_capacity(line.recount, batch_line)
+        if line.recount.is_cell_recount
+        else source_quantity
+    )
+    if capacity <= 0:
         raise SectionRecountError(
-            f"Распределение {allocated_elsewhere + quantity} превышает snapshot-остаток "
-            f"партии/статуса {source_quantity}."
+            "Для выбранной партии нет допустимого остатка или свободного лимита."
+        )
+    if allocated_elsewhere + quantity > capacity:
+        limit_label = (
+            "допустимый лимит партии"
+            if line.recount.is_cell_recount
+            else "snapshot-остаток партии/статуса"
+        )
+        raise SectionRecountError(
+            f"Распределение {allocated_elsewhere + quantity} превышает "
+            f"{limit_label} {capacity}."
         )
     allocation, _ = SectionRecountAllocation.objects.update_or_create(
         line=line,
@@ -515,6 +747,8 @@ def allocate_section_line(
         defaults={
             "quantity": quantity,
             "unit_cost_rub": source_cost,
+            "batch_quantity_snapshot": batch_line.quantity,
+            "batch_updated_at_snapshot": batch_line.updated_at,
             "lot_status": lot_status,
         },
     )
@@ -537,8 +771,12 @@ def _prepare_allocations(doc: SectionRecount) -> None:
             if len(statuses) != 1:
                 continue
             status = statuses[0]
-            source_quantity = _snapshot_source_quantities(doc).get(
-                (candidate.pk, status), Decimal("0")
+            source_quantity = (
+                _cell_batch_capacity(doc, candidate)
+                if doc.is_cell_recount
+                else _snapshot_source_quantities(doc).get(
+                    (candidate.pk, status), Decimal("0")
+                )
             )
             allocated = (
                 SectionRecountAllocation.objects.filter(
@@ -552,7 +790,9 @@ def _prepare_allocations(doc: SectionRecount) -> None:
                 line=line,
                 batch_line=candidate,
                 quantity=line.quantity,
-                unit_cost_rub=_snapshot_source_costs(doc)[(candidate.pk, status)],
+                unit_cost_rub=_allocation_cost(doc, candidate, status),
+                batch_quantity_snapshot=candidate.quantity,
+                batch_updated_at_snapshot=candidate.updated_at,
                 lot_status=status,
             )
 
@@ -560,7 +800,6 @@ def _prepare_allocations(doc: SectionRecount) -> None:
 def _validate_allocations(doc: SectionRecount) -> list[str]:
     warnings = []
     source_quantities = _snapshot_source_quantities(doc)
-    source_costs = _snapshot_source_costs(doc)
     totals = defaultdict(Decimal)
     for line in doc.lines.prefetch_related(
         "allocations__batch_line__batch", "allocations__batch_line__part_type"
@@ -573,7 +812,8 @@ def _validate_allocations(doc: SectionRecount) -> list[str]:
             )
         for allocation in line.allocations.all():
             key = (allocation.batch_line_id, allocation.lot_status)
-            totals[key] += allocation.quantity
+            total_key = allocation.batch_line_id if doc.is_cell_recount else key
+            totals[total_key] += allocation.quantity
             if allocation.batch_line.part_type_id != line.part_type_id:
                 warnings.append(f"{line.part_number}: партия относится к другой детали")
             if allocation.lot_status not in PHYSICAL_LOT_STATUSES:
@@ -583,14 +823,27 @@ def _validate_allocations(doc: SectionRecount) -> list[str]:
                 or not allocation.batch_line.batch.cost_finalized
             ):
                 warnings.append(f"{line.part_number}: партия недоступна для склада")
-            if allocation.unit_cost_rub != source_costs.get(key):
+            expected_cost = _allocation_cost(
+                doc, allocation.batch_line, allocation.lot_status
+            )
+            if allocation.unit_cost_rub != expected_cost:
                 warnings.append(f"{line.part_number}: себестоимость не совпадает с snapshot")
-            if key not in source_quantities:
+            if (
+                allocation.batch_quantity_snapshot != allocation.batch_line.quantity
+                or allocation.batch_updated_at_snapshot != allocation.batch_line.updated_at
+            ):
+                warnings.append(f"{line.part_number}: метаданные партии изменились")
+            if key not in source_quantities and not doc.is_cell_recount:
                 warnings.append(f"{line.part_number}: исходный лот отсутствует в snapshot")
-            if totals[key] > source_quantities.get(key, Decimal("0")):
+            capacity = (
+                _cell_batch_capacity(doc, allocation.batch_line)
+                if doc.is_cell_recount
+                else source_quantities.get(key, Decimal("0"))
+            )
+            if totals[total_key] > capacity:
                 warnings.append(
                     f"партия {allocation.batch_line_id} / {allocation.lot_status}: "
-                    "распределение превышает snapshot-остаток"
+                    "распределение превышает допустимый лимит"
                 )
     return warnings
 
@@ -614,6 +867,66 @@ def _snapshot_totals(doc: SectionRecount):
     return current
 
 
+def _adjustment_plan(doc: SectionRecount) -> dict[str, list[dict]]:
+    """Сравнить lot-level snapshot с целевыми allocation и вернуть только дельты."""
+    source = defaultdict(Decimal)
+    source_lot_ids = {}
+    for item in doc.snapshot.get("lots", []):
+        if item["status"] not in PHYSICAL_LOT_STATUSES:
+            continue
+        key = (item["location_id"], item["batch_line_id"], item["status"])
+        source[key] += _decimal(item["quantity"])
+        source_lot_ids[key] = item["id"]
+
+    target = defaultdict(Decimal)
+    target_meta = {}
+    allocations = SectionRecountAllocation.objects.filter(
+        line__recount=doc, quantity__gt=0
+    ).select_related("line__cell", "batch_line")
+    for allocation in allocations:
+        key = (
+            allocation.line.cell.location_id,
+            allocation.batch_line_id,
+            allocation.lot_status,
+        )
+        target[key] += allocation.quantity
+        target_meta[key] = {
+            "batch_line_id": allocation.batch_line_id,
+            "location_id": allocation.line.cell.location_id,
+            "lot_status": allocation.lot_status,
+        }
+
+    adjust_out = []
+    adjust_in = []
+    for key in sorted(set(source) | set(target)):
+        delta = target[key] - source[key]
+        if delta < 0:
+            adjust_out.append(
+                {
+                    "lot_id": source_lot_ids[key],
+                    "quantity": -delta,
+                    "location_id": key[0],
+                    "batch_line_id": key[1],
+                    "lot_status": key[2],
+                }
+            )
+        elif delta > 0:
+            adjust_in.append({**target_meta[key], "quantity": delta})
+    return {"adjust_out": adjust_out, "adjust_in": adjust_in}
+
+
+def _comparison_status(before: Decimal, after: Decimal) -> tuple[str, str]:
+    if before == after:
+        return "match", "Совпадает"
+    if before > 0 and after == 0:
+        return "system_only", "В системе есть, физически не найдено"
+    if before == 0 and after > 0:
+        return "actual_only", "Физически найдено, в системе не числится"
+    if before > after:
+        return "system_more", "В системе больше"
+    return "actual_more", "Фактически больше"
+
+
 def build_section_dry_run(doc: SectionRecount) -> dict:
     """Построить отчёт без записи в БД, включая все расхождения."""
     current = _snapshot_totals(doc)
@@ -621,17 +934,45 @@ def build_section_dry_run(doc: SectionRecount) -> dict:
     for line in doc.lines.select_related("cell").all():
         counted[line.cell.location_id][line.part_type_id] += line.quantity
     cell_rows = []
+    comparison_rows = []
     all_keys = set(current) | set(counted)
+    part_ids = {
+        part_id
+        for location_id in all_keys
+        for part_id in set(current[location_id]) | set(counted[location_id])
+    }
+    parts = {
+        part.pk: part
+        for part in with_part_identity(
+            PartType.objects.filter(pk__in=part_ids), part_field=""
+        )
+    }
+    locations = {
+        item["id"]: item["code"] for item in doc.snapshot.get("locations", [])
+    }
     for location_id in sorted(all_keys):
         part_ids = set(current[location_id]) | set(counted[location_id])
         changes = []
         for part_id in sorted(part_ids):
             before = current[location_id][part_id]
             after = counted[location_id][part_id]
+            status, status_label = _comparison_status(before, after)
+            part = parts[part_id]
+            comparison = {
+                "location_id": location_id,
+                "location_code": locations.get(location_id, ""),
+                "part_type_id": part_id,
+                "part_number": _part_number(part),
+                "part_name": part.name,
+                "before": str(before),
+                "after": str(after),
+                "difference": str(after - before),
+                "status": status,
+                "status_label": status_label,
+            }
+            comparison_rows.append(comparison)
             if before != after:
-                changes.append(
-                    {"part_type_id": part_id, "before": str(before), "after": str(after)}
-                )
+                changes.append(comparison)
         cell_rows.append({"location_id": location_id, "changes": changes})
 
     before_total = sum(
@@ -658,12 +999,6 @@ def build_section_dry_run(doc: SectionRecount) -> dict:
     unresolved = sum(
         1 for line in doc.lines.all() if line.quantity > 0 and not line.allocations.exists()
     )
-    allocation_count = sum(
-        1
-        for line in doc.lines.prefetch_related("allocations")
-        for item in line.allocations.all()
-        if item.quantity > 0
-    )
     multi_batch_parts = len({
         line.part_type_id
         for line in doc.lines.all()
@@ -675,23 +1010,42 @@ def build_section_dry_run(doc: SectionRecount) -> dict:
             "cell": allocation.line.cell.location.code,
             "part_number": allocation.line.part_number,
             "batch_line_id": allocation.batch_line_id,
+            "batch_number": allocation.batch_line.batch.number,
             "status": allocation.lot_status,
             "quantity": str(allocation.quantity),
             "unit_cost_rub": str(allocation.unit_cost_rub),
+            "batch_quantity_snapshot": str(allocation.batch_quantity_snapshot),
         }
         for allocation in SectionRecountAllocation.objects.filter(
             line__recount=doc
-        ).select_related("line__cell__location")
+        ).select_related("line__cell__location", "batch_line__batch")
     ]
+    adjustment_plan = _adjustment_plan(doc)
+    adjust_out_quantity = sum(
+        (item["quantity"] for item in adjustment_plan["adjust_out"]), Decimal("0")
+    )
+    adjust_in_quantity = sum(
+        (item["quantity"] for item in adjustment_plan["adjust_in"]), Decimal("0")
+    )
     return {
         "section_code": doc.section_code,
         "before_total": str(before_total),
         "after_total": str(after_total),
         "difference": str(after_total - before_total),
         "cell_rows": cell_rows,
+        "comparison_rows": comparison_rows,
         "moved": moved,
-        "adjust_out": len(doc.snapshot.get("lots", [])),
-        "adjust_in": allocation_count,
+        "adjust_out": str(adjust_out_quantity),
+        "adjust_in": str(adjust_in_quantity),
+        "adjust_out_movements": len(adjustment_plan["adjust_out"]),
+        "adjust_in_movements": len(adjustment_plan["adjust_in"]),
+        "matched_positions": sum(row["status"] == "match" for row in comparison_rows),
+        "shortage_positions": sum(
+            _decimal(row["difference"]) < 0 for row in comparison_rows
+        ),
+        "excess_positions": sum(
+            _decimal(row["difference"]) > 0 for row in comparison_rows
+        ),
         "touched_parts": len(set(part_before) | set(part_after)),
         "multi_batch_parts": multi_batch_parts,
         "unresolved_allocations": unresolved,
@@ -709,6 +1063,8 @@ def mark_section_ready(doc: SectionRecount) -> SectionRecount:
     if doc.cells.filter(
         status__in=[SectionRecountCell.Status.NOT_STARTED, SectionRecountCell.Status.COUNTING]
     ).exists():
+        if doc.is_cell_recount:
+            raise SectionRecountError("Сначала завершите физический пересчёт ячейки.")
         raise SectionRecountError("Сначала завершите каждую из 10 ячеек.")
     _assert_snapshot_unchanged(doc)
     if doc.snapshot.get("reservations"):
@@ -740,7 +1096,15 @@ def _assert_snapshot_unchanged(doc: SectionRecount) -> None:
         StorageLocation.objects.filter(pk__in=doc.cells.values("location_id"))
         .order_by("code", "pk")
     )
-    live = _capture_snapshot(locations, section_code=doc.section_code)
+    live = _capture_snapshot(
+        locations, section_code=doc.section_code, scope=doc.scope
+    )
+    for line in doc.lines.all():
+        if _preferred_snapshot_for_part(line.part_type_id) != line.preferred_snapshot:
+            raise SectionRecountError(
+                f"Snapshot mismatch: изменилась предпочтительная ячейка "
+                f"детали {line.part_number}."
+            )
     if live["fingerprint"] == doc.snapshot_fingerprint:
         return
     if live.get("reservations") != doc.snapshot.get("reservations"):
@@ -757,12 +1121,12 @@ def _assert_snapshot_unchanged(doc: SectionRecount) -> None:
     raise SectionRecountError("Snapshot mismatch: состояние участка изменилось; apply остановлен.")
 
 
-def _reconcile_preferred(doc: SectionRecount) -> dict:
-    old = {item["part_type_id"]: item["location_id"] for item in doc.snapshot.get("preferred", [])}
-    part_ids = set(doc.lines.values_list("part_type_id", flat=True))
+def _reconcile_preferred(doc: SectionRecount, *, by=None) -> dict:
+    part_ids = {
+        item["part_type_id"] for item in doc.snapshot.get("lots", [])
+    } | set(doc.lines.values_list("part_type_id", flat=True))
     locations_by_part = defaultdict(set)
     for lot in StockLot.objects.filter(
-        location_id__in=doc.cells.values("location_id"),
         part_type_id__in=part_ids,
         quantity__gt=0,
         status__in=PHYSICAL_LOT_STATUSES,
@@ -773,11 +1137,14 @@ def _reconcile_preferred(doc: SectionRecount) -> dict:
         locations = locations_by_part[part_id]
         if len(locations) == 1:
             location_id = next(iter(locations))
-            if old.get(part_id) != location_id:
+            current_preferred = PartPreferredLocation.objects.filter(
+                part_type_id=part_id
+            ).values_list("location_id", flat=True).first()
+            if current_preferred != location_id:
                 set_preferred_part_location(
-                    doc.lines.filter(part_type_id=part_id).first().part_type,
+                    PartType.objects.get(pk=part_id),
                     StorageLocation.objects.get(pk=location_id),
-                    by=doc.created_by,
+                    by=by,
                     section_recount_id=doc.pk,
                 )
                 changed += 1
@@ -790,13 +1157,29 @@ def _reconcile_preferred(doc: SectionRecount) -> dict:
     return {"changed": changed, "saved": saved, "ambiguous": ambiguous, "zero": zero}
 
 
-def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
+def _apply_section_recount_atomic(doc_id: int, *, by=None) -> SectionRecount:
     doc = SectionRecount.objects.select_for_update().get(pk=doc_id)
     if doc.status == SectionRecount.Status.COMPLETED:
         return doc
     if doc.status != SectionRecount.Status.READY:
         raise SectionRecountError("Применить можно только документ в статусе READY.")
     _validate_snapshot_lots(doc)
+    batch_line_ids = list(
+        SectionRecountAllocation.objects.filter(line__recount=doc)
+        .values_list("batch_line_id", flat=True)
+        .distinct()
+    )
+    list(
+        BatchLine.objects.select_for_update()
+        .filter(pk__in=batch_line_ids)
+        .order_by("pk")
+    )
+    list(
+        StockLot.objects.select_for_update()
+        .filter(batch_line_id__in=batch_line_ids)
+        .order_by("pk")
+    )
+    _assert_snapshot_unchanged(doc)
     warnings = _validate_allocations(doc)
     if warnings:
         raise SectionRecountError(
@@ -804,38 +1187,56 @@ def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
         )
     doc.status = SectionRecount.Status.APPLYING
     doc.save(update_fields=["status", "updated_at"])
-    _assert_snapshot_unchanged(doc)
-    lots = list(
-        StockLot.objects.select_for_update().filter(
-            location_id__in=doc.cells.values("location_id"), quantity__gt=0
-        )
-    )
-    for lot in lots:
+    adjustment_plan = _adjustment_plan(doc)
+    movement_count = 0
+    for adjustment in adjustment_plan["adjust_out"]:
+        lot = StockLot.objects.get(pk=adjustment["lot_id"])
         adjust_stock_lot_quantity(
-            lot, -lot.quantity, by=doc.created_by,
-            comment=f"Пересчёт участка {doc.section_code} #{doc.pk}",
+            lot,
+            -adjustment["quantity"],
+            by=by,
+            comment=f"{doc.operation_label} #{doc.pk}",
             document_type=SECTION_RECOUNT_DOCUMENT, document_id=doc.pk,
             section_recount_id=doc.pk, update_preferred=False,
         )
-    for line in doc.lines.prefetch_related("allocations").select_related("cell", "part_type"):
-        for allocation in line.allocations.all():
-            lot = get_or_create_section_recount_lot(
-                allocation.batch_line,
-                line.cell.location,
-                lot_status=allocation.lot_status,
-                section_recount_id=doc.pk,
-            )
-            adjust_stock_lot_quantity(
-                lot, allocation.quantity, by=doc.created_by,
-                comment=f"Пересчёт участка {doc.section_code} #{doc.pk}",
-                document_type=SECTION_RECOUNT_DOCUMENT, document_id=doc.pk,
-                section_recount_id=doc.pk, update_preferred=False,
-            )
+        movement_count += 1
+    batch_lines = {
+        line.pk: line
+        for line in BatchLine.objects.filter(pk__in=batch_line_ids).select_related(
+            "batch", "part_type"
+        )
+    }
+    locations = {
+        location.pk: location
+        for location in StorageLocation.objects.filter(
+            pk__in=doc.cells.values("location_id")
+        )
+    }
+    for adjustment in adjustment_plan["adjust_in"]:
+        lot = get_or_create_section_recount_lot(
+            batch_lines[adjustment["batch_line_id"]],
+            locations[adjustment["location_id"]],
+            lot_status=adjustment["lot_status"],
+            section_recount_id=doc.pk,
+        )
+        adjust_stock_lot_quantity(
+            lot,
+            adjustment["quantity"],
+            by=by,
+            comment=f"{doc.operation_label} #{doc.pk}",
+            document_type=SECTION_RECOUNT_DOCUMENT,
+            document_id=doc.pk,
+            section_recount_id=doc.pk,
+            update_preferred=False,
+        )
+        movement_count += 1
     result = dict(doc.result or build_section_dry_run(doc))
-    result["preferred"] = _reconcile_preferred(doc)
-    result["created_movements"] = len(
-        lots
-    ) + SectionRecountAllocation.objects.filter(line__recount=doc, quantity__gt=0).count()
+    result["preferred"] = _reconcile_preferred(doc, by=by)
+    result["applied_by"] = {
+        "id": by.pk if by is not None else None,
+        "username": by.get_username() if by is not None else "",
+    }
+    result["created_movements"] = movement_count
     doc.result = result
     doc.status = SectionRecount.Status.COMPLETED
     doc.completed_at = timezone.now()
@@ -846,11 +1247,11 @@ def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
     return doc
 
 
-def apply_section_recount(doc: SectionRecount) -> SectionRecount:
+def apply_section_recount(doc: SectionRecount, *, by=None) -> SectionRecount:
     """Apply once; failed transactions become FAILED and keep the lock."""
     try:
         with transaction.atomic():
-            return _apply_section_recount_atomic(doc.pk)
+            return _apply_section_recount_atomic(doc.pk, by=by)
     except Exception as exc:
         SectionRecount.objects.filter(pk=doc.pk, status=SectionRecount.Status.READY).update(
             status=SectionRecount.Status.FAILED,

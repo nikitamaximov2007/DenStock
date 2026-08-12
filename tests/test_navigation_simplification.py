@@ -82,7 +82,12 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
         ],
         "sales": ["Продажи", "Резервы", "Возвраты покупателей"],
         "repairs": ["Ремонты", "Возвраты из ремонта"],
-        "reports": ["Сводка", "Складские действия / Таможня", "Статистика"],
+        "reports": [
+            "Сводка",
+            "Продажи по клиентам",
+            "Складские действия / Таможня",
+            "Статистика",
+        ],
         "settings": ["Цены", "Пользователи", "Бэкапы"],
     }
     assert html.count('data-nav-group-toggle') == 5
@@ -106,7 +111,11 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                 ],
                 "sales": ["Возвраты покупателей"],
                 "repairs": ["Ремонты", "Возвраты из ремонта"],
-                "reports": ["Сводка", "Складские действия / Таможня"],
+                "reports": [
+                    "Сводка",
+                    "Продажи по клиентам",
+                    "Складские действия / Таможня",
+                ],
             },
         ),
         (
@@ -279,6 +288,7 @@ def test_reports_and_settings_tabs_follow_permissions(client, make_nav_user):
     _login(client, admin)
     reports = _html(client, "reports_dashboard")
     assert "Сводка" in reports
+    assert "Продажи по клиентам" in reports
     assert "Складские действия / Таможня" in reports
     assert "Статистика" in reports
     settings = _html(client, "directory_index")

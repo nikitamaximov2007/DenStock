@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% load number_format %}
+{% block title %}Пересчёт {{ doc.section_code }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="cell-recount">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">Пересчёт ячейки {{ doc.section_code }}</h1>
+        <p class="page-subtitle">{{ doc.get_status_display }} · документ #{{ doc.pk }}</p>
+      </div>
+      <div class="page-header__actions">
+        {% if cells.0 %}
+          <a class="btn btn--secondary"
+             href="{% url 'location_detail' cells.0.location.pk %}">К ячейке</a>
+        {% endif %}
+        {% if doc.status == "counting" or doc.status == "ready" or doc.status == "failed" %}
+          <form method="post" action="{% url 'section_recount_cancel' doc.pk %}">
+            {% csrf_token %}
+            <button class="btn btn--secondary" type="submit">Отменить пересчёт</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+    {% if doc.status == "counting" or doc.status == "ready" %}
+      <div class="status status--warning">
+        <span class="status__icon">!</span>
+        <span>Ячейка временно заблокирована: выполняется пересчёт.</span>
+      </div>
+    {% endif %}
+    {% if doc.error_message %}
+      <div class="status status--error">
+        <span class="status__icon">!</span><span>{{ doc.error_message }}</span>
+      </div>
+    {% endif %}
+    {% if doc.status == "counting" %}
+      <dl class="recount-metrics">
+        <div>
+          <dt>Уникальных деталей</dt>
+          <dd>
+            {{ counted_positions }}
+          </dd>
+        </div>
+        <div>
+          <dt>Всего единиц</dt>
+          <dd>
+            {{ counted_units|quantity_int }}
+          </dd>
+        </div>
+      </dl>
+      <div class="card">
+        <div class="card__body">
+          <h2 class="card__title">Сканировать или добавить деталь</h2>
+          <form method="post"
+                action="{% url 'section_recount_scan' doc.pk %}"
+                class="scanner-page">
+            {% csrf_token %}
+            <input type="hidden" name="cell_number" value="1">
+            <input name="raw_value"
+                   class="scanner-page__input"
+                   placeholder="Штрихкод или точный артикул"
+                   autocomplete="off"
+                   autofocus
+                   required>
+            <button class="btn btn--primary" type="submit">Добавить +1</button>
+          </form>
+          <form method="get" class="scanner-page">
+            <input name="q"
+                   value="{{ query }}"
+                   class="scanner-page__input"
+                   placeholder="Поиск по артикулу или названию">
+            <button class="btn btn--secondary" type="submit">Найти</button>
+          </form>
+          {% if search_result %}
+            {% if search_result.candidates %}
+              <ul class="scanner-candidates">
+                {% for candidate in search_result.candidates %}
+                  <li>
+                    <div><strong>{{ candidate.exact_number }}</strong> · {{ candidate.part.name }}</div>
+                    <form method="post" action="{% url 'section_recount_scan' doc.pk %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="cell_number" value="1">
+                      <input type="hidden" name="part_id" value="{{ candidate.part.pk }}">
+                      <button class="btn btn--small btn--secondary" type="submit">Добавить +1</button>
+                    </form>
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="muted">{{ search_result.message|default:"Ничего не найдено." }}</p>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-card__header">
+          <h2 class="table-card__title">Фактически найдено</h2>
+        </div>
+        {% if lines %}
+          <table class="table table--compact recount-lines">
+            <thead>
+              <tr>
+                <th>Артикул</th>
+                <th>Название</th>
+                <th>Количество</th>
+                <th>Партия и статус</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for line in lines %}
+                <tr>
+                  <td><span class="code-pill">{{ line.part_number }}</span></td>
+                  <td>{{ line.part_type.name }}</td>
+                  <td>
+                    <form method="post"
+                          action="{% url 'section_recount_set_quantity' doc.pk line.pk %}"
+                          class="inline-form">
+                      {% csrf_token %}
+                      <input name="quantity"
+                             value="{{ line.quantity|quantity_int }}"
+                             inputmode="decimal"
+                             aria-label="Количество {{ line.part_number }}"
+                             class="qty-input"
+                             required>
+                      <button class="btn btn--small btn--secondary" type="submit">Сохранить</button>
+                    </form>
+                  </td>
+                  <td>
+                    {% for allocation in line.allocations.all %}
+                      <div>Партия {{ allocation.batch_line.batch.number }} · {{ allocation.get_lot_status_display }} · {{ allocation.quantity|quantity_int }} шт. · {{ allocation.unit_cost_rub|money_int }} ₽</div>
+                    {% empty %}
+                      <span class="muted">Будет определено перед dry-run</span>
+                    {% endfor %}
+                    {% if not line.batch_candidates %}
+                      <div class="status status--error"><span class="status__icon">!</span><span>Нет финансово закрытой партии с подтверждённой себестоимостью.</span></div>
+                    {% endif %}
+                    {% if line.show_allocation_form %}
+                      <form method="post"
+                            action="{% url 'section_recount_allocate' doc.pk line.pk %}"
+                            class="allocation-form">
+                        {% csrf_token %}
+                        <select name="allocation_source" required>
+                          <option value="">Выберите партию и статус</option>
+                          {% for batch_line in line.batch_candidates %}
+                            {% for status in batch_line.section_statuses %}
+                              <option value="{{ batch_line.pk }}:{{ status }}">
+                                {{ batch_line.batch.number }} ·
+                                {% if status == "quarantine" %}
+                                  QUARANTINE
+                                {% else %}
+                                  AVAILABLE
+                                {% endif %}
+                                · {{ batch_line.landed_unit_cost_rub|money_int }} ₽
+                              </option>
+                            {% endfor %}
+                          {% endfor %}
+                        </select>
+                        <input name="quantity"
+                               value="{{ line.quantity|quantity_int }}"
+                               inputmode="decimal"
+                               aria-label="Количество из партии"
+                               class="qty-input"
+                               required>
+                        <button class="btn btn--small btn--secondary" type="submit">Распределить</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <form method="post"
+                          action="{% url 'section_recount_remove_line' doc.pk line.pk %}">
+                      {% csrf_token %}
+                      <button class="btn btn--small btn--danger" type="submit">Удалить</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <div class="empty-state">Пока ничего не найдено. Пустой список означает, что физически ячейка пуста.</div>
+        {% endif %}
+      </div>
+      <div class="page-actions recount-finish">
+        {% if cells.0.status != "completed" %}
+          <form method="post"
+                action="{% url 'section_recount_complete_cell' doc.pk 1 %}">
+            {% csrf_token %}
+            <button class="btn btn--primary" type="submit">Я закончил пересчёт</button>
+          </form>
+        {% else %}
+          <form method="post" action="{% url 'section_recount_ready' doc.pk %}">
+            {% csrf_token %}
+            <button class="btn btn--primary" type="submit">Проверить расхождения</button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+    {% if doc.status == "ready" or doc.status == "completed" %}
+      <div class="card">
+        <div class="card__body">
+          <h2 class="card__title">Результат проверки</h2>
+          {% if dry_run.shortage_positions == 0 and dry_run.excess_positions == 0 %}
+            <div class="status status--success"><span class="status__icon">✓</span><span>Расхождений нет</span></div>
+          {% endif %}
+          <dl class="recount-metrics">
+            <div>
+              <dt>Совпало позиций</dt>
+              <dd>
+                {{ dry_run.matched_positions }}
+              </dd>
+            </div>
+            <div>
+              <dt>Недостача</dt>
+              <dd>
+                {{ dry_run.shortage_positions }}
+              </dd>
+            </div>
+            <div>
+              <dt>Излишек</dt>
+              <dd>
+                {{ dry_run.excess_positions }}
+              </dd>
+            </div>
+            <div>
+              <dt>ADJUST_OUT, единиц</dt>
+              <dd>
+                {{ dry_run.adjust_out|quantity_int }}
+              </dd>
+            </div>
+            <div>
+              <dt>ADJUST_IN, единиц</dt>
+              <dd>
+                {{ dry_run.adjust_in|quantity_int }}
+              </dd>
+            </div>
+          </dl>
+          {% if dry_run.comparison_rows %}
+            <div class="table-card">
+              <table class="table table--compact">
+                <thead>
+                  <tr>
+                    <th>Деталь</th>
+                    <th>Статус</th>
+                    <th>Было</th>
+                    <th>Насчитано</th>
+                    <th>Разница</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in dry_run.comparison_rows %}
+                    <tr>
+                      <td>
+                        <strong>{{ row.part_number }}</strong>
+                        <br>
+                        <span class="muted">{{ row.part_name }}</span>
+                      </td>
+                      <td>{{ row.status_label }}</td>
+                      <td>{{ row.before|quantity_int }}</td>
+                      <td>{{ row.after|quantity_int }}</td>
+                      <td>{{ row.difference|quantity_int }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endif %}
+          {% if doc.status == "ready" %}
+            <div class="status status--warning"><span class="status__icon">!</span><span>Только следующее подтверждение изменит складской учёт.</span></div>
+            <form method="post"
+                  action="{% url 'section_recount_apply' doc.pk %}"
+                  class="page-actions">
+              {% csrf_token %}
+              <input type="hidden" name="confirm" value="APPLY">
+              <button class="btn btn--danger" type="submit">Применить результаты</button>
+            </form>
+          {% else %}
+            <p>Применено {{ doc.completed_at|date:"d.m.Y H:i" }} пользователем {{ doc.result.applied_by.username|default:doc.created_by|default:"Система" }}. Создано движений: {{ doc.result.created_movements }}.</p>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+{% endblock %}

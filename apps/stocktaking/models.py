@@ -142,7 +142,18 @@ class SectionRecount(models.Model):
         CANCELED = "canceled", "Отменён"
         FAILED = "failed", "Ошибка"
 
+    class Scope(models.TextChoices):
+        SECTION = "section", "Участок"
+        CELL = "cell", "Ячейка"
+
     section_code = models.CharField("Участок", max_length=60, db_index=True)
+    scope = models.CharField(
+        "Область пересчёта",
+        max_length=20,
+        choices=Scope.choices,
+        default=Scope.SECTION,
+        db_index=True,
+    )
     status = models.CharField(
         "Статус", max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True
     )
@@ -177,7 +188,16 @@ class SectionRecount(models.Model):
         ]
 
     def __str__(self):
-        return f"Пересчёт участка {self.section_code} #{self.pk}"
+        return f"{self.operation_label} #{self.pk}"
+
+    @property
+    def is_cell_recount(self):
+        return self.scope == self.Scope.CELL
+
+    @property
+    def operation_label(self):
+        noun = "ячейки" if self.is_cell_recount else "участка"
+        return f"Пересчёт {noun} {self.section_code}"
 
     @property
     def is_mutable(self):
@@ -224,6 +244,9 @@ class SectionRecountLine(models.Model):
         "catalog.PartType", on_delete=models.PROTECT, related_name="section_recount_lines"
     )
     part_number = models.CharField("Артикул (снимок)", max_length=100)
+    preferred_snapshot = models.JSONField(
+        "Закреплённая ячейка при первом вводе", default=dict, editable=False
+    )
     quantity = models.DecimalField("Факт", max_digits=12, decimal_places=3, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -257,6 +280,15 @@ class SectionRecountAllocation(models.Model):
     quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
     unit_cost_rub = models.DecimalField(
         "Себестоимость (snapshot)", max_digits=12, decimal_places=2, editable=False
+    )
+    batch_quantity_snapshot = models.DecimalField(
+        "Количество партии (snapshot)",
+        max_digits=12,
+        decimal_places=3,
+        editable=False,
+    )
+    batch_updated_at_snapshot = models.DateTimeField(
+        "Партия обновлена (snapshot)", editable=False
     )
     lot_status = models.CharField(
         "Статус лота (snapshot)", max_length=20, choices=StockLot.Status.choices,

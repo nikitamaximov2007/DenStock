@@ -1,18 +1,31 @@
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.core.exceptions import PermissionDenied
-from django.shortcuts import get_object_or_404, redirect
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
-from django.views.generic import CreateView, DetailView, FormView, ListView, UpdateView
+from django.views.generic import DetailView, FormView, ListView, UpdateView
 
 from apps.accounts.permissions import ManageWarehouseMixin
 from apps.inventory.movement import live_stock_rows
 
-from .forms import StorageLocationForm, StorageLocationRenameForm, StorageLocationUpdateForm
+from .drawer_rename import build_drawer_rename_plan, rename_storage_drawer
+from .forms import (
+    StorageAddressV2CreateForm,
+    StorageDrawerRenameForm,
+    StorageLocationRenameForm,
+    StorageLocationUpdateForm,
+)
 from .models import StorageLocation
-from .services import StorageLocationRenameError, rename_storage_location
+from .services import (
+    StorageLocationRemovalError,
+    StorageLocationRenameError,
+    remove_or_archive_storage_location,
+    rename_storage_location,
+    storage_location_removal_preview,
+)
 
 
 def _safe_internal_next(request, candidate: str) -> str:
@@ -82,17 +95,32 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
         ctx["can_view_inventory"] = (
             self.request.user.can_manage_inventory or self.request.user.is_viewer
         )
+        ctx["can_remove"] = (
+            self.request.user.can_manage_warehouse
+            and self.object.level == StorageLocation.Level.CELL
+        )
+        ctx["can_rename_cell"] = (
+            self.request.user.can_manage_warehouse
+            and self.object.level == StorageLocation.Level.CELL
+        )
+        ctx["can_rename_drawer"] = (
+            self.request.user.can_manage_warehouse
+            and self.object.level == StorageLocation.Level.DRAWER
+        )
+        ctx["can_recount"] = (
+            self.request.user.can_manage_stocktaking
+            and self.object.level == StorageLocation.Level.CELL
+            and self.object.can_hold_stock()
+        )
         ctx["children"] = self.object.children.all()
         ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
         ctx["live_stock_rows"] = live_stock_rows(location_id=self.object.pk)
         return ctx
 
 
-class LocationCreateView(ManageWarehouseMixin, CreateView):
-    model = StorageLocation
-    form_class = StorageLocationForm
+class LocationCreateView(ManageWarehouseMixin, FormView):
+    form_class = StorageAddressV2CreateForm
     template_name = "directories/form.html"
-    success_url = reverse_lazy("warehouse_index")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -100,8 +128,13 @@ class LocationCreateView(ManageWarehouseMixin, CreateView):
         return ctx
 
     def form_valid(self, form):
+        try:
+            location = form.save()
+        except ValidationError as exc:
+            form.add_error(None, exc)
+            return self.form_invalid(form)
         messages.success(self.request, "Место хранения создано.")
-        return super().form_valid(form)
+        return redirect("location_detail", pk=location.pk)
 
 
 class LocationUpdateView(ManageWarehouseMixin, UpdateView):
@@ -125,7 +158,11 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
     template_name = "warehouse/location_rename.html"
 
     def dispatch(self, request, *args, **kwargs):
-        self.location = get_object_or_404(StorageLocation, pk=kwargs["pk"])
+        self.location = get_object_or_404(
+            StorageLocation,
+            pk=kwargs["pk"],
+            level=StorageLocation.Level.CELL,
+        )
         return super().dispatch(request, *args, **kwargs)
 
     def get_initial(self):
@@ -168,12 +205,80 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
         )
 
 
+class LocationDrawerRenameView(ManageWarehouseMixin, FormView):
+    form_class = StorageDrawerRenameForm
+    template_name = "warehouse/location_drawer_rename.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        self.drawer = get_object_or_404(StorageLocation, pk=kwargs["pk"])
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_initial(self):
+        initial = super().get_initial()
+        initial["expected_code"] = self.drawer.code
+        return initial
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["drawer"] = self.drawer
+        return ctx
+
+    def form_valid(self, form):
+        try:
+            plan = build_drawer_rename_plan(
+                self.drawer,
+                form.cleaned_data["new_number"],
+            )
+        except StorageLocationRenameError as exc:
+            form.add_error("new_number", str(exc))
+            return self.form_invalid(form)
+        if not plan.can_apply:
+            for conflict in plan.conflicts:
+                form.add_error(None, conflict)
+            return self.form_invalid(form)
+        if self.request.POST.get("action") != "apply":
+            confirmation = self.form_class(
+                initial={
+                    "expected_code": plan.old_code,
+                    "expected_fingerprint": plan.fingerprint,
+                    "new_number": form.cleaned_data["new_number"],
+                }
+            )
+            return self.render_to_response(
+                self.get_context_data(form=confirmation, preview=plan)
+            )
+        try:
+            renamed = rename_storage_drawer(
+                self.drawer,
+                new_number=form.cleaned_data["new_number"],
+                expected_code=form.cleaned_data["expected_code"],
+                expected_fingerprint=form.cleaned_data["expected_fingerprint"],
+                by=self.request.user,
+            )
+        except StorageLocationRenameError as exc:
+            form.add_error(None, str(exc))
+            return self.form_invalid(form)
+        messages.success(
+            self.request,
+            f"Ящик {plan.old_code} переименован в {renamed.code}. "
+            f"Обновлено ячеек: {len(plan.changes) - 1}.",
+        )
+        messages.warning(self.request, "Распечатайте новые этикетки ящика и ячеек.")
+        return redirect("location_detail", pk=renamed.pk)
+
+
 @require_POST
 def location_toggle(request, pk):
     if not request.user.can_manage_warehouse:
         raise PermissionDenied
     loc = get_object_or_404(StorageLocation, pk=pk)
     if loc.is_active:
+        if loc.level == StorageLocation.Level.CELL:
+            messages.info(
+                request,
+                "Удаление или архивирование ячейки требует отдельного безопасного подтверждения.",
+            )
+            return redirect("location_remove", pk=loc.pk)
         if loc.children.filter(is_active=True).exists():
             messages.error(
                 request,
@@ -190,3 +295,37 @@ def location_toggle(request, pk):
     state = "активировано" if loc.is_active else "деактивировано"
     messages.success(request, f"Место {state}: {loc}")
     return redirect("warehouse_index")
+
+
+@login_required
+def location_remove(request, pk):
+    if not request.user.can_manage_warehouse:
+        raise PermissionDenied
+    location = get_object_or_404(
+        StorageLocation,
+        pk=pk,
+        level=StorageLocation.Level.CELL,
+    )
+    if request.method == "POST":
+        try:
+            result, code = remove_or_archive_storage_location(
+                location,
+                action=request.POST.get("action", ""),
+                expected_code=request.POST.get("expected_code", ""),
+            )
+        except StorageLocationRemovalError as exc:
+            messages.error(request, str(exc))
+        else:
+            if result == "deleted":
+                messages.success(request, f"Новая пустая ячейка {code} удалена.")
+            else:
+                messages.success(request, f"Историческая ячейка {code} архивирована.")
+            return redirect("warehouse_index")
+    return render(
+        request,
+        "warehouse/location_remove.html",
+        {
+            "location": location,
+            "preview": storage_location_removal_preview(location),
+        },
+    )

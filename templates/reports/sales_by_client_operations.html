@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Операции продажи · {{ customer_name }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Операции продажи</h1>
+  <p class="page-subtitle">
+    Клиент: {{ customer_name }} · Деталь: {{ part.name }}
+    {% if exact_number %}· <span class="code-pill">{{ exact_number }}</span>{% endif %}
+  </p>
+  <p>
+    <a href="{% url 'reports_sales_by_client_detail' %}?{{ period_qs }}&amp;{{ customer_qs }}">← К деталям клиента</a>
+  </p>
+  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Продажа</th>
+          <th class="num--qty">Количество</th>
+          {% if show_money %}
+            <th class="num--money">Цена за ед. (₽)</th>
+            <th class="num--money">Сумма (₽)</th>
+          {% endif %}
+          <th>Сотрудник</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in page_obj.object_list %}
+          <tr>
+            <td>{{ line.sale.sold_at|ru_dt }}</td>
+            <td><a href="{% url 'sale_detail' line.sale_id %}">{{ line.sale.number }}</a></td>
+            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+            {% if show_money %}
+              <td class="num--money">{{ line.unit_price|money_int }}</td>
+              <td class="num--money">{{ line.total_price|money_int }}</td>
+            {% endif %}
+            <td>{{ line.sale.sold_by|default:"·" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="cart" title="Операций за период нет" text="Измените период в карточке клиента." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}

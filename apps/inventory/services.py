@@ -49,7 +49,7 @@ def ensure_location_operation_allowed(location, *, section_recount_id=None) -> N
     )
     if lock is not None and lock.document_id != section_recount_id:
         raise InventoryError(
-            f"Ячейка временно заблокирована: выполняется пересчёт участка "
+            f"Ячейка временно заблокирована: выполняется пересчёт "
             f"{lock.section_code}."
         )
 

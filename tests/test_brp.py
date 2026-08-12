@@ -26,7 +26,12 @@ from apps.polaris.models import PolarisPricingSettings
 from apps.procurement.models import Batch
 from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, post_receipt
-from apps.warehouse.addresses import AddressError, compose_address
+from apps.warehouse.addresses import (
+    AddressError,
+    compose_address,
+    parse_address,
+    parse_legacy_address,
+)
 from apps.warehouse.models import StorageLocation, ValuationSettings
 
 PASSWORD = "parol-12345"
@@ -596,25 +601,24 @@ def test_price_settings_rejects_non_finite_values(client, make_user, db):
 
 
 def test_address_for_drawer():
-    # Новый формат по умолчанию: без зоны.
-    assert compose_address("", 1, 2, kind="drawer", unit_no=3, cell_no=8) == "S01-L02-D03-C08"
+    assert compose_address(1, drawer_no=3, cell_no=8) == "S01-D03-C08"
 
 
-def test_address_for_box_or_container():
-    # Коробка и контейнер — одна буква B (K и X для новых адресов не используются).
-    assert compose_address("", 2, 1, kind="container", unit_no=4, cell_no=2) == "S02-L01-B04-C02"
-    assert compose_address("", 2, 1, kind="box", unit_no=4, cell_no=2) == "S02-L01-B04-C02"
+def test_address_for_drawer_and_rack():
+    assert compose_address(2) == "S02"
+    assert compose_address(2, drawer_no=4) == "S02-D04"
 
 
-def test_address_for_open_shelf():
-    assert compose_address("", 4, 2) == "S04-L02"
-    assert compose_address("", 3, 1, kind="box", unit_no=2) == "S03-L01-B02"
+def test_parse_v2_address():
+    parsed = parse_address("s04-d02-c08")
+    assert (parsed.rack, parsed.drawer, parsed.cell) == (4, 2, 8)
+    assert parsed.code == "S04-D02-C08"
 
 
-def test_address_legacy_zone_still_works():
-    # Старые адреса с зоной остаются собираемыми и валидными.
-    assert compose_address("A", 1, 2, kind="drawer", unit_no=1, cell_no=1) == "A-S01-L02-D01-C01"
-    assert compose_address("d", 1, 4, kind="shelf") == "D-S01-L04"
+def test_address_legacy_zone_still_parses_without_mapping():
+    parsed = parse_legacy_address("A-S01-L02-D01-C01")
+    assert parsed.drawer_code == "A-S01-L02-D01"
+    assert parsed.cell_number == 1
 
 
 def test_address_legacy_codes_remain_searchable(db):
@@ -622,18 +626,18 @@ def test_address_legacy_codes_remain_searchable(db):
     from apps.warehouse.addresses import get_or_create_location
 
     for code in ("A-S01-L02-D01-C01", "S01-L02-K01-C01", "S01-L02-X01-C01"):
-        created = get_or_create_location(code)
+        created = get_or_create_location(code, allow_legacy=True)
         assert get_or_create_location(code).pk == created.pk
         assert StorageLocation.objects.filter(code=code).count() == 1
 
 
 def test_address_validation():
     with pytest.raises(AddressError):
-        compose_address("", 0, 1)
+        compose_address(0)
     with pytest.raises(AddressError):
-        compose_address("", 1, 1, kind="drawer")  # ящик без номера
+        compose_address(1, cell_no=5)
     with pytest.raises(AddressError):
-        compose_address("", 1, 1, cell_no=5)  # ячейка вне ящика/контейнера
+        parse_address("S01-L01-D01-C01")
 
 
 def test_brp_status_legend_visible(client, make_user, db):

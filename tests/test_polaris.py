@@ -185,7 +185,7 @@ def test_counting_accepts_polaris_scan_and_counts_value(db, admin):
     polaris = PolarisCatalogPart.objects.create(
         part_number="3610030", part_name="OIL SEAL", wholesale_price_usd=Decimal("10")
     )
-    location = get_or_create_location("S01-L02-D03-C08")
+    location = get_or_create_location("S01-D03-C08")
     session = start_session(location=location, by=admin)
     line = record_scan(session, "3610030", by=admin)
     assert line.source == "polaris_catalog"

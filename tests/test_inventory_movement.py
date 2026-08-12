@@ -376,7 +376,7 @@ def test_move_destination_template_has_combined_accessible_field(
     assert 'aria-autocomplete="list"' in html
     assert 'aria-haspopup="listbox"' in html
     assert 'data-search-url="/scanner/move/locations/"' in html
-    assert "Начните вводить код, например S03-L03" in html
+    assert "Начните вводить код, например S03-D02" in html
     assert "Физически 1" in html
     assert "доступно 1" in html
     assert "сканируйте новую ячейку" not in html

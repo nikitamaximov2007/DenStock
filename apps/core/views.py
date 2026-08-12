@@ -53,7 +53,11 @@ from apps.reports.services import (
     resolve_period,
 )
 from apps.sales.models import Reservation
-from apps.warehouse.models import StorageLocation
+from apps.warehouse.models import StorageLocation, StorageLocationAlias
+from apps.warehouse.services import (
+    StorageLocationResolutionError,
+    resolve_storage_location,
+)
 
 from .models import UnresolvedScan
 from .part_lookup import MatchSource, clean_lookup_value
@@ -787,9 +791,10 @@ def _resolve_move_destination(raw):
     code = clean_lookup_value(raw)
     if not code:
         return None, "Выберите новую ячейку."
-    location = StorageLocation.objects.filter(code__iexact=code).first()
-    if location is None:
-        location = StorageLocation.objects.filter(barcode__iexact=code).first()
+    try:
+        location, _is_alias = resolve_storage_location(code)
+    except StorageLocationResolutionError as exc:
+        return None, str(exc)
     if location is None:
         return None, "Ячейка с таким кодом не найдена."
     if not location.can_hold_stock():
@@ -843,7 +848,14 @@ def scanner_move_locations(request: HttpRequest) -> JsonResponse:
     if exclude_id is not None:
         locations = locations.exclude(pk=exclude_id)
     if query:
-        locations = locations.filter(Q(code__icontains=query) | Q(barcode__icontains=query))
+        alias_location_ids = StorageLocationAlias.objects.filter(
+            Q(code__icontains=query) | Q(barcode__icontains=query)
+        ).values("location_id")
+        locations = locations.filter(
+            Q(code__icontains=query)
+            | Q(barcode__icontains=query)
+            | Q(pk__in=alias_location_ids)
+        )
     rows = locations.order_by("code", "pk")[:50]
     return JsonResponse(
         {

@@ -379,6 +379,34 @@ def test_quarantine_status_is_preserved_in_target(section_data):
     assert target.status == StockLot.Status.QUARANTINE
 
 
+def test_allocation_limit_is_separate_by_lot_status(section_data):
+    data = section_data
+    quarantined_lot = create_stock_lot(
+        data["batch_line"],
+        StorageLocation.objects.get(code="S03-L03-D02-C04"),
+        Decimal("5"),
+    )
+    receive_stock_lot(quarantined_lot, by=data["admin"])
+    StockLot.objects.filter(pk=quarantined_lot.pk).update(status=StockLot.Status.QUARANTINE)
+    doc, lines = _allocation_lines(data, ("5", "5"))
+
+    available = allocate_section_line(
+        lines[0],
+        batch_line_id=data["batch_line"].pk,
+        quantity="5",
+        lot_status=StockLot.Status.AVAILABLE,
+    )
+    quarantined = allocate_section_line(
+        lines[1],
+        batch_line_id=data["batch_line"].pk,
+        quantity="5",
+        lot_status=StockLot.Status.QUARANTINE,
+    )
+
+    assert available.lot_status == StockLot.Status.AVAILABLE
+    assert quarantined.lot_status == StockLot.Status.QUARANTINE
+
+
 def test_allocation_global_limit_and_invalid_batch_are_rejected(section_data):
     data = section_data
     doc = _start(data)
