@@ -4,6 +4,17 @@ from . import views
 
 urlpatterns = [
     path("", views.reports_dashboard, name="reports_dashboard"),
+    path("sales-by-client/", views.sales_by_client, name="reports_sales_by_client"),
+    path(
+        "sales-by-client/customer/",
+        views.sales_by_client_detail,
+        name="reports_sales_by_client_detail",
+    ),
+    path(
+        "sales-by-client/operations/",
+        views.sales_by_client_operations,
+        name="reports_sales_by_client_operations",
+    ),
     path("stock/", views.reports_stock, name="reports_stock"),
     # Слой 22: CSV-экспорт (отдельный endpoint на отчёт)
     path("export/sales.csv", views.export_sales, name="reports_export_sales"),

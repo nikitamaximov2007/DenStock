@@ -42,6 +42,7 @@ ADMIN_PAGES = [
     "write_off_list",
     "inventory_count_list",
     "reports_dashboard",
+    "reports_sales_by_client",
     "reports_stock",
     "statistics_dashboard",
     "directory_index",

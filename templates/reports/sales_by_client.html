@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Продажи по клиентам · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Продажи по клиентам</h1>
+  {% include "reports/_sales_period_filter.html" %}
+  <p class="page-subtitle">
+    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    Только проведённые продажи по моменту проведения.
+  </p>
+  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th class="num">Продаж</th>
+          <th class="num">Уникальных артикулов</th>
+          <th class="num--qty">Единиц</th>
+          {% if show_money %}<th class="num--money">Сумма (₽)</th>{% endif %}
+          <th>Последняя продажа</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page_obj.object_list %}
+          <tr>
+            <td>
+              <a href="{% url 'reports_sales_by_client_detail' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+            </td>
+            <td class="num">{{ row.sale_count }}</td>
+            <td class="num">{{ row.unique_parts }}</td>
+            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
+            {% if show_money %}<td class="num--money">{{ row.revenue|money_int }}</td>{% endif %}
+            <td>{{ row.last_sale|ru_dt }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="chart" title="Продаж за период нет" text="Измените период, чтобы увидеть проведённые продажи по клиентам." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}

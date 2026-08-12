@@ -1,0 +1,24 @@
+<form method="get" class="filter-toolbar">
+  {% if customer_value %}<input type="hidden" name="customer" value="{{ customer_value }}">{% endif %}
+  {% if missing_customer %}<input type="hidden" name="missing" value="1">{% endif %}
+  <div class="filter-field">
+    <span class="filter-label">Быстрый период</span>
+    <div class="segmented">
+      {% for value, label in presets %}
+        <a href="?{% if customer_qs %}{{ customer_qs }}&amp;{% endif %}preset={{ value }}"
+           class="{% if period.preset == value %}is-active{% endif %}">{{ label }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <label>
+    С
+    <input type="date"
+           name="date_from"
+           value="{{ period.date_from|date:'Y-m-d' }}">
+  </label>
+  <label>
+    По
+    <input type="date" name="date_to" value="{{ period.date_to|date:'Y-m-d' }}">
+  </label>
+  <button type="submit" class="btn btn--secondary">Показать</button>
+</form>
