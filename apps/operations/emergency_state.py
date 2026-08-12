@@ -12,6 +12,7 @@ from uuid import UUID
 from django.apps import apps
 from django.conf import settings
 from django.db import connections
+from django.db.migrations.loader import MigrationLoader
 from django.db.migrations.recorder import MigrationRecorder
 
 from .models import DeploymentState, EmergencyAuditEvent
@@ -97,6 +98,15 @@ def migration_state(*, using="default") -> dict:
     return {
         "fingerprint": hashlib.sha256(_canonical_bytes(payload)).hexdigest(),
         "applied": payload,
+    }
+
+
+def application_migration_state(*, using="default") -> dict:
+    loader = MigrationLoader(connections[using], ignore_no_migrations=True)
+    payload = [[app, name] for app, name in sorted(loader.disk_migrations)]
+    return {
+        "fingerprint": hashlib.sha256(_canonical_bytes(payload)).hexdigest(),
+        "available": payload,
     }
 
 
