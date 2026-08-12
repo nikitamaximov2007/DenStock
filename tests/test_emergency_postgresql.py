@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 import pytest
-from django.db import close_old_connections, connection, connections, transaction
+from django.db import IntegrityError, close_old_connections, connection, connections, transaction
 
 from apps.catalog.models import Category, PartType, Unit
 from apps.inventory.models import NumberSequence, StockLot
@@ -153,6 +153,28 @@ def test_postgresql_freeze_waits_for_an_already_running_write_transaction(settin
         assert DeploymentState.get_solo().write_state == (
             DeploymentState.WriteState.MAINTENANCE
         )
+    finally:
+        settings.DENSTOCK_MODE = "test"
+
+
+@pytest.mark.django_db(transaction=True)
+def test_postgresql_failed_business_write_releases_failover_lock(settings):
+    _set_state(DeploymentState.WriteState.NORMAL)
+    settings.DENSTOCK_MODE = "production"
+    Supplier.objects.create(name="Duplicate supplier")
+
+    try:
+        with pytest.raises(IntegrityError), transaction.atomic():
+            Supplier.objects.create(name="Duplicate supplier")
+
+        def freeze():
+            with transaction.atomic(), lifecycle_write():
+                acquire_failover_lock(exclusive=True)
+            return "lock acquired"
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = pool.submit(_thread_call, freeze).result(timeout=10)
+        assert result == "lock acquired"
     finally:
         settings.DENSTOCK_MODE = "test"
 

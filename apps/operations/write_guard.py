@@ -136,28 +136,14 @@ def acquire_failover_lock(*, exclusive: bool, using="default") -> None:
 
 @contextmanager
 def _business_mutation_lock(*, using="default"):
-    """Hold a session lock across state check and the mutating statement."""
+    """Hold a transaction lock across the state check and mutation."""
     database = connections[using]
     if database.vendor != "postgresql":
         yield
         return
-    token = _internal.set(True)
-    try:
-        with database.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_lock_shared(%s)", [FAILOVER_ADVISORY_LOCK_ID])
-    finally:
-        _internal.reset(token)
-    try:
+    with transaction.atomic(using=using):
+        acquire_failover_lock(exclusive=False, using=using)
         yield
-    finally:
-        token = _internal.set(True)
-        try:
-            with database.cursor() as cursor:
-                cursor.execute(
-                    "SELECT pg_advisory_unlock_shared(%s)", [FAILOVER_ADVISORY_LOCK_ID]
-                )
-        finally:
-            _internal.reset(token)
 
 
 @contextmanager
