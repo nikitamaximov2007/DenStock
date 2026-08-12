@@ -128,7 +128,7 @@ STORAGES = {
 }
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "mediafiles"
+MEDIA_ROOT = Path(env("DENSTOCK_MEDIA_ROOT", default=str(BASE_DIR / "mediafiles")))
 
 # Private AI support screenshots are served only through authenticated Django
 # views. This directory must never be mounted into the public Caddy media path.
