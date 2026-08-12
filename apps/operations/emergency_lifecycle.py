@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 from datetime import datetime
+from pathlib import Path
 
 from django.conf import settings
 from django.db import connection, transaction
@@ -42,7 +43,10 @@ def _active_standby(paths=None) -> tuple[dict, dict]:
         raise EmergencyLifecycleError(str(exc)) from exc
     if not active:
         raise EmergencyLifecycleError("Проверенной standby-копии нет.")
-    report = validate_manifest(active["manifest_path"], expected_source="production")
+    manifest_path = Path(active.get("manifest_path", ""))
+    if manifest_path.name != "manifest.json" or not manifest_path.is_file():
+        raise EmergencyLifecycleError("Standby manifest не найден.")
+    report = validate_manifest(manifest_path.parent, expected_source="production")
     if not report.ok:
         raise EmergencyLifecycleError("Standby manifest invalid: " + "; ".join(report.errors))
     if connection.settings_dict.get("NAME") != active["database_name"]:

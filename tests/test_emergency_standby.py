@@ -2,8 +2,10 @@ import json
 from pathlib import Path
 
 import pytest
+from django.db import connection
 from django.test import override_settings
 
+from apps.operations.emergency_lifecycle import _active_standby
 from apps.operations.emergency_manifest import SCHEMA_VERSION
 from apps.operations.emergency_state import (
     application_migration_state,
@@ -94,6 +96,22 @@ def test_successful_standby_refresh_is_activated_atomically(tmp_path, standby_ru
     assert dropped == []
     assert load_control(paths)["active_standby"] == active
     assert Path(active["manifest_path"]).is_file()
+
+
+@pytest.mark.django_db
+def test_active_standby_validates_manifest_file_recorded_in_control(
+    tmp_path, standby_runtime, monkeypatch
+):
+    paths, _, _ = standby_runtime
+    source = tmp_path / "source"
+    _source_backup(source)
+    active = refresh_standby(str(source), paths=paths)
+    monkeypatch.setitem(connection.settings_dict, "NAME", active["database_name"])
+
+    selected, manifest = _active_standby(paths)
+
+    assert selected == active
+    assert manifest["backup_run_id"] == active["backup_run_id"]
 
 
 @pytest.mark.django_db
