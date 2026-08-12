@@ -3,6 +3,8 @@ from .base import *  # noqa: F403
 
 DEBUG = False
 ALLOWED_HOSTS = ["*"]
+DENSTOCK_MODE = "test"
+DENSTOCK_INSTANCE_ID = "test"
 
 DATABASES = {
     "default": {

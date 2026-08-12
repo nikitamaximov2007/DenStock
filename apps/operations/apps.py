@@ -8,3 +8,6 @@ class OperationsConfig(AppConfig):
 
     def ready(self):
         from . import emergency_environment  # noqa: F401
+        from .write_guard import install_all_guards
+
+        install_all_guards()

@@ -19,7 +19,9 @@ from .models import DeploymentState, EmergencyAuditEvent
 
 BUSINESS_APP_LABELS = frozenset(
     {
+        "accounts",
         "actions",
+        "ai_support",
         "brp",
         "catalog",
         "core",
