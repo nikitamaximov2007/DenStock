@@ -166,6 +166,14 @@ def test_http_write_returns_locked_when_production_is_frozen():
     assert response.status_code == 423
 
 
+def test_http_write_guard_does_not_open_database_in_test_mode():
+    middleware = BusinessWriteGuardMiddleware(lambda request: HttpResponse("ok"))
+
+    response = middleware(RequestFactory().post("/scanner/resolve/"))
+
+    assert response.status_code == 200
+
+
 @pytest.mark.django_db
 @override_settings(DENSTOCK_MODE="emergency-local", AI_SUPPORT_ENABLED=True)
 def test_ai_support_is_gracefully_unavailable_offline():

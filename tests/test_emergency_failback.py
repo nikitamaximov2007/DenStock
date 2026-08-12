@@ -363,13 +363,11 @@ def test_failback_package_rejects_wrong_sha(tmp_path, settings, monkeypatch):
 
 
 @pytest.mark.django_db
-@override_settings(
-    DENSTOCK_MODE="production",
-    DENSTOCK_APP_COMMIT=COMMIT,
-)
 def test_production_finalizer_unlocks_only_matching_eligible_restore(
     tmp_path, settings, monkeypatch
 ):
+    settings.DENSTOCK_MODE = "production"
+    settings.DENSTOCK_APP_COMMIT = COMMIT
     settings.DENSTOCK_EMERGENCY_ROOT = tmp_path / "runtime"
     session = _session(status=OfflineSession.Status.ELIGIBLE)
     run = _final_run(tmp_path / "backups", session)
@@ -407,11 +405,9 @@ def test_production_finalizer_unlocks_only_matching_eligible_restore(
 
 
 @pytest.mark.django_db
-@override_settings(
-    DENSTOCK_MODE="production",
-    DENSTOCK_APP_COMMIT=COMMIT,
-)
 def test_production_finalizer_refuses_conflict_package(tmp_path, settings, monkeypatch):
+    settings.DENSTOCK_MODE = "production"
+    settings.DENSTOCK_APP_COMMIT = COMMIT
     settings.DENSTOCK_EMERGENCY_ROOT = tmp_path / "runtime"
     session = _session(status=OfflineSession.Status.CONFLICT)
     run = _final_run(tmp_path / "backups", session)

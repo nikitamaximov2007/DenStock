@@ -162,6 +162,8 @@ class BusinessWriteGuardMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        if settings.DENSTOCK_MODE == "test":
+            return self.get_response(request)
         if request.method in SAFE_METHODS:
             return self.get_response(request)
         if request.path in EXEMPT_WRITE_PATHS:
