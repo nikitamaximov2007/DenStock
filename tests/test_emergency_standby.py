@@ -104,6 +104,7 @@ def test_broken_download_keeps_previous_standby(tmp_path, standby_runtime):
         "schema_version": 1,
         "active_standby": {"database_name": "denstock_emergency_previous"},
         "previous_standbys": [],
+        "offline_lifecycle": None,
     }
     paths.control.write_text(json.dumps(previous), encoding="utf-8")
 
@@ -125,6 +126,7 @@ def test_restore_or_health_failure_rolls_back_candidate(tmp_path, standby_runtim
         "schema_version": 1,
         "active_standby": {"database_name": "denstock_emergency_previous"},
         "previous_standbys": [],
+        "offline_lifecycle": None,
     }
     paths.control.write_text(json.dumps(previous), encoding="utf-8")
     monkeypatch.setattr(
@@ -155,6 +157,29 @@ def test_refresh_is_blocked_while_offline_session_is_active(tmp_path, standby_ru
     )
 
     with pytest.raises(StandbyError, match="запрещён"):
+        refresh_standby(str(tmp_path), paths=paths)
+
+    assert created == []
+    assert dropped == []
+
+
+@pytest.mark.django_db
+def test_control_lifecycle_blocks_scheduled_refresh(tmp_path, standby_runtime):
+    paths, created, dropped = standby_runtime
+    paths.root.mkdir(parents=True)
+    paths.control.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "active_standby": {"database_name": "denstock_emergency_previous"},
+                "previous_standbys": [],
+                "offline_lifecycle": {"status": "active", "session_id": "session"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(StandbyError, match="offline lifecycle"):
         refresh_standby(str(tmp_path), paths=paths)
 
     assert created == []

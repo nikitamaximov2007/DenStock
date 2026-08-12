@@ -20,7 +20,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import connection
 
-from .emergency_manifest import SCHEMA_VERSION, write_manifest
+from .emergency_manifest import SCHEMA_VERSION, validate_manifest, write_manifest
 from .emergency_state import (
     business_state_marker,
     media_tree_sha256,
@@ -211,6 +211,8 @@ def backup_all(
     по умолчанию) / automatic (планировщик) / pre_restore (перед восстановлением) /
     uploaded (загруженный). Структура db/media не меняется.
     """
+    if trigger not in BACKUP_TYPES:
+        raise OperationsError(f"Неизвестный тип backup: {trigger}")
     s = settings_dict or connection.settings_dict
     run = new_run_dir(root)
     migrations = migration_state()
@@ -279,6 +281,12 @@ def backup_all(
             )
         manifest.update(extra_manifest)
     write_manifest(run / "manifest.json", manifest)
+    validation = validate_manifest(run, expected_source=settings.DENSTOCK_MODE)
+    if not validation.ok:
+        raise OperationsError(
+            "Созданный backup manifest не прошёл self-check: "
+            + "; ".join(validation.errors)
+        )
     if keep_last:
         prune_old_runs(run.parent, keep_last)
     return run

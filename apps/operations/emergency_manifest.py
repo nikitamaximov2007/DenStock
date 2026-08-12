@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -107,6 +108,26 @@ def validate_manifest(
         except ValueError:
             result.errors.append("verified_at отсутствует, некорректен или не содержит timezone")
 
+    source_instance = manifest.get("source_instance_id")
+    if (
+        not isinstance(source_instance, str)
+        or not source_instance.strip()
+        or len(source_instance) > 128
+    ):
+        result.errors.append("source_instance_id отсутствует или некорректен")
+    database_name = manifest.get("database_name")
+    if not isinstance(database_name, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]{1,128}", database_name
+    ):
+        result.errors.append("database_name отсутствует или небезопасен")
+    storage_origin = manifest.get("storage_origin")
+    if (
+        not isinstance(storage_origin, str)
+        or not storage_origin.strip()
+        or len(storage_origin) > 255
+    ):
+        result.errors.append("storage_origin отсутствует или некорректен")
+
     for key in ("database_identity", "migration_fingerprint", "media_tree_sha256"):
         value = manifest.get(key)
         if key == "database_identity":
@@ -164,6 +185,36 @@ def validate_manifest(
             result.errors.append("data_state business_generation отсутствует или некорректна")
         if not isinstance(marker.get("tables"), dict):
             result.errors.append("data_state tables отсутствует или некорректен")
+        else:
+            for table, table_marker in marker["tables"].items():
+                if (
+                    not isinstance(table, str)
+                    or not isinstance(table_marker, dict)
+                    or not isinstance(table_marker.get("count"), int)
+                    or isinstance(table_marker.get("count"), bool)
+                    or table_marker.get("count", -1) < 0
+                    or not SHA256_RE.fullmatch(str(table_marker.get("sha256", "")))
+                ):
+                    result.errors.append(f"data_state table marker некорректен: {table!r}")
+                    break
+
+    migration_rows = manifest.get("migration_state")
+    if not isinstance(migration_rows, list) or any(
+        not isinstance(row, list)
+        or len(row) != 2
+        or not all(isinstance(value, str) and value for value in row)
+        for row in migration_rows or []
+    ):
+        result.errors.append("migration_state отсутствует или некорректен")
+    elif hashlib.sha256(
+        json.dumps(
+            migration_rows,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+    ).hexdigest() != manifest.get("migration_fingerprint"):
+        result.errors.append("migration_state не совпадает с migration_fingerprint")
 
     if manifest.get("consistency") not in {"database_snapshot", "single_writer_locked"}:
         result.errors.append("consistency отсутствует или неизвестен")

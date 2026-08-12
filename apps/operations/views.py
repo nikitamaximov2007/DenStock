@@ -56,7 +56,6 @@ def emergency_probe(request):
     with transaction.atomic():
         acquire_failover_lock(exclusive=True)
         state = DeploymentState.objects.get(pk=DeploymentState.SINGLETON_PK)
-        stable = state.write_state == DeploymentState.WriteState.MAINTENANCE
         data_state = business_state_marker()
         migrations = migration_state()
         media_hash = media_tree_sha256(settings.MEDIA_ROOT)
@@ -66,7 +65,8 @@ def emergency_probe(request):
             "mode": settings.DENSTOCK_MODE,
             "instance_id": settings.DENSTOCK_INSTANCE_ID,
             "write_state": state.write_state,
-            "stable_snapshot": stable,
+            "state_reason": state.state_reason,
+            "stable_snapshot": True,
             "app_commit": settings.DENSTOCK_APP_COMMIT or backup._git_commit(),
             "migration_fingerprint": migrations["fingerprint"],
             "data_state": data_state,

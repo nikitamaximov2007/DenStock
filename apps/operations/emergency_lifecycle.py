@@ -14,7 +14,14 @@ from .emergency_environment import validate_database_target
 from .emergency_manifest import validate_manifest
 from .emergency_state import business_state_marker, migration_state, record_event
 from .models import DeploymentState, OfflineSession
-from .standby import EmergencyPaths, StandbyError, load_control
+from .standby import (
+    EmergencyPaths,
+    StandbyError,
+    control_lock,
+    load_control,
+    save_control,
+    set_offline_lifecycle,
+)
 from .write_guard import acquire_failover_lock, lifecycle_write
 
 
@@ -43,8 +50,50 @@ def _active_standby(paths=None) -> tuple[dict, dict]:
     return active, report.manifest
 
 
+def start_offline_session(*, kind: str, actor=None, paths=None, resume=False) -> OfflineSession:
+    validate_database_target(mode="emergency-local")
+    paths = paths or EmergencyPaths.configured()
+    with control_lock(paths):
+        control = load_control(paths)
+        unfinished = OfflineSession.objects.filter(
+            status__in=[
+                OfflineSession.Status.ACTIVE,
+                OfflineSession.Status.FREEZING,
+                OfflineSession.Status.EXPORT_FAILED,
+            ]
+        ).first()
+        if unfinished:
+            set_offline_lifecycle(unfinished, paths=paths)
+            if resume and unfinished.status == OfflineSession.Status.ACTIVE:
+                return unfinished
+            raise EmergencyLifecycleError(f"Offline lifecycle уже существует: {unfinished.status}.")
+        if control.get("offline_lifecycle") and not resume:
+            raise EmergencyLifecycleError(
+                "Emergency control содержит незавершённый lifecycle. "
+                "Проверьте status и используйте --resume только после диагностики."
+            )
+        active = control.get("active_standby") or {}
+        control["offline_lifecycle"] = {
+            "session_id": "",
+            "status": "starting",
+            "database_name": active.get("database_name", ""),
+            "base_backup_run_id": active.get("backup_run_id", ""),
+            "updated_at": timezone.now().isoformat(),
+        }
+        save_control(control, paths)
+        try:
+            session = _start_offline_session_database(kind=kind, actor=actor, paths=paths)
+        except Exception:
+            control = load_control(paths)
+            control["offline_lifecycle"] = None
+            save_control(control, paths)
+            raise
+        set_offline_lifecycle(session, paths=paths)
+        return session
+
+
 @transaction.atomic
-def start_offline_session(*, kind: str, actor=None, paths=None) -> OfflineSession:
+def _start_offline_session_database(*, kind: str, actor=None, paths=None) -> OfflineSession:
     validate_database_target(mode="emergency-local")
     active, manifest = _active_standby(paths)
     acquire_failover_lock(exclusive=True)
@@ -134,5 +183,6 @@ def emergency_context() -> dict:
         "status": state.write_state,
         "session": session,
         "instance_id": settings.DENSTOCK_INSTANCE_ID,
+        "standby_only": session is None,
         "writable": state.write_state == DeploymentState.WriteState.EMERGENCY_ACTIVE,
     }

@@ -28,11 +28,13 @@ class Command(BaseCommand):
             "instance_id": settings.DENSTOCK_INSTANCE_ID,
             "write_state": deployment.write_state,
             "standby": active,
+            "control_lifecycle": control.get("offline_lifecycle"),
             "session": (
                 {
                     "id": str(session.id),
                     "status": session.status,
                     "started_at": session.started_at.isoformat(),
+                    "ended_at": session.ended_at.isoformat() if session.ended_at else None,
                 }
                 if session
                 else None
@@ -55,6 +57,12 @@ class Command(BaseCommand):
         self.stdout.write(f"Режим: {payload['mode']}")
         self.stdout.write(f"Instance: {payload['instance_id']}")
         self.stdout.write(f"Запись: {payload['write_state']}")
+        if payload["control_lifecycle"]:
+            lifecycle = payload["control_lifecycle"]
+            self.stdout.write(
+                f"Lifecycle: {lifecycle.get('status', '?')} "
+                f"({lifecycle.get('session_id') or 'transition'})"
+            )
         if active:
             self.stdout.write(f"Backup run: {active['backup_run_id']}")
             self.stdout.write(f"Backup time: {active['backup_created_at']}")

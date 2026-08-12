@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -7,6 +8,8 @@ from apps.operations import backup
 from apps.operations.emergency_manifest import SCHEMA_VERSION, validate_manifest
 from apps.operations.emergency_state import migration_state, record_event, sha256_file
 from apps.operations.models import DeploymentState
+
+EMPTY_MIGRATION_HASH = hashlib.sha256(b"[]").hexdigest()
 
 
 def _manifest(run, db_path, media_path=None, **overrides):
@@ -25,7 +28,7 @@ def _manifest(run, db_path, media_path=None, **overrides):
         "media_filename": media_path.name if media_path else None,
         "media_sha256": sha256_file(media_path) if media_path else None,
         "media_tree_sha256": "b" * 64,
-        "migration_fingerprint": "c" * 64,
+        "migration_fingerprint": EMPTY_MIGRATION_HASH,
         "migration_state": [],
         "data_state": {
             "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
@@ -89,6 +92,28 @@ def test_manifest_rejects_bad_media_hash_and_missing_database(tmp_path):
     assert any("контрольная сумма media" in error for error in report.errors)
 
 
+def test_manifest_rejects_migration_and_data_marker_tampering(tmp_path):
+    db_path = tmp_path / "db.dump"
+    db_path.write_bytes(b"database")
+    _manifest(
+        tmp_path,
+        db_path,
+        migration_fingerprint="0" * 64,
+        data_state={
+            "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
+            "business_generation": -1,
+            "business_sha256": "d" * 64,
+            "tables": {"sales.sale": {"count": -1, "sha256": "bad"}},
+        },
+    )
+
+    report = validate_manifest(tmp_path)
+
+    assert any("migration_state не совпадает" in error for error in report.errors)
+    assert any("business_generation" in error for error in report.errors)
+    assert any("table marker" in error for error in report.errors)
+
+
 @pytest.mark.django_db
 @override_settings(
     DENSTOCK_MODE="production",
@@ -103,12 +128,16 @@ def test_backup_all_writes_verified_v2_manifest(tmp_path, db, settings, monkeypa
     (media / "photo.jpg").write_bytes(b"photo")
     settings_dict = {"ENGINE": "django.db.backends.sqlite3", "NAME": str(source)}
     monkeypatch.setattr(backup, "verify_database_payload", lambda *args: None)
-    monkeypatch.setattr(backup, "business_state_marker", lambda: {
-        "database_identity": str(DeploymentState.get_solo().database_identity),
-        "business_generation": 0,
-        "business_sha256": "d" * 64,
-        "tables": {},
-    })
+    monkeypatch.setattr(
+        backup,
+        "business_state_marker",
+        lambda: {
+            "database_identity": str(DeploymentState.get_solo().database_identity),
+            "business_generation": 0,
+            "business_sha256": "d" * 64,
+            "tables": {},
+        },
+    )
 
     run = backup.backup_all(
         root=tmp_path / "backups", settings_dict=settings_dict, media_root=media

@@ -305,6 +305,16 @@ enhancement: прямой URL, обновление страницы и рабо
   запуск требует проверки бэкапа, слова ПОДТВЕРЖДАЮ и checkbox риска;
   перед restore автоматически создаётся pre-restore бэкап. Загрузки
   внешних файлов бэкапа нет.
+- Emergency local mode запускается только отдельным Windows operator tooling.
+  Это single-writer failover, а не двусторонняя синхронизация. Local standby
+  восстанавливается только из verified manifest v2 в отдельную PostgreSQL 16
+  DB. Активный local mode заметен по banner на всех страницах. ИИ-поддержка
+  недоступна, складские workflows используют локальную DB. После работы local
+  замораживается и экспортируется. Failback check сравнивает database identity,
+  generation, полный business fingerprint, table markers, migrations, app
+  commit и media hash. `CONFLICT`/`BLOCKED` запрещают overwrite; `ELIGIBLE`
+  разрешает только отдельную reviewed production restore procedure. Automatic
+  production overwrite отсутствует.
 
 ## Role map
 
