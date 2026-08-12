@@ -22,7 +22,7 @@ def test_postgresql_global_gate_serializes_shared_codex_capacity(
 ):
     first = django_user_model.objects.create_user(username="pg-ai-first")
     second = django_user_model.objects.create_user(username="pg-ai-second")
-    group = Group.objects.get(name=roles.STOREKEEPER)
+    group, _ = Group.objects.get_or_create(name=roles.STOREKEEPER)
     first.groups.add(group)
     second.groups.add(group)
     first_conversation = SupportConversation.objects.create(owner=first)

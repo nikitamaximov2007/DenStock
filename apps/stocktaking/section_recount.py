@@ -717,7 +717,9 @@ def allocate_section_line(
     if source_cost is None:
         raise SectionRecountError("Для выбранной партии нет подтверждённой себестоимости.")
     existing = SectionRecountAllocation.objects.filter(
-        line__recount=line.recount, batch_line=batch_line
+        line__recount=line.recount,
+        batch_line=batch_line,
+        lot_status=lot_status,
     ).exclude(line=line)
     allocated_elsewhere = existing.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
     capacity = (
