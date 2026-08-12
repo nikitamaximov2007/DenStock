@@ -6,7 +6,7 @@ from django.contrib.auth.models import Group
 from django.db import close_old_connections, connection
 
 from apps.accounts import roles
-from apps.ai_support.models import SupportConversation, SupportUsageDay
+from apps.ai_support.models import SupportConversation, SupportRuntimeGate, SupportUsageDay
 from apps.ai_support.providers.fake import FakeProvider
 from apps.ai_support.services import ProviderCapacity, send_message
 
@@ -20,6 +20,7 @@ if connection.vendor != "postgresql":
 def test_postgresql_global_gate_serializes_shared_codex_capacity(
     django_user_model, settings, monkeypatch
 ):
+    SupportRuntimeGate.objects.get_or_create(pk=1)
     first = django_user_model.objects.create_user(username="pg-ai-first")
     second = django_user_model.objects.create_user(username="pg-ai-second")
     group, _ = Group.objects.get_or_create(name=roles.STOREKEEPER)
