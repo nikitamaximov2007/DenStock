@@ -20,7 +20,6 @@ FAILOVER_ADVISORY_LOCK_ID = 0x44454E53544F434B
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 EXEMPT_WRITE_PATHS = frozenset({"/login/", "/logout/", "/operations/backups/create/"})
 _internal = contextvars.ContextVar("denstock_write_guard_internal", default=False)
-_business_write_seen = contextvars.ContextVar("denstock_business_write_seen", default=False)
 _table_pattern = None
 
 
@@ -86,23 +85,24 @@ def execute_guard(execute, sql, params, many, context):
     if _internal.get() or not _is_business_mutation(sql):
         return execute(sql, params, many, context)
     if settings.DENSTOCK_MODE == "test":
-        result = execute(sql, params, many, context)
-        _business_write_seen.set(True)
-        return result
-    token = _internal.set(True)
-    try:
+        return execute(sql, params, many, context)
+    alias = context["connection"].alias
+    with _business_mutation_lock(using=alias):
+        token = _internal.set(True)
         try:
-            assert_business_writes_allowed(using=context["connection"].alias)
-        except (OperationalError, ProgrammingError):
-            database = context["connection"]
-            if DeploymentState._meta.db_table in database.introspection.table_names():
-                raise
+            try:
+                assert_business_writes_allowed(using=alias)
+            except (OperationalError, ProgrammingError):
+                database = context["connection"]
+                if DeploymentState._meta.db_table in database.introspection.table_names():
+                    raise
+                return execute(sql, params, many, context)
+            DeploymentState.objects.using(alias).filter(
+                pk=DeploymentState.SINGLETON_PK
+            ).update(business_generation=F("business_generation") + 1)
             return execute(sql, params, many, context)
-    finally:
-        _internal.reset(token)
-    result = execute(sql, params, many, context)
-    _business_write_seen.set(True)
-    return result
+        finally:
+            _internal.reset(token)
 
 
 def install_guard(sender=None, connection=None, **kwargs):
@@ -135,21 +135,38 @@ def acquire_failover_lock(*, exclusive: bool, using="default") -> None:
 
 
 @contextmanager
+def _business_mutation_lock(*, using="default"):
+    """Hold a session lock across state check and the mutating statement."""
+    database = connections[using]
+    if database.vendor != "postgresql":
+        yield
+        return
+    token = _internal.set(True)
+    try:
+        with database.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_lock_shared(%s)", [FAILOVER_ADVISORY_LOCK_ID])
+    finally:
+        _internal.reset(token)
+    try:
+        yield
+    finally:
+        token = _internal.set(True)
+        try:
+            with database.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pg_advisory_unlock_shared(%s)", [FAILOVER_ADVISORY_LOCK_ID]
+                )
+        finally:
+            _internal.reset(token)
+
+
+@contextmanager
 def lifecycle_write():
     token = _internal.set(True)
     try:
         yield
     finally:
         _internal.reset(token)
-
-
-def _record_generation() -> None:
-    if not _business_write_seen.get():
-        return
-    with lifecycle_write():
-        DeploymentState.objects.filter(pk=DeploymentState.SINGLETON_PK).update(
-            business_generation=F("business_generation") + 1
-        )
 
 
 class BusinessWriteGuardMiddleware:
@@ -159,22 +176,19 @@ class BusinessWriteGuardMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        if request.method in SAFE_METHODS or request.path in EXEMPT_WRITE_PATHS:
+        if request.method in SAFE_METHODS:
             return self.get_response(request)
-        seen_token = _business_write_seen.set(False)
+        if request.path in EXEMPT_WRITE_PATHS:
+            with lifecycle_write():
+                return self.get_response(request)
         try:
             with transaction.atomic():
                 acquire_failover_lock(exclusive=False)
                 assert_business_writes_allowed()
-                response = self.get_response(request)
-                if response.status_code < 400:
-                    _record_generation()
-                return response
+                return self.get_response(request)
         except BusinessWriteBlocked:
             return HttpResponse(
                 "Запись временно запрещена: система работает только для чтения.",
                 status=423,
                 content_type="text/plain; charset=utf-8",
             )
-        finally:
-            _business_write_seen.reset(seen_token)

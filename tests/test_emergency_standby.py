@@ -5,7 +5,11 @@ import pytest
 from django.test import override_settings
 
 from apps.operations.emergency_manifest import SCHEMA_VERSION
-from apps.operations.emergency_state import application_migration_state, sha256_file
+from apps.operations.emergency_state import (
+    application_migration_state,
+    media_tree_sha256,
+    sha256_file,
+)
 from apps.operations.models import OfflineSession
 from apps.operations.standby import EmergencyPaths, StandbyError, load_control, refresh_standby
 
@@ -22,6 +26,7 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
         "schema_version": SCHEMA_VERSION,
         "backup_run_id": "d7919779-6c24-43cb-bb78-181f61a335d5",
         "created_at": "2026-08-12T10:00:00+05:00",
+        "verified_at": "2026-08-12T10:01:00+05:00",
         "source_environment": "production",
         "source_instance_id": "production",
         "app_commit": COMMIT,
@@ -31,12 +36,18 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
         "database_sha256": sha256_file(database),
         "media_filename": None,
         "media_sha256": None,
-        "media_tree_sha256": "b" * 64,
+        "media_tree_sha256": media_tree_sha256(run / "empty-media"),
         "migration_fingerprint": migrations["fingerprint"],
         "migration_state": migrations["available"],
-        "data_state": {"business_sha256": "d" * 64, "tables": {}},
+        "data_state": {
+            "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
+            "business_generation": 0,
+            "business_sha256": "d" * 64,
+            "tables": {},
+        },
         "storage_origin": "test",
         "verification_status": "verified",
+        "consistency": "database_snapshot",
     }
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run

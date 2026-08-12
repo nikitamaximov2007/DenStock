@@ -5,6 +5,7 @@ from . import views
 app_name = "operations"
 
 urlpatterns = [
+    path("emergency/probe/", views.emergency_probe, name="emergency_probe"),
     path("backups/", views.backups_list, name="backups"),
     path("backups/create/", views.backup_create, name="backup_create"),
     path("backups/<str:run_id>/manifest/", views.backup_manifest, name="backup_manifest"),

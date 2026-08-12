@@ -84,9 +84,11 @@ def validate_manifest(
     except ValueError:
         result.errors.append("backup_run_id отсутствует или некорректен")
     try:
-        datetime.fromisoformat(str(manifest.get("created_at", "")))
+        created_at = datetime.fromisoformat(str(manifest.get("created_at", "")))
+        if created_at.utcoffset() is None:
+            raise ValueError
     except ValueError:
-        result.errors.append("created_at отсутствует или некорректен")
+        result.errors.append("created_at отсутствует, некорректен или не содержит timezone")
 
     source = manifest.get("source_environment")
     if source not in ALLOWED_SOURCE_ENVIRONMENTS:
@@ -97,6 +99,13 @@ def validate_manifest(
         )
     if require_verified and manifest.get("verification_status") != "verified":
         result.errors.append("backup не помечен как verified")
+    if require_verified:
+        try:
+            verified_at = datetime.fromisoformat(str(manifest.get("verified_at", "")))
+            if verified_at.utcoffset() is None:
+                raise ValueError
+        except ValueError:
+            result.errors.append("verified_at отсутствует, некорректен или не содержит timezone")
 
     for key in ("database_identity", "migration_fingerprint", "media_tree_sha256"):
         value = manifest.get(key)
@@ -147,4 +156,15 @@ def validate_manifest(
         str(marker.get("business_sha256", ""))
     ):
         result.errors.append("data_state отсутствует или некорректен")
+    else:
+        if marker.get("database_identity") != manifest.get("database_identity"):
+            result.errors.append("data_state database_identity не совпадает с manifest")
+        generation = marker.get("business_generation")
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+            result.errors.append("data_state business_generation отсутствует или некорректна")
+        if not isinstance(marker.get("tables"), dict):
+            result.errors.append("data_state tables отсутствует или некорректен")
+
+    if manifest.get("consistency") not in {"database_snapshot", "single_writer_locked"}:
+        result.errors.append("consistency отсутствует или неизвестен")
     return result
