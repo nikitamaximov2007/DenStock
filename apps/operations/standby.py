@@ -272,9 +272,11 @@ def _database_url(database_settings: dict, name: str) -> str:
 
 def validate_candidate(name: str, media_root: Path, *, database_settings=None) -> dict:
     database_settings = database_settings or connection.settings_dict
+    candidate_url = _database_url(database_settings, name)
     environment = {
         **os.environ,
-        "DATABASE_URL": _database_url(database_settings, name),
+        "DATABASE_URL": candidate_url,
+        "DENSTOCK_TEST_DATABASE_URL": candidate_url,
         "DENSTOCK_MODE": "emergency-local",
         "DENSTOCK_INSTANCE_ID": settings.DENSTOCK_INSTANCE_ID,
         "DENSTOCK_EMERGENCY_DATABASE_NAME": name,
