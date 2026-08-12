@@ -14,6 +14,7 @@ def _manifest(run, db_path, media_path=None, **overrides):
         "schema_version": SCHEMA_VERSION,
         "backup_run_id": "a63f4a56-a616-4a6d-ad1d-a7bace93130f",
         "created_at": "2026-08-12T10:00:00+05:00",
+        "verified_at": "2026-08-12T10:01:00+05:00",
         "source_environment": "production",
         "source_instance_id": "production",
         "app_commit": "a" * 40,
@@ -26,9 +27,15 @@ def _manifest(run, db_path, media_path=None, **overrides):
         "media_tree_sha256": "b" * 64,
         "migration_fingerprint": "c" * 64,
         "migration_state": [],
-        "data_state": {"business_sha256": "d" * 64, "tables": {}},
+        "data_state": {
+            "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
+            "business_generation": 0,
+            "business_sha256": "d" * 64,
+            "tables": {},
+        },
         "storage_origin": "yandex-object-storage",
         "verification_status": "verified",
+        "consistency": "database_snapshot",
     }
     values.update(overrides)
     (run / "manifest.json").write_text(json.dumps(values), encoding="utf-8")

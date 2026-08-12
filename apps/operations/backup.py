@@ -197,7 +197,13 @@ def verify_media_payload(path: str | Path | None) -> None:
 
 
 def backup_all(
-    *, root=None, keep_last=None, settings_dict=None, media_root=None, trigger="manual"
+    *,
+    root=None,
+    keep_last=None,
+    settings_dict=None,
+    media_root=None,
+    trigger="manual",
+    extra_manifest=None,
 ) -> Path:
     """Полный бэкап: db + media + manifest.json в одном каталоге рана.
 
@@ -264,6 +270,14 @@ def backup_all(
             **({media_path.name: media_sha256} if media_path else {}),
         },
     }
+    if extra_manifest:
+        forbidden = set(extra_manifest) & set(manifest)
+        if forbidden:
+            raise OperationsError(
+                "Дополнительные manifest-поля не могут переопределять: "
+                + ", ".join(sorted(forbidden))
+            )
+        manifest.update(extra_manifest)
     write_manifest(run / "manifest.json", manifest)
     if keep_last:
         prune_old_runs(run.parent, keep_last)

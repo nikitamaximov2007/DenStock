@@ -22,7 +22,7 @@ from psycopg import sql
 from . import backup
 from .emergency_environment import validate_database_target
 from .emergency_manifest import validate_manifest
-from .emergency_state import application_migration_state, record_event
+from .emergency_state import application_migration_state, media_tree_sha256, record_event
 from .models import OfflineSession
 
 CONTROL_SCHEMA_VERSION = 1
@@ -244,15 +244,20 @@ def validate_candidate(name: str, media_root: Path, *, database_settings=None) -
         raise StandbyError("Candidate probe returned invalid JSON.") from exc
 
 
-def _cleanup_removed(entries: list[dict], paths: EmergencyPaths) -> None:
+def _cleanup_removed(entries: list[dict], paths: EmergencyPaths) -> list[str]:
+    errors = []
     for entry in entries:
         database_name = entry.get("database_name", "")
         folder_name = entry.get("slot", "")
-        if database_name:
-            drop_database(database_name)
-        folder = (paths.standbys / folder_name).resolve()
-        if folder.parent == paths.standbys.resolve() and folder.is_dir():
-            shutil.rmtree(folder)
+        try:
+            if database_name:
+                drop_database(database_name)
+            folder = (paths.standbys / folder_name).resolve()
+            if folder.parent == paths.standbys.resolve() and folder.is_dir():
+                shutil.rmtree(folder)
+        except Exception as exc:  # cleanup must not invalidate the active standby
+            errors.append(f"{database_name or folder_name}: {exc}")
+    return errors
 
 
 def refresh_standby(source: str, *, run_id=None, paths=None) -> dict:
@@ -269,6 +274,8 @@ def refresh_standby(source: str, *, run_id=None, paths=None) -> dict:
         raise StandbyError("Standby refresh запрещён во время активной offline session.")
     staging = paths.staging / f"refresh-{uuid.uuid4().hex}"
     database_name = ""
+    slot_dir = None
+    activated = False
     try:
         fetched, source_run_id = fetch_backup(source, staging, run_id=run_id)
         report = validate_manifest(fetched, expected_source="production")
@@ -298,6 +305,8 @@ def refresh_standby(source: str, *, run_id=None, paths=None) -> dict:
             backup.restore_media(fetched / manifest["media_filename"], media_root=media_root)
         else:
             media_root.mkdir(parents=True, exist_ok=True)
+        if media_tree_sha256(media_root) != manifest["media_tree_sha256"]:
+            raise StandbyError("Restored media fingerprint differs from manifest.")
         probe = validate_candidate(database_name, media_root)
         if probe.get("data_state", {}).get("business_sha256") != manifest["data_state"].get(
             "business_sha256"
@@ -331,21 +340,28 @@ def refresh_standby(source: str, *, run_id=None, paths=None) -> dict:
             "previous_standbys": previous[:keep_previous],
         }
         _write_json_atomic(paths.control, new_control)
-        _cleanup_removed(removed, paths)
+        activated = True
+        cleanup_errors = _cleanup_removed(removed, paths)
         record_event(
             "standby_sync",
             "success",
-            details={"backup_run_id": manifest["backup_run_id"], "slot": slot},
+            details={
+                "backup_run_id": manifest["backup_run_id"],
+                "slot": slot,
+                "cleanup_errors": cleanup_errors,
+            },
         )
         return active
     except Exception as exc:
-        if database_name:
+        if database_name and not activated:
             try:
                 drop_database(database_name)
             except Exception:
                 pass
         if staging.is_dir():
             shutil.rmtree(staging)
+        if not activated and slot_dir and slot_dir.is_dir():
+            shutil.rmtree(slot_dir)
         record_event("standby_sync", "failed", details={"error": str(exc)[:500]})
         if isinstance(exc, StandbyError):
             raise
