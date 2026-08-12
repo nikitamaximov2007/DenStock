@@ -38,9 +38,17 @@
         <section class="emergency-banner{% if not emergency_mode.writable %} emergency-banner--frozen{% endif %}"
                  role="status"
                  aria-live="polite">
-          <strong>АВТОНОМНЫЙ РЕЖИМ</strong>
+          <strong>
+            {% if emergency_mode.standby_only %}
+              ЛОКАЛЬНАЯ РЕЗЕРВНАЯ КОПИЯ
+            {% else %}
+              АВТОНОМНЫЙ РЕЖИМ
+            {% endif %}
+          </strong>
           <span>
-            {% if emergency_mode.writable %}
+            {% if emergency_mode.standby_only %}
+              Только чтение. Автономная работа ещё не начата.
+            {% elif emergency_mode.writable %}
               Данные работают локально и ещё не синхронизированы с сервером.
             {% else %}
               Локальные данные заморожены. Новые складские операции запрещены.

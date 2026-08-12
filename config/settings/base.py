@@ -103,6 +103,13 @@ ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {
     "default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
 }
+_emergency_database_name = env("DENSTOCK_EMERGENCY_DATABASE_NAME", default="").strip()
+if _emergency_database_name:
+    if env("DENSTOCK_MODE", default="development").strip().lower() != "emergency-local":
+        raise ValueError(
+            "DENSTOCK_EMERGENCY_DATABASE_NAME is allowed only in emergency-local mode."
+        )
+    DATABASES["default"]["NAME"] = _emergency_database_name
 
 # --- Пользователь -----------------------------------------------------------
 AUTH_USER_MODEL = "accounts.User"
@@ -211,6 +218,9 @@ DENSTOCK_EMERGENCY_STALE_WARNING_HOURS = env.int(
 )
 DENSTOCK_EMERGENCY_KEEP_STANDBY = env.int(
     "DENSTOCK_EMERGENCY_KEEP_STANDBY", default=2
+)
+DENSTOCK_EMERGENCY_KEEP_COMPLETED_EXPORTS = env.int(
+    "DENSTOCK_EMERGENCY_KEEP_COMPLETED_EXPORTS", default=2
 )
 DENSTOCK_EMERGENCY_PROBE_TOKEN = env(
     "DENSTOCK_EMERGENCY_PROBE_TOKEN", default=""

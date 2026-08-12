@@ -16,12 +16,19 @@ class Command(BaseCommand):
             required=True,
         )
         parser.add_argument("--confirm", required=True)
+        parser.add_argument(
+            "--resume",
+            action="store_true",
+            help="Восстановить control marker после прерванного запуска.",
+        )
 
     def handle(self, *args, **options):
         if options["confirm"] != CONFIRM_PHRASE:
             raise CommandError(f"Для подтверждения укажите --confirm {CONFIRM_PHRASE}")
         try:
-            session = start_offline_session(kind=options["kind"], actor="operator")
+            session = start_offline_session(
+                kind=options["kind"], actor="operator", resume=options["resume"]
+            )
         except EmergencyLifecycleError as exc:
             raise CommandError(str(exc)) from exc
         self.stdout.write(

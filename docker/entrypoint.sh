@@ -27,7 +27,9 @@ echo "[entrypoint] Сборка статики…"
 python manage.py collectstatic --noinput
 
 # Создание первичного администратора из переменных окружения (если заданы).
-if [[ -n "${DJANGO_SUPERUSER_USERNAME:-}" && -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]]; then
+if [[ "${DENSTOCK_MODE:-}" != "emergency-local" \
+      && -n "${DJANGO_SUPERUSER_USERNAME:-}" \
+      && -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]]; then
   echo "[entrypoint] Проверка/создание администратора ${DJANGO_SUPERUSER_USERNAME}…"
   python manage.py createsuperuser --noinput || true
 fi

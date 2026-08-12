@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,10 @@ class EmergencyPaths:
     def standbys(self):
         return self.root / "standbys"
 
+    @property
+    def lock(self):
+        return self.root / "control.lock"
+
     @classmethod
     def configured(cls):
         return cls(Path(settings.DENSTOCK_EMERGENCY_ROOT).resolve())
@@ -63,6 +68,46 @@ def _write_json_atomic(path: Path, value: dict) -> None:
     os.replace(temporary, path)
 
 
+def save_control(value: dict, paths=None) -> None:
+    paths = paths or EmergencyPaths.configured()
+    value = {
+        "schema_version": CONTROL_SCHEMA_VERSION,
+        "active_standby": value.get("active_standby"),
+        "previous_standbys": value.get("previous_standbys", []),
+        "offline_lifecycle": value.get("offline_lifecycle"),
+    }
+    _write_json_atomic(paths.control, value)
+
+
+@contextmanager
+def control_lock(paths=None):
+    """Serialize standby and offline lifecycle changes across processes."""
+    paths = paths or EmergencyPaths.configured()
+    paths.root.mkdir(parents=True, exist_ok=True)
+    with paths.lock.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def load_control(paths=None) -> dict:
     paths = paths or EmergencyPaths.configured()
     if not paths.control.exists():
@@ -70,6 +115,7 @@ def load_control(paths=None) -> dict:
             "schema_version": CONTROL_SCHEMA_VERSION,
             "active_standby": None,
             "previous_standbys": [],
+            "offline_lifecycle": None,
         }
     try:
         value = json.loads(paths.control.read_text(encoding="utf-8"))
@@ -77,7 +123,29 @@ def load_control(paths=None) -> dict:
         raise StandbyError("Emergency control state повреждён.") from exc
     if not isinstance(value, dict) or value.get("schema_version") != CONTROL_SCHEMA_VERSION:
         raise StandbyError("Emergency control state имеет неизвестную версию.")
+    value.setdefault("active_standby", None)
+    value.setdefault("previous_standbys", [])
+    value.setdefault("offline_lifecycle", None)
     return value
+
+
+def set_offline_lifecycle(session, *, status=None, paths=None, details=None) -> dict:
+    """Persist credential-free lifecycle state while the caller holds control_lock."""
+    paths = paths or EmergencyPaths.configured()
+    control = load_control(paths)
+    active = control.get("active_standby") or {}
+    payload = {
+        "session_id": str(session.id),
+        "status": status or session.status,
+        "database_name": active.get("database_name", ""),
+        "base_backup_run_id": session.base_backup_run_id,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    if details:
+        payload["details"] = details
+    control["offline_lifecycle"] = payload
+    save_control(control, paths)
+    return payload
 
 
 def _is_remote(source: str) -> bool:
@@ -209,6 +277,7 @@ def validate_candidate(name: str, media_root: Path, *, database_settings=None) -
         "DATABASE_URL": _database_url(database_settings, name),
         "DENSTOCK_MODE": "emergency-local",
         "DENSTOCK_INSTANCE_ID": settings.DENSTOCK_INSTANCE_ID,
+        "DENSTOCK_EMERGENCY_DATABASE_NAME": name,
         "DENSTOCK_MEDIA_ROOT": str(media_root),
     }
     commands = [
@@ -264,6 +333,17 @@ def refresh_standby(source: str, *, run_id=None, paths=None) -> dict:
     """Download, verify and restore a candidate before atomically activating it."""
     validate_database_target(mode="emergency-local")
     paths = paths or EmergencyPaths.configured()
+    with control_lock(paths):
+        lifecycle = load_control(paths).get("offline_lifecycle")
+        if lifecycle:
+            raise StandbyError(
+                "Standby refresh запрещён: offline lifecycle уже начат "
+                f"({lifecycle.get('status', 'unknown')})."
+            )
+        return _refresh_standby_locked(source, run_id=run_id, paths=paths)
+
+
+def _refresh_standby_locked(source: str, *, run_id=None, paths: EmergencyPaths) -> dict:
     if OfflineSession.objects.filter(
         status__in=[
             OfflineSession.Status.ACTIVE,
@@ -338,8 +418,9 @@ def refresh_standby(source: str, *, run_id=None, paths=None) -> dict:
             "schema_version": CONTROL_SCHEMA_VERSION,
             "active_standby": active,
             "previous_standbys": previous[:keep_previous],
+            "offline_lifecycle": None,
         }
-        _write_json_atomic(paths.control, new_control)
+        save_control(new_control, paths)
         activated = True
         cleanup_errors = _cleanup_removed(removed, paths)
         record_event(

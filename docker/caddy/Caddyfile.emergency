@@ -1,0 +1,12 @@
+:80 {
+	encode gzip
+
+	handle_path /media/* {
+		root * /srv/standbys/{$EMERGENCY_SLOT}/media
+		file_server
+	}
+
+	handle {
+		reverse_proxy emergency-web:8000
+	}
+}

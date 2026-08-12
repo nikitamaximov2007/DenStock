@@ -74,6 +74,7 @@ class OfflineSession(models.Model):
         ELIGIBLE = "eligible", "Допустим controlled failback"
         CONFLICT = "conflict", "Обнаружен конфликт"
         BLOCKED = "blocked", "Возврат заблокирован"
+        COMPLETED = "completed", "Возврат подтверждён"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     kind = models.CharField(max_length=12, choices=Kind.choices)

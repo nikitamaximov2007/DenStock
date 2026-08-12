@@ -5,8 +5,14 @@ from django.core.management.base import BaseCommand, CommandError
 
 from apps.operations import backup
 from apps.operations.emergency_environment import validate_database_target
-from apps.operations.failback import FailbackError, evaluate_failback, fetch_production_probe
+from apps.operations.failback import (
+    FailbackError,
+    configured_production_url,
+    evaluate_failback,
+    fetch_production_probe,
+)
 from apps.operations.models import OfflineSession
+from apps.operations.standby import EmergencyPaths, control_lock, set_offline_lifecycle
 
 
 class Command(BaseCommand):
@@ -29,14 +35,7 @@ class Command(BaseCommand):
             ).first()
             if not session or not session.final_backup_run_id:
                 raise FailbackError("Нет frozen offline session с final backup.")
-            production_url = options["production_url"] or settings.DENSTOCK_PRODUCTION_URL
-            if not production_url:
-                raise FailbackError("DENSTOCK_PRODUCTION_URL не задан.")
-            configured_url = settings.DENSTOCK_PRODUCTION_URL.rstrip("/")
-            if configured_url and production_url.rstrip("/") != configured_url:
-                raise FailbackError(
-                    "Production URL отличается от DENSTOCK_PRODUCTION_URL; token не отправлен."
-                )
+            production_url = configured_production_url(options["production_url"])
             production = fetch_production_probe(
                 production_url, token=settings.DENSTOCK_EMERGENCY_PROBE_TOKEN
             )
@@ -45,6 +44,14 @@ class Command(BaseCommand):
             if final_run.parent != root or not final_run.is_dir():
                 raise FailbackError("Final backup path находится вне BACKUP_ROOT.")
             decision = evaluate_failback(session, production, final_run)
+            paths = EmergencyPaths.configured()
+            session.refresh_from_db()
+            with control_lock(paths):
+                set_offline_lifecycle(
+                    session,
+                    paths=paths,
+                    details={"failback_status": decision.status},
+                )
         except (FailbackError, RuntimeError) as exc:
             raise CommandError(str(exc)) from exc
         payload = decision.as_dict()
@@ -55,6 +62,4 @@ class Command(BaseCommand):
             for reason in decision.reasons:
                 self.stdout.write(f"- {reason}")
         if not decision.eligible:
-            raise CommandError(
-                "Automatic production overwrite запрещён. Требуется reconciliation."
-            )
+            raise CommandError("Automatic production overwrite запрещён. Требуется reconciliation.")
