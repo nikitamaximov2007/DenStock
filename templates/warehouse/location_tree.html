@@ -54,18 +54,22 @@
           {% if can_manage %}
             <td>
               <a href="{% url 'location_edit' row.obj.pk %}">Изменить</a>
-              <form method="post"
-                    action="{% url 'location_toggle' row.obj.pk %}"
-                    class="inline-form">
-                {% csrf_token %}
-                <button type="submit">
-                  {% if row.obj.is_active %}
-                    Деактивировать
-                  {% else %}
-                    Активировать
-                  {% endif %}
-                </button>
-              </form>
+              {% if row.obj.level == "cell" and row.obj.is_active %}
+                <a href="{% url 'location_remove' row.obj.pk %}">Удалить / архивировать</a>
+              {% else %}
+                <form method="post"
+                      action="{% url 'location_toggle' row.obj.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit">
+                    {% if row.obj.is_active %}
+                      Деактивировать
+                    {% else %}
+                      Активировать
+                    {% endif %}
+                  </button>
+                </form>
+              {% endif %}
             </td>
           {% endif %}
         </tr>

@@ -86,4 +86,3 @@ duplicate child, alias/barcode collision или active location lock блоки�
 Rename блокирует rack, drawer и children по стабильному порядку и обновляет их
 атомарно. Stock сам по себе rename не запрещает, потому что все FK и IDs
 сохраняются. Ошибка любой child-операции откатывает весь rename.
-

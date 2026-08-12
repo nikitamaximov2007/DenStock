@@ -274,7 +274,7 @@
               <button class="btn btn--danger" type="submit">Применить результаты</button>
             </form>
           {% else %}
-            <p>Применено {{ doc.completed_at|date:"d.m.Y H:i" }} пользователем {{ doc.created_by|default:"Система" }}. Создано движений: {{ doc.result.created_movements }}.</p>
+            <p>Применено {{ doc.completed_at|date:"d.m.Y H:i" }} пользователем {{ doc.result.applied_by.username|default:doc.created_by|default:"Система" }}. Создано движений: {{ doc.result.created_movements }}.</p>
           {% endif %}
         </div>
       </div>

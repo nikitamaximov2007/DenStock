@@ -119,7 +119,11 @@ def section_recount_new(request):
 @login_required
 def cell_recount_new(request, location_pk):
     _require_section_recount(request)
-    location = get_object_or_404(StorageLocation, pk=location_pk)
+    location = get_object_or_404(
+        StorageLocation,
+        pk=location_pk,
+        level=StorageLocation.Level.CELL,
+    )
     preview = cell_recount_preview(location)
     if request.method == "POST":
         try:
@@ -286,7 +290,7 @@ def section_recount_apply_view(request, pk):
         messages.error(request, "Для применения введите подтверждение APPLY.")
     else:
         try:
-            apply_section_recount(doc)
+            apply_section_recount(doc, by=request.user)
         except SectionRecountError as exc:
             messages.error(request, str(exc))
         else:

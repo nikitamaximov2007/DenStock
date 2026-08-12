@@ -205,6 +205,21 @@ def test_cell_recount_applies_only_shortage_or_excess_delta(
     assert StockLot.objects.get(pk=cell_data["lot"].pk).quantity == Decimal(counted)
 
 
+def test_cell_recount_records_actual_apply_actor(cell_data, django_user_model):
+    approver = django_user_model.objects.create_superuser(
+        username="cell-recount-approver", password="secret"
+    )
+    doc, _line = _ready(cell_data, "4")
+
+    completed = apply_section_recount(doc, by=approver)
+
+    assert _document_movements(doc).get().created_by == approver
+    assert completed.result["applied_by"] == {
+        "id": approver.pk,
+        "username": approver.get_username(),
+    }
+
+
 def test_cell_recount_physical_empty_adjusts_everything_out(cell_data):
     doc, _line = _ready(cell_data, "0")
     assert doc.result["comparison_rows"][0]["status"] == "system_only"
@@ -540,6 +555,22 @@ def test_arbitrary_cell_ui_scanner_search_and_permissions(cell_data, client, dja
     viewer.groups.add(Group.objects.get(name=roles.VIEWER))
     client.force_login(viewer)
     assert client.get(start_url).status_code == 403
+
+
+def test_cell_recount_rejects_non_cell_location(cell_data, client):
+    drawer = StorageLocation.objects.create(
+        code="S10-L01-D01",
+        name="Не ячейка",
+        level=StorageLocation.Level.DRAWER,
+        storage_allowed=True,
+    )
+    client.force_login(cell_data["admin"])
+
+    page = client.get(reverse("location_detail", args=[drawer.pk]))
+    assert "Пересчитать ячейку" not in page.content.decode()
+    assert client.get(reverse("cell_recount_new", args=[drawer.pk])).status_code == 404
+    with pytest.raises(SectionRecountError, match="только активную складскую ячейку"):
+        create_cell_recount(location=drawer, by=cell_data["admin"])
 
 
 def test_hard_delete_only_new_unused_empty_location(cell_data):

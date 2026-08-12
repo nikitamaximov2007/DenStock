@@ -131,14 +131,15 @@ def test_parent_cycle_rejected(db):
         a.full_clean()
 
 
-def test_toggle_deactivates_without_delete(make_user, client):
+def test_cell_toggle_requires_safe_remove_or_archive_flow(make_user, client):
     make_user("admin", is_superuser=True)
     client.login(username="admin", password=PASSWORD)
     loc = StorageLocation.objects.create(name="Ячейка", code="C1", level=L.CELL)
     resp = client.post(reverse("location_toggle", args=[loc.pk]))
     assert resp.status_code == 302
+    assert resp.url == reverse("location_remove", args=[loc.pk])
     loc.refresh_from_db()
-    assert loc.is_active is False
+    assert loc.is_active is True
     assert StorageLocation.objects.filter(pk=loc.pk).exists()
 
 

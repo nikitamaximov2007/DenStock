@@ -327,7 +327,10 @@ def create_cell_recount(*, location: StorageLocation, by=None) -> SectionRecount
     try:
         with transaction.atomic():
             location = StorageLocation.objects.select_for_update().get(pk=location.pk)
-            if not location.can_hold_stock():
+            if (
+                location.level != StorageLocation.Level.CELL
+                or not location.can_hold_stock()
+            ):
                 raise SectionRecountError("Пересчитать можно только активную складскую ячейку.")
             doc = SectionRecount.objects.create(
                 section_code=location.code,
@@ -1116,7 +1119,7 @@ def _assert_snapshot_unchanged(doc: SectionRecount) -> None:
     raise SectionRecountError("Snapshot mismatch: состояние участка изменилось; apply остановлен.")
 
 
-def _reconcile_preferred(doc: SectionRecount) -> dict:
+def _reconcile_preferred(doc: SectionRecount, *, by=None) -> dict:
     part_ids = {
         item["part_type_id"] for item in doc.snapshot.get("lots", [])
     } | set(doc.lines.values_list("part_type_id", flat=True))
@@ -1139,7 +1142,7 @@ def _reconcile_preferred(doc: SectionRecount) -> dict:
                 set_preferred_part_location(
                     PartType.objects.get(pk=part_id),
                     StorageLocation.objects.get(pk=location_id),
-                    by=doc.created_by,
+                    by=by,
                     section_recount_id=doc.pk,
                 )
                 changed += 1
@@ -1152,7 +1155,7 @@ def _reconcile_preferred(doc: SectionRecount) -> dict:
     return {"changed": changed, "saved": saved, "ambiguous": ambiguous, "zero": zero}
 
 
-def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
+def _apply_section_recount_atomic(doc_id: int, *, by=None) -> SectionRecount:
     doc = SectionRecount.objects.select_for_update().get(pk=doc_id)
     if doc.status == SectionRecount.Status.COMPLETED:
         return doc
@@ -1189,7 +1192,7 @@ def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
         adjust_stock_lot_quantity(
             lot,
             -adjustment["quantity"],
-            by=doc.created_by,
+            by=by,
             comment=f"{doc.operation_label} #{doc.pk}",
             document_type=SECTION_RECOUNT_DOCUMENT, document_id=doc.pk,
             section_recount_id=doc.pk, update_preferred=False,
@@ -1217,7 +1220,7 @@ def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
         adjust_stock_lot_quantity(
             lot,
             adjustment["quantity"],
-            by=doc.created_by,
+            by=by,
             comment=f"{doc.operation_label} #{doc.pk}",
             document_type=SECTION_RECOUNT_DOCUMENT,
             document_id=doc.pk,
@@ -1226,7 +1229,11 @@ def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
         )
         movement_count += 1
     result = dict(doc.result or build_section_dry_run(doc))
-    result["preferred"] = _reconcile_preferred(doc)
+    result["preferred"] = _reconcile_preferred(doc, by=by)
+    result["applied_by"] = {
+        "id": by.pk if by is not None else None,
+        "username": by.get_username() if by is not None else "",
+    }
     result["created_movements"] = movement_count
     doc.result = result
     doc.status = SectionRecount.Status.COMPLETED
@@ -1238,11 +1245,11 @@ def _apply_section_recount_atomic(doc_id: int) -> SectionRecount:
     return doc
 
 
-def apply_section_recount(doc: SectionRecount) -> SectionRecount:
+def apply_section_recount(doc: SectionRecount, *, by=None) -> SectionRecount:
     """Apply once; failed transactions become FAILED and keep the lock."""
     try:
         with transaction.atomic():
-            return _apply_section_recount_atomic(doc.pk)
+            return _apply_section_recount_atomic(doc.pk, by=by)
     except Exception as exc:
         SectionRecount.objects.filter(pk=doc.pk, status=SectionRecount.Status.READY).update(
             status=SectionRecount.Status.FAILED,

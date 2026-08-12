@@ -108,7 +108,9 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
             and self.object.level == StorageLocation.Level.DRAWER
         )
         ctx["can_recount"] = (
-            self.request.user.can_manage_stocktaking and self.object.can_hold_stock()
+            self.request.user.can_manage_stocktaking
+            and self.object.level == StorageLocation.Level.CELL
+            and self.object.can_hold_stock()
         )
         ctx["children"] = self.object.children.all()
         ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
@@ -271,6 +273,12 @@ def location_toggle(request, pk):
         raise PermissionDenied
     loc = get_object_or_404(StorageLocation, pk=pk)
     if loc.is_active:
+        if loc.level == StorageLocation.Level.CELL:
+            messages.info(
+                request,
+                "Удаление или архивирование ячейки требует отдельного безопасного подтверждения.",
+            )
+            return redirect("location_remove", pk=loc.pk)
         if loc.children.filter(is_active=True).exists():
             messages.error(
                 request,
