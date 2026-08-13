@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Ремонты по клиентам · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Ремонты по клиентам</h1>
+  {% include "reports/_sales_period_filter.html" %}
+  <p class="page-subtitle">
+    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    Только проведённые ремонтные заказы по моменту проведения.
+  </p>
+  <p class="muted">
+    Ремонтный заказ фиксирует, какие детали ушли на технику клиента, и
+    замораживает их себестоимость. Цены работ и оплаты система не хранит,
+    поэтому выручки по ремонтам здесь нет и быть не может.
+  </p>
+  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th class="num">Ремонтов</th>
+          <th class="num">Уникальных артикулов</th>
+          <th class="num--qty">Единиц</th>
+          {% if show_money %}<th class="num--money">Себестоимость выданного (₽)</th>{% endif %}
+          <th>Последний ремонт</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page_obj.object_list %}
+          <tr>
+            <td>
+              <a href="{% url 'reports_repairs_by_client_detail' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+            </td>
+            <td class="num">{{ row.repair_count }}</td>
+            <td class="num">{{ row.unique_parts }}</td>
+            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
+            {% if show_money %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
+            <td>{{ row.last_repair|ru_dt }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="chart" title="Ремонтов за период нет" text="Измените период, чтобы увидеть проведённые ремонтные заказы по клиентам." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}
