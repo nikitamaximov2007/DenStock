@@ -31,6 +31,7 @@
           <tr>
             <td>
               <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+              {% if not row.linked %}<span class="muted"> · без карточки</span>{% endif %}
             </td>
             <td class="num">{{ row.sale_count }}</td>
             {% if show_money %}<td class="num--money">{{ row.revenue|money_int }}</td>{% endif %}

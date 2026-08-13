@@ -11,6 +11,8 @@
     {% if can_edit %}
       <div class="page-actions">
         <a class="btn btn--small btn--secondary"
+           href="{% url 'reports_client_timeline' %}?customer_id={{ customer.pk }}">История</a>
+        <a class="btn btn--small btn--secondary"
            href="{% url 'customer_edit' customer.pk %}">Изменить</a>
       </div>
     {% endif %}

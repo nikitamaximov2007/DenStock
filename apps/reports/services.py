@@ -211,6 +211,85 @@ def get_sales_report(period: Period) -> SalesReport:
     )
 
 
+# --- Идентичность клиента в отчётах ------------------------------------------
+#
+# После появления справочника у клиента есть стабильный идентификатор, но вся
+# история до него связи не имеет. Поэтому отчёты РАЗДЕЛЯЮТ два случая и никогда
+# их не смешивают:
+#
+# * документ связан с карточкой - строка отчёта это КАРТОЧКА, группировка идёт
+#   по её PK. Переименование карточки не дробит строку, потому что снимок имени
+#   в группировке не участвует;
+# * документ не связан - строка отчёта это ИСТОРИЧЕСКАЯ ЗАПИСЬ, группировка идёт
+#   по сохранённому имени. Такие строки помечаются как «без карточки», потому
+#   что одинаковое имя не доказывает, что это один человек.
+
+
+def _linked_rows(lines, *, prefix: str, aggregates: dict):
+    """Агрегаты по карточкам клиентов (только связанные документы)."""
+    field = f"{prefix}__customer_id"
+    return (
+        lines.filter(**{f"{prefix}__customer__isnull": False})
+        .values(field, f"{prefix}__customer__name")
+        .annotate(**aggregates)
+    )
+
+
+def _legacy_rows(lines, *, prefix: str, aggregates: dict):
+    """Агрегаты по историческому имени (документы без карточки)."""
+    return (
+        lines.filter(**{f"{prefix}__customer__isnull": True})
+        .annotate(report_customer=Trim(f"{prefix}__customer_name"))
+        .values("report_customer")
+        .annotate(**aggregates)
+    )
+
+
+def _identity_row(row, *, prefix: str, linked: bool) -> dict:
+    """Привести строку агрегата к единому виду с явной пометкой источника."""
+    if linked:
+        customer_id = row[f"{prefix}__customer_id"]
+        name = row[f"{prefix}__customer__name"]
+        return {
+            **row,
+            "customer_id": customer_id,
+            "report_customer": name,
+            "display_name": name,
+            "linked": True,
+            "missing_name": False,
+        }
+    name = row.get("report_customer") or ""
+    return {
+        **row,
+        "customer_id": None,
+        "report_customer": name,
+        "display_name": name or "Без клиента",
+        "linked": False,
+        "missing_name": not name,
+    }
+
+
+def _customer_rows(lines, *, prefix: str, aggregates: dict, order_key) -> list[dict]:
+    rows = [
+        _identity_row(row, prefix=prefix, linked=True)
+        for row in _linked_rows(lines, prefix=prefix, aggregates=aggregates)
+    ]
+    rows += [
+        _identity_row(row, prefix=prefix, linked=False)
+        for row in _legacy_rows(lines, prefix=prefix, aggregates=aggregates)
+    ]
+    rows.sort(key=order_key)
+    return rows
+
+
+def _document_customer_filter(prefix: str, *, customer_id, customer_name: str, missing: bool):
+    """Фильтр «документы этого клиента» для связанной карточки или legacy-имени."""
+    if customer_id:
+        return {f"{prefix}__customer_id": customer_id}
+    expected = "" if missing else (customer_name or "").strip()
+    return {f"{prefix}__customer__isnull": True, "report_customer": expected}
+
+
 def _completed_sale_lines(period: Period):
     """Frozen completed sale lines for customer reports."""
     start, end = _bounds(period)
@@ -220,35 +299,47 @@ def _completed_sale_lines(period: Period):
     )
 
 
-def get_sales_by_customer(period: Period):
-    """Aggregate completed line snapshots by the stored customer name."""
-    return (
-        _completed_sale_lines(period)
-        .annotate(report_customer=Trim("sale__customer_name"))
-        .values("report_customer")
-        .annotate(
-            sale_count=Count("sale_id", distinct=True),
-            unique_parts=Count("part_type_id", distinct=True),
-            quantity=Sum("quantity"),
-            revenue=Sum("total_price"),
-            last_sale=Max("sale__sold_at"),
-        )
-        .order_by("-revenue", "report_customer")
+SALE_CUSTOMER_AGGREGATES = {
+    "sale_count": Count("sale_id", distinct=True),
+    "unique_parts": Count("part_type_id", distinct=True),
+    "quantity": Sum("quantity"),
+    "revenue": Sum("total_price"),
+    "last_sale": Max("sale__sold_at"),
+}
+
+
+def get_sales_by_customer(period: Period) -> list[dict]:
+    """Продажи по клиентам: карточки отдельно, документы без карточки отдельно."""
+    return _customer_rows(
+        _completed_sale_lines(period),
+        prefix="sale",
+        aggregates=SALE_CUSTOMER_AGGREGATES,
+        order_key=lambda row: (-(row["revenue"] or DEC0), row["display_name"]),
     )
 
 
-def _customer_sale_lines(period: Period, *, customer_name: str, missing: bool):
-    customer_name = (customer_name or "").strip()
-    expected = "" if missing else customer_name
-    return _completed_sale_lines(period).annotate(
-        report_customer=Trim("sale__customer_name")
-    ).filter(report_customer=expected)
+def _customer_sale_lines(
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+):
+    return (
+        _completed_sale_lines(period)
+        .annotate(report_customer=Trim("sale__customer_name"))
+        .filter(
+            **_document_customer_filter(
+                "sale", customer_id=customer_id, customer_name=customer_name, missing=missing
+            )
+        )
+    )
 
 
-def get_customer_part_sales(period: Period, *, customer_name: str, missing: bool):
+def get_customer_part_sales(
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+):
     """Aggregate one customer's completed snapshots by current part identity."""
     return (
-        _customer_sale_lines(period, customer_name=customer_name, missing=missing)
+        _customer_sale_lines(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        )
         .values("part_type_id", "part_type__name")
         .annotate(
             quantity=Sum("quantity"),
@@ -273,13 +364,16 @@ def attach_customer_part_identity(rows) -> list[dict]:
 def get_customer_part_operations(
     period: Period,
     *,
-    customer_name: str,
-    missing: bool,
     part_type_id: int,
+    customer_name: str = "",
+    missing: bool = False,
+    customer_id=None,
 ):
     """Individual completed operations with frozen unit and line prices."""
     return (
-        _customer_sale_lines(period, customer_name=customer_name, missing=missing)
+        _customer_sale_lines(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        )
         .filter(part_type_id=part_type_id)
         .select_related("sale", "sale__sold_by", "part_type")
         .order_by("-sale__sold_at", "-sale_id", "pk")
@@ -298,7 +392,16 @@ def _completed_repair_lines(period: Period):
     )
 
 
-def get_repairs_by_customer(period: Period):
+REPAIR_CUSTOMER_AGGREGATES = {
+    "repair_count": Count("repair_order_id", distinct=True),
+    "unique_parts": Count("part_type_id", distinct=True),
+    "quantity": Sum("quantity"),
+    "issued_cost": Sum("total_cost_rub"),
+    "last_repair": Max("repair_order__completed_at"),
+}
+
+
+def get_repairs_by_customer(period: Period) -> list[dict]:
     """Ремонты по клиентам за период.
 
     ВАЖНО про деньги: у ремонтного заказа НЕТ клиентской суммы. Слой 17
@@ -308,35 +411,39 @@ def get_repairs_by_customer(period: Period):
     количеству, а не по деньгам: количество видно всем ролям, а себестоимость
     закрыта правом на закупочные цены.
     """
+    return _customer_rows(
+        _completed_repair_lines(period),
+        prefix="repair_order",
+        aggregates=REPAIR_CUSTOMER_AGGREGATES,
+        order_key=lambda row: (-(row["quantity"] or DEC0), row["display_name"]),
+    )
+
+
+def _customer_repair_lines(
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+):
     return (
         _completed_repair_lines(period)
         .annotate(report_customer=Trim("repair_order__customer_name"))
-        .values("report_customer")
-        .annotate(
-            repair_count=Count("repair_order_id", distinct=True),
-            unique_parts=Count("part_type_id", distinct=True),
-            quantity=Sum("quantity"),
-            issued_cost=Sum("total_cost_rub"),
-            last_repair=Max("repair_order__completed_at"),
+        .filter(
+            **_document_customer_filter(
+                "repair_order",
+                customer_id=customer_id,
+                customer_name=customer_name,
+                missing=missing,
+            )
         )
-        .order_by("-quantity", "report_customer")
     )
 
 
-def _customer_repair_lines(period: Period, *, customer_name: str, missing: bool):
-    customer_name = (customer_name or "").strip()
-    expected = "" if missing else customer_name
-    return (
-        _completed_repair_lines(period)
-        .annotate(report_customer=Trim("repair_order__customer_name"))
-        .filter(report_customer=expected)
-    )
-
-
-def get_customer_repair_parts(period: Period, *, customer_name: str, missing: bool):
+def get_customer_repair_parts(
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+):
     """Детали, выданные одному клиенту в ремонт: количество и себестоимость."""
     return (
-        _customer_repair_lines(period, customer_name=customer_name, missing=missing)
+        _customer_repair_lines(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        )
         .values("part_type_id", "part_type__name")
         .annotate(
             quantity=Sum("quantity"),
@@ -351,13 +458,16 @@ def get_customer_repair_parts(period: Period, *, customer_name: str, missing: bo
 def get_customer_repair_operations(
     period: Period,
     *,
-    customer_name: str,
-    missing: bool,
     part_type_id: int,
+    customer_name: str = "",
+    missing: bool = False,
+    customer_id=None,
 ):
     """Отдельные выдачи в ремонт с замороженной себестоимостью строки."""
     return (
-        _customer_repair_lines(period, customer_name=customer_name, missing=missing)
+        _customer_repair_lines(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        )
         .filter(part_type_id=part_type_id)
         .select_related("repair_order", "repair_order__created_by", "part_type")
         .order_by("-repair_order__completed_at", "-repair_order_id", "pk")
@@ -371,6 +481,8 @@ def _client_row(name: str) -> dict:
     return {
         "report_customer": name,
         "display_name": name or "Без клиента",
+        "customer_id": None,
+        "linked": False,
         "sale_count": 0,
         "sale_quantity": DEC0,
         "revenue": DEC0,
@@ -402,17 +514,29 @@ def get_clients_sales_and_repairs(period: Period) -> list[dict]:
     Сортировка идёт по числу документов, а не по деньгам: количество документов
     видно всем ролям, а деньги закрыты правом на закупочные цены.
     """
-    rows: dict[str, dict] = {}
+    # Ключ строки это идентичность клиента, а не текст: карточка объединяется по
+    # PK, а документы без карточки остаются отдельными историческими строками.
+    rows: dict[tuple, dict] = {}
+
+    def _entry(row):
+        key = ("card", row["customer_id"]) if row["linked"] else ("legacy", row["report_customer"])
+        entry = rows.get(key)
+        if entry is None:
+            entry = _client_row(row["report_customer"])
+            entry["customer_id"] = row["customer_id"]
+            entry["linked"] = row["linked"]
+            entry["display_name"] = row["display_name"]
+            rows[key] = entry
+        return entry
+
     for row in get_sales_by_customer(period):
-        name = row["report_customer"] or ""
-        entry = rows.setdefault(name, _client_row(name))
+        entry = _entry(row)
         entry["sale_count"] = row["sale_count"] or 0
         entry["sale_quantity"] = row["quantity"] or DEC0
         entry["revenue"] = row["revenue"] or DEC0
         entry["last_sale"] = row["last_sale"]
     for row in get_repairs_by_customer(period):
-        name = row["report_customer"] or ""
-        entry = rows.setdefault(name, _client_row(name))
+        entry = _entry(row)
         entry["repair_count"] = row["repair_count"] or 0
         entry["repair_quantity"] = row["quantity"] or DEC0
         entry["issued_cost"] = row["issued_cost"] or DEC0
@@ -422,7 +546,7 @@ def get_clients_sales_and_repairs(period: Period) -> list[dict]:
         entry["last_event"] = _later(entry["last_sale"], entry["last_repair"])
     return sorted(
         rows.values(),
-        key=lambda entry: (-entry["document_count"], entry["report_customer"]),
+        key=lambda entry: (-entry["document_count"], entry["display_name"]),
     )
 
 
@@ -430,7 +554,9 @@ def _client_filter(customer_name: str, missing: bool) -> str:
     return "" if missing else (customer_name or "").strip()
 
 
-def get_client_timeline(period: Period, *, customer_name: str, missing: bool) -> list[dict]:
+def get_client_timeline(
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+) -> list[dict]:
     """Единая лента документов клиента: продажи и ремонты по времени проведения.
 
     Историческая лента: берутся только проведённые документы и их замороженные
@@ -441,12 +567,20 @@ def get_client_timeline(period: Period, *, customer_name: str, missing: bool) ->
     выданного, и каждая запись несёт только свою величину.
     """
     start, end = _bounds(period)
-    expected = _client_filter(customer_name, missing)
+    # Карточка выбрана - берём её документы по связи. Карточки нет - только
+    # документы без связи с тем же историческим именем.
+    if customer_id:
+        document_filter = {"customer_id": customer_id}
+    else:
+        document_filter = {
+            "customer__isnull": True,
+            "report_customer": "" if missing else (customer_name or "").strip(),
+        }
 
     sales = (
         Sale.objects.filter(status=Sale.Status.COMPLETED, sold_at__range=(start, end))
         .annotate(report_customer=Trim("customer_name"))
-        .filter(report_customer=expected)
+        .filter(**document_filter)
         .annotate(line_quantity=Sum("lines__quantity"))
         .select_related("sold_by")
     )
@@ -455,7 +589,7 @@ def get_client_timeline(period: Period, *, customer_name: str, missing: bool) ->
             status=RepairOrder.Status.COMPLETED, completed_at__range=(start, end)
         )
         .annotate(report_customer=Trim("customer_name"))
-        .filter(report_customer=expected)
+        .filter(**document_filter)
         .annotate(line_quantity=Sum("lines__quantity"))
         .select_related("created_by")
     )

@@ -61,16 +61,44 @@ def _period_query(period) -> str:
     )
 
 
-def _customer_selection(request) -> tuple[str, bool]:
+def _customer_selection(request) -> tuple[str, bool, int | None]:
+    """Кого показывать: карточку по id или исторические документы по имени."""
+    raw_id = (request.GET.get("customer_id") or "").strip()
+    if raw_id:
+        try:
+            return "", False, int(raw_id)
+        except ValueError as exc:
+            raise Http404("Клиент не указан.") from exc
     missing = request.GET.get("missing") == "1"
     customer_name = (request.GET.get("customer") or "").strip()
     if not missing and not customer_name:
         raise Http404("Клиент не указан.")
-    return customer_name, missing
+    return customer_name, missing, None
 
 
-def _customer_query(customer_name: str, missing: bool) -> str:
+def _customer_query(customer_name: str, missing: bool, customer_id=None) -> str:
+    if customer_id:
+        return urlencode({"customer_id": customer_id})
     return urlencode({"missing": "1"} if missing else {"customer": customer_name})
+
+
+def _row_query(row) -> str:
+    """Ссылка на детализацию строки отчёта с учётом её идентичности."""
+    if row.get("linked"):
+        return urlencode({"customer_id": row["customer_id"]})
+    name = row.get("report_customer") or ""
+    return urlencode({"missing": "1"} if not name else {"customer": name})
+
+
+def _customer_title(customer_name: str, missing: bool, customer_id=None) -> str:
+    if customer_id:
+        from apps.customers.models import Customer
+
+        customer = Customer.objects.filter(pk=customer_id).first()
+        if customer is None:
+            raise Http404("Карточка клиента не найдена.")
+        return customer.name
+    return customer_name or "Без клиента"
 
 
 def _paginate(request, rows):
@@ -135,9 +163,9 @@ def sales_by_client(request):
     period = resolve_period(request.GET)
     page_obj, is_paginated = _paginate(request, get_sales_by_customer(period))
     for row in page_obj.object_list:
-        customer_name = row["report_customer"]
-        row["display_name"] = customer_name or "Без клиента"
-        row["customer_qs"] = _customer_query(customer_name, not customer_name)
+        # display_name и linked приходят из агрегата: карточка показывается
+        # своим текущим именем, документы без карточки помечаются отдельно.
+        row["customer_qs"] = _row_query(row)
     return render(
         request,
         "reports/sales_by_client.html",
@@ -156,13 +184,14 @@ def sales_by_client(request):
 def sales_by_client_detail(request):
     _require_reports(request)
     period = resolve_period(request.GET)
-    customer_name, missing = _customer_selection(request)
+    customer_name, missing, customer_id = _customer_selection(request)
     page_obj, is_paginated = _paginate(
         request,
         get_customer_part_sales(
             period,
             customer_name=customer_name,
             missing=missing,
+            customer_id=customer_id,
         ),
     )
     page_obj.object_list = attach_customer_part_identity(page_obj.object_list)
@@ -170,9 +199,9 @@ def sales_by_client_detail(request):
         request,
         "reports/sales_by_client_detail.html",
         {
-            "customer_name": customer_name or "Без клиента",
+            "customer_name": _customer_title(customer_name, missing, customer_id),
             "customer_value": customer_name,
-            "customer_qs": _customer_query(customer_name, missing),
+            "customer_qs": _customer_query(customer_name, missing, customer_id),
             "period": period,
             "period_qs": _period_query(period),
             "presets": _PRESETS,
@@ -195,8 +224,7 @@ def clients_overview(request):
     period = resolve_period(request.GET)
     page_obj, is_paginated = _paginate(request, get_clients_sales_and_repairs(period))
     for row in page_obj.object_list:
-        name = row["report_customer"]
-        row["customer_qs"] = _customer_query(name, not name)
+        row["customer_qs"] = _row_query(row)
     return render(
         request,
         "reports/clients_overview.html",
@@ -216,17 +244,19 @@ def client_timeline(request):
     """Единая лента документов клиента: продажи и ремонты по времени."""
     _require_reports(request)
     period = resolve_period(request.GET)
-    customer_name, missing = _customer_selection(request)
+    customer_name, missing, customer_id = _customer_selection(request)
     page_obj, is_paginated = _paginate(
         request,
-        get_client_timeline(period, customer_name=customer_name, missing=missing),
+        get_client_timeline(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        ),
     )
     return render(
         request,
         "reports/client_timeline.html",
         {
-            "customer_name": customer_name or "Без клиента",
-            "customer_qs": _customer_query(customer_name, missing),
+            "customer_name": _customer_title(customer_name, missing, customer_id),
+            "customer_qs": _customer_query(customer_name, missing, customer_id),
             "period": period,
             "period_qs": _period_query(period),
             "presets": _PRESETS,
@@ -250,9 +280,9 @@ def repairs_by_client(request):
     period = resolve_period(request.GET)
     page_obj, is_paginated = _paginate(request, get_repairs_by_customer(period))
     for row in page_obj.object_list:
-        customer_name = row["report_customer"]
-        row["display_name"] = customer_name or "Без клиента"
-        row["customer_qs"] = _customer_query(customer_name, not customer_name)
+        # display_name и linked приходят из агрегата: карточка показывается
+        # своим текущим именем, документы без карточки помечаются отдельно.
+        row["customer_qs"] = _row_query(row)
     return render(
         request,
         "reports/repairs_by_client.html",
@@ -271,19 +301,21 @@ def repairs_by_client(request):
 def repairs_by_client_detail(request):
     _require_reports(request)
     period = resolve_period(request.GET)
-    customer_name, missing = _customer_selection(request)
+    customer_name, missing, customer_id = _customer_selection(request)
     page_obj, is_paginated = _paginate(
         request,
-        get_customer_repair_parts(period, customer_name=customer_name, missing=missing),
+        get_customer_repair_parts(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        ),
     )
     page_obj.object_list = attach_customer_part_identity(page_obj.object_list)
     return render(
         request,
         "reports/repairs_by_client_detail.html",
         {
-            "customer_name": customer_name or "Без клиента",
+            "customer_name": _customer_title(customer_name, missing, customer_id),
             "customer_value": customer_name,
-            "customer_qs": _customer_query(customer_name, missing),
+            "customer_qs": _customer_query(customer_name, missing, customer_id),
             "period": period,
             "period_qs": _period_query(period),
             "presets": _PRESETS,
@@ -299,7 +331,7 @@ def repairs_by_client_detail(request):
 def repairs_by_client_operations(request):
     _require_reports(request)
     period = resolve_period(request.GET)
-    customer_name, missing = _customer_selection(request)
+    customer_name, missing, customer_id = _customer_selection(request)
     try:
         part_id = int(request.GET.get("part", ""))
     except (TypeError, ValueError) as exc:
@@ -311,6 +343,7 @@ def repairs_by_client_operations(request):
             period,
             customer_name=customer_name,
             missing=missing,
+            customer_id=customer_id,
             part_type_id=part.pk,
         ),
     )
@@ -319,8 +352,8 @@ def repairs_by_client_operations(request):
         request,
         "reports/repairs_by_client_operations.html",
         {
-            "customer_name": customer_name or "Без клиента",
-            "customer_qs": _customer_query(customer_name, missing),
+            "customer_name": _customer_title(customer_name, missing, customer_id),
+            "customer_qs": _customer_query(customer_name, missing, customer_id),
             "part": part,
             "exact_number": identity["exact_number"],
             "period": period,
@@ -336,7 +369,7 @@ def repairs_by_client_operations(request):
 def sales_by_client_operations(request):
     _require_reports(request)
     period = resolve_period(request.GET)
-    customer_name, missing = _customer_selection(request)
+    customer_name, missing, customer_id = _customer_selection(request)
     try:
         part_id = int(request.GET.get("part", ""))
     except (TypeError, ValueError) as exc:
@@ -348,6 +381,7 @@ def sales_by_client_operations(request):
             period,
             customer_name=customer_name,
             missing=missing,
+            customer_id=customer_id,
             part_type_id=part.pk,
         ),
     )
@@ -356,8 +390,8 @@ def sales_by_client_operations(request):
         request,
         "reports/sales_by_client_operations.html",
         {
-            "customer_name": customer_name or "Без клиента",
-            "customer_qs": _customer_query(customer_name, missing),
+            "customer_name": _customer_title(customer_name, missing, customer_id),
+            "customer_qs": _customer_query(customer_name, missing, customer_id),
             "part": part,
             "exact_number": identity["exact_number"],
             "period": period,
