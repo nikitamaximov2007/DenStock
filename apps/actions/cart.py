@@ -293,7 +293,14 @@ def complete_cart(
     if replay:
         return replay
 
-    _ensure_draft(cart)
+    # Статус перечитываем из БД под блокировкой, а не доверяем объекту в памяти.
+    # Иначе повторный вызов со «старым» объектом корзины прошёл бы проверку и
+    # записал в журнал вторую порцию строк на уже проведённый документ: склад
+    # при этом не пострадал бы, но отчёт удвоил бы количества.
+    model = _document_model(cart_kind(cart))
+    locked = model.objects.select_for_update().get(pk=cart.pk)
+    if locked.status != model.Status.DRAFT:
+        raise ActionError("Документ уже проведён или отменён — провести повторно нельзя.")
     customer_comment = (customer_comment or "").strip()
     if not customer_comment:
         raise ActionError("Укажите клиента или комментарий.")
