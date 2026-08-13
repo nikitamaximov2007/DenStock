@@ -168,11 +168,8 @@ def _create_attachment(owner, file_settings):
 
 
 def test_private_attachment_ownership_headers_and_missing_file(
-    transactional_db, client, users, file_settings
+    client, users, file_settings
 ):
-    # Тест закрывает FileResponse, а это завершает «запрос» и закрывает
-    # соединение с БД. На PostgreSQL это разорвало бы транзакцию обычного
-    # django_db-теста, поэтому здесь нужна транзакционная БД.
     owner, other, _ = users
     attachment = _create_attachment(owner, file_settings)
     client.force_login(other)
