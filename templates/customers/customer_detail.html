@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">{{ customer.name }}</h1>
+      <p class="page-subtitle">
+        <a href="{% url 'customer_list' %}">← Все клиенты</a>
+      </p>
+    </div>
+    {% if can_edit %}
+      <div class="page-actions">
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'reports_client_timeline' %}?customer_id={{ customer.pk }}">История</a>
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'customer_edit' customer.pk %}">Изменить</a>
+      </div>
+    {% endif %}
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Телефон</th>
+            <td>{{ customer.phone|default:"·" }}</td>
+          </tr>
+          <tr>
+            <th>Комментарий</th>
+            <td>{{ customer.comment|default:"·" }}</td>
+          </tr>
+          <tr>
+            <th>Создан</th>
+            <td>{{ customer.created_at|ru_dt }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        Документы хранят имя и телефон на момент проведения. Изменение карточки
+        не меняет уже проведённые продажи и ремонты.
+      </p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Продажи</h2>
+    </div>
+    <div class="card__body">
+      {% if sales %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>№</th>
+              <th>Статус</th>
+              <th>Клиент в документе</th>
+              <th class="num--money">Выручка (₽)</th>
+              <th>Проведена</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sale in sales %}
+              <tr>
+                <td>
+                  <a href="{% url 'sale_detail' sale.pk %}">{{ sale.number }}</a>
+                </td>
+                <td>{{ sale.get_status_display }}</td>
+                <td>{{ sale.customer_name }}</td>
+                <td class="num--money">{{ sale.revenue_total|money_int }}</td>
+                <td>{{ sale.sold_at|ru_dt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">Продаж по этой карточке пока нет.</p>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Ремонты</h2>
+    </div>
+    <div class="card__body">
+      {% if repairs %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>№</th>
+              <th>Статус</th>
+              <th>Клиент в документе</th>
+              <th>Техника</th>
+              {% if show_costs %}<th class="num--money">Себестоимость выданного (₽)</th>{% endif %}
+              <th>Проведён</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in repairs %}
+              <tr>
+                <td>
+                  <a href="{% url 'repair_order_detail' order.pk %}">{{ order.number }}</a>
+                </td>
+                <td>{{ order.get_status_display }}</td>
+                <td>{{ order.customer_name }}</td>
+                <td>{{ order.vehicle_make }} {{ order.vehicle_model }}</td>
+                {% if show_costs %}<td class="num--money">{{ order.cost_total|money_int }}</td>{% endif %}
+                <td>{{ order.completed_at|ru_dt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted">
+          У ремонта нет суммы для клиента: система хранит только себестоимость
+          выданных деталей. Складывать её с выручкой продаж нельзя.
+        </p>
+      {% else %}
+        <p class="muted">Ремонтов по этой карточке пока нет.</p>
+      {% endif %}
+    </div>
+  </div>
+  {% if reservations %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Резервы</h2>
+      </div>
+      <div class="card__body">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>№</th>
+              <th>Статус</th>
+              <th>Клиент в документе</th>
+              <th>Создан</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for reservation in reservations %}
+              <tr>
+                <td>
+                  <a href="{% url 'reservation_detail' reservation.pk %}">{{ reservation.number }}</a>
+                </td>
+                <td>{{ reservation.get_status_display }}</td>
+                <td>{{ reservation.customer_name }}</td>
+                <td>{{ reservation.created_at|ru_dt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

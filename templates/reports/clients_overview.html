@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Продажи и ремонты по клиентам · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Продажи и ремонты по клиентам</h1>
+  {% include "reports/_sales_period_filter.html" %}
+  <p class="page-subtitle">
+    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    Только проведённые документы по моменту проведения.
+  </p>
+  <p class="muted">
+    Деньги продажи и деньги ремонта не складываются. У продажи это выручка от
+    клиента, у ремонта это себестоимость выданных деталей: клиентской суммы
+    ремонта система не хранит. Поэтому здесь две отдельные колонки и нет
+    общего итога.
+  </p>
+  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th class="num">Продаж</th>
+          {% if show_money %}<th class="num--money">Выручка продаж (₽)</th>{% endif %}
+          <th class="num">Ремонтов</th>
+          {% if show_money %}<th class="num--money">Себестоимость выданного (₽)</th>{% endif %}
+          <th>Последний документ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page_obj.object_list %}
+          <tr>
+            <td>
+              <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+              {% if not row.linked %}<span class="muted"> · без карточки</span>{% endif %}
+            </td>
+            <td class="num">{{ row.sale_count }}</td>
+            {% if show_money %}<td class="num--money">{{ row.revenue|money_int }}</td>{% endif %}
+            <td class="num">{{ row.repair_count }}</td>
+            {% if show_money %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
+            <td>{{ row.last_event|ru_dt }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="chart" title="Документов за период нет" text="Измените период, чтобы увидеть проведённые продажи и ремонты по клиентам." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}

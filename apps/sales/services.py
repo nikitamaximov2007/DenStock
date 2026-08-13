@@ -14,6 +14,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import (
     ensure_location_operation_allowed,
@@ -163,15 +164,23 @@ def _recompute_for_lines(lines) -> None:
 
 
 def create_reservation(
-    *, customer_name, customer_phone="", comment="", expires_at=None, by=None
+    *, customer_name="", customer_phone="", comment="", expires_at=None, by=None, customer=None
 ) -> Reservation:
     """Создать черновик брони (остаток ещё не держим)."""
-    customer_name = (customer_name or "").strip()
+    # Выбрана карточка клиента - документ забирает её АКТУАЛЬНЫЕ имя и телефон
+    # как снимок. Дальше документ от карточки не зависит: переименование
+    # карточки завтра историю не переписывает.
+    snapshot = customer_snapshot(
+        customer, fallback_name=customer_name, fallback_phone=customer_phone
+    )
+    customer_name = snapshot["customer_name"]
+    customer_phone = snapshot["customer_phone"]
     if not customer_name:
         raise ReservationError("Не указан клиент.")
     return Reservation.objects.create(
+        customer=customer,
         customer_name=customer_name,
-        customer_phone=(customer_phone or "").strip(),
+        customer_phone=customer_phone,
         comment=(comment or "").strip(),
         expires_at=expires_at,
         created_by=by,
@@ -370,15 +379,23 @@ def expire_reservations(*, now=None, by=None) -> int:
 
 
 def create_sale(
-    *, customer_name, customer_phone="", comment="", by=None, reservation=None
+    *, customer_name="", customer_phone="", comment="", by=None, reservation=None, customer=None
 ) -> Sale:
     """Создать черновик продажи."""
-    customer_name = (customer_name or "").strip()
+    # Выбрана карточка клиента - документ забирает её АКТУАЛЬНЫЕ имя и телефон
+    # как снимок. Дальше документ от карточки не зависит: переименование
+    # карточки завтра историю не переписывает.
+    snapshot = customer_snapshot(
+        customer, fallback_name=customer_name, fallback_phone=customer_phone
+    )
+    customer_name = snapshot["customer_name"]
+    customer_phone = snapshot["customer_phone"]
     if not customer_name:
         raise SaleError("Не указан клиент.")
     return Sale.objects.create(
+        customer=customer,
         customer_name=customer_name,
-        customer_phone=(customer_phone or "").strip(),
+        customer_phone=customer_phone,
         comment=(comment or "").strip(),
         reservation=reservation,
         sold_by=by,
@@ -473,11 +490,18 @@ def create_sale_from_reservation(reservation, *, by=None) -> Sale:
     if not rlines:
         raise SaleError("В резерве нет позиций.")
     sale = create_sale(
+        # Снимок наследуется от брони КАК ЕСТЬ: продажа из резерва обязана
+        # показывать то, что видел клиент при бронировании. Поэтому карточка
+        # сюда не передаётся (она перезаписала бы снимок актуальными
+        # значениями), а связь проставляется отдельно ниже.
         customer_name=reservation.customer_name,
         customer_phone=reservation.customer_phone,
         comment=reservation.comment,
         by=by, reservation=reservation,
     )
+    if reservation.customer_id:
+        sale.customer_id = reservation.customer_id
+        sale.save(update_fields=["customer", "updated_at"])
     for rline in rlines:
         unit_price = rline.part_type.recommended_price or Decimal("0")
         if rline.part_item_id:

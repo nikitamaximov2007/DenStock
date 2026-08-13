@@ -411,6 +411,16 @@ def _warehouse_subtabs(user, path):
 
 def _sales_tabs(user, path, source):
     tabs = []
+    if user.can_manage_sales or user.can_manage_repairs or user.can_manage_reservations:
+        tabs.append(
+            _tab(
+                "Клиенты",
+                reverse("customer_list"),
+                sidebar_key="customers",
+                icon="users",
+                active=path.startswith("/sales/customers/"),
+            )
+        )
     if user.can_manage_sales:
         tabs.append(
             _tab(
@@ -479,7 +489,18 @@ def _reports_tabs(user, path):
                 sidebar_key="summary",
                 icon="chart",
                 active=path.startswith("/reports/")
-                and not path.startswith("/reports/sales-by-client/"),
+                and not path.startswith("/reports/sales-by-client/")
+                and not path.startswith("/reports/repairs-by-client/")
+                and not path.startswith("/reports/clients/"),
+            )
+        )
+        tabs.append(
+            _tab(
+                "Продажи и ремонты",
+                reverse("reports_clients_overview"),
+                sidebar_key="clients-overview",
+                icon="users",
+                active=path.startswith("/reports/clients/"),
             )
         )
         tabs.append(
@@ -489,6 +510,15 @@ def _reports_tabs(user, path):
                 sidebar_key="sales-by-client",
                 icon="users",
                 active=path.startswith("/reports/sales-by-client/"),
+            )
+        )
+        tabs.append(
+            _tab(
+                "Ремонты по клиентам",
+                reverse("reports_repairs_by_client"),
+                sidebar_key="repairs-by-client",
+                icon="users",
+                active=path.startswith("/reports/repairs-by-client/"),
             )
         )
     if _can_use_actions(user):

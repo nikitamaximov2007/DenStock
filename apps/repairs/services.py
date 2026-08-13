@@ -16,6 +16,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import issue_part_item, issue_stock_lot
 from apps.procurement.models import money
@@ -45,16 +46,25 @@ def _freeze_repair_line_cost(line: RepairIssueLine) -> None:
 
 
 def create_repair_order(
-    *, customer_name, customer_phone="", vehicle_type=None, vehicle_make="",
+    *, customer_name="", customer_phone="", vehicle_type=None, vehicle_make="",
     vehicle_model="", vehicle_identifier="", problem_description="", comment="", by=None,
+    customer=None,
 ) -> RepairOrder:
     """Создать черновик ремонтного заказа (склад ещё не трогаем)."""
-    customer_name = (customer_name or "").strip()
+    # Выбрана карточка клиента - документ забирает её АКТУАЛЬНЫЕ имя и телефон
+    # как снимок. Дальше документ от карточки не зависит: переименование
+    # карточки завтра историю не переписывает.
+    snapshot = customer_snapshot(
+        customer, fallback_name=customer_name, fallback_phone=customer_phone
+    )
+    customer_name = snapshot["customer_name"]
+    customer_phone = snapshot["customer_phone"]
     if not customer_name:
         raise RepairError("Не указан клиент.")
     return RepairOrder.objects.create(
+        customer=customer,
         customer_name=customer_name,
-        customer_phone=(customer_phone or "").strip(),
+        customer_phone=customer_phone,
         vehicle_type=vehicle_type,
         vehicle_make=(vehicle_make or "").strip(),
         vehicle_model=(vehicle_model or "").strip(),

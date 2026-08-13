@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Клиенты · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Клиенты</h1>
+    {% if can_edit %}
+      <div class="page-actions">
+        <a class="btn btn--primary" href="{% url 'customer_create' %}">Новый клиент</a>
+      </div>
+    {% endif %}
+  </div>
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
+    <label>
+      Имя или телефон
+      <input name="q"
+             type="search"
+             value="{{ q }}"
+             placeholder="Иванов или 8 912 123-45-67"
+             autocomplete="off">
+    </label>
+    <button type="submit" class="btn btn--small btn--secondary">Найти</button>
+  </form>
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Имя</th>
+          <th>Телефон</th>
+          <th>Комментарий</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for customer in page_obj.object_list %}
+          <tr>
+            <td>
+              <a href="{% url 'customer_detail' customer.pk %}">{{ customer.name }}</a>
+            </td>
+            <td>{{ customer.phone|default:"·" }}</td>
+            <td>{{ customer.comment|truncatechars:60|default:"·" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% elif q %}
+    {% include "partials/_empty_state.html" with icon="search" title="Клиент не найден" text="Проверьте написание имени или введите номер телефона в любом формате." compact=1 %}
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="users" title="Клиентов пока нет" text="Создайте карточку клиента, чтобы связывать с ним продажи и ремонты." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}

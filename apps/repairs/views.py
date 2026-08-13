@@ -121,6 +121,7 @@ def repair_order_create(request):
         if form.is_valid():
             try:
                 order = create_repair_order(
+                    customer=form.cleaned_data.get("customer"),
                     customer_name=form.cleaned_data["customer_name"],
                     customer_phone=form.cleaned_data["customer_phone"],
                     vehicle_type=form.cleaned_data["vehicle_type"],

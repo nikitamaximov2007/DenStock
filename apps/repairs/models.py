@@ -30,6 +30,14 @@ class RepairOrder(models.Model):
     status = models.CharField(
         "Статус", max_length=20, choices=Status.choices, default=Status.DRAFT
     )
+    # Постоянная карточка клиента. Может быть пустой: исторические документы
+    # созданы до появления справочника и живут только на снимке ниже.
+    customer = models.ForeignKey(
+        "customers.Customer", verbose_name="Клиент (карточка)",
+        on_delete=models.PROTECT, null=True, blank=True, related_name="%(class)ss",
+    )
+    # СНИМОК на момент создания документа: переименование карточки завтра не
+    # переписывает историю проведённого документа.
     customer_name = models.CharField("Клиент", max_length=255)
     customer_phone = models.CharField("Телефон", max_length=50, blank=True)
     vehicle_type = models.ForeignKey(

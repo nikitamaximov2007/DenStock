@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+    <div class="page-actions">
+      {% if customer %}
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'customer_detail' customer.pk %}">К карточке</a>
+      {% else %}
+        <a class="btn btn--small btn--secondary" href="{% url 'customer_list' %}">К списку</a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        <p>
+          <label for="{{ form.name.id_for_label }}">Имя клиента</label>
+          <br>
+          {{ form.name }}
+          {{ form.name.errors }}
+        </p>
+        <p>
+          <label for="{{ form.phone.id_for_label }}">Телефон</label>
+          <br>
+          {{ form.phone }}
+          {{ form.phone.errors }}
+          <br>
+          <span class="muted">
+            Необязательно. Можно вводить в любом виде: «+7 912 123-45-67»,
+            «8 912 123 45 67» или «89121234567». Один номер разрешено указывать
+            у разных клиентов.
+          </span>
+        </p>
+        <p>
+          <label for="{{ form.comment.id_for_label }}">Комментарий</label>
+          <br>
+          {{ form.comment }}
+          {{ form.comment.errors }}
+        </p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

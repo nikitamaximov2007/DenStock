@@ -15,6 +15,19 @@ urlpatterns = [
         views.sales_by_client_operations,
         name="reports_sales_by_client_operations",
     ),
+    path("clients/", views.clients_overview, name="reports_clients_overview"),
+    path("clients/timeline/", views.client_timeline, name="reports_client_timeline"),
+    path("repairs-by-client/", views.repairs_by_client, name="reports_repairs_by_client"),
+    path(
+        "repairs-by-client/customer/",
+        views.repairs_by_client_detail,
+        name="reports_repairs_by_client_detail",
+    ),
+    path(
+        "repairs-by-client/operations/",
+        views.repairs_by_client_operations,
+        name="reports_repairs_by_client_operations",
+    ),
     path("stock/", views.reports_stock, name="reports_stock"),
     # Слой 22: CSV-экспорт (отдельный endpoint на отчёт)
     path("export/sales.csv", views.export_sales, name="reports_export_sales"),

@@ -1,17 +1,18 @@
 from django import forms
 
 from apps.catalog.models import VehicleType
+from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
 from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 
 from .models import RepairOrder
 
 
-class RepairOrderForm(forms.ModelForm):
+class RepairOrderForm(CustomerSelectionMixin):
     class Meta:
         model = RepairOrder
         fields = [
-            "customer_name", "customer_phone", "vehicle_type",
+            "customer", "customer_name", "customer_phone", "vehicle_type",
             "vehicle_make", "vehicle_model", "vehicle_identifier",
             "problem_description", "comment",
         ]
