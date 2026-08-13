@@ -13,7 +13,13 @@ from apps.operations.emergency_state import (
     sha256_file,
 )
 from apps.operations.models import OfflineSession
-from apps.operations.standby import EmergencyPaths, StandbyError, load_control, refresh_standby
+from apps.operations.standby import (
+    EmergencyPaths,
+    StandbyError,
+    active_standby_run_dir,
+    load_control,
+    refresh_standby,
+)
 
 COMMIT = "a" * 40
 
@@ -112,6 +118,34 @@ def test_active_standby_validates_manifest_file_recorded_in_control(
 
     assert selected == active
     assert manifest["backup_run_id"] == active["backup_run_id"]
+
+
+@pytest.mark.django_db
+def test_repeated_refresh_of_same_verified_backup_is_idempotent(tmp_path, standby_runtime):
+    paths, created, dropped = standby_runtime
+    source = tmp_path / "source"
+    _source_backup(source)
+
+    first = refresh_standby(str(source), paths=paths)
+    second = refresh_standby(str(source), paths=paths)
+
+    assert second == first
+    assert created == [first["database_name"]]
+    assert dropped == []
+
+
+@pytest.mark.django_db
+def test_active_standby_rejects_control_path_outside_recorded_slot(
+    tmp_path, standby_runtime
+):
+    paths, _, _ = standby_runtime
+    source = tmp_path / "source"
+    _source_backup(source)
+    active = refresh_standby(str(source), paths=paths)
+    active["manifest_path"] = str(tmp_path / "outside" / "manifest.json")
+
+    with pytest.raises(StandbyError, match="paths"):
+        active_standby_run_dir(active, paths)
 
 
 @pytest.mark.django_db
@@ -217,6 +251,9 @@ def test_control_lifecycle_blocks_scheduled_refresh(tmp_path, standby_runtime):
         ("emergency-local", "django.db.backends.postgresql", "localhost", "denstock", "prefix"),
         ("emergency-local", "django.db.backends.sqlite3", "", "denstock_emergency_x", "PostgreSQL"),
         ("production", "django.db.backends.postgresql", "db", "denstock_emergency_x", "emergency"),
+        ("production", "django.db.backends.sqlite3", "db", "denstock", "PostgreSQL"),
+        ("production", "django.db.backends.postgresql", "localhost", "denstock", "emergency"),
+        ("production", "django.db.backends.postgresql", "unknown", "denstock", "allowlisted"),
     ],
 )
 @override_settings(
@@ -232,3 +269,21 @@ def test_environment_database_guard(mode, engine, host, name, message):
             mode=mode,
             database={"ENGINE": engine, "HOST": host, "NAME": name},
         )
+
+
+@override_settings(
+    DENSTOCK_EMERGENCY_DB_PREFIX="denstock_emergency_",
+    DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS=["localhost", "emergency-db"],
+    DENSTOCK_PRODUCTION_DB_HOSTS=["db", "185.250.44.206"],
+)
+def test_production_database_guard_accepts_allowlisted_postgresql():
+    from apps.operations.emergency_environment import validate_database_target
+
+    validate_database_target(
+        mode="production",
+        database={
+            "ENGINE": "django.db.backends.postgresql",
+            "HOST": "db",
+            "NAME": "denstock",
+        },
+    )

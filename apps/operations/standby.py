@@ -28,6 +28,7 @@ from .models import OfflineSession
 
 CONTROL_SCHEMA_VERSION = 1
 SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SAFE_SLOT = re.compile(r"^[0-9a-f]{12}$")
 
 
 class StandbyError(RuntimeError):
@@ -139,6 +140,7 @@ def set_offline_lifecycle(session, *, status=None, paths=None, details=None) -> 
         "status": status or session.status,
         "database_name": active.get("database_name", ""),
         "base_backup_run_id": session.base_backup_run_id,
+        "kind": session.kind,
         "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     if details:
@@ -146,6 +148,27 @@ def set_offline_lifecycle(session, *, status=None, paths=None, details=None) -> 
     control["offline_lifecycle"] = payload
     save_control(control, paths)
     return payload
+
+
+def active_standby_run_dir(active: dict, paths=None) -> Path:
+    """Resolve a control entry only when every path is inside its recorded slot."""
+    paths = paths or EmergencyPaths.configured()
+    slot = str(active.get("slot", ""))
+    database_name = str(active.get("database_name", ""))
+    if not SAFE_SLOT.fullmatch(slot):
+        raise StandbyError("Active standby slot имеет небезопасный формат.")
+    if database_name != f"{settings.DENSTOCK_EMERGENCY_DB_PREFIX}{slot}":
+        raise StandbyError("Active standby database не соответствует slot.")
+    slot_dir = (paths.standbys / slot).resolve()
+    if slot_dir.parent != paths.standbys.resolve():
+        raise StandbyError("Active standby slot находится вне standby root.")
+    manifest_path = Path(str(active.get("manifest_path", ""))).resolve()
+    media_root = Path(str(active.get("media_root", ""))).resolve()
+    if manifest_path != slot_dir / "manifest.json" or media_root != slot_dir / "media":
+        raise StandbyError("Active standby paths не соответствуют slot.")
+    if not manifest_path.is_file() or not media_root.is_dir():
+        raise StandbyError("Active standby files отсутствуют.")
+    return slot_dir
 
 
 def _is_remote(source: str) -> bool:
@@ -370,6 +393,21 @@ def _refresh_standby_locked(source: str, *, run_id=None, paths: EmergencyPaths) 
         local_commit = settings.DENSTOCK_APP_COMMIT or backup._git_commit()
         if not local_commit or manifest["app_commit"] != local_commit:
             raise StandbyError("Backup application commit не совпадает с local application.")
+
+        control = load_control(paths)
+        old_active = control.get("active_standby")
+        if old_active and old_active.get("backup_run_id") == manifest["backup_run_id"]:
+            active_run = active_standby_run_dir(old_active, paths)
+            active_report = validate_manifest(active_run, expected_source="production")
+            if not active_report.ok or active_report.manifest != manifest:
+                raise StandbyError("Backup run id повторно использован с другими данными.")
+            shutil.rmtree(staging)
+            record_event(
+                "standby_sync",
+                "unchanged",
+                details={"backup_run_id": manifest["backup_run_id"]},
+            )
+            return old_active
 
         database_name = _candidate_database_name(manifest)
         slot = database_name.removeprefix(settings.DENSTOCK_EMERGENCY_DB_PREFIX)

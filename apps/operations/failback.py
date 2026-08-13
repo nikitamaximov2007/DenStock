@@ -42,6 +42,18 @@ class FailbackError(RuntimeError):
     pass
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _is_safe_probe_origin(parsed) -> bool:
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    return parsed.scheme == "https" or (
+        parsed.scheme == "http" and parsed.hostname in local_hosts
+    )
+
+
 @dataclass
 class FailbackDecision:
     status: str
@@ -189,7 +201,16 @@ def _freeze_and_export_locked(*, actor, root, resume, paths) -> OfflineSession:
 
 def fetch_production_probe(url: str, *, token: str, timeout=30) -> dict:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+    if (
+        not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise FailbackError("Production probe URL должен быть безопасным root URL.")
+    if not _is_safe_probe_origin(parsed):
         raise FailbackError("Production probe requires HTTPS.")
     if not token:
         raise FailbackError("DENSTOCK_EMERGENCY_PROBE_TOKEN не задан.")
@@ -200,7 +221,8 @@ def fetch_production_probe(url: str, *, token: str, timeout=30) -> dict:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(request, timeout=timeout) as response:
             payload = json.loads(response.read(2 * 1024 * 1024).decode("utf-8"))
     except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
         raise FailbackError("Production probe недоступен или вернул некорректный ответ.") from exc
@@ -219,6 +241,17 @@ def configured_production_url(candidate=None) -> str:
         raise FailbackError(
             "Production URL отличается от DENSTOCK_PRODUCTION_URL; token не отправлен."
         )
+    parsed = urlsplit(selected)
+    if (
+        not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or not _is_safe_probe_origin(parsed)
+    ):
+        raise FailbackError("DENSTOCK_PRODUCTION_URL должен быть безопасным root HTTPS URL.")
     return selected
 
 
@@ -270,6 +303,9 @@ def evaluate_failback(session: OfflineSession, production: dict, final_run: str 
     if production.get("mode") != "production":
         blocked = True
         reasons.append("production probe не подтверждает production mode")
+    if production.get("instance_id") != base.get("source_instance_id"):
+        blocked = True
+        reasons.append("production instance identity отличается от base source")
     if production.get("write_state") != DeploymentState.WriteState.MAINTENANCE:
         blocked = True
         reasons.append("production не находится под maintenance write lock")
@@ -332,6 +368,9 @@ def evaluate_failback(session: OfflineSession, production: dict, final_run: str 
         if final.get("source_instance_id") != session.instance_id:
             blocked = True
             reasons.append("local final backup создан другим instance")
+        if final.get("consistency") != "single_writer_locked":
+            blocked = True
+            reasons.append("local final backup создан без frozen single-writer lock")
 
     status = (
         OfflineSession.Status.CONFLICT

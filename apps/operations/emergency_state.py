@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -42,6 +43,7 @@ BUSINESS_APP_LABELS = frozenset(
 SENSITIVE_DETAIL_KEYS = frozenset(
     {"authorization", "credential", "database_url", "password", "secret", "token"}
 )
+CREDENTIAL_URL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@")
 
 
 def _json_value(value):
@@ -155,12 +157,26 @@ def business_state_marker(*, using="default") -> dict:
     }
 
 
+def _sanitize_audit_value(value):
+    if isinstance(value, dict):
+        clean = {}
+        for key, item in value.items():
+            lowered = str(key).lower()
+            clean[str(key)] = (
+                "[REDACTED]"
+                if any(sensitive in lowered for sensitive in SENSITIVE_DETAIL_KEYS)
+                else _sanitize_audit_value(item)
+            )
+        return clean
+    if isinstance(value, (list, tuple)):
+        return [_sanitize_audit_value(item) for item in value]
+    if isinstance(value, str):
+        return CREDENTIAL_URL_RE.sub(r"\1[REDACTED]@", value)
+    return _json_value(value)
+
+
 def sanitize_audit_details(details: dict | None) -> dict:
-    clean = {}
-    for key, value in (details or {}).items():
-        lowered = str(key).lower()
-        clean[str(key)] = "[REDACTED]" if lowered in SENSITIVE_DETAIL_KEYS else _json_value(value)
-    return clean
+    return _sanitize_audit_value(details or {})
 
 
 def record_event(event_type, outcome, *, session=None, actor="", details=None, using="default"):

@@ -180,6 +180,49 @@ def test_postgresql_failed_business_write_releases_failover_lock(settings):
 
 
 @pytest.mark.django_db(transaction=True)
+def test_postgresql_backup_snapshot_serializes_business_writes(
+    tmp_path, settings, monkeypatch
+):
+    _set_state(DeploymentState.WriteState.NORMAL)
+    settings.DENSTOCK_MODE = "production"
+    settings.DENSTOCK_APP_COMMIT = COMMIT
+    lock_acquired = threading.Event()
+    allow_backup = threading.Event()
+
+    def fake_backup_db(destination, **kwargs):
+        lock_acquired.set()
+        assert allow_backup.wait(10)
+        path = destination / "db.dump"
+        path.write_bytes(b"synthetic-locked-dump")
+        return path
+
+    monkeypatch.setattr(backup, "backup_db", fake_backup_db)
+    monkeypatch.setattr(backup, "verify_database_payload", lambda *args: None)
+
+    def create_backup():
+        return backup.backup_all(root=tmp_path / "backups", media_root=tmp_path / "media")
+
+    def write():
+        assert lock_acquired.wait(10)
+        return Supplier.objects.create(name="Write after backup snapshot")
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            backup_future = pool.submit(_thread_call, create_backup)
+            assert lock_acquired.wait(10)
+            write_future = pool.submit(_thread_call, write)
+            time.sleep(0.25)
+            assert not write_future.done()
+            allow_backup.set()
+            run = backup_future.result(timeout=20)
+            result = write_future.result(timeout=10)
+        assert run.joinpath("manifest.json").is_file()
+        assert isinstance(result, Supplier)
+    finally:
+        settings.DENSTOCK_MODE = "test"
+
+
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_two_start_commands_have_one_winner(tmp_path, settings, monkeypatch):
     state = _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "emergency-local"

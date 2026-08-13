@@ -13,12 +13,13 @@ import sqlite3
 import subprocess
 import tarfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
 
 from django.conf import settings
-from django.db import connection
+from django.db import connection, transaction
 
 from .emergency_manifest import SCHEMA_VERSION, validate_manifest, write_manifest
 from .emergency_state import (
@@ -196,6 +197,25 @@ def verify_media_payload(path: str | Path | None) -> None:
         raise OperationsError(f"Media backup повреждён: {exc}") from exc
 
 
+@contextmanager
+def _backup_consistency_scope(database_settings: dict):
+    """Block application writes while PostgreSQL data and media are captured."""
+    if "postgresql" not in database_settings["ENGINE"]:
+        yield DeploymentState.objects.get(pk=DeploymentState.SINGLETON_PK)
+        return
+
+    # Imported lazily to keep the low-level backup helpers independent from
+    # write-guard initialization during Django app startup.
+    from .write_guard import acquire_failover_lock, lifecycle_write
+
+    with transaction.atomic(), lifecycle_write():
+        acquire_failover_lock(exclusive=True)
+        state = DeploymentState.objects.select_for_update().get(
+            pk=DeploymentState.SINGLETON_PK
+        )
+        yield state
+
+
 def backup_all(
     *,
     root=None,
@@ -215,16 +235,25 @@ def backup_all(
         raise OperationsError(f"Неизвестный тип backup: {trigger}")
     s = settings_dict or connection.settings_dict
     run = new_run_dir(root)
-    migrations = migration_state()
-    data_marker = business_state_marker()
     media_source = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
-    media_tree_hash = media_tree_sha256(media_source)
-    db_path = backup_db(run, settings_dict=s)
-    media_path = backup_media(run, media_root=media_root)
     engine = _engine_name(s["ENGINE"])
+    with _backup_consistency_scope(s) as state:
+        migrations = migration_state()
+        data_marker = business_state_marker()
+        media_tree_hash = media_tree_sha256(media_source)
+        db_path = backup_db(run, settings_dict=s)
+        media_path = backup_media(run, media_root=media_root)
+        consistency = (
+            "single_writer_locked"
+            if state.write_state
+            in {
+                DeploymentState.WriteState.MAINTENANCE,
+                DeploymentState.WriteState.EMERGENCY_FROZEN,
+            }
+            else "database_snapshot"
+        )
     verify_database_payload(db_path, engine)
     verify_media_payload(media_path)
-    state = DeploymentState.objects.get(pk=DeploymentState.SINGLETON_PK)
     app_commit = getattr(settings, "DENSTOCK_APP_COMMIT", "") or _git_commit()
     if not app_commit:
         raise OperationsError("Не удалось определить application commit для manifest.")
@@ -251,15 +280,7 @@ def backup_all(
         "storage_origin": getattr(settings, "DENSTOCK_BACKUP_STORAGE_ORIGIN", "local"),
         "verification_status": "verified",
         "verified_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "consistency": (
-            "single_writer_locked"
-            if state.write_state
-            in {
-                DeploymentState.WriteState.MAINTENANCE,
-                DeploymentState.WriteState.EMERGENCY_FROZEN,
-            }
-            else "database_snapshot"
-        ),
+        "consistency": consistency,
         # Legacy/UI compatibility. Emergency tooling uses the versioned fields above.
         "type": trigger,
         "engine": engine,

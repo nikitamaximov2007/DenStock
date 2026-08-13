@@ -47,6 +47,22 @@
 Emergency Compose слушает только `127.0.0.1`, по умолчанию порт `8080`. Он не
 использует production Compose volumes и не публикует PostgreSQL port.
 
+## Production prerequisites
+
+До первого emergency-capable backup в production `.env` должны быть заданы:
+
+- `DENSTOCK_APP_COMMIT` - полный SHA развёрнутого release;
+- `DENSTOCK_INSTANCE_ID` - стабильное имя production instance;
+- `DENSTOCK_PRODUCTION_DB_HOSTS=db,185.250.44.206` или более узкий фактический
+  allowlist;
+- `DENSTOCK_EMERGENCY_PROBE_TOKEN` - отдельный случайный read-only probe token;
+- `DENSTOCK_PRODUCTION_URL=https://185-250-44-206.sslip.io`.
+
+`DENSTOCK_MODE=production` задаётся явно или берётся как default из production
+settings. Startup блокируется, если production использует не PostgreSQL,
+неразрешённый host или emergency-prefixed database. Probe token не является DB
+credential и не даёт права на restore или mutation.
+
 ## Первичная настройка Windows
 
 Требуются Docker Desktop, Git и PowerShell 5.1 или новее. Для Yandex Object
@@ -115,6 +131,11 @@ Secrets в manifest отсутствуют.
 8. Сверяет business и media tree fingerprints с manifest.
 9. Только после успеха atomically меняет active pointer.
 10. Сохраняет previous verified standby.
+
+При создании PostgreSQL backup DenisStock берёт exclusive failover lock на
+время вычисления data/media markers, `pg_dump` и media archive. Новые
+application writes ждут завершения snapshot. Standby всё равно восстанавливает
+dump в отдельную DB и повторно сравнивает fingerprints до activation.
 
 При любой ошибке active standby не меняется, candidate DB удаляется. Cleanup
 старой копии не может отменить уже подтверждённую activation.
@@ -197,7 +218,8 @@ workflows. ИИ-поддержка показывает `Недоступно в
 вызова и не зависает.
 
 Global write guard проверяет каждую business SQL mutation. На PostgreSQL
-shared advisory lock удерживается от проверки state до SQL statement. Start,
+shared transaction advisory lock удерживается от проверки state до завершения
+транзакции с mutation. Start,
 freeze, maintenance probe и finalizer используют exclusive lock. HTTP write
 request дополнительно выполняется в одной transaction с shared lock.
 
@@ -247,6 +269,9 @@ exclusive advisory lock и возвращает consistent read-only marker.
 
 Report содержит base, production и local high-level markers и изменившиеся
 tables. Чувствительные значения не логируются.
+
+Probe не следует HTTP redirects, принимает только pinned root HTTPS URL и
+сравнивает production instance identity с source instance base backup.
 
 ## Conflict и reconciliation
 
@@ -364,3 +389,14 @@ docker compose --project-name denstock-emergency `
 ```
 
 Удалять PostgreSQL volume или `.emergency` при незавершённой session запрещено.
+
+## Известные ограничения первой версии
+
+- Автоматический merge production и local отсутствует намеренно.
+- Advisory lock защищает writes через DenisStock. Прямой SQL доступ отдельными
+  credentials должен быть организационно закрыт; если это нельзя доказать,
+  failback остаётся `BLOCKED` или требует reconciliation.
+- Manifest защищает целостность SHA-256, но не является цифровой подписью.
+  Доверие к источнику обеспечивают доступ к bucket/rclone и независимая проверка.
+- Production restore и exact media swap остаются отдельной ручной процедурой с
+  backup, review и rollback plan.

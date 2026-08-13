@@ -66,6 +66,7 @@ def _session(*, status=OfflineSession.Status.FROZEN, instance_id="warehouse-pc")
         base_backup_created_at=timezone.now(),
         base_manifest={
             "backup_run_id": BASE_RUN_ID,
+            "source_instance_id": "production",
             "database_identity": DATABASE_ID,
             "app_commit": COMMIT,
             "migration_fingerprint": MIGRATION_HASH,
@@ -151,6 +152,23 @@ def test_probe_token_is_pinned_to_configured_production_url():
     )
     with pytest.raises(FailbackError, match="token не отправлен"):
         configured_production_url("https://attacker.example")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://production.example",
+        "ftp://localhost",
+        "https://user:password@production.example",
+        "https://production.example/path",
+        "https://production.example?target=other",
+    ],
+)
+def test_probe_url_rejects_unsafe_configured_origin(settings, url):
+    settings.DENSTOCK_PRODUCTION_URL = url
+
+    with pytest.raises(FailbackError, match="root HTTPS URL"):
+        configured_production_url()
 
 
 @pytest.fixture
@@ -303,6 +321,30 @@ def test_incompatible_production_version_is_blocked(tmp_path, field):
     decision = evaluate_failback(session, production, run)
 
     assert decision.status == OfflineSession.Status.BLOCKED
+
+
+@pytest.mark.django_db
+def test_different_production_instance_is_blocked(tmp_path):
+    session = _session()
+    run = _final_run(tmp_path, session)
+    production = _production_probe()
+    production["instance_id"] = "different-production"
+
+    decision = evaluate_failback(session, production, run)
+
+    assert decision.status == OfflineSession.Status.BLOCKED
+    assert any("instance identity" in reason for reason in decision.reasons)
+
+
+@pytest.mark.django_db
+def test_final_backup_without_frozen_consistency_is_blocked(tmp_path):
+    session = _session()
+    run = _final_run(tmp_path, session, consistency="database_snapshot")
+
+    decision = evaluate_failback(session, _production_probe(), run)
+
+    assert decision.status == OfflineSession.Status.BLOCKED
+    assert any("single-writer" in reason for reason in decision.reasons)
 
 
 @pytest.mark.django_db

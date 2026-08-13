@@ -24,3 +24,17 @@ docs/*
 
 .pytest-tmp/
 .emergency/
+.agents/
+.claude/
+/import/
+/research_inputs/
+/tools/
+*.dump
+*.log
+*.session
+*.session-journal
+*.sql.gz
+*.xls
+*.xlsx
+!apps/actions/customs_template/supplier_order_template.xlsx
+rclone.conf

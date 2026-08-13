@@ -87,6 +87,13 @@ function Assert-ReleaseIdentity {
     if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) {
         throw "Рабочее дерево содержит отслеживаемые изменения. Сборка заблокирована."
     }
+    $untracked = @(& git ls-files --others --exclude-standard)
+    $unexpected = @($untracked | Where-Object {
+        $_ -notmatch '^tools/research/\.(cache|runtime)/'
+    })
+    if ($LASTEXITCODE -ne 0 -or $unexpected.Count -gt 0) {
+        throw "Рабочее дерево содержит посторонние untracked-файлы. Сборка заблокирована."
+    }
 }
 
 function Invoke-EmergencyCompose {
@@ -114,8 +121,23 @@ function Get-ControlState {
 function Set-TargetFromControl {
     $control = Get-ControlState
     if ($null -ne $control -and $null -ne $control.active_standby) {
-        $env:EMERGENCY_DATABASE_NAME = [string]$control.active_standby.database_name
-        $env:EMERGENCY_SLOT = [string]$control.active_standby.slot
+        $databaseName = [string]$control.active_standby.database_name
+        $slot = [string]$control.active_standby.slot
+        $prefix = [string]$script:Environment["DENSTOCK_EMERGENCY_DB_PREFIX"]
+        $expectedCommit = [string]$script:Environment["DENSTOCK_APP_COMMIT"]
+        if (-not $prefix) {
+            $prefix = "denstock_emergency_"
+        }
+        if (
+            $slot -notmatch '^[0-9a-f]{12}$' -or
+            $databaseName -notmatch '^[A-Za-z_][A-Za-z0-9_]{0,62}$' -or
+            $databaseName -cne "$prefix$slot" -or
+            [string]$control.active_standby.app_commit -cne $expectedCommit
+        ) {
+            throw "Active standby не соответствует безопасному target или release commit."
+        }
+        $env:EMERGENCY_DATABASE_NAME = $databaseName
+        $env:EMERGENCY_SLOT = $slot
     }
     else {
         $env:EMERGENCY_DATABASE_NAME = "denstock_emergency_control"
@@ -125,7 +147,11 @@ function Set-TargetFromControl {
 }
 
 function Set-ControlTarget {
-    $env:EMERGENCY_DATABASE_NAME = "denstock_emergency_control"
+    $prefix = [string]$script:Environment["DENSTOCK_EMERGENCY_DB_PREFIX"]
+    if (-not $prefix) {
+        $prefix = "denstock_emergency_"
+    }
+    $env:EMERGENCY_DATABASE_NAME = "${prefix}control"
     $env:EMERGENCY_SLOT = "inactive"
 }
 
@@ -297,8 +323,12 @@ function Start-Offline {
             "Обнаружен прерванный запуск. Будет восстановлен существующий lifecycle marker."
         )
         Start-Database
+        $resumeKind = [string]$control.offline_lifecycle.kind
+        if ($resumeKind -notin @("planned", "unplanned")) {
+            $resumeKind = "unplanned"
+        }
         Invoke-Manage -ManageArgs @(
-            "emergency_start", "--kind", "unplanned", "--confirm", $resumePhrase,
+            "emergency_start", "--kind", $resumeKind, "--confirm", $resumePhrase,
             "--resume"
         ) | Out-Null
         Invoke-EmergencyCompose -CommandArgs @(
@@ -442,6 +472,7 @@ function Invoke-SelectedAction {
 try {
     Assert-Prerequisites
     $environment = Read-DotEnv
+    $script:Environment = $environment
     if ($Action -ne "Menu") {
         Invoke-SelectedAction -Selected $Action -Environment $environment
         exit 0

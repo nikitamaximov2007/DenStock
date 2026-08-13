@@ -20,8 +20,20 @@ else:
     raise SystemExit("[entrypoint] Не дождались базы данных.")
 PY
 
-echo "[entrypoint] Применение миграций…"
-python manage.py migrate --noinput
+if [[ "${DENSTOCK_MODE:-}" == "emergency-local" ]]; then
+  emergency_control_db="${DENSTOCK_EMERGENCY_DB_PREFIX:-denstock_emergency_}control"
+  if [[ "${DENSTOCK_EMERGENCY_DATABASE_NAME:-}" == "${emergency_control_db}" \
+        && "${POSTGRES_DB:-}" == "${emergency_control_db}" ]]; then
+    echo "[entrypoint] Применение миграций к служебной emergency control DB…"
+    python manage.py migrate --noinput
+  else
+    echo "[entrypoint] Проверка миграций emergency standby без изменения БД…"
+    python manage.py migrate --check
+  fi
+else
+  echo "[entrypoint] Применение миграций…"
+  python manage.py migrate --noinput
+fi
 
 echo "[entrypoint] Сборка статики…"
 python manage.py collectstatic --noinput

@@ -52,10 +52,14 @@ def validate_database_target(*, mode=None, database=None) -> None:
         if not prefix or not name.startswith(prefix):
             raise EmergencySafetyError("Emergency local database name has an unsafe prefix.")
     elif mode == "production":
+        if "postgresql" not in _normalized(database.get("ENGINE")):
+            raise EmergencySafetyError("Production mode requires PostgreSQL.")
         if prefix and name.startswith(prefix):
             raise EmergencySafetyError("Production points to an emergency local database.")
-        if _host_matches(host, {"emergency-db"}):
-            raise EmergencySafetyError("Production points to the emergency database service.")
+        if _host_matches(host, emergency_hosts):
+            raise EmergencySafetyError("Production points to an emergency local DB host.")
+        if not _host_matches(host, production_hosts):
+            raise EmergencySafetyError("Production DB host is not allowlisted.")
     elif mode not in {"development", "test"}:
         raise EmergencySafetyError(f"Unknown DENSTOCK_MODE: {mode or '?'}")
 

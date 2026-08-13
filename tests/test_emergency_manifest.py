@@ -157,7 +157,17 @@ def test_emergency_audit_event_has_no_secret_values():
     event = record_event(
         "standby_sync",
         "failed",
-        details={"password": "do-not-store", "run_id": "safe"},
+        details={
+            "password": "do-not-store",
+            "run_id": "safe",
+            "nested": {"probe_token": "secret", "status": "blocked"},
+            "error": "postgresql://user:password@localhost/database failed",
+        },
     )
 
-    assert event.details == {"password": "[REDACTED]", "run_id": "safe"}
+    assert event.details == {
+        "password": "[REDACTED]",
+        "run_id": "safe",
+        "nested": {"probe_token": "[REDACTED]", "status": "blocked"},
+        "error": "postgresql://[REDACTED]@localhost/database failed",
+    }

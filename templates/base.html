@@ -57,6 +57,8 @@
           {% if emergency_mode.session %}
             <span>Начало: {{ emergency_mode.session.started_at|ru_dt }}</span>
             <span>Base backup: {{ emergency_mode.session.base_backup_created_at|ru_dt }}</span>
+            <span>Host: {{ emergency_mode.session.local_hostname }}</span>
+            <span>Статус: {{ emergency_mode.session.get_status_display }}</span>
           {% endif %}
           <span>Instance: {{ emergency_mode.instance_id }}</span>
         </section>

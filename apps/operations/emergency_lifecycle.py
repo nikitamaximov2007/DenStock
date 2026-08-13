@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import socket
 from datetime import datetime
-from pathlib import Path
 
 from django.conf import settings
 from django.db import connection, transaction
@@ -18,6 +17,7 @@ from .models import DeploymentState, OfflineSession
 from .standby import (
     EmergencyPaths,
     StandbyError,
+    active_standby_run_dir,
     control_lock,
     load_control,
     save_control,
@@ -43,10 +43,11 @@ def _active_standby(paths=None) -> tuple[dict, dict]:
         raise EmergencyLifecycleError(str(exc)) from exc
     if not active:
         raise EmergencyLifecycleError("Проверенной standby-копии нет.")
-    manifest_path = Path(active.get("manifest_path", ""))
-    if manifest_path.name != "manifest.json" or not manifest_path.is_file():
-        raise EmergencyLifecycleError("Standby manifest не найден.")
-    report = validate_manifest(manifest_path.parent, expected_source="production")
+    try:
+        run_dir = active_standby_run_dir(active, paths)
+    except StandbyError as exc:
+        raise EmergencyLifecycleError(str(exc)) from exc
+    report = validate_manifest(run_dir, expected_source="production")
     if not report.ok:
         raise EmergencyLifecycleError("Standby manifest invalid: " + "; ".join(report.errors))
     if connection.settings_dict.get("NAME") != active["database_name"]:
@@ -82,6 +83,7 @@ def start_offline_session(*, kind: str, actor=None, paths=None, resume=False) ->
             "status": "starting",
             "database_name": active.get("database_name", ""),
             "base_backup_run_id": active.get("backup_run_id", ""),
+            "kind": kind,
             "updated_at": timezone.now().isoformat(),
         }
         save_control(control, paths)

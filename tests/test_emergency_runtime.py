@@ -4,6 +4,7 @@ import pytest
 from django.db import transaction
 from django.http import HttpResponse
 from django.test import RequestFactory, override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.ai_support.services import FeatureDisabled, send_message
@@ -183,6 +184,18 @@ def test_ai_support_is_gracefully_unavailable_offline():
 
 
 @pytest.mark.django_db
+def test_ai_support_page_explains_offline_unavailability(client, django_user_model):
+    user = django_user_model.objects.create_superuser(username="offline-admin", password="test")
+    client.force_login(user)
+
+    with override_settings(DENSTOCK_MODE="emergency-local", AI_SUPPORT_ENABLED=True):
+        response = client.get(reverse("ai_support:home"))
+
+    assert response.status_code == 200
+    assert "Недоступно в автономном режиме" in response.content.decode("utf-8")
+
+
+@pytest.mark.django_db
 @override_settings(DENSTOCK_MODE="emergency-local", DENSTOCK_INSTANCE_ID="warehouse-pc")
 def test_emergency_banner_is_visible_on_authenticated_pages(client, django_user_model):
     state = DeploymentState.get_solo()
@@ -211,6 +224,7 @@ def test_emergency_banner_is_visible_on_authenticated_pages(client, django_user_
     assert "АВТОНОМНЫЙ РЕЖИМ" in body
     assert "Данные работают локально" in body
     assert "warehouse-pc" in body
+    assert "Статус: Автономная работа" in body
 
 
 @pytest.mark.django_db

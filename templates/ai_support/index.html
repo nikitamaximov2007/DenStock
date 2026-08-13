@@ -20,7 +20,13 @@
     <span class="status__icon" aria-hidden="true">!</span>
     <span class="status__text">ИИ может ошибаться. Он не выполняет операции и не изменяет данные DenisStock.</span>
   </div>
-  {% if provider_state == "disabled" %}
+  {% if provider_state == "offline" %}
+    <div class="status status--warning ai-support__provider-state"
+         role="status">
+      <span class="status__icon" aria-hidden="true">!</span>
+      <span class="status__text">Недоступно в автономном режиме. История остаётся доступной только для чтения.</span>
+    </div>
+  {% elif provider_state == "disabled" %}
     <div class="status status--warning ai-support__provider-state"
          role="status">
       <span class="status__icon" aria-hidden="true">!</span>
