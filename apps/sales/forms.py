@@ -1,5 +1,6 @@
 from django import forms
 
+from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
 from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 
@@ -15,10 +16,10 @@ def _available_lots():
     )
 
 
-class ReservationForm(forms.ModelForm):
+class ReservationForm(CustomerSelectionMixin):
     class Meta:
         model = Reservation
-        fields = ["customer_name", "customer_phone", "comment", "expires_at"]
+        fields = ["customer", "customer_name", "customer_phone", "comment", "expires_at"]
         widgets = {
             "expires_at": forms.DateTimeInput(
                 attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
@@ -50,10 +51,10 @@ class AddLotForm(forms.Form):
         self.fields["lot"].queryset = _available_lots()
 
 
-class SaleForm(forms.ModelForm):
+class SaleForm(CustomerSelectionMixin):
     class Meta:
         model = Sale
-        fields = ["customer_name", "customer_phone", "comment"]
+        fields = ["customer", "customer_name", "customer_phone", "comment"]
 
 
 class AddSaleItemForm(forms.Form):

@@ -80,7 +80,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Быстрые действия",
             "История",
         ],
-        "sales": ["Продажи", "Резервы", "Возвраты покупателей"],
+        "sales": ["Клиенты", "Продажи", "Резервы", "Возвраты покупателей"],
         "repairs": ["Ремонты", "Возвраты из ремонта"],
         "reports": [
             "Сводка",
@@ -109,7 +109,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Быстрые действия",
                     "История",
                 ],
-                "sales": ["Возвраты покупателей"],
+                "sales": ["Клиенты", "Возвраты покупателей"],
                 "repairs": ["Ремонты", "Возвраты из ремонта"],
                 "reports": [
                     "Сводка",
@@ -121,7 +121,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
         (
             roles.SELLER,
             {
-                "sales": ["Продажи", "Резервы"],
+                "sales": ["Клиенты", "Продажи", "Резервы"],
                 "repairs": ["Ремонты"],
                 "reports": ["Складские действия / Таможня"],
             },

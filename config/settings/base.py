@@ -44,6 +44,7 @@ LOCAL_APPS = [
     "apps.polaris",
     "apps.counting",
     "apps.actions",
+    "apps.customers",
     "apps.sales",
     "apps.repairs",
     "apps.returns",

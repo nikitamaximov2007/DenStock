@@ -411,6 +411,16 @@ def _warehouse_subtabs(user, path):
 
 def _sales_tabs(user, path, source):
     tabs = []
+    if user.can_manage_sales or user.can_manage_repairs or user.can_manage_reservations:
+        tabs.append(
+            _tab(
+                "Клиенты",
+                reverse("customer_list"),
+                sidebar_key="customers",
+                icon="users",
+                active=path.startswith("/sales/customers/"),
+            )
+        )
     if user.can_manage_sales:
         tabs.append(
             _tab(

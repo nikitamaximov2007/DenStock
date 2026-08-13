@@ -136,6 +136,7 @@ def reservation_create(request):
         if form.is_valid():
             try:
                 reservation = create_reservation(
+                    customer=form.cleaned_data.get("customer"),
                     customer_name=form.cleaned_data["customer_name"],
                     customer_phone=form.cleaned_data["customer_phone"],
                     comment=form.cleaned_data["comment"],
@@ -301,6 +302,7 @@ def sale_create(request):
         if form.is_valid():
             try:
                 sale = create_sale(
+                    customer=form.cleaned_data.get("customer"),
                     customer_name=form.cleaned_data["customer_name"],
                     customer_phone=form.cleaned_data["customer_phone"],
                     comment=form.cleaned_data["comment"],
