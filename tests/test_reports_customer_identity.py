@@ -318,3 +318,54 @@ def test_period_boundaries_are_respected(data):
         sold_at=timezone.now() - timezone.timedelta(days=400)
     )
     assert get_sales_by_customer(resolve_period({})) == []
+
+
+# --- Производительность ----------------------------------------------------------------------
+
+
+def test_reports_query_count_does_not_grow_with_documents(
+    client, make_user, data, django_assert_max_num_queries
+):
+    """Отчёты по клиентам не должны давать N+1 по документам."""
+    _login(client, make_user)
+    customer = Customer.objects.create(name="Иванов")
+    for _ in range(3):
+        _sale(data, customer=customer, qty=1)
+        _repair(data, customer=customer, qty=1)
+
+    urls = (
+        reverse("reports_sales_by_client"),
+        reverse("reports_repairs_by_client"),
+        reverse("reports_clients_overview"),
+    )
+    for url in urls:
+        client.get(url)  # прогрев
+    baseline = {}
+    for url in urls:
+        with django_assert_max_num_queries(20) as captured:
+            client.get(url)
+        baseline[url] = len(captured)
+
+    for _ in range(6):
+        _sale(data, customer=customer, qty=1)
+        _repair(data, customer=customer, qty=1)
+
+    for url in urls:
+        with django_assert_max_num_queries(baseline[url]) as captured:
+            client.get(url)
+        assert len(captured) <= baseline[url], url
+
+
+def test_client_timeline_query_count_is_bounded(
+    client, make_user, data, django_assert_max_num_queries
+):
+    _login(client, make_user)
+    customer = Customer.objects.create(name="Иванов")
+    for _ in range(4):
+        _sale(data, customer=customer, qty=1)
+        _repair(data, customer=customer, qty=1)
+
+    url = reverse("reports_client_timeline")
+    client.get(url, {"customer_id": customer.pk})
+    with django_assert_max_num_queries(15):
+        client.get(url, {"customer_id": customer.pk})
