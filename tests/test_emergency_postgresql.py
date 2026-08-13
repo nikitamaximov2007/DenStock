@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import time
@@ -8,6 +9,7 @@ from decimal import Decimal
 
 import pytest
 from django.db import IntegrityError, close_old_connections, connection, connections, transaction
+from django.utils import timezone
 
 from apps.catalog.models import Category, PartType, Unit
 from apps.inventory.models import NumberSequence, StockLot
@@ -16,8 +18,12 @@ from apps.operations.emergency_lifecycle import (
     EmergencyLifecycleError,
     start_offline_session,
 )
-from apps.operations.emergency_manifest import validate_manifest
-from apps.operations.emergency_state import business_state_marker, migration_state
+from apps.operations.emergency_manifest import SCHEMA_VERSION, validate_manifest
+from apps.operations.emergency_state import (
+    business_state_marker,
+    migration_state,
+    sha256_file,
+)
 from apps.operations.failback import FailbackError, _freeze_for_export
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import (
@@ -434,3 +440,133 @@ def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
         settings.DENSTOCK_MODE = "test"
         for database_name in reversed(created_databases):
             drop_database(database_name)
+
+
+
+def _postgres_final_run(root, session, marker, migrations):
+    """Финальный экспорт с настоящей линией происхождения от base сессии."""
+    run = root / "final-export"
+    run.mkdir(parents=True, exist_ok=True)
+    dump = run / "db.dump"
+    dump.write_bytes(b"postgres-final-dump")
+    manifest = {
+        "schema_version": SCHEMA_VERSION,
+        "backup_run_id": str(uuid.uuid4()),
+        "created_at": timezone.now().isoformat(),
+        "verified_at": timezone.now().isoformat(),
+        "source_environment": "emergency-local",
+        "source_instance_id": session.instance_id,
+        "app_commit": session.base_app_commit,
+        "database_name": "denstock_emergency_local",
+        "database_identity": marker["database_identity"],
+        "database_dump_filename": dump.name,
+        "database_sha256": sha256_file(dump),
+        "media_filename": None,
+        "media_sha256": None,
+        "media_tree_sha256": "e" * 64,
+        "migration_fingerprint": migrations["fingerprint"],
+        "migration_state": migrations["applied"],
+        "data_state": {
+            "database_identity": marker["database_identity"],
+            "business_generation": marker["business_generation"] + 5,
+            "business_sha256": "f" * 64,
+            "tables": {},
+        },
+        "storage_origin": "emergency-local",
+        "verification_status": "verified",
+        "consistency": "single_writer_locked",
+        "type": "emergency_final",
+        "offline_lineage": {
+            "offline_session_id": str(session.id),
+            "base_backup_run_id": session.base_backup_run_id,
+            "base_database_identity": session.base_manifest["database_identity"],
+            "base_business_sha256": session.base_data_marker["business_sha256"],
+            "base_media_sha256": session.base_media_sha256,
+        },
+    }
+    (run / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+    )
+    return run
+
+
+def _probe_from_session(session, *, generation_delta=0, media_hash=None):
+    """Собрать production-probe, совпадающий с общим предком сессии.
+
+    Совпадающий probe означает «production не менялся с момента base», поэтому
+    failback обязан стать ELIGIBLE. Любое отличие обязано стать CONFLICT.
+    """
+    base = session.base_manifest
+    base_data = dict(session.base_data_marker)
+    base_data["business_generation"] = base_data["business_generation"] + generation_delta
+    return {
+        "schema_version": 1,
+        "mode": "production",
+        "instance_id": base.get("source_instance_id"),
+        "write_state": DeploymentState.WriteState.MAINTENANCE,
+        "state_reason": "maintenance",
+        "stable_snapshot": True,
+        "app_commit": session.base_app_commit,
+        "migration_fingerprint": session.base_migration_fingerprint,
+        "data_state": base_data,
+        "media_tree_sha256": (
+            media_hash if media_hash is not None else session.base_media_sha256
+        ),
+    }
+
+
+def test_postgresql_changed_production_turns_failback_into_conflict(db, tmp_path, settings):
+    """Шаги 16-18 синтетического сценария на реальном PostgreSQL.
+
+    После заморозки локальной сессии production «уехал вперёд»: изменилась
+    business generation или media. Failback обязан стать CONFLICT, а автоматической
+    перезаписи production не должно существовать ни при каком статусе.
+    """
+    from apps.operations.failback import evaluate_failback
+
+    settings.DENSTOCK_MODE = "test"
+    settings.DENSTOCK_APP_COMMIT = COMMIT
+    settings.DENSTOCK_INSTANCE_ID = "postgres-conflict"
+    _set_state(DeploymentState.WriteState.NORMAL)
+
+    marker = business_state_marker()
+    migrations = migration_state()
+    session = OfflineSession.objects.create(
+        kind=OfflineSession.Kind.UNPLANNED,
+        status=OfflineSession.Status.FROZEN,
+        local_hostname="warehouse-pc",
+        instance_id=settings.DENSTOCK_INSTANCE_ID,
+        base_backup_run_id=str(uuid.uuid4()),
+        base_backup_created_at=timezone.now(),
+        base_manifest={
+            "backup_run_id": str(uuid.uuid4()),
+            "source_instance_id": "production",
+            "database_identity": marker["database_identity"],
+            "app_commit": COMMIT,
+            "migration_fingerprint": migrations["fingerprint"],
+        },
+        base_data_marker=marker,
+        base_media_sha256="d" * 64,
+        base_app_commit=COMMIT,
+        base_migration_fingerprint=migrations["fingerprint"],
+    )
+
+    final_run = _postgres_final_run(tmp_path, session, marker, migrations)
+
+    unchanged = evaluate_failback(session, _probe_from_session(session), final_run)
+    assert unchanged.status == OfflineSession.Status.ELIGIBLE, unchanged.reasons
+    assert unchanged.as_dict()["automatic_production_overwrite"] == "disabled"
+
+    moved_on = evaluate_failback(
+        session, _probe_from_session(session, generation_delta=1), final_run
+    )
+    assert moved_on.status == OfflineSession.Status.CONFLICT
+    assert "business_generation" in moved_on.differences
+    assert not moved_on.eligible
+    assert moved_on.as_dict()["automatic_production_overwrite"] == "disabled"
+
+    media_changed = evaluate_failback(
+        session, _probe_from_session(session, media_hash="0" * 64), final_run
+    )
+    assert media_changed.status == OfflineSession.Status.CONFLICT
+    assert "media_tree_sha256" in media_changed.differences
