@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Очистить корзину · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Очистить корзину · {{ title }}</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary" href="{{ back }}">Вернуться к сканеру</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Корзина это черновик документа. Она ничего не списывала со склада, поэтому
+    очистка остатки не меняет: удалятся только набранные позиции.
+  </p>
+  <div class="card">
+    <div class="card__body">
+      {% if rows %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Название</th>
+              <th>Ячейка</th>
+              <th class="num--qty">Количество</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.part.name }}</td>
+                <td>
+                  <span class="code-pill">{{ row.location.code }}</span>
+                </td>
+                <td class="num--qty">{{ row.quantity|quantity_int }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <form method="post" class="form">
+          {% csrf_token %}
+          <input type="hidden" name="q" value="{{ q }}">
+          <div class="form-actions">
+            <button type="submit" class="btn btn--danger">Очистить корзину</button>
+            <a class="btn btn--secondary" href="{{ back }}">Отмена</a>
+          </div>
+        </form>
+      {% else %}
+        {% include "partials/_empty_state.html" with icon="scan" title="Корзина уже пуста" text="Отсканируйте деталь, чтобы набрать позиции." compact=1 %}
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

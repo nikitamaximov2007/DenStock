@@ -200,7 +200,7 @@ def test_actions_page_shows_only_exact_production_number(
     assert RELATED_A not in html
     assert RELATED_B not in html
     assert "Найдено несколько складских карточек" not in html
-    assert "Провести действие" in html
+    assert "Провести сразу" in html
 
 
 def test_alias_only_action_scan_is_not_an_operation_candidate(
@@ -211,7 +211,7 @@ def test_alias_only_action_scan_is_not_an_operation_candidate(
     html = client.get(reverse("actions_scan"), {"q": RELATED_ONLY}).content.decode()
 
     assert "Деталь не найдена в остатках склада." in html
-    assert "Провести действие" not in html
+    assert "Провести сразу" not in html
     assert RELATED_A not in html
 
 
@@ -272,7 +272,7 @@ def test_same_exact_number_on_two_real_cards_requires_explicit_part_choice(
     assert f"part_id={exact_action_data['exact_part'].pk}" in ambiguous
     assert f"part_id={duplicate.pk}" in ambiguous
     assert "DAMPER, VIBRATION" in selected
-    assert "Провести действие" in selected
+    assert "Провести сразу" in selected
 
 
 def test_actions_post_rejects_part_id_that_does_not_match_exact_scan(
@@ -397,7 +397,7 @@ def test_general_search_labels_aliases_as_related_reference_data(
 
     assert "Возможные связанные номера" in html
     assert RELATED_A in html
-    assert "Провести действие" not in html
+    assert "Провести сразу" not in html
 
 
 def test_sale_cancel_report_and_export_keep_exact_snapshot(
