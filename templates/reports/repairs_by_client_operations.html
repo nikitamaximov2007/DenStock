@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Выдачи в ремонт · {{ customer_name }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Выдачи в ремонт</h1>
+  <p class="page-subtitle">
+    Клиент: {{ customer_name }} · Деталь: {{ part.name }}
+    {% if exact_number %}· <span class="code-pill">{{ exact_number }}</span>{% endif %}
+  </p>
+  <p>
+    <a href="{% url 'reports_repairs_by_client_detail' %}?{{ period_qs }}&amp;{{ customer_qs }}">← К деталям клиента</a>
+  </p>
+  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Заказ</th>
+          <th>Техника</th>
+          <th class="num--qty">Количество</th>
+          {% if show_money %}
+            <th class="num--money">Себестоимость за ед. (₽)</th>
+            <th class="num--money">Себестоимость (₽)</th>
+          {% endif %}
+          <th>Сотрудник</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in page_obj.object_list %}
+          <tr>
+            <td>{{ line.repair_order.completed_at|ru_dt }}</td>
+            <td>
+              <a href="{% url 'repair_order_detail' line.repair_order_id %}">{{ line.repair_order.number }}</a>
+            </td>
+            <td>
+              {{ line.repair_order.vehicle_make }} {{ line.repair_order.vehicle_model }}
+              {% if line.repair_order.vehicle_identifier %}
+                · {{ line.repair_order.vehicle_identifier }}
+              {% endif %}
+            </td>
+            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+            {% if show_money %}
+              <td class="num--money">{{ line.unit_cost_rub|money_int }}</td>
+              <td class="num--money">{{ line.total_cost_rub|money_int }}</td>
+            {% endif %}
+            <td>{{ line.repair_order.created_by|default:"·" }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="cart" title="Выдач за период нет" text="Измените период в карточке клиента." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}

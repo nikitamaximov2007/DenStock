@@ -20,8 +20,11 @@ from .services import (
     attach_customer_part_identity,
     get_customer_part_operations,
     get_customer_part_sales,
+    get_customer_repair_operations,
+    get_customer_repair_parts,
     get_dashboard_report,
     get_low_stock_report,
+    get_repairs_by_customer,
     get_repairs_report,
     get_returns_report,
     get_sales_by_customer,
@@ -175,6 +178,101 @@ def sales_by_client_detail(request):
             "is_paginated": is_paginated,
             "show_money": request.user.can_view_purchase_cost,
             "missing_customer": missing,
+        },
+    )
+
+
+@login_required
+def repairs_by_client(request):
+    """Ремонты по клиентам.
+
+    Денег клиента здесь нет: ремонтный заказ фиксирует выдачу деталей и их
+    себестоимость, цены работ система не хранит. Поэтому в отчёте нет колонки
+    выручки, а «Себестоимость выданного» показывается только тем, кому открыты
+    закупочные цены.
+    """
+    _require_reports(request)
+    period = resolve_period(request.GET)
+    page_obj, is_paginated = _paginate(request, get_repairs_by_customer(period))
+    for row in page_obj.object_list:
+        customer_name = row["report_customer"]
+        row["display_name"] = customer_name or "Без клиента"
+        row["customer_qs"] = _customer_query(customer_name, not customer_name)
+    return render(
+        request,
+        "reports/repairs_by_client.html",
+        {
+            "period": period,
+            "period_qs": _period_query(period),
+            "presets": _PRESETS,
+            "page_obj": page_obj,
+            "is_paginated": is_paginated,
+            "show_money": request.user.can_view_purchase_cost,
+        },
+    )
+
+
+@login_required
+def repairs_by_client_detail(request):
+    _require_reports(request)
+    period = resolve_period(request.GET)
+    customer_name, missing = _customer_selection(request)
+    page_obj, is_paginated = _paginate(
+        request,
+        get_customer_repair_parts(period, customer_name=customer_name, missing=missing),
+    )
+    page_obj.object_list = attach_customer_part_identity(page_obj.object_list)
+    return render(
+        request,
+        "reports/repairs_by_client_detail.html",
+        {
+            "customer_name": customer_name or "Без клиента",
+            "customer_value": customer_name,
+            "customer_qs": _customer_query(customer_name, missing),
+            "period": period,
+            "period_qs": _period_query(period),
+            "presets": _PRESETS,
+            "page_obj": page_obj,
+            "is_paginated": is_paginated,
+            "show_money": request.user.can_view_purchase_cost,
+            "missing_customer": missing,
+        },
+    )
+
+
+@login_required
+def repairs_by_client_operations(request):
+    _require_reports(request)
+    period = resolve_period(request.GET)
+    customer_name, missing = _customer_selection(request)
+    try:
+        part_id = int(request.GET.get("part", ""))
+    except (TypeError, ValueError) as exc:
+        raise Http404("Деталь не указана.") from exc
+    part = get_object_or_404(PartType, pk=part_id)
+    page_obj, is_paginated = _paginate(
+        request,
+        get_customer_repair_operations(
+            period,
+            customer_name=customer_name,
+            missing=missing,
+            part_type_id=part.pk,
+        ),
+    )
+    identity = attach_customer_part_identity([{"part_type_id": part.pk}])[0]
+    return render(
+        request,
+        "reports/repairs_by_client_operations.html",
+        {
+            "customer_name": customer_name or "Без клиента",
+            "customer_qs": _customer_query(customer_name, missing),
+            "part": part,
+            "exact_number": identity["exact_number"],
+            "period": period,
+            "period_qs": _period_query(period),
+            "page_obj": page_obj,
+            "is_paginated": is_paginated,
+            "show_money": request.user.can_view_purchase_cost,
         },
     )
 

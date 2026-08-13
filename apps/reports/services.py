@@ -289,6 +289,81 @@ def get_customer_part_operations(
 # --- Ремонт/выдачи (по completed_at; без выручки — Слой 17 без цены работ) ----
 
 
+def _completed_repair_lines(period: Period):
+    """Строки проведённых ремонтов за период: снимки себестоимости заморожены."""
+    start, end = _bounds(period)
+    return RepairIssueLine.objects.filter(
+        repair_order__status=RepairOrder.Status.COMPLETED,
+        repair_order__completed_at__range=(start, end),
+    )
+
+
+def get_repairs_by_customer(period: Period):
+    """Ремонты по клиентам за период.
+
+    ВАЖНО про деньги: у ремонтного заказа НЕТ клиентской суммы. Слой 17
+    фиксирует, куда ушли детали, и замораживает их СЕБЕСТОИМОСТЬ; цены работ,
+    оплаты и прибыли в системе нет. Поэтому здесь считается «себестоимость
+    выданного», а не выручка, и называть её выручкой нельзя. Сортировка идёт по
+    количеству, а не по деньгам: количество видно всем ролям, а себестоимость
+    закрыта правом на закупочные цены.
+    """
+    return (
+        _completed_repair_lines(period)
+        .annotate(report_customer=Trim("repair_order__customer_name"))
+        .values("report_customer")
+        .annotate(
+            repair_count=Count("repair_order_id", distinct=True),
+            unique_parts=Count("part_type_id", distinct=True),
+            quantity=Sum("quantity"),
+            issued_cost=Sum("total_cost_rub"),
+            last_repair=Max("repair_order__completed_at"),
+        )
+        .order_by("-quantity", "report_customer")
+    )
+
+
+def _customer_repair_lines(period: Period, *, customer_name: str, missing: bool):
+    customer_name = (customer_name or "").strip()
+    expected = "" if missing else customer_name
+    return (
+        _completed_repair_lines(period)
+        .annotate(report_customer=Trim("repair_order__customer_name"))
+        .filter(report_customer=expected)
+    )
+
+
+def get_customer_repair_parts(period: Period, *, customer_name: str, missing: bool):
+    """Детали, выданные одному клиенту в ремонт: количество и себестоимость."""
+    return (
+        _customer_repair_lines(period, customer_name=customer_name, missing=missing)
+        .values("part_type_id", "part_type__name")
+        .annotate(
+            quantity=Sum("quantity"),
+            issued_cost=Sum("total_cost_rub"),
+            operation_count=Count("repair_order_id", distinct=True),
+            last_repair=Max("repair_order__completed_at"),
+        )
+        .order_by("-quantity", "part_type__name", "part_type_id")
+    )
+
+
+def get_customer_repair_operations(
+    period: Period,
+    *,
+    customer_name: str,
+    missing: bool,
+    part_type_id: int,
+):
+    """Отдельные выдачи в ремонт с замороженной себестоимостью строки."""
+    return (
+        _customer_repair_lines(period, customer_name=customer_name, missing=missing)
+        .filter(part_type_id=part_type_id)
+        .select_related("repair_order", "repair_order__created_by", "part_type")
+        .order_by("-repair_order__completed_at", "-repair_order_id", "pk")
+    )
+
+
 def get_repairs_report(period: Period) -> RepairReport:
     start, end = _bounds(period)
     orders = RepairOrder.objects.filter(

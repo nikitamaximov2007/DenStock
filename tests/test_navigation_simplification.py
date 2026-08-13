@@ -85,6 +85,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
         "reports": [
             "Сводка",
             "Продажи по клиентам",
+            "Ремонты по клиентам",
             "Складские действия / Таможня",
             "Статистика",
         ],
@@ -114,6 +115,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                 "reports": [
                     "Сводка",
                     "Продажи по клиентам",
+                    "Ремонты по клиентам",
                     "Складские действия / Таможня",
                 ],
             },

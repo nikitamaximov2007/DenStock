@@ -479,7 +479,8 @@ def _reports_tabs(user, path):
                 sidebar_key="summary",
                 icon="chart",
                 active=path.startswith("/reports/")
-                and not path.startswith("/reports/sales-by-client/"),
+                and not path.startswith("/reports/sales-by-client/")
+                and not path.startswith("/reports/repairs-by-client/"),
             )
         )
         tabs.append(
@@ -489,6 +490,15 @@ def _reports_tabs(user, path):
                 sidebar_key="sales-by-client",
                 icon="users",
                 active=path.startswith("/reports/sales-by-client/"),
+            )
+        )
+        tabs.append(
+            _tab(
+                "Ремонты по клиентам",
+                reverse("reports_repairs_by_client"),
+                sidebar_key="repairs-by-client",
+                icon="users",
+                active=path.startswith("/reports/repairs-by-client/"),
             )
         )
     if _can_use_actions(user):
