@@ -19,6 +19,15 @@
         {% endfor %}
       </select>
     </label>
+    <label>
+      Клиент или телефон
+      <input name="q"
+             type="search"
+             value="{{ q }}"
+             placeholder="Иванов или 8 916 123-45-67"
+             autocomplete="off">
+    </label>
+    <button type="submit" class="btn btn--small btn--secondary">Найти</button>
     <noscript>
       <button type="submit">Показать</button>
     </noscript>
@@ -30,6 +39,7 @@
           <th>№</th>
           <th>Статус</th>
           <th>Клиент</th>
+          <th>Телефон</th>
           <th>Состав</th>
           <th class="num--money">Выручка (₽)</th>
           {% if show_costs %}<th class="num--money">Прибыль (₽)</th>{% endif %}
@@ -44,6 +54,7 @@
             </td>
             <td>{{ s.get_status_display }}</td>
             <td>{{ s.customer_name }}</td>
+            <td>{{ s.customer_phone|default:"·" }}</td>
             <td>{% include "partials/_doc_composition.html" with doc=s %}</td>
             <td class="num--money">{{ s.revenue_total|money_int }}</td>
             {% if show_costs %}<td class="num--money">{{ s.profit_total|money_int }}</td>{% endif %}

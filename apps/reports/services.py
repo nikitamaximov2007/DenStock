@@ -245,6 +245,26 @@ def _customer_sale_lines(period: Period, *, customer_name: str, missing: bool):
     ).filter(report_customer=expected)
 
 
+def get_customer_phones(period: Period, *, customer_name: str, missing: bool) -> list[str]:
+    """Телефоны, записанные в продажах этого клиента за период.
+
+    Клиент в системе это текст, а не карточка: один и тот же человек мог быть
+    записан с разными номерами, а номер мог смениться. Поэтому показываем все
+    встреченные номера, а не «телефон клиента» как единственную истину.
+    """
+    start, end = _bounds(period)
+    expected = "" if missing else (customer_name or "").strip()
+    values = (
+        Sale.objects.filter(status=Sale.Status.COMPLETED, sold_at__range=(start, end))
+        .annotate(report_customer=Trim("customer_name"))
+        .filter(report_customer=expected)
+        .exclude(customer_phone="")
+        .values_list("customer_phone", flat=True)
+        .distinct()
+    )
+    return sorted({value.strip() for value in values if value.strip()})
+
+
 def get_customer_part_sales(period: Period, *, customer_name: str, missing: bool):
     """Aggregate one customer's completed snapshots by current part identity."""
     return (

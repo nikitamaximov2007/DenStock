@@ -7,6 +7,11 @@
       <p class="page-subtitle">
         <a href="{% url 'reports_sales_by_client' %}?{{ period_qs }}">← Все клиенты</a>
       </p>
+      {% if customer_phones %}
+        <p class="muted">
+          Телефоны в продажах за период: {{ customer_phones|join:", " }}
+        </p>
+      {% endif %}
     </div>
   </div>
   {% include "reports/_sales_period_filter.html" %}

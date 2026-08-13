@@ -11,6 +11,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.core.phones import customer_search_q
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
     attach_document_composition,
@@ -239,6 +240,7 @@ def reservation_cancel(request, pk):
 @login_required
 def sale_list(request):
     status = request.GET.get("status", "")
+    query = (request.GET.get("q") or "").strip()
     qs = (
         Sale.objects.select_related("sold_by")
         .prefetch_related(lines_with_identity_prefetch(SaleLine))
@@ -246,6 +248,9 @@ def sale_list(request):
     )
     if status:
         qs = qs.filter(status=status)
+    if query:
+        # Имя клиента подстрокой или телефон в любом привычном формате.
+        qs = qs.filter(customer_search_q(query))
     sales = list(qs[:100])
     attach_document_composition(sales)  # состав: первая позиция + «ещё N»
     return render(
@@ -254,6 +259,7 @@ def sale_list(request):
         {
             "sales": sales,
             "status": status,
+            "q": query,
             "statuses": Sale.Status.choices,
             "can_sell": request.user.can_manage_sales,
             "show_costs": request.user.can_view_purchase_cost,

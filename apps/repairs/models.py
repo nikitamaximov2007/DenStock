@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+from apps.core.phones import sync_normalized_phone
 from apps.inventory.models import NumberSequence
 
 
@@ -32,6 +33,11 @@ class RepairOrder(models.Model):
     )
     customer_name = models.CharField("Клиент", max_length=255)
     customer_phone = models.CharField("Телефон", max_length=50, blank=True)
+    # Поисковая форма телефона: только цифры, российская 8 приведена к 7.
+    # Не уникальна и не показывается: видимый телефон остаётся как ввели.
+    customer_phone_normalized = models.CharField(
+        "Телефон для поиска", max_length=50, blank=True, db_index=True, editable=False
+    )
     vehicle_type = models.ForeignKey(
         "catalog.VehicleType", verbose_name="Вид техники",
         on_delete=models.PROTECT, null=True, blank=True, related_name="+",
@@ -64,6 +70,7 @@ class RepairOrder(models.Model):
     def save(self, *args, **kwargs):
         if not self.number:
             self.number = NumberSequence.next("repair_order")
+        sync_normalized_phone(self, kwargs)
         super().save(*args, **kwargs)
 
 

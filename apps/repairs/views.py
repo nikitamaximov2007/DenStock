@@ -12,6 +12,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.core.phones import customer_search_q
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
     attach_document_composition,
@@ -57,6 +58,7 @@ def _resolve_item(code: str):
 @login_required
 def repair_order_list(request):
     status = request.GET.get("status", "")
+    query = (request.GET.get("q") or "").strip()
     qs = (
         RepairOrder.objects.select_related("created_by", "vehicle_type")
         .prefetch_related(lines_with_identity_prefetch(RepairIssueLine))
@@ -64,6 +66,9 @@ def repair_order_list(request):
     )
     if status:
         qs = qs.filter(status=status)
+    if query:
+        # Имя клиента подстрокой или телефон в любом привычном формате.
+        qs = qs.filter(customer_search_q(query))
     orders = list(qs[:100])
     attach_document_composition(orders)  # состав: первая позиция + «ещё N»
     return render(
@@ -72,6 +77,7 @@ def repair_order_list(request):
         {
             "orders": orders,
             "status": status,
+            "q": query,
             "statuses": RepairOrder.Status.choices,
             "can_manage": request.user.can_manage_repairs,
             "show_costs": request.user.can_view_purchase_cost,

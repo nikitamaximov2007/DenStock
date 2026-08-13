@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 
+from apps.core.phones import sync_normalized_phone
 from apps.inventory.models import NumberSequence
 
 
@@ -29,6 +30,11 @@ class Reservation(models.Model):
     )
     customer_name = models.CharField("Клиент", max_length=255)
     customer_phone = models.CharField("Телефон", max_length=50, blank=True)
+    # Поисковая форма телефона: только цифры, российская 8 приведена к 7.
+    # Не уникальна и не показывается: видимый телефон остаётся как ввели.
+    customer_phone_normalized = models.CharField(
+        "Телефон для поиска", max_length=50, blank=True, db_index=True, editable=False
+    )
     comment = models.CharField("Комментарий", max_length=255, blank=True)
     expires_at = models.DateTimeField("Действует до", null=True, blank=True)
     created_by = models.ForeignKey(
@@ -50,6 +56,7 @@ class Reservation(models.Model):
     def save(self, *args, **kwargs):
         if not self.number:
             self.number = NumberSequence.next("reservation")
+        sync_normalized_phone(self, kwargs)
         super().save(*args, **kwargs)
 
 
@@ -125,6 +132,11 @@ class Sale(models.Model):
     )
     customer_name = models.CharField("Клиент", max_length=255)
     customer_phone = models.CharField("Телефон", max_length=50, blank=True)
+    # Поисковая форма телефона: только цифры, российская 8 приведена к 7.
+    # Не уникальна и не показывается: видимый телефон остаётся как ввели.
+    customer_phone_normalized = models.CharField(
+        "Телефон для поиска", max_length=50, blank=True, db_index=True, editable=False
+    )
     comment = models.CharField("Комментарий", max_length=255, blank=True)
     reservation = models.ForeignKey(
         Reservation, verbose_name="Из резерва",
@@ -159,6 +171,7 @@ class Sale(models.Model):
     def save(self, *args, **kwargs):
         if not self.number:
             self.number = NumberSequence.next("sale")
+        sync_normalized_phone(self, kwargs)
         super().save(*args, **kwargs)
 
 

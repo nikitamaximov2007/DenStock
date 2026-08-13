@@ -20,6 +20,7 @@ from .services import (
     attach_customer_part_identity,
     get_customer_part_operations,
     get_customer_part_sales,
+    get_customer_phones,
     get_dashboard_report,
     get_low_stock_report,
     get_repairs_report,
@@ -167,6 +168,9 @@ def sales_by_client_detail(request):
         {
             "customer_name": customer_name or "Без клиента",
             "customer_value": customer_name,
+            "customer_phones": get_customer_phones(
+                period, customer_name=customer_name, missing=missing
+            ),
             "customer_qs": _customer_query(customer_name, missing),
             "period": period,
             "period_qs": _period_query(period),
