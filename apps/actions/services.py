@@ -216,6 +216,20 @@ def _split_quantity_over_lots(lots, quantity: Decimal):
     return portions
 
 
+def parse_quantity(value, *, allow_zero=False) -> Decimal:
+    """Разобрать количество из формы (запятая как разделитель). По умолчанию > 0.
+
+    `allow_zero` нужен корзине: ноль там означает «убрать позицию», а не ошибку.
+    """
+    try:
+        quantity = Decimal(str(value).replace(",", "."))
+    except (InvalidOperation, TypeError) as exc:
+        raise ActionError("Некорректное количество.") from exc
+    if quantity < 0 or (quantity == 0 and not allow_zero):
+        raise ActionError("Количество должно быть больше нуля.")
+    return quantity
+
+
 def _request_token(value) -> str | None:
     token = str(value or "").strip()
     if len(token) > 64:
@@ -259,12 +273,7 @@ def _perform_action_atomic(
     customer_comment = (customer_comment or "").strip()
     if not customer_comment:
         raise ActionError("Укажите клиента или комментарий.")
-    try:
-        quantity = Decimal(str(quantity).replace(",", "."))
-    except (InvalidOperation, TypeError) as exc:
-        raise ActionError("Некорректное количество.") from exc
-    if quantity <= 0:
-        raise ActionError("Количество должно быть больше нуля.")
+    quantity = parse_quantity(quantity)
     token = _request_token(request_token)
     if token:
         existing = WarehouseAction.objects.filter(request_token=token).first()
@@ -425,12 +434,14 @@ def cancel_warehouse_action(action: WarehouseAction, *, by=None, reason="") -> W
     if sale.status == Sale.Status.VOIDED:
         raise ActionError("Связанная продажа уже сторнирована.")
 
-    for line in sale.lines.select_related("stock_lot", "batch_line").all():
+    for line in sale.lines.select_related("stock_lot__location", "batch_line").all():
         if line.stock_lot_id is None:
             continue  # поштучные экземпляры сканером не продаются
+        # Возврат идёт в ячейку СВОЕЙ строки: в мультипозиционной продаже
+        # детали могли уйти из разных ячеек.
         return_stock_lot_quantity(
             line.batch_line,
-            action.location,
+            line.stock_lot.location,
             line.quantity,
             unit_cost_rub=line.unit_cost_rub,
             restock_status=StockLot.Status.AVAILABLE,
@@ -439,15 +450,23 @@ def cancel_warehouse_action(action: WarehouseAction, *, by=None, reason="") -> W
             comment=f"Отмена продажи {sale.number}: {reason}"[:255],
         )
 
+    now = timezone.now()
     sale.status = Sale.Status.VOIDED
-    sale.canceled_at = timezone.now()
+    sale.canceled_at = now
     sale.save(update_fields=["status", "canceled_at", "updated_at"])
 
-    action.status = WarehouseAction.Status.CANCELLED
-    action.cancelled_at = timezone.now()
-    action.cancelled_by = by
-    action.cancel_reason = reason
-    action.save(update_fields=["status", "cancelled_at", "cancelled_by", "cancel_reason"])
+    # Мультипозиционная продажа — это один документ и несколько записей
+    # журнала. Сторно документа отменяет их все: иначе в отчёте остались бы
+    # «активные» строки уже возвращённого товара.
+    WarehouseAction.objects.filter(
+        sale_id=sale.pk, status=WarehouseAction.Status.ACTIVE
+    ).update(
+        status=WarehouseAction.Status.CANCELLED,
+        cancelled_at=now,
+        cancelled_by=by,
+        cancel_reason=reason,
+    )
+    action.refresh_from_db()
     return action
 
 

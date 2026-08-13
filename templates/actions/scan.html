@@ -31,6 +31,108 @@
       выберите нужную ячейку. Сканер работает как клавиатура: скан и Enter.
     </p>
   </div>
+  {% for panel in cart_panels %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Корзина · {{ panel.title }}</h2>
+        <a class="btn btn--small btn--secondary" href="{{ panel.clear_url }}">Очистить корзину</a>
+      </div>
+      <div class="card__body">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Название</th>
+              <th>Артикул</th>
+              <th>Ячейка</th>
+              <th class="num--qty">Количество</th>
+              {% if panel.is_sale %}<th class="num--money">Сумма</th>{% endif %}
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in panel.rows %}
+              <tr>
+                <td>{{ item.row.part.name }}</td>
+                <td>
+                  {% if item.identity.exact_number %}
+                    <span class="code-pill">{{ item.identity.exact_number }}</span>
+                  {% else %}
+                    <span class="muted">Артикул не указан</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="code-pill">{{ item.row.location.code }}</span>
+                </td>
+                <td class="num--qty">
+                  <form method="post"
+                        action="{% url 'actions_cart_update' %}"
+                        class="inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="kind" value="{{ panel.kind }}">
+                    <input type="hidden" name="operation" value="set">
+                    <input type="hidden" name="row_key" value="{{ item.row.key }}">
+                    <input type="hidden" name="q" value="{{ q }}">
+                    <input name="quantity"
+                           type="text"
+                           inputmode="decimal"
+                           size="4"
+                           value="{{ item.row.quantity|quantity_int }}"
+                           aria-label="Количество">
+                    <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
+                  </form>
+                </td>
+                {% if panel.is_sale %}
+                  <td class="num--money">
+                    {% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}
+                  </td>
+                {% endif %}
+                <td>
+                  <form method="post"
+                        action="{% url 'actions_cart_update' %}"
+                        class="inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="kind" value="{{ panel.kind }}">
+                    <input type="hidden" name="operation" value="remove">
+                    <input type="hidden" name="row_key" value="{{ item.row.key }}">
+                    <input type="hidden" name="q" value="{{ q }}">
+                    <button type="submit" class="btn btn--small btn--secondary">Убрать</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted">
+          Позиций: {{ panel.positions }}.
+          {% if panel.is_sale %}Сумма: {{ panel.total|money_int }} ₽.{% endif %}
+          Склад изменится только при проведении.
+        </p>
+        <form method="post"
+              action="{% url 'actions_cart_complete' %}"
+              class="form"
+              data-idempotent-form>
+          {% csrf_token %}
+          <input type="hidden" name="kind" value="{{ panel.kind }}">
+          <input type="hidden" name="q" value="{{ q }}">
+          <input type="hidden" name="request_token" value="{{ cart_token }}">
+          <p>
+            <label for="cart-comment-{{ panel.kind }}">Клиент / комментарий</label>
+            <br>
+            <input id="cart-comment-{{ panel.kind }}"
+                   name="customer_comment"
+                   type="text"
+                   maxlength="255"
+                   placeholder="Например: Иванов, снегоход Ski-Doo"
+                   required
+                   style="min-width: 280px">
+          </p>
+          <div class="form-actions">
+            <button type="submit" class="btn btn--primary">Провести {{ panel.title|lower }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endfor %}
   {% if searched %}
     {% if lookup_candidates %}
       {% include "partials/_status_block.html" with kind="warning" text=lookup_message %}
@@ -148,17 +250,23 @@
                        type="text"
                        maxlength="255"
                        placeholder="Например: Иванов, снегоход Ski-Doo"
-                       required
                        style="min-width: 280px">
               </p>
               <div class="form-actions">
-                <button type="submit" class="btn btn--primary">Провести действие</button>
+                <button type="submit"
+                        class="btn btn--primary"
+                        formaction="{% url 'actions_cart_add' %}"
+                        formnovalidate>В корзину</button>
+                <button type="submit" class="btn btn--secondary">Провести сразу</button>
               </div>
             </form>
             <p class="muted">
-              Продажа и ремонт списывают остаток сразу; резерв удерживает
-              доступность до отмены или продажи из резерва. Больше доступного
-              количества провести нельзя.
+              «В корзину» ничего не списывает: продажа или ремонт набираются из
+              нескольких деталей и проводятся одним документом. Повторный скан
+              той же детали из той же ячейки увеличивает количество позиции.
+              Резерв добавить в корзину нельзя: он проводится сразу и удерживает
+              доступность до отмены или продажи из резерва. Клиент нужен только
+              при проведении. Больше доступного количества провести нельзя.
             </p>
           {% endif %}
         </div>

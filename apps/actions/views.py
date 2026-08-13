@@ -19,8 +19,25 @@ from django.utils.http import urlencode
 from apps.catalog.models import PartType
 from apps.core.part_lookup import MatchSource, resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
+from apps.inventory.presentation import identity_for_part_ids
 from apps.warehouse.models import StorageLocation
 
+from .cart import (
+    CART_KINDS,
+    KIND_REPAIR,
+    KIND_SALE,
+    add_scan,
+    cart_rows,
+    cart_total,
+    clear_cart,
+    complete_cart,
+    discard_cart,
+    load_cart,
+    open_cart,
+    parse_row_key,
+    remove_row,
+    set_row_quantity,
+)
 from .models import PartCustomsInfo, WarehouseAction
 from .services import (
     IDENTITY_MISMATCH_MESSAGE,
@@ -60,6 +77,19 @@ ACTION_PERMISSIONS = {
 }
 
 
+# Корзина живёт в сессии пользователя: там только id черновика документа,
+# сам состав — в БД, поэтому корзина переживает перезагрузку страницы.
+CART_SESSION_KEYS = {
+    KIND_SALE: "actions_cart_sale",
+    KIND_REPAIR: "actions_cart_repair",
+}
+CART_TITLES = {KIND_SALE: "Продажа", KIND_REPAIR: "Выдача в ремонт"}
+# Что именно отсканировали по каждой позиции: снимок номера в отчёте должен
+# остаться таким же точным, как при одиночном проведении. Первый скан позиции
+# и определяет номер: дальше это уже та же canonical деталь.
+CART_SCANS_SESSION_KEY = "actions_cart_scans"
+
+
 def _allowed_actions(user) -> list:
     return [
         (value, label)
@@ -91,6 +121,8 @@ def actions_scan(request):
         "allowed_actions": _allowed_actions(request.user),
         "not_found_message": NOT_FOUND_MESSAGE,
         "multi_location_message": MULTI_LOCATION_MESSAGE,
+        "cart_panels": _cart_panels(request),
+        "cart_token": secrets.token_urlsafe(32),
     }
     if q:
         lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
@@ -169,6 +201,277 @@ def actions_perform(request):
         request,
         f"Действие проведено: {action.get_action_type_display()} — {identity}, "
         f"{qty} шт, {location.code}",
+    )
+    return redirect(back)
+
+
+def _check_cart_kind(request, kind: str) -> str:
+    """Корзина есть только у продажи и ремонта; резерв проводится сразу."""
+    if kind not in CART_KINDS:
+        raise ActionError("Корзина доступна для продажи и выдачи в ремонт.")
+    permission = ACTION_PERMISSIONS.get(kind)
+    if permission is None or not getattr(request.user, permission):
+        raise PermissionDenied
+    return kind
+
+
+def _cart_for(request, kind: str, *, create=False):
+    key = CART_SESSION_KEYS[kind]
+    cart = load_cart(kind, request.session.get(key))
+    if cart is not None:
+        return cart
+    # Черновик проведён/удалён в другой вкладке — забываем его.
+    request.session.pop(key, None)
+    if not create:
+        return None
+    cart = open_cart(kind, by=request.user)
+    request.session[key] = cart.pk
+    return cart
+
+
+def _forget_cart(request, kind: str) -> None:
+    request.session.pop(CART_SESSION_KEYS[kind], None)
+    _drop_scans(request, kind)
+
+
+def _scan_key(kind: str, row_key: str) -> str:
+    return f"{kind}:{row_key}"
+
+
+def _remember_scan(request, kind: str, row_key: str, scanned: str) -> None:
+    scanned = (scanned or "").strip()
+    if not scanned:
+        return
+    scans = request.session.get(CART_SCANS_SESSION_KEY) or {}
+    scans.setdefault(_scan_key(kind, row_key), scanned)
+    request.session[CART_SCANS_SESSION_KEY] = scans
+
+
+def _forget_scan(request, kind: str, row_key: str) -> None:
+    scans = request.session.get(CART_SCANS_SESSION_KEY) or {}
+    if scans.pop(_scan_key(kind, row_key), None) is not None:
+        request.session[CART_SCANS_SESSION_KEY] = scans
+
+
+def _drop_scans(request, kind: str) -> None:
+    scans = request.session.get(CART_SCANS_SESSION_KEY) or {}
+    kept = {key: value for key, value in scans.items() if not key.startswith(f"{kind}:")}
+    if kept != scans:
+        request.session[CART_SCANS_SESSION_KEY] = kept
+
+
+def _scans_for(request, kind: str) -> dict:
+    prefix = f"{kind}:"
+    scans = request.session.get(CART_SCANS_SESSION_KEY) or {}
+    return {key[len(prefix):]: value for key, value in scans.items() if key.startswith(prefix)}
+
+
+def _cart_panels(request) -> list:
+    """Непустые корзины пользователя для показа на странице сканера."""
+    panels = []
+    for kind in CART_KINDS:
+        permission = ACTION_PERMISSIONS.get(kind)
+        if not getattr(request.user, permission, False):
+            continue
+        cart = _cart_for(request, kind)
+        if cart is None:
+            continue
+        rows = cart_rows(cart)
+        if not rows:
+            continue
+        identities = identity_for_part_ids([row.part.pk for row in rows])
+        q = (request.GET.get("q") or "").strip()
+        clear_url = reverse("actions_cart_clear", args=[kind])
+        panels.append(
+            {
+                "kind": kind,
+                "title": CART_TITLES[kind],
+                "clear_url": clear_url + (f"?{urlencode({'q': q})}" if q else ""),
+                "document": cart,
+                "is_sale": kind == KIND_SALE,
+                "rows": [
+                    {
+                        "row": row,
+                        "identity": identities.get(row.part.pk),
+                    }
+                    for row in rows
+                ],
+                "positions": len(rows),
+                "total": cart_total(cart) if kind == KIND_SALE else None,
+            }
+        )
+    return panels
+
+
+def _scan_back(request) -> str:
+    q = (request.POST.get("q") or "").strip()
+    return reverse("actions_scan") + (f"?{urlencode({'q': q})}" if q else "")
+
+
+@login_required
+def actions_cart_add(request):
+    """Добавить отсканированную деталь в корзину (склад не меняется)."""
+    _require_access(request)
+    if request.method != "POST":
+        return redirect("actions_scan")
+    back = _scan_back(request)
+    try:
+        kind = _check_cart_kind(request, request.POST.get("action_type", ""))
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect(back)
+    part = get_object_or_404(PartType, pk=request.POST.get("part_id"))
+    location_id = request.POST.get("location_id")
+    if not location_id:
+        messages.error(request, "Выберите ячейку списания.")
+        return redirect(back)
+    location = get_object_or_404(StorageLocation, pk=location_id)
+    cart = _cart_for(request, kind, create=True)
+    try:
+        row = add_scan(
+            cart, part, location, quantity=request.POST.get("quantity", "1"), by=request.user
+        )
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        # Не оставляем пустой черновик, если самая первая позиция не прошла.
+        if not cart_rows(cart):
+            discard_cart(cart, by=request.user)
+            _forget_cart(request, kind)
+        return redirect(back)
+    _remember_scan(request, kind, row.key, request.POST.get("q", ""))
+    messages.success(
+        request,
+        f"В корзину «{CART_TITLES[kind]}»: {part.name}, "
+        f"{quantity_int(row.quantity)} шт, {location.code}. Склад не изменён.",
+    )
+    return redirect(back)
+
+
+@login_required
+def actions_cart_update(request):
+    """Изменить количество позиции, удалить её или очистить корзину."""
+    _require_access(request)
+    if request.method != "POST":
+        return redirect("actions_scan")
+    back = _scan_back(request)
+    try:
+        kind = _check_cart_kind(request, request.POST.get("kind", ""))
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect(back)
+    cart = _cart_for(request, kind)
+    if cart is None:
+        messages.error(request, "Корзина уже пуста.")
+        return redirect(back)
+
+    operation = request.POST.get("operation", "")
+    try:
+        part_id, location_id = parse_row_key(request.POST.get("row_key", ""))
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect(back)
+    part = get_object_or_404(PartType, pk=part_id)
+    location = get_object_or_404(StorageLocation, pk=location_id)
+
+    row_key = f"{part.pk}:{location.pk}"
+    if operation == "remove":
+        remove_row(cart, part, location, by=request.user)
+        _forget_scan(request, kind, row_key)
+        messages.success(request, f"Позиция убрана из корзины: {part.name}.")
+    elif operation == "set":
+        try:
+            row = set_row_quantity(
+                cart, part, location, request.POST.get("quantity", ""), by=request.user
+            )
+        except ActionError as exc:
+            messages.error(request, str(exc))
+            return redirect(back)
+        if row is None:
+            _forget_scan(request, kind, row_key)
+            messages.success(request, f"Позиция убрана из корзины: {part.name}.")
+        else:
+            messages.success(
+                request, f"Количество обновлено: {part.name}, {quantity_int(row.quantity)} шт."
+            )
+    else:
+        messages.error(request, "Неизвестная операция с корзиной.")
+        return redirect(back)
+
+    if not cart_rows(cart):
+        discard_cart(cart, by=request.user)
+        _forget_cart(request, kind)
+    return redirect(back)
+
+
+@login_required
+def actions_cart_clear(request, kind):
+    """Очистка корзины: GET — подтверждение с составом, POST — очистка.
+
+    Корзина ничего не списывала, поэтому очистка не трогает остатки — удаляются
+    только набранные позиции и сам черновик.
+    """
+    _require_access(request)
+    try:
+        kind = _check_cart_kind(request, kind)
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect("actions_scan")
+    q = (request.GET.get("q") or request.POST.get("q") or "").strip()
+    back = reverse("actions_scan") + (f"?{urlencode({'q': q})}" if q else "")
+    cart = _cart_for(request, kind)
+    if request.method == "POST":
+        if cart is not None:
+            clear_cart(cart, by=request.user)
+            discard_cart(cart, by=request.user)
+        _forget_cart(request, kind)
+        messages.success(request, f"Корзина «{CART_TITLES[kind]}» очищена. Склад не изменён.")
+        return redirect(back)
+    return render(
+        request,
+        "actions/cart_clear.html",
+        {
+            "kind": kind,
+            "title": CART_TITLES[kind],
+            "rows": cart_rows(cart) if cart is not None else [],
+            "back": back,
+            "q": q,
+        },
+    )
+
+
+@login_required
+def actions_cart_complete(request):
+    """Провести корзину одним документом: здесь и только здесь меняется склад."""
+    _require_access(request)
+    if request.method != "POST":
+        return redirect("actions_scan")
+    back = _scan_back(request)
+    try:
+        kind = _check_cart_kind(request, request.POST.get("kind", ""))
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect(back)
+    cart = _cart_for(request, kind)
+    if cart is None:
+        messages.error(request, "Корзина пуста: отсканируйте хотя бы одну деталь.")
+        return redirect(back)
+    try:
+        actions = complete_cart(
+            cart,
+            customer_comment=request.POST.get("customer_comment", ""),
+            by=request.user,
+            scanned_numbers=_scans_for(request, kind),
+            request_token=request.POST.get("request_token"),
+        )
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        return redirect(back)
+    _forget_cart(request, kind)
+    total_qty = sum(action.quantity for action in actions)
+    messages.success(
+        request,
+        f"{CART_TITLES[kind]} проведена: позиций {len(actions)}, "
+        f"{quantity_int(total_qty)} шт.",
     )
     return redirect(back)
 
