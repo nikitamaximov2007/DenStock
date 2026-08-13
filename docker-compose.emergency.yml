@@ -1,0 +1,66 @@
+services:
+  emergency-db:
+    image: postgres:16
+    env_file: ${DENSTOCK_EMERGENCY_ENV_FILE:-.env.emergency}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-denstock_emergency_control}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - emergency_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-denstock_emergency_control}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  emergency-web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file: ${DENSTOCK_EMERGENCY_ENV_FILE:-.env.emergency}
+    environment:
+      DENSTOCK_MODE: emergency-local
+      DENSTOCK_EMERGENCY_DATABASE_NAME: ${EMERGENCY_DATABASE_NAME:-denstock_emergency_control}
+      DENSTOCK_MEDIA_ROOT: /app/.emergency/standbys/${EMERGENCY_SLOT:-inactive}/media
+      PRIVATE_MEDIA_ROOT: /app/.emergency/private-media
+      BACKUP_ROOT: /app/.emergency/backups
+      AI_SUPPORT_ENABLED: "false"
+      AI_SUPPORT_PROVIDER: disabled
+      DJANGO_SUPERUSER_USERNAME: ""
+      DJANGO_SUPERUSER_PASSWORD: ""
+    depends_on:
+      emergency-db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    volumes:
+      - ./.emergency:/app/.emergency
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  emergency-proxy:
+    image: caddy:2
+    depends_on:
+      emergency-web:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${DENSTOCK_EMERGENCY_PORT:-8080}:80"
+    environment:
+      EMERGENCY_SLOT: ${EMERGENCY_SLOT:-inactive}
+    volumes:
+      - ./docker/caddy/Caddyfile.emergency:/etc/caddy/Caddyfile:ro
+      - ./.emergency/standbys:/srv/standbys:ro
+      - emergency_caddy_data:/data
+      - emergency_caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  emergency_pgdata:
+  emergency_caddy_data:
+  emergency_caddy_config:

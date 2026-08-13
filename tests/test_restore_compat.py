@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from django.conf import settings as django_settings
+from django.db import connection
 
 from apps.operations import backup as backup_mod
 from apps.operations import restore as restore_mod
@@ -134,12 +135,19 @@ def backups_root(settings, tmp_path):
     return root
 
 
+def _live_engine() -> str:
+    """Движок БД, на которой реально идут тесты (sqlite или postgresql)."""
+    return "postgresql" if connection.vendor == "postgresql" else "sqlite"
+
+
 def _make_run(root, run_id="2026-07-05_07-13-35", db_bytes=b"PGDMP data"):
     run = Path(root) / run_id
     run.mkdir(parents=True)
     (run / "db.dump").write_bytes(db_bytes)
+    # Манифест описывает ТУ ЖЕ БД, на которой идут тесты: иначе сработала бы
+    # штатная защита от восстановления бэкапа чужого движка.
     (run / "manifest.json").write_text(json.dumps({
-        "created_at": "2026-07-05T07:13:35", "type": "manual", "engine": "sqlite",
+        "created_at": "2026-07-05T07:13:35", "type": "manual", "engine": _live_engine(),
         "db_file": "db.dump", "media_file": None, "version": None,
     }), encoding="utf-8")
     return run
@@ -176,6 +184,9 @@ def test_web_restore_logs_transaction_timeout_warning(
         lambda p: ["пропущен SET transaction_timeout: дамп сделан клиентом новее"],
     )
     monkeypatch.setattr(restore_mod, "call_command", lambda *a, **kw: None)
+    # Реальное закрытие соединений нужно production-restore, но здесь оно
+    # разорвало бы транзакцию теста на PostgreSQL: сам restore уже подменён.
+    monkeypatch.setattr(restore_mod.connections, "close_all", lambda: None)
     job = run_web_restore("2026-07-05_07-13-35", user=user)
     assert job.status == RestoreJob.Status.COMPLETED
     assert "transaction_timeout" in job.log

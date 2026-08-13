@@ -138,6 +138,8 @@ docker compose exec web python manage.py ops_check
 - [Restore runbook](docs/operations/restore-runbook.md): восстановление из бэкапа (CLI + защищённый веб-restore).
 - [Scheduled + offsite backups](docs/operations/scheduled-offsite-backups.md) — cron/systemd + rclone.
 - [Backup UI](docs/operations/backups-ui.md) — раздел «Бэкапы» в интерфейсе.
+- [Emergency local mode](docs/operations/emergency-local-mode.md): local PostgreSQL 16
+  standby, controlled failover, frozen export и failback dry-run без automatic restore.
 - [Инцидент: pg_restore transaction_timeout](docs/operations/incidents/2026-07-02-pg-restore-transaction-timeout.md)
 - [План 37: совместимость версий PostgreSQL](docs/plans/37-postgres-backup-restore-version-compatibility.md)
 
@@ -146,7 +148,7 @@ docker compose exec web python manage.py ops_check
 ```
 config/         — Django-проект (настройки base/dev/prod/test, urls, wsgi/asgi)
 apps/           — складские домены (catalog, inventory, sales, reports, labels …)
-apps/operations — эксплуатация: backup/restore/ops_check (без моделей)
+apps/operations - эксплуатация: backup/restore, emergency lifecycle, failback checks
 templates/      — шаблоны и партиалы
 docker/         — Dockerfile, entrypoint, Caddy
 docs/           — требования (ТЗ), дизайн, планы реализации (по слоям)

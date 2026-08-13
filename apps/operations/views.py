@@ -11,15 +11,21 @@ Layer 30: добавлено аварийное веб-восстановлен�
 """
 import json
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
-from django.http import FileResponse, Http404
+from django.db import transaction
+from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import redirect, render
-from django.views.decorators.http import require_POST
+from django.views.decorators.cache import never_cache
+from django.views.decorators.http import require_GET, require_POST
 
 from . import backup, restore
-from .models import RestoreJob
+from .emergency_state import business_state_marker, media_tree_sha256, migration_state
+from .failback import probe_token_matches
+from .models import DeploymentState, RestoreJob
+from .write_guard import acquire_failover_lock
 
 # Единственные файлы, которые вообще можно отдать из backup-run.
 ALLOWED_FILES = ("manifest.json", "db.dump", "db.sqlite3", "media.tar.gz")
@@ -37,6 +43,36 @@ TYPE_PILLS = {
     "pre_restore": "pill--warning",
     "uploaded": "pill--muted",
 }
+
+
+@never_cache
+@require_GET
+def emergency_probe(request):
+    """Authenticated read-only production marker for failback decisions."""
+    if settings.DENSTOCK_MODE != "production" or not probe_token_matches(
+        request.headers.get("X-Denstock-Emergency-Probe", "")
+    ):
+        raise Http404
+    with transaction.atomic():
+        acquire_failover_lock(exclusive=True)
+        state = DeploymentState.objects.get(pk=DeploymentState.SINGLETON_PK)
+        data_state = business_state_marker()
+        migrations = migration_state()
+        media_hash = media_tree_sha256(settings.MEDIA_ROOT)
+    return JsonResponse(
+        {
+            "schema_version": 1,
+            "mode": settings.DENSTOCK_MODE,
+            "instance_id": settings.DENSTOCK_INSTANCE_ID,
+            "write_state": state.write_state,
+            "state_reason": state.state_reason,
+            "stable_snapshot": True,
+            "app_commit": settings.DENSTOCK_APP_COMMIT or backup._git_commit(),
+            "migration_fingerprint": migrations["fingerprint"],
+            "data_state": data_state,
+            "media_tree_sha256": media_hash,
+        }
+    )
 
 
 def _type_label(manifest) -> str:

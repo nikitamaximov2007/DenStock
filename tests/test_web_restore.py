@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group
+from django.db import connection
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -57,8 +58,16 @@ def restore_enabled(settings):
     return settings
 
 
+def _live_engine() -> str:
+    """Движок БД, на которой реально идут тесты (sqlite или postgresql)."""
+    return "postgresql" if connection.vendor == "postgresql" else "sqlite"
+
+
 def _make_run(root, run_id="2026-07-01_10-00-00", manifest=True,
-              files=("db.dump", "media.tar.gz"), engine="sqlite", **manifest_extra):
+              files=("db.dump", "media.tar.gz"), engine=None, **manifest_extra):
+    # По умолчанию бэкап описывает ТУ ЖЕ БД, на которой идут тесты: иначе на
+    # PostgreSQL сработала бы штатная защита от восстановления чужого движка.
+    engine = engine or _live_engine()
     run = Path(root) / run_id
     run.mkdir(parents=True, exist_ok=True)
     for name in files:
@@ -159,7 +168,9 @@ def test_missing_db_rejected(backups_root):
 
 
 def test_engine_mismatch_rejected(backups_root):
-    _make_run(backups_root, engine="postgresql")  # тестовая БД sqlite
+    # Заведомо ЧУЖОЙ движок относительно текущей тестовой БД.
+    other = "sqlite" if _live_engine() == "postgresql" else "postgresql"
+    _make_run(backups_root, engine=other)
     report = verify_backup("2026-07-01_10-00-00")
     assert not report.ok
 
@@ -287,6 +298,10 @@ def test_pre_restore_backup_called_before_restore(backups_root, make_user, monke
     )
     monkeypatch.setattr(restore_mod.backup, "restore_media", lambda p: order.append("media"))
     monkeypatch.setattr(restore_mod, "call_command", lambda *a, **kw: order.append("migrate"))
+    # Реальное закрытие соединений нужно production-restore, но в тесте оно
+    # разорвало бы транзакцию теста на PostgreSQL. Механизм восстановления
+    # здесь и так подменён: проверяется порядок шагов, а не сам pg_restore.
+    monkeypatch.setattr(restore_mod.connections, "close_all", lambda: None)
 
     job = run_web_restore("2026-07-01_10-00-00", user=user)
     assert order == ["pre_backup", "db", "media", "migrate"]
@@ -331,6 +346,10 @@ def test_restore_error_reports_pre_backup_for_rollback(backups_root, make_user, 
         raise backup_mod.OperationsError("pg_restore упал")
 
     monkeypatch.setattr(restore_mod.backup, "restore_db", failing_restore)
+    # Реальное закрытие соединений нужно production-restore, но в тесте оно
+    # разорвало бы транзакцию теста на PostgreSQL. Механизм восстановления
+    # здесь и так подменён: проверяется порядок шагов, а не сам pg_restore.
+    monkeypatch.setattr(restore_mod.connections, "close_all", lambda: None)
     job = run_web_restore("2026-07-01_10-00-00", user=user)
     assert job.status == RestoreJob.Status.FAILED
     assert "2026-07-02_09-00-00" in job.error  # путь отката виден

@@ -64,6 +64,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "apps.operations.write_guard.BusinessWriteGuardMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -82,6 +83,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "apps.accounts.context_processors.navigation",
+                "apps.operations.context_processors.emergency_mode",
             ],
             # Русский формат дат в UI доступен во всех шаблонах без {% load %}.
             "builtins": [
@@ -101,6 +103,13 @@ ASGI_APPLICATION = "config.asgi.application"
 DATABASES = {
     "default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
 }
+_emergency_database_name = env("DENSTOCK_EMERGENCY_DATABASE_NAME", default="").strip()
+if _emergency_database_name:
+    if env("DENSTOCK_MODE", default="development").strip().lower() != "emergency-local":
+        raise ValueError(
+            "DENSTOCK_EMERGENCY_DATABASE_NAME is allowed only in emergency-local mode."
+        )
+    DATABASES["default"]["NAME"] = _emergency_database_name
 
 # --- Пользователь -----------------------------------------------------------
 AUTH_USER_MODEL = "accounts.User"
@@ -128,7 +137,7 @@ STORAGES = {
 }
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "mediafiles"
+MEDIA_ROOT = Path(env("DENSTOCK_MEDIA_ROOT", default=str(BASE_DIR / "mediafiles")))
 
 # Private AI support screenshots are served only through authenticated Django
 # views. This directory must never be mounted into the public Caddy media path.
@@ -187,6 +196,39 @@ AI_SUPPORT_CONVERSATION_RETENTION_DAYS = env.int(
 )
 DENSTOCK_PUBLIC_BASE_URL = env("DENSTOCK_PUBLIC_BASE_URL", default="")
 DENSTOCK_APP_COMMIT = env("DENSTOCK_APP_COMMIT", default="")
+
+# --- Deployment identity and controlled failover ----------------------------
+DENSTOCK_MODE = env("DENSTOCK_MODE", default="development").strip().lower()
+DENSTOCK_INSTANCE_ID = env("DENSTOCK_INSTANCE_ID", default="development").strip()
+DENSTOCK_EMERGENCY_ROOT = Path(
+    env("DENSTOCK_EMERGENCY_ROOT", default=str(BASE_DIR / ".emergency"))
+)
+DENSTOCK_EMERGENCY_DB_PREFIX = env(
+    "DENSTOCK_EMERGENCY_DB_PREFIX", default="denstock_emergency_"
+)
+DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS = env.list(
+    "DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS",
+    default=["localhost", "127.0.0.1", "::1", "emergency-db"],
+)
+DENSTOCK_PRODUCTION_DB_HOSTS = env.list(
+    "DENSTOCK_PRODUCTION_DB_HOSTS", default=["185.250.44.206", "db"]
+)
+DENSTOCK_EMERGENCY_STALE_WARNING_HOURS = env.int(
+    "DENSTOCK_EMERGENCY_STALE_WARNING_HOURS", default=24
+)
+DENSTOCK_EMERGENCY_KEEP_STANDBY = env.int(
+    "DENSTOCK_EMERGENCY_KEEP_STANDBY", default=2
+)
+DENSTOCK_EMERGENCY_KEEP_COMPLETED_EXPORTS = env.int(
+    "DENSTOCK_EMERGENCY_KEEP_COMPLETED_EXPORTS", default=2
+)
+DENSTOCK_EMERGENCY_PROBE_TOKEN = env(
+    "DENSTOCK_EMERGENCY_PROBE_TOKEN", default=""
+)
+DENSTOCK_PRODUCTION_URL = env("DENSTOCK_PRODUCTION_URL", default="").strip()
+DENSTOCK_BACKUP_STORAGE_ORIGIN = env(
+    "DENSTOCK_BACKUP_STORAGE_ORIGIN", default="local"
+)
 
 # --- Эксплуатация (Слой 25) -------------------------------------------------
 # Каталог резервных копий (БД + media). Не коммитится (см. .gitignore).

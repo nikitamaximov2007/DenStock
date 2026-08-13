@@ -67,6 +67,22 @@ body.app {
 .topbar__username { color: var(--muted); font-size: 14px; max-width: 160px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.emergency-banner {
+  position: sticky; top: var(--topbar-h); z-index: 39;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+  height: 84px; padding: 10px 18px; overflow-y: auto;
+  color: #2b1600; background: #ffd166; border-bottom: 2px solid #9a6700;
+  font-size: 14px;
+}
+.emergency-banner strong { font-size: 16px; }
+.emergency-banner--frozen {
+  color: #fff; background: #9b1c1c; border-bottom-color: #5c1010;
+}
+.emergency-banner + .layout .sidebar {
+  top: calc(var(--topbar-h) + 84px);
+  height: calc(100vh - var(--topbar-h) - 84px);
+}
+
 /* Поле сканера в топбаре */
 .scanfield { display: flex; align-items: center; gap: 8px; }
 .scanfield__label { font-size: 13px; color: var(--muted); }
@@ -389,6 +405,8 @@ th.num, td.num, .table th.num, .table td.num,
   .scanfield { display: none; }
   .topbar__username { display: none; }
   .layout { display: block; }
+  .emergency-banner { height: auto; min-height: 76px; overflow-y: visible; }
+  .emergency-banner + .layout .sidebar { top: 0; height: 100vh; }
   .sidebar { position: fixed; top: 0; left: 0; z-index: 60;
     width: 288px; max-width: 84vw; height: 100vh; padding-top: 16px;
     box-shadow: var(--shadow-md); transform: translateX(-100%); transition: transform .2s ease; }
