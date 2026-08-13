@@ -426,3 +426,40 @@ def test_customer_card_query_count_does_not_grow_with_documents(
         create_repair_order(customer=customer, by=admin)
     with django_assert_num_queries(6):
         client.get(url)
+
+
+# --- Матрица прав ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "role,can_open,can_create",
+    [
+        ("STOREKEEPER", True, True),   # ремонты: оформляет документы клиента
+        ("SELLER", True, True),        # продажи и резервы
+        ("VIEWER", True, False),       # только чтение через право отчётов
+    ],
+)
+def test_customer_access_matrix(client, make_user, db, role, can_open, can_create):
+    from apps.accounts import roles
+
+    make_user(f"user-{role}", role=getattr(roles, role))
+    client.login(username=f"user-{role}", password=PASSWORD)
+    Customer.objects.create(name="Иванов", phone="+79121234567")
+
+    listing = client.get(reverse("customer_list"))
+    assert (listing.status_code == 200) is can_open, role
+    create = client.get(reverse("customer_create"))
+    assert (create.status_code == 200) is can_create, role
+
+
+def test_phone_is_not_shown_to_roles_without_access(client, make_user, db):
+    """Роль без прав на документы клиента не получает и его телефон."""
+    from apps.accounts import roles
+
+    customer = Customer.objects.create(name="Иванов", phone="+7 912 123-45-67")
+    make_user("no-access", role=roles.ADMIN if False else None)
+    client.login(username="no-access", password=PASSWORD)
+    for url in (reverse("customer_list"), reverse("customer_detail", args=[customer.pk])):
+        resp = client.get(url)
+        assert resp.status_code == 403
+        assert "+7 912 123-45-67" not in resp.content.decode()
