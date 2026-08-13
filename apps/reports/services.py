@@ -364,6 +364,139 @@ def get_customer_repair_operations(
     )
 
 
+# --- Клиент целиком: продажи и ремонты вместе (без общей суммы) --------------
+
+
+def _client_row(name: str) -> dict:
+    return {
+        "report_customer": name,
+        "display_name": name or "Без клиента",
+        "sale_count": 0,
+        "sale_quantity": DEC0,
+        "revenue": DEC0,
+        "repair_count": 0,
+        "repair_quantity": DEC0,
+        "issued_cost": DEC0,
+        "last_sale": None,
+        "last_repair": None,
+    }
+
+
+def _later(first, second):
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return max(first, second)
+
+
+def get_clients_sales_and_repairs(period: Period) -> list[dict]:
+    """Клиенты с продажами И ремонтами за период, одной строкой на клиента.
+
+    ОБЩЕЙ ДЕНЕЖНОЙ СУММЫ ЗДЕСЬ НЕТ И БЫТЬ НЕ МОЖЕТ. Выручка продажи это деньги
+    клиента, а «себестоимость выданного» в ремонте это закупочная стоимость
+    деталей: клиентской суммы у ремонтного заказа система не хранит. Складывать
+    их в один итог значило бы выдумать величину, которой в системе нет, поэтому
+    деньги показываются двумя отдельными колонками со своими названиями.
+
+    Сортировка идёт по числу документов, а не по деньгам: количество документов
+    видно всем ролям, а деньги закрыты правом на закупочные цены.
+    """
+    rows: dict[str, dict] = {}
+    for row in get_sales_by_customer(period):
+        name = row["report_customer"] or ""
+        entry = rows.setdefault(name, _client_row(name))
+        entry["sale_count"] = row["sale_count"] or 0
+        entry["sale_quantity"] = row["quantity"] or DEC0
+        entry["revenue"] = row["revenue"] or DEC0
+        entry["last_sale"] = row["last_sale"]
+    for row in get_repairs_by_customer(period):
+        name = row["report_customer"] or ""
+        entry = rows.setdefault(name, _client_row(name))
+        entry["repair_count"] = row["repair_count"] or 0
+        entry["repair_quantity"] = row["quantity"] or DEC0
+        entry["issued_cost"] = row["issued_cost"] or DEC0
+        entry["last_repair"] = row["last_repair"]
+    for entry in rows.values():
+        entry["document_count"] = entry["sale_count"] + entry["repair_count"]
+        entry["last_event"] = _later(entry["last_sale"], entry["last_repair"])
+    return sorted(
+        rows.values(),
+        key=lambda entry: (-entry["document_count"], entry["report_customer"]),
+    )
+
+
+def _client_filter(customer_name: str, missing: bool) -> str:
+    return "" if missing else (customer_name or "").strip()
+
+
+def get_client_timeline(period: Period, *, customer_name: str, missing: bool) -> list[dict]:
+    """Единая лента документов клиента: продажи и ремонты по времени проведения.
+
+    Историческая лента: берутся только проведённые документы и их замороженные
+    значения. Каждая запись ведёт в исходный документ, поэтому суммы в ленте
+    всегда можно сверить с первоисточником.
+
+    Деньги не смешиваются: у продажи это выручка, у ремонта это себестоимость
+    выданного, и каждая запись несёт только свою величину.
+    """
+    start, end = _bounds(period)
+    expected = _client_filter(customer_name, missing)
+
+    sales = (
+        Sale.objects.filter(status=Sale.Status.COMPLETED, sold_at__range=(start, end))
+        .annotate(report_customer=Trim("customer_name"))
+        .filter(report_customer=expected)
+        .annotate(line_quantity=Sum("lines__quantity"))
+        .select_related("sold_by")
+    )
+    repairs = (
+        RepairOrder.objects.filter(
+            status=RepairOrder.Status.COMPLETED, completed_at__range=(start, end)
+        )
+        .annotate(report_customer=Trim("customer_name"))
+        .filter(report_customer=expected)
+        .annotate(line_quantity=Sum("lines__quantity"))
+        .select_related("created_by")
+    )
+
+    events = [
+        {
+            "kind": "sale",
+            "kind_label": "Продажа",
+            "document_id": sale.pk,
+            "number": sale.number,
+            "at": sale.sold_at,
+            "quantity": sale.line_quantity or DEC0,
+            "revenue": sale.revenue_total,
+            "issued_cost": None,
+            "employee": sale.sold_by,
+            "note": sale.comment,
+        }
+        for sale in sales
+    ] + [
+        {
+            "kind": "repair",
+            "kind_label": "Ремонт",
+            "document_id": order.pk,
+            "number": order.number,
+            "at": order.completed_at,
+            "quantity": order.line_quantity or DEC0,
+            "revenue": None,
+            "issued_cost": order.cost_total,
+            "employee": order.created_by,
+            "note": " ".join(
+                part
+                for part in (order.vehicle_make, order.vehicle_model, order.vehicle_identifier)
+                if part
+            ),
+        }
+        for order in repairs
+    ]
+    events.sort(key=lambda event: (event["at"] is None, event["at"]), reverse=True)
+    return events
+
+
 def get_repairs_report(period: Period) -> RepairReport:
     start, end = _bounds(period)
     orders = RepairOrder.objects.filter(

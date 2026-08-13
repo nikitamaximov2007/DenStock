@@ -18,6 +18,8 @@ from apps.catalog.models import PartType
 from . import exporters
 from .services import (
     attach_customer_part_identity,
+    get_client_timeline,
+    get_clients_sales_and_repairs,
     get_customer_part_operations,
     get_customer_part_sales,
     get_customer_repair_operations,
@@ -178,6 +180,59 @@ def sales_by_client_detail(request):
             "is_paginated": is_paginated,
             "show_money": request.user.can_view_purchase_cost,
             "missing_customer": missing,
+        },
+    )
+
+
+@login_required
+def clients_overview(request):
+    """Продажи и ремонты по клиентам в одной таблице.
+
+    Денежные колонки раздельные: выручка продаж и себестоимость выданного в
+    ремонт это разные величины, общего итога у них нет.
+    """
+    _require_reports(request)
+    period = resolve_period(request.GET)
+    page_obj, is_paginated = _paginate(request, get_clients_sales_and_repairs(period))
+    for row in page_obj.object_list:
+        name = row["report_customer"]
+        row["customer_qs"] = _customer_query(name, not name)
+    return render(
+        request,
+        "reports/clients_overview.html",
+        {
+            "period": period,
+            "period_qs": _period_query(period),
+            "presets": _PRESETS,
+            "page_obj": page_obj,
+            "is_paginated": is_paginated,
+            "show_money": request.user.can_view_purchase_cost,
+        },
+    )
+
+
+@login_required
+def client_timeline(request):
+    """Единая лента документов клиента: продажи и ремонты по времени."""
+    _require_reports(request)
+    period = resolve_period(request.GET)
+    customer_name, missing = _customer_selection(request)
+    page_obj, is_paginated = _paginate(
+        request,
+        get_client_timeline(period, customer_name=customer_name, missing=missing),
+    )
+    return render(
+        request,
+        "reports/client_timeline.html",
+        {
+            "customer_name": customer_name or "Без клиента",
+            "customer_qs": _customer_query(customer_name, missing),
+            "period": period,
+            "period_qs": _period_query(period),
+            "presets": _PRESETS,
+            "page_obj": page_obj,
+            "is_paginated": is_paginated,
+            "show_money": request.user.can_view_purchase_cost,
         },
     )
 

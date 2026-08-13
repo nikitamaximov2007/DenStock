@@ -490,7 +490,17 @@ def _reports_tabs(user, path):
                 icon="chart",
                 active=path.startswith("/reports/")
                 and not path.startswith("/reports/sales-by-client/")
-                and not path.startswith("/reports/repairs-by-client/"),
+                and not path.startswith("/reports/repairs-by-client/")
+                and not path.startswith("/reports/clients/"),
+            )
+        )
+        tabs.append(
+            _tab(
+                "Продажи и ремонты",
+                reverse("reports_clients_overview"),
+                sidebar_key="clients-overview",
+                icon="users",
+                active=path.startswith("/reports/clients/"),
             )
         )
         tabs.append(
