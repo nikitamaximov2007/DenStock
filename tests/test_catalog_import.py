@@ -464,7 +464,9 @@ def test_second_admin_cannot_apply_stale_preview(db, admin, make_user, settings,
 
 def test_second_admin_can_apply_after_recheck(db, admin, make_user, settings, tmp_path):
     other = make_user("second-admin", is_superuser=True)
-    first = run_check(_batch(_workbook([ROW_OK], tmp_path, name="a.xlsx"), admin, settings, tmp_path))
+    first = run_check(
+        _batch(_workbook([ROW_OK], tmp_path, name="a.xlsx"), admin, settings, tmp_path)
+    )
     second = run_check(
         _batch(_workbook([ROW_OBS], tmp_path, name="b.xlsx"), other, settings, tmp_path)
     )
