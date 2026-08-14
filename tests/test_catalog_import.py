@@ -432,3 +432,95 @@ def test_anonymous_is_redirected(client, db):
     resp = client.get(reverse("catalog_import_list"))
     assert resp.status_code in (301, 302)
     assert "/login" in resp["Location"]
+
+
+# --- Конкуренция двух администраторов --------------------------------------------------------
+
+
+def test_second_admin_cannot_apply_stale_preview(db, admin, make_user, settings, tmp_path):
+    """Два администратора проверили разные файлы, первый применил.
+
+    Второй обязан получить отказ, а не молча затереть результат первого.
+    """
+    other = make_user("second-admin", is_superuser=True)
+    first_file = _workbook([ROW_OK], tmp_path, name="first.xlsx")
+    second_file = _workbook([ROW_OBS], tmp_path, name="second.xlsx")
+
+    first = run_check(_batch(first_file, admin, settings, tmp_path))
+    second = run_check(_batch(second_file, other, settings, tmp_path))
+
+    apply_batch(first, by=admin)
+
+    with pytest.raises(CatalogImportError) as exc:
+        apply_batch(second, by=other)
+    assert "STALE_DRY_RUN" in str(exc.value)
+
+    # Результат первого не тронут, второй файл не применён.
+    assert BrpCatalogPart.objects.filter(material_no="420831955").exists()
+    assert not BrpCatalogPart.objects.filter(material_no="420931284").exists()
+    second.refresh_from_db()
+    assert second.status == CatalogImportBatch.Status.CHECKED
+
+
+def test_second_admin_can_apply_after_recheck(db, admin, make_user, settings, tmp_path):
+    other = make_user("second-admin", is_superuser=True)
+    first = run_check(_batch(_workbook([ROW_OK], tmp_path, name="a.xlsx"), admin, settings, tmp_path))
+    second = run_check(
+        _batch(_workbook([ROW_OBS], tmp_path, name="b.xlsx"), other, settings, tmp_path)
+    )
+    apply_batch(first, by=admin)
+
+    run_check(second)  # честная повторная проверка на новом состоянии каталога
+    apply_batch(second, by=other)
+    assert BrpCatalogPart.objects.count() == 2
+
+
+def test_formula_cells_are_read_as_values(db, admin, settings, tmp_path):
+    """Импортёр читает книгу с data_only: формулы не попадают в каталог строкой."""
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(HEADERS)
+    sheet.append(NOTE_ROW)
+    sheet.append(["420831955", "ROLLER", "", "", "25.99", "=20+0", "", ""])
+    path = tmp_path / "formula.xlsx"
+    workbook.save(path)
+
+    batch = run_check(_batch(path, admin, settings, tmp_path))
+    apply_batch(batch, by=admin)
+    part = BrpCatalogPart.objects.get()
+    # Формула без вычисленного значения не превращается в мусорную цену.
+    assert part.wholesale_price_usd is None
+    assert part.material_no == "420831955"
+
+
+def test_blank_material_number_is_skipped(db, admin, settings, tmp_path):
+    rows = [["", "NO NUMBER", "", "", "1.00", "0.80", "", ""], ROW_OK]
+    batch = run_check(_batch(_workbook(rows, tmp_path), admin, settings, tmp_path))
+    apply_batch(batch, by=admin)
+    assert BrpCatalogPart.objects.count() == 1
+    assert BrpCatalogPart.objects.get().material_no == "420831955"
+
+
+def test_broken_workbook_is_reported_not_crashed(db, admin, settings, tmp_path):
+    settings.PRIVATE_MEDIA_ROOT = str(tmp_path / "private")
+    upload = SimpleUploadedFile(
+        "broken.xlsx", b"not-a-zip-at-all", content_type="application/vnd.ms-excel"
+    )
+    batch = save_upload(upload, catalog="brp", by=admin)
+    with pytest.raises(CatalogImportError):
+        run_check(batch)
+    batch.refresh_from_db()
+    assert batch.status == CatalogImportBatch.Status.CHECK_FAILED
+    assert batch.error_text
+
+
+def test_failed_check_cannot_be_applied(db, admin, settings, tmp_path):
+    settings.PRIVATE_MEDIA_ROOT = str(tmp_path / "private")
+    upload = SimpleUploadedFile("broken.xlsx", b"nope", content_type="application/vnd.ms-excel")
+    batch = save_upload(upload, catalog="brp", by=admin)
+    with pytest.raises(CatalogImportError):
+        run_check(batch)
+    with pytest.raises(CatalogImportError):
+        apply_batch(batch, by=admin)
