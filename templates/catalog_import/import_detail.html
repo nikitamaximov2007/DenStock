@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}{{ batch.source_filename }} · Импорт каталога · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">{{ batch.get_catalog_display }}: {{ batch.source_filename }}</h1>
+      <p class="page-subtitle">
+        <a href="{% url 'catalog_import_list' %}">← К импортам каталога</a>
+      </p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'catalog_import_inspect' batch.pk %}">Структура файла</a>
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'catalog_import_download' batch.pk %}">Скачать файл</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Статус</th>
+            <td>{{ batch.get_status_display }}</td>
+          </tr>
+          <tr>
+            <th>SHA-256</th>
+            <td>
+              <span class="code-pill">{{ batch.source_sha256 }}</span>
+            </td>
+          </tr>
+          <tr>
+            <th>Загрузил</th>
+            <td>{{ batch.created_by|default:"·" }} · {{ batch.created_at|ru_dt }}</td>
+          </tr>
+          <tr>
+            <th>Проверен</th>
+            <td>{{ batch.checked_at|ru_dt|default:"·" }}</td>
+          </tr>
+          <tr>
+            <th>Применён</th>
+            <td>
+              {% if batch.applied_at %}
+                {{ batch.applied_by|default:"·" }} · {{ batch.applied_at|ru_dt }}
+              {% else %}
+                ·
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {% if batch.error_text %}
+        {% include "partials/_status_block.html" with kind="error" text=batch.error_text %}
+      {% endif %}
+      {% if already_applied %}
+        <p class="muted">
+          Файл с таким же SHA-256 уже применялся
+          <a href="{% url 'catalog_import_detail' already_applied.pk %}">ранее</a>.
+          Повторное применение того же файла ничего не сломает: обновятся только
+          отличающиеся строки.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">
+        {% if batch.is_applied %}
+          Результат импорта
+        {% else %}
+          Что изменится
+        {% endif %}
+      </h2>
+    </div>
+    <div class="card__body">
+      {% if summary_rows %}
+        <table class="table">
+          <tbody>
+            {% for label, value in summary_rows %}
+              <tr>
+                <th>{{ label }}</th>
+                <td class="num">{{ value }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+      {% if status_rows %}
+        <h3 class="card__title">Статусы поставщика</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Статус</th>
+              <th class="num">Позиций</th>
+              <th>Значение</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in status_rows %}
+              <tr>
+                <td>
+                  <span class="code-pill">{{ row.code }}</span>
+                </td>
+                <td class="num">{{ row.count }}</td>
+                <td>
+                  {% if row.hint %}
+                    {{ row.hint }}
+                  {% elif not row.known %}
+                    <strong>UNKNOWN_D_STATUS</strong>: значение не описано в системе,
+                    проверьте файл поставщика
+                  {% else %}
+                    ·
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted">
+          Позиции со снятым с производства статусом не удаляются: карточка,
+          складской остаток и история сохраняются, продать имеющийся остаток
+          по-прежнему можно.
+        </p>
+      {% endif %}
+    </div>
+    <div class="card__actions">
+      {% if batch.is_applied %}
+        <span class="muted">Импорт применён, повторное применение отклоняется.</span>
+      {% else %}
+        <form method="post" action="{% url 'catalog_import_recheck' batch.pk %}">
+          {% csrf_token %}
+          <button type="submit" class="btn btn--secondary">Проверить заново</button>
+        </form>
+        {% if batch.can_apply %}
+          <form method="post" action="{% url 'catalog_import_apply' batch.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn--primary">Применить импорт</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
