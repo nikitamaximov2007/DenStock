@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from apps.actions.services import stock_overview
 from apps.brp.models import BrpCatalogPart, BrpPartLink
-from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
+from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
 from apps.catalog.models import PartNumber, PartType, normalize_number
 from apps.catalog.services import get_current_price_settings
 from apps.counting.services import find_brp_price_source
@@ -64,10 +64,11 @@ def _brp_candidate(part: BrpCatalogPart, pricing) -> ReceivingCandidate:
     warehouse_part = link.part if link else None
     price = warehouse_part.recommended_price if warehouse_part else None
     if warehouse_part is None:
-        source = find_brp_price_source(part.material_no_norm, part)
-        wholesale = source.wholesale_price_usd if source else part.wholesale_price_usd
-        price = brp_customer_price_rub(
-            wholesale, pricing.current_usd_rate, pricing.brp_markup_percent
+        # Через позицию каталога, а не через сырую цену: надбавку VIN
+        # применяет централизованный слой цен.
+        source = find_brp_price_source(part.material_no_norm, part) or part
+        price = brp_catalog_part_price_rub(
+            source, pricing.current_usd_rate, pricing.brp_markup_percent
         )
     return ReceivingCandidate(
         source="brp",

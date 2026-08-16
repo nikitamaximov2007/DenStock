@@ -811,7 +811,7 @@ def _positive_integer(value) -> int:
 def _found_part_from_entry(entry: dict, *, by=None):
     """Resolve/promote one trusted queue reference inside the posting transaction."""
     from apps.brp.models import BrpCatalogPart, BrpPartLink
-    from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
+    from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
     from apps.brp.services import promote_to_warehouse as promote_brp
     from apps.catalog.models import PartNumber, PartType, normalize_number
     from apps.catalog.services import get_current_price_settings
@@ -854,8 +854,8 @@ def _found_part_from_entry(entry: dict, *, by=None):
         if not catalog.wholesale_price_usd or catalog.wholesale_price_usd <= 0:
             price_source = find_brp_price_source(catalog.material_no_norm, catalog)
             if price_source is not None:
-                manual = brp_customer_price_rub(
-                    price_source.wholesale_price_usd,
+                manual = brp_catalog_part_price_rub(
+                    price_source,
                     pricing.current_usd_rate,
                     pricing.brp_markup_percent,
                 )

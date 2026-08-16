@@ -12,7 +12,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.brp.models import BrpCatalogPart, BrpPricingSettings
-from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
+from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import PartType, normalize_number
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
@@ -175,7 +175,8 @@ def _effective_brp_price(
         settings = BrpPricingSettings.get()
         usd_rate = valuation.current_usd_rate
         markup_percent = settings.brp_markup_percent
-    return brp_customer_price_rub(price_source.wholesale_price_usd, usd_rate, markup_percent)
+    # Позиция каталога целиком: надбавку VIN применяет слой цен.
+    return brp_catalog_part_price_rub(price_source, usd_rate, markup_percent)
 
 
 def _effective_polaris_price(

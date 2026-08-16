@@ -235,3 +235,41 @@ def test_repeated_refresh_is_idempotent(db, admin, pricing):
     first = _linked_price(part)
     _refresh_prices()
     assert _linked_price(part) == first
+
+
+# --- Надбавка применяется во ВСЕХ путях расчёта -----------------------------------------------
+
+
+def test_all_brp_price_paths_apply_the_surcharge(db, pricing):
+    """Одна и та же деталь не должна стоить по-разному на разных экранах.
+
+    Регрессия release candidate: часть путей расчёта передавала в формулу сырую
+    оптовую цену и обходила надбавку VIN.
+    """
+    from apps.brp.pricing import effective_wholesale_usd
+    from apps.counting.services import find_brp_price_source
+    from apps.reports.warehouse_finance import _brp_base_usd
+
+    vintage = _part(status="VIN", material="900000001")
+    expected = customer_price_rub(Decimal("125"), RATE, MARKUP)
+
+    # Прямой расчёт по позиции каталога.
+    assert catalog_part_price_rub(vintage, RATE, MARKUP) == expected
+
+    # Источник цены (он же позиция при отсутствии замены).
+    source = find_brp_price_source(vintage.material_no_norm, vintage)
+    assert catalog_part_price_rub(source, RATE, MARKUP) == expected
+
+    # Финансовый отчёт склада отдаёт УЖЕ расчётную оптовую цену.
+    assert _brp_base_usd(vintage) == Decimal("125")
+    assert effective_wholesale_usd(vintage) == Decimal("125")
+
+
+def test_ordinary_part_price_paths_are_unchanged(db, pricing):
+    from apps.reports.warehouse_finance import _brp_base_usd
+
+    ordinary = _part(material="900000002")
+    assert _brp_base_usd(ordinary) == Decimal("100")
+    assert catalog_part_price_rub(ordinary, RATE, MARKUP) == customer_price_rub(
+        Decimal("100"), RATE, MARKUP
+    )

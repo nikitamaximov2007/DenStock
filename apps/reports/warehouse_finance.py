@@ -30,6 +30,7 @@ from django.db.models import Count, Q, Sum
 
 from apps.brp.models import BrpPricingSettings
 from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
+from apps.brp.pricing import effective_wholesale_usd as brp_effective_wholesale_usd
 from apps.catalog.models import PartType
 from apps.counting.services import find_brp_price_source, load_brp_price_candidates
 from apps.inventory.models import PartItem, StockLot
@@ -134,10 +135,15 @@ def _polaris_wholesale_usd(
 
 
 def _brp_base_usd(brp, candidates=None) -> Decimal | None:
-    """Базовая долларовая цена BRP (до наценки): exact, иначе replacement-источник."""
+    """Базовая долларовая цена BRP (до наценки): exact, иначе replacement-источник.
+
+    Возвращается РАСЧЁТНАЯ оптовая цена: у позиций со статусом VIN в неё уже
+    включена надбавка поставщика за винтажный склад. Сырая цена каталога при
+    этом не меняется.
+    """
     source = find_brp_price_source(brp.material_no_norm, brp, candidates=candidates)
     if source is not None and source.wholesale_price_usd and source.wholesale_price_usd > 0:
-        return source.wholesale_price_usd
+        return brp_effective_wholesale_usd(source)
     return None
 
 
