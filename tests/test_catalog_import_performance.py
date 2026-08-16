@@ -17,14 +17,13 @@ import time
 from decimal import Decimal
 
 import pytest
-from django.contrib.auth.models import Group
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from openpyxl import Workbook
 
 from apps.brp.models import BrpCatalogPart
 from apps.catalog_import.services import apply_batch, run_check, save_upload
-from django.core.files.uploadedfile import SimpleUploadedFile
 
 PASSWORD = "parol-12345"
 HEADERS = [
