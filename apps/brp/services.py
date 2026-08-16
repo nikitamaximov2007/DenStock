@@ -16,7 +16,7 @@ from apps.suppliers.models import Supplier
 from apps.warehouse.models import ValuationSettings
 
 from .models import BrpCatalogPart, BrpPartLink, BrpPricingSettings
-from .pricing import customer_price_rub
+from .pricing import catalog_part_price_rub
 
 BRP_CATEGORY_NAME = "BRP"
 DEFAULT_UNIT_NAME = "Штука"
@@ -53,8 +53,10 @@ def promote_to_warehouse(
 
     valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
-    calculated = customer_price_rub(
-        brp_part.wholesale_price_usd,
+    # Через catalog_part_price_rub, а не по сырой цене: у VIN-позиций к оптовой
+    # цене добавляется доставка с винтажного склада.
+    calculated = catalog_part_price_rub(
+        brp_part,
         valuation.current_usd_rate,
         settings.brp_markup_percent,
     )

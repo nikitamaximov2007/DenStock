@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Импорт каталога · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Импорт каталога</h1>
+  <p class="page-subtitle">
+    Загрузка прайс-листа поставщика в справочник. Импорт не создаёт складских
+    движений и не меняет остатки, ячейки и уже проведённые документы.
+  </p>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Загрузить Excel</h2>
+    </div>
+    <div class="card__body">
+      <form method="post"
+            action="{% url 'catalog_import_upload' %}"
+            enctype="multipart/form-data"
+            class="form">
+        {% csrf_token %}
+        <div class="form-grid form-grid--2">
+          <p>
+            <label for="catalog">Каталог</label>
+            <br>
+            <select id="catalog" name="catalog">
+              {% for value, label in catalogs %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+          </p>
+          <p>
+            <label for="workbook">Файл прайса (.xlsx)</label>
+            <br>
+            <input id="workbook" name="workbook" type="file" accept=".xlsx" required>
+          </p>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Проверить файл</button>
+        </div>
+      </form>
+      <p class="muted">
+        Сразу после загрузки выполняется только проверка: система разбирает файл
+        и показывает, что изменится. Ничего не применяется, пока вы не нажмёте
+        «Применить импорт».
+      </p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">История импортов</h2>
+    </div>
+    <div class="card__body">
+      {% if page_obj.object_list %}
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Каталог</th>
+              <th>Файл</th>
+              <th>Статус</th>
+              <th class="num">Строк данных</th>
+              <th class="num">Новых</th>
+              <th class="num">Изменено</th>
+              <th>Загрузил</th>
+              <th>Когда</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for batch in page_obj.object_list %}
+              <tr>
+                <td>{{ batch.get_catalog_display }}</td>
+                <td>
+                  <a href="{% url 'catalog_import_detail' batch.pk %}">{{ batch.source_filename }}</a>
+                </td>
+                <td>{{ batch.get_status_display }}</td>
+                <td class="num">{{ batch.summary.data_rows|default:"·" }}</td>
+                <td class="num">{{ batch.summary.created|default:"·" }}</td>
+                <td class="num">{{ batch.summary.updated|default:"·" }}</td>
+                <td>{{ batch.created_by|default:"·" }}</td>
+                <td>{{ batch.created_at|ru_dt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        {% include "partials/_empty_state.html" with icon="database" title="Импортов пока не было" text="Загрузите файл прайса, чтобы увидеть, что изменится в справочнике." compact=1 %}
+      {% endif %}
+    </div>
+  </div>
+  {% include "partials/_pagination.html" %}
+{% endblock %}

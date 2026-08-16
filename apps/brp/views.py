@@ -17,7 +17,7 @@ from apps.catalog.services import get_current_price_settings
 from apps.core.part_lookup import resolve_part_lookup
 
 from .models import BrpCatalogPart, BrpPartLink
-from .pricing import customer_price_rub
+from .pricing import catalog_part_price_rub
 from .services import (
     BrpPromotionError,
     find_promoted_part,
@@ -80,8 +80,8 @@ def _brp_matches(q: str, norm: str, status: str, settings) -> list:
     for brp in parts:
         rows.append({
             "brp": brp,
-            "customer_price": customer_price_rub(
-                brp.wholesale_price_usd,
+            "customer_price": catalog_part_price_rub(
+                brp,
                 settings.current_usd_rate,
                 settings.brp_markup_percent,
             ),

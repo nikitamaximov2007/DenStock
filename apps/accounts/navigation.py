@@ -225,6 +225,13 @@ def _catalog_tabs(path):
     return [
         _tab("Все детали", reverse("part_list"), active=path.startswith("/parts/")),
         _tab("BRP", reverse("brp_search"), active=path.startswith("/brp/")),
+        _tab(
+            "Импорт каталога",
+            reverse("catalog_import_list"),
+            sidebar_key="catalog-import",
+            icon="database",
+            active=path.startswith("/directories/catalog-import/"),
+        ),
         _tab("Polaris", reverse("polaris_search"), active=path.startswith("/polaris/")),
     ]
 

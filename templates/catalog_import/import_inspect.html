@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Структура файла · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Структура файла</h1>
+      <p class="page-subtitle">
+        <a href="{% url 'catalog_import_detail' batch.pk %}">← К импорту</a>
+        · {{ batch.source_filename }}
+      </p>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Только чтение. Экран нужен, когда поставщик прислал файл непривычной формы:
+    он показывает фактическую структуру, чтобы не пришлось угадывать колонки.
+  </p>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Листы</th>
+            <td>{{ structure.sheets|join:", " }}</td>
+          </tr>
+          <tr>
+            <th>Разбирается лист</th>
+            <td>{{ structure.sheet }}</td>
+          </tr>
+          <tr>
+            <th>Строк по заголовку файла</th>
+            <td class="num">{{ structure.declared_max_row }}</td>
+          </tr>
+          <tr>
+            <th>Колонок по заголовку файла</th>
+            <td class="num">{{ structure.declared_max_column }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3 class="card__title">Заголовки</h3>
+      <table class="table">
+        <thead>
+          <tr>
+            <th class="num">№</th>
+            <th>Заголовок</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for header in structure.headers %}
+            <tr>
+              <td class="num">{{ forloop.counter }}</td>
+              <td>{{ header|default:"(пусто)" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <h3 class="card__title">Первые строки</h3>
+      <table class="table">
+        <tbody>
+          {% for row in structure.sample_rows %}
+            <tr>
+              {% for cell in row %}<td>{{ cell|default:"·" }}</td>{% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from apps.brp.models import BrpPartLink, BrpPricingSettings
-from apps.brp.pricing import customer_price_rub as brp_customer_price_rub
+from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
 from apps.counting.services import find_brp_price_source
 from apps.polaris.models import PolarisPartLink, PolarisPricingSettings
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
@@ -63,7 +63,8 @@ def _brp_link_price(link: BrpPartLink, usd_rate: Decimal, markup: Decimal):
     source = find_brp_price_source(link.brp_part.material_no_norm, link.brp_part)
     if source is None:
         return None
-    return brp_customer_price_rub(source.wholesale_price_usd, usd_rate, markup)
+    # Источник цены это позиция каталога: надбавку VIN применяет слой цен.
+    return brp_catalog_part_price_rub(source, usd_rate, markup)
 
 
 def _polaris_link_price(link: PolarisPartLink, usd_rate: Decimal, markup: Decimal):
