@@ -289,9 +289,6 @@ def complete_cart(
     ссылаются на ОДИН документ.
     """
     token = _request_token(request_token)
-    replay = _existing_actions_for_token(token)
-    if replay:
-        return replay
 
     # Статус перечитываем из БД под блокировкой, а не доверяем объекту в памяти.
     # Иначе повторный вызов со «старым» объектом корзины прошёл бы проверку и
@@ -299,6 +296,15 @@ def complete_cart(
     # при этом не пострадал бы, но отчёт удвоил бы количества.
     model = _document_model(cart_kind(cart))
     locked = model.objects.select_for_update().get(pk=cart.pk)
+    # Токен проверяем ПОД блокировкой. Двойное нажатие на сенсорном экране шлёт
+    # два запроса одновременно: оба успевают не найти токен до того, как первый
+    # зафиксирует транзакцию. Проверка до блокировки поэтому спасает только от
+    # последовательного повтора, а при одновременном втором запросе пользователь
+    # получал ошибку вместо результата первого. Склад при этом не страдал, но
+    # смысл токена в том, чтобы повтор был незаметен.
+    replay = _existing_actions_for_token(token)
+    if replay:
+        return replay
     if locked.status != model.Status.DRAFT:
         raise ActionError("Документ уже проведён или отменён — провести повторно нельзя.")
     customer_comment = (customer_comment or "").strip()
