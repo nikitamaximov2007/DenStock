@@ -120,22 +120,26 @@ def apply_batch(batch: CatalogImportBatch, *, by=None) -> CatalogImportBatch:
     if batch.status != CatalogImportBatch.Status.CHECKED:
         raise CatalogImportError("Сначала выполните проверку файла.")
 
-    adapter = get_adapter(batch.catalog)
-    path = stored_file_path(batch)
-    if not path.exists():
-        raise CatalogImportError("Файл партии больше не доступен, загрузите заново.")
-    if file_sha256(path) != batch.source_sha256:
-        raise CatalogImportError("STALE_DRY_RUN: файл изменился после проверки.")
-    if adapter.fingerprint() != batch.catalog_fingerprint:
-        raise CatalogImportError(
-            "STALE_DRY_RUN: каталог изменился после проверки, повторите проверку."
-        )
-
     try:
         with transaction.atomic():
+            # One durable batch row serializes every apply for this catalog.
+            # The current batch itself guarantees that the queryset is non-empty.
+            CatalogImportBatch.objects.select_for_update().filter(
+                catalog=batch.catalog
+            ).order_by("pk").first()
             locked = CatalogImportBatch.objects.select_for_update().get(pk=batch.pk)
             if locked.status != CatalogImportBatch.Status.CHECKED:
                 raise CatalogImportError("Эта партия уже применена.")
+            adapter = get_adapter(locked.catalog)
+            path = stored_file_path(locked)
+            if not path.exists():
+                raise CatalogImportError("Файл партии больше не доступен, загрузите заново.")
+            if file_sha256(path) != locked.source_sha256:
+                raise CatalogImportError("STALE_DRY_RUN: файл изменился после проверки.")
+            if adapter.fingerprint() != locked.catalog_fingerprint:
+                raise CatalogImportError(
+                    "STALE_DRY_RUN: каталог изменился после проверки, повторите проверку."
+                )
             summary = adapter.apply(path)
             locked.apply_summary = summary
             locked.status = CatalogImportBatch.Status.APPLIED
