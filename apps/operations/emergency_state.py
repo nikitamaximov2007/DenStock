@@ -126,13 +126,22 @@ def business_state_marker(*, using="default") -> dict:
 
     The operation is intentionally expensive and is used only for backup/failback
     control. It avoids relying on row counts or commit SHA alone.
+
+    Набор моделей намеренно совпадает с тем, что охраняет защита записи
+    (`write_guard._guarded_table_pattern`): те же бизнес-приложения и то же
+    `include_auto_created=True`. Промежуточные таблицы связей «многие ко многим»
+    создаются Django автоматически, но данные в них настоящие: в DenisStock это
+    членство пользователя в группах, то есть РОЛИ, и персональные права. Пока
+    отпечаток строился без них, изменение роли на production было для него
+    невидимо, и failback опирался только на счётчик поколений. Теперь оба
+    признака независимо видят это изменение.
     """
     table_markers = {}
     combined = hashlib.sha256()
     models = sorted(
         (
             model
-            for model in apps.get_models(include_auto_created=False)
+            for model in apps.get_models(include_auto_created=True)
             if model._meta.app_label in BUSINESS_APP_LABELS and model._meta.managed
         ),
         key=lambda model: model._meta.label_lower,
