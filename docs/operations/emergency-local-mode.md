@@ -35,7 +35,7 @@
 
 | Компонент | Назначение |
 |---|---|
-| `docker-compose.emergency.yml` | Изолированные PostgreSQL 16, Django и Caddy на Windows |
+| `docker-compose.emergency.yml` | Изолированные PostgreSQL 16, Django и Caddy в WSL2 Docker Engine |
 | `.env.emergency` | Локальные secrets, identity и offsite source |
 | `.emergency/control.json` | Активная standby, previous standby и lifecycle marker |
 | `.emergency/standbys/` | Проверенные DB slots и media snapshots |
@@ -44,8 +44,12 @@
 | `DenisStock-Emergency.ps1` | Операторское меню |
 | `Emergency-Standby-Refresh.ps1` | Неинтерактивный scheduled standby refresh |
 
-Emergency Compose слушает только `127.0.0.1`, по умолчанию порт `8080`. Он не
-использует production Compose volumes и не публикует PostgreSQL port.
+Emergency Compose по умолчанию слушает только `127.0.0.1`, порт `8080`. Только
+provisioned Primary может намеренно слушать свой fixed LAN IPv4; Windows firewall
+при этом ограничен `LocalSubnet`. Он не использует production Compose volumes и
+не публикует PostgreSQL port. Docker Desktop не является required runtime:
+supported workstation path описан в
+[emergency-workstation-deployment.md](emergency-workstation-deployment.md).
 
 ## Production prerequisites
 

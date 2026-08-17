@@ -138,6 +138,13 @@ def test_business_write_requires_active_local_session():
 
 
 @pytest.mark.django_db
+@override_settings(DENSTOCK_MODE="emergency-local", DENSTOCK_EMERGENCY_ROLE="secondary")
+def test_secondary_workstation_cannot_activate_a_second_emergency_writer(lifecycle_runtime):
+    with pytest.raises(EmergencyLifecycleError, match="secondary"):
+        start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+
+
+@pytest.mark.django_db
 @override_settings(DENSTOCK_MODE="production")
 def test_http_write_updates_generation_only_after_business_mutation():
     factory = RequestFactory()
