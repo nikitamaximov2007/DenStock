@@ -73,7 +73,9 @@ def _checked_batch(root: Path, name: str) -> CatalogImportBatch:
 
 
 @pytest.mark.django_db(transaction=True)
-def test_postgresql_concurrent_apply_rechecks_catalog_after_shared_lock(settings, monkeypatch, tmp_path):
+def test_postgresql_concurrent_apply_rechecks_catalog_after_shared_lock(
+    settings, monkeypatch, tmp_path
+):
     """A second checked import must become stale after the first changes catalog."""
     settings.PRIVATE_MEDIA_ROOT = str(tmp_path / "private")
     root = Path(settings.PRIVATE_MEDIA_ROOT) / "catalog-imports"
