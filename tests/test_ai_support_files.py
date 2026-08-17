@@ -172,16 +172,30 @@ def test_private_attachment_ownership_headers_and_missing_file(
 ):
     owner, other, _ = users
     attachment = _create_attachment(owner, file_settings)
+
+    # Чужому пользователю вложение не отдаётся.
     client.force_login(other)
     assert client.get(reverse("ai_support:attachment", args=[attachment.id])).status_code == 404
+
+    # Пропавший на диске файл даёт 404, а не 500. Проверяем на отдельном вложении и
+    # до скачивания, чтобы вообще не открывать файловый дескриптор: иначе на Windows
+    # unlink не прошёл бы.
     client.force_login(owner)
+    missing = _create_attachment(owner, file_settings)
+    private_path(missing.relative_path).unlink()
+    assert client.get(reverse("ai_support:attachment", args=[missing.id])).status_code == 404
+
+    # Владелец получает файл с приватными заголовками. response.close() стоит
+    # последним намеренно: он шлёт request_finished, а подписанный на него
+    # close_old_connections внутри тестовой транзакции видит рассогласование
+    # autocommit и рвёт соединение с БД. На PostgreSQL любой следующий запрос упал бы
+    # с «the connection is closed»; на SQLite in-memory соединение намеренно не
+    # закрывается, поэтому там ловушка невидима.
     response = client.get(reverse("ai_support:attachment", args=[attachment.id]))
     assert response.status_code == 200
     assert response["Cache-Control"] == "private, no-store"
     assert response["X-Content-Type-Options"] == "nosniff"
     response.close()
-    private_path(attachment.relative_path).unlink()
-    assert client.get(reverse("ai_support:attachment", args=[attachment.id])).status_code == 404
 
 
 def test_manager_reads_only_attachment_explicitly_shared_with_ticket(
