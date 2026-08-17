@@ -323,3 +323,15 @@ def test_dockerfile_pins_postgresql_client_16():
     assert "postgresql-client-17" in text  # чтение старых архивов pg_dump 17
     # Unversioned пакет больше не ставится (иначе снова приедет клиент 17 в PATH).
     assert "postgresql-client \\" not in text
+
+
+def test_production_python_dependencies_are_pinned_and_used_by_docker_build():
+    root = Path(django_settings.BASE_DIR)
+    requirements = (root / "requirements" / "production.txt").read_text(encoding="utf-8")
+    dockerfile = (root / "docker" / "Dockerfile").read_text(encoding="utf-8")
+
+    for package in ("Django", "psycopg", "psycopg-binary", "gunicorn", "Pillow", "openpyxl"):
+        assert f"{package}==" in requirements
+    assert "FROM python:3.12.13-slim" in dockerfile
+    assert 'pip install --requirement production.txt' in dockerfile
+    assert "pip install --no-deps ." in dockerfile

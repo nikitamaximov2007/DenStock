@@ -16,7 +16,7 @@ if connection.vendor != "postgresql":
     pytest.skip("Run against a staging PostgreSQL DATABASE_URL", allow_module_level=True)
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_postgresql_global_gate_serializes_shared_codex_capacity(
     django_user_model, settings, monkeypatch
 ):

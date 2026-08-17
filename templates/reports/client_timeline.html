@@ -51,12 +51,8 @@
             </td>
             <td class="num--qty">{{ event.quantity|quantity_int }}</td>
             {% if show_money %}
-              <td class="num--money">
-                {% if event.kind == "sale" %}{{ event.revenue|money_int }}{% endif %}
-              </td>
-              <td class="num--money">
-                {% if event.kind == "repair" %}{{ event.issued_cost|money_int }}{% endif %}
-              </td>
+              <td class="num--money">{% if event.kind == "sale" %}{{ event.revenue|money_int }}{% endif %}</td>
+              <td class="num--money">{% if event.kind == "repair" %}{{ event.issued_cost|money_int }}{% endif %}</td>
             {% endif %}
             <td>{{ event.note|default:"·" }}</td>
             <td>{{ event.employee|default:"·" }}</td>

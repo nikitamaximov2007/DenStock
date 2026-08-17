@@ -72,7 +72,7 @@ def _checked_batch(root: Path, name: str) -> CatalogImportBatch:
     )
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_postgresql_concurrent_apply_rechecks_catalog_after_shared_lock(
     settings, monkeypatch, tmp_path
 ):

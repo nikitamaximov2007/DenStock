@@ -1,0 +1,16 @@
+# The QA-qualified developer and test environment.
+-r production.txt
+cssbeautifier==2.0.3
+djlint==1.44.2
+EditorConfig==0.17.1
+iniconfig==2.3.0
+jsbeautifier==2.0.3
+json5==0.15.0
+pathspec==1.1.1
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
+pytest-django==4.14.0
+PyYAML==6.0.3
+regex==2026.7.19
+ruff==0.16.3

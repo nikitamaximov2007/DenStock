@@ -82,9 +82,7 @@
                   </form>
                 </td>
                 {% if panel.is_sale %}
-                  <td class="num--money">
-                    {% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}
-                  </td>
+                  <td class="num--money">{% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}</td>
                 {% endif %}
                 <td>
                   <form method="post"

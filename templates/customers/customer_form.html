@@ -8,7 +8,8 @@
         <a class="btn btn--small btn--secondary"
            href="{% url 'customer_detail' customer.pk %}">К карточке</a>
       {% else %}
-        <a class="btn btn--small btn--secondary" href="{% url 'customer_list' %}">К списку</a>
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'customer_list' %}">К списку</a>
       {% endif %}
     </div>
   </div>

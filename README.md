@@ -34,7 +34,8 @@ docker compose exec web python manage.py createsuperuser
 
 ```bash
 python -m venv .venv && . .venv/Scripts/activate   # Windows: .venv\Scripts\activate
-pip install ".[dev]"
+pip install -r requirements/dev.txt
+pip install --no-deps -e .
 python manage.py migrate
 python manage.py runserver                          # DEBUG=True → /media/ отдаётся Django
 pytest

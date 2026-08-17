@@ -1,6 +1,6 @@
 # DenStock — образ приложения (Слой 1: только Python; сборка Tailwind добавится
 # на UI-слоях). Один и тот же образ работает локально и на VPS.
-FROM python:3.12-slim
+FROM python:3.12.13-slim
 
 ARG DENSTOCK_WEB_UID=2001
 ARG DENSTOCK_WEB_GID=2001
@@ -32,13 +32,19 @@ RUN apt-get update \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Сначала зависимости — для кэширования слоёв.
-COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
+# Сначала проверенные зависимости — для кэширования слоёв.  Версии в этом
+# файле сверены с production и PostgreSQL QA; не позволяем pip выбрать новые
+# совместимые версии при следующей сборке.
+COPY pyproject.toml requirements/production.txt ./
+RUN pip install --upgrade "pip==26.2.1" \
+    && pip install --requirement production.txt \
+    && pip check
 
 # Затем исходный код.
 COPY . .
-RUN test -f /app/docs/ai-support/overview.md \
+RUN pip install --no-deps . \
+    && pip check \
+    && test -f /app/docs/ai-support/overview.md \
     && test -f /app/docs/ai-support/receiving.md \
     && test -f /app/docs/ai-support/inventory.md
 

@@ -30,7 +30,7 @@
           <tr>
             <td>
               <a href="{% url 'reports_repairs_by_client_detail' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
-              {% if not row.linked %}<span class="muted"> · без карточки</span>{% endif %}
+              {% if not row.linked %}<span class="muted">&#32;· без карточки</span>{% endif %}
             </td>
             <td class="num">{{ row.repair_count }}</td>
             <td class="num">{{ row.unique_parts }}</td>

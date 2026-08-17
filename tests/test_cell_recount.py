@@ -377,7 +377,7 @@ def test_repeated_finish_and_apply_are_idempotent(cell_data):
     assert _document_movements(doc).count() == 1
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 @pytest.mark.skipif(
     connection.vendor != "postgresql", reason="PostgreSQL row-lock integration test"
 )

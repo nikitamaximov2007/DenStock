@@ -58,7 +58,9 @@
         <tbody>
           {% for row in structure.sample_rows %}
             <tr>
-              {% for cell in row %}<td>{{ cell|default:"·" }}</td>{% endfor %}
+              {% for cell in row %}
+                <td>{{ cell|default:"·" }}</td>
+              {% endfor %}
             </tr>
           {% endfor %}
         </tbody>
