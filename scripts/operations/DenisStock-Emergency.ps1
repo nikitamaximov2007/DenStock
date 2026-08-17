@@ -1,7 +1,9 @@
 param(
     [ValidateSet("Menu", "Status", "Sync", "Start", "Stop", "FailbackCheck", "Package", "Complete", "Prune", "Open")]
     [string]$Action = "Menu",
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [ValidateSet("auto", "docker-desktop", "wsl2")]
+    [string]$Runtime = "auto"
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,12 +29,8 @@ try {
 catch {
     throw "Другая операция DenisStock Emergency Control уже выполняется."
 }
-$script:ComposeBase = @(
-    "compose",
-    "--project-name", "denstock-emergency",
-    "--env-file", $script:EnvFile,
-    "-f", $script:ComposeFile
-)
+$script:RuntimeKind = $null
+$script:WslDistro = $null
 
 Set-Location $script:RepoRoot
 
@@ -61,15 +59,55 @@ function Read-DotEnv {
     return $values
 }
 
+function Convert-ToWslPath {
+    param([string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ($full -notmatch "^([A-Za-z]):\\(.*)$") {
+        throw "Не удалось преобразовать путь для WSL: $full"
+    }
+    return "/mnt/$($Matches[1].ToLower())/$($Matches[2].Replace('\', '/'))"
+}
+
+function Initialize-EmergencyRuntime {
+    param([hashtable]$Environment)
+    $requested = if ($Runtime -ne "auto") { $Runtime } else { [string]$Environment["DENSTOCK_EMERGENCY_RUNTIME"] }
+    if (-not $requested) { $requested = "wsl2" }
+    if ($requested -eq "auto") { $requested = "wsl2" }
+
+    if ($requested -eq "docker-desktop") {
+        $script:RuntimeKind = "docker-desktop"
+        return
+    }
+    if ($requested -ne "wsl2") {
+        throw "Неподдерживаемый emergency runtime: $requested"
+    }
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        throw "WSL2 не установлен. Запустите workstation provisioning от администратора."
+    }
+    $distro = [string]$Environment["DENSTOCK_EMERGENCY_WSL_DISTRO"]
+    if (-not $distro) { $distro = "Ubuntu" }
+    & wsl.exe -d $distro -- docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "WSL2 Docker Engine недоступен в $distro. Docker Desktop для emergency runtime не требуется."
+    }
+    $script:RuntimeKind = "wsl2"
+    $script:WslDistro = $distro
+}
+
 function Assert-Prerequisites {
-    foreach ($command in @("docker", "git")) {
+    foreach ($command in @("git")) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Не найдена команда $command."
         }
     }
-    & docker info *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Docker Desktop недоступен."
+    if ($script:RuntimeKind -eq "docker-desktop") {
+        if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+            throw "Docker CLI не найден."
+        }
+        & docker info *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Docker Desktop runtime недоступен."
+        }
     }
 }
 
@@ -98,7 +136,27 @@ function Assert-ReleaseIdentity {
 
 function Invoke-EmergencyCompose {
     param([string[]]$CommandArgs, [switch]$AllowFailure)
-    & docker @script:ComposeBase @CommandArgs | Out-Host
+    $composeArgs = @(
+        "compose", "--project-name", "denstock-emergency",
+        "--env-file", $script:EnvFile, "-f", $script:ComposeFile
+    ) + $CommandArgs
+    if ($script:RuntimeKind -eq "wsl2") {
+        $linuxRoot = Convert-ToWslPath $script:RepoRoot
+        $linuxEnv = Convert-ToWslPath $script:EnvFile
+        $linuxCompose = Convert-ToWslPath $script:ComposeFile
+        $composeArgs = @(
+            "compose", "--project-name", "denstock-emergency",
+            "--env-file", $linuxEnv, "-f", $linuxCompose
+        ) + $CommandArgs
+        $runtimeEnv = @(
+            "EMERGENCY_DATABASE_NAME=$env:EMERGENCY_DATABASE_NAME",
+            "EMERGENCY_SLOT=$env:EMERGENCY_SLOT"
+        )
+        & wsl.exe -d $script:WslDistro --cd $linuxRoot -- env @runtimeEnv docker @composeArgs | Out-Host
+    }
+    else {
+        & docker @composeArgs | Out-Host
+    }
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "Docker Compose завершился с кодом $exitCode."
@@ -342,6 +400,24 @@ function Start-Offline {
     Write-Host "Backup run: $($control.active_standby.backup_run_id)"
     $kindAnswer = Read-Host "Тип запуска: 1 - planned, 2 - unplanned"
     $kind = if ($kindAnswer -eq "1") { "planned" } elseif ($kindAnswer -eq "2") { "unplanned" } else { throw "Неизвестный тип запуска." }
+    if ([string]$Environment["DENSTOCK_EMERGENCY_ROLE"] -ne "primary") {
+        throw "Этот компьютер настроен как cold standby secondary и не может быть emergency writer."
+    }
+    $productionUrl = [string]$Environment["DENSTOCK_PRODUCTION_URL"]
+    if ($kind -eq "unplanned" -and $productionUrl) {
+        try {
+            $response = Invoke-WebRequest -Uri "$($productionUrl.TrimEnd('/'))/healthz/" -TimeoutSec 5 -UseBasicParsing
+            if ($response.StatusCode -eq 200) {
+                throw "Production доступен. Unplanned activation заблокирован; не создавайте второй writer."
+            }
+        }
+        catch [System.Management.Automation.RuntimeException] {
+            throw
+        }
+        catch {
+            # Network failure is exactly the condition for an unplanned session.
+        }
+    }
     $phrase = "НАЧАТЬ-АВТОНОМНУЮ-РАБОТУ"
     Confirm-Exact -Phrase $phrase -Prompt (
         "После запуска все складские операции должны выполняться только на этом компьютере."
@@ -470,9 +546,10 @@ function Invoke-SelectedAction {
 }
 
 try {
-    Assert-Prerequisites
     $environment = Read-DotEnv
     $script:Environment = $environment
+    Initialize-EmergencyRuntime -Environment $environment
+    Assert-Prerequisites
     if ($Action -ne "Menu") {
         Invoke-SelectedAction -Selected $Action -Environment $environment
         exit 0

@@ -10,7 +10,7 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from . import backup
-from .emergency_environment import validate_database_target
+from .emergency_environment import validate_database_target, validate_emergency_role
 from .emergency_manifest import validate_manifest
 from .emergency_state import business_state_marker, migration_state, record_event
 from .models import DeploymentState, OfflineSession
@@ -57,6 +57,12 @@ def _active_standby(paths=None) -> tuple[dict, dict]:
 
 def start_offline_session(*, kind: str, actor=None, paths=None, resume=False) -> OfflineSession:
     validate_database_target(mode="emergency-local")
+    validate_emergency_role()
+    if settings.DENSTOCK_EMERGENCY_ROLE != "primary":
+        raise EmergencyLifecycleError(
+            "Этот компьютер зарегистрирован как cold standby secondary и не может "
+            "одновременно стать вторым emergency writer."
+        )
     paths = paths or EmergencyPaths.configured()
     with control_lock(paths):
         control = load_control(paths)

@@ -64,10 +64,19 @@ def validate_database_target(*, mode=None, database=None) -> None:
         raise EmergencySafetyError(f"Unknown DENSTOCK_MODE: {mode or '?'}")
 
 
+def validate_emergency_role(*, role=None) -> None:
+    """Only the designated LAN primary may ever become an emergency writer."""
+    role = _normalized(role or settings.DENSTOCK_EMERGENCY_ROLE)
+    if role not in {"primary", "secondary"}:
+        raise EmergencySafetyError("Emergency workstation role must be primary or secondary.")
+
+
 @register()
 def deployment_database_check(app_configs, **kwargs):
     try:
         validate_database_target()
+        if _normalized(settings.DENSTOCK_MODE) == "emergency-local":
+            validate_emergency_role()
     except EmergencySafetyError as exc:
         return [Error(str(exc), id="operations.E001")]
     return []
