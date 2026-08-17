@@ -9,7 +9,6 @@
 from decimal import Decimal
 
 import pytest
-from django.contrib.auth.models import Group
 
 from apps.actions.cart import KIND_SALE, add_scan, complete_cart, open_cart
 from apps.actions.models import WarehouseAction
