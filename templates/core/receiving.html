@@ -66,6 +66,9 @@
              placeholder="{% if step == 'scan_object' %}Отсканируйте деталь…{% else %}Отсканируйте ячейку…{% endif %}"
              autocomplete="off"
              autofocus
+             autocapitalize="off"
+             autocorrect="off"
+             spellcheck="false"
              data-scan-input>
       <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
       {% if object %}
