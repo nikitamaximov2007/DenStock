@@ -145,3 +145,37 @@ def test_frozen_still_allows_control_plane_write(frozen_emergency):
     state.save(update_fields=["state_reason", "updated_at"])
     state.refresh_from_db()
     assert state.state_reason == "red-team probe"
+
+
+# --- Защита падает закрыто ---------------------------------------------------------------
+
+
+def test_missing_deployment_state_blocks_business_writes(db, settings):
+    """Без управляющей строки бизнес-запись обязана быть отклонена.
+
+    Это осознанное «падать закрыто»: лучше остановить работу, чем писать в
+    состоянии, про которое неизвестно, разрешена ли запись вообще.
+
+    Практическое следствие для выпуска: строку создаёт миграция
+    operations/0002. Если после развёртывания её не окажется, склад станет
+    только для чтения. Поэтому в план выпуска добавлена явная проверка.
+    """
+    settings.DENSTOCK_MODE = "production"
+    try:
+        DeploymentState.objects.all().delete()
+        with pytest.raises(BusinessWriteBlocked):
+            Customer.objects.create(name="Иванов")
+    finally:
+        settings.DENSTOCK_MODE = "test"
+    # Строку обратно не создаём: отклонённая вставка уже пометила транзакцию
+    # теста как требующую отката, а сама тестовая база откатится сама.
+
+
+def test_normal_state_allows_business_writes(db, settings):
+    """Контроль: в обычном состоянии запись проходит."""
+    _set_state(DeploymentState.WriteState.NORMAL)
+    settings.DENSTOCK_MODE = "production"
+    try:
+        assert Customer.objects.create(name="Иванов").pk is not None
+    finally:
+        settings.DENSTOCK_MODE = "test"
