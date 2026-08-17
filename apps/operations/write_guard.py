@@ -13,7 +13,7 @@ from django.db.backends.signals import connection_created
 from django.db.models import F
 from django.http import HttpResponse
 
-from .emergency_state import BUSINESS_APP_LABELS
+from .emergency_state import AUTHORIZATION_MODEL_LABELS, BUSINESS_APP_LABELS
 from .models import DeploymentState
 
 FAILOVER_ADVISORY_LOCK_ID = 0x44454E53544F434B
@@ -34,7 +34,10 @@ def _guarded_table_pattern():
             {
                 model._meta.db_table
                 for model in apps.get_models(include_auto_created=True)
-                if model._meta.app_label in BUSINESS_APP_LABELS
+                if (
+                    model._meta.app_label in BUSINESS_APP_LABELS
+                    or model._meta.label_lower in AUTHORIZATION_MODEL_LABELS
+                )
             },
             key=len,
             reverse=True,

@@ -47,6 +47,17 @@ BUSINESS_APP_LABELS = frozenset(
         "writeoffs",
     }
 )
+# Django auth is not business data as a whole.  These rows are the narrow
+# exception: they determine the effective authorization of DenisStock users
+# and must not be silently overwritten by a whole-database failback.
+AUTHORIZATION_MODEL_LABELS = frozenset(
+    {
+        "auth.group",
+        "auth.permission",
+        "auth.group_permissions",
+        "contenttypes.contenttype",
+    }
+)
 SENSITIVE_DETAIL_KEYS = frozenset(
     {"authorization", "credential", "database_url", "password", "secret", "token"}
 )
@@ -142,7 +153,13 @@ def business_state_marker(*, using="default") -> dict:
         (
             model
             for model in apps.get_models(include_auto_created=True)
-            if model._meta.app_label in BUSINESS_APP_LABELS and model._meta.managed
+            if (
+                model._meta.managed
+                and (
+                    model._meta.app_label in BUSINESS_APP_LABELS
+                    or model._meta.label_lower in AUTHORIZATION_MODEL_LABELS
+                )
+            )
         ),
         key=lambda model: model._meta.label_lower,
     )

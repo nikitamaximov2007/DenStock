@@ -15,6 +15,7 @@ $script:EnvFile = Join-Path $script:RepoRoot ".env.emergency"
 $script:ComposeFile = Join-Path $script:RepoRoot "docker-compose.emergency.yml"
 $script:RuntimeRoot = Join-Path $script:RepoRoot ".emergency"
 $script:ControlFile = Join-Path $script:RuntimeRoot "control.json"
+$script:RefreshStatusFile = Join-Path $script:RuntimeRoot "standby-refresh-status.json"
 $script:DownloadsRoot = Join-Path $script:RuntimeRoot "downloads"
 $script:LogRoot = Join-Path $script:RuntimeRoot "logs"
 New-Item -ItemType Directory -Force -Path $script:RuntimeRoot | Out-Null
@@ -57,6 +58,74 @@ function Read-DotEnv {
         $values[$pair[0].Trim()] = $pair[1].Trim()
     }
     return $values
+}
+
+function Set-DotEnvValue {
+    param([string]$Key, [string]$Value)
+    if ($Key -notmatch '^[A-Z][A-Z0-9_]*$' -or $Value -match "[`r`n]") {
+        throw "Небезопасное значение emergency configuration."
+    }
+    $lines = @(Get-Content -LiteralPath $script:EnvFile -Encoding UTF8)
+    $found = $false
+    $updated = foreach ($line in $lines) {
+        if ($line -match "^$([regex]::Escape($Key))=") {
+            $found = $true
+            "$Key=$Value"
+        }
+        else {
+            $line
+        }
+    }
+    if (-not $found) { $updated += "$Key=$Value" }
+    $temporary = "$script:EnvFile.tmp-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        $updated | Set-Content -LiteralPath $temporary -Encoding utf8NoBOM
+        Move-Item -LiteralPath $temporary -Destination $script:EnvFile -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Write-StandbyRefreshStatus {
+    param(
+        [ValidateSet("ready", "failed", "incompatible")]
+        [string]$Outcome,
+        [string]$RunId = "",
+        [string]$AppCommit = "",
+        [string]$Code = ""
+    )
+    $payload = [ordered]@{
+        schema_version = 1
+        attempted_at = [DateTimeOffset]::Now.ToString("o")
+        outcome = $Outcome
+        backup_run_id = $RunId
+        observed_app_commit = $AppCommit
+        code = $Code
+    }
+    $temporary = "$script:RefreshStatusFile.tmp-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        $payload | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8NoBOM
+        Move-Item -LiteralPath $temporary -Destination $script:RefreshStatusFile -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Show-StandbyRefreshWarning {
+    if (-not (Test-Path -LiteralPath $script:RefreshStatusFile -PathType Leaf)) { return }
+    try {
+        $status = Get-Content -LiteralPath $script:RefreshStatusFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        Write-Host "НЕ ГОТОВО: состояние последней standby sync повреждено." -ForegroundColor Red
+        return
+    }
+    if ([string]$status.outcome -eq "ready") { return }
+    $commit = [string]$status.observed_app_commit
+    $suffix = if ($commit) { " Production backup commit: $commit." } else { "" }
+    Write-Host "НЕ ГОТОВО: последняя standby sync не завершилась ($($status.outcome)).$suffix" -ForegroundColor Red
 }
 
 function Convert-ToWslPath {
@@ -132,6 +201,76 @@ function Assert-ReleaseIdentity {
     if ($LASTEXITCODE -ne 0 -or $unexpected.Count -gt 0) {
         throw "Рабочее дерево содержит посторонние untracked-файлы. Сборка заблокирована."
     }
+}
+
+function Get-BackupManifest {
+    param([string]$RunPath)
+    $manifestPath = Join-Path $RunPath "manifest.json"
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        throw "Скачанный backup manifest повреждён."
+    }
+    $commit = [string]$manifest.app_commit
+    if ($commit -notmatch '^[0-9a-f]{40}$') {
+        throw "Backup manifest не содержит полный безопасный app_commit."
+    }
+    return $manifest
+}
+
+function Set-ReleaseForBackup {
+    param([hashtable]$Environment, [object]$Manifest)
+    $target = [string]$Manifest.app_commit
+    $current = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось определить текущий application commit." }
+    if ($current -eq $target -and [string]$Environment["DENSTOCK_APP_COMMIT"] -eq $target) {
+        return $null
+    }
+    $source = [string]$Environment["DENSTOCK_EMERGENCY_RELEASE_SOURCE"]
+    if (-not $source -or $source.StartsWith("REPLACE-")) {
+        throw "Новый backup требует другой app_commit, но release source не настроен. Старый READY standby сохранён."
+    }
+    if (@(& git status --porcelain --untracked-files=no).Count -gt 0) {
+        throw "Нельзя менять application release из dirty checkout."
+    }
+    $previousAppCommit = [string]$Environment["DENSTOCK_APP_COMMIT"]
+    & git fetch --no-tags $source $target
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось получить exact application commit для backup." }
+    $resolved = (& git rev-parse "$target^{commit}").Trim()
+    if ($LASTEXITCODE -ne 0 -or $resolved -ne $target) {
+        throw "Release source не предоставил exact application commit из manifest."
+    }
+    $checkoutChanged = $false
+    try {
+        & git checkout --detach $target
+        if ($LASTEXITCODE -ne 0) { throw "Не удалось переключить application checkout на backup commit." }
+        $checkoutChanged = $true
+        Set-DotEnvValue -Key "DENSTOCK_APP_COMMIT" -Value $target
+        $Environment["DENSTOCK_APP_COMMIT"] = $target
+    }
+    catch {
+        if ($checkoutChanged) {
+            & git checkout --detach $current
+            if ($LASTEXITCODE -eq 0) {
+                Set-DotEnvValue -Key "DENSTOCK_APP_COMMIT" -Value $previousAppCommit
+                $Environment["DENSTOCK_APP_COMMIT"] = $previousAppCommit
+            }
+        }
+        throw
+    }
+    return @{ Head = $current; AppCommit = $previousAppCommit }
+}
+
+function Restore-PreviousRelease {
+    param([hashtable]$Environment, [object]$Previous)
+    if ($null -eq $Previous) { return }
+    & git checkout --detach $Previous.Head
+    if ($LASTEXITCODE -ne 0) {
+        throw "Не удалось вернуть прежний application checkout после failed standby refresh."
+    }
+    Set-DotEnvValue -Key "DENSTOCK_APP_COMMIT" -Value $Previous.AppCommit
+    $Environment["DENSTOCK_APP_COMMIT"] = $Previous.AppCommit
 }
 
 function Invoke-EmergencyCompose {
@@ -335,6 +474,7 @@ function Show-Status {
     Set-TargetFromControl | Out-Null
     Start-Database
     Invoke-Manage -ManageArgs @("emergency_status") | Out-Null
+    Show-StandbyRefreshWarning
 }
 
 function Sync-Standby {
@@ -343,19 +483,40 @@ function Sync-Standby {
     if ($null -ne $control -and $null -ne $control.offline_lifecycle) {
         throw "Standby sync запрещён: offline lifecycle уже начат."
     }
-    $source = $Environment["DENSTOCK_EMERGENCY_BACKUP_SOURCE"]
-    if (-not $source -or $source.StartsWith("REPLACE-")) {
-        throw "DENSTOCK_EMERGENCY_BACKUP_SOURCE не настроен."
+    $backup = $null
+    $manifest = $null
+    $previousRelease = $null
+    try {
+        $source = $Environment["DENSTOCK_EMERGENCY_BACKUP_SOURCE"]
+        if (-not $source -or $source.StartsWith("REPLACE-")) {
+            throw "DENSTOCK_EMERGENCY_BACKUP_SOURCE не настроен."
+        }
+        $backup = Get-LatestBackup -Source $source
+        $download = Copy-BackupToRuntime -Backup $backup
+        $manifest = Get-BackupManifest -RunPath $download
+        $previousRelease = Set-ReleaseForBackup -Environment $Environment -Manifest $manifest
+        Assert-ReleaseIdentity -Environment $Environment
+        Set-ControlTarget
+        Start-Database
+        $containerSource = "/app/.emergency/downloads"
+        Invoke-Manage -ManageArgs @(
+            "emergency_sync", "--source", $containerSource, "--run-id", $backup.RunId
+        ) | Out-Null
+        Write-StandbyRefreshStatus -Outcome "ready" -RunId $backup.RunId -AppCommit $manifest.app_commit
     }
-    Assert-ReleaseIdentity -Environment $Environment
-    $backup = Get-LatestBackup -Source $source
-    Copy-BackupToRuntime -Backup $backup | Out-Null
-    Set-ControlTarget
-    Start-Database
-    $containerSource = "/app/.emergency/downloads"
-    Invoke-Manage -ManageArgs @(
-        "emergency_sync", "--source", $containerSource, "--run-id", $backup.RunId
-    ) | Out-Null
+    catch {
+        Restore-PreviousRelease -Environment $Environment -Previous $previousRelease
+        $runId = if ($null -ne $backup) { [string]$backup.RunId } else { "" }
+        $commit = if ($null -ne $manifest) { [string]$manifest.app_commit } else { "" }
+        $outcome = if ($commit -and $commit -ne [string]$Environment["DENSTOCK_APP_COMMIT"]) {
+            "incompatible"
+        }
+        else {
+            "failed"
+        }
+        Write-StandbyRefreshStatus -Outcome $outcome -RunId $runId -AppCommit $commit -Code "sync_failed"
+        throw
+    }
     $keep = 2
     if ($Environment["DENSTOCK_EMERGENCY_KEEP_DOWNLOADS"] -match "^\d+$") {
         $keep = [Math]::Max(1, [int]$Environment["DENSTOCK_EMERGENCY_KEEP_DOWNLOADS"])

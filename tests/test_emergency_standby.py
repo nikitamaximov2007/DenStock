@@ -24,7 +24,7 @@ from apps.operations.standby import (
 COMMIT = "a" * 40
 
 
-def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
+def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00", app_commit=COMMIT) -> Path:
     run = root / run_id
     run.mkdir(parents=True)
     database = run / "db.dump"
@@ -37,7 +37,7 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
         "verified_at": "2026-08-12T10:01:00+05:00",
         "source_environment": "production",
         "source_instance_id": "production",
-        "app_commit": COMMIT,
+        "app_commit": app_commit,
         "database_name": "denstock",
         "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
         "database_dump_filename": database.name,
@@ -162,6 +162,30 @@ def test_broken_download_keeps_previous_standby(tmp_path, standby_runtime):
 
     with pytest.raises(StandbyError, match="источник backup не найден"):
         refresh_standby(str(tmp_path / "missing"), paths=paths)
+
+    assert load_control(paths) == previous
+    assert created == []
+    assert dropped == []
+
+
+@pytest.mark.django_db
+def test_newer_backup_with_incompatible_app_commit_keeps_previous_ready_standby(
+    tmp_path, standby_runtime
+):
+    paths, created, dropped = standby_runtime
+    source = tmp_path / "source"
+    _source_backup(source, app_commit="b" * 40)
+    paths.root.mkdir(parents=True)
+    previous = {
+        "schema_version": 1,
+        "active_standby": {"database_name": "denstock_emergency_previous"},
+        "previous_standbys": [],
+        "offline_lifecycle": None,
+    }
+    paths.control.write_text(json.dumps(previous), encoding="utf-8")
+
+    with pytest.raises(StandbyError, match="application commit"):
+        refresh_standby(str(source), paths=paths)
 
     assert load_control(paths) == previous
     assert created == []

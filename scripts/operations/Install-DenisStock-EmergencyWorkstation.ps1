@@ -9,9 +9,12 @@ param(
     [string]$PrimaryLanAddress,
     [Parameter(Mandatory)]
     [string]$AppCommit,
+    [Parameter(Mandatory)]
+    [string]$ReleaseSource,
     [ValidateSet("primary", "secondary")]
     [string]$Role = "primary",
     [string]$WslDistro = "Ubuntu",
+    [ValidateRange(1, 65535)]
     [int]$Port = 8080,
     [switch]$InstallWslRuntime,
     [switch]$CreateTasks,
@@ -62,16 +65,33 @@ function ConvertTo-WslPath {
     "/mnt/$($Matches[1].ToLower())/$($Matches[2].Replace('\', '/'))"
 }
 
+function Assert-SingleLineConfig {
+    param([string]$Name, [string]$Value)
+    if (-not $Value -or $Value -match "[`r`n]") {
+        throw "$Name отсутствует или содержит недопустимый перенос строки."
+    }
+}
+
+function Set-AdministratorOnlyAcl {
+    param([string]$Path, [switch]$Directory)
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($identity in @("BUILTIN\Administrators", [Security.Principal.WindowsIdentity]::GetCurrent().Name)) {
+        if ($Directory) {
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $identity, "FullControl", "ContainerInherit, ObjectInherit", "None", "Allow"
+            )
+        }
+        else {
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity, "FullControl", "Allow")
+        }
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
+}
+
 Assert-Administrator
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
-if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
-    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "rclone не найден, а winget недоступен. Установите rclone до provisioning."
-    }
-    & winget install --id Rclone.Rclone --exact --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { throw "Не удалось установить rclone." }
-    throw "rclone установлен. Откройте новый PowerShell, настройте approved remote и повторите provisioning."
-}
 foreach ($required in @("docker-compose.emergency.yml", ".env.emergency.example", "scripts\operations\DenisStock-Emergency.ps1")) {
     if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot $required))) {
         throw "Не найден DenisStock Emergency release: $required"
@@ -93,6 +113,22 @@ if ($Role -eq "primary") {
     Assert-PrimaryNetwork $PrimaryLanAddress
     Assert-WorkstationCapacity
 }
+foreach ($item in @(
+    @{ Name = "BackupSource"; Value = $BackupSource },
+    @{ Name = "ReleaseSource"; Value = $ReleaseSource },
+    @{ Name = "ProductionUrl"; Value = $ProductionUrl },
+    @{ Name = "PrimaryLanAddress"; Value = $PrimaryLanAddress }
+)) {
+    Assert-SingleLineConfig -Name $item.Name -Value $item.Value
+}
+if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        throw "rclone не найден, а winget недоступен. Установите rclone до provisioning."
+    }
+    & winget install --id Rclone.Rclone --exact --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось установить rclone." }
+    throw "rclone установлен. Откройте новый PowerShell, настройте approved remote и повторите provisioning."
+}
 
 if ($InstallWslRuntime) {
     if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { throw "WSL2 недоступен в Windows." }
@@ -103,6 +139,9 @@ if ($InstallWslRuntime) {
     }
     $bootstrap = ConvertTo-WslPath (Join-Path $RepoRoot "scripts\operations\provision-wsl-docker.sh")
     & wsl.exe -d $WslDistro -u root -- bash $bootstrap
+    if ($LASTEXITCODE -eq 42) {
+        throw "WSL systemd включён. Выполните 'wsl --shutdown' из Administrator PowerShell и повторите provisioning."
+    }
     if ($LASTEXITCODE -ne 0) { throw "Не удалось подготовить WSL Docker Engine." }
     throw "WSL Docker Engine установлен. Закройте WSL session и повторите provisioning без -InstallWslRuntime."
 }
@@ -152,6 +191,7 @@ $envLines = @(
     "DENSTOCK_EMERGENCY_KEEP_DOWNLOADS=2",
     "DENSTOCK_EMERGENCY_KEEP_COMPLETED_EXPORTS=2",
     "DENSTOCK_EMERGENCY_BACKUP_SOURCE=$BackupSource",
+    "DENSTOCK_EMERGENCY_RELEASE_SOURCE=$ReleaseSource",
     "DENSTOCK_PRODUCTION_URL=$ProductionUrl",
     "DENSTOCK_EMERGENCY_PROBE_TOKEN=$probeValue",
     "AI_SUPPORT_ENABLED=false",
@@ -159,13 +199,10 @@ $envLines = @(
 )
 $envLines | Set-Content -LiteralPath $envFile -Encoding utf8NoBOM
 
-$acl = Get-Acl -LiteralPath $envFile
-$acl.SetAccessRuleProtection($true, $false)
-foreach ($identity in @("BUILTIN\Administrators", [Security.Principal.WindowsIdentity]::GetCurrent().Name)) {
-    $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity, "FullControl", "Allow")
-    $acl.AddAccessRule($rule)
-}
-Set-Acl -LiteralPath $envFile -AclObject $acl
+Set-AdministratorOnlyAcl -Path $envFile
+$runtimeRoot = Join-Path $RepoRoot ".emergency"
+New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+Set-AdministratorOnlyAcl -Path $runtimeRoot -Directory
 
 if ($Role -eq "primary") {
     $ruleName = "DenisStock Emergency LAN $Port"
@@ -174,7 +211,9 @@ if ($Role -eq "primary") {
 }
 
 $launcher = Join-Path $RepoRoot "scripts\operations\DenisStock-Emergency.ps1"
-$shortcutDir = [Environment]::GetFolderPath("CommonDesktopDirectory")
+# The launcher can read emergency secrets, so it belongs only to the responsible
+# administrator's desktop. LAN clients receive a browser-only shortcut separately.
+$shortcutDir = [Environment]::GetFolderPath("Desktop")
 $shell = New-Object -ComObject WScript.Shell
 foreach ($item in @(
     @{ Name = "DenisStock - Аварийный.lnk"; Args = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`"" },

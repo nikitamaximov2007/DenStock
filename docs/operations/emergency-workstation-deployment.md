@@ -41,6 +41,7 @@ Open Administrator PowerShell and run once:
 F:\DenisStockEmergency\scripts\operations\Install-DenisStock-EmergencyWorkstation.ps1 `
   -RepoRoot F:\DenisStockEmergency `
   -BackupSource 'yandex-s3:denstock-backups-nikita' `
+  -ReleaseSource 'origin' `
   -ProductionUrl 'https://185-250-44-206.sslip.io' `
   -PrimaryLanAddress '192.168.100.10' `
   -AppCommit '0fd18913234d344ea3ae44cbc84bb6dc411bc3ad' `
@@ -49,20 +50,32 @@ F:\DenisStockEmergency\scripts\operations\Install-DenisStock-EmergencyWorkstatio
 
 The first WSL install can require a Windows reboot. Re-run the same command
 after the reboot. The installer creates `.env.emergency` with new local
-secrets, limits its ACL to the provisioning administrator and Administrators,
-adds a Private-profile `LocalSubnet` firewall rule for the chosen port, creates
-two desktop shortcuts and registers refresh at logon, 07:00 and 19:00.
+secrets, limits both it and `.emergency` backups to the provisioning
+administrator and Administrators, adds a Private-profile `LocalSubnet` firewall
+rule for the chosen port, creates two control shortcuts on that administrator's
+desktop and registers refresh at logon, 07:00 and 19:00.
 
 `rclone` is intentionally not configured by this script because its Yandex
 credentials must never be placed in source control. Configure the approved
 remote only in the responsible Windows profile, then use the status shortcut.
+
+`ReleaseSource` is a controlled Git remote or local bare repository containing
+every approved production release. It is not optional: when a backup manifest
+has a newer `app_commit`, refresh fetches exactly that commit before restoring a
+candidate. If code fetch, checkout, restore or validation fails, the previous
+checkout and its READY standby are restored. This prevents a valid backup B
+from being presented with application code A.
 
 ## Provision Secondary or LAN clients
 
 A cold replacement uses `-Role secondary`; its bind host is forced to
 `127.0.0.1` and activation is blocked by both the launcher and Django
 lifecycle. Promote it only through a documented incident decision, after the
-old Primary has been made unavailable and its final export preserved.
+old Primary has been made unavailable and its final export preserved. The
+local role protects a configured secondary, but it cannot prove that two
+separately provisioned machines were both declared `primary` while the network
+is down. Do not provision another primary until a production-authorized primary
+identity is added to the backup manifest and enforced during activation.
 
 LAN client PCs do not receive PostgreSQL, `.env.emergency`, rclone, standby
 data or failback controls. Create a shortcut containing only:

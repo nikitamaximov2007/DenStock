@@ -3,12 +3,10 @@
 Промежуточные таблицы связей «многие ко многим» Django создаёт автоматически,
 поэтому раньше они выпадали из отпечатка: он строился с
 `include_auto_created=False`, а защита записи с `include_auto_created=True`.
-В проекте таких таблиц три. Две принадлежат приложению `accounts`: членство
-пользователя в группах (то есть РОЛИ) и персональные права. Третья,
-`auth.group_permissions`, относится к приложению `auth`, которое бизнес-данными
-не считается, и в отпечаток осознанно не входит: её конечные модели `auth.group`
-и `auth.permission` в отпечатке тоже отсутствуют, включать одну связь без них
-было бы непоследовательно.
+Связи `accounts` фиксируют членство пользователей в ролях и персональные
+права. Узкий набор `auth` также нужен: имена Group и `auth.group_permissions`
+определяют эффективные warehouse permissions. Весь auth app при этом не
+становится business state.
 
 Здесь закрепляется исправленное поведение, граница включения и то, что формат
 маркера при этом не изменился.
@@ -35,7 +33,10 @@ from apps.operations.write_guard import BusinessWriteBlocked, _is_business_mutat
 
 MEMBERSHIP = "accounts.user_groups"
 PERMISSIONS = "accounts.user_user_permissions"
+GROUP = "auth.group"
+PERMISSION = "auth.permission"
 FRAMEWORK = "auth.group_permissions"
+CONTENT_TYPE = "contenttypes.contenttype"
 
 
 def _sha():
@@ -144,24 +145,35 @@ def test_marker_lists_accounts_membership_tables(db):
     assert PERMISSIONS in tables
 
 
-def test_framework_group_permissions_stays_out_of_marker(db):
-    """Связь auth.group_permissions намеренно не входит: auth не бизнес-приложение.
-
-    Это граница осознанного включения, а не побочный эффект: её конечные модели
-    auth.group и auth.permission в отпечатке тоже отсутствуют.
-    """
+def test_authorization_control_tables_are_in_marker_and_not_a_whole_auth_app(db):
+    """Only effective authorization controls are covered, not the whole auth app."""
     tables = business_state_marker()["tables"]
-    assert FRAMEWORK not in tables
+    assert {GROUP, PERMISSION, FRAMEWORK, CONTENT_TYPE} <= set(tables)
     assert "auth" not in BUSINESS_APP_LABELS
-    assert not any(name.startswith("auth.") for name in tables)
+    assert not any(
+        name.startswith("auth.") and name not in {GROUP, PERMISSION, FRAMEWORK}
+        for name in tables
+    )
 
 
-def test_group_permission_change_does_not_touch_fingerprint(db):
-    """Контроль границы: изменение прав ГРУППЫ отпечаток не двигает."""
+def test_group_permission_change_moves_fingerprint(db):
+    """Changing effective Django Group permissions is failback-relevant."""
     group = Group.objects.get(name=roles.VIEWER)
     before = _sha()
     group.permissions.add(Permission.objects.first())
-    assert _sha() == before
+    assert _sha() != before
+
+
+def test_group_rename_moves_fingerprint_and_generation(production_mode):
+    """Role names are DenisStock capabilities, so a rename is authorization data."""
+    group = Group.objects.get(name=roles.VIEWER)
+    before = _sha()
+    generation = _generation()
+    group.name = "Viewer temporarily renamed"
+    group.save(update_fields=["name"])
+
+    assert _sha() != before
+    assert _generation() > generation
 
 
 def test_every_fingerprinted_table_is_also_write_guarded(db):
@@ -179,11 +191,11 @@ def test_every_fingerprinted_table_is_also_write_guarded(db):
         )
 
 
-def test_framework_table_is_neither_fingerprinted_nor_guarded(db):
-    """Обратная сторона симметрии: чего нет в отпечатке, того нет и в защите."""
+def test_authorization_tables_are_fingerprinted_and_guarded(db):
+    """Effective permission changes cannot bypass the lifecycle write guard."""
     table = django_apps.get_model(FRAMEWORK)._meta.db_table
-    assert FRAMEWORK not in business_state_marker()["tables"]
-    assert not _is_business_mutation(f'INSERT INTO "{table}" ("id") VALUES (1)')
+    assert FRAMEWORK in business_state_marker()["tables"]
+    assert _is_business_mutation(f'INSERT INTO "{table}" ("id") VALUES (1)')
 
 
 # --- E. Failback conflict -------------------------------------------------------------------
@@ -357,6 +369,18 @@ def test_frozen_emergency_blocks_group_membership_write(db, settings, django_use
     try:
         with pytest.raises(BusinessWriteBlocked):
             user.groups.add(group)
+    finally:
+        settings.DENSTOCK_MODE = "test"
+
+
+def test_frozen_emergency_blocks_group_permission_write(db, settings):
+    group = Group.objects.get(name=roles.STOREKEEPER)
+    permission = Permission.objects.first()
+    _set_state(DeploymentState.WriteState.EMERGENCY_FROZEN)
+    settings.DENSTOCK_MODE = "emergency-local"
+    try:
+        with pytest.raises(BusinessWriteBlocked):
+            group.permissions.add(permission)
     finally:
         settings.DENSTOCK_MODE = "test"
 

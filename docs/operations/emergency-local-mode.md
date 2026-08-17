@@ -69,34 +69,21 @@ credential и не даёт права на restore или mutation.
 
 ## Первичная настройка Windows
 
-Требуются Docker Desktop, Git и PowerShell 5.1 или новее. Для Yandex Object
-Storage нужен `rclone`, настроенный в профиле Windows-пользователя.
+Поддерживаемая workstation-установка использует WSL2 Ubuntu и Docker Engine
+внутри WSL. Docker Desktop не требуется. Выполните только
+[workstation deployment guide](emergency-workstation-deployment.md) от имени
+ответственного администратора: installer создаёт local secrets, `.env.emergency`,
+ACL, firewall rule, shortcuts и scheduled refresh. Обычный сотрудник не должен
+видеть `.env.emergency`, вводить PostgreSQL credentials или запускать PowerShell.
 
-```powershell
-Copy-Item .env.emergency.example .env.emergency
-```
+Для Yandex Object Storage нужен `rclone`, настроенный только в профиле
+ответственного Windows-пользователя. Production DB credentials в emergency env
+не нужны и запрещены. Проверка окружения аварийно завершает startup, если mode,
+DB host или DB name не соответствуют local allowlist и prefix
+`denstock_emergency_`.
 
-В `.env.emergency` заполнить:
-
-- отдельные локальные `POSTGRES_PASSWORD` и `DJANGO_SECRET_KEY`;
-- уникальный `DENSTOCK_INSTANCE_ID`, например `warehouse-pc-01`;
-- полный SHA установленного release в `DENSTOCK_APP_COMMIT`;
-- `DENSTOCK_EMERGENCY_BACKUP_SOURCE`, например
-  `yandex-s3:denstock-backups-nikita`;
-- канонический `DENSTOCK_PRODUCTION_URL`;
-- случайный `DENSTOCK_EMERGENCY_PROBE_TOKEN`, одинаковый на production и local.
-
-Production DB credentials в emergency env не нужны и запрещены. Пароль в
-`DATABASE_URL` должен быть URL-safe. Проверка окружения аварийно завершает
-startup, если mode, DB host или DB name не соответствуют local allowlist и
-prefix `denstock_emergency_`.
-
-Запуск меню:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File scripts\operations\DenisStock-Emergency.ps1
-```
+Manual local setup below is retained only for an isolated development drill,
+not for a warehouse workstation. It must not create a second primary writer.
 
 ## Manifest schema v2
 
