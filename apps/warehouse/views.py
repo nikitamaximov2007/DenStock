@@ -267,6 +267,7 @@ class LocationDrawerRenameView(ManageWarehouseMixin, FormView):
         return redirect("location_detail", pk=renamed.pk)
 
 
+@login_required
 @require_POST
 def location_toggle(request, pk):
     if not request.user.can_manage_warehouse:

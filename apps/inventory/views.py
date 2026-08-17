@@ -174,6 +174,7 @@ class PartItemUpdateView(InventoryManageMixin, UpdateView):
         return reverse("item_detail", args=[self.object.pk])
 
 
+@login_required
 def item_create(request, line_pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -203,6 +204,7 @@ def item_create(request, line_pk):
     )
 
 
+@login_required
 def item_bulk_create(request, line_pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -229,6 +231,7 @@ def item_bulk_create(request, line_pk):
     )
 
 
+@login_required
 @require_POST
 def item_status_change(request, pk):
     if not request.user.can_manage_inventory:
@@ -353,6 +356,7 @@ class StockLotDetailView(InventoryViewMixin, DetailView):
         return ctx
 
 
+@login_required
 def lot_create(request, line_pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -381,6 +385,7 @@ def lot_create(request, line_pk):
     )
 
 
+@login_required
 def lot_create_remaining(request, line_pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -409,6 +414,7 @@ def lot_create_remaining(request, line_pk):
     )
 
 
+@login_required
 def lot_edit(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -436,6 +442,7 @@ def lot_edit(request, pk):
     )
 
 
+@login_required
 @require_POST
 def lot_status_change(request, pk):
     if not request.user.can_manage_inventory:
@@ -557,6 +564,7 @@ class BalanceListView(InventoryViewMixin, ListView):
         return ctx
 
 
+@login_required
 @require_POST
 def item_receive(request, pk):
     if not request.user.can_manage_inventory:
@@ -573,6 +581,7 @@ def item_receive(request, pk):
     return redirect("item_detail", pk=pk)
 
 
+@login_required
 def item_move(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -599,6 +608,7 @@ def item_move(request, pk):
     )
 
 
+@login_required
 @require_POST
 def lot_receive(request, pk):
     if not request.user.can_manage_inventory:
@@ -613,6 +623,7 @@ def lot_receive(request, pk):
     return redirect("lot_detail", pk=pk)
 
 
+@login_required
 def lot_move(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
@@ -639,6 +650,7 @@ def lot_move(request, pk):
     )
 
 
+@login_required
 def lot_adjust(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
