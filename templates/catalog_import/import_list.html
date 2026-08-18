@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Импорт каталога · DenisStock{% endblock %}
+{% block title %}Импорт каталога BRP · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Импорт каталога</h1>
+  <h1 class="page-title">Импорт каталога BRP</h1>
   <p class="page-subtitle">
     Загрузка прайс-листа поставщика в справочник. Импорт не создаёт складских
     движений и не меняет остатки, ячейки и уже проведённые документы.
   </p>
   <div class="card">
     <div class="card__header">
-      <h2 class="card__title">Загрузить Excel</h2>
+      <h2 class="card__title">Выберите Excel-каталог BRP</h2>
     </div>
     <div class="card__body">
       <form method="post"
@@ -25,7 +25,7 @@
             </select>
           </p>
           <p>
-            <label for="workbook">Файл прайса (.xlsx)</label>
+            <label for="workbook">Excel-каталог BRP (.xlsx)</label>
             <br>
             <input id="workbook" name="workbook" type="file" accept=".xlsx" required>
           </p>
