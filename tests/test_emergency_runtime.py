@@ -18,7 +18,11 @@ from apps.operations.emergency_lifecycle import (
 )
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import EmergencyPaths, save_control
-from apps.operations.write_guard import BusinessWriteBlocked, BusinessWriteGuardMiddleware
+from apps.operations.write_guard import (
+    BusinessWriteBlocked,
+    BusinessWriteGuardMiddleware,
+    _is_missing_deployment_state_table,
+)
 from apps.suppliers.models import Supplier
 from tests.emergency_support import configure_test_trust
 
@@ -26,6 +30,30 @@ COMMIT = "a" * 40
 MIGRATION_HASH = "b" * 64
 DATA_HASH = "c" * 64
 DATABASE_ID = "52347a14-d939-45e6-a397-06c79ef257f2"
+
+
+class _MissingTableCause(Exception):
+    sqlstate = "42P01"
+
+    def __str__(self):
+        return 'relation "operations_deploymentstate" does not exist'
+
+
+class _OtherMissingTableCause(Exception):
+    sqlstate = "42P01"
+
+    def __str__(self):
+        return 'relation "catalog_parttype" does not exist'
+
+
+def test_write_guard_bootstrap_bypass_is_limited_to_missing_deployment_state_table():
+    missing = RuntimeError("state lookup failed")
+    missing.__cause__ = _MissingTableCause()
+    assert _is_missing_deployment_state_table(missing)
+
+    other = RuntimeError("a different missing table")
+    other.__cause__ = _OtherMissingTableCause()
+    assert not _is_missing_deployment_state_table(other)
 
 
 def _base_manifest(*, consistency="database_snapshot", workstation_id=None):
