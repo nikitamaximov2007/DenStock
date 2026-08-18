@@ -10,12 +10,12 @@ from django.utils import timezone
 
 from apps.ai_support.services import FeatureDisabled, send_message
 from apps.ai_support.views import _provider_state
+from apps.operations.emergency_environment import EmergencySafetyError, configured_workstation_id
 from apps.operations.emergency_lifecycle import (
     EmergencyLifecycleError,
     emergency_context,
     start_offline_session,
 )
-from apps.operations.emergency_environment import EmergencySafetyError, configured_workstation_id
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import EmergencyPaths, save_control
 from apps.operations.write_guard import BusinessWriteBlocked, BusinessWriteGuardMiddleware

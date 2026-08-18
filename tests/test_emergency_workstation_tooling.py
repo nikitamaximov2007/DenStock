@@ -21,7 +21,10 @@ def test_workstation_provisioner_uses_wsl_engine_and_scoped_lan_firewall():
     assert "DENSTOCK_EMERGENCY_BIND_HOST=$bindHost" in installer
     assert "POSTGRES_PASSWORD=$postgresPassword" in installer
     assert "ManifestPublicKeyPath" in installer
-    assert "DENSTOCK_MANIFEST_PUBLIC_KEY_PATH=/app/.emergency/trusted/production-manifest-ed25519-public.pem" in installer
+    assert (
+        "DENSTOCK_MANIFEST_PUBLIC_KEY_PATH="
+        "/app/.emergency/trusted/production-manifest-ed25519-public.pem" in installer
+    )
     assert "workstation-id.txt" in installer
     assert "DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH=/app/.emergency/workstation-id.txt" in installer
 
