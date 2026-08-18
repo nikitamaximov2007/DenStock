@@ -322,7 +322,7 @@ def test_postgresql_two_stop_transitions_have_one_winner(settings):
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
     tmp_path, settings, django_user_model
 ):
@@ -442,8 +442,13 @@ def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
             assert Receipt.objects.filter(status=Receipt.Status.POSTED).count() == 1
             assert StockLot.objects.filter(quantity=Decimal("3")).exists()
     finally:
-        connections["default"].close()
-        connections["default"].settings_dict["NAME"] = original_database
+        database = connections["default"]
+        database.close()
+        database.settings_dict["NAME"] = original_database
+        # TransactionTestCase must flush the real test database after this
+        # test. Reconnect it after temporary candidate DB switches so a later
+        # serialized_rollback fixture restores into an empty schema.
+        database.connect()
         settings.DENSTOCK_MODE = "test"
         for database_name in reversed(created_databases):
             drop_database(database_name)
