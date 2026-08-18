@@ -56,6 +56,7 @@
               <th class="num">Строк данных</th>
               <th class="num">Новых</th>
               <th class="num">Изменено</th>
+              <th class="num">Неактуально</th>
               <th>Загрузил</th>
               <th>Когда</th>
             </tr>
@@ -71,6 +72,7 @@
                 <td class="num">{{ batch.summary.data_rows|default:"·" }}</td>
                 <td class="num">{{ batch.summary.created|default:"·" }}</td>
                 <td class="num">{{ batch.summary.updated|default:"·" }}</td>
+                <td class="num">{{ batch.apply_summary.deactivated|default:batch.summary.deactivated|default:"·" }}</td>
                 <td>{{ batch.created_by|default:"·" }}</td>
                 <td>{{ batch.created_at|ru_dt }}</td>
               </tr>

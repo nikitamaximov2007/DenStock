@@ -60,6 +60,8 @@ def _locked_singleton(model):
 
 
 def _brp_link_price(link: BrpPartLink, usd_rate: Decimal, markup: Decimal):
+    if not link.brp_part.is_current:
+        return None
     source = find_brp_price_source(link.brp_part.material_no_norm, link.brp_part)
     if source is None:
         return None
@@ -117,6 +119,12 @@ def plan_linked_part_price_refresh(
         ).count()
         for link in brp_links.filter(price_source=BrpPartLink.PriceSource.CALCULATED):
             plan.brp_links += 1
+            if not link.brp_part.is_current:
+                if link.part.recommended_price is not None:
+                    link.part.recommended_price = None
+                    plan.parts_to_update[link.part_id] = link.part
+                plan.skipped_without_wholesale += 1
+                continue
             price = _brp_link_price(link, usd_rate, brp_markup)
             if price is None or price <= 0:
                 plan.skipped_without_wholesale += 1

@@ -72,6 +72,65 @@ def _checked_batch(root: Path, name: str) -> CatalogImportBatch:
     )
 
 
+def _catalog_workbook(path: Path, rows: list[list[str]]) -> None:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(
+        [
+            "Material_No", "Part_Desc", "Last_Yr_Util", "Status", "Retail", "Wholesale",
+            "Replacement 1", "Replacement 2",
+        ]
+    )
+    sheet.append([""] * 8)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+
+
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_postgresql_concurrent_full_catalog_apply_never_mixes_current_snapshots(
+    settings, tmp_path
+):
+    """The batch lock makes one full snapshot win and the other become stale."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from apps.brp.models import BrpCatalogPart
+    from apps.catalog_import.services import run_check, save_upload
+
+    settings.PRIVATE_MEDIA_ROOT = str(tmp_path / "private")
+    first_file = tmp_path / "first.xlsx"
+    second_file = tmp_path / "second.xlsx"
+    _catalog_workbook(
+        first_file,
+        [["A", "A", "", "", "10", "8", "", ""], ["B", "B", "", "", "10", "8", "", ""]],
+    )
+    _catalog_workbook(
+        second_file,
+        [["A", "A", "", "", "10", "8", "", ""], ["C", "C", "", "", "10", "8", "", ""]],
+    )
+    first = save_upload(
+        SimpleUploadedFile("first.xlsx", first_file.read_bytes()), catalog="brp"
+    )
+    second = save_upload(
+        SimpleUploadedFile("second.xlsx", second_file.read_bytes()), catalog="brp"
+    )
+    run_check(first)
+    run_check(second)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [pool.submit(_thread_apply, batch.pk) for batch in (first, second)]
+        results = [future.result(timeout=30) for future in results]
+
+    assert sum(isinstance(result, CatalogImportBatch) for result in results) == 1
+    assert sum(isinstance(result, CatalogImportError) for result in results) == 1
+    current = set(
+        BrpCatalogPart.objects.filter(is_current=True).values_list("material_no", flat=True)
+    )
+    assert current in ({"A", "B"}, {"A", "C"})
+
+
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_postgresql_concurrent_apply_rechecks_catalog_after_shared_lock(
     settings, monkeypatch, tmp_path

@@ -445,6 +445,33 @@ def test_search_warehouse_first_then_brp(client, make_user, imported, admin):
     assert "Создать карточку" not in html
 
 
+def test_inactive_catalog_row_does_not_hide_promoted_warehouse_part(
+    client, make_user, imported, admin, tmp_path
+):
+    brp = BrpCatalogPart.objects.get(material_no="042")
+    part = promote_to_warehouse(brp, by=admin)
+    import_catalog(
+        _make_xlsx(
+            tmp_path,
+            [["CURRENT", "CURRENT", "", "", "10", "8", "", ""]],
+            "next-full-catalog.xlsx",
+        ),
+        commit=True,
+    )
+    brp.refresh_from_db()
+    part.refresh_from_db()
+    assert not brp.is_current
+    assert part.recommended_price is None
+    _login(client, make_user, superuser=True, name="boss")
+
+    html = client.get(reverse("brp_search") + "?q=042").content.decode()
+
+    assert "На складе" in html
+    assert part.name in html
+    assert "нет в текущем каталоге" in html
+    assert "Цена клиента (₽)" in html
+
+
 def test_brp_preview_when_not_in_warehouse(client, make_user, imported):
     _login(client, make_user, superuser=True)
     html = client.get(reverse("brp_search") + "?q=353589").content.decode()

@@ -95,6 +95,9 @@
               <td>
                 {% if row.link %}
                   <span class="code-pill">{{ row.link.brp_part.material_no }}</span>
+                  {% if not row.link.brp_part.is_current %}
+                    <span class="pill pill--muted">нет в текущем каталоге</span>
+                  {% endif %}
                 {% else %}
                   ·
                 {% endif %}

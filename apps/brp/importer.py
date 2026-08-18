@@ -51,7 +51,7 @@ SYNC_FIELDS = (
 )
 UPDATE_FIELDS = SYNC_FIELDS + (
     "material_no_norm", "replacement_no_1_norm", "replacement_no_2_norm",
-    "source_file", "source_row", "import_batch", "updated_at",
+    "source_file", "source_row", "import_batch", "is_current", "updated_at",
 )
 
 
@@ -66,6 +66,8 @@ class ImportSummary:
     data_rows: int = 0
     created: int = 0
     updated: int = 0
+    reactivated: int = 0
+    deactivated: int = 0
     skipped_unchanged: int = 0
     skipped_empty: int = 0
     duplicates: int = 0
@@ -137,6 +139,7 @@ def _apply(obj: BrpCatalogPart, row: dict, *, source_file: str, batch: str) -> N
         setattr(obj, name, row[name])
     obj.source_file = source_file
     obj.import_batch = batch
+    obj.is_current = True
     # bulk_create/bulk_update не вызывают save(): нормализацию считаем сами.
     obj.material_no_norm = normalize_number(obj.material_no)
     obj.replacement_no_1_norm = normalize_number(obj.replacement_no_1)
@@ -159,7 +162,8 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
             _apply(obj, row, source_file=source_file, batch=batch)
             to_create.append(obj)
             summary.created += 1
-        elif _differs(obj, row):
+        elif _differs(obj, row) or not obj.is_current:
+            was_current = obj.is_current
             old_wholesale = obj.wholesale_price_usd
             new_wholesale = row["wholesale_price_usd"]
             if (old_wholesale is None or old_wholesale == ZERO) and (
@@ -169,6 +173,8 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
             _apply(obj, row, source_file=source_file, batch=batch)
             to_update.append(obj)
             summary.updated += 1
+            if not was_current:
+                summary.reactivated += 1
         else:
             summary.skipped_unchanged += 1
     if commit:
@@ -231,6 +237,9 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
     finally:
         workbook.close()
     summary.unique_materials = len(selected_rows)
+    summary.deactivated = BrpCatalogPart.objects.filter(is_current=True).exclude(
+        material_no__in=selected_rows
+    ).count()
     winners = set(selected_rows.values())
 
     # Проход 2: обработать только выбранные строки, чанками.
@@ -260,6 +269,12 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
         if chunk:
             _flush(chunk, summary, commit=commit, source_file=path.name, batch=batch)
         if commit:
+            # Every BRP workbook is a complete supplier snapshot. This runs in
+            # the caller's apply transaction, so readers never observe a
+            # partially replaced current catalog after a failed apply.
+            summary.deactivated = BrpCatalogPart.objects.filter(is_current=True).exclude(
+                material_no__in=selected_rows
+            ).update(is_current=False, updated_at=timezone.now())
             from apps.catalog.services import get_current_price_settings, refresh_linked_part_prices
 
             pricing = get_current_price_settings()

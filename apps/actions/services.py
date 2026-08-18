@@ -674,7 +674,8 @@ def _brp_wholesale_usd(brp) -> Decimal | None:
     if not related:
         return None
     source = (
-        BrpCatalogPart.objects.filter(related, wholesale_price_usd__gt=0)
+        BrpCatalogPart.objects.filter(is_current=True, wholesale_price_usd__gt=0)
+        .filter(related)
         .order_by("pk")
         .first()
     )

@@ -233,6 +233,91 @@ def test_obsolete_part_is_never_deleted_on_reimport(db, admin, settings, tmp_pat
     assert BrpCatalogPart.objects.filter(material_no="420931284").exists()
 
 
+def test_full_catalog_apply_marks_absent_rows_not_current_and_keeps_history(
+    db, admin, settings, tmp_path
+):
+    first = _workbook(
+        [
+            ["A", "A OLD", "", "", "10", "8", "", ""],
+            ["B", "B", "", "", "10", "8", "", ""],
+            ["C", "C OLD", "", "", "20", "15", "", ""],
+        ],
+        tmp_path,
+        name="first.xlsx",
+    )
+    apply_batch(run_check(_batch(first, admin, settings, tmp_path)), by=admin)
+
+    second = _workbook(
+        [
+            ["A", "A NEW", "", "", "11", "9", "", ""],
+            ["B", "B", "", "", "10", "8", "", ""],
+            ["D", "D", "", "", "30", "25", "", ""],
+        ],
+        tmp_path,
+        name="second.xlsx",
+    )
+    preview = run_check(_batch(second, admin, settings, tmp_path))
+    assert preview.summary["deactivated"] == 1
+
+    apply_batch(preview, by=admin)
+    current = set(
+        BrpCatalogPart.objects.filter(is_current=True).values_list("material_no", flat=True)
+    )
+    assert current == {
+        "A",
+        "B",
+        "D",
+    }
+    archived = BrpCatalogPart.objects.get(material_no="C")
+    assert not archived.is_current
+    assert archived.part_desc == "C OLD"
+    assert archived.wholesale_price_usd == Decimal("15.00")
+    preview.refresh_from_db()
+    assert preview.apply_summary["deactivated"] == 1
+
+
+def test_absent_part_reappears_and_obs_in_current_file_stays_current(db, admin, settings, tmp_path):
+    first = _workbook([ROW_OK, ROW_OBS], tmp_path, name="first.xlsx")
+    apply_batch(run_check(_batch(first, admin, settings, tmp_path)), by=admin)
+    second = _workbook([ROW_OK], tmp_path, name="second.xlsx")
+    apply_batch(run_check(_batch(second, admin, settings, tmp_path)), by=admin)
+    assert not BrpCatalogPart.objects.get(material_no="420931284").is_current
+
+    reappeared = ["420931284", "OBSOLETE AGAIN", "", "OBS", "9.00", "7.00", "", ""]
+    third = _workbook([ROW_OK, reappeared], tmp_path, name="third.xlsx")
+    batch = run_check(_batch(third, admin, settings, tmp_path))
+    assert batch.summary["reactivated"] == 1
+    apply_batch(batch, by=admin)
+    part = BrpCatalogPart.objects.get(material_no="420931284")
+    assert part.is_current
+    assert part.brp_status == "OBS"
+    assert part.wholesale_price_usd == Decimal("7.00")
+
+
+def test_failed_snapshot_apply_keeps_previous_current_catalog(
+    db, admin, settings, tmp_path, monkeypatch
+):
+    first = _workbook([ROW_OK, ROW_OBS], tmp_path, name="first.xlsx")
+    apply_batch(run_check(_batch(first, admin, settings, tmp_path)), by=admin)
+    second = _workbook([ROW_OK], tmp_path, name="second.xlsx")
+    batch = run_check(_batch(second, admin, settings, tmp_path))
+
+    def fail_refresh(**kwargs):
+        raise RuntimeError("simulated price refresh failure")
+
+    monkeypatch.setattr("apps.catalog.services.refresh_linked_part_prices", fail_refresh)
+    with pytest.raises(CatalogImportError):
+        apply_batch(batch, by=admin)
+
+    current = set(
+        BrpCatalogPart.objects.filter(is_current=True).values_list("material_no", flat=True)
+    )
+    assert current == {
+        "420831955",
+        "420931284",
+    }
+
+
 # --- Проверка ничего не меняет -------------------------------------------------------------
 
 
@@ -376,6 +461,8 @@ def test_workflow_through_ui(client, make_user, db, settings, tmp_path):
 
     page = client.get(reverse("catalog_import_detail", args=[batch.pk])).content.decode()
     assert "Что изменится" in page
+    assert "Перестанут быть актуальными" in page
+    assert "полным актуальным каталогом BRP" in page
     assert "Применить импорт" in page
 
     client.post(reverse("catalog_import_apply", args=[batch.pk]), follow=True)

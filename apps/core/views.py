@@ -327,7 +327,9 @@ def search_page(request: HttpRequest) -> HttpResponse:
         norm = normalize_number(q)
         warehouse_exact = any(row.match_source == MatchSource.EXACT for row in rows)
         if norm:
-            brp_hits = list(BrpCatalogPart.objects.filter(material_no_norm=norm)[:5])
+            brp_hits = list(
+                BrpCatalogPart.objects.filter(is_current=True, material_no_norm=norm)[:5]
+            )
             polaris_hits = list(
                 PolarisCatalogPart.objects.filter(part_number_norm=norm)[:5]
             )
@@ -337,7 +339,7 @@ def search_page(request: HttpRequest) -> HttpResponse:
                 brp_q = Q(replacement_no_1_norm=norm) | Q(replacement_no_2_norm=norm)
             if not rows and len(q) >= 3:
                 brp_q |= Q(part_desc__icontains=q)
-            brp_hits = list(BrpCatalogPart.objects.filter(brp_q)[:5])
+            brp_hits = list(BrpCatalogPart.objects.filter(is_current=True).filter(brp_q)[:5])
             brp_hits_are_related = bool(brp_hits)
         if not warehouse_exact and not polaris_hits:
             polaris_q = Q(superseded_number_norm=norm) if norm else Q(pk=None)
