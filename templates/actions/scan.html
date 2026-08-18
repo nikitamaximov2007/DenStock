@@ -13,12 +13,15 @@
     финальном проведении документа.
   </p>
   <div class="action-panel">
-    <form method="post" action="{% url 'actions_cart_scan' %}" class="search-form">
+    <form method="post"
+          action="{% url 'actions_cart_scan' %}"
+          class="search-form">
       {% csrf_token %}
       <label for="scan-kind" class="visually-hidden">Действие</label>
       <select id="scan-kind" name="kind">
         {% for value, label in allowed_actions %}
-          <option value="{{ value }}" {% if value == selected_action_kind %}selected{% endif %}>{{ label }}</option>
+          <option value="{{ value }}"
+                  {% if value == selected_action_kind %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
       <input id="scan"
