@@ -61,6 +61,8 @@ supported workstation path описан в
   allowlist;
 - `DENSTOCK_EMERGENCY_PROBE_TOKEN` - отдельный случайный read-only probe token;
 - `DENSTOCK_PRODUCTION_URL=https://185-250-44-206.sslip.io`.
+- `DENSTOCK_MANIFEST_SIGNING_KEY_PATH` - persistent Ed25519 private key path;
+- `DENSTOCK_MANIFEST_SIGNING_KEY_ID` - current public-key identifier.
 
 `DENSTOCK_MODE=production` задаётся явно или берётся как default из production
 settings. Startup блокируется, если production использует не PostgreSQL,
@@ -84,6 +86,32 @@ DB host или DB name не соответствуют local allowlist и prefix
 
 Manual local setup below is retained only for an isolated development drill,
 not for a warehouse workstation. It must not create a second primary writer.
+
+The production private signing key is an administrative secret. It is not in
+Git, PostgreSQL, media, manifest, rclone or workstation files. A missing key
+causes production emergency-backup creation to fail closed. The workstation
+receives a separately provisioned pinned public key and key id only; it never
+trusts a key supplied inside a manifest. Signed production manifests are
+required for `READY`, `ACTIVE` and failback checks. Older unsigned manifests
+may be retained for diagnostics but cannot activate an emergency workstation.
+
+Production authorization is explicit and starts with no authorized primary:
+
+```bash
+docker compose exec web python manage.py authorize_emergency_primary \
+  --workstation-id '<WORKSTATION-UUID>' --actor '<ADMIN>' \
+  --confirm 'НАЗНАЧИТЬ-EMERGENCY-PRIMARY'
+docker compose exec web python manage.py revoke_emergency_primary \
+  --actor '<ADMIN>' --confirm 'ОТОЗВАТЬ-EMERGENCY-PRIMARY'
+```
+
+Authorization replacement and revocation are atomic, audit logged and advance
+the epoch. A fresh signed backup is required after every change. During a
+planned A to B replacement, freeze and preserve A's export, authorize B, sync
+B, then decommission A by wiping its standby and protected runtime. A fully
+isolated A with an older valid signed manifest cannot learn that B was later
+authorized; this is an unavoidable offline limitation, so it must never be
+left available as an emergency writer.
 
 ## Manifest schema v2
 
