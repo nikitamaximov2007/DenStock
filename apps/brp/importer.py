@@ -42,6 +42,7 @@ from .models import BrpCatalogPart
 
 CHUNK_SIZE = 4000
 ZERO = Decimal("0")
+STATUS_ALIASES = {"UCP": "USE"}
 
 # Поля, которые синхронизируются из файла при обновлении существующей строки.
 SYNC_FIELDS = (
@@ -98,6 +99,12 @@ def _dec(value):
         return Decimal(str(value).replace(",", ".").replace(" ", ""))
     except InvalidOperation:
         return None
+
+
+def normalize_status(value) -> str:
+    """Привести supplier status к canonical BRP-коду на входе импорта."""
+    status = _text(value).upper()
+    return STATUS_ALIASES.get(status, status)
 
 
 def _header_name(value) -> str:
@@ -159,7 +166,7 @@ def _row_dict(cells, row_no: int, columns: dict[str, int]) -> dict:
         "material_no": _text(_cell(cells, columns["material_no"])),
         "part_desc": _text(_cell(cells, columns["part_desc"]))[:255],
         "last_year_util": _text(_cell(cells, columns["last_year_util"]))[:20],
-        "brp_status": _text(_cell(cells, columns["brp_status"]))[:20],
+        "brp_status": normalize_status(_cell(cells, columns["brp_status"]))[:20],
         "retail_price_usd": _dec(_cell(cells, columns["retail_price_usd"])),
         "wholesale_price_usd": _dec(_cell(cells, columns["wholesale_price_usd"])),
         "replacement_no_1": _text(_cell(cells, columns["replacement_no_1"]))[:40],

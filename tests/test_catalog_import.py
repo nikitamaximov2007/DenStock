@@ -99,6 +99,7 @@ ROW_OBS = ["420931284", "DAMPER", "2024", "OBS", "31.00", "24.00", "", ""]
 ROW_USE = ["420931285", "BELT", "2024", "USE", "40.00", "31.00", "420931999", ""]
 ROW_VIN = ["420931795", "PULLEY", "2019", "VIN", "80.00", "62.00", "", ""]
 ROW_LIQ = ["420931796", "SPRING", "2023", "LIQ", "12.00", "9.00", "", ""]
+ROW_UCP = ["420931797", "ROLLER", "2025", " ucp ", "25.99", "20.00", "420931798", ""]
 ROW_REORDERED_OFFICIAL = [
     "420931797", "ROLLER", "2025", "", "420931798", "", "25.99", "20.00"
 ]
@@ -229,6 +230,23 @@ def test_use_status_keeps_replacement_number(db, admin, settings, tmp_path):
     part = BrpCatalogPart.objects.get()
     assert part.replacement_no_1 == "420931999"
     assert part.brp_status == "USE"
+
+
+def test_ucp_status_is_normalized_to_use_with_replacement(db, admin, settings, tmp_path):
+    batch = run_check(_batch(_workbook([ROW_UCP], tmp_path), admin, settings, tmp_path))
+
+    assert batch.summary["status_counts"] == {"USE": 1}
+    apply_batch(batch, by=admin)
+    part = BrpCatalogPart.objects.get()
+    assert part.brp_status == "USE"
+    assert part.replacement_no_1 == "420931798"
+
+
+def test_ucp_and_use_are_combined_in_supplier_status_summary(db, admin, settings, tmp_path):
+    batch = run_check(_batch(_workbook([ROW_USE, ROW_UCP], tmp_path), admin, settings, tmp_path))
+
+    assert batch.summary["status_counts"] == {"USE": 2}
+    assert "UCP" not in batch.summary["status_counts"]
 
 
 def test_obsolete_part_is_never_deleted_on_reimport(db, admin, settings, tmp_path):
