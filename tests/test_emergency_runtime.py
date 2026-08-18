@@ -185,6 +185,29 @@ def test_protected_workstation_identity_survives_env_validation(tmp_path, settin
 
 
 @pytest.mark.django_db
+def test_two_workstations_require_the_production_authorized_identity(
+    lifecycle_runtime, monkeypatch, settings
+):
+    _, primary_id = lifecycle_runtime
+    other_id = uuid.uuid4()
+    manifest = _base_manifest(workstation_id=primary_id)
+    monkeypatch.setattr(
+        "apps.operations.emergency_lifecycle._active_standby",
+        lambda paths=None: ({"database_name": "ignored"}, manifest),
+    )
+
+    # B may set its local role to primary, but production authorization remains for A.
+    settings.DENSTOCK_EMERGENCY_ROLE = "primary"
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(other_id)
+    with pytest.raises(EmergencyLifecycleError, match="другого аварийного"):
+        start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(primary_id)
+    session = start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+    assert session.status == OfflineSession.Status.ACTIVE
+
+
+@pytest.mark.django_db
 @override_settings(DENSTOCK_MODE="production")
 def test_http_write_updates_generation_only_after_business_mutation():
     factory = RequestFactory()
