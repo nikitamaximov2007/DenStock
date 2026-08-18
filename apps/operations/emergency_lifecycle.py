@@ -11,7 +11,12 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from . import backup
-from .emergency_environment import validate_database_target, validate_emergency_role
+from .emergency_environment import (
+    EmergencySafetyError,
+    configured_workstation_id,
+    validate_database_target,
+    validate_emergency_role,
+)
 from .emergency_manifest import validate_manifest
 from .emergency_state import business_state_marker, migration_state, record_event
 from .models import DeploymentState, OfflineSession
@@ -135,8 +140,8 @@ def _start_offline_session_database(*, kind: str, actor=None, paths=None) -> Off
             )
         try:
             authorized = uuid.UUID(str(manifest.get("authorized_emergency_primary_id")))
-            workstation = uuid.UUID(str(settings.DENSTOCK_EMERGENCY_WORKSTATION_ID))
-        except (TypeError, ValueError):
+            workstation = configured_workstation_id()
+        except (EmergencySafetyError, TypeError, ValueError):
             raise EmergencyLifecycleError(
                 "Этот компьютер не назначен аварийным основным компьютером."
             ) from None

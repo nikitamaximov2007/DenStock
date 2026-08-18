@@ -8,7 +8,7 @@ from django.db import connection
 from django.test import override_settings
 
 from apps.operations.emergency_lifecycle import _active_standby
-from apps.operations.emergency_manifest import SCHEMA_VERSION
+from apps.operations.emergency_manifest import SCHEMA_VERSION, validate_manifest
 from apps.operations.emergency_state import (
     application_migration_state,
     media_tree_sha256,
@@ -130,6 +130,36 @@ def test_active_standby_validates_manifest_file_recorded_in_control(
 
     assert selected == active
     assert manifest["backup_run_id"] == active["backup_run_id"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda manifest: manifest.__setitem__("authorized_emergency_primary_id", str(uuid.uuid4())),
+        lambda manifest: manifest.__setitem__("primary_authorization_epoch", 2),
+        lambda manifest: manifest.__setitem__("app_commit", "b" * 40),
+        lambda manifest: manifest.__setitem__("migration_fingerprint", "b" * 64),
+        lambda manifest: manifest.__setitem__("database_sha256", "b" * 64),
+        lambda manifest: manifest.__setitem__("media_tree_sha256", "b" * 64),
+        lambda manifest: manifest["data_state"].__setitem__("business_generation", 1),
+        lambda manifest: manifest["data_state"].__setitem__("business_sha256", "b" * 64),
+        lambda manifest: manifest.pop("signature"),
+    ],
+)
+def test_emergency_runtime_rejects_unsigned_or_tampered_production_manifest(
+    tmp_path, standby_runtime, settings, mutate
+):
+    source = _source_backup(tmp_path / "source", settings=settings)
+    manifest_path = source / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutate(manifest)
+    manifest_path.write_text(json.dumps(manifest, indent=3), encoding="utf-8")
+
+    report = validate_manifest(source, expected_source="production")
+
+    assert not report.ok
+    assert any("signature" in error.lower() for error in report.errors)
 
 
 @pytest.mark.django_db

@@ -45,6 +45,8 @@ F:\DenisStockEmergency\scripts\operations\Install-DenisStock-EmergencyWorkstatio
   -ProductionUrl 'https://185-250-44-206.sslip.io' `
   -PrimaryLanAddress '192.168.100.10' `
   -AppCommit '0fd18913234d344ea3ae44cbc84bb6dc411bc3ad' `
+  -ManifestPublicKeyPath 'F:\ApprovedSecrets\production-manifest-ed25519-public.pem' `
+  -ManifestSigningKeyId 'production-ed25519-2026-01' `
   -Role primary -ConfirmPrimary -InstallWslRuntime -CreateTasks
 ```
 
@@ -54,6 +56,14 @@ secrets, limits both it and `.emergency` backups to the provisioning
 administrator and Administrators, adds a Private-profile `LocalSubnet` firewall
 rule for the chosen port, creates two control shortcuts on that administrator's
 desktop and registers refresh at logon, 07:00 and 19:00.
+
+The production signing private key is never copied to this PC. The installer
+copies only the administrator-supplied pinned public key into protected
+`.emergency/trusted/` storage and creates a stable UUID in protected
+`.emergency/workstation-id.txt`. On a normal update the installer refuses to
+replace either trust anchor or identity. The Django process verifies that the
+env UUID matches this protected file, so copying `.env.emergency` from Primary
+A onto an already-provisioned B does not impersonate A.
 
 `rclone` is intentionally not configured by this script because its Yandex
 credentials must never be placed in source control. Configure the approved
@@ -76,6 +86,30 @@ local role protects a configured secondary, but it cannot prove that two
 separately provisioned machines were both declared `primary` while the network
 is down. Do not provision another primary until a production-authorized primary
 identity is added to the backup manifest and enforced during activation.
+
+Before the first signed backup, a production administrator generates and backs
+up an Ed25519 signing key through the approved secret process, provisions the
+public key above, then explicitly authorizes the printed workstation UUID:
+
+```bash
+docker compose exec web python manage.py authorize_emergency_primary \
+  --workstation-id '<WORKSTATION-UUID>' --actor '<ADMIN>' \
+  --confirm 'НАЗНАЧИТЬ-EMERGENCY-PRIMARY'
+```
+
+Replacement A to B is a production-side promotion: preserve A's final export,
+make A unavailable, authorize B (which increments the authorization epoch),
+create a fresh signed standby for B, then wipe A's local standby before it can
+be returned to service. To revoke all authorization, use
+`revoke_emergency_primary --actor '<ADMIN>' --confirm 'ОТОЗВАТЬ-EMERGENCY-PRIMARY'`.
+No migration or workstation provisioning step authorizes a Primary.
+
+A fully isolated former Primary can still start with an older genuine signed
+manifest because it cannot learn a later promotion. This is a known offline
+limitation, not a permission to operate two writers: controlled replacement,
+decommissioning and a fresh-standby policy are mandatory. A Windows or WSL
+administrator who can replace application code, the protected identity and the
+pinned key controls that endpoint and is outside this software-only boundary.
 
 LAN client PCs do not receive PostgreSQL, `.env.emergency`, rclone, standby
 data or failback controls. Create a shortcut containing only:

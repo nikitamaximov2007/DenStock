@@ -1,4 +1,6 @@
+import base64
 import copy
+import json
 import uuid
 
 import pytest
@@ -44,7 +46,11 @@ def _manifest():
         "media_sha256": "b" * 64,
         "app_commit": "c" * 40,
         "migration_fingerprint": "d" * 64,
-        "data_state": {"business_generation": 1, "business_sha256": "e" * 64},
+        "data_state": {
+            "business_generation": 1,
+            "business_sha256": "e" * 64,
+            "tables": {"inventory.stocklot": {"count": 1, "sha256": "f" * 64}},
+        },
         "authorized_emergency_primary_id": str(uuid.uuid4()),
         "primary_authorization_epoch": 1,
     }
@@ -74,8 +80,11 @@ def test_signed_manifest_is_deterministic_and_verifies(signing_settings):
         ("authorized_emergency_primary_id", str(uuid.uuid4())),
         ("primary_authorization_epoch", 2),
         ("app_commit", "f" * 40),
+        ("migration_fingerprint", "f" * 64),
         ("database_sha256", "f" * 64),
         ("media_sha256", "f" * 64),
+        ("backup_run_id", str(uuid.uuid4())),
+        ("data_state", {"business_generation": 2, "business_sha256": "e" * 64}),
     ],
 )
 def test_signed_manifest_rejects_tampering(signing_settings, path, value):
@@ -97,3 +106,40 @@ def test_missing_or_wrong_key_signature_is_rejected(signing_settings, tmp_path):
     signing_settings.DENSTOCK_MANIFEST_PUBLIC_KEY_PATH = str(wrong_public)
     with pytest.raises(ManifestSignatureError):
         verify_manifest(manifest)
+
+
+def test_signature_envelope_key_id_and_encoding_fail_closed(signing_settings):
+    manifest = _manifest()
+    sign_manifest(manifest)
+
+    manifest["signature"]["key_id"] = "unknown-production-key"
+    with pytest.raises(ManifestSignatureError):
+        verify_manifest(manifest)
+
+    manifest = _manifest()
+    sign_manifest(manifest)
+    manifest["signature"]["value"] = "not-base64!"
+    with pytest.raises(ManifestSignatureError):
+        verify_manifest(manifest)
+
+    manifest = _manifest()
+    sign_manifest(manifest)
+    manifest["signature"]["value"] = base64.b64encode(b"wrong length").decode("ascii")
+    with pytest.raises(ManifestSignatureError):
+        verify_manifest(manifest)
+
+
+def test_canonical_payload_is_independent_of_json_formatting(signing_settings):
+    manifest = _manifest()
+    sign_manifest(manifest)
+    serialized = json.dumps(manifest, ensure_ascii=False, indent=4, sort_keys=False)
+    reordered = json.loads(serialized)
+
+    assert canonical_manifest_payload(reordered) == canonical_manifest_payload(manifest)
+    verify_manifest(reordered)
+
+
+def test_production_signing_without_private_key_fails_closed(signing_settings):
+    signing_settings.DENSTOCK_MANIFEST_SIGNING_KEY_PATH = ""
+    with pytest.raises(ManifestSignatureError, match="not configured"):
+        sign_manifest(_manifest())

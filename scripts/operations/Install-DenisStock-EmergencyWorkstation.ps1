@@ -11,6 +11,10 @@ param(
     [string]$AppCommit,
     [Parameter(Mandatory)]
     [string]$ReleaseSource,
+    [Parameter(Mandatory)]
+    [string]$ManifestPublicKeyPath,
+    [Parameter(Mandatory)]
+    [string]$ManifestSigningKeyId,
     [ValidateSet("primary", "secondary")]
     [string]$Role = "primary",
     [string]$WslDistro = "Ubuntu",
@@ -121,6 +125,12 @@ foreach ($item in @(
 )) {
     Assert-SingleLineConfig -Name $item.Name -Value $item.Value
 }
+if ($ManifestSigningKeyId -notmatch '^[A-Za-z0-9._-]{1,128}$') {
+    throw "ManifestSigningKeyId содержит недопустимые символы."
+}
+if (-not (Test-Path -LiteralPath $ManifestPublicKeyPath -PathType Leaf)) {
+    throw "Pinned production manifest public key не найден."
+}
 if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw "rclone не найден, а winget недоступен. Установите rclone до provisioning."
@@ -157,6 +167,29 @@ try { $probeValue = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($probePtr
 finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($probePtr) }
 if (-not $probeValue) { throw "Probe token обязателен для безопасного failback check." }
 
+$runtimeRoot = Join-Path $RepoRoot ".emergency"
+New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+Set-AdministratorOnlyAcl -Path $runtimeRoot -Directory
+$identityFile = Join-Path $runtimeRoot "workstation-id.txt"
+if (Test-Path -LiteralPath $identityFile) {
+    try { $workstationId = [Guid]::Parse((Get-Content -LiteralPath $identityFile -Raw -Encoding UTF8).Trim()).ToString() }
+    catch { throw "Существующий workstation UUID повреждён. Не создавайте новый UUID поверх него." }
+}
+else {
+    $workstationId = [Guid]::NewGuid().ToString()
+    Set-Content -LiteralPath $identityFile -Value $workstationId -Encoding utf8NoBOM -NoNewline
+    Set-AdministratorOnlyAcl -Path $identityFile
+}
+$trustedKeyDir = Join-Path $runtimeRoot "trusted"
+New-Item -ItemType Directory -Force -Path $trustedKeyDir | Out-Null
+Set-AdministratorOnlyAcl -Path $trustedKeyDir -Directory
+$pinnedPublicKey = Join-Path $trustedKeyDir "production-manifest-ed25519-public.pem"
+if (Test-Path -LiteralPath $pinnedPublicKey) {
+    throw "Pinned production public key уже существует; provisioning не заменяет trust anchor."
+}
+Copy-Item -LiteralPath $ManifestPublicKeyPath -Destination $pinnedPublicKey
+Set-AdministratorOnlyAcl -Path $pinnedPublicKey
+
 $envFile = Join-Path $RepoRoot ".env.emergency"
 if (Test-Path -LiteralPath $envFile) { throw ".env.emergency уже существует; provisioning не перезаписывает secrets." }
 $bindHost = if ($Role -eq "primary") { $PrimaryLanAddress } else { "127.0.0.1" }
@@ -177,7 +210,10 @@ $envLines = @(
     "DATABASE_URL=postgresql://denstock_emergency:$postgresPassword@emergency-db:5432/denstock_emergency_control",
     "DENSTOCK_MODE=emergency-local",
     "DENSTOCK_INSTANCE_ID=$env:COMPUTERNAME",
-    "DENSTOCK_EMERGENCY_WORKSTATION_ID=$([Guid]::NewGuid().ToString())",
+    "DENSTOCK_EMERGENCY_WORKSTATION_ID=$workstationId",
+    "DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH=/app/.emergency/workstation-id.txt",
+    "DENSTOCK_MANIFEST_PUBLIC_KEY_PATH=/app/.emergency/trusted/production-manifest-ed25519-public.pem",
+    "DENSTOCK_MANIFEST_SIGNING_KEY_ID=$ManifestSigningKeyId",
     "DENSTOCK_APP_COMMIT=$AppCommit",
     "DENSTOCK_EMERGENCY_DB_PREFIX=denstock_emergency_",
     "DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS=emergency-db,localhost,127.0.0.1",
@@ -201,9 +237,6 @@ $envLines = @(
 $envLines | Set-Content -LiteralPath $envFile -Encoding utf8NoBOM
 
 Set-AdministratorOnlyAcl -Path $envFile
-$runtimeRoot = Join-Path $RepoRoot ".emergency"
-New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
-Set-AdministratorOnlyAcl -Path $runtimeRoot -Directory
 
 if ($Role -eq "primary") {
     $ruleName = "DenisStock Emergency LAN $Port"

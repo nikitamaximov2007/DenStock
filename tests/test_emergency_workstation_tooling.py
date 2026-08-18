@@ -20,6 +20,10 @@ def test_workstation_provisioner_uses_wsl_engine_and_scoped_lan_firewall():
     assert "DENSTOCK_EMERGENCY_ROLE=$Role" in installer
     assert "DENSTOCK_EMERGENCY_BIND_HOST=$bindHost" in installer
     assert "POSTGRES_PASSWORD=$postgresPassword" in installer
+    assert "ManifestPublicKeyPath" in installer
+    assert "DENSTOCK_MANIFEST_PUBLIC_KEY_PATH=/app/.emergency/trusted/production-manifest-ed25519-public.pem" in installer
+    assert "workstation-id.txt" in installer
+    assert "DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH=/app/.emergency/workstation-id.txt" in installer
 
 
 def test_operator_launcher_blocks_secondary_and_supports_wsl_without_docker_desktop():
@@ -56,3 +60,4 @@ def test_provisioning_keeps_secrets_and_backup_runtime_off_regular_desktops():
     assert '[Environment]::GetFolderPath("Desktop")' in installer
     assert "CommonDesktopDirectory" not in installer
     assert "WSL systemd включён" in installer
+    assert "Pinned production public key уже существует" in installer

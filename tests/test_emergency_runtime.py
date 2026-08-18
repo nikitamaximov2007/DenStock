@@ -15,6 +15,7 @@ from apps.operations.emergency_lifecycle import (
     emergency_context,
     start_offline_session,
 )
+from apps.operations.emergency_environment import EmergencySafetyError, configured_workstation_id
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import EmergencyPaths, save_control
 from apps.operations.write_guard import BusinessWriteBlocked, BusinessWriteGuardMiddleware
@@ -160,6 +161,27 @@ def test_business_write_requires_active_local_session():
 def test_secondary_workstation_cannot_activate_a_second_emergency_writer(lifecycle_runtime):
     with pytest.raises(EmergencyLifecycleError, match="secondary"):
         start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+
+
+def test_protected_workstation_identity_rejects_copied_environment(tmp_path, settings):
+    first, second = uuid.uuid4(), uuid.uuid4()
+    identity = tmp_path / "workstation-id.txt"
+    identity.write_text(str(second), encoding="utf-8")
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(first)
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH = str(identity)
+
+    with pytest.raises(EmergencySafetyError, match="does not match"):
+        configured_workstation_id()
+
+
+def test_protected_workstation_identity_survives_env_validation(tmp_path, settings):
+    workstation_id = uuid.uuid4()
+    identity = tmp_path / "workstation-id.txt"
+    identity.write_text(str(workstation_id), encoding="utf-8")
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(workstation_id)
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH = str(identity)
+
+    assert configured_workstation_id() == workstation_id
 
 
 @pytest.mark.django_db
