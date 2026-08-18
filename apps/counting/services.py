@@ -63,7 +63,11 @@ def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
     """Позиция BRP только по точному material_no."""
     if not norm:
         return None
-    return BrpCatalogPart.objects.filter(material_no_norm=norm).order_by("pk").first()
+    return (
+        BrpCatalogPart.objects.filter(is_current=True, material_no_norm=norm)
+        .order_by("pk")
+        .first()
+    )
 
 
 def find_brp_price_source(
@@ -106,7 +110,8 @@ def find_brp_price_source(
         return selected
     if candidates is None:
         priced = (
-            BrpCatalogPart.objects.filter(related, wholesale_price_usd__gt=0)
+            BrpCatalogPart.objects.filter(is_current=True, wholesale_price_usd__gt=0)
+            .filter(related)
             .order_by("pk")
             .first()
         )
@@ -150,7 +155,7 @@ def load_brp_price_candidates(selected_parts) -> list[BrpCatalogPart]:
     if not exact_norms and not forward_norms:
         return []
     return list(
-        BrpCatalogPart.objects.filter(
+        BrpCatalogPart.objects.filter(is_current=True).filter(
             Q(material_no_norm__in=exact_norms | forward_norms)
             | Q(replacement_no_1_norm__in=exact_norms)
             | Q(replacement_no_2_norm__in=exact_norms),

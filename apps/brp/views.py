@@ -68,7 +68,7 @@ def _brp_matches(q: str, norm: str, status: str, settings) -> list:
     query = number_q
     if len(q) >= 3:
         query = query | Q(part_desc__icontains=q)
-    qs = BrpCatalogPart.objects.filter(query)
+    qs = BrpCatalogPart.objects.filter(is_current=True).filter(query)
     if status:
         qs = qs.filter(brp_status=status)
     parts = list(qs.order_by("material_no")[:BRP_LIMIT])
@@ -102,7 +102,7 @@ def brp_search(request):
         "status": status,
         "statuses": sorted(BrpCatalogPart.STATUS_LABELS.items()),
         "pricing": pricing,
-        "catalog_size": BrpCatalogPart.objects.count(),
+        "catalog_size": BrpCatalogPart.objects.filter(is_current=True).count(),
         "can_manage_parts": request.user.can_manage_parts,
         "can_manage_inventory": request.user.can_manage_inventory,
         "warehouse_rows": [],
@@ -122,7 +122,7 @@ def brp_promote(request, pk):
     """«Добавить в склад»: только карточка, остатков не создаёт."""
     if not request.user.can_manage_parts:
         raise PermissionDenied
-    brp_part = get_object_or_404(BrpCatalogPart, pk=pk)
+    brp_part = get_object_or_404(BrpCatalogPart, pk=pk, is_current=True)
     try:
         part = promote_to_warehouse(brp_part, by=request.user)
     except BrpPromotionError as exc:
@@ -142,7 +142,7 @@ def brp_intake(request, pk):
     """«Учесть наличие»: карточка (если нужно) + черновик начальных остатков."""
     if not request.user.can_manage_inventory:
         raise PermissionDenied
-    brp_part = get_object_or_404(BrpCatalogPart, pk=pk)
+    brp_part = get_object_or_404(BrpCatalogPart, pk=pk, is_current=True)
     part = find_promoted_part(brp_part)
     if part is None:
         if not request.user.can_manage_parts:

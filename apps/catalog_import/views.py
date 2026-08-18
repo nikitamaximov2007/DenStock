@@ -32,6 +32,8 @@ SUMMARY_ROWS = (
     ("unique_materials", "Уникальных номеров"),
     ("created", "Новых позиций"),
     ("updated", "Изменённых позиций"),
+    ("reactivated", "Снова актуальных"),
+    ("deactivated", "Перестанут быть актуальными"),
     ("skipped_unchanged", "Без изменений"),
     ("skipped_empty", "Пропущено пустых"),
     ("duplicates", "Дубликатов номера"),

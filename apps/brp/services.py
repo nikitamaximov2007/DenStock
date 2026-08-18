@@ -47,6 +47,8 @@ def promote_to_warehouse(
     связи навсегда); manual_price переопределяет итог, не затирая ни исходную
     цену BRP в долларах, ни рассчитанное значение.
     """
+    if not brp_part.is_current:
+        raise BrpPromotionError("Эта позиция отсутствует в актуальном каталоге BRP.")
     existing = BrpPartLink.objects.filter(brp_part=brp_part).select_related("part").first()
     if existing is not None:
         return existing.part

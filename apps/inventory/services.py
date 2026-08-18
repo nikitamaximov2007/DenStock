@@ -844,7 +844,9 @@ def _found_part_from_entry(entry: dict, *, by=None):
 
     pricing = get_current_price_settings()
     if source == "brp":
-        catalog = BrpCatalogPart.objects.select_for_update().filter(pk=source_id).first()
+        catalog = BrpCatalogPart.objects.select_for_update().filter(
+            pk=source_id, is_current=True
+        ).first()
         if catalog is None or catalog.material_no_norm != expected:
             raise InventoryError("Exact-позиция BRP больше не найдена.")
         link = BrpPartLink.objects.filter(brp_part=catalog).select_related("part").first()

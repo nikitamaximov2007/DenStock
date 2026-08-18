@@ -43,6 +43,7 @@ class BrpCatalogPart(models.Model):
     source_file = models.CharField("Файл импорта", max_length=255, blank=True)
     source_row = models.PositiveIntegerField("Строка в файле", null=True, blank=True)
     import_batch = models.CharField("Партия импорта", max_length=40, blank=True)
+    is_current = models.BooleanField("В актуальном каталоге", default=True, db_index=True)
     imported_at = models.DateTimeField("Импортировано", auto_now_add=True)
     updated_at = models.DateTimeField("Обновлено", auto_now=True)
 

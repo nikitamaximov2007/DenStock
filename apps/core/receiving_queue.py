@@ -128,7 +128,7 @@ def find_receiving_candidates(raw: str, *, warehouse_part_id: int | None = None)
     candidates: list[ReceivingCandidate] = []
 
     if norm:
-        brp_parts = BrpCatalogPart.objects.filter(material_no_norm=norm)
+        brp_parts = BrpCatalogPart.objects.filter(is_current=True, material_no_norm=norm)
         candidates.extend(_brp_candidate(part, pricing) for part in brp_parts[:25])
         polaris_parts = PolarisCatalogPart.objects.filter(part_number_norm=norm)
         candidates.extend(_polaris_candidate(part, pricing) for part in polaris_parts[:25])
@@ -171,7 +171,7 @@ def resolve_queue_reference(entry: dict) -> ReceivingCandidate:
     source_id = entry.get("source_id")
     pricing = get_current_price_settings()
     if source == "brp":
-        part = BrpCatalogPart.objects.filter(pk=source_id).first()
+        part = BrpCatalogPart.objects.filter(pk=source_id, is_current=True).first()
         if part is None:
             raise ReceivingQueueError("Позиция BRP больше не найдена.")
         return _brp_candidate(part, pricing)

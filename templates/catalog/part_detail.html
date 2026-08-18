@@ -45,6 +45,12 @@
         <th>Рекомендуемая цена</th>
         <td>{{ part.recommended_price|money_int }}</td>
       </tr>
+      {% if part.brp_link and not part.brp_link.brp_part.is_current %}
+        <tr>
+          <th>BRP-каталог</th>
+          <td>Позиция отсутствует в текущем каталоге BRP.</td>
+        </tr>
+      {% endif %}
       <tr>
         <th>Минимальная цена</th>
         <td>{{ part.min_price|money_int }}</td>
@@ -76,7 +82,7 @@
     {% for n in numbers %}
       <li>
         {{ n.value }} · {{ n.get_kind_display }}
-        {% if n.is_primary %} (основной){% endif %}
+        {% if n.is_primary %}(основной){% endif %}
         {% if can_manage %}
           <form method="post"
                 action="{% url 'part_number_delete' n.pk %}"

@@ -153,3 +153,21 @@ def test_recalculate_keeps_existing_recommendation_when_wholesale_price_is_missi
     part.refresh_from_db()
     assert part.recommended_price == Decimal("4321")
     assert "Без оптовой цены, текущая цена сохранена: 1" in capsys.readouterr().out
+
+
+def test_inactive_brp_catalog_row_clears_only_current_recommendation(wholesale_price_data):
+    data = wholesale_price_data
+    part = data["part"]
+    action = data["action"]
+    sale_line = SaleLine.objects.get(sale=action.sale)
+    data["brp"].is_current = False
+    data["brp"].save(update_fields=["is_current"])
+
+    call_command("recalculate_linked_part_prices", "--apply")
+
+    part.refresh_from_db()
+    action.refresh_from_db()
+    sale_line.refresh_from_db()
+    assert part.recommended_price is None
+    assert action.unit_price_rub == Decimal("1470")
+    assert sale_line.unit_price == Decimal("1470")
