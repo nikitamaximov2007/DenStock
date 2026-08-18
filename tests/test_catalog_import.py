@@ -36,6 +36,10 @@ HEADERS = [
     "Material_No", "Part_Desc", "Last_Yr_Util", "Status",
     "РОЗНИЦА", "ОПТОВАЯ", "ЗАМЕНА НОМЕРА", "ЗАМЕНА НОМЕРА",
 ]
+REORDERED_OFFICIAL_HEADERS = [
+    "Material_No", "Part_Desc", "Last_Yr_Util", "Status",
+    "ЗАМЕНА НОМЕРА", "ЗАМЕНА НОМЕРА", "РОЗНИЦА", "ОПТОВАЯ",
+]
 NOTE_ROW = ["", "", "", "", "", "", "", ""]
 
 
@@ -95,6 +99,9 @@ ROW_OBS = ["420931284", "DAMPER", "2024", "OBS", "31.00", "24.00", "", ""]
 ROW_USE = ["420931285", "BELT", "2024", "USE", "40.00", "31.00", "420931999", ""]
 ROW_VIN = ["420931795", "PULLEY", "2019", "VIN", "80.00", "62.00", "", ""]
 ROW_LIQ = ["420931796", "SPRING", "2023", "LIQ", "12.00", "9.00", "", ""]
+ROW_REORDERED_OFFICIAL = [
+    "420931797", "ROLLER", "2025", "", "420931798", "", "25.99", "20.00"
+]
 
 
 # --- Разбор файла -----------------------------------------------------------------------
@@ -494,6 +501,17 @@ def test_settings_exposes_brp_catalog_import_to_authorized_user(client, make_use
     assert "Проверить файл" in import_page.content.decode()
 
 
+def test_sidebar_exposes_direct_brp_catalog_import_to_authorized_user(client, make_user, db):
+    _login(client, make_user)
+
+    response = client.get(reverse("directory_index"))
+    sidebar = response.content.decode().split('<nav class="sidebar"', 1)[1].split("</nav>", 1)[0]
+
+    assert 'data-nav-group="settings"' in sidebar
+    assert "Импорт каталога BRP" in sidebar
+    assert reverse("catalog_import_list") in sidebar
+
+
 def test_settings_hides_brp_catalog_import_without_catalog_permission(client, make_user, db):
     from apps.accounts import roles
 
@@ -504,6 +522,63 @@ def test_settings_hides_brp_catalog_import_without_catalog_permission(client, ma
     assert response.status_code == 200
     assert "Импорт каталога BRP" not in response.content.decode()
     assert client.get(reverse("catalog_import_list")).status_code == 403
+
+
+def test_reordered_official_headers_are_checked_without_catalog_writes(
+    db, admin, settings, tmp_path
+):
+    path = _workbook(
+        [ROW_REORDERED_OFFICIAL],
+        tmp_path,
+        headers=REORDERED_OFFICIAL_HEADERS,
+        note=False,
+    )
+    batch = _batch(path, admin, settings, tmp_path)
+
+    checked = run_check(batch)
+
+    assert checked.status == CatalogImportBatch.Status.CHECKED
+    assert checked.summary["created"] == 1
+    assert checked.summary["with_retail_price"] == 1
+    assert checked.summary["with_wholesale_price"] == 1
+    assert checked.summary["with_replacement"] == 1
+    assert BrpCatalogPart.objects.count() == 0
+
+
+def test_unsupported_headers_are_a_controlled_failed_check(db, admin, settings, tmp_path):
+    path = _workbook([ROW_OK], tmp_path, headers=["Material_No"], note=False)
+    batch = _batch(path, admin, settings, tmp_path)
+
+    with pytest.raises(CatalogImportError, match="Формат Excel не поддерживается"):
+        run_check(batch)
+
+    batch.refresh_from_db()
+    assert batch.status == CatalogImportBatch.Status.CHECK_FAILED
+    assert "колонки" in batch.error_text
+    assert BrpCatalogPart.objects.count() == 0
+
+
+def test_unexpected_check_failure_is_recorded_without_raw_error(
+    db, admin, settings, tmp_path, monkeypatch
+):
+    batch = _batch(_workbook([ROW_OK], tmp_path), admin, settings, tmp_path)
+
+    class BrokenAdapter:
+        def fingerprint(self):
+            return "fingerprint"
+
+        def check(self, path):
+            raise RuntimeError("unexpected parser failure")
+
+    monkeypatch.setattr("apps.catalog_import.services.get_adapter", lambda catalog: BrokenAdapter())
+
+    with pytest.raises(CatalogImportError, match="Не удалось проверить файл"):
+        run_check(batch)
+
+    batch.refresh_from_db()
+    assert batch.status == CatalogImportBatch.Status.CHECK_FAILED
+    assert "RuntimeError" in batch.error_text
+    assert BrpCatalogPart.objects.count() == 0
 
 
 def test_inspector_page_opens(client, make_user, db, admin, settings, tmp_path):

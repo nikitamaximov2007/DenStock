@@ -16,10 +16,11 @@
 и обновляет отличающиеся записи (счётчик zero_wholesale_price_repaired).
 
 Формат файла (проверен на реальном прайсе):
-- первый лист; строка 1 — заголовки; строка 2 — примечания (пустая в колонках
-  данных); данные со строки 3;
-- значимые колонки A..H: Material_No, Part_Desc, Last_Yr_Util, Status,
-  РОЗНИЦА (USD), ОПТОВАЯ (USD), ЗАМЕНА НОМЕРА, ЗАМЕНА НОМЕРА;
+- первый лист; строка 1 — заголовки; данные начинаются со строки 2. Старые
+  файлы с пустой строкой примечаний после заголовка поддерживаются;
+- значимые колонки определяются по заголовку, а не позиции: Material_No,
+  Part_Desc, Last_Yr_Util, Status, РОЗНИЦА, ОПТОВАЯ и две ЗАМЕНА НОМЕРА.
+  Поддерживаются оба официальных порядка цен и замен;
 - колонки правее H (легенда статусов) игнорируются;
 - Material_No хранится СТРОКОЙ (ведущие нули не теряются), пробелы обрезаются,
   пустые ячейки нормализуются.
@@ -39,8 +40,7 @@ from apps.catalog.models import normalize_number
 
 from .models import BrpCatalogPart
 
-CHUNK_SIZE = 1000
-DATA_COLUMNS = 8  # A..H
+CHUNK_SIZE = 4000
 ZERO = Decimal("0")
 
 # Поля, которые синхронизируются из файла при обновлении существующей строки.
@@ -100,17 +100,70 @@ def _dec(value):
         return None
 
 
-def _row_dict(cells, row_no: int) -> dict:
-    padded = list(cells[:DATA_COLUMNS]) + [None] * (DATA_COLUMNS - len(cells))
+def _header_name(value) -> str:
+    """Нормализовать заголовок Excel без привязки к регистру и пробелам."""
+    return "".join(char for char in _text(value).casefold() if char.isalnum())
+
+
+def _column_map(worksheet) -> dict[str, int]:
+    """Вернуть индексы обязательных колонок поддерживаемого BRP-листа."""
+    headers = next(worksheet.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    positions: dict[str, list[int]] = {}
+    for index, value in enumerate(headers):
+        positions.setdefault(_header_name(value), []).append(index)
+
+    aliases = {
+        "material_no": ("materialno",),
+        "part_desc": ("partdesc",),
+        "last_year_util": ("lastyrutil",),
+        "brp_status": ("status",),
+        "retail_price_usd": ("розница", "розницаusd", "retail", "retailusd"),
+        "wholesale_price_usd": ("оптовая", "оптоваяusd", "wholesale", "wholesaleusd"),
+    }
+    columns: dict[str, int] = {}
+    missing = []
+    for field_name, names in aliases.items():
+        indexes = [index for name in names for index in positions.get(name, [])]
+        if len(indexes) != 1:
+            missing.append(names[0])
+        else:
+            columns[field_name] = indexes[0]
+
+    replacements = positions.get("заменаномера", [])
+    if len(replacements) >= 2:
+        columns["replacement_no_1"], columns["replacement_no_2"] = replacements[:2]
+    else:
+        first = positions.get("replacement1", [])
+        second = positions.get("replacement2", [])
+        if len(first) == 1 and len(second) == 1:
+            columns["replacement_no_1"] = first[0]
+            columns["replacement_no_2"] = second[0]
+        else:
+            missing.append("ЗАМЕНА НОМЕРА (две колонки)")
+
+    if missing:
+        raise BrpImportError(
+            "Формат Excel не поддерживается: отсутствуют или повторяются колонки "
+            + ", ".join(missing)
+            + "."
+        )
+    return columns
+
+
+def _cell(cells, index: int):
+    return cells[index] if index < len(cells) else None
+
+
+def _row_dict(cells, row_no: int, columns: dict[str, int]) -> dict:
     return {
-        "material_no": _text(padded[0]),
-        "part_desc": _text(padded[1])[:255],
-        "last_year_util": _text(padded[2])[:20],
-        "brp_status": _text(padded[3])[:20],
-        "retail_price_usd": _dec(padded[4]),
-        "wholesale_price_usd": _dec(padded[5]),
-        "replacement_no_1": _text(padded[6])[:40],
-        "replacement_no_2": _text(padded[7])[:40],
+        "material_no": _text(_cell(cells, columns["material_no"])),
+        "part_desc": _text(_cell(cells, columns["part_desc"]))[:255],
+        "last_year_util": _text(_cell(cells, columns["last_year_util"]))[:20],
+        "brp_status": _text(_cell(cells, columns["brp_status"]))[:20],
+        "retail_price_usd": _dec(_cell(cells, columns["retail_price_usd"])),
+        "wholesale_price_usd": _dec(_cell(cells, columns["wholesale_price_usd"])),
+        "replacement_no_1": _text(_cell(cells, columns["replacement_no_1"]))[:40],
+        "replacement_no_2": _text(_cell(cells, columns["replacement_no_2"]))[:40],
         "source_row": row_no,
     }
 
@@ -197,14 +250,16 @@ def _open_worksheet(path: Path, sheet: str | None):
     return workbook, worksheet
 
 
-def _select_best_rows(worksheet, summary: ImportSummary) -> dict[str, int]:
+def _select_best_rows(
+    worksheet, summary: ImportSummary, columns: dict[str, int]
+) -> dict[str, int]:
     """Проход 1: для каждого Material_No выбрать номер лучшей строки файла."""
     best: dict[str, tuple[tuple[int, int], int]] = {}
     for row_no, cells in enumerate(
         worksheet.iter_rows(min_row=2, values_only=True), start=2
     ):
         summary.total_rows_scanned += 1
-        row = _row_dict(cells, row_no)
+        row = _row_dict(cells, row_no, columns)
         material = row["material_no"]
         if not material:
             summary.skipped_empty += 1
@@ -233,7 +288,7 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
     # Проход 1: выбор лучших строк (в памяти только номера строк и ранги).
     workbook, worksheet = _open_worksheet(path, sheet)
     try:
-        selected_rows = _select_best_rows(worksheet, summary)
+        selected_rows = _select_best_rows(worksheet, summary, _column_map(worksheet))
     finally:
         workbook.close()
     summary.unique_materials = len(selected_rows)
@@ -245,13 +300,14 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
     # Проход 2: обработать только выбранные строки, чанками.
     workbook, worksheet = _open_worksheet(path, sheet)
     try:
+        columns = _column_map(worksheet)
         chunk: list[dict] = []
         for row_no, cells in enumerate(
             worksheet.iter_rows(min_row=2, values_only=True), start=2
         ):
             if row_no not in winners:
                 continue
-            row = _row_dict(cells, row_no)
+            row = _row_dict(cells, row_no, columns)
             summary.data_rows += 1
             if row["brp_status"]:
                 summary.status_counts[row["brp_status"]] += 1

@@ -106,6 +106,15 @@ def _settings_tabs(user, path):
     if user.can_manage_parts:
         tabs.append(
             _tab(
+                "Импорт каталога BRP",
+                reverse("catalog_import_list"),
+                sidebar_key="catalog-import",
+                icon="database",
+                active=path.startswith("/directories/catalog-import/"),
+            )
+        )
+        tabs.append(
+            _tab(
                 "Цены",
                 reverse("price_settings"),
                 sidebar_key="prices",

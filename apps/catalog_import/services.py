@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from .models import CatalogImportBatch
 
 MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 STORAGE_SUBDIR = "catalog-imports"
+logger = logging.getLogger(__name__)
 
 
 class CatalogImportError(RuntimeError):
@@ -92,11 +94,12 @@ def run_check(batch: CatalogImportBatch) -> CatalogImportBatch:
     try:
         summary = adapter.check(path)
     except CatalogAdapterError as exc:
-        batch.status = CatalogImportBatch.Status.CHECK_FAILED
-        batch.error_text = str(exc)[:2000]
-        batch.checked_at = timezone.now()
-        batch.save(update_fields=["status", "error_text", "checked_at"])
+        _mark_check_failed(batch, str(exc))
         raise CatalogImportError(str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - user must not receive a raw 500
+        logger.exception("Unexpected catalog check failure for batch %s", batch.pk)
+        _mark_check_failed(batch, f"{type(exc).__name__}: {exc}")
+        raise CatalogImportError("Не удалось проверить файл. Обратитесь к администратору.") from exc
 
     batch.summary = summary
     batch.catalog_fingerprint = fingerprint
@@ -107,6 +110,13 @@ def run_check(batch: CatalogImportBatch) -> CatalogImportBatch:
         update_fields=["summary", "catalog_fingerprint", "status", "error_text", "checked_at"]
     )
     return batch
+
+
+def _mark_check_failed(batch: CatalogImportBatch, error: str) -> None:
+    batch.status = CatalogImportBatch.Status.CHECK_FAILED
+    batch.error_text = error[:2000]
+    batch.checked_at = timezone.now()
+    batch.save(update_fields=["status", "error_text", "checked_at"])
 
 
 def apply_batch(batch: CatalogImportBatch, *, by=None) -> CatalogImportBatch:
