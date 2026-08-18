@@ -10,7 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from django.conf import settings
+
 from .emergency_state import sha256_file
+from .manifest_signing import ManifestSignatureError, verify_manifest
 
 SCHEMA_VERSION = 2
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -75,6 +78,11 @@ def validate_manifest(
         result.errors.append(str(exc))
         return result
     manifest = result.manifest
+    if expected_source == "production" and settings.DENSTOCK_MODE == "emergency-local":
+        try:
+            verify_manifest(manifest)
+        except ManifestSignatureError as exc:
+            result.errors.append(str(exc))
 
     if manifest.get("schema_version") != SCHEMA_VERSION:
         result.errors.append(

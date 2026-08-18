@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import uuid
 from datetime import datetime
 
 from django.conf import settings
@@ -131,6 +132,22 @@ def _start_offline_session_database(*, kind: str, actor=None, paths=None) -> Off
         ):
             raise EmergencyLifecycleError(
                 "Planned failover требует backup, созданный под production maintenance lock."
+            )
+        try:
+            authorized = uuid.UUID(str(manifest.get("authorized_emergency_primary_id")))
+            workstation = uuid.UUID(str(settings.DENSTOCK_EMERGENCY_WORKSTATION_ID))
+        except (TypeError, ValueError):
+            raise EmergencyLifecycleError(
+                "Этот компьютер не назначен аварийным основным компьютером."
+            ) from None
+        if authorized != workstation:
+            raise EmergencyLifecycleError(
+                "Резервная копия создана для другого аварийного компьютера."
+            )
+        epoch = manifest.get("primary_authorization_epoch")
+        if not isinstance(epoch, int) or epoch < 1:
+            raise EmergencyLifecycleError(
+                "Авторизация аварийного компьютера отсутствует или устарела."
             )
         local_commit = settings.DENSTOCK_APP_COMMIT or backup._git_commit()
         if manifest["app_commit"] != local_commit:

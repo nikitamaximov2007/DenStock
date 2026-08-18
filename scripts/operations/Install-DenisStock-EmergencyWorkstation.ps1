@@ -177,6 +177,7 @@ $envLines = @(
     "DATABASE_URL=postgresql://denstock_emergency:$postgresPassword@emergency-db:5432/denstock_emergency_control",
     "DENSTOCK_MODE=emergency-local",
     "DENSTOCK_INSTANCE_ID=$env:COMPUTERNAME",
+    "DENSTOCK_EMERGENCY_WORKSTATION_ID=$([Guid]::NewGuid().ToString())",
     "DENSTOCK_APP_COMMIT=$AppCommit",
     "DENSTOCK_EMERGENCY_DB_PREFIX=denstock_emergency_",
     "DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS=emergency-db,localhost,127.0.0.1",

@@ -39,6 +39,8 @@ class DeploymentState(models.Model):
         db_index=True,
     )
     state_reason = models.CharField(max_length=255, blank=True)
+    authorized_emergency_primary_id = models.UUIDField(null=True, blank=True)
+    primary_authorization_epoch = models.PositiveBigIntegerField(default=0)
     state_changed_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
