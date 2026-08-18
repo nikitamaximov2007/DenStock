@@ -51,6 +51,9 @@ class Command(BaseCommand):
                 payload["standby_age_hours"]
                 > settings.DENSTOCK_EMERGENCY_STALE_WARNING_HOURS
             )
+            payload["standby_app_compatible"] = (
+                active.get("app_commit") == settings.DENSTOCK_APP_COMMIT
+            )
         if options["json"]:
             self.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             return
@@ -70,5 +73,11 @@ class Command(BaseCommand):
             self.stdout.write(f"Production commit: {active['app_commit']}")
             if payload["standby_stale"]:
                 self.stdout.write(self.style.WARNING("ВНИМАНИЕ: аварийная копия устарела."))
+            if not payload["standby_app_compatible"]:
+                self.stdout.write(
+                    self.style.ERROR(
+                        "НЕ ГОТОВО: standby app_commit несовместим с local application."
+                    )
+                )
         else:
             self.stdout.write(self.style.WARNING("Проверенной standby-копии нет."))

@@ -34,6 +34,7 @@ from .emergency_state import (
     migration_state,
     sha256_file,
 )
+from .manifest_signing import sign_manifest
 from .models import DeploymentState
 
 
@@ -272,6 +273,12 @@ def backup_all(
         "created_at": created_at,
         "source_environment": settings.DENSTOCK_MODE,
         "source_instance_id": settings.DENSTOCK_INSTANCE_ID,
+        "authorized_emergency_primary_id": (
+            str(state.authorized_emergency_primary_id)
+            if state.authorized_emergency_primary_id
+            else None
+        ),
+        "primary_authorization_epoch": state.primary_authorization_epoch,
         "app_commit": app_commit,
         "database_name": Path(str(s.get("NAME") or "")).name,
         "database_identity": str(state.database_identity),
@@ -307,6 +314,8 @@ def backup_all(
                 + ", ".join(sorted(forbidden))
             )
         manifest.update(extra_manifest)
+    if settings.DENSTOCK_MODE == "production":
+        sign_manifest(manifest)
     write_manifest(run / "manifest.json", manifest)
     validation = validate_manifest(run, expected_source=settings.DENSTOCK_MODE)
     if not validation.ok:

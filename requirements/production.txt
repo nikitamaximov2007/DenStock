@@ -1,6 +1,7 @@
 # Verified in the production web container and PostgreSQL QA on 2026-08-17.
 asgiref==3.12.1
 Django==5.2.17
+cryptography==50.0.0
 django-environ==0.14.0
 et_xmlfile==2.0.0
 gunicorn==26.0.0

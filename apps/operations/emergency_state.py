@@ -47,6 +47,17 @@ BUSINESS_APP_LABELS = frozenset(
         "writeoffs",
     }
 )
+# Django auth is not business data as a whole.  These rows are the narrow
+# exception: they determine the effective authorization of DenisStock users
+# and must not be silently overwritten by a whole-database failback.
+AUTHORIZATION_MODEL_LABELS = frozenset(
+    {
+        "auth.group",
+        "auth.permission",
+        "auth.group_permissions",
+        "contenttypes.contenttype",
+    }
+)
 SENSITIVE_DETAIL_KEYS = frozenset(
     {"authorization", "credential", "database_url", "password", "secret", "token"}
 )
@@ -126,14 +137,29 @@ def business_state_marker(*, using="default") -> dict:
 
     The operation is intentionally expensive and is used only for backup/failback
     control. It avoids relying on row counts or commit SHA alone.
+
+    Набор моделей намеренно совпадает с тем, что охраняет защита записи
+    (`write_guard._guarded_table_pattern`): те же бизнес-приложения и то же
+    `include_auto_created=True`. Промежуточные таблицы связей «многие ко многим»
+    создаются Django автоматически, но данные в них настоящие: в DenisStock это
+    членство пользователя в группах, то есть РОЛИ, и персональные права. Пока
+    отпечаток строился без них, изменение роли на production было для него
+    невидимо, и failback опирался только на счётчик поколений. Теперь оба
+    признака независимо видят это изменение.
     """
     table_markers = {}
     combined = hashlib.sha256()
     models = sorted(
         (
             model
-            for model in apps.get_models(include_auto_created=False)
-            if model._meta.app_label in BUSINESS_APP_LABELS and model._meta.managed
+            for model in apps.get_models(include_auto_created=True)
+            if (
+                model._meta.managed
+                and (
+                    model._meta.app_label in BUSINESS_APP_LABELS
+                    or model._meta.label_lower in AUTHORIZATION_MODEL_LABELS
+                )
+            )
         ),
         key=lambda model: model._meta.label_lower,
     )

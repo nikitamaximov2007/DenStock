@@ -1,12 +1,14 @@
 import json
+import uuid
 from pathlib import Path
 
 import pytest
+from django.conf import settings as django_settings
 from django.db import connection
 from django.test import override_settings
 
 from apps.operations.emergency_lifecycle import _active_standby
-from apps.operations.emergency_manifest import SCHEMA_VERSION
+from apps.operations.emergency_manifest import SCHEMA_VERSION, validate_manifest
 from apps.operations.emergency_state import (
     application_migration_state,
     media_tree_sha256,
@@ -20,11 +22,15 @@ from apps.operations.standby import (
     load_control,
     refresh_standby,
 )
+from tests.emergency_support import configure_test_trust, sign_production_manifest
 
 COMMIT = "a" * 40
 
 
-def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
+def _source_backup(
+    root: Path, *, run_id="2026-08-12_10-00-00", app_commit=COMMIT, settings=None
+) -> Path:
+    settings = settings or django_settings
     run = root / run_id
     run.mkdir(parents=True)
     database = run / "db.dump"
@@ -37,7 +43,11 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
         "verified_at": "2026-08-12T10:01:00+05:00",
         "source_environment": "production",
         "source_instance_id": "production",
-        "app_commit": COMMIT,
+        "authorized_emergency_primary_id": str(
+            uuid.UUID(settings.DENSTOCK_EMERGENCY_WORKSTATION_ID)
+        ),
+        "primary_authorization_epoch": 1,
+        "app_commit": app_commit,
         "database_name": "denstock",
         "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
         "database_dump_filename": database.name,
@@ -57,6 +67,7 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00") -> Path:
         "verification_status": "verified",
         "consistency": "database_snapshot",
     }
+    sign_production_manifest(manifest, settings)
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run
 
@@ -66,6 +77,7 @@ def standby_runtime(tmp_path, monkeypatch, settings):
     settings.DENSTOCK_MODE = "emergency-local"
     settings.DENSTOCK_INSTANCE_ID = "warehouse-pc-test"
     settings.DENSTOCK_APP_COMMIT = COMMIT
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     settings.DENSTOCK_EMERGENCY_DB_PREFIX = "denstock_emergency_"
     settings.DENSTOCK_EMERGENCY_KEEP_STANDBY = 2
     paths = EmergencyPaths(tmp_path / "emergency")
@@ -90,10 +102,10 @@ def standby_runtime(tmp_path, monkeypatch, settings):
 
 
 @pytest.mark.django_db
-def test_successful_standby_refresh_is_activated_atomically(tmp_path, standby_runtime):
+def test_successful_standby_refresh_is_activated_atomically(tmp_path, standby_runtime, settings):
     paths, created, dropped = standby_runtime
     source = tmp_path / "source"
-    _source_backup(source)
+    _source_backup(source, settings=settings)
 
     active = refresh_standby(str(source), paths=paths)
 
@@ -121,6 +133,36 @@ def test_active_standby_validates_manifest_file_recorded_in_control(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda manifest: manifest.__setitem__("authorized_emergency_primary_id", str(uuid.uuid4())),
+        lambda manifest: manifest.__setitem__("primary_authorization_epoch", 2),
+        lambda manifest: manifest.__setitem__("app_commit", "b" * 40),
+        lambda manifest: manifest.__setitem__("migration_fingerprint", "b" * 64),
+        lambda manifest: manifest.__setitem__("database_sha256", "b" * 64),
+        lambda manifest: manifest.__setitem__("media_tree_sha256", "b" * 64),
+        lambda manifest: manifest["data_state"].__setitem__("business_generation", 1),
+        lambda manifest: manifest["data_state"].__setitem__("business_sha256", "b" * 64),
+        lambda manifest: manifest.pop("signature"),
+    ],
+)
+def test_emergency_runtime_rejects_unsigned_or_tampered_production_manifest(
+    tmp_path, standby_runtime, settings, mutate
+):
+    source = _source_backup(tmp_path / "source", settings=settings)
+    manifest_path = source / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutate(manifest)
+    manifest_path.write_text(json.dumps(manifest, indent=3), encoding="utf-8")
+
+    report = validate_manifest(source, expected_source="production")
+
+    assert not report.ok
+    assert any("signature" in error.lower() for error in report.errors)
+
+
+@pytest.mark.django_db
 def test_repeated_refresh_of_same_verified_backup_is_idempotent(tmp_path, standby_runtime):
     paths, created, dropped = standby_runtime
     source = tmp_path / "source"
@@ -135,9 +177,7 @@ def test_repeated_refresh_of_same_verified_backup_is_idempotent(tmp_path, standb
 
 
 @pytest.mark.django_db
-def test_active_standby_rejects_control_path_outside_recorded_slot(
-    tmp_path, standby_runtime
-):
+def test_active_standby_rejects_control_path_outside_recorded_slot(tmp_path, standby_runtime):
     paths, _, _ = standby_runtime
     source = tmp_path / "source"
     _source_backup(source)
@@ -162,6 +202,30 @@ def test_broken_download_keeps_previous_standby(tmp_path, standby_runtime):
 
     with pytest.raises(StandbyError, match="источник backup не найден"):
         refresh_standby(str(tmp_path / "missing"), paths=paths)
+
+    assert load_control(paths) == previous
+    assert created == []
+    assert dropped == []
+
+
+@pytest.mark.django_db
+def test_newer_backup_with_incompatible_app_commit_keeps_previous_ready_standby(
+    tmp_path, standby_runtime
+):
+    paths, created, dropped = standby_runtime
+    source = tmp_path / "source"
+    _source_backup(source, app_commit="b" * 40)
+    paths.root.mkdir(parents=True)
+    previous = {
+        "schema_version": 1,
+        "active_standby": {"database_name": "denstock_emergency_previous"},
+        "previous_standbys": [],
+        "offline_lifecycle": None,
+    }
+    paths.control.write_text(json.dumps(previous), encoding="utf-8")
+
+    with pytest.raises(StandbyError, match="application commit"):
+        refresh_standby(str(source), paths=paths)
 
     assert load_control(paths) == previous
     assert created == []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import uuid
 from datetime import datetime
 
 from django.conf import settings
@@ -10,7 +11,12 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from . import backup
-from .emergency_environment import validate_database_target
+from .emergency_environment import (
+    EmergencySafetyError,
+    configured_workstation_id,
+    validate_database_target,
+    validate_emergency_role,
+)
 from .emergency_manifest import validate_manifest
 from .emergency_state import business_state_marker, migration_state, record_event
 from .models import DeploymentState, OfflineSession
@@ -57,6 +63,12 @@ def _active_standby(paths=None) -> tuple[dict, dict]:
 
 def start_offline_session(*, kind: str, actor=None, paths=None, resume=False) -> OfflineSession:
     validate_database_target(mode="emergency-local")
+    validate_emergency_role()
+    if settings.DENSTOCK_EMERGENCY_ROLE != "primary":
+        raise EmergencyLifecycleError(
+            "Этот компьютер зарегистрирован как cold standby secondary и не может "
+            "одновременно стать вторым emergency writer."
+        )
     paths = paths or EmergencyPaths.configured()
     with control_lock(paths):
         control = load_control(paths)
@@ -125,6 +137,22 @@ def _start_offline_session_database(*, kind: str, actor=None, paths=None) -> Off
         ):
             raise EmergencyLifecycleError(
                 "Planned failover требует backup, созданный под production maintenance lock."
+            )
+        try:
+            authorized = uuid.UUID(str(manifest.get("authorized_emergency_primary_id")))
+            workstation = configured_workstation_id()
+        except (EmergencySafetyError, TypeError, ValueError):
+            raise EmergencyLifecycleError(
+                "Этот компьютер не назначен аварийным основным компьютером."
+            ) from None
+        if authorized != workstation:
+            raise EmergencyLifecycleError(
+                "Резервная копия создана для другого аварийного компьютера."
+            )
+        epoch = manifest.get("primary_authorization_epoch")
+        if not isinstance(epoch, int) or epoch < 1:
+            raise EmergencyLifecycleError(
+                "Авторизация аварийного компьютера отсутствует или устарела."
             )
         local_commit = settings.DENSTOCK_APP_COMMIT or backup._git_commit()
         if manifest["app_commit"] != local_commit:

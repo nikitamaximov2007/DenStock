@@ -1,7 +1,9 @@
 param(
     [ValidateSet("Menu", "Status", "Sync", "Start", "Stop", "FailbackCheck", "Package", "Complete", "Prune", "Open")]
     [string]$Action = "Menu",
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [ValidateSet("auto", "docker-desktop", "wsl2")]
+    [string]$Runtime = "auto"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +15,7 @@ $script:EnvFile = Join-Path $script:RepoRoot ".env.emergency"
 $script:ComposeFile = Join-Path $script:RepoRoot "docker-compose.emergency.yml"
 $script:RuntimeRoot = Join-Path $script:RepoRoot ".emergency"
 $script:ControlFile = Join-Path $script:RuntimeRoot "control.json"
+$script:RefreshStatusFile = Join-Path $script:RuntimeRoot "standby-refresh-status.json"
 $script:DownloadsRoot = Join-Path $script:RuntimeRoot "downloads"
 $script:LogRoot = Join-Path $script:RuntimeRoot "logs"
 New-Item -ItemType Directory -Force -Path $script:RuntimeRoot | Out-Null
@@ -27,12 +30,8 @@ try {
 catch {
     throw "Другая операция DenisStock Emergency Control уже выполняется."
 }
-$script:ComposeBase = @(
-    "compose",
-    "--project-name", "denstock-emergency",
-    "--env-file", $script:EnvFile,
-    "-f", $script:ComposeFile
-)
+$script:RuntimeKind = $null
+$script:WslDistro = $null
 
 Set-Location $script:RepoRoot
 
@@ -61,15 +60,123 @@ function Read-DotEnv {
     return $values
 }
 
+function Set-DotEnvValue {
+    param([string]$Key, [string]$Value)
+    if ($Key -notmatch '^[A-Z][A-Z0-9_]*$' -or $Value -match "[`r`n]") {
+        throw "Небезопасное значение emergency configuration."
+    }
+    $lines = @(Get-Content -LiteralPath $script:EnvFile -Encoding UTF8)
+    $found = $false
+    $updated = foreach ($line in $lines) {
+        if ($line -match "^$([regex]::Escape($Key))=") {
+            $found = $true
+            "$Key=$Value"
+        }
+        else {
+            $line
+        }
+    }
+    if (-not $found) { $updated += "$Key=$Value" }
+    $temporary = "$script:EnvFile.tmp-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        $updated | Set-Content -LiteralPath $temporary -Encoding utf8NoBOM
+        Move-Item -LiteralPath $temporary -Destination $script:EnvFile -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Write-StandbyRefreshStatus {
+    param(
+        [ValidateSet("ready", "failed", "incompatible")]
+        [string]$Outcome,
+        [string]$RunId = "",
+        [string]$AppCommit = "",
+        [string]$Code = ""
+    )
+    $payload = [ordered]@{
+        schema_version = 1
+        attempted_at = [DateTimeOffset]::Now.ToString("o")
+        outcome = $Outcome
+        backup_run_id = $RunId
+        observed_app_commit = $AppCommit
+        code = $Code
+    }
+    $temporary = "$script:RefreshStatusFile.tmp-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        $payload | ConvertTo-Json | Set-Content -LiteralPath $temporary -Encoding utf8NoBOM
+        Move-Item -LiteralPath $temporary -Destination $script:RefreshStatusFile -Force
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+    }
+}
+
+function Show-StandbyRefreshWarning {
+    if (-not (Test-Path -LiteralPath $script:RefreshStatusFile -PathType Leaf)) { return }
+    try {
+        $status = Get-Content -LiteralPath $script:RefreshStatusFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        Write-Host "НЕ ГОТОВО: состояние последней standby sync повреждено." -ForegroundColor Red
+        return
+    }
+    if ([string]$status.outcome -eq "ready") { return }
+    $commit = [string]$status.observed_app_commit
+    $suffix = if ($commit) { " Production backup commit: $commit." } else { "" }
+    Write-Host "НЕ ГОТОВО: последняя standby sync не завершилась ($($status.outcome)).$suffix" -ForegroundColor Red
+}
+
+function Convert-ToWslPath {
+    param([string]$Path)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ($full -notmatch "^([A-Za-z]):\\(.*)$") {
+        throw "Не удалось преобразовать путь для WSL: $full"
+    }
+    return "/mnt/$($Matches[1].ToLower())/$($Matches[2].Replace('\', '/'))"
+}
+
+function Initialize-EmergencyRuntime {
+    param([hashtable]$Environment)
+    $requested = if ($Runtime -ne "auto") { $Runtime } else { [string]$Environment["DENSTOCK_EMERGENCY_RUNTIME"] }
+    if (-not $requested) { $requested = "wsl2" }
+    if ($requested -eq "auto") { $requested = "wsl2" }
+
+    if ($requested -eq "docker-desktop") {
+        $script:RuntimeKind = "docker-desktop"
+        return
+    }
+    if ($requested -ne "wsl2") {
+        throw "Неподдерживаемый emergency runtime: $requested"
+    }
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        throw "WSL2 не установлен. Запустите workstation provisioning от администратора."
+    }
+    $distro = [string]$Environment["DENSTOCK_EMERGENCY_WSL_DISTRO"]
+    if (-not $distro) { $distro = "Ubuntu" }
+    & wsl.exe -d $distro -- docker info *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "WSL2 Docker Engine недоступен в $distro. Docker Desktop для emergency runtime не требуется."
+    }
+    $script:RuntimeKind = "wsl2"
+    $script:WslDistro = $distro
+}
+
 function Assert-Prerequisites {
-    foreach ($command in @("docker", "git")) {
+    foreach ($command in @("git")) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Не найдена команда $command."
         }
     }
-    & docker info *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Docker Desktop недоступен."
+    if ($script:RuntimeKind -eq "docker-desktop") {
+        if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+            throw "Docker CLI не найден."
+        }
+        & docker info *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Docker Desktop runtime недоступен."
+        }
     }
 }
 
@@ -96,9 +203,99 @@ function Assert-ReleaseIdentity {
     }
 }
 
+function Get-BackupManifest {
+    param([string]$RunPath)
+    $manifestPath = Join-Path $RunPath "manifest.json"
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        throw "Скачанный backup manifest повреждён."
+    }
+    $commit = [string]$manifest.app_commit
+    if ($commit -notmatch '^[0-9a-f]{40}$') {
+        throw "Backup manifest не содержит полный безопасный app_commit."
+    }
+    return $manifest
+}
+
+function Set-ReleaseForBackup {
+    param([hashtable]$Environment, [object]$Manifest)
+    $target = [string]$Manifest.app_commit
+    $current = (& git rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось определить текущий application commit." }
+    if ($current -eq $target -and [string]$Environment["DENSTOCK_APP_COMMIT"] -eq $target) {
+        return $null
+    }
+    $source = [string]$Environment["DENSTOCK_EMERGENCY_RELEASE_SOURCE"]
+    if (-not $source -or $source.StartsWith("REPLACE-")) {
+        throw "Новый backup требует другой app_commit, но release source не настроен. Старый READY standby сохранён."
+    }
+    if (@(& git status --porcelain --untracked-files=no).Count -gt 0) {
+        throw "Нельзя менять application release из dirty checkout."
+    }
+    $previousAppCommit = [string]$Environment["DENSTOCK_APP_COMMIT"]
+    & git fetch --no-tags $source $target
+    if ($LASTEXITCODE -ne 0) { throw "Не удалось получить exact application commit для backup." }
+    $resolved = (& git rev-parse "$target^{commit}").Trim()
+    if ($LASTEXITCODE -ne 0 -or $resolved -ne $target) {
+        throw "Release source не предоставил exact application commit из manifest."
+    }
+    $checkoutChanged = $false
+    try {
+        & git checkout --detach $target
+        if ($LASTEXITCODE -ne 0) { throw "Не удалось переключить application checkout на backup commit." }
+        $checkoutChanged = $true
+        Set-DotEnvValue -Key "DENSTOCK_APP_COMMIT" -Value $target
+        $Environment["DENSTOCK_APP_COMMIT"] = $target
+    }
+    catch {
+        if ($checkoutChanged) {
+            & git checkout --detach $current
+            if ($LASTEXITCODE -eq 0) {
+                Set-DotEnvValue -Key "DENSTOCK_APP_COMMIT" -Value $previousAppCommit
+                $Environment["DENSTOCK_APP_COMMIT"] = $previousAppCommit
+            }
+        }
+        throw
+    }
+    return @{ Head = $current; AppCommit = $previousAppCommit }
+}
+
+function Restore-PreviousRelease {
+    param([hashtable]$Environment, [object]$Previous)
+    if ($null -eq $Previous) { return }
+    & git checkout --detach $Previous.Head
+    if ($LASTEXITCODE -ne 0) {
+        throw "Не удалось вернуть прежний application checkout после failed standby refresh."
+    }
+    Set-DotEnvValue -Key "DENSTOCK_APP_COMMIT" -Value $Previous.AppCommit
+    $Environment["DENSTOCK_APP_COMMIT"] = $Previous.AppCommit
+}
+
 function Invoke-EmergencyCompose {
     param([string[]]$CommandArgs, [switch]$AllowFailure)
-    & docker @script:ComposeBase @CommandArgs | Out-Host
+    $composeArgs = @(
+        "compose", "--project-name", "denstock-emergency",
+        "--env-file", $script:EnvFile, "-f", $script:ComposeFile
+    ) + $CommandArgs
+    if ($script:RuntimeKind -eq "wsl2") {
+        $linuxRoot = Convert-ToWslPath $script:RepoRoot
+        $linuxEnv = Convert-ToWslPath $script:EnvFile
+        $linuxCompose = Convert-ToWslPath $script:ComposeFile
+        $composeArgs = @(
+            "compose", "--project-name", "denstock-emergency",
+            "--env-file", $linuxEnv, "-f", $linuxCompose
+        ) + $CommandArgs
+        $runtimeEnv = @(
+            "EMERGENCY_DATABASE_NAME=$env:EMERGENCY_DATABASE_NAME",
+            "EMERGENCY_SLOT=$env:EMERGENCY_SLOT"
+        )
+        & wsl.exe -d $script:WslDistro --cd $linuxRoot -- env @runtimeEnv docker @composeArgs | Out-Host
+    }
+    else {
+        & docker @composeArgs | Out-Host
+    }
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "Docker Compose завершился с кодом $exitCode."
@@ -277,6 +474,7 @@ function Show-Status {
     Set-TargetFromControl | Out-Null
     Start-Database
     Invoke-Manage -ManageArgs @("emergency_status") | Out-Null
+    Show-StandbyRefreshWarning
 }
 
 function Sync-Standby {
@@ -285,19 +483,40 @@ function Sync-Standby {
     if ($null -ne $control -and $null -ne $control.offline_lifecycle) {
         throw "Standby sync запрещён: offline lifecycle уже начат."
     }
-    $source = $Environment["DENSTOCK_EMERGENCY_BACKUP_SOURCE"]
-    if (-not $source -or $source.StartsWith("REPLACE-")) {
-        throw "DENSTOCK_EMERGENCY_BACKUP_SOURCE не настроен."
+    $backup = $null
+    $manifest = $null
+    $previousRelease = $null
+    try {
+        $source = $Environment["DENSTOCK_EMERGENCY_BACKUP_SOURCE"]
+        if (-not $source -or $source.StartsWith("REPLACE-")) {
+            throw "DENSTOCK_EMERGENCY_BACKUP_SOURCE не настроен."
+        }
+        $backup = Get-LatestBackup -Source $source
+        $download = Copy-BackupToRuntime -Backup $backup
+        $manifest = Get-BackupManifest -RunPath $download
+        $previousRelease = Set-ReleaseForBackup -Environment $Environment -Manifest $manifest
+        Assert-ReleaseIdentity -Environment $Environment
+        Set-ControlTarget
+        Start-Database
+        $containerSource = "/app/.emergency/downloads"
+        Invoke-Manage -ManageArgs @(
+            "emergency_sync", "--source", $containerSource, "--run-id", $backup.RunId
+        ) | Out-Null
+        Write-StandbyRefreshStatus -Outcome "ready" -RunId $backup.RunId -AppCommit $manifest.app_commit
     }
-    Assert-ReleaseIdentity -Environment $Environment
-    $backup = Get-LatestBackup -Source $source
-    Copy-BackupToRuntime -Backup $backup | Out-Null
-    Set-ControlTarget
-    Start-Database
-    $containerSource = "/app/.emergency/downloads"
-    Invoke-Manage -ManageArgs @(
-        "emergency_sync", "--source", $containerSource, "--run-id", $backup.RunId
-    ) | Out-Null
+    catch {
+        Restore-PreviousRelease -Environment $Environment -Previous $previousRelease
+        $runId = if ($null -ne $backup) { [string]$backup.RunId } else { "" }
+        $commit = if ($null -ne $manifest) { [string]$manifest.app_commit } else { "" }
+        $outcome = if ($commit -and $commit -ne [string]$Environment["DENSTOCK_APP_COMMIT"]) {
+            "incompatible"
+        }
+        else {
+            "failed"
+        }
+        Write-StandbyRefreshStatus -Outcome $outcome -RunId $runId -AppCommit $commit -Code "sync_failed"
+        throw
+    }
     $keep = 2
     if ($Environment["DENSTOCK_EMERGENCY_KEEP_DOWNLOADS"] -match "^\d+$") {
         $keep = [Math]::Max(1, [int]$Environment["DENSTOCK_EMERGENCY_KEEP_DOWNLOADS"])
@@ -342,6 +561,24 @@ function Start-Offline {
     Write-Host "Backup run: $($control.active_standby.backup_run_id)"
     $kindAnswer = Read-Host "Тип запуска: 1 - planned, 2 - unplanned"
     $kind = if ($kindAnswer -eq "1") { "planned" } elseif ($kindAnswer -eq "2") { "unplanned" } else { throw "Неизвестный тип запуска." }
+    if ([string]$Environment["DENSTOCK_EMERGENCY_ROLE"] -ne "primary") {
+        throw "Этот компьютер настроен как cold standby secondary и не может быть emergency writer."
+    }
+    $productionUrl = [string]$Environment["DENSTOCK_PRODUCTION_URL"]
+    if ($kind -eq "unplanned" -and $productionUrl) {
+        try {
+            $response = Invoke-WebRequest -Uri "$($productionUrl.TrimEnd('/'))/healthz/" -TimeoutSec 5 -UseBasicParsing
+            if ($response.StatusCode -eq 200) {
+                throw "Production доступен. Unplanned activation заблокирован; не создавайте второй writer."
+            }
+        }
+        catch [System.Management.Automation.RuntimeException] {
+            throw
+        }
+        catch {
+            # Network failure is exactly the condition for an unplanned session.
+        }
+    }
     $phrase = "НАЧАТЬ-АВТОНОМНУЮ-РАБОТУ"
     Confirm-Exact -Phrase $phrase -Prompt (
         "После запуска все складские операции должны выполняться только на этом компьютере."
@@ -470,9 +707,10 @@ function Invoke-SelectedAction {
 }
 
 try {
-    Assert-Prerequisites
     $environment = Read-DotEnv
     $script:Environment = $environment
+    Initialize-EmergencyRuntime -Environment $environment
+    Assert-Prerequisites
     if ($Action -ne "Menu") {
         Invoke-SelectedAction -Selected $Action -Environment $environment
         exit 0
