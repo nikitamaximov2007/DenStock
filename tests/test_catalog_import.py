@@ -490,10 +490,14 @@ def test_workflow_through_ui(client, make_user, db, settings, tmp_path):
     assert "полным актуальным каталогом BRP" in page
     assert "Применить импорт" in page
 
-    client.post(reverse("catalog_import_apply", args=[batch.pk]), follow=True)
+    response = client.post(reverse("catalog_import_apply", args=[batch.pk]), follow=True)
     batch.refresh_from_db()
     assert batch.status == CatalogImportBatch.Status.APPLIED
     assert BrpCatalogPart.objects.count() == 2
+    page = response.content.decode()
+    assert "Каталог BRP успешно обновлён" in page
+    assert "Актуальных позиций" in page
+    assert "Импорт применён, повторное применение отклоняется" in page
 
 
 def test_history_page_lists_batches(client, make_user, db, admin, settings, tmp_path):

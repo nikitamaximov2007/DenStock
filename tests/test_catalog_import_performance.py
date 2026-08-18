@@ -23,7 +23,7 @@ from django.db.models.query import QuerySet
 from django.test.utils import CaptureQueriesContext
 from openpyxl import Workbook
 
-from apps.brp.importer import WRITE_BATCH_SIZE
+from apps.brp.importer import CHUNK_SIZE, UPDATE_FIELDS
 from apps.brp.models import BrpCatalogPart
 from apps.catalog_import.services import apply_batch, run_check, save_upload
 
@@ -112,7 +112,7 @@ def test_repeat_import_of_large_file_is_cheap(db, admin, settings, tmp_path):
     assert BrpCatalogPart.objects.first().wholesale_price_usd == Decimal("8.00")
 
 
-def test_large_changed_workbook_uses_bounded_postgresql_write_batches(
+def test_large_changed_workbook_uses_bounded_upsert_batches(
     db, admin, settings, tmp_path, monkeypatch
 ):
     """Full snapshot updates must not create one giant PostgreSQL CASE query."""
@@ -120,17 +120,25 @@ def test_large_changed_workbook_uses_bounded_postgresql_write_batches(
     apply_batch(run_check(_batch(first, admin, settings, tmp_path)), by=admin)
 
     changed_rows = _big_workbook(tmp_path, rows=ROWS, wholesale="9.00")
-    original_bulk_update = QuerySet.bulk_update
-    observed_sizes = []
+    original_bulk_create = QuerySet.bulk_create
+    observed_calls = []
 
-    def tracked_bulk_update(queryset, objs, fields, batch_size=None):
+    def tracked_bulk_create(queryset, objs, batch_size=None, **kwargs):
         if queryset.model is BrpCatalogPart:
-            observed_sizes.append(batch_size)
-        return original_bulk_update(queryset, objs, fields, batch_size=batch_size)
+            observed_calls.append((batch_size, kwargs))
+        return original_bulk_create(queryset, objs, batch_size=batch_size, **kwargs)
 
-    monkeypatch.setattr(QuerySet, "bulk_update", tracked_bulk_update)
+    monkeypatch.setattr(QuerySet, "bulk_create", tracked_bulk_create)
     batch = run_check(_batch(changed_rows, admin, settings, tmp_path))
     apply_batch(batch, by=admin)
 
-    assert observed_sizes == [WRITE_BATCH_SIZE]
-    assert WRITE_BATCH_SIZE < ROWS
+    assert observed_calls == [
+        (
+            CHUNK_SIZE,
+            {
+                "update_conflicts": True,
+                "update_fields": UPDATE_FIELDS,
+                "unique_fields": ["material_no"],
+            },
+        )
+    ]

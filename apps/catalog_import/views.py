@@ -120,7 +120,11 @@ def import_detail(request, pk):
         {
             "batch": batch,
             "summary_rows": [
-                (label, (summary or {}).get(key, 0)) for key, label in SUMMARY_ROWS
+                (
+                    "Актуальных позиций" if batch.is_applied and key == "data_rows" else label,
+                    (summary or {}).get(key, 0),
+                )
+                for key, label in SUMMARY_ROWS
             ],
             "status_rows": _status_rows(summary),
             "already_applied": previous_applied(batch),
@@ -155,7 +159,10 @@ def import_apply(request, pk):
     except CatalogImportError as exc:
         messages.error(request, str(exc))
         return redirect("catalog_import_detail", pk=pk)
-    messages.success(request, "Импорт применён к справочнику. Складские остатки не изменены.")
+    messages.success(
+        request,
+        "Каталог BRP успешно обновлён. Складские остатки не изменены.",
+    )
     return redirect("catalog_import_detail", pk=pk)
 
 
