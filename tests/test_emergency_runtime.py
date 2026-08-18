@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 
 import pytest
@@ -18,6 +19,7 @@ from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import EmergencyPaths, save_control
 from apps.operations.write_guard import BusinessWriteBlocked, BusinessWriteGuardMiddleware
 from apps.suppliers.models import Supplier
+from tests.emergency_support import configure_test_trust
 
 COMMIT = "a" * 40
 MIGRATION_HASH = "b" * 64
@@ -25,7 +27,7 @@ DATA_HASH = "c" * 64
 DATABASE_ID = "52347a14-d939-45e6-a397-06c79ef257f2"
 
 
-def _base_manifest(*, consistency="database_snapshot"):
+def _base_manifest(*, consistency="database_snapshot", workstation_id=None):
     return {
         "backup_run_id": "d7919779-6c24-43cb-bb78-181f61a335d5",
         "created_at": (timezone.now() - timedelta(hours=2)).isoformat(),
@@ -34,6 +36,8 @@ def _base_manifest(*, consistency="database_snapshot"):
         "migration_fingerprint": MIGRATION_HASH,
         "media_tree_sha256": "d" * 64,
         "data_state": {"business_sha256": DATA_HASH},
+        "authorized_emergency_primary_id": str(workstation_id),
+        "primary_authorization_epoch": 1,
         "consistency": consistency,
     }
 
@@ -43,6 +47,8 @@ def lifecycle_runtime(tmp_path, monkeypatch, settings):
     settings.DENSTOCK_MODE = "emergency-local"
     settings.DENSTOCK_INSTANCE_ID = "warehouse-pc-test"
     settings.DENSTOCK_APP_COMMIT = COMMIT
+    workstation_id = uuid.uuid4()
+    configure_test_trust(tmp_path, settings, workstation_id=workstation_id)
     state = DeploymentState.get_solo()
     state.database_identity = DATABASE_ID
     state.write_state = DeploymentState.WriteState.NORMAL
@@ -64,35 +70,43 @@ def lifecycle_runtime(tmp_path, monkeypatch, settings):
         {
             "active_standby": {
                 "database_name": "ignored",
-                "backup_run_id": _base_manifest()["backup_run_id"],
+                "backup_run_id": _base_manifest(workstation_id=workstation_id)["backup_run_id"],
             },
             "previous_standbys": [],
         },
         EmergencyPaths(settings.DENSTOCK_EMERGENCY_ROOT),
     )
-    return state
+    return state, workstation_id
 
 
 @pytest.mark.django_db
 def test_start_from_verified_standby_creates_active_session(lifecycle_runtime, monkeypatch):
+    state, workstation_id = lifecycle_runtime
     monkeypatch.setattr(
         "apps.operations.emergency_lifecycle._active_standby",
-        lambda paths=None: ({"database_name": "ignored"}, _base_manifest()),
+        lambda paths=None: (
+            {"database_name": "ignored"},
+            _base_manifest(workstation_id=workstation_id),
+        ),
     )
 
     session = start_offline_session(kind=OfflineSession.Kind.UNPLANNED, actor="operator")
 
-    lifecycle_runtime.refresh_from_db()
+    state.refresh_from_db()
     assert session.status == OfflineSession.Status.ACTIVE
     assert session.base_data_marker == {"business_sha256": DATA_HASH}
-    assert lifecycle_runtime.write_state == DeploymentState.WriteState.EMERGENCY_ACTIVE
+    assert state.write_state == DeploymentState.WriteState.EMERGENCY_ACTIVE
 
 
 @pytest.mark.django_db
 def test_two_start_commands_are_serialized_and_second_is_denied(lifecycle_runtime, monkeypatch):
+    _, workstation_id = lifecycle_runtime
     monkeypatch.setattr(
         "apps.operations.emergency_lifecycle._active_standby",
-        lambda paths=None: ({"database_name": "ignored"}, _base_manifest()),
+        lambda paths=None: (
+            {"database_name": "ignored"},
+            _base_manifest(workstation_id=workstation_id),
+        ),
     )
     start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
 
@@ -102,9 +116,13 @@ def test_two_start_commands_are_serialized_and_second_is_denied(lifecycle_runtim
 
 @pytest.mark.django_db
 def test_planned_start_requires_maintenance_consistent_backup(lifecycle_runtime, monkeypatch):
+    _, workstation_id = lifecycle_runtime
     monkeypatch.setattr(
         "apps.operations.emergency_lifecycle._active_standby",
-        lambda paths=None: ({"database_name": "ignored"}, _base_manifest()),
+        lambda paths=None: (
+            {"database_name": "ignored"},
+            _base_manifest(workstation_id=workstation_id),
+        ),
     )
 
     with pytest.raises(EmergencyLifecycleError, match="maintenance lock"):

@@ -1,7 +1,9 @@
 import json
+import uuid
 from pathlib import Path
 
 import pytest
+from django.conf import settings as django_settings
 from django.db import connection
 from django.test import override_settings
 
@@ -20,11 +22,15 @@ from apps.operations.standby import (
     load_control,
     refresh_standby,
 )
+from tests.emergency_support import configure_test_trust, sign_production_manifest
 
 COMMIT = "a" * 40
 
 
-def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00", app_commit=COMMIT) -> Path:
+def _source_backup(
+    root: Path, *, run_id="2026-08-12_10-00-00", app_commit=COMMIT, settings=None
+) -> Path:
+    settings = settings or django_settings
     run = root / run_id
     run.mkdir(parents=True)
     database = run / "db.dump"
@@ -37,6 +43,10 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00", app_commit=COMMI
         "verified_at": "2026-08-12T10:01:00+05:00",
         "source_environment": "production",
         "source_instance_id": "production",
+        "authorized_emergency_primary_id": str(
+            uuid.UUID(settings.DENSTOCK_EMERGENCY_WORKSTATION_ID)
+        ),
+        "primary_authorization_epoch": 1,
         "app_commit": app_commit,
         "database_name": "denstock",
         "database_identity": "52347a14-d939-45e6-a397-06c79ef257f2",
@@ -57,6 +67,7 @@ def _source_backup(root: Path, *, run_id="2026-08-12_10-00-00", app_commit=COMMI
         "verification_status": "verified",
         "consistency": "database_snapshot",
     }
+    sign_production_manifest(manifest, settings)
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run
 
@@ -66,6 +77,7 @@ def standby_runtime(tmp_path, monkeypatch, settings):
     settings.DENSTOCK_MODE = "emergency-local"
     settings.DENSTOCK_INSTANCE_ID = "warehouse-pc-test"
     settings.DENSTOCK_APP_COMMIT = COMMIT
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     settings.DENSTOCK_EMERGENCY_DB_PREFIX = "denstock_emergency_"
     settings.DENSTOCK_EMERGENCY_KEEP_STANDBY = 2
     paths = EmergencyPaths(tmp_path / "emergency")
@@ -90,10 +102,10 @@ def standby_runtime(tmp_path, monkeypatch, settings):
 
 
 @pytest.mark.django_db
-def test_successful_standby_refresh_is_activated_atomically(tmp_path, standby_runtime):
+def test_successful_standby_refresh_is_activated_atomically(tmp_path, standby_runtime, settings):
     paths, created, dropped = standby_runtime
     source = tmp_path / "source"
-    _source_backup(source)
+    _source_backup(source, settings=settings)
 
     active = refresh_standby(str(source), paths=paths)
 
@@ -135,9 +147,7 @@ def test_repeated_refresh_of_same_verified_backup_is_idempotent(tmp_path, standb
 
 
 @pytest.mark.django_db
-def test_active_standby_rejects_control_path_outside_recorded_slot(
-    tmp_path, standby_runtime
-):
+def test_active_standby_rejects_control_path_outside_recorded_slot(tmp_path, standby_runtime):
     paths, _, _ = standby_runtime
     source = tmp_path / "source"
     _source_backup(source)
