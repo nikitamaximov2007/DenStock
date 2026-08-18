@@ -230,7 +230,7 @@ def test_postgresql_backup_snapshot_serializes_business_writes(
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_two_start_commands_have_one_winner(tmp_path, settings, monkeypatch):
     state = _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "emergency-local"
@@ -322,7 +322,7 @@ def test_postgresql_two_stop_transitions_have_one_winner(settings):
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
     tmp_path, settings, django_user_model
 ):
