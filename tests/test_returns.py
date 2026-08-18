@@ -587,7 +587,7 @@ def test_return_completion_rolls_back_after_critical_failure(data, failure_path)
     assert StockMovement.objects.count() == movement_count
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
     """A 0002 draft remains operable after applying current additive migrations."""
     ret = _new_return(data, data["order"])
@@ -1073,7 +1073,7 @@ def _http_post(opener, url, html, data):
     return opener.open(request, timeout=10).read().decode()
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_repair_return_live_http_smoke(data, live_server):
     """Exercise the real local HTTP stack, including login and CSRF-protected changes."""
     ret = _new_return(data, data["order"])
