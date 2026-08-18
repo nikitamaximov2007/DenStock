@@ -83,12 +83,17 @@ def _can_use_actions(user):
 
 
 def _can_open_warehouse(user):
+    # Быстрые действия живут в разделе «Склад», но выданы они продавцу и мастеру.
+    # Без этого условия раздел им не открывался, и свой основной ежедневный экран
+    # они видеть не могли, хотя права на него есть. Лишнего это не показывает:
+    # каждая вкладка внутри раздела отдельно ограничена своей возможностью.
     return (
         user.can_manage_inventory
         or user.is_viewer
         or user.can_manage_batches
         or user.can_manage_write_offs
         or user.can_manage_stocktaking
+        or _can_use_actions(user)
     )
 
 
