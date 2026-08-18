@@ -19,9 +19,11 @@ from decimal import Decimal
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
+from django.db.models.query import QuerySet
 from django.test.utils import CaptureQueriesContext
 from openpyxl import Workbook
 
+from apps.brp.importer import WRITE_BATCH_SIZE
 from apps.brp.models import BrpCatalogPart
 from apps.catalog_import.services import apply_batch, run_check, save_upload
 
@@ -48,14 +50,14 @@ def admin(make_user):
     return make_user("admin", is_superuser=True)
 
 
-def _big_workbook(tmp_path, rows=ROWS):
+def _big_workbook(tmp_path, rows=ROWS, wholesale="8.00"):
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet()
     sheet.append(HEADERS)
     sheet.append([""] * len(HEADERS))
     for index in range(rows):
         sheet.append(
-            [f"5{index:08d}", f"PART {index}", "2025", "", "10.00", "8.00", "", ""]
+            [f"5{index:08d}", f"PART {index}", "2025", "", "10.00", wholesale, "", ""]
         )
     path = tmp_path / "big.xlsx"
     workbook.save(path)
@@ -108,3 +110,27 @@ def test_repeat_import_of_large_file_is_cheap(db, admin, settings, tmp_path):
     apply_batch(second, by=admin)
     assert BrpCatalogPart.objects.count() == 1000
     assert BrpCatalogPart.objects.first().wholesale_price_usd == Decimal("8.00")
+
+
+def test_large_changed_workbook_uses_bounded_postgresql_write_batches(
+    db, admin, settings, tmp_path, monkeypatch
+):
+    """Full snapshot updates must not create one giant PostgreSQL CASE query."""
+    first = _big_workbook(tmp_path, rows=ROWS)
+    apply_batch(run_check(_batch(first, admin, settings, tmp_path)), by=admin)
+
+    changed_rows = _big_workbook(tmp_path, rows=ROWS, wholesale="9.00")
+    original_bulk_update = QuerySet.bulk_update
+    observed_sizes = []
+
+    def tracked_bulk_update(queryset, objs, fields, batch_size=None):
+        if queryset.model is BrpCatalogPart:
+            observed_sizes.append(batch_size)
+        return original_bulk_update(queryset, objs, fields, batch_size=batch_size)
+
+    monkeypatch.setattr(QuerySet, "bulk_update", tracked_bulk_update)
+    batch = run_check(_batch(changed_rows, admin, settings, tmp_path))
+    apply_batch(batch, by=admin)
+
+    assert observed_sizes == [WRITE_BATCH_SIZE]
+    assert WRITE_BATCH_SIZE < ROWS

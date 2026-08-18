@@ -40,7 +40,11 @@ from apps.catalog.models import normalize_number
 
 from .models import BrpCatalogPart
 
+# Reading a supplier workbook benefits from larger chunks, while PostgreSQL
+# bulk_update builds a CASE expression for every updated field. Keeping writes
+# smaller avoids multi-megabyte statements for a full 130k-row snapshot.
 CHUNK_SIZE = 4000
+WRITE_BATCH_SIZE = 500
 ZERO = Decimal("0")
 STATUS_ALIASES = {"UCP": "USE"}
 
@@ -242,7 +246,7 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
             BrpCatalogPart.objects.bulk_create(to_create, batch_size=CHUNK_SIZE)
         if to_update:
             BrpCatalogPart.objects.bulk_update(
-                to_update, UPDATE_FIELDS, batch_size=CHUNK_SIZE
+                to_update, UPDATE_FIELDS, batch_size=WRITE_BATCH_SIZE
             )
 
 
