@@ -30,7 +30,7 @@ from apps.actions.services import actions_report, build_export_rows, perform_act
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse as promote_brp_to_warehouse
 from apps.catalog.models import Category, PartNumber, PartType, Unit
-from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
+from apps.inventory.models import NumberSequence, PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
     InventoryError,
     create_part_items,
@@ -113,7 +113,16 @@ def _finalized_line(sup, part, admin, *, qty, unit_cost="100", shipping="40"):
 def data(db, admin):
     sup = Supplier.objects.create(name="ООО Поставка")
     cat = Category.objects.create(name="Двигатель")
-    unit = Unit.objects.get(name="Штука")
+    unit, _ = Unit.objects.get_or_create(name="Штука", defaults={"short_name": "шт"})
+    for key, prefix in (
+        ("part_item", "ДЕТ-"),
+        ("sale", "ПР-"),
+        ("repair_order", "РЕМ-"),
+        ("stock_return", "ВЗВ-"),
+    ):
+        NumberSequence.objects.get_or_create(
+            key=key, defaults={"prefix": prefix, "last_value": 0}
+        )
     loc = StorageLocation.objects.create(
         name="Ячейка A", code="A-01", storage_allowed=True, is_active=True
     )
