@@ -86,7 +86,7 @@ def _using_database(name):
         database.settings_dict["NAME"] = original
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_freeze_blocks_a_write_that_arrives_after_exclusive_lock(settings):
     _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "production"
@@ -123,7 +123,7 @@ def test_postgresql_freeze_blocks_a_write_that_arrives_after_exclusive_lock(sett
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_freeze_waits_for_an_already_running_write_transaction(settings):
     _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "production"
@@ -164,7 +164,7 @@ def test_postgresql_freeze_waits_for_an_already_running_write_transaction(settin
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_failed_business_write_releases_failover_lock(settings):
     _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "production"
@@ -186,7 +186,7 @@ def test_postgresql_failed_business_write_releases_failover_lock(settings):
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_backup_snapshot_serializes_business_writes(
     tmp_path, settings, monkeypatch
 ):
@@ -287,7 +287,7 @@ def test_postgresql_two_start_commands_have_one_winner(tmp_path, settings, monke
         settings.DENSTOCK_MODE = "test"
 
 
-@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.django_db(transaction=True)
 def test_postgresql_two_stop_transitions_have_one_winner(settings):
     settings.DENSTOCK_MODE = "test"
     state = _set_state(DeploymentState.WriteState.EMERGENCY_ACTIVE)
