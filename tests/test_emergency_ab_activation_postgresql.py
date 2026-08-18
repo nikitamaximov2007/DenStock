@@ -24,7 +24,11 @@ from apps.operations.emergency_lifecycle import (
     start_offline_session,
 )
 from apps.operations.emergency_manifest import validate_manifest
-from apps.operations.emergency_state import business_state_marker, migration_state
+from apps.operations.emergency_state import (
+    business_state_marker,
+    migration_state,
+    sha256_file,
+)
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import EmergencyPaths, save_control
 from tests.emergency_support import configure_test_trust, sign_production_manifest
@@ -44,7 +48,7 @@ UUID_B = uuid.UUID("bbbbbbbb-0000-4000-8000-00000000000b")
 
 def _reset_state() -> DeploymentState:
     OfflineSession.objects.all().delete()
-    state = DeploymentState.objects.get(pk=DeploymentState.SINGLETON_PK)
+    state = DeploymentState.get_solo()
     state.write_state = DeploymentState.WriteState.NORMAL
     state.state_reason = ""
     state.save(update_fields=["write_state", "state_reason", "updated_at"])
@@ -67,6 +71,11 @@ def _emergency_settings(settings, tmp_path, *, workstation_id):
 
 
 def _signed_standby(tmp_path, settings, state, *, authorized_id, epoch=1, tamper=None) -> Path:
+    run = tmp_path / "standby-run"
+    run.mkdir(parents=True, exist_ok=True)
+    dump = run / "db.dump"
+    dump.write_bytes(b"synthetic-production-dump")
+    migrations = migration_state()
     manifest = {
         "schema_version": 2,
         "backup_run_id": str(uuid.uuid4()),
@@ -80,12 +89,12 @@ def _signed_standby(tmp_path, settings, state, *, authorized_id, epoch=1, tamper
         "database_name": "denstock",
         "database_identity": str(state.database_identity),
         "database_dump_filename": "db.dump",
-        "database_sha256": "0" * 64,
+        "database_sha256": sha256_file(dump),
         "media_filename": None,
         "media_sha256": None,
         "media_tree_sha256": "d" * 64,
-        "migration_fingerprint": migration_state()["fingerprint"],
-        "migration_state": [],
+        "migration_fingerprint": migrations["fingerprint"],
+        "migration_state": migrations["applied"],
         "data_state": business_state_marker(),
         "storage_origin": "yandex-object-storage",
         "verification_status": "verified",
@@ -94,8 +103,6 @@ def _signed_standby(tmp_path, settings, state, *, authorized_id, epoch=1, tamper
     sign_production_manifest(manifest, settings)
     if tamper:
         manifest.update(tamper)
-    run = tmp_path / "standby-run"
-    run.mkdir(parents=True, exist_ok=True)
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run
 
