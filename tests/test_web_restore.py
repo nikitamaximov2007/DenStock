@@ -7,12 +7,15 @@ GET ничего не запускает; без фразы ПОДТВЕРЖДА
 экспорт бэкапов не сломан (существующие тесты test_backups_ui).
 """
 import json
+from datetime import timedelta
+from datetime import timezone as datetime_timezone
 from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group
 from django.db import connection
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts import roles
 from apps.operations import backup as backup_mod
@@ -190,6 +193,62 @@ def test_old_backup_and_pre_restore_warnings(backups_root):
     assert report.ok  # предупреждения не блокируют
     joined = " ".join(report.warnings)
     assert "дней" in joined and "pre-restore" in joined
+
+
+def test_verify_accepts_current_aware_manifest_timestamp(backups_root):
+    _make_run(backups_root, created_at=timezone.now().isoformat())
+
+    report = verify_backup("2026-07-01_10-00-00")
+
+    assert report.ok
+
+
+def test_verify_accepts_production_style_local_offset_timestamp(backups_root):
+    production_style = timezone.now().astimezone().isoformat(timespec="seconds")
+    _make_run(backups_root, created_at=production_style)
+
+    assert verify_backup("2026-07-01_10-00-00").ok
+
+
+def test_verify_warns_for_stale_aware_timestamp_without_type_error(backups_root):
+    _make_run(backups_root, created_at=(timezone.now() - timedelta(days=31)).isoformat())
+
+    report = verify_backup("2026-07-01_10-00-00")
+
+    assert report.ok
+    assert any("бэкапу больше" in warning for warning in report.warnings)
+
+
+def test_verify_does_not_mark_future_aware_timestamp_as_stale(backups_root):
+    _make_run(backups_root, created_at=(timezone.now() + timedelta(days=1)).isoformat())
+
+    report = verify_backup("2026-07-01_10-00-00")
+
+    assert report.ok
+    assert not any("бэкапу больше" in warning for warning in report.warnings)
+
+
+def test_verify_rejects_malformed_manifest_timestamp_without_traceback(backups_root):
+    _make_run(backups_root, created_at="not-a-timestamp")
+
+    report = verify_backup("2026-07-01_10-00-00")
+
+    assert not report.ok
+    assert any("created_at" in error for error in report.errors)
+
+
+def test_verify_supports_legacy_naive_timestamp_in_configured_timezone(backups_root):
+    legacy_naive = timezone.make_naive(timezone.now(), timezone.get_current_timezone()).isoformat()
+    _make_run(backups_root, created_at=legacy_naive)
+
+    assert verify_backup("2026-07-01_10-00-00").ok
+
+
+def test_verify_compares_non_utc_offset_timestamp_as_absolute_time(backups_root):
+    non_utc = timezone.now().astimezone(datetime_timezone(timedelta(hours=5))).isoformat()
+    _make_run(backups_root, created_at=non_utc)
+
+    assert verify_backup("2026-07-01_10-00-00").ok
 
 
 def test_verify_command(backups_root, capsys):

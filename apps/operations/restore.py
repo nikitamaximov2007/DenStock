@@ -93,6 +93,24 @@ def _safe_run_dir(run_id: str):
     return candidate
 
 
+def _manifest_created_at(value) -> datetime | None:
+    """Parse a manifest timestamp into the aware Django-timezone contract.
+
+    Current backups store ISO-8601 timestamps with an offset. Older manifests
+    used a naive ISO timestamp; they are interpreted in the configured Django
+    timezone, which is the historical production timestamp contract.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if timezone.is_naive(parsed):
+        return timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
 def verify_backup(run_id: str) -> VerifyReport:
     """Проверить бэкап перед восстановлением. Ничего не меняет."""
     report = VerifyReport(run_id=run_id)
@@ -207,11 +225,14 @@ def verify_backup(run_id: str) -> VerifyReport:
         )
 
     created = manifest.get("created_at") or ""
-    try:
-        created_dt = datetime.fromisoformat(created)
-    except ValueError:
-        created_dt = None
-    if created_dt and datetime.now() - created_dt > timedelta(days=OLD_BACKUP_DAYS):
+    created_dt = _manifest_created_at(created)
+    if not created_dt:
+        report.check(
+            "Дата создания бэкапа",
+            False,
+            error="created_at в manifest отсутствует или имеет некорректный ISO-8601 формат",
+        )
+    elif timezone.now() - created_dt > timedelta(days=OLD_BACKUP_DAYS):
         report.check(
             "Свежесть бэкапа", False,
             warn=f"бэкапу больше {OLD_BACKUP_DAYS} дней ({created[:10]})",
@@ -314,9 +335,5 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
 
 def restore_age_warning(manifest: dict) -> bool:
     """Старый ли бэкап (для пометки в списке выбора)."""
-    created = (manifest or {}).get("created_at") or ""
-    try:
-        created_dt = datetime.fromisoformat(created)
-    except ValueError:
-        return False
-    return datetime.now() - created_dt > timedelta(days=OLD_BACKUP_DAYS)
+    created_dt = _manifest_created_at((manifest or {}).get("created_at"))
+    return bool(created_dt and timezone.now() - created_dt > timedelta(days=OLD_BACKUP_DAYS))
