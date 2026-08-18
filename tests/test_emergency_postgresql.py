@@ -42,6 +42,7 @@ from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, create_receipt, post_receipt
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.emergency_support import configure_test_trust
 
 pytestmark = pytest.mark.postgresql
 
@@ -189,6 +190,7 @@ def test_postgresql_failed_business_write_releases_failover_lock(settings):
 def test_postgresql_backup_snapshot_serializes_business_writes(
     tmp_path, settings, monkeypatch
 ):
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "production"
     settings.DENSTOCK_APP_COMMIT = COMMIT
@@ -237,6 +239,8 @@ def test_postgresql_two_start_commands_have_one_winner(tmp_path, settings, monke
     settings.DENSTOCK_EMERGENCY_DB_PREFIX = str(connection.settings_dict["NAME"])
     settings.DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS = [connection.settings_dict["HOST"]]
     settings.DENSTOCK_PRODUCTION_DB_HOSTS = []
+    workstation_id = uuid.uuid4()
+    configure_test_trust(tmp_path, settings, workstation_id=workstation_id)
     marker = business_state_marker()
     migrations = migration_state()
     manifest = {
@@ -247,6 +251,8 @@ def test_postgresql_two_start_commands_have_one_winner(tmp_path, settings, monke
         "migration_fingerprint": migrations["fingerprint"],
         "media_tree_sha256": "d" * 64,
         "data_state": marker,
+        "authorized_emergency_primary_id": str(workstation_id),
+        "primary_authorization_epoch": 1,
         "consistency": "database_snapshot",
     }
     paths = EmergencyPaths(tmp_path / "emergency")
@@ -320,6 +326,7 @@ def test_postgresql_two_stop_transitions_have_one_winner(settings):
 def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
     tmp_path, settings, django_user_model
 ):
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     settings.DENSTOCK_MODE = "test"
     settings.DENSTOCK_APP_COMMIT = COMMIT
     settings.DENSTOCK_INSTANCE_ID = "postgres-integration"
