@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Страница не найдена · DenisStock{% endblock %}
+{% block content %}
+  {% include "partials/_status_block.html" with kind="error" text="Страница не найдена" %}
+  <p class="muted">
+    Адрес неверный, или документ был удалён. Проверьте номер в адресной строке.
+  </p>
+  <p>
+    <a href="{% url 'dashboard' %}">На главную</a>
+  </p>
+{% endblock %}
+{% block anon_content %}
+  {% include "partials/_status_block.html" with kind="error" text="Страница не найдена" %}
+  <p>
+    <a href="{% url 'login' %}">Войти</a>
+  </p>
+{% endblock %}

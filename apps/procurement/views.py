@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import PermissionDenied
 from django.db.models import Count, DecimalField, Sum, Value
@@ -131,6 +132,7 @@ class BatchUpdateView(ManageBatchesMixin, UpdateView):
         return reverse("batch_detail", args=[self.object.pk])
 
 
+@login_required
 @require_POST
 def batch_status_change(request, pk):
     if not request.user.can_manage_batches:
@@ -146,6 +148,7 @@ def batch_status_change(request, pk):
     return redirect("batch_detail", pk=pk)
 
 
+@login_required
 def cost_preview(request, pk):
     """Предпросмотр распределения landed cost без сохранения (защита от случайной фиксации)."""
     if not request.user.can_manage_batches:
@@ -175,6 +178,7 @@ def cost_preview(request, pk):
     )
 
 
+@login_required
 @require_POST
 def cost_finalize(request, pk):
     if not request.user.can_manage_batches:
@@ -242,6 +246,7 @@ class BatchLineUpdateView(ManageBatchesMixin, UpdateView):
         return reverse("batch_detail", args=[self.object.batch.pk])
 
 
+@login_required
 @require_POST
 def line_delete(request, pk):
     if not request.user.can_manage_batches:
