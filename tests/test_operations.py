@@ -7,6 +7,7 @@
 import json
 import sqlite3
 import tarfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from django.core.management.base import CommandError
 
 from apps.inventory.models import StockBalance, StockMovement
 from apps.operations import backup, checks
+from tests.emergency_support import configure_test_trust
 
 BASE_DIR = Path(django_settings.BASE_DIR)
 
@@ -108,7 +110,8 @@ def test_backup_db_postgres_builds_command_without_password(tmp_path, monkeypatc
 # --- Backup all + manifest ---------------------------------------------------
 
 
-def test_backup_all_structure_and_manifest(tmp_path, db):
+def test_backup_all_structure_and_manifest(tmp_path, db, settings):
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     db = _make_db_file(tmp_path / "src.sqlite3")
     media = tmp_path / "media"
     media.mkdir()
@@ -127,7 +130,8 @@ def test_backup_all_structure_and_manifest(tmp_path, db):
     assert "password" not in json.dumps(manifest).lower()
 
 
-def test_backup_all_trigger_automatic(tmp_path, db):
+def test_backup_all_trigger_automatic(tmp_path, db, settings):
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     db = _make_db_file(tmp_path / "src.sqlite3")
     media = tmp_path / "media"
     media.mkdir()
