@@ -87,18 +87,28 @@ def assert_business_writes_allowed(*, using="default") -> None:
 
 
 def _is_missing_deployment_state_table(exc: Exception) -> bool:
-    """Return true only for the pre-operations-migration PostgreSQL state.
+    """Return true only for the pre-operations-migration bootstrap state.
 
     The guard is installed before every migration.  A data migration in an
     earlier app can therefore write before ``operations.0002`` creates the
     singleton table.  Its failed state lookup must run in a savepoint, then
     only this exact bootstrap condition may pass through.
+
+    Проверка не привязана к одному движку. PostgreSQL сообщает код 42P01,
+    SQLite кода не сообщает вовсе, и раньше на нём разворачивание базы с нуля
+    в обычном режиме падало на первой же миграции, которая пересоздаёт
+    таблицу. Там, где код есть, требование к нему остаётся прежним, поэтому
+    строгость на PostgreSQL не ослабла. Настоящая защита в любом случае не
+    здесь, а в проверке, что определяющая миграция ещё не применена: потеря
+    таблицы на развёрнутой базе по-прежнему приводит к отказу.
     """
     cause = exc.__cause__
-    return (
-        getattr(cause, "sqlstate", None) == "42P01"
-        and DeploymentState._meta.db_table in str(cause)
-    )
+    if cause is None or DeploymentState._meta.db_table not in str(cause):
+        return False
+    sqlstate = getattr(cause, "sqlstate", None)
+    if sqlstate is not None:
+        return sqlstate == "42P01"
+    return "no such table" in str(cause).lower()
 
 
 def _deployment_state_schema_is_migrated(*, using: str) -> bool:
