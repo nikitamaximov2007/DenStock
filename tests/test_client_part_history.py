@@ -86,6 +86,7 @@ def data(db, admin):
         ("bolt", "Болт", "700100"),
         ("belt", "Ремень", "700200"),
         ("filter", "Фильтр", "700300"),
+        ("gasket", "Прокладка", "700400"),
     ):
         part = PartType.objects.create(
             name=name, category=cat, unit=unit,
@@ -94,7 +95,7 @@ def data(db, admin):
         )
         PartNumber.objects.create(part=part, value=number, kind=PartNumber.Kind.OEM)
         parts[key] = part
-        lots[key] = _lot(part, loc, 100, sup, admin)
+        lots[key] = _lot(part, loc, 400, sup, admin)
     return {"sup": sup, "loc": loc, "admin": admin, "parts": parts, "lots": lots}
 
 
@@ -475,3 +476,39 @@ def test_an_empty_repair_period_says_so_in_words(client, data, admin):
 
     body = _repairs_detail(client, customer).content.decode()
     assert "За выбранный период ремонтов нет" in body
+
+
+def test_a_representative_client_stays_within_a_query_budget(client, data, admin):
+    """Пятьдесят документов и двести строк: запросы не должны расти со строками.
+
+    Масштаб взят как у активного клиента за период. Проверяется и число
+    запросов, и то, что объединённый экран клиента остаётся в том же бюджете,
+    что и продажи по отдельности.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    _login(client, admin)
+    quiet = Customer.objects.create(name="Тихий")
+    _sale(data, customer=quiet, items=(("bolt", 1),))
+
+    busy = Customer.objects.create(name="Активный")
+    for _ in range(50):
+        _sale(data, customer=busy, items=(("bolt", 1), ("belt", 1), ("filter", 1), ("gasket", 1)))
+
+    with CaptureQueriesContext(connection) as baseline:
+        _sales_detail(client, quiet)
+    with CaptureQueriesContext(connection) as loaded:
+        resp = _sales_detail(client, busy)
+    assert len(loaded) <= len(baseline) + 2, (
+        f"продажи клиента: {len(baseline)} против {len(loaded)} запросов"
+    )
+
+    total = resp.context["page_obj"].paginator.count
+    assert total >= 150, f"проверка бессмысленна: строк всего {total}"
+
+    with CaptureQueriesContext(connection) as combined:
+        client.get(reverse("reports_client_timeline"), {"customer_id": busy.pk})
+    assert len(combined) <= len(baseline) + 4, (
+        f"объединённый экран клиента вышел из бюджета: {len(combined)} запросов"
+    )
