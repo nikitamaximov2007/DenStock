@@ -16,39 +16,35 @@
     <table class="table">
       <thead>
         <tr>
+          <th>Дата</th>
+          <th>Деталь</th>
           <th>Артикул</th>
-          <th>Название</th>
-          <th class="num--qty">Продано</th>
+          <th class="num--qty">Кол-во</th>
           {% if show_money %}<th class="num--money">Сумма (₽)</th>{% endif %}
-          <th class="num">Операций</th>
-          <th>Последняя продажа</th>
-          <th></th>
         </tr>
       </thead>
       <tbody>
-        {% for row in page_obj.object_list %}
+        {% for line in page_obj.object_list %}
           <tr>
+            <td>{{ line.sale.sold_at|ru_date }}</td>
             <td>
-              {% if row.exact_number %}
-                <span class="code-pill">{{ row.exact_number }}</span>
+              <a href="{% url 'part_detail' line.part_type_id %}">{{ line.part_type.name }}</a>
+            </td>
+            <td>
+              {% if line.exact_number %}
+                <span class="code-pill">{{ line.exact_number }}</span>
               {% else %}
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td>{{ row.part_type__name }}</td>
-            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
-            {% if show_money %}<td class="num--money">{{ row.revenue|money_int }}</td>{% endif %}
-            <td class="num">{{ row.operation_count }}</td>
-            <td>{{ row.last_sale|ru_dt }}</td>
-            <td>
-              <a href="{% url 'reports_sales_by_client_operations' %}?{{ period_qs }}&amp;{{ customer_qs }}&amp;part={{ row.part_type_id }}">Операции</a>
-            </td>
+            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+            {% if show_money %}<td class="num--money">{{ line.total_price|money_int }}</td>{% endif %}
           </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    {% include "partials/_empty_state.html" with icon="cart" title="Продаж клиенту за период нет" text="Измените период или вернитесь к списку клиентов." compact=1 %}
+    {% include "partials/_empty_state.html" with icon="cart" title="За выбранный период продаж нет" text="Измените период или вернитесь к списку клиентов." compact=1 %}
   {% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}

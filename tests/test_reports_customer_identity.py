@@ -303,12 +303,20 @@ def test_legacy_detail_page_still_opens_by_name(client, make_user, data):
 
 
 def test_timeline_page_opens_for_card(client, make_user, data):
+    """Карточка клиента открывается и показывает сами детали, а не документы.
+
+    Раньше здесь проверялся номер продажи. Вопрос сотрудника звучит «что мы
+    давали этому клиенту», и номер документа на него не отвечает: он лишний
+    уровень между вопросом и ответом.
+    """
     _login(client, make_user)
     customer = Customer.objects.create(name="Иванов")
     sale = _sale(data, customer=customer, qty=1)
     resp = client.get(reverse("reports_client_timeline"), {"customer_id": customer.pk})
     assert resp.status_code == 200
-    assert sale.number in resp.content.decode()
+    body = resp.content.decode()
+    assert sale.lines.first().part_type.name in body, "деталь не показана в истории клиента"
+    assert sale.number not in body, "номер документа снова стал главным элементом"
 
 
 def test_period_boundaries_are_respected(data):

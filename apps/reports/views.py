@@ -18,12 +18,11 @@ from apps.catalog.models import PartType
 from . import exporters
 from .services import (
     attach_customer_part_identity,
-    get_client_timeline,
+    attach_line_part_identity,
+    get_client_part_history,
     get_clients_sales_and_repairs,
     get_customer_part_operations,
-    get_customer_part_sales,
     get_customer_repair_operations,
-    get_customer_repair_parts,
     get_dashboard_report,
     get_low_stock_report,
     get_repairs_by_customer,
@@ -185,16 +184,19 @@ def sales_by_client_detail(request):
     _require_reports(request)
     period = resolve_period(request.GET)
     customer_name, missing, customer_id = _customer_selection(request)
+    # Плоская история: строка на проданную деталь, а не документ продажи.
+    # Вопрос сотрудника звучит «что мы продавали этому клиенту», и номер
+    # документа на него не отвечает.
     page_obj, is_paginated = _paginate(
         request,
-        get_customer_part_sales(
+        get_customer_part_operations(
             period,
             customer_name=customer_name,
             missing=missing,
             customer_id=customer_id,
         ),
     )
-    page_obj.object_list = attach_customer_part_identity(page_obj.object_list)
+    page_obj.object_list = attach_line_part_identity(page_obj.object_list)
     return render(
         request,
         "reports/sales_by_client_detail.html",
@@ -247,7 +249,7 @@ def client_timeline(request):
     customer_name, missing, customer_id = _customer_selection(request)
     page_obj, is_paginated = _paginate(
         request,
-        get_client_timeline(
+        get_client_part_history(
             period, customer_name=customer_name, missing=missing, customer_id=customer_id
         ),
     )
@@ -302,13 +304,14 @@ def repairs_by_client_detail(request):
     _require_reports(request)
     period = resolve_period(request.GET)
     customer_name, missing, customer_id = _customer_selection(request)
+    # Плоская история выдач: строка на деталь, а не ремонтный заказ.
     page_obj, is_paginated = _paginate(
         request,
-        get_customer_repair_parts(
+        get_customer_repair_operations(
             period, customer_name=customer_name, missing=missing, customer_id=customer_id
         ),
     )
-    page_obj.object_list = attach_customer_part_identity(page_obj.object_list)
+    page_obj.object_list = attach_line_part_identity(page_obj.object_list)
     return render(
         request,
         "reports/repairs_by_client_detail.html",

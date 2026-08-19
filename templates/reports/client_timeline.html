@@ -10,15 +10,12 @@
     </div>
   </div>
   {% include "reports/_sales_period_filter.html" %}
-  <p class="page-subtitle">
-    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
-    Продажи и ремонты в одной ленте по времени проведения.
-  </p>
+  <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
   <p class="muted">
-    Каждая строка ведёт в исходный документ. Суммы историчные: они
-    зафиксированы при проведении. Колонка «Выручка (₽)» заполнена только у
-    продаж, «Себестоимость выданного (₽)» только у ремонтов, и складывать их
-    между собой нельзя.
+    Что и когда получал клиент. Суммы историчные: они зафиксированы при
+    проведении продажи и не меняются при обновлении каталога. У ремонта
+    клиентской суммы нет: система хранит, куда ушли детали, а цену работ не
+    хранит.
   </p>
   {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
   {% if page_obj.object_list %}
@@ -26,42 +23,40 @@
       <thead>
         <tr>
           <th>Дата</th>
+          <th>Деталь</th>
+          <th>Артикул</th>
+          <th class="num--qty">Кол-во</th>
+          {% if show_money %}<th class="num--money">Сумма (₽)</th>{% endif %}
           <th>Тип</th>
-          <th>Документ</th>
-          <th class="num--qty">Единиц</th>
-          {% if show_money %}
-            <th class="num--money">Выручка (₽)</th>
-            <th class="num--money">Себестоимость выданного (₽)</th>
-          {% endif %}
-          <th>Комментарий</th>
-          <th>Сотрудник</th>
         </tr>
       </thead>
       <tbody>
-        {% for event in page_obj.object_list %}
+        {% for row in page_obj.object_list %}
           <tr>
-            <td>{{ event.at|ru_dt }}</td>
-            <td>{{ event.kind_label }}</td>
+            <td>{{ row.at|ru_date }}</td>
             <td>
-              {% if event.kind == "sale" %}
-                <a href="{% url 'sale_detail' event.document_id %}">{{ event.number }}</a>
+              <a href="{% url 'part_detail' row.part_type_id %}">{{ row.part_name }}</a>
+            </td>
+            <td>
+              {% if row.exact_number %}
+                <span class="code-pill">{{ row.exact_number }}</span>
               {% else %}
-                <a href="{% url 'repair_order_detail' event.document_id %}">{{ event.number }}</a>
+                <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td class="num--qty">{{ event.quantity|quantity_int }}</td>
+            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
             {% if show_money %}
-              <td class="num--money">{% if event.kind == "sale" %}{{ event.revenue|money_int }}{% endif %}</td>
-              <td class="num--money">{% if event.kind == "repair" %}{{ event.issued_cost|money_int }}{% endif %}</td>
+              <td class="num--money">
+                {% if row.amount is not None %}{{ row.amount|money_int }}{% else %}<span class="muted">·</span>{% endif %}
+              </td>
             {% endif %}
-            <td>{{ event.note|default:"·" }}</td>
-            <td>{{ event.employee|default:"·" }}</td>
+            <td>{{ row.kind_label }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    {% include "partials/_empty_state.html" with icon="chart" title="Документов за период нет" text="Измените период, чтобы увидеть продажи и ремонты этого клиента." compact=1 %}
+    {% include "partials/_empty_state.html" with icon="cart" title="За выбранный период операций нет" text="Измените период или вернитесь к списку клиентов." compact=1 %}
   {% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}

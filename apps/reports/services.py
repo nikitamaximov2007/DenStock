@@ -364,20 +364,43 @@ def attach_customer_part_identity(rows) -> list[dict]:
 def get_customer_part_operations(
     period: Period,
     *,
-    part_type_id: int,
+    part_type_id: int | None = None,
     customer_name: str = "",
     missing: bool = False,
     customer_id=None,
 ):
-    """Individual completed operations with frozen unit and line prices."""
+    """Individual completed operations with frozen unit and line prices.
+
+    Без ``part_type_id`` возвращается вся история клиента одной плоской лентой:
+    строка на каждую проданную деталь, новые сверху. Именно это нужно на
+    вопрос «что мы продавали этому клиенту»: документ продажи здесь лишний
+    уровень, а суммы взяты из снимка проведённой продажи и не пересчитываются
+    по сегодняшнему каталогу.
+    """
+    lines = _customer_sale_lines(
+        period, customer_name=customer_name, missing=missing, customer_id=customer_id
+    )
+    if part_type_id is not None:
+        lines = lines.filter(part_type_id=part_type_id)
     return (
-        _customer_sale_lines(
-            period, customer_name=customer_name, missing=missing, customer_id=customer_id
-        )
-        .filter(part_type_id=part_type_id)
+        lines
         .select_related("sale", "sale__sold_by", "part_type")
         .order_by("-sale__sold_at", "-sale_id", "pk")
     )
+
+
+def attach_line_part_identity(lines):
+    """Проставить артикул строкам документов одним запросом на страницу.
+
+    Идентичность детали живёт отдельно от строки документа, поэтому артикул
+    добирается пакетно: иначе плоская история клиента дала бы запрос на строку.
+    """
+    lines = list(lines)
+    identities = identity_for_part_ids({line.part_type_id for line in lines})
+    for line in lines:
+        identity = identities.get(line.part_type_id)
+        line.exact_number = identity.exact_number if identity else ""
+    return lines
 
 
 # --- Ремонт/выдачи (по completed_at; без выручки — Слой 17 без цены работ) ----
@@ -458,17 +481,24 @@ def get_customer_repair_parts(
 def get_customer_repair_operations(
     period: Period,
     *,
-    part_type_id: int,
+    part_type_id: int | None = None,
     customer_name: str = "",
     missing: bool = False,
     customer_id=None,
 ):
-    """Отдельные выдачи в ремонт с замороженной себестоимостью строки."""
+    """Отдельные выдачи в ремонт с замороженной себестоимостью строки.
+
+    Без ``part_type_id`` возвращается вся история выдач клиенту одной плоской
+    лентой, новые сверху. Денежной колонки у ремонта для клиента нет: система
+    хранит себестоимость выданного, а не сумму, которую клиент заплатил.
+    """
+    lines = _customer_repair_lines(
+        period, customer_name=customer_name, missing=missing, customer_id=customer_id
+    )
+    if part_type_id is not None:
+        lines = lines.filter(part_type_id=part_type_id)
     return (
-        _customer_repair_lines(
-            period, customer_name=customer_name, missing=missing, customer_id=customer_id
-        )
-        .filter(part_type_id=part_type_id)
+        lines
         .select_related("repair_order", "repair_order__created_by", "part_type")
         .order_by("-repair_order__completed_at", "-repair_order_id", "pk")
     )
@@ -552,6 +582,61 @@ def get_clients_sales_and_repairs(period: Period) -> list[dict]:
 
 def _client_filter(customer_name: str, missing: bool) -> str:
     return "" if missing else (customer_name or "").strip()
+
+
+def get_client_part_history(
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+) -> list[dict]:
+    """Плоская история клиента: строка на каждую деталь, продажи и ремонты вместе.
+
+    Отвечает на вопрос «что мы давали этому клиенту и когда». Документ здесь не
+    показывается: он лишний уровень между вопросом и ответом.
+
+    Деньги есть только у продажи и берутся из снимка проведённого документа.
+    У ремонта клиентской суммы не существует: система хранит себестоимость
+    выданного, а это не то, что клиент заплатил, поэтому денег у строк ремонта
+    нет вовсе.
+    """
+    sale_lines = attach_line_part_identity(
+        get_customer_part_operations(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        )
+    )
+    repair_lines = attach_line_part_identity(
+        get_customer_repair_operations(
+            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+        )
+    )
+
+    rows = [
+        {
+            "kind": "sale",
+            "kind_label": "Продажа",
+            "at": line.sale.sold_at,
+            "part_type_id": line.part_type_id,
+            "part_name": line.part_type.name,
+            "exact_number": line.exact_number,
+            "quantity": line.quantity,
+            "amount": line.total_price,
+        }
+        for line in sale_lines
+    ] + [
+        {
+            "kind": "repair",
+            "kind_label": "Ремонт",
+            "at": line.repair_order.completed_at,
+            "part_type_id": line.part_type_id,
+            "part_name": line.part_type.name,
+            "exact_number": line.exact_number,
+            "quantity": line.quantity,
+            "amount": None,
+        }
+        for line in repair_lines
+    ]
+    # Новые сверху. Вторичный ключ по названию делает порядок устойчивым, когда
+    # несколько строк проведены одним документом в одну и ту же секунду.
+    rows.sort(key=lambda row: (row["at"], row["part_name"]), reverse=True)
+    return rows
 
 
 def get_client_timeline(

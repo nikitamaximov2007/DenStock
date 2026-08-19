@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}Ремонты клиенту: {{ customer_name }} · DenisStock{% endblock %}
+{% block title %}Ремонты клиента: {{ customer_name }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <div>
-      <h1 class="page-title">Ремонты клиенту: {{ customer_name }}</h1>
+      <h1 class="page-title">Ремонты клиента: {{ customer_name }}</h1>
       <p class="page-subtitle">
         <a href="{% url 'reports_repairs_by_client' %}?{{ period_qs }}">← Все клиенты</a>
       </p>
@@ -11,44 +11,41 @@
   </div>
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
-  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
+  <p class="muted">
+    Детали, выданные в ремонт. Суммы клиента здесь нет: система фиксирует, куда
+    ушли детали, а цену работ не хранит.
+  </p>
   {% if page_obj.object_list %}
     <table class="table">
       <thead>
         <tr>
+          <th>Дата</th>
+          <th>Деталь</th>
           <th>Артикул</th>
-          <th>Название</th>
-          <th class="num--qty">Выдано</th>
-          {% if show_money %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
-          <th class="num">Заказов</th>
-          <th>Последний ремонт</th>
-          <th></th>
+          <th class="num--qty">Кол-во</th>
         </tr>
       </thead>
       <tbody>
-        {% for row in page_obj.object_list %}
+        {% for line in page_obj.object_list %}
           <tr>
+            <td>{{ line.repair_order.completed_at|ru_date }}</td>
             <td>
-              {% if row.exact_number %}
-                <span class="code-pill">{{ row.exact_number }}</span>
+              <a href="{% url 'part_detail' line.part_type_id %}">{{ line.part_type.name }}</a>
+            </td>
+            <td>
+              {% if line.exact_number %}
+                <span class="code-pill">{{ line.exact_number }}</span>
               {% else %}
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td>{{ row.part_type__name }}</td>
-            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
-            {% if show_money %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
-            <td class="num">{{ row.operation_count }}</td>
-            <td>{{ row.last_repair|ru_dt }}</td>
-            <td>
-              <a href="{% url 'reports_repairs_by_client_operations' %}?{{ period_qs }}&amp;{{ customer_qs }}&amp;part={{ row.part_type_id }}">Операции</a>
-            </td>
+            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
   {% else %}
-    {% include "partials/_empty_state.html" with icon="chart" title="Ремонтов за период нет" text="Измените период, чтобы увидеть выдачи в ремонт этому клиенту." compact=1 %}
+    {% include "partials/_empty_state.html" with icon="wrench" title="За выбранный период ремонтов нет" text="Измените период или вернитесь к списку клиентов." compact=1 %}
   {% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}
