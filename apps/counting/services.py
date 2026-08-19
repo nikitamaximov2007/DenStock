@@ -70,6 +70,17 @@ def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
     )
 
 
+def _can_price(part: BrpCatalogPart | None) -> bool:
+    """Строка, выпавшая из актуального снимка, источником цены быть не может.
+
+    Её прежняя цена остаётся в базе как история, но поставщик её больше не
+    публикует. Проверка стоит здесь, в общей воронке выбора источника, потому
+    что через неё проходят все экраны: карточка, поиск, приёмка, инвентаризация
+    и отчёт стоимости склада.
+    """
+    return part is not None and getattr(part, "is_current", True)
+
+
 def find_brp_price_source(
     norm: str,
     selected: BrpCatalogPart | None,
@@ -89,7 +100,7 @@ def find_brp_price_source(
     выбранной позиции. Порядок детерминирован: оптовая цена > 0, меньший pk.
     Если ни у кого оптовой цены нет, источником остаётся выбранная позиция (0).
     """
-    if selected is not None and (
+    if _can_price(selected) and (
         selected.wholesale_price_usd is not None and selected.wholesale_price_usd > 0
     ):
         return selected
@@ -107,7 +118,7 @@ def find_brp_price_source(
             if repl_norm:
                 related |= Q(material_no_norm=repl_norm)
     if not related:
-        return selected
+        return selected if _can_price(selected) else None
     if candidates is None:
         priced = (
             BrpCatalogPart.objects.filter(is_current=True, wholesale_price_usd__gt=0)
@@ -139,7 +150,7 @@ def find_brp_price_source(
             ),
             None,
         )
-    return priced or selected
+    return priced or (selected if _can_price(selected) else None)
 
 
 def load_brp_price_candidates(selected_parts) -> list[BrpCatalogPart]:

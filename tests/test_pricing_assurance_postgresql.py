@@ -598,3 +598,53 @@ def test_a_large_current_catalog_stays_answerable(tmp_path, pricing):
     assert len(captured) <= 3, (
         f"выбор источника цены сделал {len(captured)} запросов: каталог перебирается целиком"
     )
+
+
+# --- Документы инвентаризации ------------------------------------------------------------
+
+
+def test_counting_price_refresh_does_not_revive_a_withdrawn_row(tmp_path, pricing):
+    """Пересчёт цен в инвентаризации обязан подчиняться актуальности каталога.
+
+    Строка документа хранит ссылку на позицию каталога. Если позиция выпала из
+    снимка, точный поиск её больше не находит, и остаётся сохранённая ссылка.
+    Пересчёт цен — это операция «привести к текущим ценам», поэтому взять цену
+    из выбывшей позиции значит записать в документ цену, которой у поставщика
+    больше нет.
+    """
+    from apps.counting.models import InventoryCountingLine, InventoryCountingSession
+    from apps.counting.services import refresh_draft_prices
+
+    apply_snapshot(tmp_path, "cnt-old.xlsx", [{"material": "CNT-4004", "wholesale": 40}])
+    row = BrpCatalogPart.objects.get(material_no="CNT-4004")
+    stale = Decimal("40") * RATE * Decimal("1.5")
+
+    from apps.warehouse.models import StorageLocation
+
+    location, _ = StorageLocation.objects.get_or_create(
+        code="S98-L01-D01-C01",
+        defaults={"name": "Ячейка инвентаризации", "storage_allowed": True, "is_active": True},
+    )
+    session = InventoryCountingSession.objects.create(
+        storage_location=location, full_address=location.code
+    )
+    line = InventoryCountingLine.objects.create(
+        session=session,
+        scanned_value="CNT-4004",
+        normalized_value=row.material_no_norm,
+        brp_catalog_part=row,
+        source=InventoryCountingLine.Source.BRP,
+        display_name="Деталь",
+        quantity_counted=Decimal("1"),
+        final_customer_price_rub=stale,
+    )
+
+    apply_snapshot(tmp_path, "cnt-new.xlsx", [{"material": "OTHER-5005", "wholesale": 55}])
+    row.refresh_from_db()
+    assert row.is_current is False
+
+    refresh_draft_prices(session)
+    line.refresh_from_db()
+    assert line.final_customer_price_rub != stale, (
+        "пересчёт цен в инвентаризации взял цену из выбывшей строки каталога"
+    )
