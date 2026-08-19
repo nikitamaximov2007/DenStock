@@ -203,4 +203,6 @@ def test_navigation_batches_visible_to_right_roles(make_user, client):
 
     client.logout()
     client.login(username="prodavec", password=PASSWORD)
-    assert ">Склад<" not in client.get(reverse("dashboard")).content.decode()
+    dashboard = client.get(reverse("dashboard")).content.decode()
+    assert "Быстрые действия" in dashboard
+    assert "Партии поставок" not in dashboard

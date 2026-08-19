@@ -214,7 +214,9 @@ def test_nav_section_visibility(make_user, client):
 
     client.logout()
     client.login(username="prodavec", password=PASSWORD)
-    assert ">Склад<" not in client.get(reverse("dashboard")).content.decode()
+    dashboard = client.get(reverse("dashboard")).content.decode()
+    assert "Быстрые действия" in dashboard
+    assert "Экземпляры" not in dashboard
 
 
 def test_storekeeper_cannot_manage_batches_capability(make_user):
