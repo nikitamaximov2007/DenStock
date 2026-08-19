@@ -112,17 +112,22 @@ def _parse_date(value):
 
 @login_required
 def actions_scan(request):
-    """Сканер действий: поиск остатков по скану + форма проведения."""
+    """Сканер действий: scan добавляет в draft, проведение отдельным submit."""
     _require_access(request)
     q = (request.GET.get("q") or "").strip()
+    allowed_actions = _allowed_actions(request.user)
+    selected_action_kind = request.GET.get("kind") or allowed_actions[0][0]
+    if selected_action_kind not in {value for value, _label in allowed_actions}:
+        selected_action_kind = allowed_actions[0][0]
     ctx = {
         "q": q,
         "searched": bool(q),
-        "allowed_actions": _allowed_actions(request.user),
+        "allowed_actions": allowed_actions,
         "not_found_message": NOT_FOUND_MESSAGE,
         "multi_location_message": MULTI_LOCATION_MESSAGE,
         "cart_panels": _cart_panels(request),
         "cart_token": secrets.token_urlsafe(32),
+        "selected_action_kind": selected_action_kind,
     }
     if q:
         lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
@@ -157,13 +162,65 @@ def actions_scan(request):
 
 
 @login_required
+def actions_cart_scan(request):
+    """Resolve one scan and add it to the selected draft when location is unambiguous."""
+    _require_access(request)
+    if request.method != "POST":
+        return redirect("actions_scan")
+    q = (request.POST.get("q") or "").strip()
+    kind_value = request.POST.get("kind", "")
+    permission = ACTION_PERMISSIONS.get(kind_value)
+    if permission is None or not getattr(request.user, permission, False):
+        raise PermissionDenied
+    kind = kind_value
+    back = reverse("actions_scan") + (f"?{urlencode({'kind': kind})}")
+    if not q:
+        messages.error(request, "Отсканируйте номер детали.")
+        return redirect(back)
+    lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
+    if lookup.ambiguous or not lookup.found:
+        messages.error(request, lookup.message or NOT_FOUND_MESSAGE)
+        return redirect(back)
+    if kind not in CART_KINDS:
+        # Резерв — отдельная немедленная операция, а не тип многострочной
+        # корзины. Сохраняем прежнюю возможность, но не списываем товар при
+        # сканировании.
+        return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
+    part = lookup.candidate.part
+    overview = stock_overview(part)
+    if not overview["locations"]:
+        messages.error(request, NOT_FOUND_MESSAGE)
+        return redirect(back)
+    if len(overview["locations"]) != 1:
+        messages.warning(request, MULTI_LOCATION_MESSAGE)
+        return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
+    location = overview["locations"][0]["location"]
+    cart = _cart_for(request, kind, create=True)
+    try:
+        row = add_scan(cart, part, location, by=request.user)
+    except ActionError as exc:
+        messages.error(request, str(exc))
+        if not cart_rows(cart):
+            discard_cart(cart, by=request.user)
+            _forget_cart(request, kind)
+        return redirect(back)
+    _remember_scan(request, kind, row.key, q)
+    messages.success(
+        request, f"Добавлено: {part.name}, {quantity_int(row.quantity)} шт, {location.code}."
+    )
+    return redirect(back)
+
+
+@login_required
 def actions_perform(request):
     """Провести действие (POST): Продажа / Резерв / Ремонт из выбранной ячейки."""
     _require_access(request)
     if request.method != "POST":
         return redirect("actions_scan")
     q = (request.POST.get("q") or "").strip()
-    back = reverse("actions_scan") + (f"?{urlencode({'q': q})}" if q else "")
+    action_kind = request.POST.get("action_type", "")
+    back_params = {"q": q, "kind": action_kind}
+    back = reverse("actions_scan") + f"?{urlencode(back_params)}"
     part = get_object_or_404(PartType, pk=request.POST.get("part_id"))
     location_id = request.POST.get("location_id")
     if not location_id:
@@ -305,7 +362,9 @@ def _cart_panels(request) -> list:
 
 def _scan_back(request) -> str:
     q = (request.POST.get("q") or "").strip()
-    return reverse("actions_scan") + (f"?{urlencode({'q': q})}" if q else "")
+    kind = request.POST.get("kind") or request.POST.get("action_type") or ""
+    params = {"q": q, "kind": kind}
+    return reverse("actions_scan") + f"?{urlencode(params)}"
 
 
 @login_required

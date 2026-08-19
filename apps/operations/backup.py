@@ -21,13 +21,20 @@ from pathlib import Path
 from django.conf import settings
 from django.db import connection, transaction
 
-from .emergency_manifest import SCHEMA_VERSION, validate_manifest, write_manifest
+from .emergency_manifest import (
+    SCHEMA_VERSION,
+    ManifestError,
+    read_manifest,
+    validate_manifest,
+    write_manifest,
+)
 from .emergency_state import (
     business_state_marker,
     media_tree_sha256,
     migration_state,
     sha256_file,
 )
+from .manifest_signing import sign_manifest
 from .models import DeploymentState
 
 
@@ -266,6 +273,12 @@ def backup_all(
         "created_at": created_at,
         "source_environment": settings.DENSTOCK_MODE,
         "source_instance_id": settings.DENSTOCK_INSTANCE_ID,
+        "authorized_emergency_primary_id": (
+            str(state.authorized_emergency_primary_id)
+            if state.authorized_emergency_primary_id
+            else None
+        ),
+        "primary_authorization_epoch": state.primary_authorization_epoch,
         "app_commit": app_commit,
         "database_name": Path(str(s.get("NAME") or "")).name,
         "database_identity": str(state.database_identity),
@@ -301,6 +314,8 @@ def backup_all(
                 + ", ".join(sorted(forbidden))
             )
         manifest.update(extra_manifest)
+    if settings.DENSTOCK_MODE == "production":
+        sign_manifest(manifest)
     write_manifest(run / "manifest.json", manifest)
     validation = validate_manifest(run, expected_source=settings.DENSTOCK_MODE)
     if not validation.ok:
@@ -313,11 +328,39 @@ def backup_all(
     return run
 
 
+def _run_is_complete(run: Path) -> bool:
+    """Каталог довели до конца: manifest читается и помечен verified.
+
+    Каталог создаётся В НАЧАЛЕ копирования, поэтому прерванный запуск оставляет
+    на диске частичный каталог без пригодного manifest.
+    """
+    try:
+        manifest = read_manifest(run / "manifest.json")
+    except ManifestError:
+        return False
+    return manifest.get("verification_status") == "verified"
+
+
 def prune_old_runs(root, keep_last: int) -> list[Path]:
-    """Оставить `keep_last` свежих каталогов бэкапов, остальные удалить. Возвращает удалённые."""
+    """Оставить `keep_last` свежих ЗАВЕРШЁННЫХ копий, остальные удалить.
+
+    Считать позиции, а не завершённость, было опасно: прерванный запуск оставляет
+    каталог, который занимал место в квоте наравне с рабочей копией. Несколько
+    сбоев подряд вытесняли исправные копии, и на диске оставался мусор вместо
+    запаса. Поэтому квоту расходуют только завершённые копии.
+
+    Незавершённые каталоги считаются отдельной квотой того же размера: свежие
+    остаются для разбора сбоя, но копиться вечно не могут.
+    """
     root = Path(root)
+    if keep_last <= 0:
+        return []
     runs = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.name)
-    to_remove = runs[:-keep_last] if keep_last > 0 else []
+    complete, partial = [], []
+    for run in runs:
+        (complete if _run_is_complete(run) else partial).append(run)
+    keep = set(complete[-keep_last:]) | set(partial[-keep_last:])
+    to_remove = [run for run in runs if run not in keep]
     for path in to_remove:
         shutil.rmtree(path, ignore_errors=True)
     return to_remove

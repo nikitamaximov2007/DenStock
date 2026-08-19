@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ipaddress
+import uuid
+from pathlib import Path
 
 from django.conf import settings
 from django.core.checks import Error, register
@@ -64,10 +66,37 @@ def validate_database_target(*, mode=None, database=None) -> None:
         raise EmergencySafetyError(f"Unknown DENSTOCK_MODE: {mode or '?'}")
 
 
+def validate_emergency_role(*, role=None) -> None:
+    """Only the designated LAN primary may ever become an emergency writer."""
+    role = _normalized(role or settings.DENSTOCK_EMERGENCY_ROLE)
+    if role not in {"primary", "secondary"}:
+        raise EmergencySafetyError("Emergency workstation role must be primary or secondary.")
+
+
+def configured_workstation_id() -> uuid.UUID:
+    """Return the configured identity, optionally pinned to protected local storage."""
+    try:
+        configured = uuid.UUID(str(settings.DENSTOCK_EMERGENCY_WORKSTATION_ID))
+    except (TypeError, ValueError) as exc:
+        raise EmergencySafetyError("Emergency workstation UUID is missing or invalid.") from exc
+    identity_path = str(settings.DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH or "").strip()
+    if not identity_path:
+        return configured
+    try:
+        persisted = uuid.UUID(Path(identity_path).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError) as exc:
+        raise EmergencySafetyError("Protected emergency workstation UUID is unavailable.") from exc
+    if persisted != configured:
+        raise EmergencySafetyError("Emergency workstation UUID does not match protected identity.")
+    return configured
+
+
 @register()
 def deployment_database_check(app_configs, **kwargs):
     try:
         validate_database_target()
+        if _normalized(settings.DENSTOCK_MODE) == "emergency-local":
+            validate_emergency_role()
     except EmergencySafetyError as exc:
         return [Error(str(exc), id="operations.E001")]
     return []

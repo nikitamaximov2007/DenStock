@@ -10,10 +10,11 @@ from django.apps import apps
 from django.conf import settings
 from django.db import OperationalError, ProgrammingError, connections, transaction
 from django.db.backends.signals import connection_created
+from django.db.migrations.recorder import MigrationRecorder
 from django.db.models import F
 from django.http import HttpResponse
 
-from .emergency_state import BUSINESS_APP_LABELS
+from .emergency_state import AUTHORIZATION_MODEL_LABELS, BUSINESS_APP_LABELS
 from .models import DeploymentState
 
 FAILOVER_ADVISORY_LOCK_ID = 0x44454E53544F434B
@@ -21,6 +22,7 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 EXEMPT_WRITE_PATHS = frozenset({"/login/", "/logout/", "/operations/backups/create/"})
 _internal = contextvars.ContextVar("denstock_write_guard_internal", default=False)
 _table_pattern = None
+_DEPLOYMENT_STATE_MIGRATION = "0002_deploymentstate_offlinesession_emergencyauditevent_and_more"
 
 
 class BusinessWriteBlocked(RuntimeError):
@@ -34,7 +36,10 @@ def _guarded_table_pattern():
             {
                 model._meta.db_table
                 for model in apps.get_models(include_auto_created=True)
-                if model._meta.app_label in BUSINESS_APP_LABELS
+                if (
+                    model._meta.app_label in BUSINESS_APP_LABELS
+                    or model._meta.label_lower in AUTHORIZATION_MODEL_LABELS
+                )
             },
             key=len,
             reverse=True,
@@ -81,6 +86,27 @@ def assert_business_writes_allowed(*, using="default") -> None:
         )
 
 
+def _is_missing_deployment_state_table(exc: Exception) -> bool:
+    """Return true only for the pre-operations-migration PostgreSQL state.
+
+    The guard is installed before every migration.  A data migration in an
+    earlier app can therefore write before ``operations.0002`` creates the
+    singleton table.  Its failed state lookup must run in a savepoint, then
+    only this exact bootstrap condition may pass through.
+    """
+    cause = exc.__cause__
+    return (
+        getattr(cause, "sqlstate", None) == "42P01"
+        and DeploymentState._meta.db_table in str(cause)
+    )
+
+
+def _deployment_state_schema_is_migrated(*, using: str) -> bool:
+    return MigrationRecorder(connections[using]).migration_qs.filter(
+        app="operations", name=_DEPLOYMENT_STATE_MIGRATION
+    ).exists()
+
+
 def execute_guard(execute, sql, params, many, context):
     if _internal.get() or not _is_business_mutation(sql):
         return execute(sql, params, many, context)
@@ -91,12 +117,21 @@ def execute_guard(execute, sql, params, many, context):
         token = _internal.set(True)
         try:
             try:
-                assert_business_writes_allowed(using=alias)
-            except (OperationalError, ProgrammingError):
-                database = context["connection"]
-                if DeploymentState._meta.db_table in database.introspection.table_names():
+                # A failed PostgreSQL query aborts its transaction.  Keep the
+                # bootstrap lookup in a savepoint so the original migration
+                # statement can still execute while operations.0002 has not
+                # yet created DeploymentState.
+                with transaction.atomic(using=alias):
+                    assert_business_writes_allowed(using=alias)
+            except (OperationalError, ProgrammingError) as exc:
+                # A missing table is only safe before its defining migration.
+                # If a deployed database loses the table, fail closed instead.
+                missing_state = _is_missing_deployment_state_table(exc)
+                state_migrated = _deployment_state_schema_is_migrated(using=alias)
+                if missing_state and not state_migrated:
+                    return execute(sql, params, many, context)
+                else:
                     raise
-                return execute(sql, params, many, context)
             DeploymentState.objects.using(alias).filter(
                 pk=DeploymentState.SINGLETON_PK
             ).update(business_generation=F("business_generation") + 1)

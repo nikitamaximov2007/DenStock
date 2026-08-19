@@ -127,19 +127,31 @@
       {% if batch.is_applied %}
         <span class="muted">Импорт применён, повторное применение отклоняется.</span>
       {% else %}
-        <form method="post" action="{% url 'catalog_import_recheck' batch.pk %}">
+        <form method="post"
+              action="{% url 'catalog_import_recheck' batch.pk %}"
+              data-idempotent-form>
           {% csrf_token %}
-          <button type="submit" class="btn btn--secondary">Проверить заново</button>
+          <button type="submit"
+                  class="btn btn--secondary"
+                  data-progress-label="Идёт проверка...">Проверить заново</button>
         </form>
         {% if batch.can_apply %}
-          <form method="post" action="{% url 'catalog_import_apply' batch.pk %}">
+          <form method="post"
+                action="{% url 'catalog_import_apply' batch.pk %}"
+                data-idempotent-form>
             {% csrf_token %}
             <p class="muted">
               Этот файл считается полным актуальным каталогом BRP. Позиции, которых
               в нём нет, перестанут использоваться как текущие каталоговые позиции;
               склад и история не удаляются.
             </p>
-            <button type="submit" class="btn btn--primary">Применить импорт</button>
+            <p class="muted">
+              Полный каталог применяется до минуты. Дождитесь окончания, страница
+              обновится сама.
+            </p>
+            <button type="submit"
+                    class="btn btn--primary"
+                    data-progress-label="Идёт применение...">Применить импорт</button>
           </form>
         {% endif %}
       {% endif %}

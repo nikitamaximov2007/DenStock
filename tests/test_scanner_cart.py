@@ -195,6 +195,69 @@ def test_scan_by_oem_and_by_barcode_is_one_row(client, make_user, data):
     assert rows[0].quantity == Decimal("2")
 
 
+def test_single_location_scan_auto_adds_to_selected_cart_without_stock_mutation(
+    client, make_user, data
+):
+    _login(client, make_user)
+    movements_before = StockMovement.objects.count()
+    for _ in range(2):
+        response = client.post(
+            reverse("actions_cart_scan"), {"kind": KIND_SALE, "q": "700200"}, follow=True
+        )
+        assert response.status_code == 200
+
+    cart = Sale.objects.get(status=Sale.Status.DRAFT)
+    rows = cart_rows(cart)
+    assert len(rows) == 1
+    assert rows[0].part == data["ring"]
+    assert rows[0].quantity == Decimal("2")
+    data["ring_lot"].refresh_from_db()
+    assert data["ring_lot"].quantity == Decimal("4")
+    assert StockMovement.objects.count() == movements_before
+
+
+def test_auto_scan_uses_one_selected_document_kind_and_invalid_scan_keeps_cart(
+    client, make_user, data
+):
+    _login(client, make_user)
+    client.post(reverse("actions_cart_scan"), {"kind": KIND_REPAIR, "q": "700200"})
+    client.post(reverse("actions_cart_scan"), {"kind": KIND_REPAIR, "q": "missing"}, follow=True)
+
+    cart = RepairOrder.objects.get(status=RepairOrder.Status.DRAFT)
+    assert [(row.part, row.quantity) for row in cart_rows(cart)] == [(data["ring"], Decimal("1"))]
+    page = client.get(reverse("actions_scan")).content.decode()
+    assert "В корзину" not in page
+    assert "autocorrect=\"off\"" in page
+    assert "autocapitalize=\"off\"" in page
+
+
+def test_multi_location_scan_requires_choice_before_adding_to_cart(client, make_user, data):
+    _login(client, make_user)
+    response = client.post(
+        reverse("actions_cart_scan"), {"kind": KIND_SALE, "q": "700100"}, follow=True
+    )
+
+    assert response.status_code == 200
+    assert not Sale.objects.filter(status=Sale.Status.DRAFT).exists()
+    page = response.content.decode()
+    assert "Выберите, откуда списать" in page
+    assert "Добавить выбранную ячейку" in page
+
+
+def test_reserve_remains_available_without_becoming_a_cart_type(client, make_user, data):
+    _login(client, make_user)
+    response = client.post(
+        reverse("actions_cart_scan"), {"kind": WarehouseAction.Type.RESERVE, "q": "700200"},
+        follow=True,
+    )
+
+    assert response.status_code == 200
+    page = response.content.decode()
+    assert "Создать резерв" in page
+    assert "В корзину" not in page
+    assert not Sale.objects.filter(status=Sale.Status.DRAFT).exists()
+
+
 # --- Ручное редактирование ----------------------------------------------------------------
 
 

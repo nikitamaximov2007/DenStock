@@ -356,9 +356,9 @@ def test_scan_page_single_location_preselected(client, make_user, data):
     assert "Болт одноместный" in html
     assert 'checked' in html  # единственная ячейка выбрана сразу
     assert "Деталь найдена в нескольких ячейках" not in html
-    # Два пути со сканера: набрать документ в корзину или провести одну деталь.
-    assert "В корзину" in html
-    assert "Провести сразу" in html
+    assert "Добавить выбранную ячейку" in html
+    assert "В корзину" not in html
+    assert "Провести сразу" not in html
 
 
 def test_scan_page_multiple_locations_require_choice(client, make_user, data):

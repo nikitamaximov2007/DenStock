@@ -35,7 +35,7 @@
 
 | Компонент | Назначение |
 |---|---|
-| `docker-compose.emergency.yml` | Изолированные PostgreSQL 16, Django и Caddy на Windows |
+| `docker-compose.emergency.yml` | Изолированные PostgreSQL 16, Django и Caddy в WSL2 Docker Engine |
 | `.env.emergency` | Локальные secrets, identity и offsite source |
 | `.emergency/control.json` | Активная standby, previous standby и lifecycle marker |
 | `.emergency/standbys/` | Проверенные DB slots и media snapshots |
@@ -44,8 +44,12 @@
 | `DenisStock-Emergency.ps1` | Операторское меню |
 | `Emergency-Standby-Refresh.ps1` | Неинтерактивный scheduled standby refresh |
 
-Emergency Compose слушает только `127.0.0.1`, по умолчанию порт `8080`. Он не
-использует production Compose volumes и не публикует PostgreSQL port.
+Emergency Compose по умолчанию слушает только `127.0.0.1`, порт `8080`. Только
+provisioned Primary может намеренно слушать свой fixed LAN IPv4; Windows firewall
+при этом ограничен `LocalSubnet`. Он не использует production Compose volumes и
+не публикует PostgreSQL port. Docker Desktop не является required runtime:
+supported workstation path описан в
+[emergency-workstation-deployment.md](emergency-workstation-deployment.md).
 
 ## Production prerequisites
 
@@ -57,6 +61,8 @@ Emergency Compose слушает только `127.0.0.1`, по умолчани
   allowlist;
 - `DENSTOCK_EMERGENCY_PROBE_TOKEN` - отдельный случайный read-only probe token;
 - `DENSTOCK_PRODUCTION_URL=https://185-250-44-206.sslip.io`.
+- `DENSTOCK_MANIFEST_SIGNING_KEY_PATH` - persistent Ed25519 private key path;
+- `DENSTOCK_MANIFEST_SIGNING_KEY_ID` - current public-key identifier.
 
 `DENSTOCK_MODE=production` задаётся явно или берётся как default из production
 settings. Startup блокируется, если production использует не PostgreSQL,
@@ -65,34 +71,47 @@ credential и не даёт права на restore или mutation.
 
 ## Первичная настройка Windows
 
-Требуются Docker Desktop, Git и PowerShell 5.1 или новее. Для Yandex Object
-Storage нужен `rclone`, настроенный в профиле Windows-пользователя.
+Поддерживаемая workstation-установка использует WSL2 Ubuntu и Docker Engine
+внутри WSL. Docker Desktop не требуется. Выполните только
+[workstation deployment guide](emergency-workstation-deployment.md) от имени
+ответственного администратора: installer создаёт local secrets, `.env.emergency`,
+ACL, firewall rule, shortcuts и scheduled refresh. Обычный сотрудник не должен
+видеть `.env.emergency`, вводить PostgreSQL credentials или запускать PowerShell.
 
-```powershell
-Copy-Item .env.emergency.example .env.emergency
+Для Yandex Object Storage нужен `rclone`, настроенный только в профиле
+ответственного Windows-пользователя. Production DB credentials в emergency env
+не нужны и запрещены. Проверка окружения аварийно завершает startup, если mode,
+DB host или DB name не соответствуют local allowlist и prefix
+`denstock_emergency_`.
+
+Manual local setup below is retained only for an isolated development drill,
+not for a warehouse workstation. It must not create a second primary writer.
+
+The production private signing key is an administrative secret. It is not in
+Git, PostgreSQL, media, manifest, rclone or workstation files. A missing key
+causes production emergency-backup creation to fail closed. The workstation
+receives a separately provisioned pinned public key and key id only; it never
+trusts a key supplied inside a manifest. Signed production manifests are
+required for `READY`, `ACTIVE` and failback checks. Older unsigned manifests
+may be retained for diagnostics but cannot activate an emergency workstation.
+
+Production authorization is explicit and starts with no authorized primary:
+
+```bash
+docker compose exec web python manage.py authorize_emergency_primary \
+  --workstation-id '<WORKSTATION-UUID>' --actor '<ADMIN>' \
+  --confirm 'НАЗНАЧИТЬ-EMERGENCY-PRIMARY'
+docker compose exec web python manage.py revoke_emergency_primary \
+  --actor '<ADMIN>' --confirm 'ОТОЗВАТЬ-EMERGENCY-PRIMARY'
 ```
 
-В `.env.emergency` заполнить:
-
-- отдельные локальные `POSTGRES_PASSWORD` и `DJANGO_SECRET_KEY`;
-- уникальный `DENSTOCK_INSTANCE_ID`, например `warehouse-pc-01`;
-- полный SHA установленного release в `DENSTOCK_APP_COMMIT`;
-- `DENSTOCK_EMERGENCY_BACKUP_SOURCE`, например
-  `yandex-s3:denstock-backups-nikita`;
-- канонический `DENSTOCK_PRODUCTION_URL`;
-- случайный `DENSTOCK_EMERGENCY_PROBE_TOKEN`, одинаковый на production и local.
-
-Production DB credentials в emergency env не нужны и запрещены. Пароль в
-`DATABASE_URL` должен быть URL-safe. Проверка окружения аварийно завершает
-startup, если mode, DB host или DB name не соответствуют local allowlist и
-prefix `denstock_emergency_`.
-
-Запуск меню:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File scripts\operations\DenisStock-Emergency.ps1
-```
+Authorization replacement and revocation are atomic, audit logged and advance
+the epoch. A fresh signed backup is required after every change. During a
+planned A to B replacement, freeze and preserve A's export, authorize B, sync
+B, then decommission A by wiping its standby and protected runtime. A fully
+isolated A with an older valid signed manifest cannot learn that B was later
+authorized; this is an unavoidable offline limitation, so it must never be
+left available as an emergency writer.
 
 ## Manifest schema v2
 

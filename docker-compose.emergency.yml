@@ -50,7 +50,8 @@ services:
       emergency-web:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${DENSTOCK_EMERGENCY_PORT:-8080}:80"
+      # Primary may deliberately bind its fixed LAN address.  Secondary stays loopback-only.
+      - "${DENSTOCK_EMERGENCY_BIND_HOST:-127.0.0.1}:${DENSTOCK_EMERGENCY_PORT:-8080}:80"
     environment:
       EMERGENCY_SLOT: ${EMERGENCY_SLOT:-inactive}
     volumes:

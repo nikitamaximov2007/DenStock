@@ -9,12 +9,21 @@
     </div>
   </div>
   <p class="page-subtitle">
-    Сканер действий: продажа, резерв или выдача в ремонт прямо со скана.
-    Остаток меняется сразу и попадает в отчёты; резерв только удерживает
-    доступность, отменить его можно в разделе «Резервы».
+    Сканируйте позиции в общий черновик. Остаток изменится только при одном
+    финальном проведении документа.
   </p>
   <div class="action-panel">
-    <form method="get" class="search-form">
+    <form method="post"
+          action="{% url 'actions_cart_scan' %}"
+          class="search-form">
+      {% csrf_token %}
+      <label for="scan-kind" class="visually-hidden">Действие</label>
+      <select id="scan-kind" name="kind">
+        {% for value, label in allowed_actions %}
+          <option value="{{ value }}"
+                  {% if value == selected_action_kind %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
       <input id="scan"
              name="q"
              type="text"
@@ -22,13 +31,16 @@
              placeholder="Отсканируйте номер детали"
              autocomplete="off"
              autofocus
+             autocapitalize="off"
+             autocorrect="off"
+             spellcheck="false"
              data-scan-input
              value="{{ q }}">
-      <button type="submit" class="btn btn--primary">Найти</button>
+      <button type="submit" class="btn btn--primary">Сканировать</button>
     </form>
     <p class="action-panel__hint">
-      Отсканируйте номер детали. Если деталь есть в нескольких ячейках,
-      выберите нужную ячейку. Сканер работает как клавиатура: скан и Enter.
+      Скан и Enter сразу добавляют деталь в выбранный черновик. Если деталь есть
+      в нескольких ячейках, сначала выберите нужную ячейку.
     </p>
   </div>
   {% for panel in cart_panels %}
@@ -181,13 +193,16 @@
               </p>
             {% endif %}
             <form method="post"
-                  action="{% url 'actions_perform' %}"
+                  action="{% if selected_action_kind == 'reserve' %}{% url 'actions_perform' %}{% else %}{% url 'actions_cart_add' %}{% endif %}"
                   class="form"
                   data-idempotent-form>
               {% csrf_token %}
-              <input type="hidden" name="request_token" value="{{ request_token }}">
+              <input type="hidden" name="action_type" value="{{ selected_action_kind }}">
               <input type="hidden" name="part_id" value="{{ overview.part.pk }}">
               <input type="hidden" name="q" value="{{ q }}">
+              {% if selected_action_kind == 'reserve' %}
+                <input type="hidden" name="request_token" value="{{ request_token }}">
+              {% endif %}
               <table class="table">
                 <thead>
                   <tr>
@@ -219,16 +234,7 @@
                   {% endfor %}
                 </tbody>
               </table>
-              <div class="form-grid form-grid--2">
-                <p>
-                  <label for="action-type">Действие</label>
-                  <br>
-                  <select id="action-type" name="action_type">
-                    {% for value, label in allowed_actions %}
-                      <option value="{{ value }}">{{ label }}</option>
-                    {% endfor %}
-                  </select>
-                </p>
+              {% if selected_action_kind == 'reserve' %}
                 <p>
                   <label for="action-qty">Количество</label>
                   <br>
@@ -239,32 +245,34 @@
                          value="1"
                          required>
                 </p>
-              </div>
-              <p>
-                <label for="action-comment">Клиент / комментарий</label>
-                <br>
-                <input id="action-comment"
-                       name="customer_comment"
-                       type="text"
-                       maxlength="255"
-                       placeholder="Например: Иванов, снегоход Ski-Doo"
-                       style="min-width: 280px">
-              </p>
+                <p>
+                  <label for="action-comment">Клиент / комментарий</label>
+                  <br>
+                  <input id="action-comment"
+                         name="customer_comment"
+                         type="text"
+                         maxlength="255"
+                         placeholder="Например: Иванов, снегоход Ski-Doo"
+                         style="min-width: 280px">
+                </p>
+              {% else %}
+                <input type="hidden" name="quantity" value="1">
+              {% endif %}
               <div class="form-actions">
-                <button type="submit"
-                        class="btn btn--primary"
-                        formaction="{% url 'actions_cart_add' %}"
-                        formnovalidate>В корзину</button>
-                <button type="submit" class="btn btn--secondary">Провести сразу</button>
+                <button type="submit" class="btn btn--primary">{% if selected_action_kind == 'reserve' %}Создать резерв{% else %}Добавить выбранную ячейку{% endif %}</button>
               </div>
             </form>
             <p class="muted">
-              «В корзину» ничего не списывает: продажа или ремонт набираются из
-              нескольких деталей и проводятся одним документом. Повторный скан
-              той же детали из той же ячейки увеличивает количество позиции.
-              Резерв добавить в корзину нельзя: он проводится сразу и удерживает
-              доступность до отмены или продажи из резерва. Клиент нужен только
-              при проведении. Больше доступного количества провести нельзя.
+              {% if selected_action_kind == 'reserve' %}
+                Резерв создаётся отдельно и удерживает доступность до отмены или
+                продажи из резерва. Сканирование до подтверждения остаток не меняет.
+              {% else %}
+                Сканирование ничего не списывает: продажа или ремонт набираются из
+                нескольких деталей и проводятся одним документом. Повторный скан
+                той же детали из той же ячейки увеличивает количество позиции.
+                Клиент нужен только при проведении. Больше доступного количества
+                провести нельзя.
+              {% endif %}
             </p>
           {% endif %}
         </div>

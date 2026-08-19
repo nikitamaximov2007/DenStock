@@ -3,10 +3,12 @@ from decimal import Decimal
 import pytest
 from django.test import override_settings
 
+from apps.actions.cart import KIND_SALE, add_scan, complete_cart, open_cart
 from apps.catalog.models import Category, PartType, Unit
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import move_stock_lot
 from apps.operations.models import DeploymentState
+from apps.operations.write_guard import BusinessWriteBlocked
 from apps.receipts.services import add_line, create_receipt, post_receipt
 from apps.sales.models import Reservation, Sale
 from apps.sales.services import (
@@ -106,3 +108,50 @@ def test_core_warehouse_workflow_operates_on_active_offline_database(django_user
     ).exists()
     state.refresh_from_db()
     assert state.business_generation > 0
+
+
+@pytest.mark.django_db
+@override_settings(DENSTOCK_MODE="emergency-local")
+def test_scanner_cart_completes_only_while_offline_session_is_active(django_user_model):
+    state = DeploymentState.get_solo()
+    state.write_state = DeploymentState.WriteState.EMERGENCY_ACTIVE
+    state.save()
+    user = django_user_model.objects.create_superuser(username="offline-cart", password="test")
+    category = Category.objects.create(name="Offline cart category")
+    unit, _ = Unit.objects.get_or_create(name="Штука", defaults={"short_name": "шт"})
+    part = PartType.objects.create(
+        name="Offline cart part",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("250"),
+    )
+    supplier = Supplier.objects.create(name="Offline cart supplier")
+    location = StorageLocation.objects.create(
+        code="S90-D02-C01", name="Offline cart location", storage_allowed=True
+    )
+    receipt = create_receipt(supplier=supplier, by=user)
+    add_line(
+        receipt,
+        part_type=part,
+        quantity=Decimal("2"),
+        unit_cost_rub=Decimal("100"),
+        location=location,
+    )
+    receipt = post_receipt(receipt, by=user)
+    lot = StockLot.objects.get(batch=receipt.batch, part_type=part)
+
+    active_cart = open_cart(KIND_SALE, by=user)
+    add_scan(active_cart, part, location, by=user)
+    complete_cart(active_cart, customer_comment="Offline customer", by=user)
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("1")
+
+    frozen_cart = open_cart(KIND_SALE, by=user)
+    add_scan(frozen_cart, part, location, by=user)
+    state.write_state = DeploymentState.WriteState.EMERGENCY_FROZEN
+    state.save()
+    with pytest.raises(BusinessWriteBlocked):
+        complete_cart(frozen_cart, customer_comment="Must stay frozen", by=user)
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("1")

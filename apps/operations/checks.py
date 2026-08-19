@@ -130,6 +130,37 @@ def run_checks(settings_dict=None) -> list[CheckResult]:
     else:
         results.append(CheckResult("ALLOWED_HOSTS", WARN, f"широкое значение: {hosts}"))
 
+    # 7. Версия приложения.
+    #
+    # На неё опираются manifest резервной копии, активация аварийного режима и
+    # сверка при возврате на production. Настройка необязательна и по умолчанию
+    # пуста, а запасной вариант читает git, которого в контейнере может не быть:
+    # тогда версия молча становится пустой, и это уже приводило к копиям без
+    # метаданных. Поэтому проверка выполняется здесь, а не остаётся в документе.
+    configured = str(getattr(settings, "DENSTOCK_APP_COMMIT", "") or "").strip()
+    if configured:
+        results.append(
+            CheckResult("Версия приложения", OK, f"DENSTOCK_APP_COMMIT={configured[:12]}")
+        )
+    elif backup._git_commit():
+        results.append(
+            CheckResult(
+                "Версия приложения",
+                WARN,
+                "DENSTOCK_APP_COMMIT не задан, версия берётся из git. "
+                "В контейнере без .git она станет пустой",
+            )
+        )
+    else:
+        results.append(
+            CheckResult(
+                "Версия приложения",
+                FAIL,
+                "DENSTOCK_APP_COMMIT не задан и git недоступен: резервные копии "
+                "останутся без версии, а аварийный режим не сможет сверить сборку",
+            )
+        )
+
     return results
 
 

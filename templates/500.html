@@ -1,0 +1,61 @@
+{# Автономно намеренно.
+
+   Этот шаблон рендерится с ПУСТЫМ контекстом: контекст-процессоры не
+   выполняются, поэтому переменных навигации и пользователя здесь нет. Сама
+   ошибка вполне может быть вызвана недоступностью базы, а base.html
+   опирается на данные аварийного режима. Поэтому страница не наследует
+   базовый шаблон, не обращается к базе и не разрешает имена маршрутов. #}
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Сбой сервера · DenisStock</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #f5f6f8;
+        color: #1c1f23;
+        font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      .card {
+        max-width: 30rem;
+        width: 100%;
+        background: #fff;
+        border: 1px solid #e2e5ea;
+        border-radius: 10px;
+        padding: 28px;
+      }
+      h1 { margin: 0 0 12px; font-size: 1.25rem; font-weight: 600; }
+      p { margin: 0 0 12px; }
+      .muted { color: #5b6470; font-size: 0.94rem; }
+      a { color: #1c56b8; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #16181c; color: #e8eaed; }
+        .card { background: #1e2126; border-color: #2f343b; }
+        .muted { color: #a6adb8; }
+        a { color: #7fb0ff; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Сбой на сервере</h1>
+      <p>
+        Произошла внутренняя ошибка. Перед повторной операцией проверьте её
+        результат в системе или в истории действий.
+      </p>
+      <p class="muted">
+        Если ошибка повторяется, сообщите администратору время и что именно вы
+        делали: это попадает в журнал сервера и помогает найти причину.
+      </p>
+      <p><a href="/">На главную</a></p>
+    </main>
+  </body>
+</html>

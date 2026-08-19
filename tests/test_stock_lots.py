@@ -211,12 +211,13 @@ def test_cost_hidden_from_storekeeper(make_user, client, refs, admin):
     make_user("sklad", role=roles.STOREKEEPER)
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("lot_detail", args=[lot.pk])).content.decode()
-    assert "60" not in html
+    assert "Себестоимость за ед." not in html
 
     client.logout()
     client.login(username="admin", password=PASSWORD)
     admin_html = client.get(reverse("lot_detail", args=[lot.pk])).content.decode()
-    assert "60" in admin_html
+    assert "Себестоимость за ед." in admin_html
+    assert "60 ₽" in admin_html
 
 
 def test_seller_cannot_view_lots(make_user, client):
@@ -248,4 +249,7 @@ def test_nav_section_visibility(make_user, client):
 
     client.logout()
     client.login(username="prodavec", password=PASSWORD)
-    assert ">Склад<" not in client.get(reverse("dashboard")).content.decode()
+    dashboard = client.get(reverse("dashboard")).content.decode()
+    assert "Быстрые действия" in dashboard
+    assert "Лоты" not in dashboard
+    assert "Партии поставок" not in dashboard

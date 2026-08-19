@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 
 import pytest
@@ -9,6 +10,7 @@ from django.utils import timezone
 
 from apps.ai_support.services import FeatureDisabled, send_message
 from apps.ai_support.views import _provider_state
+from apps.operations.emergency_environment import EmergencySafetyError, configured_workstation_id
 from apps.operations.emergency_lifecycle import (
     EmergencyLifecycleError,
     emergency_context,
@@ -16,8 +18,13 @@ from apps.operations.emergency_lifecycle import (
 )
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.operations.standby import EmergencyPaths, save_control
-from apps.operations.write_guard import BusinessWriteBlocked, BusinessWriteGuardMiddleware
+from apps.operations.write_guard import (
+    BusinessWriteBlocked,
+    BusinessWriteGuardMiddleware,
+    _is_missing_deployment_state_table,
+)
 from apps.suppliers.models import Supplier
+from tests.emergency_support import configure_test_trust
 
 COMMIT = "a" * 40
 MIGRATION_HASH = "b" * 64
@@ -25,7 +32,31 @@ DATA_HASH = "c" * 64
 DATABASE_ID = "52347a14-d939-45e6-a397-06c79ef257f2"
 
 
-def _base_manifest(*, consistency="database_snapshot"):
+class _MissingTableCause(Exception):
+    sqlstate = "42P01"
+
+    def __str__(self):
+        return 'relation "operations_deploymentstate" does not exist'
+
+
+class _OtherMissingTableCause(Exception):
+    sqlstate = "42P01"
+
+    def __str__(self):
+        return 'relation "catalog_parttype" does not exist'
+
+
+def test_write_guard_bootstrap_bypass_is_limited_to_missing_deployment_state_table():
+    missing = RuntimeError("state lookup failed")
+    missing.__cause__ = _MissingTableCause()
+    assert _is_missing_deployment_state_table(missing)
+
+    other = RuntimeError("a different missing table")
+    other.__cause__ = _OtherMissingTableCause()
+    assert not _is_missing_deployment_state_table(other)
+
+
+def _base_manifest(*, consistency="database_snapshot", workstation_id=None):
     return {
         "backup_run_id": "d7919779-6c24-43cb-bb78-181f61a335d5",
         "created_at": (timezone.now() - timedelta(hours=2)).isoformat(),
@@ -34,6 +65,8 @@ def _base_manifest(*, consistency="database_snapshot"):
         "migration_fingerprint": MIGRATION_HASH,
         "media_tree_sha256": "d" * 64,
         "data_state": {"business_sha256": DATA_HASH},
+        "authorized_emergency_primary_id": str(workstation_id),
+        "primary_authorization_epoch": 1,
         "consistency": consistency,
     }
 
@@ -43,6 +76,8 @@ def lifecycle_runtime(tmp_path, monkeypatch, settings):
     settings.DENSTOCK_MODE = "emergency-local"
     settings.DENSTOCK_INSTANCE_ID = "warehouse-pc-test"
     settings.DENSTOCK_APP_COMMIT = COMMIT
+    workstation_id = uuid.uuid4()
+    configure_test_trust(tmp_path, settings, workstation_id=workstation_id)
     state = DeploymentState.get_solo()
     state.database_identity = DATABASE_ID
     state.write_state = DeploymentState.WriteState.NORMAL
@@ -64,35 +99,43 @@ def lifecycle_runtime(tmp_path, monkeypatch, settings):
         {
             "active_standby": {
                 "database_name": "ignored",
-                "backup_run_id": _base_manifest()["backup_run_id"],
+                "backup_run_id": _base_manifest(workstation_id=workstation_id)["backup_run_id"],
             },
             "previous_standbys": [],
         },
         EmergencyPaths(settings.DENSTOCK_EMERGENCY_ROOT),
     )
-    return state
+    return state, workstation_id
 
 
 @pytest.mark.django_db
 def test_start_from_verified_standby_creates_active_session(lifecycle_runtime, monkeypatch):
+    state, workstation_id = lifecycle_runtime
     monkeypatch.setattr(
         "apps.operations.emergency_lifecycle._active_standby",
-        lambda paths=None: ({"database_name": "ignored"}, _base_manifest()),
+        lambda paths=None: (
+            {"database_name": "ignored"},
+            _base_manifest(workstation_id=workstation_id),
+        ),
     )
 
     session = start_offline_session(kind=OfflineSession.Kind.UNPLANNED, actor="operator")
 
-    lifecycle_runtime.refresh_from_db()
+    state.refresh_from_db()
     assert session.status == OfflineSession.Status.ACTIVE
     assert session.base_data_marker == {"business_sha256": DATA_HASH}
-    assert lifecycle_runtime.write_state == DeploymentState.WriteState.EMERGENCY_ACTIVE
+    assert state.write_state == DeploymentState.WriteState.EMERGENCY_ACTIVE
 
 
 @pytest.mark.django_db
 def test_two_start_commands_are_serialized_and_second_is_denied(lifecycle_runtime, monkeypatch):
+    _, workstation_id = lifecycle_runtime
     monkeypatch.setattr(
         "apps.operations.emergency_lifecycle._active_standby",
-        lambda paths=None: ({"database_name": "ignored"}, _base_manifest()),
+        lambda paths=None: (
+            {"database_name": "ignored"},
+            _base_manifest(workstation_id=workstation_id),
+        ),
     )
     start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
 
@@ -102,9 +145,13 @@ def test_two_start_commands_are_serialized_and_second_is_denied(lifecycle_runtim
 
 @pytest.mark.django_db
 def test_planned_start_requires_maintenance_consistent_backup(lifecycle_runtime, monkeypatch):
+    _, workstation_id = lifecycle_runtime
     monkeypatch.setattr(
         "apps.operations.emergency_lifecycle._active_standby",
-        lambda paths=None: ({"database_name": "ignored"}, _base_manifest()),
+        lambda paths=None: (
+            {"database_name": "ignored"},
+            _base_manifest(workstation_id=workstation_id),
+        ),
     )
 
     with pytest.raises(EmergencyLifecycleError, match="maintenance lock"):
@@ -135,6 +182,57 @@ def test_business_write_requires_active_local_session():
     state.save()
     supplier = Supplier.objects.create(name="Offline supplier")
     assert supplier.pk
+
+
+@pytest.mark.django_db
+@override_settings(DENSTOCK_MODE="emergency-local", DENSTOCK_EMERGENCY_ROLE="secondary")
+def test_secondary_workstation_cannot_activate_a_second_emergency_writer(lifecycle_runtime):
+    with pytest.raises(EmergencyLifecycleError, match="secondary"):
+        start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+
+
+def test_protected_workstation_identity_rejects_copied_environment(tmp_path, settings):
+    first, second = uuid.uuid4(), uuid.uuid4()
+    identity = tmp_path / "workstation-id.txt"
+    identity.write_text(str(second), encoding="utf-8")
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(first)
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH = str(identity)
+
+    with pytest.raises(EmergencySafetyError, match="does not match"):
+        configured_workstation_id()
+
+
+def test_protected_workstation_identity_survives_env_validation(tmp_path, settings):
+    workstation_id = uuid.uuid4()
+    identity = tmp_path / "workstation-id.txt"
+    identity.write_text(str(workstation_id), encoding="utf-8")
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(workstation_id)
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID_PATH = str(identity)
+
+    assert configured_workstation_id() == workstation_id
+
+
+@pytest.mark.django_db
+def test_two_workstations_require_the_production_authorized_identity(
+    lifecycle_runtime, monkeypatch, settings
+):
+    _, primary_id = lifecycle_runtime
+    other_id = uuid.uuid4()
+    manifest = _base_manifest(workstation_id=primary_id)
+    monkeypatch.setattr(
+        "apps.operations.emergency_lifecycle._active_standby",
+        lambda paths=None: ({"database_name": "ignored"}, manifest),
+    )
+
+    # B may set its local role to primary, but production authorization remains for A.
+    settings.DENSTOCK_EMERGENCY_ROLE = "primary"
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(other_id)
+    with pytest.raises(EmergencyLifecycleError, match="другого аварийного"):
+        start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+
+    settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(primary_id)
+    session = start_offline_session(kind=OfflineSession.Kind.UNPLANNED)
+    assert session.status == OfflineSession.Status.ACTIVE
 
 
 @pytest.mark.django_db

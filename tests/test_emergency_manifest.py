@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 
 import pytest
 from django.test import override_settings
@@ -8,6 +9,7 @@ from apps.operations import backup
 from apps.operations.emergency_manifest import SCHEMA_VERSION, validate_manifest
 from apps.operations.emergency_state import migration_state, record_event, sha256_file
 from apps.operations.models import DeploymentState
+from tests.emergency_support import configure_test_trust
 
 EMPTY_MIGRATION_HASH = hashlib.sha256(b"[]").hexdigest()
 
@@ -121,6 +123,7 @@ def test_manifest_rejects_migration_and_data_marker_tampering(tmp_path):
     DENSTOCK_APP_COMMIT="a" * 40,
 )
 def test_backup_all_writes_verified_v2_manifest(tmp_path, db, settings, monkeypatch):
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
     source = tmp_path / "source.sqlite3"
     source.write_bytes(b"sqlite-copy")
     media = tmp_path / "media"
