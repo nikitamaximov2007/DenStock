@@ -421,7 +421,11 @@ th.num, td.num, .table th.num, .table td.num,
 @media (max-width: 560px) {
   .content { padding: 14px; }
   .topbar__wordmark { display: none; }
-  .scanner-page__input { min-width: 0; width: 100%; }
+  /* Сканер это главный ввод смены, и на телефоне он должен занимать строку
+     целиком. Одной ширины для этого мало: поле стоит во flex-строке рядом с
+     выбором действия и кнопкой, и она его сжимала вдвое. Базис в 100%
+     заставляет строку перенестись, а соседи уходят под поле. */
+  .scanner-page__input { min-width: 0; flex: 1 0 100%; }
   .table { white-space: nowrap; }
 }
 

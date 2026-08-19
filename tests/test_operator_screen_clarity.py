@@ -191,3 +191,52 @@ def test_an_operator_without_the_money_right_never_sees_cost(
 
     body = _search(client).content.decode()
     assert "Себестоимость" not in body, f"роль «{role}» видит закупочную себестоимость"
+
+
+# --- Быстрые действия: один экран, одно пояснение ------------------------------------------
+
+
+def test_quick_actions_explains_the_flow_once(stock, client, admin):
+    """Вокруг сканера было два пересекающихся пояснения, одно над и одно под.
+
+    Оба говорили «сканируйте в черновик». На телефоне это отодвигало главный
+    ввод смены вниз. Осталось одно пояснение, и оно сохранило оба факта: что
+    делает скан и что остаток меняется только при проведении.
+    """
+    _login(client, admin)
+    body = client.get(reverse("actions_scan")).content.decode()
+
+    assert body.count("черновик") == 1, "пояснение про черновик снова повторяется"
+    assert "остаток изменится только" in body.lower(), (
+        "потеряно предупреждение, что остаток меняется только при проведении"
+    )
+    assert "нескольких ячейках" in body, "потеряна подсказка про выбор ячейки"
+
+
+def test_the_scanner_is_the_first_input_of_the_screen(stock, client, admin):
+    """Сканер обязан оставаться главным вводом, а не одним из полей."""
+    _login(client, admin)
+    body = client.get(reverse("actions_scan")).content.decode()
+
+    assert "data-scan-input" in body
+    assert "autofocus" in body, "сканер потерял автофокус"
+    # Ввод со сканера не должен исправляться телефоном.
+    for guard in ('autocorrect="off"', 'autocapitalize="off"', 'spellcheck="false"'):
+        assert guard in body, f"потеряна защита ввода сканера: {guard}"
+
+
+def test_the_narrow_screen_gives_the_scanner_its_own_row():
+    """На телефоне выбор действия и кнопка сжимали поле сканера вдвое."""
+    import pathlib
+
+    css = pathlib.Path(__file__).resolve().parents[1] / "static" / "css" / "app.css"
+    text = css.read_text(encoding="utf-8")
+    rule = re.search(
+        r"@media \(max-width: 560px\)\s*\{.*?\.scanner-page__input\s*\{([^}]*)\}",
+        text,
+        re.S,
+    )
+    assert rule is not None, "правило узкого экрана для поля сканера исчезло"
+    assert "flex" in rule.group(1), (
+        "одной ширины мало: во flex-строке поле снова сожмут соседи"
+    )
