@@ -140,7 +140,16 @@ def _brp_base_usd(brp, candidates=None) -> Decimal | None:
     Возвращается РАСЧЁТНАЯ оптовая цена: у позиций со статусом VIN в неё уже
     включена надбавка поставщика за винтажный склад. Сырая цена каталога при
     этом не меняется.
+
+    Строка, выпавшая из актуального снимка каталога, ценой не считается. Её
+    старая цена остаётся в базе как история, но поставщик её больше не
+    публикует, поэтому текущую стоимость склада по ней считать нельзя. Тот же
+    запрет уже действует при пересчёте рекомендованных цен: там связь с
+    неактуальной строкой цену не даёт, а прежнее значение снимается. Без этой
+    проверки отчёт показывал бы цену, которой нет больше нигде в системе.
     """
+    if brp is None or not brp.is_current:
+        return None
     source = find_brp_price_source(brp.material_no_norm, brp, candidates=candidates)
     if source is not None and source.wholesale_price_usd and source.wholesale_price_usd > 0:
         return brp_effective_wholesale_usd(source)
