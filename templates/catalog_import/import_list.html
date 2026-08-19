@@ -69,10 +69,17 @@
                   <a href="{% url 'catalog_import_detail' batch.pk %}">{{ batch.source_filename }}</a>
                 </td>
                 <td>{{ batch.get_status_display }}</td>
-                <td class="num">{{ batch.summary.data_rows|default:"·" }}</td>
-                <td class="num">{{ batch.summary.created|default:"·" }}</td>
-                <td class="num">{{ batch.summary.updated|default:"·" }}</td>
-                <td class="num">{{ batch.apply_summary.deactivated|default:batch.summary.deactivated|default:"·" }}</td>
+                {% comment %}
+                  Счётчики приходят готовыми из представления в порядке колонок.
+                  Прочерк означает «метрика к этой партии неприменима», ноль
+                  означает «ничего не изменилось». Это разные утверждения,
+                  поэтому фильтр default здесь не годится: для него ноль пустой.
+                {% endcomment %}
+                {% for value in batch.history_counters %}
+                  <td class="num">
+                    {% if value is not None %}{{ value }}{% else %}·{% endif %}
+                  </td>
+                {% endfor %}
                 <td>{{ batch.created_by|default:"·" }}</td>
                 <td>{{ batch.created_at|ru_dt }}</td>
               </tr>

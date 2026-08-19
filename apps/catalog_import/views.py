@@ -51,6 +51,87 @@ SUMMARY_ROWS = (
 )
 
 
+# Счётчики строки истории, в порядке колонок таблицы. Держатся здесь, а не в
+# шаблоне, потому что «ключа нет» и «ключ равен нулю» это разные утверждения, и
+# решать это должен код, а не разметка.
+#
+# Второе значение пары - откуда берётся счётчик. Выбор источника оставлен ровно
+# таким, каким был в разметке: три первых числа показывают разбор файла, а
+# «Неактуально» - результат применения, если он посчитан. Менять это здесь не
+# стали намеренно, чтобы исправление отображения не поменяло числа, которые
+# сотрудник уже видел в истории.
+LIST_COUNTERS = (
+    ("data_rows", ("summary",)),
+    ("created", ("summary",)),
+    ("updated", ("summary",)),
+    ("deactivated", ("apply_summary", "summary")),
+)
+
+# Коррекция цен считает совсем другое: она не разбирает новый файл и не меняет
+# актуальность строк, поэтому у неё нет ни строк данных, ни деактивированных.
+CORRECTION_KIND = "brp_zero_wholesale_correction"
+
+CORRECTION_SUMMARY_ROWS = (
+    ("current_materials", "Позиций в каталоге"),
+    ("rows_to_update", "Исправлено строк"),
+    ("previous_catalog_fallback", "Сохранена цена предыдущего каталога"),
+    ("same_file_nonzero", "Цена из другой строки того же файла"),
+    ("no_usable_price", "Цена не указана ни в одном источнике"),
+    ("ambiguous_nonzero", "Разных ненулевых цен в дубликатах"),
+    ("invalid_or_negative", "Некорректных или отрицательных цен"),
+    ("linked_prices_refreshed", "Пересчитано рекомендованных цен"),
+)
+
+
+def _as_summary(value) -> dict:
+    """Сводка это JSON, и у исторических записей она может быть любой формы."""
+    return value if isinstance(value, dict) else {}
+
+
+def _history_counters(batch) -> list:
+    """Счётчики строки истории; None означает «метрика к этой партии неприменима».
+
+    Отсутствие ключа не ошибка. У коррекции цен нет понятия «перестанут быть
+    актуальными», потому что актуальность строк она не трогает. Показать здесь
+    ноль значило бы сказать «ничего не деактивировано», а верный ответ
+    «неприменимо». Настоящий ноль при этом обязан остаться нулём.
+    """
+    sources = {
+        "summary": _as_summary(batch.summary),
+        "apply_summary": _as_summary(batch.apply_summary),
+    }
+    values = []
+    for key, order in LIST_COUNTERS:
+        for name in order:
+            if key in sources[name]:
+                values.append(sources[name][key])
+                break
+        else:
+            values.append(None)
+    return values
+
+
+def _summary_rows(summary: dict, *, applied: bool) -> list:
+    """Строки сводки для карточки партии: только те метрики, которые в ней есть.
+
+    Раньше недостающие ключи подставлялись нулём, и коррекция выглядела так,
+    будто она пересчитала весь каталог и ничего не нашла.
+    """
+    layout = (
+        CORRECTION_SUMMARY_ROWS
+        if summary.get("kind") == CORRECTION_KIND
+        else SUMMARY_ROWS
+    )
+    rows = []
+    for key, label in layout:
+        if key not in summary:
+            continue
+        if applied and key == "data_rows":
+            label = "Актуальных позиций"
+        rows.append((label, summary[key]))
+    return rows
+
+
 def _require_access(request) -> None:
     if not request.user.can_manage_parts:
         raise PermissionDenied
@@ -80,6 +161,8 @@ def import_list(request):
     _require_access(request)
     batches = CatalogImportBatch.objects.select_related("created_by", "applied_by")
     page_obj = Paginator(batches, PAGE_SIZE).get_page(request.GET.get("page"))
+    for batch in page_obj.object_list:
+        batch.history_counters = _history_counters(batch)
     return render(
         request,
         "catalog_import/import_list.html",
@@ -121,19 +204,13 @@ def import_detail(request, pk):
     batch = get_object_or_404(
         CatalogImportBatch.objects.select_related("created_by", "applied_by"), pk=pk
     )
-    summary = batch.apply_summary if batch.is_applied else batch.summary
+    summary = _as_summary(batch.apply_summary if batch.is_applied else batch.summary)
     return render(
         request,
         "catalog_import/import_detail.html",
         {
             "batch": batch,
-            "summary_rows": [
-                (
-                    "Актуальных позиций" if batch.is_applied and key == "data_rows" else label,
-                    (summary or {}).get(key, 0),
-                )
-                for key, label in SUMMARY_ROWS
-            ],
+            "summary_rows": _summary_rows(summary, applied=batch.is_applied),
             "status_rows": _status_rows(summary),
             "already_applied": previous_applied(batch),
         },
