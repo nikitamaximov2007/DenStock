@@ -169,10 +169,6 @@
         Цена продажи: рек. {{ row.part.recommended_price|money_int }} · мин.
         {{ row.part.min_price|money_int }}
       </p>
-      <p>
-        Ячейки: {{ row.locations|join:", "|default:"·" }} · Партии:
-        {{ row.batches|join:", "|default:"·" }}
-      </p>
       {% if row.location_rows %}
         <table class="table table--compact">
           <thead>
