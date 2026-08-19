@@ -483,3 +483,118 @@ def test_every_ui_path_agrees_on_a_vin_row(tmp_path, pricing):
     assert price_of("V1", pricing) == expected
     assert _effective_brp_price(row.material_no_norm, row) == expected
     assert _brp_candidate(row, pricing).unit_price == expected
+
+
+# --- Остатки на полке живут дольше каталога ---------------------------------------------
+
+
+def _with_stock(part, quantity="3"):
+    """Физический остаток на полке. Деталь уже стоит на складе, независимо от каталога."""
+    from apps.inventory.models import StockLot
+    from apps.procurement.models import Batch, BatchLine
+    from apps.suppliers.models import Supplier
+    from apps.warehouse.models import StorageLocation
+
+    supplier, _ = Supplier.objects.get_or_create(name="Поставщик проверки цен")
+    location, _ = StorageLocation.objects.get_or_create(
+        code="S99-L01-D01-C01",
+        defaults={"name": "Ячейка проверки цен", "storage_allowed": True, "is_active": True},
+    )
+    batch = Batch.objects.create(supplier=supplier)
+    line = BatchLine.objects.create(
+        batch=batch,
+        part_type=part,
+        quantity=Decimal(quantity),
+        unit_cost_currency=Decimal("100"),
+    )
+    return StockLot.objects.create(
+        part_type=part,
+        batch=batch,
+        batch_line=line,
+        location=location,
+        quantity=Decimal(quantity),
+        initial_quantity=Decimal(quantity),
+        status=StockLot.Status.AVAILABLE,
+    )
+
+
+def test_discontinued_row_with_stock_stays_findable_and_priced(tmp_path, pricing):
+    """Снятая с производства позиция продаётся с полки и обязана иметь цену.
+
+    Статус OBS означает «снято с производства», но строка остаётся в актуальном
+    снимке. Поставщик её публикует, значит цена есть, и продавец должен видеть
+    и деталь, и цену.
+    """
+    from apps.core.search import search_parts
+
+    rows = [{"material": "OBS-1001", "wholesale": 80, "status": "OBS"}]
+    part = _promoted_part(tmp_path, rows, "OBS-1001")
+    _with_stock(part)
+
+    expected = Decimal("80") * RATE * Decimal("1.5")
+    part.refresh_from_db()
+    assert part.recommended_price == expected, "снятая с производства позиция осталась без цены"
+
+    found = search_parts("OBS-1001")
+    shown = next((c for c in found if c.part.id == part.id), None)
+    assert shown is not None, "деталь с остатком не находится поиском"
+    assert shown.client_price == expected, "поиск показал не ту цену"
+
+
+def test_part_with_a_withdrawn_row_stays_findable_without_a_catalog_price(tmp_path, pricing):
+    """Остаток никуда не делся, а каталожной цены больше нет.
+
+    Строка выпала из снимка. Деталь обязана остаться в поиске, иначе товар с
+    полки пропадёт для продавца. Но цену показывать нельзя: поставщик её больше
+    не публикует. Пустая цена честнее устаревшей.
+    """
+    from apps.catalog.services import refresh_linked_part_prices
+    from apps.core.search import search_parts
+
+    before = [{"material": "GONE-2002", "wholesale": 40}]
+    after = [{"material": "STAY-3003", "wholesale": 55}]
+    part = _promoted_part(tmp_path, before, "GONE-2002")
+    _with_stock(part)
+    stale = Decimal("40") * RATE * Decimal("1.5")
+    part.refresh_from_db()
+    assert part.recommended_price == stale, "проверка бессмысленна: до снимка цены не было"
+
+    apply_snapshot(tmp_path, "gone.xlsx", after)
+    refresh_linked_part_prices(
+        usd_rate=pricing.current_usd_rate,
+        brp_markup=pricing.brp_markup_percent,
+        polaris_markup=Decimal("0"),
+    )
+    assert BrpCatalogPart.objects.get(material_no="GONE-2002").is_current is False
+
+    found = search_parts("GONE-2002")
+    shown = next((c for c in found if c.part.id == part.id), None)
+    assert shown is not None, "деталь с реальным остатком пропала из поиска после снимка"
+    assert shown.client_price != stale, "поиск показал цену по выпавшей строке"
+    assert shown.client_price is None
+
+
+def test_a_large_current_catalog_stays_answerable(tmp_path, pricing):
+    """Цена одной позиции не должна зависеть от размера каталога.
+
+    Если бы выбор источника цены перебирал каталог, на боевом объёме поиск цены
+    встал бы. Тест фиксирует, что запросов на одну цену — единицы, а не тысячи.
+    """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    rows = [{"material": f"P{i}", "wholesale": 10 + (i % 50)} for i in range(3000)]
+    apply_snapshot(tmp_path, "big.xlsx", rows)
+    assert BrpCatalogPart.objects.filter(is_current=True).count() == 3000
+
+    target = BrpCatalogPart.objects.get(material_no="P1500")
+    with CaptureQueriesContext(connection) as captured:
+        price = catalog_part_price_rub(
+            find_brp_price_source(target.material_no_norm, target),
+            pricing.current_usd_rate,
+            pricing.brp_markup_percent,
+        )
+    assert price == (Decimal("10") + Decimal(1500 % 50)) * RATE * Decimal("1.5")
+    assert len(captured) <= 3, (
+        f"выбор источника цены сделал {len(captured)} запросов: каталог перебирается целиком"
+    )
