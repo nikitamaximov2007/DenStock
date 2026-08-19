@@ -229,15 +229,25 @@ def test_overview_page_states_money_is_not_summed(client, make_user, data):
     assert "не складываются" in html
 
 
-def test_timeline_page_links_to_documents(client, make_user, data):
+def test_timeline_page_shows_parts_not_documents(client, make_user, data):
+    """Карточка клиента отвечает на вопрос «что получил клиент», а не «какие были документы».
+
+    Раньше здесь проверялись номера продажи и ремонта со ссылками на сами
+    документы. Теперь экран показывает сразу строки деталей: продажи и ремонты
+    в одной ленте, дата слева. Документ остаётся доступен из своих разделов, но
+    на клиентском экране он лишний уровень между вопросом и ответом.
+    """
     _login(client, make_user)
     sale = _sale(data, "Иванов", 2)
     order = _repair(data, "Иванов", 1)
     html = client.get(reverse("reports_client_timeline"), {"customer": "Иванов"}).content.decode()
-    assert sale.number in html
-    assert order.number in html
-    assert reverse("sale_detail", args=[sale.pk]) in html
-    assert reverse("repair_order_detail", args=[order.pk]) in html
+
+    assert data["bolt"].name in html, "деталь не показана в истории клиента"
+    assert "Продажа" in html and "Ремонт" in html, "не видно, продажа это или ремонт"
+    assert sale.number not in html, "номер продажи снова стал главным элементом"
+    assert order.number not in html, "номер ремонта снова стал главным элементом"
+    assert reverse("sale_detail", args=[sale.pk]) not in html
+    assert reverse("repair_order_detail", args=[order.pk]) not in html
 
 
 def test_timeline_requires_customer(client, make_user, data):
