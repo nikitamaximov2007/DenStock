@@ -101,6 +101,20 @@ def run_check(batch: CatalogImportBatch) -> CatalogImportBatch:
         _mark_check_failed(batch, f"{type(exc).__name__}: {exc}")
         raise CatalogImportError("Не удалось проверить файл. Обратитесь к администратору.") from exc
 
+    validation_error = adapter.validation_error(summary)
+    if validation_error:
+        batch.summary = summary
+        batch.catalog_fingerprint = fingerprint
+        batch.status = CatalogImportBatch.Status.CHECK_FAILED
+        batch.error_text = validation_error
+        batch.checked_at = timezone.now()
+        batch.save(
+            update_fields=[
+                "summary", "catalog_fingerprint", "status", "error_text", "checked_at",
+            ]
+        )
+        raise CatalogImportError(validation_error)
+
     batch.summary = summary
     batch.catalog_fingerprint = fingerprint
     batch.status = CatalogImportBatch.Status.CHECKED

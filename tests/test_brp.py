@@ -181,7 +181,7 @@ def test_duplicate_wholesale_tiebreak(db, tmp_path):
     assert part.retail_price_usd == Decimal("0")
 
 
-def test_duplicate_all_zero_keeps_zero(db, tmp_path):
+def test_duplicate_all_zero_means_price_missing(db, tmp_path):
     rows = [
         ["555002", "ZERO A", 2020, None, 0, 0, None, None],
         ["555002", "ZERO B", 2025, None, 0, 0, None, None],
@@ -190,7 +190,110 @@ def test_duplicate_all_zero_keeps_zero(db, tmp_path):
     assert summary.duplicates_price_resolved == 0
     part = BrpCatalogPart.objects.get(material_no="555002")
     assert part.part_desc == "ZERO A"  # детерминированно: первая строка
-    assert part.retail_price_usd == Decimal("0")
+    assert part.wholesale_price_usd is None
+    assert summary.no_usable_price == 1
+
+
+def test_all_new_zero_retains_previous_positive_but_updates_metadata(db, tmp_path):
+    old = _make_xlsx(
+        tmp_path,
+        [["460061", "OLD DESC", 2020, "", "137.99", "112.67", "OLD", ""]],
+        "old.xlsx",
+    )
+    import_catalog(old, commit=True)
+    new = _make_xlsx(
+        tmp_path,
+        [["460061", "NEW DESC", 2025, "VIN", "0", "0", "456", ""]],
+        "new.xlsx",
+    )
+    summary = import_catalog(new, commit=True)
+    part = BrpCatalogPart.objects.get(material_no="460061")
+    assert summary.previous_catalog_price_retained == 1
+    assert part.wholesale_price_usd == Decimal("112.67")
+    assert part.part_desc == "NEW DESC"
+    assert part.brp_status == "VIN"
+    assert part.replacement_no_1 == "456"
+    repeated = import_catalog(new, commit=True)
+    assert repeated.updated == 0
+    assert repeated.previous_catalog_price_retained == 1
+
+
+def test_same_file_positive_has_priority_over_previous_price(db, tmp_path):
+    import_catalog(
+        _make_xlsx(tmp_path, [["X", "OLD", 2020, "", "100", "90", "", ""]], "old.xlsx"),
+        commit=True,
+    )
+    rows = [
+        ["X", "ZERO", 2025, "", "0", "0", "", ""],
+        ["X", "NEW", 2025, "", "55", "45", "", ""],
+    ]
+    import_catalog(_make_xlsx(tmp_path, rows, "new.xlsx"), commit=True)
+    part = BrpCatalogPart.objects.get(material_no="X")
+    assert part.wholesale_price_usd == Decimal("45")
+    assert part.part_desc == "NEW"
+
+
+@pytest.mark.parametrize("status", ["OBS", "USE", "LIQ", " ucp "])
+def test_zero_price_fallback_works_for_non_vin_statuses(db, tmp_path, status):
+    import_catalog(
+        _make_xlsx(tmp_path, [["STATUS", "OLD", 2020, "", "20", "10", "", ""]], "old.xlsx"),
+        commit=True,
+    )
+    import_catalog(
+        _make_xlsx(tmp_path, [["STATUS", "NEW", 2025, status, "0", "0", "", ""]], "new.xlsx"),
+        commit=True,
+    )
+    part = BrpCatalogPart.objects.get(material_no="STATUS")
+    assert part.wholesale_price_usd == Decimal("10")
+    assert part.brp_status == ("USE" if status.strip().upper() == "UCP" else status)
+
+
+def test_vin_fallback_applies_surcharge_only_in_pricing_layer(db, tmp_path):
+    from apps.brp.pricing import effective_wholesale_usd
+
+    import_catalog(
+        _make_xlsx(tmp_path, [["VIN-FALLBACK", "OLD", 2020, "", "100", "100", "", ""]], "old.xlsx"),
+        commit=True,
+    )
+    import_catalog(
+        _make_xlsx(
+            tmp_path, [["VIN-FALLBACK", "NEW", 2025, "VIN", "0", "0", "", ""]], "new.xlsx"
+        ),
+        commit=True,
+    )
+    part = BrpCatalogPart.objects.get(material_no="VIN-FALLBACK")
+    assert part.wholesale_price_usd == Decimal("100")
+    assert effective_wholesale_usd(part) == Decimal("125")
+
+
+def test_new_material_without_usable_price_stays_missing(db, tmp_path):
+    summary = import_catalog(
+        _make_xlsx(tmp_path, [["NO-PRICE", "NEW", 2025, "", "0", "0", "", ""]]), commit=True
+    )
+    assert summary.no_usable_price == 1
+    assert BrpCatalogPart.objects.get(material_no="NO-PRICE").wholesale_price_usd is None
+
+
+def test_negative_wholesale_blocks_commit_but_is_visible_in_dry_run(db, tmp_path):
+    negative = _make_xlsx(
+        tmp_path, [["NEG", "NEG", 2025, "", "10", "-1", "", ""]], "negative.xlsx"
+    )
+    dry = import_catalog(negative)
+    assert dry.negative_wholesale_price == 1
+    with pytest.raises(Exception, match="некорректные"):
+        import_catalog(negative, commit=True)
+
+    conflicting = _make_xlsx(
+        tmp_path,
+        [
+            ["AMB", "ONE", 2025, "", "10", "1", "", ""],
+            ["AMB", "TWO", 2025, "", "20", "2", "", ""],
+        ],
+        "conflicting.xlsx",
+    )
+    summary = import_catalog(conflicting, commit=True)
+    assert summary.conflicting_nonzero_wholesale == 1
+    assert BrpCatalogPart.objects.get(material_no="AMB").wholesale_price_usd == Decimal("1")
 
 
 def test_reimport_repairs_zero_price_record(db, tmp_path):

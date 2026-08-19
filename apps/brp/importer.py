@@ -10,7 +10,9 @@
 1) предпочесть строку с wholesale_price_usd > 0;
 2) при равенстве — строку с retail_price_usd > 0;
 3) при полном равенстве — первую по порядку в файле;
-4) если у всех дубликатов оптовая цена 0, остаётся 0.
+4) если у всех дубликатов нет пригодной оптовой цены, цена считается
+   отсутствующей; при обновлении существующей позиции сохраняется её прежняя
+   ненулевая wholesale.
 Повторный импорт того же файла ЧИНИТ существующие записи с нулевой ценой:
 логика «пропустить без изменений» сравнивает выбранную лучшую строку с базой
 и обновляет отличающиеся записи (счётчик zero_wholesale_price_repaired).
@@ -77,6 +79,14 @@ class ImportSummary:
     duplicates: int = 0
     duplicates_price_resolved: int = 0  # дубликат выиграл по правилу ненулевой цены
     zero_wholesale_price_repaired: int = 0
+    new_file_nonzero_price: int = 0
+    same_file_nonzero_fallback: int = 0
+    previous_catalog_price_retained: int = 0
+    no_usable_price: int = 0
+    ambiguous_nonzero_wholesale: int = 0
+    conflicting_nonzero_wholesale: int = 0
+    invalid_wholesale_price: int = 0
+    negative_wholesale_price: int = 0
     unique_materials: int = 0
     with_retail_price: int = 0
     with_wholesale_price: int = 0
@@ -165,13 +175,16 @@ def _cell(cells, index: int):
 
 
 def _row_dict(cells, row_no: int, columns: dict[str, int]) -> dict:
+    wholesale_raw = _cell(cells, columns["wholesale_price_usd"])
+    wholesale = _dec(wholesale_raw)
     return {
         "material_no": _text(_cell(cells, columns["material_no"])),
         "part_desc": _text(_cell(cells, columns["part_desc"]))[:255],
         "last_year_util": _text(_cell(cells, columns["last_year_util"]))[:20],
         "brp_status": normalize_status(_cell(cells, columns["brp_status"]))[:20],
         "retail_price_usd": _dec(_cell(cells, columns["retail_price_usd"])),
-        "wholesale_price_usd": _dec(_cell(cells, columns["wholesale_price_usd"])),
+        "wholesale_price_usd": wholesale,
+        "wholesale_price_invalid": bool(_text(wholesale_raw)) and wholesale is None,
         "replacement_no_1": _text(_cell(cells, columns["replacement_no_1"]))[:40],
         "replacement_no_2": _text(_cell(cells, columns["replacement_no_2"]))[:40],
         "source_row": row_no,
@@ -210,6 +223,27 @@ def _apply(obj: BrpCatalogPart, row: dict, *, source_file: str, batch: str) -> N
     obj.updated_at = timezone.now()
 
 
+def _choose_wholesale(row: dict, obj: BrpCatalogPart | None) -> str:
+    """Resolve the supplier raw price without letting a zero erase a known price.
+
+    Metadata remains from ``row``. The selected raw wholesale is either a
+    usable value from the current workbook, a previous positive catalog price,
+    or ``None`` when the supplier did not provide any usable price.
+    """
+    incoming = row["wholesale_price_usd"]
+    if incoming is not None and incoming > ZERO:
+        row["price_source"] = "new_file"
+        return "new_file"
+    previous = getattr(obj, "wholesale_price_usd", None)
+    if previous is not None and previous > ZERO:
+        row["wholesale_price_usd"] = previous
+        row["price_source"] = "previous_catalog"
+        return "previous_catalog"
+    row["wholesale_price_usd"] = None
+    row["price_source"] = "missing"
+    return "missing"
+
+
 def _flush(chunk: list[dict], summary: ImportSummary, *,
            commit: bool, source_file: str, batch: str) -> None:
     keys = [row["material_no"] for row in chunk]
@@ -220,6 +254,13 @@ def _flush(chunk: list[dict], summary: ImportSummary, *,
     to_create, to_update = [], []
     for row in chunk:
         obj = existing.get(row["material_no"])
+        price_source = _choose_wholesale(row, obj)
+        if price_source == "new_file":
+            summary.new_file_nonzero_price += 1
+        elif price_source == "previous_catalog":
+            summary.previous_catalog_price_retained += 1
+        else:
+            summary.no_usable_price += 1
         if obj is None:
             obj = BrpCatalogPart(material_no=row["material_no"])
             _apply(obj, row, source_file=source_file, batch=batch)
@@ -269,6 +310,7 @@ def _select_best_rows(
 ) -> dict[str, int]:
     """Проход 1: для каждого Material_No выбрать номер лучшей строки файла."""
     best: dict[str, tuple[tuple[int, int], int]] = {}
+    positive_prices: dict[str, set[Decimal]] = {}
     for row_no, cells in enumerate(
         worksheet.iter_rows(min_row=2, values_only=True), start=2
     ):
@@ -278,6 +320,12 @@ def _select_best_rows(
         if not material:
             summary.skipped_empty += 1
             continue
+        if row["wholesale_price_invalid"]:
+            summary.invalid_wholesale_price += 1
+        elif row["wholesale_price_usd"] is not None and row["wholesale_price_usd"] < ZERO:
+            summary.negative_wholesale_price += 1
+        elif row["wholesale_price_usd"] is not None and row["wholesale_price_usd"] > ZERO:
+            positive_prices.setdefault(material, set()).add(row["wholesale_price_usd"])
         score = _price_score(row)
         kept = best.get(material)
         if kept is None:
@@ -287,7 +335,56 @@ def _select_best_rows(
         if score > kept[0]:  # строго лучше по цене: дубликат побеждает
             best[material] = (score, row_no)
             summary.duplicates_price_resolved += 1
+    # The supplier format has an explicit stable tie-breaker: when two rows
+    # have the same rank, the first source row wins. Keep reporting differing
+    # positive duplicates for operator review, but they are not ambiguous to
+    # this deterministic importer.
+    summary.conflicting_nonzero_wholesale = sum(
+        len(prices) > 1 for prices in positive_prices.values()
+    )
     return {material: row_no for material, (_score, row_no) in best.items()}
+
+
+def _has_blocking_price_issues(summary: ImportSummary) -> bool:
+    return bool(
+        summary.ambiguous_nonzero_wholesale
+        or summary.invalid_wholesale_price
+        or summary.negative_wholesale_price
+    )
+
+
+def selected_wholesale_prices(
+    path, *, sheet: str | None = None
+) -> tuple[dict[str, Decimal | None], ImportSummary]:
+    """Read the deterministic supplier winner for each material without DB writes.
+
+    The correction workflow uses this same parser for the applied supplier file
+    and the authoritative previous file. It deliberately returns raw supplier
+    values: choosing a fallback belongs to the caller that knows both sources.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise BrpImportError(f"Файл не найден: {path}")
+    summary = ImportSummary(mode="dry-run")
+    workbook, worksheet = _open_worksheet(path, sheet)
+    try:
+        selected_rows = _select_best_rows(worksheet, summary, _column_map(worksheet))
+    finally:
+        workbook.close()
+    winners = set(selected_rows.values())
+    prices: dict[str, Decimal | None] = {}
+    workbook, worksheet = _open_worksheet(path, sheet)
+    try:
+        columns = _column_map(worksheet)
+        for row_no, cells in enumerate(worksheet.iter_rows(min_row=2, values_only=True), start=2):
+            if row_no not in winners:
+                continue
+            row = _row_dict(cells, row_no, columns)
+            prices[row["material_no"]] = row["wholesale_price_usd"]
+    finally:
+        workbook.close()
+    summary.unique_materials = len(prices)
+    return prices, summary
 
 
 def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> ImportSummary:
@@ -305,6 +402,11 @@ def import_catalog(path, *, commit: bool = False, sheet: str | None = None) -> I
         selected_rows = _select_best_rows(worksheet, summary, _column_map(worksheet))
     finally:
         workbook.close()
+    if commit and _has_blocking_price_issues(summary):
+        raise BrpImportError(
+            "В файле есть неоднозначные, отрицательные или некорректные оптовые цены. "
+            "Применение заблокировано до их разбора."
+        )
     summary.unique_materials = len(selected_rows)
     summary.deactivated = BrpCatalogPart.objects.filter(is_current=True).exclude(
         material_no__in=selected_rows

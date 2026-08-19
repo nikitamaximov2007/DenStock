@@ -43,6 +43,10 @@ class CatalogAdapter:
         """Слепок текущего состояния каталога для защиты от устаревшего предпросмотра."""
         raise NotImplementedError
 
+    def validation_error(self, summary: dict) -> str | None:
+        """Return a user-facing reason why a checked file must not be applied."""
+        return None
+
 
 def _summary_dict(summary) -> dict:
     """Сводка импортёра в JSON-совместимый вид.
@@ -104,6 +108,17 @@ class BrpCatalogAdapter(CatalogAdapter):
         count = BrpCatalogPart.objects.count()
         payload = f"{count}|{aggregate['total']}|{aggregate['touched']}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def validation_error(self, summary: dict) -> str | None:
+        ambiguous = int(summary.get("ambiguous_nonzero_wholesale", 0) or 0)
+        invalid = int(summary.get("invalid_wholesale_price", 0) or 0)
+        negative = int(summary.get("negative_wholesale_price", 0) or 0)
+        if ambiguous or invalid or negative:
+            return (
+                "В прайсе есть неоднозначные, отрицательные или некорректные "
+                "оптовые цены. Применение заблокировано до разбора поставщиком."
+            )
+        return None
 
     def inspect(self, path: Path, *, sample_rows: int = 5) -> dict:
         """Read-only разбор структуры книги: листы, заголовки, первые строки.

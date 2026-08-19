@@ -169,15 +169,31 @@ def test_numeric_coercion_keeps_number_as_text(db, admin, settings, tmp_path):
     assert part.wholesale_price_usd == Decimal("20.00")
 
 
-def test_empty_and_invalid_price_do_not_break_import(db, admin, settings, tmp_path):
-    rows = [
-        ["420831955", "NO PRICE", "", "", "", "", "", ""],
-        ["420831956", "BAD PRICE", "", "", "нет", "нет", "", ""],
-    ]
-    batch = run_check(_batch(_workbook(rows, tmp_path), admin, settings, tmp_path))
+def test_empty_price_is_stored_as_missing(db, admin, settings, tmp_path):
+    batch = run_check(
+        _batch(
+            _workbook([["420831955", "NO PRICE", "", "", "", "", "", ""]], tmp_path),
+            admin,
+            settings,
+            tmp_path,
+        )
+    )
     apply_batch(batch, by=admin)
-    assert BrpCatalogPart.objects.count() == 2
-    assert BrpCatalogPart.objects.get(material_no="420831956").wholesale_price_usd is None
+    assert BrpCatalogPart.objects.get(material_no="420831955").wholesale_price_usd is None
+
+
+def test_invalid_price_is_visible_and_blocks_catalog_apply(db, admin, settings, tmp_path):
+    batch = _batch(
+        _workbook([["420831956", "BAD PRICE", "", "", "нет", "нет", "", ""]], tmp_path),
+        admin,
+        settings,
+        tmp_path,
+    )
+    with pytest.raises(CatalogImportError, match="некорректные"):
+        run_check(batch)
+    batch.refresh_from_db()
+    assert batch.status == CatalogImportBatch.Status.CHECK_FAILED
+    assert batch.summary["invalid_wholesale_price"] == 1
 
 
 def test_duplicate_part_number_keeps_priced_row(db, admin, settings, tmp_path):
