@@ -93,6 +93,28 @@ git push origin release/emergency-physical-install-rc
 
 ---
 
+## Откат, если выкладка не пошла
+
+Выпуск состоит только из инструментария, документов и тестов, поэтому данные он
+не трогает и восстановление базы не требуется. Откат - это возврат кода.
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git checkout --quiet 0fcae772eab1da13c1b7b59890827cf9984d3394 && git rev-parse HEAD"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && sed -i 's|^DENSTOCK_APP_COMMIT=.*|DENSTOCK_APP_COMMIT=0fcae772eab1da13c1b7b59890827cf9984d3394|' .env && grep '^DENSTOCK_APP_COMMIT=' .env"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose up -d --build --no-deps web"
+[ ] ssh root@185.250.44.206 "curl -sk -o /dev/null -w '%{http_code}
+' https://185-250-44-206.sslip.io/healthz/"
+```
+
+Базу **не** восстанавливаем: выкладка инструментария её не меняет. Последняя
+проверенная копия до выпуска - `2026-08-20_12-15-54`, она остаётся на месте на
+случай беды другого рода.
+
+Файл `docker-compose.signing.yml` при откате тоже остаётся: он не отслеживается
+Git и переключение кода его не трогает.
+
+---
+
 ## Часть Б. У компьютера склада
 
 ## Одна команда, которая отвечает на всё

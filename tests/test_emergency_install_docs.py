@@ -246,3 +246,19 @@ def test_the_checklist_includes_the_credential_hardening_step():
     assert "Protect-DenisStockEmergencyCredentials.ps1" in CHECKLIST
     assert (OPS / "Protect-DenisStockEmergencyCredentials.ps1").is_file()
     assert "-WhatIf" in CHECKLIST, "нет предварительного показа перед изменением прав"
+
+
+def test_the_one_page_tells_denis_what_to_do_when_the_page_is_closed():
+    assert "Страница не открывается" in ONE_PAGE
+    assert "позвоните администратору" in ONE_PAGE.lower()
+
+
+def test_the_one_page_warns_against_running_admin_commands():
+    """Запуск наугад может испортить готовую копию склада.
+
+    Пробелы нормализуются: документ переносится по строкам, и проверка не
+    должна зависеть от места переноса.
+    """
+    flat = " ".join(ONE_PAGE.split())
+    assert "запускать не надо" in flat or "не запускайте" in flat.lower()
+    assert "они для администратора" in flat
