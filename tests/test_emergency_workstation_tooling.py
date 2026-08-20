@@ -126,3 +126,53 @@ def test_the_installer_never_carries_private_key_material():
     """В комплекте установки не должно быть приватного ключа ни в каком виде."""
     for forbidden in ("BEGIN PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY", "production-ed25519.key"):
         assert forbidden not in INSTALLER, f"установщик ссылается на приватный ключ: {forbidden}"
+
+
+PREFLIGHT_PATH = ROOT / "scripts" / "operations" / "Test-DenisStockEmergencyPreflight.ps1"
+PREFLIGHT = PREFLIGHT_PATH.read_text(encoding="utf-8-sig")
+
+
+def test_the_preflight_only_reads_and_never_changes_the_computer():
+    """Проверка перед установкой обязана быть безопасной на чужом компьютере."""
+    for forbidden in (
+        "New-Item", "Remove-Item", "Set-Content", "Out-File", "New-NetFirewallRule",
+        "Register-ScheduledTask", "Set-Acl", "wsl.exe --install", "winget install",
+        "Stop-Service", "Start-Service", "Set-ExecutionPolicy",
+    ):
+        assert forbidden not in PREFLIGHT, f"проверка изменяет систему: {forbidden}"
+
+
+def test_the_preflight_speaks_in_three_states():
+    for state in ("ГОТОВО", "ВНИМАНИЕ", "ОСТАНОВКА"):
+        assert state in PREFLIGHT
+    assert "exit 0" in PREFLIGHT and "exit 1" in PREFLIGHT
+
+
+def test_the_preflight_covers_the_blocking_prerequisites():
+    """Ровно то, из-за чего установка встанет на месте у компьютера."""
+    for probe in (
+        "IsInRole", "BuildNumber", "Is64BitOperatingSystem", "VirtualizationFirmwareEnabled",
+        "wsl.exe", "com.docker.service", "TotalPhysicalMemory", "FreeSpace",
+        "Get-NetIPAddress", "Get-NetTCPConnection", "workstation-id.txt", "W32Time",
+    ):
+        assert probe in PREFLIGHT, f"проверка не покрывает: {probe}"
+
+
+def test_the_preflight_reads_the_wsl_list_in_its_own_encoding():
+    """wsl.exe печатает в UTF-16: иначе текст его ошибки станет «дистрибутивом»."""
+    assert "[Text.Encoding]::Unicode" in PREFLIGHT
+    assert "$wslExit -ne 0" in PREFLIGHT, "ошибка WSL принимается за список дистрибутивов"
+
+
+def test_the_preflight_ignores_virtual_adapters():
+    """Адрес WSL или VPN не является сетью склада.
+
+    Предложенный по такому адресу ярлык не открылся бы с другого компьютера.
+    """
+    assert "vEthernet" in PREFLIGHT and "virtualPattern" in PREFLIGHT
+    assert "виртуальные пропущены" in PREFLIGHT
+
+
+def test_the_preflight_warns_about_an_address_that_can_change():
+    assert "Dhcp" in PREFLIGHT
+    assert "Закрепите постоянный адрес" in PREFLIGHT
