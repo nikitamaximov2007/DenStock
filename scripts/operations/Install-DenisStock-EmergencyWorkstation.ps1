@@ -58,7 +58,7 @@ function Assert-PrimaryNetwork {
 }
 
 function Assert-WorkstationCapacity {
-    $memoryGb = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB
+    $memoryGb = ((Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum) / 1GB
     $root = Split-Path -Qualifier (Resolve-Path -LiteralPath $RepoRoot).Path
     $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$root'"
     if ($memoryGb -lt 8) { throw "Для Emergency Primary требуется не менее 8 GB RAM." }

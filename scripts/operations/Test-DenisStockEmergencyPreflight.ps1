@@ -177,7 +177,7 @@ Test-Safely "Docker Desktop" {
 
 # --- Память и диск -------------------------------------------------------------
 Test-Safely "Оперативная память" {
-    $gb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
+    $gb = [math]::Round(((Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum).Sum) / 1GB, 1)
     if ($gb -ge 16) { Add-Check -Name "Оперативная память" -State "ГОТОВО" -Detail "$gb ГБ" }
     elseif ($gb -ge 8) {
         Add-Check -Name "Оперативная память" -State "ВНИМАНИЕ" -Detail "$gb ГБ" `

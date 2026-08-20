@@ -152,7 +152,7 @@ def test_the_preflight_covers_the_blocking_prerequisites():
     """Ровно то, из-за чего установка встанет на месте у компьютера."""
     for probe in (
         "IsInRole", "BuildNumber", "Is64BitOperatingSystem", "VirtualizationFirmwareEnabled",
-        "wsl.exe", "com.docker.service", "TotalPhysicalMemory", "FreeSpace",
+        "wsl.exe", "com.docker.service", "Win32_PhysicalMemory", "FreeSpace",
         "Get-NetIPAddress", "Get-NetTCPConnection", "workstation-id.txt", "W32Time",
     ):
         assert probe in PREFLIGHT, f"проверка не покрывает: {probe}"
@@ -176,3 +176,10 @@ def test_the_preflight_ignores_virtual_adapters():
 def test_the_preflight_warns_about_an_address_that_can_change():
     assert "Dhcp" in PREFLIGHT
     assert "Закрепите постоянный адрес" in PREFLIGHT
+
+
+def test_ram_capacity_uses_installed_physical_modules():
+    assert "Win32_PhysicalMemory" in PREFLIGHT
+    assert "TotalPhysicalMemory" not in PREFLIGHT
+    assert "Win32_PhysicalMemory" in INSTALLER
+    assert "TotalPhysicalMemory" not in INSTALLER
