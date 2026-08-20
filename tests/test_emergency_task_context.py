@@ -234,3 +234,49 @@ def test_the_release_update_still_fails_closed():
     assert 'git fetch --no-tags $source $target' in launcher.replace("& ", "")
     assert '$resolved -ne $target' in launcher, "точное совпадение коммита не проверяется"
     assert "Старый READY standby сохранён." in launcher
+
+
+# --- Совместимость с Windows 10 и подсистемой Linux -------------------------------------
+
+BOOTSTRAP = (OPS / "provision-wsl-docker.sh").read_text(encoding="utf-8")
+
+
+def test_the_bootstrap_does_not_loop_when_systemd_is_unsupported():
+    """Встроенный WSL Windows 10 systemd не умеет.
+
+    Раньше сценарий просто прописывал systemd и просил перезапуск. При
+    неподдерживающей версии человек получал то же сообщение снова и снова.
+    """
+    assert "grep -qs '^systemd=true' /etc/wsl.conf" in BOOTSTRAP
+    assert "exit 43" in BOOTSTRAP
+    assert "wsl --update" in BOOTSTRAP
+    assert "Microsoft Store" in BOOTSTRAP
+
+
+def test_the_bootstrap_is_safe_to_repeat():
+    """Повторный запуск не должен переустанавливать уже стоящий Docker."""
+    assert "command -v docker" in BOOTSTRAP
+    assert "systemctl enable --now docker" in BOOTSTRAP
+
+
+def test_the_preflight_checks_the_wsl_version():
+    """Проверено на живой машине: современный WSL отвечает на --version."""
+    assert '"--version"' in PREFLIGHT
+    assert "systemd" in PREFLIGHT
+    assert "Microsoft Store" in PREFLIGHT
+
+
+def test_windows_home_uses_no_pro_only_feature():
+    """Аварийный режим не должен требовать Windows Pro из-за одной команды."""
+    installer_and_checks = INSTALLER + PREFLIGHT + DIAGNOSTICS
+    for pro_only in ("Enable-WindowsOptionalFeature -FeatureName Microsoft-Hyper-V",
+                     "Hyper-V-All", "Get-VM", "New-VM", "gpedit", "BitLocker",
+                     "Get-WindowsFeature"):
+        assert pro_only not in installer_and_checks, f"нужна была бы Windows Pro: {pro_only}"
+
+
+def test_only_home_available_windows_apis_are_used():
+    """Всё перечисленное есть в Windows 10 Home."""
+    for api in ("New-NetFirewallRule", "Register-ScheduledTask", "Get-Acl", "Set-Acl",
+                "WScript.Shell", "Get-CimInstance"):
+        assert api in INSTALLER, f"проверка бессмысленна: {api} больше не используется"

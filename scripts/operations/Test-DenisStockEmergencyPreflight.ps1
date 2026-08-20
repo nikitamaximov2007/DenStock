@@ -168,6 +168,33 @@ Test-Safely "Подсистема Linux (WSL)" {
     }
 }
 
+# --- Версия WSL -----------------------------------------------------------------
+Test-Safely "Версия WSL" {
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        Add-Check -Name "Версия WSL" -State "ВНИМАНИЕ" -Detail "WSL ещё не установлен" `
+            -Fix "Установщик поставит WSL. После установки проверьте эту строку снова."
+        return
+    }
+    # Docker внутри WSL поднимается через systemd, а его поддерживает только
+    # современный WSL из Microsoft Store. Встроенный компонент Windows 10
+    # systemd не умеет, и установка встала бы на этом шаге по кругу.
+    $version = Invoke-ExternalWithTimeout -FilePath "wsl.exe" -Arguments @("--version") `
+        -TimeoutSeconds 20 -Utf16Output
+    if ($version.TimedOut) {
+        Add-Check -Name "Версия WSL" -State "ВНИМАНИЕ" -Detail "wsl.exe не ответил за 20 секунд" `
+            -Fix "Выполните wsl --shutdown и повторите проверку."
+        return
+    }
+    if ($version.ExitCode -ne 0) {
+        Add-Check -Name "Версия WSL" -State "ОСТАНОВКА" `
+            -Detail "установлен встроенный WSL, он не поддерживает systemd" `
+            -Fix "Выполните от имени администратора: wsl --update, затем wsl --shutdown. Если команда неизвестна, установите WSL из Microsoft Store. Без этого Docker внутри WSL не запустится."
+        return
+    }
+    $first = ($version.Text -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+    Add-Check -Name "Версия WSL" -State "ГОТОВО" -Detail $first.Trim()
+}
+
 # --- Docker Desktop ------------------------------------------------------------
 Test-Safely "Docker Desktop" {
     $service = Get-Service -Name "com.docker.service" -ErrorAction SilentlyContinue
