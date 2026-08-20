@@ -319,13 +319,46 @@ foreach ($item in @(
 
 if ($CreateTasks) {
     $refresh = Join-Path $RepoRoot "scripts\operations\Emergency-Standby-Refresh.ps1"
-    $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$refresh`""
+    $action = New-ScheduledTaskAction `
+        -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$refresh`"" `
+        -WorkingDirectory $RepoRoot
     $triggers = @(
         (New-ScheduledTaskTrigger -Daily -At 7:00AM),
         (New-ScheduledTaskTrigger -Daily -At 7:00PM),
         (New-ScheduledTaskTrigger -AtLogOn)
     )
-    Register-ScheduledTask -TaskName "DenisStock Emergency Standby Refresh" -Action $action -Trigger $triggers -Description "Refreshes verified DenisStock emergency standby only when no offline lifecycle exists." -Force | Out-Null
+    # Учётная запись задания задаётся явно и намеренно.
+    #
+    # Обновление копии выполняет rclone, а его настройки лежат в профиле
+    # пользователя: %APPDATA%\rclone\rclone.conf. Если задание пойдёт под
+    # СИСТЕМОЙ или под другим пользователем, у него будет другой профиль,
+    # источник копий просто не найдётся, и станция начнёт молча устаревать.
+    # Поэтому задание закрепляется за тем же, кто настраивал rclone и ставил
+    # станцию.
+    #
+    # Тип входа S4U, а не Interactive: при Interactive ежедневные запуски в
+    # 07:00 и 19:00 срабатывают только тогда, когда этот пользователь в
+    # системе. Компьютер склада может стоять с заблокированным экраном, и
+    # копия не обновлялась бы неделями. S4U работает без входа и не требует
+    # хранить пароль.
+    #
+    # Права обычные, не повышенные: обновлению копии хватает доступа к своим
+    # каталогам, которые установщик открыл этому пользователю.
+    $taskAccount = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $principal = New-ScheduledTaskPrincipal -UserId $taskAccount -LogonType S4U -RunLevel Limited
+    # Пропущенный запуск догоняется: компьютер склада ночью может быть выключен.
+    $settings = New-ScheduledTaskSettingsSet `
+        -StartWhenAvailable `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    Register-ScheduledTask -TaskName "DenisStock Emergency Standby Refresh" `
+        -Action $action -Trigger $triggers -Principal $principal -Settings $settings `
+        -Description "Обновляет проверенную аварийную копию склада, пока не начат автономный режим." `
+        -Force | Out-Null
+    Write-Host "Задание обновления копии закреплено за $taskAccount (вход S4U)." -ForegroundColor DarkGray
 }
 
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $launcher -Action Status

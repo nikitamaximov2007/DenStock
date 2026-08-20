@@ -133,26 +133,26 @@ Test-Safely "Подсистема Linux (WSL)" {
             -Fix "Установщик поставит её сам. Потребуется одна перезагрузка."
         return
     }
-    # wsl.exe печатает список в UTF-16. Без смены кодировки консоли сюда
-    # попадают не имена дистрибутивов, а мусор, и при ошибке WSL её текст
-    # тоже приходит в этот же поток. Читаем правильно и смотрим код возврата.
-    $previousEncoding = [Console]::OutputEncoding
-    try {
-        [Console]::OutputEncoding = [Text.Encoding]::Unicode
-        $rawList = & wsl.exe -l -q 2>&1
-        $wslExit = $LASTEXITCODE
+    # Вызов ограничен по времени: на машине со сломанной подсистемой Linux
+    # wsl.exe -l -q возвращался четыре минуты, и проверка молчала всё это время.
+    $listing = Invoke-ExternalWithTimeout -FilePath "wsl.exe" -Arguments @("-l", "-q") `
+        -TimeoutSeconds 25 -Utf16Output
+    if ($listing.TimedOut) {
+        Add-Check -Name "Подсистема Linux (WSL)" -State "ВНИМАНИЕ" `
+            -Detail "wsl.exe не ответил за 25 секунд" `
+            -Fix "Выполните wsl --shutdown, затем wsl --update, и повторите проверку."
+        return
     }
-    finally { [Console]::OutputEncoding = $previousEncoding }
-    if ($wslExit -ne 0) {
-        $message = ($rawList | Out-String).Trim()
+    if ($listing.ExitCode -ne 0) {
         Add-Check -Name "Подсистема Linux (WSL)" -State "ВНИМАНИЕ" `
             -Detail "WSL установлен, но отвечает ошибкой" `
-            -Fix "WSL сообщает: $message. Установщик попробует подготовить подсистему заново; если ошибка повторится, обновите WSL командой wsl --update."
+            -Fix "WSL сообщает: $($listing.Text.Trim()). Установщик попробует подготовить подсистему заново; если ошибка повторится, обновите WSL командой wsl --update."
         return
     }
     $distros = @(
-        $rawList | ForEach-Object { $_.Replace([string][char]0, "").Trim() } |
-            Where-Object { $_ -and $_ -notmatch "^\s*$" }
+        $listing.Text -split "`n" |
+            ForEach-Object { $_.Replace([string][char]0, "").Trim() } |
+            Where-Object { $_ }
     )
     if ($distros -contains $WslDistro) {
         Add-Check -Name "Подсистема Linux (WSL)" -State "ГОТОВО" -Detail "дистрибутив $WslDistro установлен"

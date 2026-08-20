@@ -93,23 +93,32 @@ if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
     Add-Layer -Layer "Подсистема Linux" -State "ОШИБКА" -Detail "wsl.exe не найден"
 }
 else {
-    $previousEncoding = [Console]::OutputEncoding
-    try {
-        [Console]::OutputEncoding = [Text.Encoding]::Unicode
-        $list = & wsl.exe -l -q 2>&1
-        $code = $LASTEXITCODE
+    # Вызов ограничен по времени. На машине со сломанной подсистемой Linux
+    # wsl.exe -l -q возвращался четыре минуты, и проверка готовности молчала
+    # всё это время. Просроченный вызов честнее ответа через четыре минуты.
+    $listing = Invoke-ExternalWithTimeout -FilePath "wsl.exe" -Arguments @("-l", "-q") `
+        -TimeoutSeconds 25 -Utf16Output
+    if ($listing.TimedOut) {
+        Add-Layer -Layer "Подсистема Linux" -State "ОШИБКА" `
+            -Detail "wsl.exe не ответил за 25 секунд"
+        Add-NextStep "Подсистема Linux не отвечает. Выполните wsl --shutdown, затем wsl --update, и повторите проверку."
     }
-    finally { [Console]::OutputEncoding = $previousEncoding }
-    $names = @($list | ForEach-Object { $_.Replace([string][char]0, "").Trim() } | Where-Object { $_ })
-    if ($code -ne 0) {
-        Add-Layer -Layer "Подсистема Linux" -State "ОШИБКА" -Detail (($list | Out-String).Trim())
-    }
-    elseif ($names -contains $WslDistro) {
-        Add-Layer -Layer "Подсистема Linux" -State "ГОТОВО" -Detail "дистрибутив $WslDistro"
-        $wslReady = $true
+    elseif ($listing.ExitCode -ne 0) {
+        Add-Layer -Layer "Подсистема Linux" -State "ОШИБКА" -Detail $listing.Text.Trim()
     }
     else {
-        Add-Layer -Layer "Подсистема Linux" -State "ОШИБКА" -Detail "нет дистрибутива $WslDistro"
+        $names = @(
+            $listing.Text -split "`n" |
+                ForEach-Object { $_.Replace([string][char]0, "").Trim() } |
+                Where-Object { $_ }
+        )
+        if ($names -contains $WslDistro) {
+            Add-Layer -Layer "Подсистема Linux" -State "ГОТОВО" -Detail "дистрибутив $WslDistro"
+            $wslReady = $true
+        }
+        else {
+            Add-Layer -Layer "Подсистема Linux" -State "ОШИБКА" -Detail "нет дистрибутива $WslDistro"
+        }
     }
 }
 
@@ -119,9 +128,16 @@ if (-not $wslReady) {
     Add-Layer -Layer "Docker" -State "НЕТ ДАННЫХ" -Detail "не проверялся: не работает подсистема Linux"
 }
 else {
-    & wsl.exe -d $WslDistro -- docker info *> $null
-    if ($LASTEXITCODE -eq 0) {
-        $version = (& wsl.exe -d $WslDistro -- docker --version 2>$null | Out-String).Trim()
+    $probe = Invoke-ExternalWithTimeout -FilePath "wsl.exe" `
+        -Arguments @("-d", $WslDistro, "--", "docker", "info") -TimeoutSeconds 40
+    if ($probe.TimedOut) {
+        Add-Layer -Layer "Docker" -State "ОШИБКА" -Detail "docker не ответил за 40 секунд"
+        Add-NextStep "Docker не отвечает. Выполните: wsl -d $WslDistro -u root -- systemctl start docker"
+    }
+    elseif ($probe.ExitCode -eq 0) {
+        $versionProbe = Invoke-ExternalWithTimeout -FilePath "wsl.exe" `
+            -Arguments @("-d", $WslDistro, "--", "docker", "--version") -TimeoutSeconds 20
+        $version = if ($versionProbe.TimedOut) { "версия не получена" } else { $versionProbe.Text.Trim() }
         Add-Layer -Layer "Docker" -State "ГОТОВО" -Detail $version
         $dockerReady = $true
     }
@@ -286,6 +302,79 @@ elseif (Test-Path -LiteralPath $envFile) {
 }
 else {
     Add-Layer -Layer "Задание обновления" -State "НЕТ ДАННЫХ" -Detail "станция ещё не установлена"
+}
+
+# --- Слой 11: контекст задания и настройки rclone -------------------------------------
+# Обновление копии выполняет rclone, а его настройки лежат в профиле того
+# пользователя Windows, который их создавал. Если задание пойдёт под другим
+# пользователем или под СИСТЕМОЙ, источник копий просто не найдётся, и станция
+# начнёт устаревать молча. Поэтому контекст проверяется отдельно.
+if (Get-Command Get-RcloneConfigPath -ErrorAction SilentlyContinue) {
+    $conf = Get-RcloneConfigPath
+    if (-not $conf.Exists) {
+        Add-Layer -Layer "Настройки rclone" -State "ОШИБКА" -Detail "нет файла: $($conf.Path)"
+        Add-NextStep "Выполнить rclone config под тем пользователем Windows, от которого работает станция."
+    }
+    elseif ($conf.ExtraReaders.Count -gt 0) {
+        Add-Layer -Layer "Настройки rclone" -State "ВНИМАНИЕ" `
+            -Detail "$($conf.Path); лишние читатели: $($conf.ExtraReaders -join ', ')"
+        Add-NextStep "Ограничить доступ к настройкам rclone: ключ к хранилищу копий не должен читаться посторонними учётными записями."
+    }
+    else {
+        Add-Layer -Layer "Настройки rclone" -State "ГОТОВО" -Detail $conf.Path
+    }
+}
+
+$refreshTask = Get-ScheduledTask -TaskName "DenisStock Emergency Standby Refresh" -ErrorAction SilentlyContinue
+if ($refreshTask) {
+    $account = [string]$refreshTask.Principal.UserId
+    $logon = [string]$refreshTask.Principal.LogonType
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $shortMe = $me.Split("\\")[-1]
+    $detail = "учётная запись $account, вход $logon"
+    if ($account -match "^(SYSTEM|NT AUTHORITY)" -or $logon -eq "ServiceAccount") {
+        Add-Layer -Layer "Контекст задания" -State "ОШИБКА" -Detail $detail
+        Add-NextStep "Задание идёт под системной учётной записью: у неё другой профиль и она не увидит настройки rclone. Повторите установку с ключом -CreateTasks."
+    }
+    elseif ($logon -eq "Interactive") {
+        Add-Layer -Layer "Контекст задания" -State "ВНИМАНИЕ" -Detail $detail
+        Add-NextStep "Задание сработает только когда этот пользователь в системе. Повторите установку с ключом -CreateTasks, чтобы копия обновлялась и при заблокированном экране."
+    }
+    elseif ($account -ne $me -and $account -ne $shortMe) {
+        Add-Layer -Layer "Контекст задания" -State "ВНИМАНИЕ" `
+            -Detail "$detail; проверка идёт от $me"
+        Add-NextStep "Проверьте источник копий под учётной записью ${account}: настройки rclone лежат в её профиле."
+    }
+    else {
+        Add-Layer -Layer "Контекст задания" -State "ГОТОВО" -Detail $detail
+    }
+}
+
+# --- Слой 12: последнее обновление копии ------------------------------------------------
+$refreshStatusFile = Join-Path $runtimeRoot "standby-refresh-status.json"
+if (Test-Path -LiteralPath $refreshStatusFile -PathType Leaf) {
+    try {
+        $status = Get-Content -LiteralPath $refreshStatusFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $when = [DateTimeOffset]::Parse($status.attempted_at).LocalDateTime.ToString("yyyy-MM-dd HH:mm")
+        $detail = "$when, итог: $($status.outcome), копия $($status.backup_run_id)"
+        if ($status.outcome -eq "ready") {
+            Add-Layer -Layer "Последнее обновление" -State "ГОТОВО" -Detail $detail
+        }
+        elseif ($status.outcome -eq "incompatible") {
+            Add-Layer -Layer "Последнее обновление" -State "ВНИМАНИЕ" -Detail $detail
+            Add-NextStep "Версия станции не совпала с копией. Обновите станцию до версии production и повторите обновление копии."
+        }
+        else {
+            Add-Layer -Layer "Последнее обновление" -State "ВНИМАНИЕ" -Detail $detail
+            Add-NextStep "Последнее обновление копии не удалось. Прежняя рабочая копия сохранена; проверьте источник копий."
+        }
+    }
+    catch {
+        Add-Layer -Layer "Последнее обновление" -State "ВНИМАНИЕ" -Detail "запись о последнем обновлении не читается"
+    }
+}
+elseif (Test-Path -LiteralPath $envFile) {
+    Add-Layer -Layer "Последнее обновление" -State "НЕТ ДАННЫХ" -Detail "копия ещё ни разу не обновлялась"
 }
 
 # --- Отчёт ---------------------------------------------------------------------------

@@ -5,6 +5,8 @@
     .DESCRIPTION
     Файл подключается через точку из проверок готовности и диагностики, чтобы
     обе они судили об источнике одинаково. Самостоятельно ничего не выполняет.
+    Здесь же лежат общие вспомогательные функции этих проверок: запуск
+    внешней программы с ограничением по времени и путь к настройкам rclone.
 
     Главное свойство: ни одна функция здесь не пишет в хранилище. Ни пробного
     объекта, ни проверки прав на запись записью. Станция забирает копии и
@@ -276,4 +278,143 @@ function Get-BackupRunAgeHours {
     }
     catch { return $null }
     return [math]::Round(((Get-Date) - $stamp).TotalHours, 1)
+}
+
+function Get-RcloneConfigPath {
+    <#
+        Путь к настройкам rclone для ТЕКУЩЕГО пользователя Windows.
+
+        Путь вычисляется по соглашению, а не спрашивается у самого rclone:
+        подкоманда config намеренно не входит в список разрешённых, чтобы
+        прочитать настройки было невозможно даже случайно. Проверено на живой
+        Windows: rclone кладёт файл в %APPDATA%\rclone\rclone.conf, а
+        переменная RCLONE_CONFIG перекрывает это место.
+
+        Возвращается только путь и сведения о правах. Содержимое не читается.
+    #>
+    $override = $env:RCLONE_CONFIG
+    if ($override) {
+        $path = $override
+        $source = "переменная RCLONE_CONFIG"
+    }
+    else {
+        $path = Join-Path $env:APPDATA "rclone" | Join-Path -ChildPath "rclone.conf"
+        $source = "обычное место профиля"
+    }
+    $exists = Test-Path -LiteralPath $path -PathType Leaf
+    $result = [ordered]@{
+        Path = $path; Source = $source; Exists = $exists
+        AclProtected = $null; ExtraReaders = @()
+    }
+    if ($exists) {
+        try {
+            $acl = Get-Acl -LiteralPath $path
+            $result.AclProtected = $acl.AreAccessRulesProtected
+            # Свои, СИСТЕМА и администраторы ожидаемы. Всё остальное - лишние
+            # читатели: в файле лежит ключ доступа к хранилищу копий.
+            $expected = @(
+                [Security.Principal.WindowsIdentity]::GetCurrent().Name,
+                "NT AUTHORITY\SYSTEM", "BUILTIN\Administrators"
+            )
+            $wellKnown = @("S-1-5-18", "S-1-5-32-544")
+            $result.ExtraReaders = @(
+                $acl.Access | ForEach-Object { [string]$_.IdentityReference } |
+                    Where-Object {
+                        $identity = $_
+                        $known = $false
+                        foreach ($name in $expected) { if ($identity -eq $name) { $known = $true } }
+                        try {
+                            $sid = (New-Object Security.Principal.NTAccount($identity)).Translate(
+                                [Security.Principal.SecurityIdentifier]).Value
+                            if ($wellKnown -contains $sid) { $known = $true }
+                            if ($sid -eq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { $known = $true }
+                        }
+                        catch { }
+                        -not $known
+                    } | Select-Object -Unique
+            )
+        }
+        catch { }
+    }
+    return [pscustomobject]$result
+}
+
+function Invoke-ExternalWithTimeout {
+    <#
+        Запускает внешнюю программу с ограничением по времени.
+
+        Нужно потому, что проверка готовности обязана отвечать быстро. На
+        машине со сломанной подсистемой Linux вызов wsl.exe -l -q возвращался
+        четыре минуты, и человек у компьютера видел молчащее окно, не понимая,
+        сломалось что-то или ещё считается. Просроченный вызов честнее ответа
+        через четыре минуты.
+
+        Возвращает объект с полями ExitCode, Text и TimedOut. Программа при
+        истечении срока снимается.
+
+        В Windows PowerShell 5.1 у ProcessStartInfo нет списка аргументов,
+        поэтому строка собирается вручную с кавычками вокруг тех, где есть
+        пробелы.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSeconds = 30,
+        [switch]$Utf16Output
+    )
+
+    $quoted = foreach ($argument in $Arguments) {
+        if ($argument -match '\s') { '"' + $argument + '"' } else { $argument }
+    }
+
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $FilePath
+    $info.Arguments = ($quoted -join " ")
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    if ($Utf16Output) {
+        $info.StandardOutputEncoding = [Text.Encoding]::Unicode
+        $info.StandardErrorEncoding = [Text.Encoding]::Unicode
+    }
+
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    $output = New-Object Text.StringBuilder
+    $errors = New-Object Text.StringBuilder
+    $outHandler = {
+        if ($null -ne $EventArgs.Data) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
+    }
+    $outSubscription = Register-ObjectEvent -InputObject $process -EventName OutputDataReceived `
+        -Action $outHandler -MessageData $output
+    $errSubscription = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived `
+        -Action $outHandler -MessageData $errors
+
+    try {
+        [void]$process.Start()
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
+        $finished = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $finished) {
+            try { $process.Kill() } catch { }
+            return [pscustomobject]@{
+                ExitCode = -1
+                Text = ""
+                TimedOut = $true
+            }
+        }
+        # Дать обработчикам дочитать остаток вывода после выхода процесса.
+        Start-Sleep -Milliseconds 120
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Text = ($output.ToString() + $errors.ToString())
+            TimedOut = $false
+        }
+    }
+    finally {
+        Unregister-Event -SubscriptionId $outSubscription.Id -ErrorAction SilentlyContinue
+        Unregister-Event -SubscriptionId $errSubscription.Id -ErrorAction SilentlyContinue
+        $process.Dispose()
+    }
 }
