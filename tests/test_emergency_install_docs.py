@@ -82,3 +82,40 @@ def test_the_one_page_covers_all_four_states():
 def test_the_one_page_explains_why_a_single_writer_matters():
     """Сотруднику нужна причина, иначе запрет выглядит произволом."""
     assert "только одна система" in ONE_PAGE
+
+
+def test_the_kit_explains_the_separate_read_only_storage_account():
+    """Ключ выгрузки копий с production на станцию переносить нельзя."""
+    assert "только на чтение" in KIT
+    assert "не переносятся никогда" in KIT
+    assert "rclone config" in KIT
+    assert "yandex-s3" in KIT
+
+
+def test_the_kit_forbids_leaking_the_storage_key():
+    for rule in ("снимки экрана", "не передаётся сценариям параметром"):
+        assert rule in KIT, f"в инструкции нет правила: {rule}"
+
+
+def test_the_kit_states_the_source_check_writes_nothing():
+    assert "ничего в хранилище не создаёт и не удаляет" in KIT
+    assert "Пробного объекта не появляется" in KIT
+
+
+def test_the_kit_checks_the_source_before_install():
+    """Иначе станция встанет готовой, но забирать копии ей будет неоткуда."""
+    assert "-BackupSource" in KIT
+    assert "до** установки" in KIT
+
+
+def test_the_kit_points_at_the_single_readiness_command():
+    assert "Что делать дальше" in KIT
+    assert "ГОТОВО: станция готова к работе." in KIT
+
+
+def test_the_kit_carries_no_real_credentials():
+    """В документе не должно быть ни ключа, ни его половины."""
+    import re
+    for pattern in (r"AKIA[0-9A-Z]{8,}", r"YC[A-Za-z0-9_-]{20,}",
+                    r"secret_access_key\s*=\s*\S", r"access_key_id\s*=\s*\S"):
+        assert not re.search(pattern, KIT), f"в инструкции похоже на ключ: {pattern}"
