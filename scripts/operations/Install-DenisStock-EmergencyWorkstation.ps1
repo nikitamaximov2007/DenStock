@@ -239,6 +239,25 @@ else {
     Write-Host "Публичный ключ закреплён: $sourceFingerprint" -ForegroundColor DarkGray
 }
 
+# Путь к настройкам rclone определяется здесь, при установке, и записывается в
+# конфигурацию станции. Причина в задании обновления копии: оно идёт с типом
+# входа S4U, и полагаться на то, что Windows подставит профиль и переменную
+# APPDATA, нельзя. Обёртка обновления читает этот путь и задаёт RCLONE_CONFIG
+# явно, поэтому источник копий находится независимо от профиля.
+#
+# Это путь, а не секрет. Сам файл не читается, не копируется и в репозиторий
+# не попадает.
+$rcloneConfigPath = if ($env:RCLONE_CONFIG) { $env:RCLONE_CONFIG }
+                    else { Join-Path $env:APPDATA "rclone" | Join-Path -ChildPath "rclone.conf" }
+if (-not (Test-Path -LiteralPath $rcloneConfigPath -PathType Leaf)) {
+    throw @"
+Не найдены настройки rclone: $rcloneConfigPath
+Выполните rclone config под этой же учётной записью Windows и создайте источник
+копий только на чтение, затем повторите установку. Задание обновления копии
+будет работать от этой учётной записи и читать именно этот файл.
+"@
+}
+
 $envFile = Join-Path $RepoRoot ".env.emergency"
 $envExisted = Test-Path -LiteralPath $envFile
 if ($envExisted) {
@@ -284,6 +303,7 @@ $envLines = @(
     "DENSTOCK_EMERGENCY_KEEP_DOWNLOADS=2",
     "DENSTOCK_EMERGENCY_KEEP_COMPLETED_EXPORTS=2",
     "DENSTOCK_EMERGENCY_BACKUP_SOURCE=$BackupSource",
+    "DENSTOCK_EMERGENCY_RCLONE_CONFIG=$rcloneConfigPath",
     "DENSTOCK_EMERGENCY_RELEASE_SOURCE=$ReleaseSource",
     "DENSTOCK_PRODUCTION_URL=$ProductionUrl",
     "DENSTOCK_EMERGENCY_PROBE_TOKEN=$probeValue",

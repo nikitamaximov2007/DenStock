@@ -312,25 +312,31 @@ function Get-RcloneConfigPath {
             $result.AclProtected = $acl.AreAccessRulesProtected
             # Свои, СИСТЕМА и администраторы ожидаемы. Всё остальное - лишние
             # читатели: в файле лежит ключ доступа к хранилищу копий.
-            $expected = @(
-                [Security.Principal.WindowsIdentity]::GetCurrent().Name,
-                "NT AUTHORITY\SYSTEM", "BUILTIN\Administrators"
+            #
+            # Сравнение идёт по неизменяемым идентификаторам, а не по именам:
+            # на русской Windows это «NT AUTHORITY\СИСТЕМА» и
+            # «BUILTIN\Администраторы», и сверка с английскими названиями не
+            # сработала бы никогда.
+            $wellKnown = @(
+                "S-1-5-18",                                                   # СИСТЕМА
+                "S-1-5-32-544",                                               # администраторы
+                [Security.Principal.WindowsIdentity]::GetCurrent().User.Value # владелец
             )
-            $wellKnown = @("S-1-5-18", "S-1-5-32-544")
             $result.ExtraReaders = @(
                 $acl.Access | ForEach-Object { [string]$_.IdentityReference } |
                     Where-Object {
                         $identity = $_
-                        $known = $false
-                        foreach ($name in $expected) { if ($identity -eq $name) { $known = $true } }
+                        $sid = $null
                         try {
                             $sid = (New-Object Security.Principal.NTAccount($identity)).Translate(
                                 [Security.Principal.SecurityIdentifier]).Value
-                            if ($wellKnown -contains $sid) { $known = $true }
-                            if ($sid -eq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { $known = $true }
                         }
-                        catch { }
-                        -not $known
+                        catch {
+                            # Права могут быть записаны прямо идентификатором,
+                            # если учётной записи больше нет в системе.
+                            if ($identity -match "^S-1-") { $sid = $identity }
+                        }
+                        -not ($sid -and $wellKnown -contains $sid)
                     } | Select-Object -Unique
             )
         }
@@ -510,4 +516,89 @@ function Test-EmergencyReleaseSource {
     $result.Kind = "ok"
     $result.Detail = "версия $($Commit.Substring(0, 12)) доступна из источника"
     return [pscustomobject]$result
+}
+
+function Protect-RcloneConfig {
+    <#
+        Ограничивает доступ к настройкам rclone. Выполняется по явной команде
+        администратора, а не сама по себе при установке.
+
+        Причина осторожности: в этом файле лежит ключ доступа к хранилищу
+        копий, но он же нужен обновлению копии каждый день. Слишком узкие права
+        сломали бы обновление молча, а это ровно тот отказ, которого мы
+        избегаем. Поэтому доступ оставляется ровно четырём: владельцу файла,
+        учётной записи задания, СИСТЕМЕ и администраторам.
+
+        Наследование снимается: именно через него посторонние группы получали
+        чтение. Содержимое файла не читается.
+
+        Возвращает объект с полями Path, Before, After и Changed.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$TaskAccount = "",
+        [switch]$WhatIf
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Файл настроек rclone не найден: $Path"
+    }
+
+    $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $keep = New-Object Collections.Generic.List[string]
+    $keep.Add($me)
+    if ($TaskAccount -and $TaskAccount -ne $me) { $keep.Add($TaskAccount) }
+
+    # Системные участники берутся по неизменяемым идентификаторам, а не по
+    # именам: на русской Windows они называются иначе.
+    foreach ($sid in @("S-1-5-18", "S-1-5-32-544")) {
+        try {
+            $account = (New-Object Security.Principal.SecurityIdentifier($sid)).Translate(
+                [Security.Principal.NTAccount]).Value
+            $keep.Add($account)
+        }
+        catch { }
+    }
+
+    $before = @((Get-Acl -LiteralPath $Path).Access |
+        ForEach-Object { [string]$_.IdentityReference } | Select-Object -Unique)
+
+    if ($WhatIf) {
+        return [pscustomobject]@{
+            Path = $Path; Before = $before; After = @($keep); Changed = $false
+        }
+    }
+
+    # Повторный запуск не должен ничего писать. Дело не только в опрятности:
+    # перезапись уже защищённого списка требует особой привилегии, и без прав
+    # администратора вторая попытка падала бы, хотя делать ей нечего.
+    $current = Get-Acl -LiteralPath $Path
+    $desired = @($keep | Select-Object -Unique | Sort-Object)
+    $existing = @($current.Access | ForEach-Object { [string]$_.IdentityReference } |
+        Select-Object -Unique | Sort-Object)
+    # Compare-Object возвращает пустоту при совпадении, а строгий режим не даёт
+    # взять у пустоты Count, поэтому результат оборачивается в массив.
+    $difference = @(Compare-Object -ReferenceObject $desired -DifferenceObject $existing)
+    if ($current.AreAccessRulesProtected -and $difference.Count -eq 0) {
+        return [pscustomobject]@{
+            Path = $Path; Before = $before; After = $existing; Changed = $false
+        }
+    }
+
+    $acl = Get-Acl -LiteralPath $Path
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+    foreach ($identity in ($keep | Select-Object -Unique)) {
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+            $identity, "FullControl", "Allow"
+        )
+        $acl.AddAccessRule($rule)
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl
+
+    $after = @((Get-Acl -LiteralPath $Path).Access |
+        ForEach-Object { [string]$_.IdentityReference } | Select-Object -Unique)
+    return [pscustomobject]@{
+        Path = $Path; Before = $before; After = $after; Changed = $true
+    }
 }
