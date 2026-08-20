@@ -50,7 +50,7 @@ nano .env
 - `POSTGRES_PASSWORD` — сгенерировать: `openssl rand -base64 24`
 - `DATABASE_URL=postgres://denstock:<POSTGRES_PASSWORD>@db:5432/denstock`
 - `DJANGO_SUPERUSER_PASSWORD` — `openssl rand -base64 18` (логин `admin`).
-- `DJANGO_ALLOWED_HOSTS` — IP и/или домен (напр. `91.142.73.205` или `example.com`).
+- `DJANGO_ALLOWED_HOSTS` — IP и/или домен (напр. `185.250.44.206` или `example.com`).
 
 **Никогда** не отправляйте `.env` в чат/Git — там пароли и ключ. `.env` уже в `.gitignore`.
 
