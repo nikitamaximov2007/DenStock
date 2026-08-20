@@ -45,6 +45,16 @@ def test_the_body_after_the_marker_is_valid_utf8(script):
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
 def test_no_script_carries_private_key_material(script):
+    """Ищется именно вставленный ключ, а не упоминание.
+
+    Сборщик диагностики держит эти же слова как образец поиска утечки, поэтому
+    проверять надо полную рамку PEM с дефисами: в образце поиска её нет.
+    """
     text = script.read_text(encoding="utf-8-sig")
-    for forbidden in ("BEGIN PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY", "BEGIN RSA PRIVATE KEY"):
+    for forbidden in (
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+    ):
         assert forbidden not in text, f"{script.name} содержит приватный ключ"
