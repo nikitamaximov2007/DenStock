@@ -188,5 +188,61 @@ def test_the_checklist_keeps_the_stale_primary_limitation():
     assert "Отозвать назначение старой" in CHECKLIST
 
 
-def test_the_checklist_is_short_enough_to_follow():
-    assert len(CHECKLIST.splitlines()) < 260, "лист выполнения разросся в описание архитектуры"
+def test_the_checklist_stays_a_checklist_and_not_an_essay():
+    """Сторож по соотношению, а не по числу строк.
+
+    Лист покрывает два компьютера и весь день установки, поэтому длина сама по
+    себе ни о чём не говорит. Важно другое: он должен оставаться перечнем
+    действий. Пояснения нужны там, где шаг связан с безопасностью, но их не
+    должно становиться больше самих шагов вдвое.
+    """
+    lines = CHECKLIST.splitlines()
+    steps = [line for line in lines if line.strip().startswith("[ ]")]
+    prose = [
+        line for line in lines
+        if line.strip()
+        and not line.strip().startswith("[ ]")
+        and not line.startswith("#")
+        and not line.startswith("```")
+        and not line.startswith("|")
+    ]
+    assert len(steps) >= 30, f"это уже не лист выполнения: шагов всего {len(steps)}"
+    assert len(prose) <= 2 * len(steps), (
+        f"пояснений {len(prose)} при {len(steps)} шагах: лист превращается в рассказ"
+    )
+
+
+def test_the_checklist_uses_the_canonical_health_endpoint():
+    """Корень отвечает перенаправлением на вход: это не проверка здоровья."""
+    urls = (ROOT / "apps" / "core" / "urls.py").read_text(encoding="utf-8")
+    assert 'path("healthz/"' in urls, "канонический адрес проверки изменился"
+    assert "/healthz/" in CHECKLIST, "в листе нет канонического адреса проверки"
+
+
+def test_the_checklist_keeps_the_signing_compose_override():
+    """Файл не отслеживается Git и легко теряется при неаккуратной выкладке."""
+    assert "docker-compose.signing.yml" in CHECKLIST
+    assert "Ничего не удаляйте" in CHECKLIST
+
+
+def test_the_checklist_never_removes_untracked_files_on_production():
+    for forbidden in ("git clean", "rm -rf /opt", "git reset --hard"):
+        assert forbidden not in CHECKLIST, f"в листе разрушающая команда: {forbidden}"
+
+
+def test_the_checklist_recreates_only_the_web_service():
+    assert "--no-deps web" in CHECKLIST
+    assert "PostgreSQL не трогаем" in CHECKLIST
+
+
+def test_the_checklist_explains_when_the_probe_token_is_needed():
+    """Установщик просит его сразу, а нужен он только при возврате."""
+    assert "probe token" in CHECKLIST
+    assert "возврате с автономного режима" in CHECKLIST
+    assert "не передавать в параметрах команды" in CHECKLIST.replace("нельзя ", "не ")
+
+
+def test_the_checklist_includes_the_credential_hardening_step():
+    assert "Protect-DenisStockEmergencyCredentials.ps1" in CHECKLIST
+    assert (OPS / "Protect-DenisStockEmergencyCredentials.ps1").is_file()
+    assert "-WhatIf" in CHECKLIST, "нет предварительного показа перед изменением прав"

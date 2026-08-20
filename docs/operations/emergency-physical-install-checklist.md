@@ -18,6 +18,83 @@
 
 ---
 
+## Часть А. На сервере, до поездки
+
+Выполняется с рабочего компьютера администратора. Подставьте `<RC_SHA>` -
+полный SHA выпуска, который выкладываем.
+
+### А1. Опубликовать выпуск
+
+```
+git push origin release/emergency-physical-install-rc
+```
+
+```
+[ ] git ls-remote origin release/emergency-physical-install-rc
+```
+
+Ветка обязана быть на сервере: иначе станция не сможет получить выпуск, и это
+уже однажды срывало выкладку.
+
+### А2. Посмотреть, что меняется
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git fetch --quiet origin && git diff --stat HEAD <RC_SHA>"
+```
+
+Ожидается только инструментарий аварийного режима, документы и тесты. Если в
+списке есть что-то ещё, остановитесь и разберитесь.
+
+### А3. Выложить выпуск
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git status --porcelain | head"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git checkout --quiet <RC_SHA> && git rev-parse HEAD"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && sed -i 's|^DENSTOCK_APP_COMMIT=.*|DENSTOCK_APP_COMMIT=<RC_SHA>|' .env && grep '^DENSTOCK_APP_COMMIT=' .env"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose up -d --build --no-deps web"
+```
+
+Перед вторым шагом список изменённых файлов обязан быть пустым: единственный
+ожидаемый неотслеживаемый файл - `docker-compose.signing.yml`, он остаётся на
+месте. Ничего не удаляйте.
+
+Пересоздаётся только `web`. PostgreSQL не трогаем.
+
+### А4. Проверить
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git rev-parse HEAD"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web printenv DENSTOCK_APP_COMMIT"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web python manage.py check"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web python manage.py ops_check"
+[ ] ssh root@185.250.44.206 "curl -sk -o /dev/null -w '%{http_code}\n' https://185-250-44-206.sslip.io/healthz/"
+```
+
+Первые две строки обязаны совпасть с `<RC_SHA>`. Последняя обязана дать `200`:
+это канонический адрес проверки здоровья, тот же, что у самого контейнера.
+
+### А5. Снять подписанную копию на новом выпуске
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web python manage.py backup_all"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web python manage.py verify_backup <RUN_ID>"
+```
+
+`<RUN_ID>` - имя каталога из вывода предыдущей команды, вида
+`2026-08-21_09-30-00`.
+
+Без этой копии станция не сможет встать на новый выпуск: у прежней копии в
+манифесте записан старый выпуск, и обновление откажется.
+
+```
+[ ] Манифест копии содержит <RC_SHA>, ed25519 и production-1
+[ ] Копия выгружена в хранилище
+```
+
+---
+
+## Часть Б. У компьютера склада
+
 ## Одна команда, которая отвечает на всё
 
 В любой момент дня, особенно после каждой перезагрузки:
@@ -71,6 +148,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 Отпечаток сверяет сам установщик. Если он не совпал, установка остановится:
 значит привезли не тот файл. Продолжать нельзя.
 
+## Шаг 3а. Ограничить доступ к настройкам rclone
+
+В настройках rclone лежит ключ к хранилищу копий. По умолчанию файл наследует
+права профиля, и его читают группы «Пользователи» и «Прошедшие проверку», то
+есть любая учётная запись компьютера.
+
+Сначала посмотреть, ничего не меняя:
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Protect-DenisStockEmergencyCredentials.ps1 -WhatIf
+```
+
+Затем применить:
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Protect-DenisStockEmergencyCredentials.ps1
+```
+
+Останутся владелец файла, учётная запись задания обновления, СИСТЕМА и
+администраторы. Обновление копии от этого не ломается: задание работает как раз
+от той учётной записи, что настраивала rclone. Повторный запуск безопасен и
+ничего не пишет.
+
+Шаг делается после установки станции, когда задание уже создано: тогда команда
+сама возьмёт его учётную запись.
+
+---
+
 ## Шаг 4. Подсистема Linux и Docker
 
 ```
@@ -99,6 +204,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 ```
 
 Установщик спросит probe token: он вводится вслепую и нигде не показывается.
+
+**Где взять и когда он нужен.** Токен выдаёт администратор production; это
+отдельное значение только на чтение, не пароль базы и не ключ хранилища. Нужен
+он лишь при возврате с автономного режима обратно на production, но установщик
+просит его сразу, чтобы станция была укомплектована. Возьмите его с собой.
+
+Токен нельзя передавать в параметрах команды, вставлять в переписку, снимок
+экрана или заявку. Вводите только в приглашение установщика.
 
 ```
 [ ] Установка завершилась без ошибки
