@@ -281,7 +281,7 @@ if ($task) {
     Add-Layer -Layer "Задание обновления" -State "ГОТОВО" -Detail "состояние: $($task.State)"
 }
 elseif (Test-Path -LiteralPath $envFile) {
-    Add-Layer -Layer "Задание обновления" -State "ВНИМАНИЕ" -Detail "не создано" 
+    Add-Layer -Layer "Задание обновления" -State "ВНИМАНИЕ" -Detail "не создано"
     Add-NextStep "Повторить установку с ключом -CreateTasks, чтобы копия обновлялась сама."
 }
 else {
