@@ -119,3 +119,74 @@ def test_the_kit_carries_no_real_credentials():
     for pattern in (r"AKIA[0-9A-Z]{8,}", r"YC[A-Za-z0-9_-]{20,}",
                     r"secret_access_key\s*=\s*\S", r"access_key_id\s*=\s*\S"):
         assert not re.search(pattern, KIT), f"в инструкции похоже на ключ: {pattern}"
+
+
+INSTALLER_PATH = OPS / "Install-DenisStock-EmergencyWorkstation.ps1"
+CHECKLIST_PATH = ROOT / "docs" / "operations" / "emergency-physical-install-checklist.md"
+CHECKLIST = CHECKLIST_PATH.read_text(encoding="utf-8")
+
+
+def test_the_checklist_names_only_scripts_that_exist():
+    """Опечатка в имени сценария означает сорванный день установки."""
+    import re
+    for name in sorted(set(re.findall(r"[A-Za-z][A-Za-z-]+\.ps1", CHECKLIST))):
+        assert (OPS / name).is_file(), f"в листе указан несуществующий сценарий: {name}"
+
+
+def test_the_checklist_uses_real_installer_parameters():
+    """Параметр, которого нет, остановит установку на месте."""
+    installer = INSTALLER_PATH.read_text(encoding="utf-8-sig")
+    # Блок параметров заканчивается перед первой настройкой сценария.
+    declared = installer.split("$ErrorActionPreference", 1)[0]
+    for parameter in ("-RepoRoot", "-InstallWslRuntime", "-CreateTasks", "-BackupSource",
+                      "-ProductionUrl", "-PrimaryLanAddress", "-AppCommit", "-ReleaseSource",
+                      "-ManifestPublicKeyPath", "-ManifestSigningKeyId", "-ConfirmPrimary"):
+        assert parameter in CHECKLIST, f"в листе нет параметра {parameter}"
+        assert parameter.lstrip("-") in declared, f"установщик не принимает {parameter}"
+
+
+def test_the_checklist_uses_real_launcher_actions():
+    launcher = (OPS / "DenisStock-Emergency.ps1").read_text(encoding="utf-8-sig")
+    assert "-Action Sync" in CHECKLIST
+    assert '"Sync"' in launcher
+
+
+def test_the_checklist_carries_the_exact_authorization_phrase():
+    command = (
+        ROOT / "apps" / "operations" / "management" / "commands" / "authorize_emergency_primary.py"
+    ).read_text(encoding="utf-8")
+    assert "НАЗНАЧИТЬ-EMERGENCY-PRIMARY" in command
+    assert "НАЗНАЧИТЬ-EMERGENCY-PRIMARY" in CHECKLIST
+
+
+def test_the_checklist_carries_the_exact_fingerprint():
+    installer = INSTALLER_PATH.read_text(encoding="utf-8-sig")
+    assert PRODUCTION_FINGERPRINT in CHECKLIST
+    assert PRODUCTION_FINGERPRINT in installer
+
+
+def test_the_checklist_has_no_real_secrets():
+    import re
+    for pattern in (r"AKIA[0-9A-Z]{8,}", r"YC[A-Za-z0-9_-]{20,}",
+                    r"secret_access_key\s*=\s*\S", r"-----BEGIN"):
+        assert not re.search(pattern, CHECKLIST), f"в листе похоже на секрет: {pattern}"
+
+
+def test_the_checklist_checks_the_task_account_on_site():
+    """Именно это молчаливо ломается: задание под чужим профилем."""
+    assert "Principal.UserId" in CHECKLIST
+    assert "S4U" in CHECKLIST
+
+
+def test_the_checklist_forbids_activation_on_install_day():
+    assert "Автономный режим не включаем" in CHECKLIST
+    assert "Приватный ключ подписи на станцию не привозим" in CHECKLIST
+
+
+def test_the_checklist_keeps_the_stale_primary_limitation():
+    assert "может включиться автономно" in CHECKLIST
+    assert "Отозвать назначение старой" in CHECKLIST
+
+
+def test_the_checklist_is_short_enough_to_follow():
+    assert len(CHECKLIST.splitlines()) < 260, "лист выполнения разросся в описание архитектуры"

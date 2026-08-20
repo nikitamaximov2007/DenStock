@@ -1,0 +1,212 @@
+# Установка аварийной станции: лист выполнения
+
+Один лист на весь день установки. Отмечайте пункты по мере выполнения.
+Подробности и разбор отказов - в [emergency-install-kit.md](emergency-install-kit.md).
+
+Все команды выполняются в PowerShell **от имени администратора**, кроме тех,
+где явно сказано иначе.
+
+Подставьте свои значения вместо `<...>`. Настоящих ключей в этом листе нет и
+быть не должно.
+
+```
+<RELEASE_SHA>   полный SHA выпуска, который ставим
+<LAN_IP>        адрес компьютера в сети склада
+<RELEASE_SRC>   откуда забирать код выпуска
+<KEY_PATH>      файл публичного ключа, привезённый с production
+```
+
+---
+
+## Одна команда, которая отвечает на всё
+
+В любой момент дня, особенно после каждой перезагрузки:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Test-DenisStockEmergency.ps1
+```
+
+Она покажет, что уже готово, что сломано и **какой ровно следующий шаг**.
+Отвечает не дольше минуты даже когда что-то не работает.
+
+---
+
+## Шаг 1. Проверка компьютера
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Test-DenisStockEmergencyPreflight.ps1 -BackupSource "yandex-s3:denstock-backups-nikita"
+```
+
+Ждём: ни одной строки `ОСТАНОВКА`.
+
+Ожидаемые предупреждения на этом компьютере:
+- адрес выдан автоматически, его нужно закрепить в роутере;
+- 8 ГБ памяти - это минимум, не рекомендуемое значение.
+
+```
+[ ] Записан адрес компьютера в сети склада: <LAN_IP>
+[ ] Источник копий отвечает, последняя копия свежая
+```
+
+## Шаг 2. Код выпуска
+
+```
+[ ] cd C:\DenisStock
+[ ] git fetch --all
+[ ] git checkout <RELEASE_SHA>
+[ ] git rev-parse HEAD      → должен совпасть с <RELEASE_SHA>
+[ ] git status --porcelain  → пусто
+```
+
+Установщик откажется работать из грязного или несовпадающего каталога. Это
+намеренно.
+
+## Шаг 3. Публичный ключ
+
+```
+[ ] Файл ключа скопирован на компьютер: <KEY_PATH>
+[ ] Отпечаток совпадает с 5615837ef355d2d1881508434980efac31f1c467acb3d31c57101ced3ee5d5b1
+```
+
+Отпечаток сверяет сам установщик. Если он не совпал, установка остановится:
+значит привезли не тот файл. Продолжать нельзя.
+
+## Шаг 4. Подсистема Linux и Docker
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Install-DenisStock-EmergencyWorkstation.ps1 -RepoRoot C:\DenisStock -InstallWslRuntime -BackupSource "yandex-s3:denstock-backups-nikita" -ProductionUrl "https://185-250-44-206.sslip.io" -PrimaryLanAddress "<LAN_IP>" -AppCommit "<RELEASE_SHA>" -ReleaseSource "<RELEASE_SRC>" -ManifestPublicKeyPath "<KEY_PATH>" -ManifestSigningKeyId "production-1" -ConfirmPrimary
+```
+
+Установщик на этом шаге останавливается несколько раз и каждый раз пишет, что
+делать. Это нормальный ход, а не ошибка.
+
+```
+[ ] Перезагрузка после включения компонентов Windows
+[ ] Повторный запуск той же команды
+[ ] wsl --shutdown, если попросит
+[ ] Повторный запуск до сообщения о готовности Docker
+```
+
+После каждой перезагрузки можно свериться единственной командой готовности
+сверху.
+
+## Шаг 5. Установка станции
+
+Та же команда **без** `-InstallWslRuntime` и **с** `-CreateTasks`:
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Install-DenisStock-EmergencyWorkstation.ps1 -RepoRoot C:\DenisStock -CreateTasks -BackupSource "yandex-s3:denstock-backups-nikita" -ProductionUrl "https://185-250-44-206.sslip.io" -PrimaryLanAddress "<LAN_IP>" -AppCommit "<RELEASE_SHA>" -ReleaseSource "<RELEASE_SRC>" -ManifestPublicKeyPath "<KEY_PATH>" -ManifestSigningKeyId "production-1" -ConfirmPrimary
+```
+
+Установщик спросит probe token: он вводится вслепую и нигде не показывается.
+
+```
+[ ] Установка завершилась без ошибки
+[ ] В выводе указано, за какой учётной записью закреплено задание обновления
+```
+
+## Шаг 6. Идентификатор станции
+
+```
+[ ] type C:\DenisStock\.emergency\workstation-id.txt
+[ ] Идентификатор записан и передан администратору production
+```
+
+## Шаг 7. Назначение на production
+
+Выполняет администратор **на сервере**, не на станции:
+
+```
+[ ] docker compose exec -T web python manage.py authorize_emergency_primary --workstation-id "<идентификатор>" --actor "<кто назначает>" --confirm "НАЗНАЧИТЬ-EMERGENCY-PRIMARY"
+[ ] Команда вывела назначенную станцию и новое значение epoch
+```
+
+Станция не назначает себя сама. Никогда.
+
+## Шаг 8. Первая копия
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\DenisStock-Emergency.ps1 -Action Sync
+[ ] Копия скачалась, подпись проверена, версия совпала
+```
+
+Если проверка не прошла, прежняя копия остаётся нетронутой. Это правильно.
+
+## Шаг 9. Готовность
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Test-DenisStockEmergency.ps1
+[ ] Итог: ГОТОВО: станция готова к работе.
+[ ] Строка «Контекст задания» показывает нужную учётную запись и вход S4U
+[ ] Строка «Настройки rclone» без лишних читателей
+```
+
+## Шаг 10. Проверка на месте
+
+```
+[ ] На самой станции браузер открывает http://<LAN_IP>:8080/
+[ ] Со второго компьютера в той же сети открывается тот же адрес
+[ ] Видна страница входа
+```
+
+## Шаг 11. Перезагрузка
+
+```
+[ ] Перезагрузить компьютер
+[ ] Войти в Windows
+[ ] Единственная команда готовности снова даёт ГОТОВО
+[ ] Станция осталась в режиме ожидания, автономный режим НЕ включился
+```
+
+## Шаг 12. Обновление копии по расписанию
+
+```
+[ ] Get-ScheduledTask -TaskName "DenisStock Emergency Standby Refresh" | Select-Object State, @{n="Account";e={$_.Principal.UserId}}, @{n="Logon";e={$_.Principal.LogonType}}
+[ ] Учётная запись та же, что настраивала rclone
+[ ] Вход S4U
+[ ] Start-ScheduledTask -TaskName "DenisStock Emergency Standby Refresh"
+[ ] Через минуту команда готовности показывает свежее «Последнее обновление»
+```
+
+## Чего сегодня НЕ делаем
+
+```
+[ ] Автономный режим не включаем
+[ ] Учебное отключение проводим отдельным днём
+[ ] Приватный ключ подписи на станцию не привозим
+```
+
+---
+
+## Если что-то пошло не так
+
+Сначала - единственная команда готовности: она называет самый нижний
+сломанный слой и следующий шаг.
+
+Если нужно передать разработчику:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Collect-DenisStockEmergencyDiagnostics.ps1
+```
+
+Соберёт архив на рабочем столе. Секретов и данных склада в нём нет.
+
+Разбор отдельных отказов - в таблице в [emergency-install-kit.md](emergency-install-kit.md).
+
+---
+
+## Замена станции в будущем
+
+Известное ограничение: старая станция, оставшаяся с прежней подлинной копией,
+может включиться автономно, если её физически не вывести из работы.
+
+Поэтому при замене порядок строгий:
+
+```
+[ ] Назначить новую станцию на production
+[ ] Обновить на ней копию
+[ ] Убедиться, что новая станция готова
+[ ] Отозвать назначение старой на production
+[ ] Физически вывести старую станцию из работы
+[ ] Удалить с неё копию склада
+```
