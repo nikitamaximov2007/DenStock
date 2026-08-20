@@ -33,7 +33,10 @@ def test_diagnostics_names_the_lowest_broken_layer():
 
 
 def test_diagnostics_reads_the_wsl_list_in_its_own_encoding():
-    assert "[Text.Encoding]::Unicode" in DIAGNOSTICS
+    """Кодировка задаётся общим помощником, который ещё и ограничивает вызов."""
+    assert "-Utf16Output" in DIAGNOSTICS
+    helper = (OPS / "EmergencyBackupSource.ps1").read_text(encoding="utf-8-sig")
+    assert "[Text.Encoding]::Unicode" in helper
 
 
 def test_diagnostics_notices_a_changed_lan_address():

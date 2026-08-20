@@ -159,9 +159,18 @@ def test_the_preflight_covers_the_blocking_prerequisites():
 
 
 def test_the_preflight_reads_the_wsl_list_in_its_own_encoding():
-    """wsl.exe печатает в UTF-16: иначе текст его ошибки станет «дистрибутивом»."""
-    assert "[Text.Encoding]::Unicode" in PREFLIGHT
-    assert "$wslExit -ne 0" in PREFLIGHT, "ошибка WSL принимается за список дистрибутивов"
+    """wsl.exe печатает в UTF-16: иначе текст его ошибки станет «дистрибутивом».
+
+    Раньше кодировка задавалась прямо здесь. Теперь тем же занят общий
+    помощник, который заодно ограничивает вызов по времени, поэтому проверка
+    смотрит на его ключ и на разбор кода возврата.
+    """
+    assert "-Utf16Output" in PREFLIGHT
+    assert "$listing.ExitCode -ne 0" in PREFLIGHT, "ошибка WSL принимается за список дистрибутивов"
+    helper = (ROOT / "scripts" / "operations" / "EmergencyBackupSource.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "[Text.Encoding]::Unicode" in helper
 
 
 def test_the_preflight_ignores_virtual_adapters():
