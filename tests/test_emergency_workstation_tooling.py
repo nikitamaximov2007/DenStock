@@ -63,4 +63,66 @@ def test_provisioning_keeps_secrets_and_backup_runtime_off_regular_desktops():
     assert '[Environment]::GetFolderPath("Desktop")' in installer
     assert "CommonDesktopDirectory" not in installer
     assert "WSL systemd включён" in installer
-    assert "Pinned production public key уже существует" in installer
+    # Доверенный ключ не подменяется установкой. Раньше это выражалось отказом
+    # при повторном запуске; теперь отпечаток сверяется, совпадение продолжает
+    # установку, расхождение останавливает её. Замена ключа - отдельная ротация.
+    assert "Замена доверенного ключа" in installer
+    assert "Copy-Item -LiteralPath $ManifestPublicKeyPath" in installer
+
+
+INSTALLER_PATH = ROOT / "scripts" / "operations" / "Install-DenisStock-EmergencyWorkstation.ps1"
+INSTALLER = INSTALLER_PATH.read_text(encoding="utf-8")
+
+PRODUCTION_FINGERPRINT = "5615837ef355d2d1881508434980efac31f1c467acb3d31c57101ced3ee5d5b1"
+
+
+def test_the_pinned_public_key_is_checked_by_fingerprint():
+    """Подменённый публичный ключ обязан остановить установку.
+
+    Раньше установщик копировал в доверенные любой переданный файл. Станция,
+    закрепившая чужой ключ, приняла бы чужой подписанный снимок за настоящий.
+    """
+    assert "Get-PublicKeyFingerprint" in INSTALLER
+    assert PRODUCTION_FINGERPRINT in INSTALLER, "отпечаток production не закреплён в установщике"
+    assert "$sourceFingerprint -ne $ExpectedPublicKeyFingerprint" in INSTALLER, (
+        "отпечаток переданного ключа не сверяется с ожидаемым"
+    )
+    assert "$pinnedFingerprint -ne $ExpectedPublicKeyFingerprint" in INSTALLER, (
+        "уже закреплённый ключ не сверяется при повторном запуске"
+    )
+
+
+def test_the_fingerprint_is_computed_from_the_der_public_key():
+    """Та же величина, что даёт openssl на сервере, иначе сверять нечего."""
+    assert "SHA256" in INSTALLER
+    assert "FromBase64String" in INSTALLER
+    assert "BEGIN PUBLIC KEY" in INSTALLER
+
+
+def test_a_repeated_install_keeps_the_station_secrets():
+    """Повторный запуск не должен разорвать станции доступ к собственной базе.
+
+    Пароль базы и ключ Django генерируются один раз. Перезапись сделала бы
+    рабочую станцию неработоспособной, а прежняя версия просто падала.
+    """
+    assert '$envExisted = Test-Path -LiteralPath $envFile' in INSTALLER
+    assert '.env.emergency уже существует' not in INSTALLER, (
+        "повторный запуск снова прерывается вместо продолжения"
+    )
+    assert "секреты сохранены без изменений" in INSTALLER
+
+
+def test_a_repeated_install_keeps_the_workstation_identity():
+    """UUID станции создаётся один раз: по нему production выдаёт авторизацию."""
+    assert "Существующий workstation UUID повреждён" in INSTALLER
+    assert "$workstationId = [Guid]::NewGuid().ToString()" in INSTALLER
+    identity_block = INSTALLER.split("$identityFile = Join-Path")[1].split("$trustedKeyDir")[0]
+    assert "if (Test-Path -LiteralPath $identityFile)" in identity_block, (
+        "новый UUID может быть создан поверх существующего"
+    )
+
+
+def test_the_installer_never_carries_private_key_material():
+    """В комплекте установки не должно быть приватного ключа ни в каком виде."""
+    for forbidden in ("BEGIN PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY", "production-ed25519.key"):
+        assert forbidden not in INSTALLER, f"установщик ссылается на приватный ключ: {forbidden}"

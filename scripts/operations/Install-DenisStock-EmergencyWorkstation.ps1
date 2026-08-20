@@ -15,6 +15,9 @@ param(
     [string]$ManifestPublicKeyPath,
     [Parameter(Mandatory)]
     [string]$ManifestSigningKeyId,
+    # Отпечаток закрепляемого ключа. Проверяется всегда: подменённый публичный
+    # ключ обязан остановить установку, а не тихо стать доверенным.
+    [string]$ExpectedPublicKeyFingerprint = "5615837ef355d2d1881508434980efac31f1c467acb3d31c57101ced3ee5d5b1",
     [ValidateSet("primary", "secondary")]
     [string]$Role = "primary",
     [string]$WslDistro = "Ubuntu",
@@ -76,6 +79,25 @@ function Assert-SingleLineConfig {
     }
 }
 
+function Get-PublicKeyFingerprint {
+    <#
+        SHA-256 от DER-представления публичного ключа. Та же величина, что даёт
+        на сервере "openssl pkey -pubin -outform DER | openssl dgst -sha256",
+        поэтому администратор может сверить её с production, не передавая файл.
+    #>
+    param([string]$Path)
+    $pem = Get-Content -LiteralPath $Path -Raw
+    $base64 = ($pem -replace "-----BEGIN PUBLIC KEY-----", "" `
+                    -replace "-----END PUBLIC KEY-----", "" `
+                    -replace "\s", "")
+    if (-not $base64) { throw "Файл публичного ключа пуст или не в формате PEM: $Path" }
+    try { $der = [Convert]::FromBase64String($base64) }
+    catch { throw "Файл публичного ключа не читается как PEM: $Path" }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($der)) -replace "-", "").ToLower() }
+    finally { $sha.Dispose() }
+}
+
 function Set-AdministratorOnlyAcl {
     param([string]$Path, [switch]$Directory)
     $acl = Get-Acl -LiteralPath $Path
@@ -131,6 +153,19 @@ if ($ManifestSigningKeyId -notmatch '^[A-Za-z0-9._-]{1,128}$') {
 if (-not (Test-Path -LiteralPath $ManifestPublicKeyPath -PathType Leaf)) {
     throw "Pinned production manifest public key не найден."
 }
+if ($ExpectedPublicKeyFingerprint -notmatch "^[0-9a-f]{64}$") {
+    throw "ExpectedPublicKeyFingerprint должен быть 64 шестнадцатеричными знаками SHA-256."
+}
+$sourceFingerprint = Get-PublicKeyFingerprint -Path $ManifestPublicKeyPath
+if ($sourceFingerprint -ne $ExpectedPublicKeyFingerprint.ToLower()) {
+    throw @"
+Отпечаток публичного ключа не совпадает с ожидаемым. Установка остановлена.
+  ожидался: $ExpectedPublicKeyFingerprint
+  получен:  $sourceFingerprint
+Это либо не тот файл, либо ключ подменили. Возьмите ключ у администратора
+production заново и сверьте отпечаток, прежде чем повторять установку.
+"@
+}
 if (-not (Get-Command rclone -ErrorAction SilentlyContinue)) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw "rclone не найден, а winget недоступен. Установите rclone до provisioning."
@@ -185,13 +220,34 @@ New-Item -ItemType Directory -Force -Path $trustedKeyDir | Out-Null
 Set-AdministratorOnlyAcl -Path $trustedKeyDir -Directory
 $pinnedPublicKey = Join-Path $trustedKeyDir "production-manifest-ed25519-public.pem"
 if (Test-Path -LiteralPath $pinnedPublicKey) {
-    throw "Pinned production public key уже существует; provisioning не заменяет trust anchor."
+    # Повторный запуск не заменяет доверенный ключ, но обязан убедиться, что
+    # закреплён именно ожидаемый. Совпал - продолжаем, разошёлся - остановка.
+    $pinnedFingerprint = Get-PublicKeyFingerprint -Path $pinnedPublicKey
+    if ($pinnedFingerprint -ne $ExpectedPublicKeyFingerprint.ToLower()) {
+        throw @"
+На станции закреплён другой публичный ключ. Установка остановлена.
+  закреплён: $pinnedFingerprint
+  ожидается: $ExpectedPublicKeyFingerprint
+Замена доверенного ключа - отдельная процедура ротации, а не переустановка.
+"@
+    }
+    Write-Host "Публичный ключ уже закреплён, отпечаток совпадает." -ForegroundColor DarkGray
 }
-Copy-Item -LiteralPath $ManifestPublicKeyPath -Destination $pinnedPublicKey
-Set-AdministratorOnlyAcl -Path $pinnedPublicKey
+else {
+    Copy-Item -LiteralPath $ManifestPublicKeyPath -Destination $pinnedPublicKey
+    Set-AdministratorOnlyAcl -Path $pinnedPublicKey
+    Write-Host "Публичный ключ закреплён: $sourceFingerprint" -ForegroundColor DarkGray
+}
 
 $envFile = Join-Path $RepoRoot ".env.emergency"
-if (Test-Path -LiteralPath $envFile) { throw ".env.emergency уже существует; provisioning не перезаписывает secrets." }
+$envExisted = Test-Path -LiteralPath $envFile
+if ($envExisted) {
+    # Повторный запуск не трогает уже сгенерированные секреты станции: пароль
+    # базы и ключ Django остаются прежними, иначе установка поверх рабочей
+    # станции разорвала бы ей доступ к собственной базе.
+    Write-Host "Конфигурация станции уже создана, секреты сохранены без изменений." -ForegroundColor DarkGray
+}
+else {
 $bindHost = if ($Role -eq "primary") { $PrimaryLanAddress } else { "127.0.0.1" }
 $postgresPassword = New-RandomSecret
 $allowedHosts = "localhost,127.0.0.1,emergency-web" + $(if ($Role -eq "primary") { ",$PrimaryLanAddress" } else { "" })
@@ -235,8 +291,9 @@ $envLines = @(
     "AI_SUPPORT_PROVIDER=disabled"
 )
 $envLines | Set-Content -LiteralPath $envFile -Encoding utf8NoBOM
-
 Set-AdministratorOnlyAcl -Path $envFile
+Write-Host "Конфигурация станции создана." -ForegroundColor DarkGray
+}
 
 if ($Role -eq "primary") {
     $ruleName = "DenisStock Emergency LAN $Port"
