@@ -20,11 +20,19 @@ param(
     [int]$Port = 8080,
     # Каталог, куда планируется поставить релиз. Нужен для проверки места.
     [string]$RepoRoot = "C:\DenisStock",
-    [string]$WslDistro = "Ubuntu"
+    [string]$WslDistro = "Ubuntu",
+    # Источник копий проверяется до установки: станция без него встанет
+    # готовой, но забирать копии ей будет неоткуда, и выяснится это только
+    # на первой синхронизации.
+    [string]$BackupSource = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
+
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$helper = Join-Path $scriptDir "EmergencyBackupSource.ps1"
+if (Test-Path -LiteralPath $helper) { . $helper }
 
 $script:Results = @()
 
@@ -288,6 +296,37 @@ Test-Safely "Часы компьютера" {
     else {
         Add-Check -Name "Часы компьютера" -State "ВНИМАНИЕ" -Detail $detail `
             -Fix "Служба времени Windows не запущена. Неверные часы мешают проверять свежесть копии склада."
+    }
+}
+
+# --- Источник копий -------------------------------------------------------------
+Test-Safely "Источник копий" {
+    if (-not $BackupSource) {
+        Add-Check -Name "Источник копий" -State "ВНИМАНИЕ" -Detail "не указан для проверки" `
+            -Fix "Запустите проверку ещё раз с параметром -BackupSource yandex-s3:имя-хранилища. Без работающего источника станция встанет готовой, но забирать копии ей будет неоткуда."
+        return
+    }
+    if (-not (Get-Command Test-EmergencyBackupSource -ErrorAction SilentlyContinue)) {
+        Add-Check -Name "Источник копий" -State "ВНИМАНИЕ" -Detail "не найден EmergencyBackupSource.ps1"
+        return
+    }
+    $probe = Test-EmergencyBackupSource -Source $BackupSource
+    if ($probe.RcloneVersion) {
+        Add-Check -Name "rclone" -State "ГОТОВО" -Detail $probe.RcloneVersion
+    }
+    elseif ($probe.Kind -eq "not-installed") {
+        Add-Check -Name "rclone" -State "ОСТАНОВКА" -Detail "не установлен" `
+            -Fix "Поставьте rclone и настройте источник копий, затем повторите проверку."
+    }
+    if ($probe.State -eq "ГОТОВО") {
+        $age = Get-BackupRunAgeHours -RunId $probe.LatestRun
+        $detail = "$($probe.Remote): $($probe.Detail)"
+        if ($null -ne $age) { $detail += ", возраст $age ч" }
+        Add-Check -Name "Источник копий" -State "ГОТОВО" -Detail $detail
+    }
+    else {
+        Add-Check -Name "Источник копий" -State "ОСТАНОВКА" `
+            -Detail "$($probe.Kind): $($probe.Detail)" -Fix $probe.Advice
     }
 }
 

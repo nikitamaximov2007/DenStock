@@ -16,6 +16,11 @@
 param(
     [string]$RepoRoot = "",
     [string]$WslDistro = "",
+    # Источник копий. По умолчанию берётся из настроек станции, а до установки
+    # его можно передать вручную: проверить источник надо ДО установки, иначе
+    # станция встанет готовой, но без чего забирать копии.
+    [string]$BackupSource = "",
+    [switch]$SkipBackupSource,
     [switch]$Quiet
 )
 
@@ -30,7 +35,17 @@ if (-not $RepoRoot) {
 }
 if (-not $RepoRoot) { $RepoRoot = (Get-Location).Path }
 
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$helper = Join-Path $scriptDir "EmergencyBackupSource.ps1"
+if (Test-Path -LiteralPath $helper) { . $helper }
+
 $script:Layers = @()
+$script:NextSteps = @()
+
+function Add-NextStep {
+    param([string]$Text)
+    if ($Text -and $script:NextSteps -notcontains $Text) { $script:NextSteps += $Text }
+}
 
 function Add-Layer {
     param(
@@ -212,6 +227,67 @@ else {
     }
 }
 
+# --- Слой 9: rclone и источник копий -------------------------------------------------
+if (-not $BackupSource) {
+    $BackupSource = Get-EmergencyEnvValue -Path $envFile -Name "DENSTOCK_EMERGENCY_BACKUP_SOURCE"
+}
+if ($SkipBackupSource) {
+    Add-Layer -Layer "Источник копий" -State "НЕТ ДАННЫХ" -Detail "проверка пропущена по просьбе оператора"
+}
+elseif (-not (Get-Command Test-EmergencyBackupSource -ErrorAction SilentlyContinue)) {
+    Add-Layer -Layer "Источник копий" -State "НЕТ ДАННЫХ" -Detail "не найден EmergencyBackupSource.ps1"
+}
+elseif (-not $BackupSource) {
+    Add-Layer -Layer "Источник копий" -State "ОШИБКА" -Detail "не задан"
+    Add-NextStep "Указать источник копий: параметр -BackupSource или установка станции."
+}
+else {
+    $probe = Test-EmergencyBackupSource -Source $BackupSource
+    if ($probe.RcloneVersion) {
+        Add-Layer -Layer "rclone" -State "ГОТОВО" -Detail $probe.RcloneVersion
+    }
+    elseif ($probe.Kind -eq "not-installed") {
+        Add-Layer -Layer "rclone" -State "ОШИБКА" -Detail "не установлен"
+    }
+
+    if ($probe.State -eq "ГОТОВО") {
+        Add-Layer -Layer "Источник копий" -State "ГОТОВО" -Detail "$($probe.Remote): $($probe.Detail)"
+        $age = Get-BackupRunAgeHours -RunId $probe.LatestRun
+        $staleHours = Get-EmergencyEnvValue -Path $envFile -Name "DENSTOCK_EMERGENCY_STALE_WARNING_HOURS"
+        if (-not $staleHours) { $staleHours = "24" }
+        if ($null -eq $age) {
+            Add-Layer -Layer "Свежесть копии" -State "ВНИМАНИЕ" `
+                -Detail "имя копии $($probe.LatestRun) не разобрано как дата"
+        }
+        elseif ($age -gt [double]$staleHours) {
+            Add-Layer -Layer "Свежесть копии" -State "ВНИМАНИЕ" `
+                -Detail "последняя копия старше $staleHours ч: $($probe.LatestRun), возраст $age ч"
+            Add-NextStep "Проверить, что production создаёт копии и выгружает их в хранилище."
+        }
+        else {
+            Add-Layer -Layer "Свежесть копии" -State "ГОТОВО" `
+                -Detail "$($probe.LatestRun), возраст $age ч"
+        }
+    }
+    else {
+        Add-Layer -Layer "Источник копий" -State "ОШИБКА" -Detail "$($probe.Kind): $($probe.Detail)"
+        Add-NextStep $probe.Advice
+    }
+}
+
+# --- Слой 10: задание обновления копии -------------------------------------------------
+$task = Get-ScheduledTask -TaskName "DenisStock Emergency Standby Refresh" -ErrorAction SilentlyContinue
+if ($task) {
+    Add-Layer -Layer "Задание обновления" -State "ГОТОВО" -Detail "состояние: $($task.State)"
+}
+elseif (Test-Path -LiteralPath $envFile) {
+    Add-Layer -Layer "Задание обновления" -State "ВНИМАНИЕ" -Detail "не создано" 
+    Add-NextStep "Повторить установку с ключом -CreateTasks, чтобы копия обновлялась сама."
+}
+else {
+    Add-Layer -Layer "Задание обновления" -State "НЕТ ДАННЫХ" -Detail "станция ещё не установлена"
+}
+
 # --- Отчёт ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "Диагностика аварийной станции DenisStock" -ForegroundColor Cyan
@@ -236,11 +312,43 @@ if (-not $Quiet -and (Get-Variable -Name AppStatusText -Scope Script -ErrorActio
 }
 
 $broken = @($script:Layers | Where-Object { $_.State -eq "ОШИБКА" })
+$installed = Test-Path -LiteralPath $envFile
+
+# Пока станция не установлена, отсутствие её частей - это не поломка, а
+# незавершённая установка. Разница важна: иначе человек после первого же
+# запуска видит красный список и думает, что всё сломано.
+if (-not $installed) {
+    Add-NextStep "Запустить установку: Install-DenisStock-EmergencyWorkstation.ps1 (см. emergency-install-kit.md)."
+}
+elseif (-not $wslReady) {
+    Add-NextStep "Подготовить подсистему Linux и Docker: установщик с ключом -InstallWslRuntime, затем перезагрузка."
+}
+elseif (-not $dockerReady) {
+    Add-NextStep "Запустить Docker: wsl -d $WslDistro -u root -- systemctl start docker"
+}
+elseif (-not $appReady) {
+    Add-NextStep "Получить копию склада: DenisStock-Emergency.ps1 -Action Sync"
+}
+
+if ($script:NextSteps.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Что делать дальше:" -ForegroundColor Cyan
+    $index = 1
+    foreach ($step in $script:NextSteps) {
+        Write-Host ("  {0}. {1}" -f $index, $step)
+        $index++
+    }
+}
+
 Write-Host ""
-if ($broken.Count -eq 0 -and $appReady) {
-    Write-Host "Станция готова." -ForegroundColor Green
+if ($installed -and $broken.Count -eq 0 -and $appReady) {
+    Write-Host "ГОТОВО: станция готова к работе." -ForegroundColor Green
     exit 0
 }
+if (-not $installed) {
+    Write-Host "НЕ ГОТОВО: станция ещё не установлена." -ForegroundColor Yellow
+    exit 1
+}
 $first = if ($broken.Count -gt 0) { $broken[0].Layer } else { "DenisStock" }
-Write-Host "Станция не готова. Разбирайтесь снизу вверх, начиная со слоя: $first" -ForegroundColor Red
+Write-Host "НЕ ГОТОВО. Разбирайтесь снизу вверх, начиная со слоя: $first" -ForegroundColor Red
 exit 1

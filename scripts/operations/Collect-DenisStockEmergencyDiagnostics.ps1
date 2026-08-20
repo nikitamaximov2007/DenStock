@@ -27,6 +27,10 @@ if (-not $RepoRoot) {
 }
 if (-not $OutputDirectory) { $OutputDirectory = [Environment]::GetFolderPath("Desktop") }
 
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+$helper = Join-Path $scriptDir "EmergencyBackupSource.ps1"
+if (Test-Path -LiteralPath $helper) { . $helper }
+
 # Имена настроек, значения которых безопасно показывать. Всё остальное
 # записывается как «имя есть, значение скрыто»: список секретов может
 # пополниться, и разрешительный подход надёжнее запретительного.
@@ -114,6 +118,27 @@ if (Test-Path -LiteralPath $pinnedKey) {
 else { $identityLines += "pinned_public_key_fingerprint=<не закреплён>" }
 Write-Section -FileName "04-identity.txt" -Lines $identityLines
 
+# --- rclone: только версия и имена источников ------------------------------------
+# Настройки источников не собираются никогда: в rclone.conf лежат ключ доступа
+# и секретный ключ. Разрешённые команды помощника не включают config show,
+# поэтому прочитать их отсюда невозможно даже по недосмотру.
+$rcloneLines = @()
+if (Get-Command rclone -ErrorAction SilentlyContinue) {
+    if (Get-Command Invoke-RcloneRead -ErrorAction SilentlyContinue) {
+        $version = Invoke-RcloneRead -Arguments @("version")
+        $rcloneLines += "version=" + (($version.Text -split "`n" | Where-Object { $_.Trim() } |
+            Select-Object -First 1) -replace "\s+$", "")
+        $remotes = Invoke-RcloneRead -Arguments @("listremotes")
+        $names = @($remotes.Text -split "`n" | ForEach-Object { $_.Trim().TrimEnd(":") } |
+            Where-Object { $_ })
+        $rcloneLines += "remotes=" + ($names -join ", ")
+        $rcloneLines += "config_contents=<не собирается никогда>"
+    }
+    else { $rcloneLines += "rclone установлен, помощник проверки не найден" }
+}
+else { $rcloneLines += "rclone не установлен" }
+Write-Section -FileName "08-rclone.txt" -Lines $rcloneLines
+
 # --- Журналы контейнеров -------------------------------------------------------
 $distro = ($settingLines | Where-Object { $_ -like "DENSTOCK_EMERGENCY_WSL_DISTRO=*" } |
     ForEach-Object { $_.Split("=", 2)[1] } | Select-Object -First 1)
@@ -143,7 +168,14 @@ foreach ($file in Get-ChildItem -LiteralPath $staging -File) {
     $text = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
     if (-not $text) { continue }
     foreach ($pattern in @("BEGIN PRIVATE KEY", "BEGIN OPENSSH PRIVATE KEY", "POSTGRES_PASSWORD=[^<]",
-                           "DJANGO_SECRET_KEY=[^<]", "DENSTOCK_EMERGENCY_PROBE_TOKEN=[^<]", "DATABASE_URL=[^<]")) {
+                           "DJANGO_SECRET_KEY=[^<]", "DENSTOCK_EMERGENCY_PROBE_TOKEN=[^<]", "DATABASE_URL=[^<]",
+                           # Учётные данные объектного хранилища: ключ доступа
+                           # станции. Их нет в собираемых файлах, и проверка
+                           # держит это свойство при будущих правках.
+                           "access_key_id\s*=\s*[^<\s]", "secret_access_key\s*=\s*[^<\s]",
+                           "aws_access_key_id\s*=\s*[^<\s]", "AKIA[0-9A-Z]{12,}",
+                           "\[.*\]\s*[
+]+\s*type\s*=\s*s3")) {
         if ($text -match $pattern) { $leaks += "$($file.Name): $pattern" }
     }
 }
