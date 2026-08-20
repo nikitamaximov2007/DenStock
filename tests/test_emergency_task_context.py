@@ -178,3 +178,59 @@ def test_extra_readers_of_the_credentials_are_reported():
     """В файле лежит ключ к хранилищу копий."""
     assert "ExtraReaders" in SOURCE
     assert "лишние читатели" in DIAGNOSTICS
+
+
+# --- Источник выпуска ------------------------------------------------------------------
+
+
+def test_the_release_source_is_checked_read_only():
+    """Проверка не публикует ветку и ничего не скачивает."""
+    assert "Test-EmergencyReleaseSource" in SOURCE
+    assert "ls-remote" in SOURCE
+    assert "--dry-run" in SOURCE
+    for forbidden in ("git push", "git checkout", "git reset", "git commit"):
+        assert forbidden not in SOURCE, f"проверка выпуска меняет репозиторий: {forbidden}"
+
+
+def test_the_release_check_requires_a_full_sha():
+    """Короткий SHA принял бы не тот коммит."""
+    assert '"^[0-9a-f]{40}$"' in SOURCE
+
+
+@needs_powershell
+def test_a_missing_commit_is_told_apart_from_a_missing_source():
+    """Ровно этот случай и подвёл: ветка выглядела опубликованной, а её не было."""
+    repo = str(ROOT)
+    missing_commit = run_powershell(
+        f'(Test-EmergencyReleaseSource -Source "origin" -Commit "{"0" * 39}1" '
+        f'-RepoRoot "{repo}" -TimeoutSeconds 60).Kind',
+        timeout=240,
+    )
+    assert missing_commit == "commit-missing", missing_commit
+
+    bad_source = run_powershell(
+        '(Test-EmergencyReleaseSource -Source "https://example.invalid/x.git" '
+        f'-Commit "{"0" * 40}" -RepoRoot "{repo}" -TimeoutSeconds 25).Kind',
+        timeout=240,
+    )
+    assert bad_source in {"unreachable", "source-missing", "timeout", "auth"}, bad_source
+
+
+@needs_powershell
+def test_an_empty_release_source_does_not_crash_the_check():
+    kind = run_powershell('(Test-EmergencyReleaseSource -Source "" -Commit "").Kind')
+    assert kind == "not-configured"
+
+
+def test_the_readiness_reports_the_release_source():
+    assert "Источник выпуска" in DIAGNOSTICS
+    assert "DENSTOCK_EMERGENCY_RELEASE_SOURCE" in DIAGNOSTICS
+
+
+def test_the_release_update_still_fails_closed():
+    """Существующие гарантии обновления версии не должны ослабнуть."""
+    launcher = (OPS / "DenisStock-Emergency.ps1").read_text(encoding="utf-8-sig")
+    assert "Нельзя менять application release из dirty checkout." in launcher
+    assert 'git fetch --no-tags $source $target' in launcher.replace("& ", "")
+    assert '$resolved -ne $target' in launcher, "точное совпадение коммита не проверяется"
+    assert "Старый READY standby сохранён." in launcher

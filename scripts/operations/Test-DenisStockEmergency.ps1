@@ -377,6 +377,31 @@ elseif (Test-Path -LiteralPath $envFile) {
     Add-Layer -Layer "Последнее обновление" -State "НЕТ ДАННЫХ" -Detail "копия ещё ни разу не обновлялась"
 }
 
+# --- Слой 13: источник выпуска ---------------------------------------------------------
+# Ветка может выглядеть опубликованной локально, а на сервере её не быть.
+# Обнаружилось бы это в худший момент: пришла копия с новой версией, станция
+# пытается обновиться и не может.
+if (Get-Command Test-EmergencyReleaseSource -ErrorAction SilentlyContinue) {
+    $releaseSource = Get-EmergencyEnvValue -Path $envFile -Name "DENSTOCK_EMERGENCY_RELEASE_SOURCE"
+    $releaseCommit = Get-EmergencyEnvValue -Path $envFile -Name "DENSTOCK_APP_COMMIT"
+    if ($releaseSource -and $releaseCommit) {
+        $release = Test-EmergencyReleaseSource -Source $releaseSource -Commit $releaseCommit `
+            -RepoRoot $RepoRoot
+        if ($release.State -eq "ГОТОВО") {
+            Add-Layer -Layer "Источник выпуска" -State "ГОТОВО" -Detail $release.Detail
+        }
+        else {
+            Add-Layer -Layer "Источник выпуска" -State "ВНИМАНИЕ" `
+                -Detail "$($release.Kind): $($release.Detail)"
+            Add-NextStep $release.Advice
+        }
+    }
+    elseif (Test-Path -LiteralPath $envFile) {
+        Add-Layer -Layer "Источник выпуска" -State "ВНИМАНИЕ" -Detail "не настроен"
+        Add-NextStep "Без источника выпуска станция не сможет перейти на новую версию, когда придёт копия с ней."
+    }
+}
+
 # --- Отчёт ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "Диагностика аварийной станции DenisStock" -ForegroundColor Cyan

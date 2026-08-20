@@ -418,3 +418,96 @@ function Invoke-ExternalWithTimeout {
         $process.Dispose()
     }
 }
+
+function Test-EmergencyReleaseSource {
+    <#
+        Проверяет, что нужный выпуск действительно можно получить из указанного
+        источника. Только чтение: ничего не скачивается и не публикуется.
+
+        Нужно потому, что ветка может выглядеть опубликованной локально, а на
+        сервере её не быть. Обнаруживается это в худший момент: когда пришла
+        копия с новой версией, станция пытается обновиться и не может.
+
+        Возвращает объект с полями State, Kind, Detail, Advice.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Source,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Commit,
+        [string]$RepoRoot = "",
+        [int]$TimeoutSeconds = 45
+    )
+
+    $result = [ordered]@{ State = "ОСТАНОВКА"; Kind = "unknown"; Detail = ""; Advice = "" }
+
+    if (-not $Source -or $Source.StartsWith("REPLACE-")) {
+        $result.Kind = "not-configured"
+        $result.Detail = "источник выпуска не задан"
+        $result.Advice = "Укажите источник выпуска: без него станция не сможет перейти на новую версию, когда придёт копия с ней."
+        return [pscustomobject]$result
+    }
+    if ($Commit -notmatch "^[0-9a-f]{40}$") {
+        $result.Kind = "bad-commit"
+        $result.Detail = "версия выпуска задана не полным SHA: $Commit"
+        $result.Advice = "Укажите полный сорокасимвольный SHA выпуска."
+        return [pscustomobject]$result
+    }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        $result.Kind = "no-git"
+        $result.Detail = "git не найден"
+        $result.Advice = "Установите Git и повторите проверку."
+        return [pscustomobject]$result
+    }
+
+    $arguments = @()
+    if ($RepoRoot) { $arguments += @("-C", $RepoRoot) }
+
+    # Сначала доступность источника вообще: сеть, адрес, права на чтение.
+    $listing = Invoke-ExternalWithTimeout -FilePath "git" `
+        -Arguments ($arguments + @("ls-remote", "--exit-code", $Source, "HEAD")) `
+        -TimeoutSeconds $TimeoutSeconds
+    if ($listing.TimedOut) {
+        $result.Kind = "timeout"
+        $result.Detail = "источник выпуска не ответил за $TimeoutSeconds секунд"
+        $result.Advice = "Проверьте сеть и доступ к источнику выпуска."
+        return [pscustomobject]$result
+    }
+    if ($listing.ExitCode -ne 0) {
+        $text = $listing.Text
+        if ($text -match "Authentication failed|could not read Username|Permission denied|403") {
+            $result.Kind = "auth"
+            $result.Advice = "Источник выпуска требует доступа, которого у этого компьютера нет. Настройте чтение репозитория."
+        }
+        elseif ($text -match "not found|does not exist|Repository not found") {
+            $result.Kind = "source-missing"
+            $result.Advice = "Источник выпуска не найден. Проверьте адрес."
+        }
+        else {
+            $result.Kind = "unreachable"
+            $result.Advice = "Источник выпуска недоступен. Проверьте сеть и адрес."
+        }
+        $result.Detail = "источник не отвечает (код $($listing.ExitCode))"
+        return [pscustomobject]$result
+    }
+
+    # Затем именно тот коммит. Пробный запрос ничего не скачивает.
+    $probe = Invoke-ExternalWithTimeout -FilePath "git" `
+        -Arguments ($arguments + @("fetch", "--dry-run", "--no-tags", $Source, $Commit)) `
+        -TimeoutSeconds $TimeoutSeconds
+    if ($probe.TimedOut) {
+        $result.Kind = "timeout"
+        $result.Detail = "проверка выпуска не ответила за $TimeoutSeconds секунд"
+        $result.Advice = "Проверьте сеть и доступ к источнику выпуска."
+        return [pscustomobject]$result
+    }
+    if ($probe.ExitCode -ne 0) {
+        $result.Kind = "commit-missing"
+        $result.Detail = "источник не отдаёт версию $($Commit.Substring(0, 12))"
+        $result.Advice = "Ветка или метка с этим выпуском не опубликована в источнике. Опубликуйте её до установки: иначе станция не сможет обновиться, когда придёт копия с новой версией."
+        return [pscustomobject]$result
+    }
+
+    $result.State = "ГОТОВО"
+    $result.Kind = "ok"
+    $result.Detail = "версия $($Commit.Substring(0, 12)) доступна из источника"
+    return [pscustomobject]$result
+}
