@@ -262,3 +262,39 @@ def test_the_one_page_warns_against_running_admin_commands():
     flat = " ".join(ONE_PAGE.split())
     assert "запускать не надо" in flat or "не запускайте" in flat.lower()
     assert "они для администратора" in flat
+
+
+def _position(fragment: str) -> int:
+    index = CHECKLIST.find(fragment)
+    assert index >= 0, f"в листе нет фрагмента: {fragment}"
+    return index
+
+
+def test_the_rollback_never_sits_in_the_middle_of_the_happy_path():
+    """Иначе администратор, читая сверху вниз, откатит только что выложенное."""
+    rollback = _position("## Откат, если выкладка не пошла")
+    for step in ("## Шаг 1. Проверка компьютера", "## Шаг 9. Готовность",
+                 "## Шаг 12. Обновление копии по расписанию"):
+        assert _position(step) < rollback, f"откат стоит раньше, чем {step}"
+
+
+def test_the_new_backup_after_authorization_is_a_real_step():
+    """Порядок был описан словами, но отметки не было, и шаг терялся."""
+    authorize = _position("## Шаг 7. Назначение на production")
+    backup = _position("## Шаг 7а. Новая подписанная копия после назначения")
+    first_sync = _position("## Шаг 8. Первая копия")
+    assert authorize < backup < first_sync, (
+        "новая копия стоит не между назначением и синхронизацией"
+    )
+    assert "[ ] Манифест новой копии содержит идентификатор станции" in CHECKLIST
+
+
+def test_the_credential_hardening_runs_after_the_installer():
+    """Команда берёт учётную запись из задания, а его создаёт установщик."""
+    install = _position("## Шаг 5. Установка станции")
+    harden = _position("## Шаг 5а. Ограничить доступ к настройкам rclone")
+    assert install < harden, "права ограничиваются до того, как создано задание"
+
+
+def test_the_server_part_comes_before_the_workstation_part():
+    assert _position("## Часть А. На сервере") < _position("## Часть Б. У компьютера склада")

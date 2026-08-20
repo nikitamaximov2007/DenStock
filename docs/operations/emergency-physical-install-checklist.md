@@ -93,28 +93,6 @@ git push origin release/emergency-physical-install-rc
 
 ---
 
-## Откат, если выкладка не пошла
-
-Выпуск состоит только из инструментария, документов и тестов, поэтому данные он
-не трогает и восстановление базы не требуется. Откат - это возврат кода.
-
-```
-[ ] ssh root@185.250.44.206 "cd /opt/denstock && git checkout --quiet 0fcae772eab1da13c1b7b59890827cf9984d3394 && git rev-parse HEAD"
-[ ] ssh root@185.250.44.206 "cd /opt/denstock && sed -i 's|^DENSTOCK_APP_COMMIT=.*|DENSTOCK_APP_COMMIT=0fcae772eab1da13c1b7b59890827cf9984d3394|' .env && grep '^DENSTOCK_APP_COMMIT=' .env"
-[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose up -d --build --no-deps web"
-[ ] ssh root@185.250.44.206 "curl -sk -o /dev/null -w '%{http_code}
-' https://185-250-44-206.sslip.io/healthz/"
-```
-
-Базу **не** восстанавливаем: выкладка инструментария её не меняет. Последняя
-проверенная копия до выпуска - `2026-08-20_12-15-54`, она остаётся на месте на
-случай беды другого рода.
-
-Файл `docker-compose.signing.yml` при откате тоже остаётся: он не отслеживается
-Git и переключение кода его не трогает.
-
----
-
 ## Часть Б. У компьютера склада
 
 ## Одна команда, которая отвечает на всё
@@ -170,34 +148,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 Отпечаток сверяет сам установщик. Если он не совпал, установка остановится:
 значит привезли не тот файл. Продолжать нельзя.
 
-## Шаг 3а. Ограничить доступ к настройкам rclone
-
-В настройках rclone лежит ключ к хранилищу копий. По умолчанию файл наследует
-права профиля, и его читают группы «Пользователи» и «Прошедшие проверку», то
-есть любая учётная запись компьютера.
-
-Сначала посмотреть, ничего не меняя:
-
-```
-[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Protect-DenisStockEmergencyCredentials.ps1 -WhatIf
-```
-
-Затем применить:
-
-```
-[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Protect-DenisStockEmergencyCredentials.ps1
-```
-
-Останутся владелец файла, учётная запись задания обновления, СИСТЕМА и
-администраторы. Обновление копии от этого не ломается: задание работает как раз
-от той учётной записи, что настраивала rclone. Повторный запуск безопасен и
-ничего не пишет.
-
-Шаг делается после установки станции, когда задание уже создано: тогда команда
-сама возьмёт его учётную запись.
-
----
-
 ## Шаг 4. Подсистема Linux и Docker
 
 ```
@@ -239,6 +189,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 [ ] Установка завершилась без ошибки
 [ ] В выводе указано, за какой учётной записью закреплено задание обновления
 ```
+
+## Шаг 5а. Ограничить доступ к настройкам rclone
+
+В настройках rclone лежит ключ к хранилищу копий. По умолчанию файл наследует
+права профиля, и его читают группы «Пользователи» и «Прошедшие проверку», то
+есть любая учётная запись компьютера.
+
+Сначала посмотреть, ничего не меняя:
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Protect-DenisStockEmergencyCredentials.ps1 -WhatIf
+```
+
+Затем применить:
+
+```
+[ ] powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Protect-DenisStockEmergencyCredentials.ps1
+```
+
+Останутся владелец файла, учётная запись задания обновления, СИСТЕМА и
+администраторы. Обновление копии от этого не ломается: задание работает как раз
+от той учётной записи, что настраивала rclone. Повторный запуск безопасен и
+ничего не пишет.
+
+Шаг делается после установки станции, когда задание уже создано: тогда команда
+сама возьмёт его учётную запись.
+
+---
 
 ## Шаг 6. Идентификатор станции
 
@@ -284,6 +262,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 
 Шаг 4 обязателен и его нельзя отложить «на потом»: без него станция выглядит
 готовой, а в нужный момент откажется работать.
+
+---
+
+## Шаг 7а. Новая подписанная копия после назначения
+
+Без неё станция дойдёт до готовности, но включить автономный режим не сможет
+никогда: назначение приезжает в манифесте копии, а у прежней копии его нет.
+
+Выполняет администратор на сервере:
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web python manage.py backup_all"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose exec -T web python manage.py verify_backup <RUN_ID>"
+[ ] Манифест новой копии содержит идентификатор станции со шага 6
+```
 
 ---
 
@@ -374,3 +367,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 [ ] Физически вывести старую станцию из работы
 [ ] Удалить с неё копию склада
 ```
+
+---
+
+## Откат, если выкладка не пошла
+
+Выпуск состоит только из инструментария, документов и тестов, поэтому данные он
+не трогает и восстановление базы не требуется. Откат - это возврат кода.
+
+```
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git checkout --quiet 0fcae772eab1da13c1b7b59890827cf9984d3394 && git rev-parse HEAD"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && sed -i 's|^DENSTOCK_APP_COMMIT=.*|DENSTOCK_APP_COMMIT=0fcae772eab1da13c1b7b59890827cf9984d3394|' .env && grep '^DENSTOCK_APP_COMMIT=' .env"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose up -d --build --no-deps web"
+[ ] ssh root@185.250.44.206 "curl -sk -o /dev/null -w '%{http_code}
+' https://185-250-44-206.sslip.io/healthz/"
+```
+
+Базу **не** восстанавливаем: выкладка инструментария её не меняет. Последняя
+проверенная копия до выпуска - `2026-08-20_12-15-54`, она остаётся на месте на
+случай беды другого рода.
+
+Файл `docker-compose.signing.yml` при откате тоже остаётся: он не отслеживается
+Git и переключение кода его не трогает.
+
+---
