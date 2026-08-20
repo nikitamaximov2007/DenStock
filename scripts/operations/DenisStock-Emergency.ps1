@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet("Menu", "Status", "Sync", "Start", "Stop", "FailbackCheck", "Package", "Complete", "Prune", "Open")]
     [string]$Action = "Menu",
     [switch]$NonInteractive,
