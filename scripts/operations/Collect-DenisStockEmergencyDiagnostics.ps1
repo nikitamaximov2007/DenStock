@@ -74,8 +74,18 @@ Write-Section -FileName "01-windows.txt" -Lines $lines
 # --- Слои станции ------------------------------------------------------------
 $diagnostics = Join-Path $PSScriptRoot "Test-DenisStockEmergency.ps1"
 if (Test-Path -LiteralPath $diagnostics) {
-    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $diagnostics -RepoRoot $RepoRoot -Quiet 2>&1
-    Write-Section -FileName "02-layers.txt" -Lines @($output | Out-String -Stream)
+    # Источник копий и источник выпуска пропускаются: они ходят в сеть, а набор
+    # диагностики собирают тогда, когда что-то уже не работает, и ждать
+    # несколько минут в этот момент никто не станет. Сам вызов тоже ограничен.
+    $layers = Invoke-ExternalWithTimeout -FilePath "powershell.exe" -Arguments @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $diagnostics,
+        "-RepoRoot", $RepoRoot, "-Quiet", "-SkipBackupSource"
+    ) -TimeoutSeconds 150
+    $lines = if ($layers.TimedOut) {
+        @("Проверка слоёв не ответила за 150 секунд и была снята.")
+    }
+    else { @($layers.Text -split "`n") }
+    Write-Section -FileName "02-layers.txt" -Lines $lines
 }
 
 # --- Настройки: только имена, значения скрыты ---------------------------------
@@ -143,13 +153,24 @@ Write-Section -FileName "08-rclone.txt" -Lines $rcloneLines
 $distro = ($settingLines | Where-Object { $_ -like "DENSTOCK_EMERGENCY_WSL_DISTRO=*" } |
     ForEach-Object { $_.Split("=", 2)[1] } | Select-Object -First 1)
 if (-not $distro) { $distro = "Ubuntu" }
-& wsl.exe -d $distro -- docker info *> $null
-if ($LASTEXITCODE -eq 0) {
-    $containers = & wsl.exe -d $distro -- docker ps -a --format "{{.Names}}`t{{.Status}}" 2>&1
-    Write-Section -FileName "05-containers.txt" -Lines @($containers | Out-String -Stream)
+# Все обращения к подсистеме Linux ограничены по времени: набор собирают
+# тогда, когда что-то уже сломано, и там эти вызовы висят минутами.
+$dockerProbe = Invoke-ExternalWithTimeout -FilePath "wsl.exe" `
+    -Arguments @("-d", $distro, "--", "docker", "info") -TimeoutSeconds 40
+if ($dockerProbe.TimedOut) {
+    Write-Section -FileName "05-containers.txt" -Lines @("Docker не ответил за 40 секунд, журналы не собраны")
+}
+elseif ($dockerProbe.ExitCode -eq 0) {
+    $containers = Invoke-ExternalWithTimeout -FilePath "wsl.exe" `
+        -Arguments @("-d", $distro, "--", "docker", "ps", "-a", "--format", "{{.Names}} {{.Status}}") `
+        -TimeoutSeconds 40
+    Write-Section -FileName "05-containers.txt" -Lines @($containers.Text -split "`n")
     foreach ($name in @("emergency-web", "emergency-db")) {
-        $log = & wsl.exe -d $distro -- docker logs --tail $LogLines $name 2>&1
-        Write-Section -FileName "06-log-$name.txt" -Lines @($log | Out-String -Stream)
+        $log = Invoke-ExternalWithTimeout -FilePath "wsl.exe" `
+            -Arguments @("-d", $distro, "--", "docker", "logs", "--tail", "$LogLines", $name) `
+            -TimeoutSeconds 60
+        $lines = if ($log.TimedOut) { @("журнал не получен за 60 секунд") } else { @($log.Text -split "`n") }
+        Write-Section -FileName "06-log-$name.txt" -Lines $lines
     }
 }
 else {
