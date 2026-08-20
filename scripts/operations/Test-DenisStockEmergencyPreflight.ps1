@@ -269,6 +269,25 @@ Test-Safely "Локальная сеть" {
     if ($virtual.Count -gt 0) {
         $list += "  [виртуальные пропущены: $($virtual.Count)]"
     }
+    # Правило брандмауэра создаётся только для частной сети. Если сеть склада
+    # помечена как общедоступная, правило не подействует, и со второго
+    # компьютера станция не откроется. Выяснять это на месте дорого.
+    $categories = @(
+        $addresses | ForEach-Object {
+            Get-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -ErrorAction SilentlyContinue
+        } | Where-Object { $_ }
+    )
+    $public = @($categories | Where-Object { $_.NetworkCategory -eq "Public" })
+    if ($public.Count -gt 0 -and $categories.Count -eq $public.Count) {
+        Add-Check -Name "Категория сети" -State "ОСТАНОВКА" `
+            -Detail "сеть помечена как общедоступная: $(($public | ForEach-Object { $_.Name }) -join ', ')" `
+            -Fix "Смените категорию сети на частную, иначе правило брандмауэра не подействует и со второго компьютера станция не откроется."
+    }
+    elseif ($categories.Count -gt 0) {
+        Add-Check -Name "Категория сети" -State "ГОТОВО" `
+            -Detail (($categories | ForEach-Object { "$($_.Name): $($_.NetworkCategory)" }) -join "; ")
+    }
+
     $dhcp = @($addresses | Where-Object { $_.PrefixOrigin -eq "Dhcp" })
     if ($dhcp.Count -eq $addresses.Count) {
         Add-Check -Name "Локальная сеть" -State "ВНИМАНИЕ" -Detail $list `
