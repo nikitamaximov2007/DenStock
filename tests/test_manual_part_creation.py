@@ -291,6 +291,22 @@ def test_no_uniqueness_was_quietly_introduced_on_numbers(db):
     assert not limits, f"на номерах появилось ограничение: {limits}"
 
 
+def test_a_supplier_price_refresh_does_not_touch_a_manual_price(boss, db):
+    """Цена, введённая человеком, не должна переписываться пересчётом.
+
+    Пересчёт идёт по связям с каталогами поставщиков, а у заведённой вручную
+    детали таких связей нет. Закрепляется, потому что обратное было бы
+    незаметно: цена просто изменилась бы однажды ночью.
+    """
+    from apps.catalog.services import refresh_linked_part_prices
+
+    _post(boss, price="4500")
+    refresh_linked_part_prices(
+        usd_rate=Decimal("100"), brp_markup=Decimal("50"), polaris_markup=Decimal("50")
+    )
+    assert PartType.objects.get().recommended_price == Decimal("4500.00")
+
+
 # --- Права и остальная карточка ---------------------------------------------------------
 
 
