@@ -252,6 +252,28 @@ def test_the_operator_can_still_insist(boss, db):
     assert PartType.objects.count() == 2
 
 
+def test_the_return_address_survives_the_duplicate_warning(boss, db):
+    """Оператор, пришедший из черновика поступления, должен вернуться туда же.
+
+    Предупреждение о совпадении - это ещё один заход на ту же страницу, и
+    адрес возврата не должен по дороге потеряться.
+    """
+    back = reverse("part_list")
+    url = f"{reverse(CREATE_URL)}?next={back}"
+    boss.post(url, {"name": "Ремень вариатора", "article": "417300383", "price": ""})
+
+    warned = boss.post(url, {"name": "Ремень другой", "article": "417300383", "price": ""})
+    assert warned.status_code == 200
+    # Своего адреса отправки у формы нет, поэтому подтверждение уходит по тому
+    # же адресу вместе с «next».
+    assert '<form method="post" class="form">' in warned.content.decode()
+
+    done = boss.post(url, {"name": "Ремень другой", "article": "417300383",
+                           "price": "", "confirm_duplicate": "1"})
+    part = PartType.objects.get(name="Ремень другой")
+    assert done["Location"] == f"{back}?new_part={part.pk}"
+
+
 def test_a_different_article_is_not_treated_as_a_duplicate(boss, db):
     _post(boss)
     response = _post(boss, name="Свеча", article="417300384")
