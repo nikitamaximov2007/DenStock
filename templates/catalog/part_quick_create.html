@@ -8,8 +8,17 @@
     </div>
   </div>
 
+  {% comment %}
+    Причина отказа стоит выше списка совпадений, потому что объясняет его.
+    Показывается всегда: если скрыть её при найденном совпадении, оператор,
+    уже подтвердивший совпадение, перестанет видеть настоящую причину и будет
+    жать кнопку впустую.
+  {% endcomment %}
+  {% for error in form.non_field_errors %}
+    {% include "partials/_status_block.html" with kind="error" text=error %}
+  {% endfor %}
+
   {% if duplicates %}
-    {% include "partials/_status_block.html" with kind="warning" text="Деталь с таким артикулом уже есть в каталоге." %}
     <div class="card">
       <div class="card__header">
         <h2 class="card__title">Уже в каталоге</h2>
@@ -40,11 +49,6 @@
     <div class="card__body">
       <form method="post" class="form">
         {% csrf_token %}
-        {% for error in form.non_field_errors %}
-          {% if not duplicates %}
-            {% include "partials/_status_block.html" with kind="error" text=error %}
-          {% endif %}
-        {% endfor %}
         {% for field in form.visible_fields %}
           <div class="field">
             <label class="field__label{% if field.field.required %} field__label--required{% endif %}"

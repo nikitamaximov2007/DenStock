@@ -280,6 +280,25 @@ def test_the_return_address_survives_the_duplicate_warning(boss, db):
     assert done["Location"] == f"{back}?new_part={part.pk}"
 
 
+def test_a_confirmed_duplicate_still_shows_a_real_failure(boss, db):
+    """Причина отказа не должна теряться за списком совпадений.
+
+    Иначе оператор, уже подтвердивший совпадение, жал бы кнопку впустую: экран
+    выглядел бы так же, как до нажатия.
+    """
+    _post(boss)
+    Unit.objects.update(is_active=False)
+
+    response = boss.post(
+        reverse(CREATE_URL),
+        {"name": "Ремень другой", "article": "417300383",
+         "price": "", "confirm_duplicate": "1"},
+    )
+    assert response.status_code == 200
+    assert "единиц" in response.content.decode(), "причина отказа не показана"
+    assert PartType.objects.count() == 1
+
+
 def test_a_different_article_is_not_treated_as_a_duplicate(boss, db):
     _post(boss)
     response = _post(boss, name="Свеча", article="417300384")
