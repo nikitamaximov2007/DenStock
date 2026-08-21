@@ -12,10 +12,13 @@
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
   <p class="muted">
-    Что и когда получал клиент. Суммы историчные: они зафиксированы при
-    проведении продажи и не меняются при обновлении каталога. У ремонта
-    клиентской суммы нет: система хранит, куда ушли детали, а цену работ не
-    хранит.
+    Что и когда получал клиент. Величины историчные: они зафиксированы при
+    проведении документа и не меняются при обновлении каталога.
+    {% if show_money %}
+      «Сумма» - это то, что заплатил клиент за проданную деталь. «Себестоимость»
+      - во сколько складу обошлась деталь, выданная в ремонт. Это разные
+      величины, складывать их между собой нельзя: цену работ система не хранит.
+    {% endif %}
   </p>
   {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
   {% if page_obj.object_list %}
@@ -26,7 +29,10 @@
           <th>Деталь</th>
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
-          {% if show_money %}<th class="num--money">Сумма (₽)</th>{% endif %}
+          {% if show_money %}
+            <th class="num--money">Сумма (₽)</th>
+            <th class="num--money">Себестоимость (₽)</th>
+          {% endif %}
           <th>Тип</th>
         </tr>
       </thead>
@@ -48,6 +54,9 @@
             {% if show_money %}
               <td class="num--money">
                 {% if row.amount is not None %}{{ row.amount|money_int }}{% else %}<span class="muted">·</span>{% endif %}
+              </td>
+              <td class="num--money">
+                {% if row.cost is not None %}{{ row.cost|money_int }}{% else %}<span class="muted">·</span>{% endif %}
               </td>
             {% endif %}
             <td>{{ row.kind_label }}</td>
