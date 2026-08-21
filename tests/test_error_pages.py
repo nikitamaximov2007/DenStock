@@ -39,3 +39,22 @@ def test_500_template_does_not_extend_the_base_template():
 @pytest.mark.parametrize("name", ["404.html", "500.html"])
 def test_error_templates_are_loadable(name):
     assert get_template(name) is not None
+
+
+@pytest.mark.parametrize("name", ["403.html", "404.html", "500.html"])
+def test_error_pages_start_with_a_doctype(name):
+    """Текст выше <!DOCTYPE> переводит браузер в режим совместимости.
+
+    Так и было: пояснение к шаблону 500 записали многострочным {# … #}, а такую
+    запись Django не распознаёт и печатает как обычный текст. По исходнику это
+    не видно, комментарий выглядит правильным, поэтому проверяется результат.
+    """
+    body = render_to_string(name, {})
+    assert body.lstrip().startswith("<!DOCTYPE html>"), f"{name}: перед доктайпом есть текст"
+
+
+@pytest.mark.parametrize("name", ["403.html", "404.html", "500.html"])
+def test_error_pages_do_not_leak_template_syntax(name):
+    body = render_to_string(name, {})
+    assert "{#" not in body
+    assert "{%" not in body
