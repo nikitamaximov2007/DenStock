@@ -1,16 +1,19 @@
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 
 from apps.brp.models import BrpPartLink, BrpPricingSettings
 from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
 from apps.counting.services import find_brp_price_source
+from apps.inventory.presentation import EXACT_NUMBER_KINDS
 from apps.polaris.models import PolarisPartLink, PolarisPricingSettings
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
 from apps.polaris.services import find_polaris_price_source
 from apps.procurement.models import money
 from apps.warehouse.models import ValuationSettings
+
+from .models import Category, PartNumber, PartType, Unit, normalize_number
 
 
 @dataclass(frozen=True)
@@ -214,3 +217,98 @@ def update_current_price_settings(
         polaris_markup=polaris_markup_percent,
     )
     return get_current_price_settings(), refreshed
+# --- Ручное добавление детали -----------------------------------------------
+
+# Категория у карточки обязательна, а на новой системе категорий может не быть
+# ни одной. Оператору неоткуда её взять, поэтому она заводится сама - так же,
+# как это делает продвижение позиции из каталога поставщика.
+MANUAL_CATEGORY_NAME = "Добавлено вручную"
+DEFAULT_UNIT_NAME = "Штука"
+
+
+class ManualPartError(ValueError):
+    """Понятная человеку причина, по которой деталь не создана."""
+
+
+def _manual_unit() -> Unit:
+    unit = Unit.objects.filter(name__iexact=DEFAULT_UNIT_NAME, is_active=True).first()
+    if unit is None:
+        unit = Unit.objects.filter(is_active=True).first()
+    if unit is None:
+        raise ManualPartError(
+            "В справочниках нет ни одной единицы измерения. Добавьте хотя бы одну."
+        )
+    return unit
+
+
+def find_parts_by_article(article: str):
+    """Детали с таким же артикулом. Пусто, если артикул не задан.
+
+    Уникальности у номера в модели нет, и вводить её здесь нельзя: у разных
+    производителей номера совпадают, а на существующих данных такое правило
+    просто не применилось бы. Но оператору стоит показать, что деталь с этим
+    артикулом уже есть: почти всегда ему нужна именно она.
+    """
+    normalized = normalize_number(article or "")
+    if not normalized:
+        return PartType.objects.none()
+    return PartType.objects.select_related("category").filter(
+        numbers__normalized_value=normalized,
+        numbers__kind__in=EXACT_NUMBER_KINDS,
+    ).distinct()
+
+
+def clean_manual_price(value) -> Decimal | None:
+    """Разобрать введённую цену. Пустое поле - это отсутствие цены, а не ноль."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        price = Decimal(str(value).replace(",", ".").strip())
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ManualPartError("Цена должна быть числом.") from exc
+    if not price.is_finite():
+        raise ManualPartError("Цена должна быть конечным числом.")
+    if price < 0:
+        raise ManualPartError("Цена не может быть отрицательной.")
+    return price.quantize(Decimal("0.01"))
+
+
+@transaction.atomic
+def create_manual_part(*, name: str, article: str = "", price=None) -> PartType:
+    """Завести карточку детали вручную. Остатков НЕ создаёт.
+
+    Повторяет то, что делает продвижение позиции из каталога поставщика:
+    карточка, единица «Штука», учёт количеством и, если цена указана, она же
+    рекомендуемая цена продажи. Появление карточки не означает, что деталь
+    физически есть на складе: остаток создаёт только приёмка.
+
+    Артикул необязателен, потому что необязателен и в модели. Без него деталь
+    будет находиться только по названию.
+    """
+    clean_name = " ".join((name or "").split())
+    if not clean_name:
+        raise ManualPartError("Укажите название детали.")
+
+    clean_article = (article or "").strip()
+    recommended = clean_manual_price(price)
+
+    category, _ = Category.objects.get_or_create(
+        name=MANUAL_CATEGORY_NAME, parent=None, defaults={"sort_order": 100}
+    )
+    part = PartType.objects.create(
+        name=clean_name[:200],
+        category=category,
+        unit=_manual_unit(),
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=recommended,
+    )
+    if clean_article:
+        # Вид «артикул» наравне с OEM считается точным номером, поэтому деталь
+        # находится поиском и показывается с артикулом в списках и отчётах.
+        PartNumber.objects.create(
+            part=part,
+            value=clean_article[:100],
+            kind=PartNumber.Kind.ARTICLE,
+            is_primary=True,
+        )
+    return part

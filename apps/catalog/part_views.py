@@ -6,7 +6,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
-from django.views.generic import CreateView, DetailView, ListView, UpdateView
+from django.views.generic import DetailView, FormView, ListView, UpdateView
 
 from apps.accounts.permissions import ManagePartsMixin
 from apps.core.forms import ImageUploadForm
@@ -14,7 +14,13 @@ from apps.core.images import add_image, deactivate_image, set_primary
 from apps.core.part_lookup import resolve_part_lookup
 from apps.inventory.presentation import attach_part_identity, with_part_identity
 
-from .forms import PartBarcodeForm, PartCompatibilityForm, PartNumberForm, PartTypeForm
+from .forms import (
+    ManualPartForm,
+    PartBarcodeForm,
+    PartCompatibilityForm,
+    PartNumberForm,
+    PartTypeForm,
+)
 from .models import (
     PartBarcode,
     PartCompatibility,
@@ -22,6 +28,7 @@ from .models import (
     PartType,
     PartTypeImage,
 )
+from .services import ManualPartError, create_manual_part
 
 
 class PartTypeListView(LoginRequiredMixin, ListView):
@@ -86,22 +93,59 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         return ctx
 
 
-class PartTypeCreateView(ManagePartsMixin, CreateView):
-    model = PartType
-    form_class = PartTypeForm
-    template_name = "directories/form.html"
+class PartTypeCreateView(ManagePartsMixin, FormView):
+    """Быстрое добавление детали, которой нет в каталоге.
+
+    Точка входа прежняя - кнопка «Добавить деталь» на всех экранах, включая
+    черновик поступления, - изменилось только то, что она спрашивает. Раньше
+    здесь открывалась полная карточка с обязательной категорией, и заполнить
+    её посреди работы было нечем: артикула в ней вообще нет, а категорий на
+    новой системе может не быть ни одной.
+
+    Остальные поля карточки никуда не делись: они открываются в её обычном
+    редактировании, когда до них дойдут руки.
+    """
+
+    form_class = ManualPartForm
+    template_name = "catalog/part_quick_create.html"
+
+    def safe_next(self) -> str:
+        """Возврат в вызвавший экран. Только безопасные relative-URL."""
+        nxt = self.request.GET.get("next") or ""
+        if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts=None):
+            return nxt
+        return ""
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["title"] = "Новая деталь"
+        ctx["duplicates"] = getattr(ctx["form"], "duplicates", [])
         return ctx
 
+    def form_valid(self, form):
+        try:
+            self.object = create_manual_part(
+                name=form.cleaned_data["name"],
+                article=form.cleaned_data["article"],
+                price=form.cleaned_data["price"],
+            )
+        except ManualPartError as exc:
+            # Например, в справочниках нет единиц измерения. Это поправимо
+            # человеком, и показать надо причину, а не страницу ошибки.
+            form.add_error(None, str(exc))
+            return self.form_invalid(form)
+        return redirect(self.get_success_url())
+
     def get_success_url(self):
-        messages.success(self.request, "Деталь создана.")
+        messages.success(
+            self.request,
+            f"Деталь «{self.object.name}» добавлена в каталог."
+            " Остатка на складе у неё пока нет: он появится после приёмки.",
+        )
         # Layer 28: возврат в вызвавший экран (например, черновик поступления)
-        # с pk созданной детали. Только безопасные relative-URL.
-        nxt = self.request.GET.get("next") or ""
-        if nxt and url_has_allowed_host_and_scheme(nxt, allowed_hosts=None):
+        # с pk созданной детали.
+        nxt = self.safe_next()
+        if nxt:
             sep = "&" if "?" in nxt else "?"
             return f"{nxt}{sep}new_part={self.object.pk}"
         return reverse("part_detail", args=[self.object.pk])

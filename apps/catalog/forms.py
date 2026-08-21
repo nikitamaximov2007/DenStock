@@ -15,6 +15,7 @@ from .models import (
     VehicleModel,
     VehicleType,
 )
+from .services import find_parts_by_article
 
 
 class CategoryForm(forms.ModelForm):
@@ -140,3 +141,75 @@ class PartCompatibilityForm(forms.ModelForm):
     class Meta:
         model = PartCompatibility
         fields = ["vehicle_model", "year_from", "year_to", "note"]
+class ManualPartForm(forms.Form):
+    """Короткая форма для случая «детали нет в каталоге, а она нужна сейчас».
+
+    Полная карточка спрашивает девять полей, среди них обязательную категорию,
+    которой на новой системе может не быть ни одной: тогда добавить деталь
+    нельзя вообще, пока кто-то не заведёт справочник. Оператору в середине
+    приёмки или продажи столько заполнять нечем и некогда.
+
+    Здесь спрашивается только то, что человек в этот момент действительно
+    знает, а остальное подставляется. Дозаполнить карточку можно потом, в её
+    обычном редактировании.
+    """
+
+    name = forms.CharField(
+        label="Название",
+        max_length=200,
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "autofocus": "autofocus",
+                   "placeholder": "Например: Ремень вариатора"}
+        ),
+    )
+    article = forms.CharField(
+        label="Артикул",
+        max_length=100,
+        required=False,
+        help_text="Необязательно. С артикулом деталь находится по номеру,"
+                  " без него - только по названию.",
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "placeholder": "Например: 417300383"}
+        ),
+    )
+    price = CommaDecimalField(
+        label="Цена продажи, ₽",
+        required=False,
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal("0"),
+        help_text="Необязательно. Это рекомендуемая цена для клиента; "
+                  "себестоимость появится сама при первой приёмке.",
+        widget=forms.TextInput(
+            attrs={"inputmode": "decimal", "step": "0.01", "class": "form-control"}
+        ),
+    )
+    # Артикулы не уникальны и уникальными быть не могут, поэтому совпадение не
+    # запрещается, а показывается: почти всегда оператору нужна уже заведённая
+    # деталь, а не вторая такая же.
+    confirm_duplicate = forms.BooleanField(required=False, widget=forms.HiddenInput)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.duplicates = []
+
+    def clean_name(self):
+        # Лишние пробелы схлопываются: иначе «Ремень» и «Ремень  » выглядят на
+        # экране одинаково, а поиском находится только одна из них.
+        name = " ".join(self.cleaned_data["name"].split())
+        if not name:
+            raise ValidationError("Укажите название детали.")
+        return name
+
+    def clean_article(self):
+        return self.cleaned_data["article"].strip()
+
+    def clean(self):
+        cleaned = super().clean()
+        self.duplicates = list(find_parts_by_article(cleaned.get("article") or ""))
+        if self.duplicates and not cleaned.get("confirm_duplicate"):
+            raise ValidationError(
+                "Деталь с таким артикулом уже есть. Посмотрите список ниже: "
+                "скорее всего, нужна именно она."
+            )
+        return cleaned
