@@ -218,6 +218,12 @@ def test_the_service_refuses_a_negative_price_on_its_own(db):
         create_manual_part(name="Ремень", price=Decimal("-1"))
 
 
+def test_the_service_refuses_an_unstorable_price(db):
+    """Через форму такое число не пройдёт, но служба вызывается и из кода."""
+    with pytest.raises(ManualPartError):
+        create_manual_part(name="Ремень", price=Decimal("1e30"))
+
+
 def test_the_service_says_what_is_wrong_when_there_are_no_units(db):
     """Ошибка окружения тоже должна быть объяснимой, а не страницей ошибки."""
     Unit.objects.all().delete()

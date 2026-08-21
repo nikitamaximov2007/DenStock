@@ -270,7 +270,12 @@ def clean_manual_price(value) -> Decimal | None:
         raise ManualPartError("Цена должна быть конечным числом.")
     if price < 0:
         raise ManualPartError("Цена не может быть отрицательной.")
-    return price.quantize(Decimal("0.01"))
+    try:
+        return price.quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        # Округление отказывает на слишком длинном числе. Через форму такое не
+        # пройдёт, но служба вызывается и из кода, и падать здесь ей нечем.
+        raise ManualPartError("Цена слишком велика.") from exc
 
 
 @transaction.atomic
