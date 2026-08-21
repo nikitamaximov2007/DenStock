@@ -192,3 +192,18 @@ def test_ram_capacity_uses_installed_physical_modules():
     assert "TotalPhysicalMemory" not in PREFLIGHT
     assert "Win32_PhysicalMemory" in INSTALLER
     assert "TotalPhysicalMemory" not in INSTALLER
+def test_installer_handles_clean_git_status_under_strict_mode():
+    from pathlib import Path
+
+    installer = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "operations"
+        / "Install-DenisStock-EmergencyWorkstation.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    safe = 'if (@(& git -C $RepoRoot status --porcelain --untracked-files=no).Count -gt 0) {'
+    unsafe = 'if ((& git -C $RepoRoot status --porcelain --untracked-files=no).Count -gt 0) {'
+
+    assert safe in installer
+    assert unsafe not in installer

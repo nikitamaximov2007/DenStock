@@ -129,7 +129,7 @@ $head = (& git -C $RepoRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $head -cne $AppCommit) {
     throw "Checkout не совпадает с указанным production release commit."
 }
-if ((& git -C $RepoRoot status --porcelain --untracked-files=no).Count -gt 0) {
+if (@(& git -C $RepoRoot status --porcelain --untracked-files=no).Count -gt 0) {
     throw "Provisioning запрещён из dirty checkout."
 }
 if ($Role -eq "primary") {
