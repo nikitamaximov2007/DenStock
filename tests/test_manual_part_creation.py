@@ -25,6 +25,12 @@ from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.catalog.services import ManualPartError, create_manual_part
 from apps.core.part_lookup import resolve_part_lookup
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
+from apps.inventory.services import create_stock_lot, receive_stock_lot
+from apps.procurement.models import Batch, BatchLine
+from apps.procurement.services import finalize_cost
+from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
+from apps.suppliers.models import Supplier
+from apps.warehouse.models import StorageLocation
 
 PASSWORD = "parol-12345"
 CREATE_URL = "part_create"
@@ -341,6 +347,44 @@ def test_a_storekeeper_still_cannot_create_parts(client, make_user, db):
     response = _post(client)
     assert response.status_code == 403
     assert not PartType.objects.exists()
+
+
+def test_the_new_part_goes_all_the_way_through_receipt_and_sale(boss, make_user, db):
+    """Смысл сценария не в карточке, а в том, что деталью потом работают.
+
+    Проходится весь путь: заведение, приёмка, продажа. Если бы карточке не
+    хватало чего-то из подставленного - единицы, категории, режима учёта, - он
+    оборвался бы на одном из шагов.
+    """
+    _post(boss, price="4500")
+    part = PartType.objects.get()
+    admin = make_user("sklad-boss", is_superuser=True)
+
+    supplier = Supplier.objects.create(name="ООО Поставка")
+    location = StorageLocation.objects.create(
+        name="Ячейка", code="S07-D01-C02", storage_allowed=True, is_active=True
+    )
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    line = BatchLine.objects.create(
+        batch=batch, part_type=part,
+        quantity=Decimal("4"), unit_cost_currency=Decimal("1000"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    line.refresh_from_db()
+    lot = create_stock_lot(line, location, Decimal("4"))
+    receive_stock_lot(lot, by=admin)
+
+    sale = create_sale(customer=None, customer_name="Иванов", by=admin)
+    add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("4500"), by=admin)
+    sale = complete_sale(sale, by=admin)
+
+    assert sale.lines.get().total_price == Decimal("9000")
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("2"), "продажа не списала остаток"
+    balance = StockBalance.objects.get(part_type=part, location=location)
+    assert balance.quantity_available == Decimal("2")
 
 
 def test_the_full_card_is_still_there_for_editing(boss, db):
