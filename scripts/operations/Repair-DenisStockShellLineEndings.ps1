@@ -111,18 +111,50 @@ if ($CheckOnly) {
 
 $blocked = @()
 $repaired = @()
+
+# Наличие несохранённых правок выясняется ДО того, как менять настройку.
+#
+# Иначе ответ оказывается ложным: с выключенным переводом Git считает
+# изменённым любой файл с возвратом каретки, то есть ровно те, ради которых всё
+# и затеяно. Измерено: из четырёх сценариев три были пропущены как «с правками»,
+# хотя никто их не трогал.
 foreach ($relative in $broken) {
-    if (Test-LocallyModified -Relative $relative) {
-        $blocked += $relative
-        continue
+    if (Test-LocallyModified -Relative $relative) { $blocked += $relative }
+}
+$repairable = @($broken | Where-Object { $blocked -notcontains $_ })
+
+# Перевод окончаний строк выключается на время работы и возвращается обратно.
+#
+# Зачем. Если выпуск уже содержит правило для сценариев, оно и так сильнее
+# настройки, и выключение ничего не меняет. Но копия может стоять на выпуске,
+# где правила ещё нет: тогда файл, полученный заново, снова окажется с
+# возвратом каретки, и шаг оказался бы бесполезным.
+#
+# Настройка возвращается в исходный вид в любом случае, даже при ошибке. Если
+# её оставить выключенной, Git начнёт считать изменёнными все остальные файлы
+# рабочей копии, а установщик из такого каталога работать отказывается.
+$previous = & git -C $RepoRoot config --local --get core.autocrlf 2>$null
+$hadPrevious = ($LASTEXITCODE -eq 0 -and $previous)
+& git -C $RepoRoot config --local core.autocrlf false | Out-Null
+
+try {
+    foreach ($relative in $repairable) {
+        $full = Join-Path $RepoRoot $relative
+        Remove-Item -LiteralPath $full -Force
+        $checkout = Invoke-Git -Arguments @("checkout", "--", $relative)
+        if ($checkout.ExitCode -ne 0) {
+            throw "Не удалось восстановить $relative из репозитория. Файл удалён, восстановите его: git -C $RepoRoot checkout -- $relative"
+        }
+        $repaired += $relative
     }
-    $full = Join-Path $RepoRoot $relative
-    Remove-Item -LiteralPath $full -Force
-    $checkout = Invoke-Git -Arguments @("checkout", "--", $relative)
-    if ($checkout.ExitCode -ne 0) {
-        throw "Не удалось восстановить $relative из репозитория. Файл удалён, восстановите его: git -C $RepoRoot checkout -- $relative"
+}
+finally {
+    if ($hadPrevious) {
+        & git -C $RepoRoot config --local core.autocrlf $previous | Out-Null
     }
-    $repaired += $relative
+    else {
+        & git -C $RepoRoot config --local --unset core.autocrlf 2>$null | Out-Null
+    }
 }
 
 Write-Host ""
