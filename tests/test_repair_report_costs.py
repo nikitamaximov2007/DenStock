@@ -300,6 +300,46 @@ def test_two_repairs_are_not_counted_twice(data):
     assert total == expected
 
 
+def test_a_new_delivery_at_another_price_does_not_move_a_past_repair(data, admin):
+    """Самая сильная форма проверки историчности.
+
+    После проведённого ремонта меняется всё, что могло бы на него повлиять:
+    цена в каталоге и закупочная цена новой партии той же детали. Прошлая
+    выдача обязана остаться прежней - иначе отчёт за закрытый месяц начинал бы
+    меняться сам по себе.
+    """
+    customer = Customer.objects.create(name="Иванов")
+    order = _repair(data, customer=customer, items=(("belt", 2),))
+    frozen = order.lines.get().total_cost_rub
+    assert frozen > 0
+
+    part = data["parts"]["belt"]
+    part.recommended_price = Decimal("99999")
+    part.min_price = Decimal("88888")
+    part.save(update_fields=["recommended_price", "min_price"])
+    _lot(part, data["loc"], 50, data["sup"], admin, unit_cost="12345")
+
+    rows = get_client_part_history(resolve_period({}), customer_id=customer.pk)
+    assert rows[0]["cost"] == frozen
+    order.lines.get().refresh_from_db()
+    assert order.lines.get().total_cost_rub == frozen
+
+
+def test_a_new_delivery_does_not_move_a_past_sale(data, admin):
+    """То же для продажи: её сумма - снимок проведённого документа."""
+    customer = Customer.objects.create(name="Иванов")
+    sale = _sale(data, customer=customer, items=(("belt", 2),), price="500")
+    before = sale.lines.get().total_price
+
+    part = data["parts"]["belt"]
+    part.recommended_price = Decimal("99999")
+    part.save(update_fields=["recommended_price"])
+    _lot(part, data["loc"], 50, data["sup"], admin, unit_cost="12345")
+
+    rows = get_client_part_history(resolve_period({}), customer_id=customer.pk)
+    assert rows[0]["amount"] == before == Decimal("1000")
+
+
 # --- Одна и та же деталь внутри одного ремонта -------------------------------------------
 
 
