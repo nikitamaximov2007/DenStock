@@ -14,6 +14,7 @@
 всё это и делается.
 """
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from django.contrib.auth.models import Group
@@ -37,6 +38,7 @@ from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sal
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 
+ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = "parol-12345"
 
 DEVELOPER_WORDS = (
@@ -243,6 +245,34 @@ def test_a_client_screen_without_a_client_does_not_crash(client, warehouse):
     for name in ("reports_client_timeline", "reports_repairs_by_client_detail"):
         response = client.get(reverse(name))
         assert response.status_code < 500, f"{name}: ответ {response.status_code}"
+
+
+def test_wide_tables_scroll_by_themselves_on_a_phone():
+    """Вторая денежная колонка не должна ломать телефон.
+
+    Раскладку спасает не обёртка вокруг таблицы, а правило на самой таблице:
+    на узком экране она становится блоком с собственной прокруткой. Если это
+    правило убрать, вбок поедет вся страница вместе с шапкой и меню, и
+    заметить это на большом мониторе будет невозможно.
+    """
+    css = (ROOT / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    narrow = css.split("@media (max-width: 900px)")[1].split("@media")[0]
+    assert "overflow-x: auto" in narrow, "широкие таблицы перестали прокручиваться"
+    assert ".table { display: block" in narrow
+
+
+def test_the_report_tables_are_ordinary_tables(client, warehouse):
+    """Правило про телефон действует только на обычный класс таблицы.
+
+    Если отчёт когда-нибудь отрисуют своей разметкой, он выпадет из этого
+    правила молча.
+    """
+    client.login(username="boss", password=PASSWORD)
+    for name in ("reports_client_timeline", "reports_repairs_by_client_detail"):
+        body = client.get(
+            reverse(name), {"customer_id": warehouse["customer"].pk}
+        ).content.decode()
+        assert '<table class="table"' in body, f"{name}: таблица без общего класса"
 
 
 def test_a_part_that_does_not_exist_is_a_normal_404(client, warehouse):
