@@ -244,6 +244,47 @@ Test-Safely "Свободное место" {
     }
 }
 
+# --- Сценарии для Linux --------------------------------------------------------
+Test-Safely "Окончания строк в сценариях" {
+    <#
+        Windows-копия репозитория может содержать сценарии с возвратом каретки.
+        Внутри WSL такой файл не запускается: bash сообщает про «invalid option
+        name» и установка останавливается в самом непонятном месте. Проверка
+        читает байты и говорит причину заранее.
+    #>
+    if (-not (Test-Path -LiteralPath $RepoRoot)) {
+        Add-Check -Name "Окончания строк в сценариях" -State "ВНИМАНИЕ" `
+            -Detail "каталог $RepoRoot ещё не создан" `
+            -Fix "Проверка повторится после получения релиза."
+        return
+    }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Add-Check -Name "Окончания строк в сценариях" -State "ВНИМАНИЕ" -Detail "git не найден в PATH" `
+            -Fix "Установите Git для Windows: без него релиз не получить."
+        return
+    }
+    $listing = & git -C $RepoRoot ls-files "*.sh" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Add-Check -Name "Окончания строк в сценариях" -State "ВНИМАНИЕ" `
+            -Detail "$RepoRoot ещё не репозиторий" -Fix "Проверка повторится после получения релиза."
+        return
+    }
+    $bad = @()
+    foreach ($relative in @($listing | Where-Object { $_ -and $_.Trim() })) {
+        $full = Join-Path $RepoRoot $relative
+        if (-not (Test-Path -LiteralPath $full)) { continue }
+        $bytes = [IO.File]::ReadAllBytes($full)
+        foreach ($byte in $bytes) { if ($byte -eq 13) { $bad += $relative; break } }
+    }
+    if ($bad.Count -eq 0) {
+        Add-Check -Name "Окончания строк в сценариях" -State "ГОТОВО" -Detail "все сценарии в формате Linux"
+        return
+    }
+    Add-Check -Name "Окончания строк в сценариях" -State "ОСТАНОВКА" `
+        -Detail ("с возвратом каретки: " + ($bad -join ", ")) `
+        -Fix "Запустите: powershell -ExecutionPolicy Bypass -File $RepoRoot\scripts\operations\Repair-DenisStockShellLineEndings.ps1 -RepoRoot $RepoRoot"
+}
+
 # --- Сеть ----------------------------------------------------------------------
 Test-Safely "Локальная сеть" {
     $all = @(

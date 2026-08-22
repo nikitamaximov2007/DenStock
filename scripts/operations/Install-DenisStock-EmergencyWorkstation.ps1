@@ -182,7 +182,14 @@ if ($InstallWslRuntime) {
         & wsl.exe --install -d $WslDistro
         throw "WSL distribution создана. Перезагрузите Windows, войдите в $WslDistro и повторите provisioning."
     }
-    $bootstrap = ConvertTo-WslPath (Join-Path $RepoRoot "scripts\operations\provision-wsl-docker.sh")
+    $bootstrapPath = Join-Path $RepoRoot "scripts\operations\provision-wsl-docker.sh"
+    # Windows-копия могла приехать с возвратом каретки. Linux такой файл не
+    # запустит, и bash сообщит про «invalid option name» - причину по этому
+    # сообщению не найти. Поэтому останавливаемся здесь и говорим прямо.
+    if (@([IO.File]::ReadAllBytes($bootstrapPath)) -contains 13) {
+        throw "Сценарий подготовки WSL записан в формате Windows и внутри Linux не запустится. Выполните: powershell -ExecutionPolicy Bypass -File $RepoRoot\scripts\operations\Repair-DenisStockShellLineEndings.ps1 -RepoRoot $RepoRoot"
+    }
+    $bootstrap = ConvertTo-WslPath $bootstrapPath
     & wsl.exe -d $WslDistro -u root -- bash $bootstrap
     if ($LASTEXITCODE -eq 42) {
         throw "WSL systemd включён. Выполните 'wsl --shutdown' из Administrator PowerShell и повторите provisioning."
