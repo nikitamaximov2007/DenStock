@@ -83,6 +83,11 @@ def test_manual_describes_the_short_part_form():
     # что дозаполняется потом, и упоминать те же поля там уместно.
     path = scenario.split("\n\n")[0].lower()
     assert "артикул" in path, "в пути нет артикула, а форма его спрашивает"
-    assert "цена продажи" in path
+    # Название поля берётся из самой формы: раньше здесь стояла строка «цена
+    # продажи», поле переименовали, и инструкция разошлась с экраном молча.
+    from apps.catalog.forms import ManualPartForm
+
+    price_label = ManualPartForm().fields["price"].label.split(",")[0].strip().lower()
+    assert price_label in path, f"в пути нет поля «{price_label}»"
     assert "режим учёта" not in path, "описана прежняя форма создания"
     assert "минимальный остаток" not in path, "описана прежняя форма создания"
