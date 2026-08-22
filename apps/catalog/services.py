@@ -217,6 +217,8 @@ def update_current_price_settings(
         polaris_markup=polaris_markup_percent,
     )
     return get_current_price_settings(), refreshed
+
+
 # --- Ручное добавление детали -----------------------------------------------
 
 # Категория у карточки обязательна, а на новой системе категорий может не быть

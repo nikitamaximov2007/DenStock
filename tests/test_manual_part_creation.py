@@ -22,12 +22,24 @@ from django.urls import reverse
 from apps.accounts import roles
 from apps.catalog.forms import ManualPartForm, PartTypeForm
 from apps.catalog.models import Category, PartNumber, PartType, Unit
-from apps.catalog.services import ManualPartError, create_manual_part
+from apps.catalog.services import (
+    MANUAL_CATEGORY_NAME,
+    ManualPartError,
+    create_manual_part,
+)
 from apps.core.part_lookup import resolve_part_lookup
+from apps.customers.models import Customer
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
+from apps.repairs.services import (
+    add_stock_lot_to_repair_order,
+    complete_repair_order,
+    create_repair_order,
+)
+from apps.returns.models import StockReturnLine
+from apps.returns.services import add_sale_line_return, complete_return, create_return
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
@@ -70,6 +82,26 @@ def _stock_snapshot():
         PartItem.objects.count(),
         StockBalance.objects.count(),
     )
+
+
+def _receive(part, admin, *, quantity="4", unit_cost="1000", code="S07-D01-C03"):
+    """Настоящая приёмка: только она создаёт остаток и закупочную стоимость."""
+    supplier = Supplier.objects.create(name=f"Поставщик {code}")
+    location = StorageLocation.objects.create(
+        name=f"Ячейка {code}", code=code, storage_allowed=True, is_active=True
+    )
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    line = BatchLine.objects.create(
+        batch=batch, part_type=part,
+        quantity=Decimal(quantity), unit_cost_currency=Decimal(unit_cost),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    line.refresh_from_db()
+    lot = create_stock_lot(line, location, Decimal(quantity))
+    receive_stock_lot(lot, by=admin)
+    return lot
 
 
 # --- Почему прежняя форма не работала -------------------------------------------------
@@ -385,6 +417,325 @@ def test_the_new_part_goes_all_the_way_through_receipt_and_sale(boss, make_user,
     assert lot.quantity == Decimal("2"), "продажа не списала остаток"
     balance = StockBalance.objects.get(part_type=part, location=location)
     assert balance.quantity_available == Decimal("2")
+
+
+def test_the_new_part_goes_all_the_way_through_receipt_and_repair(boss, make_user, db):
+    """Второй настоящий путь: заведение, приёмка, выдача в ремонт.
+
+    У ремонта своя заморозка себестоимости, и она должна взять закупочную цену
+    приёмки, а не цену продажи из карточки. Это две разные величины, и путать
+    их нельзя.
+    """
+    _post(boss, price="4500")
+    part = PartType.objects.get()
+    admin = make_user("remont-boss", is_superuser=True)
+    lot = _receive(part, admin, quantity="4", unit_cost="1000")
+
+    customer = Customer.objects.create(name="Иванов")
+    order = create_repair_order(customer=customer, customer_name="", by=admin)
+    add_stock_lot_to_repair_order(order, lot, Decimal("2"), by=admin)
+    order = complete_repair_order(order, by=admin)
+
+    issued = order.lines.get()
+    assert issued.unit_cost_rub == Decimal("1000.00"), "взята не закупочная цена"
+    assert issued.total_cost_rub == Decimal("2000.00")
+    assert issued.unit_cost_rub != part.recommended_price, (
+        "цена продажи из карточки просочилась в себестоимость ремонта"
+    )
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("2"), "выдача не списала остаток"
+
+
+def test_a_returned_manual_part_comes_back_to_the_shelf(boss, make_user, db):
+    """Обратный путь у проданной детали - возврат, и он тоже должен работать.
+
+    Отмены проведённой продажи в продукте нет: проведённый документ неизменяем,
+    а деталь возвращается отдельным возвратом. Ручная деталь должна проходить
+    его наравне с любой другой.
+    """
+    _post(boss, price="4500")
+    part = PartType.objects.get()
+    admin = make_user("vozvrat-boss", is_superuser=True)
+    lot = _receive(part, admin, quantity="5", unit_cost="1000")
+
+    sale = create_sale(customer=None, customer_name="Иванов", by=admin)
+    add_stock_lot_to_sale(sale, lot, Decimal("3"), unit_price=Decimal("4500"), by=admin)
+    sale = complete_sale(sale, by=admin)
+    balance = StockBalance.objects.get(part_type=part, location=lot.location)
+    assert balance.quantity_available == Decimal("2")
+
+    ret = create_return(source=sale, by=admin)
+    add_sale_line_return(
+        ret, sale.lines.get(), Decimal("3"),
+        to_location=lot.location,
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=admin,
+    )
+    complete_return(ret, by=admin)
+
+    balance.refresh_from_db()
+    assert balance.quantity_available == Decimal("5"), "остаток не вернулся"
+
+
+def test_the_catalog_price_does_not_become_the_incoming_cost(boss, make_user, db):
+    """Цена в карточке - продажная. Себестоимость появляется только на приёмке."""
+    _post(boss, price="4500")
+    part = PartType.objects.get()
+    admin = make_user("prihod-boss", is_superuser=True)
+    lot = _receive(part, admin, quantity="2", unit_cost="900")
+
+    assert lot.landed_unit_cost_rub == Decimal("900.00")
+    assert part.recommended_price == Decimal("4500.00")
+
+
+def test_changing_the_catalog_price_later_leaves_a_past_repair_alone(boss, make_user, db):
+    """Историческая величина не переписывается задним числом."""
+    _post(boss, price="4500")
+    part = PartType.objects.get()
+    admin = make_user("istoriya-boss", is_superuser=True)
+    lot = _receive(part, admin, quantity="4", unit_cost="1000")
+
+    customer = Customer.objects.create(name="Иванов")
+    order = create_repair_order(customer=customer, customer_name="", by=admin)
+    add_stock_lot_to_repair_order(order, lot, Decimal("1"), by=admin)
+    order = complete_repair_order(order, by=admin)
+    before = order.lines.get().total_cost_rub
+
+    part.recommended_price = Decimal("99999")
+    part.save(update_fields=["recommended_price"])
+    order.lines.get().refresh_from_db()
+    assert order.lines.get().total_cost_rub == before
+
+
+# --- Совпадение артикула: как его на самом деле пишут -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "written_again",
+    ["417300383", "417-300-383", "417 300 383", " 417300383 ", "417.300.383"],
+    ids=["как есть", "через дефис", "через пробел", "с пробелами по краям", "через точку"],
+)
+def test_the_same_number_written_differently_is_still_recognised(boss, db, written_again):
+    """Оператор редко повторяет запись символ в символ."""
+    _post(boss)
+    response = _post(boss, name="Ремень другой", article=written_again)
+
+    assert response.status_code == 200, f"«{written_again}» не опознан как тот же номер"
+    assert PartType.objects.count() == 1
+
+
+def test_a_lowercase_letter_number_matches_its_uppercase_twin(boss, db):
+    _post(boss, article="ABC-123")
+    response = _post(boss, name="Другая", article="abc 123")
+    assert response.status_code == 200
+    assert PartType.objects.count() == 1
+
+
+def test_a_cyrillic_number_works_the_same_way(boss, db):
+    _post(boss, article="АБВ-123")
+    response = _post(boss, name="Другая", article="абв123")
+    assert response.status_code == 200
+    assert PartType.objects.count() == 1
+
+
+def test_all_existing_matches_are_shown_not_just_the_first(boss, db):
+    _post(boss, name="Ремень первый")
+    boss.post(
+        reverse(CREATE_URL),
+        {"name": "Ремень второй", "article": "417300383", "confirm_duplicate": "1"},
+    )
+    assert PartType.objects.count() == 2
+
+    body = _post(boss, name="Ремень третий").content.decode()
+    assert "Ремень первый" in body
+    assert "Ремень второй" in body
+
+
+def test_a_number_that_came_from_the_supplier_catalog_also_counts(boss, db):
+    """Совпадение с уже заведённой деталью ищется по номеру, а не по способу.
+
+    Деталь, пришедшая из каталога поставщика, хранит номер тем же видом
+    точного номера, поэтому она находится наравне с заведёнными вручную.
+    """
+    category = Category.objects.create(name="Каталог")
+    imported = PartType.objects.create(
+        name="Из каталога поставщика", category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    PartNumber.objects.create(
+        part=imported, value="417300383", kind=PartNumber.Kind.OEM, is_primary=True
+    )
+
+    response = _post(boss)
+    assert response.status_code == 200
+    assert "Из каталога поставщика" in response.content.decode()
+    assert PartType.objects.count() == 1, "завелась вторая карточка того же номера"
+
+
+def test_an_archived_part_with_the_same_number_is_still_worth_showing(boss, db):
+    """Отключённая карточка - повод открыть её, а не заводить дубликат."""
+    category = Category.objects.create(name="Каталог")
+    archived = PartType.objects.create(
+        name="Снятая с учёта", category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK, is_active=False,
+    )
+    PartNumber.objects.create(part=archived, value="417300383", kind=PartNumber.Kind.ARTICLE)
+
+    response = _post(boss)
+    assert response.status_code == 200
+    assert "Снятая с учёта" in response.content.decode()
+
+
+def test_an_analog_number_is_not_treated_as_the_same_part(boss, db):
+    """Аналог - это «подойдёт вместо», а не «тот же номер»."""
+    category = Category.objects.create(name="Каталог")
+    other = PartType.objects.create(
+        name="Совсем другая", category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    PartNumber.objects.create(part=other, value="417300383", kind=PartNumber.Kind.ANALOG)
+
+    response = _post(boss)
+    assert response.status_code == 302, "аналог принят за совпадение номера"
+    assert PartType.objects.count() == 2
+
+
+def test_two_parts_without_an_article_never_collide(boss, db):
+    _post(boss, name="Первая", article="")
+    response = _post(boss, name="Вторая", article="")
+    assert response.status_code == 302
+    assert PartType.objects.count() == 2
+
+
+def test_the_same_name_is_not_by_itself_a_duplicate(boss, db):
+    """Названия повторяются постоянно, и запрещать это нельзя."""
+    _post(boss, name="Ремень", article="111")
+    response = _post(boss, name="Ремень", article="222")
+    assert response.status_code == 302
+    assert PartType.objects.count() == 2
+
+
+# --- Цена: всё, что можно набрать в поле -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "typed,stored",
+    [
+        ("0", Decimal("0.00")),
+        ("0.00", Decimal("0.00")),
+        ("4500", Decimal("4500.00")),
+        ("4500.5", Decimal("4500.50")),
+        ("4500,5", Decimal("4500.50")),
+        ("  4500  ", Decimal("4500.00")),
+    ],
+    ids=["ноль", "ноль с копейками", "целое", "через точку", "через запятую", "с пробелами"],
+)
+def test_prices_that_should_be_accepted(boss, db, typed, stored):
+    response = _post(boss, price=typed)
+    assert response.status_code == 302, f"«{typed}» не принято"
+    assert PartType.objects.get().recommended_price == stored
+
+
+@pytest.mark.parametrize(
+    "typed",
+    # Арабо-индийские цифры («٤٥٠٠») сюда не входят намеренно: их разбирает
+    # сама стандартная библиотека, набрать их на складской клавиатуре нельзя,
+    # и запрещать их отдельным правилом не за чем.
+    ["-1", "-0.01", "не число", "1e400", "4500,50,10", "4500 руб", "--5", "1/2"],
+)
+def test_prices_that_must_be_refused_without_a_crash(boss, db, typed):
+    response = _post(boss, price=typed)
+    assert response.status_code == 200, f"«{typed}» уронило страницу"
+    assert not PartType.objects.exists()
+    assert "{%" not in response.content.decode()
+
+
+def test_too_many_decimal_places_are_refused_rather_than_silently_cut(boss, db):
+    """Тихое округление денег - худший из вариантов: человек не узнает."""
+    response = _post(boss, price="4500.555")
+    assert response.status_code == 200
+    assert not PartType.objects.exists()
+
+
+def test_a_price_that_does_not_fit_the_field_is_a_message(boss, db):
+    response = _post(boss, price="9" * 20)
+    assert response.status_code == 200
+    assert not PartType.objects.exists()
+
+
+# --- Как деталь ищут потом ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("query", ["417300383", "417-300-383", "Ремень", "ремень вариатора"])
+def test_the_new_part_is_findable_in_the_shared_search(boss, db, query):
+    _post(boss)
+    response = boss.get(reverse("part_search"), {"q": query})
+    assert response.status_code == 200
+    assert "Ремень вариатора" in response.content.decode(), f"не нашлась по «{query}»"
+
+
+def test_the_new_part_can_be_picked_when_receiving(boss, make_user, db):
+    _post(boss)
+    part = PartType.objects.get()
+    body = boss.get(reverse("receipt_create")).content.decode()
+    assert str(part.pk) in body or "Ремень вариатора" in body
+
+
+def test_the_parts_list_search_finds_it_by_article(boss, db):
+    _post(boss)
+    body = boss.get(reverse("part_list"), {"q": "417300383"}).content.decode()
+    assert "Ремень вариатора" in body
+
+
+# --- Поведение формы как страницы --------------------------------------------------------
+
+
+def test_opening_the_page_creates_nothing(boss, db):
+    """Открытие формы - чтение. Мутация только через отправку."""
+    assert boss.get(reverse(CREATE_URL)).status_code == 200
+    assert not PartType.objects.exists()
+    assert not Category.objects.exists()
+
+
+def test_a_repeated_submission_of_the_same_form_is_the_operator_s_decision(boss, db):
+    """После успеха отправка идёт с перенаправлением, поэтому обновление
+    страницы результата ничего не создаёт заново.
+
+    Если человек всё-таки отправит форму второй раз, он увидит предупреждение
+    о совпадении, а не молча получит дубликат.
+    """
+    first = _post(boss)
+    assert first.status_code == 302
+    assert first["Location"].startswith("/")
+
+    second = _post(boss)
+    assert second.status_code == 200
+    assert PartType.objects.count() == 1
+
+
+def test_the_manual_category_is_created_once_and_reused(boss, db):
+    """Двадцать одинаковых категорий в справочнике - это мусор в глазах."""
+    for index in range(5):
+        _post(boss, name=f"Деталь {index}", article=f"{index}")
+    assert PartType.objects.count() == 5
+    assert Category.objects.filter(name=MANUAL_CATEGORY_NAME).count() == 1
+    assert Category.objects.count() == 1
+
+
+def test_two_operators_creating_the_same_number_both_succeed(boss, db):
+    """Уникальности номера нет, и одновременная работа не должна падать.
+
+    Проверяется поведение самой службы: она не рассчитывает на то, что номер
+    единственный, и не пытается это обеспечить.
+    """
+    first = create_manual_part(name="Ремень", article="417300383", price=Decimal("100"))
+    second = create_manual_part(name="Ремень", article="417300383", price=Decimal("100"))
+    assert first.pk != second.pk
+    assert PartNumber.objects.filter(normalized_value="417300383").count() == 2
+    assert Category.objects.filter(name=MANUAL_CATEGORY_NAME).count() == 1
 
 
 def test_the_full_card_is_still_there_for_editing(boss, db):
