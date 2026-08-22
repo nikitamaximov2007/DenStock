@@ -123,6 +123,10 @@ class PartTypeCreateView(ManagePartsMixin, FormView):
         return ctx
 
     def form_valid(self, form):
+        if form.needs_duplicate_confirmation():
+            # Ничего не создаём и возвращаем ту же страницу: решение о том,
+            # нужна ли вторая карточка с этим номером, принимает человек.
+            return self.render_to_response(self.get_context_data(form=form))
         try:
             self.object = create_manual_part(
                 name=form.cleaned_data["name"],

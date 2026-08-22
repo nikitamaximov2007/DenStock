@@ -318,6 +318,28 @@ def test_the_return_address_survives_the_duplicate_warning(boss, db):
     assert done["Location"] == f"{back}?new_part={part.pk}"
 
 
+def test_a_matching_number_is_shown_as_a_notice_and_not_as_a_failure(boss, db):
+    """Совпадение - повод посмотреть, а не сообщение о том, что всё сломалось.
+
+    Найдено на живой странице: подсказка выводилась красным блоком отказа,
+    хотя оператор ничего неправильного не сделал и через одно нажатие
+    продолжает работу.
+    """
+    _post(boss)
+    body = _post(boss, name="Ремень другой").content.decode()
+
+    assert "status--warning" in body, "подсказка о совпадении не показана предупреждением"
+    assert "status--error" not in body, "обычное совпадение показано как отказ"
+
+
+def test_a_real_failure_is_still_shown_as_a_failure(boss, db):
+    Unit.objects.update(is_active=False)
+    body = _post(boss, article="").content.decode()
+
+    assert "status--error" in body
+    assert "status--warning" not in body
+
+
 def test_a_confirmed_duplicate_still_shows_a_real_failure(boss, db):
     """Причина отказа не должна теряться за списком совпадений.
 

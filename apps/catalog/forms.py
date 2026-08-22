@@ -173,13 +173,14 @@ class ManualPartForm(forms.Form):
         ),
     )
     price = CommaDecimalField(
-        label="Цена продажи, ₽",
+        label="Рекомендуемая цена, ₽",
         required=False,
         max_digits=12,
         decimal_places=2,
         min_value=Decimal("0"),
-        help_text="Необязательно. Это рекомендуемая цена для клиента; "
-                  "себестоимость появится сама при первой приёмке.",
+        help_text="Необязательно. Сколько просим с клиента; при продаже цену"
+                  " ещё можно изменить. Себестоимость сюда не вводится: она"
+                  " появится сама при первой приёмке.",
         widget=forms.TextInput(
             attrs={"inputmode": "decimal", "step": "0.01", "class": "form-control"}
         ),
@@ -207,9 +208,16 @@ class ManualPartForm(forms.Form):
     def clean(self):
         cleaned = super().clean()
         self.duplicates = list(find_parts_by_article(cleaned.get("article") or ""))
-        if self.duplicates and not cleaned.get("confirm_duplicate"):
-            raise ValidationError(
-                "Деталь с таким артикулом уже есть. Посмотрите список ниже: "
-                "скорее всего, нужна именно она."
-            )
         return cleaned
+
+    def needs_duplicate_confirmation(self) -> bool:
+        """Совпадение номера - это повод посмотреть, а не отказ.
+
+        Ошибкой формы оно намеренно не оформляется: экран красил бы обычную
+        подсказку в цвет отказа, и оператор читал бы её как «я сделал
+        что-то не так». Решение принимает человек, поэтому страница просто
+        возвращается ещё раз, с предупреждением и списком найденного.
+        """
+        if not self.duplicates:
+            return False
+        return not self.cleaned_data.get("confirm_duplicate")

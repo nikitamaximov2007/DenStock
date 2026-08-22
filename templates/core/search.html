@@ -166,8 +166,7 @@
         {% if row.receiving %}· на приёмке: {{ row.receiving|quantity_int }}{% endif %}
       </p>
       <p>
-        Цена продажи: рек. {{ row.part.recommended_price|money_int }} · мин.
-        {{ row.part.min_price|money_int }}
+        Рекомендуемая цена: {{ row.part.recommended_price|money_int }} · минимальная: {{ row.part.min_price|money_int }}
       </p>
       {% if row.location_rows %}
         <table class="table table--compact">
