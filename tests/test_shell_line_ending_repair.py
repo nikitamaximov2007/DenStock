@@ -239,6 +239,102 @@ def test_a_script_with_unsaved_edits_is_left_alone_and_reported(stale_checkout: 
     assert "несохранённые правки" in result.stdout
 
 
+@pytest.fixture
+def legacy_checkout(tmp_path: Path) -> Path:
+    """Копия на выпуске, где правила про окончания строк ещё нет.
+
+    Именно так выглядит компьютер склада сегодня: он стоит на том же коммите,
+    что и production, а правило появилось позже. Обновлять его до нового
+    выпуска нельзя - подписанная копия привязана к прежнему коммиту, и станция
+    не сможет её принять.
+    """
+    repo = tmp_path / "legacy"
+    repo.mkdir()
+    assert git(repo, "init", "--quiet").returncode == 0
+    for key, value in (
+        ("core.autocrlf", "true"),
+        ("user.email", "proverka@example.invalid"),
+        ("user.name", "Проверка"),
+        ("commit.gpgsign", "false"),
+    ):
+        assert git(repo, "config", key, value).returncode == 0
+
+    script = repo / "scripts" / "run.sh"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(SCRIPT_BODY)
+    assert git(repo, "add", "scripts/run.sh").returncode == 0
+    assert git(repo, "commit", "--quiet", "-m", "sluzhebnyy").returncode == 0
+    script.unlink()
+    assert git(repo, "checkout", "--", "scripts/run.sh").returncode == 0
+    assert carriage_returns(script) > 0
+    assert not (repo / ".gitattributes").exists()
+    return repo
+
+
+@needs_powershell
+def test_the_repair_works_without_the_rule_being_present(legacy_checkout: Path):
+    """Без правила простое получение файла заново вернуло бы возврат каретки.
+
+    Поэтому на время работы перевод окончаний строк выключается. Проверяется
+    результат в байтах, а не то, что команда отработала.
+    """
+    script = legacy_checkout / "scripts" / "run.sh"
+    result = run_repair(legacy_checkout)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert carriage_returns(script) == 0
+    assert script.read_bytes() == SCRIPT_BODY
+
+
+@needs_powershell
+def test_the_setting_is_put_back_exactly_as_it_was(legacy_checkout: Path):
+    """Оставленная выключенной настройка сделала бы всю копию «изменённой».
+
+    Установщик из такого каталога работать отказывается, поэтому вернуть
+    настройку важнее, чем починить файл.
+    """
+    before = git(legacy_checkout, "config", "--local", "--get", "core.autocrlf").stdout.strip()
+    assert before == "true"
+
+    assert run_repair(legacy_checkout).returncode == 0
+
+    after = git(legacy_checkout, "config", "--local", "--get", "core.autocrlf").stdout.strip()
+    assert after == before, "настройка перевода окончаний строк не восстановлена"
+    assert not git(legacy_checkout, "status", "--porcelain").stdout.strip(), (
+        "после исправления копия выглядит изменённой"
+    )
+
+
+@needs_powershell
+def test_the_commit_is_not_moved_by_the_repair(legacy_checkout: Path):
+    """Станция обязана остаться на том же коммите, что и подписанная копия."""
+    before = git(legacy_checkout, "rev-parse", "HEAD").stdout.strip()
+    assert run_repair(legacy_checkout).returncode == 0
+    assert git(legacy_checkout, "rev-parse", "HEAD").stdout.strip() == before
+
+
+@needs_powershell
+def test_unsaved_edits_are_recognised_before_the_setting_changes(legacy_checkout: Path):
+    """Найдено проверкой: определение правок ломалось от собственного шага.
+
+    Наличие правок выяснялось уже после выключения перевода окончаний строк, а
+    с ним Git считает изменённым любой файл с возвратом каретки - то есть ровно
+    те, ради которых всё и затевалось. Из четырёх сценариев три объявлялись
+    «с несохранёнными правками» и пропускались.
+    """
+    second = legacy_checkout / "scripts" / "second.sh"
+    second.write_bytes(SCRIPT_BODY)
+    git(legacy_checkout, "add", "scripts/second.sh")
+    git(legacy_checkout, "commit", "--quiet", "-m", "vtoroy")
+    second.unlink()
+    git(legacy_checkout, "checkout", "--", "scripts/second.sh")
+    assert carriage_returns(second) > 0
+
+    result = run_repair(legacy_checkout)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert carriage_returns(legacy_checkout / "scripts" / "run.sh") == 0
+    assert carriage_returns(second) == 0, "второй сценарий приняли за изменённый"
+
+
 @needs_powershell
 def test_a_healthy_copy_is_reported_as_healthy(stale_checkout: Path):
     assert run_repair(stale_checkout).returncode == 0
