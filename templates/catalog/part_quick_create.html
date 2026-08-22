@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary" href="{% url 'part_list' %}">К списку деталей</a>
+    </div>
+  </div>
+
+  {% comment %}
+    Настоящий отказ показывается всегда, даже когда ниже есть список
+    совпадений: иначе оператор, уже подтвердивший совпадение, перестал бы
+    видеть причину и жал бы кнопку впустую.
+
+    Совпадение номера отказом не является и красным не показывается: это
+    подсказка посмотреть, что уже заведено.
+  {% endcomment %}
+  {% for error in form.non_field_errors %}
+    {% include "partials/_status_block.html" with kind="error" text=error %}
+  {% endfor %}
+
+  {% if duplicates %}
+    {% include "partials/_status_block.html" with kind="warning" text="Деталь с таким артикулом уже есть. Посмотрите список ниже: скорее всего, нужна именно она." %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Уже в каталоге</h2>
+      </div>
+      <div class="card__body">
+        <table class="table table--compact">
+          <thead>
+            <tr><th>Название</th><th>Категория</th></tr>
+          </thead>
+          <tbody>
+            {% for part in duplicates %}
+              <tr>
+                <td><a href="{% url 'part_detail' part.pk %}">{{ part.name }}</a></td>
+                <td class="muted">{{ part.category.name }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted">
+          Если нужна одна из них - откройте её, заводить вторую не нужно.
+          Если это всё-таки другая деталь, нажмите «Всё равно создать».
+        </p>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        {% for field in form.visible_fields %}
+          <div class="field">
+            <label class="field__label{% if field.field.required %} field__label--required{% endif %}"
+                   for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% if field.help_text %}<p class="field__hint">{{ field.help_text }}</p>{% endif %}
+            {% for error in field.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
+          </div>
+        {% endfor %}
+        {% comment %}
+          Подтверждение совпадения артикула едет на самой кнопке, поэтому
+          скрытое поле здесь не выводится: иначе значение пришло бы дважды.
+        {% endcomment %}
+        <div class="form-actions">
+          {% if duplicates %}
+            <button type="submit" class="btn btn--primary"
+                    name="confirm_duplicate" value="1">Всё равно создать</button>
+          {% else %}
+            <button type="submit" class="btn btn--primary">Добавить деталь</button>
+          {% endif %}
+          <a class="btn btn--ghost" href="{% url 'part_list' %}">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <p class="muted">
+    Деталь появится в каталоге и в поиске сразу. Остатка на складе она не создаёт:
+    он появится, когда деталь примут на склад. Остальные поля карточки
+    (производитель, категория, минимальный запас) можно заполнить потом.
+  </p>
+{% endblock %}

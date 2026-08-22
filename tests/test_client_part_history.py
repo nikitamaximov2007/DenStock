@@ -217,14 +217,33 @@ def test_sales_detail_hides_internal_accounting(client, data, admin, noise):
     assert noise not in body, f"на клиентском экране осталось «{noise}»"
 
 
-@pytest.mark.parametrize("noise", ["Себестоимость", "Прибыль", "Источник остатка", "лот #"])
+@pytest.mark.parametrize("noise", ["Прибыль", "Источник остатка", "лот #"])
 def test_repairs_detail_hides_internal_accounting(client, data, admin, noise):
+    """На экране ремонтов остаётся только то, что нужно для работы.
+
+    Себестоимость из этого списка убрана намеренно: сотруднику нужно знать, во
+    сколько складу обошлась выданная деталь, и это прямое требование. Она
+    показана отдельной колонкой, закрыта правом на закупочные суммы и никогда
+    не называется выручкой. Прибыль, источник остатка и номера лотов
+    по-прежнему лишние.
+    """
     _login(client, admin)
     customer = Customer.objects.create(name="Иванов")
     _repair(data, customer=customer)
 
     body = _repairs_detail(client, customer).content.decode()
     assert noise not in body, f"на клиентском экране осталось «{noise}»"
+
+
+def test_repairs_detail_shows_the_issued_cost_but_never_calls_it_revenue(client, data, admin):
+    """Стоимость выданной детали нужна, но выручкой ремонта она не является."""
+    _login(client, admin)
+    customer = Customer.objects.create(name="Иванов")
+    _repair(data, customer=customer)
+
+    body = _repairs_detail(client, customer).content.decode()
+    assert "Себестоимость (₽)" in body, "стоимость выданной детали не показана"
+    assert "Выручка" not in body, "себестоимость выдана за выручку"
 
 
 def test_the_data_itself_is_not_destroyed(client, data, admin):

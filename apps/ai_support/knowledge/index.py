@@ -147,8 +147,17 @@ SOURCES = (
             "карточк детал",
             "точный артикул",
             "номер детал",
+            # Заведение детали вручную живёт здесь же: оператор приходит с
+            # вопросом «нет в каталоге», а не «создать карточку».
+            "добавить детал",
+            "завест",
+            "создать детал",
+            "нет в каталог",
+            "новая деталь",
+            "не нашёл детал",
+            "не нашел детал",
         ),
-        route_names=("part_search", "scanner", "part_list", "part_detail"),
+        route_names=("part_search", "scanner", "part_list", "part_detail", "part_create"),
         intents=(HOW_TO, CURRENT_DATA, TROUBLESHOOTING),
     ),
     KnowledgeSource(
@@ -178,7 +187,9 @@ SOURCES = (
         "returns-repairs-writeoffs",
         "returns-repairs-writeoffs.md",
         "Ремонты, возвраты и списания",
-        ("ремонт", "возврат", "вернуть", "списан", "брак", "утилиз"),
+        # Основа слова, а не форма: «списан» не ловит «списать», и вопрос
+        # «как списать сломанную деталь» уходил в приёмку.
+        ("ремонт", "возврат", "вернуть", "списа", "брак", "утилиз"),
         route_names=(
             "repair_order_list",
             "repair_order_detail",
@@ -203,8 +214,25 @@ SOURCES = (
             "статист",
             "история действий",
             "журнал действий",
+            # Вопросы про деньги клиента приходят словами «сколько», а не
+            # «отчёт», поэтому они перечислены отдельно.
+            "себестоимост",
+            "сколько потратил",
+            "во сколько обошл",
+            "истори клиент",
+            "выданн",
+            "сколько стоили",
+            "детали в ремонт",
         ),
-        route_names=("reports_dashboard", "statistics_dashboard", "actions_report"),
+        route_names=(
+            "reports_dashboard",
+            "statistics_dashboard",
+            "actions_report",
+            "reports_client_timeline",
+            "reports_clients_overview",
+            "reports_repairs_by_client",
+            "reports_repairs_by_client_detail",
+        ),
         intents=(HOW_TO, CURRENT_DATA, TROUBLESHOOTING),
     ),
     KnowledgeSource(
@@ -215,6 +243,7 @@ SOURCES = (
             "цен",
             "клиентск",
             "рекомендован",
+            "рекомендуем",
             "курс",
             "нацен",
             "brp",
