@@ -148,6 +148,14 @@
           <span class="muted">не указан</span>
         {% endif %}
         {% if row.manufacturer %}· {{ row.manufacturer }}{% endif %}
+        {% if row.analog_for %}
+          {% comment %}
+            Пометка нужна, когда в выдаче несколько деталей с одним артикулом:
+            без неё они выглядят случайным дублем, а это разные детали.
+          {% endcomment %}
+          · <span class="pill pill--info">Аналог</span>
+          <span class="muted">для {{ row.analog_for|join:", " }}</span>
+        {% endif %}
         {% if row.analogs %}
           · Вспомогательные номера:
           {% for a in row.analogs|slice:":3" %}

@@ -295,9 +295,20 @@ def test_search_shows_exact_number_first(client, make_user, env, analog_part):
 
 
 def test_search_labels_analogs(client, make_user, env, analog_part):
+    """Номер вида ANALOG - это другой номер ТОЙ ЖЕ детали, а не другая деталь.
+
+    Подпись берётся у самого вида номера: раньше здесь стояло слово «Аналоги»,
+    и оно оказалось на одном экране с настоящими аналогами-деталями. Значение в
+    базе прежнее, поменялась только подпись.
+    """
+    from apps.catalog.models import PartNumber
+
     _login(client, make_user)
     html = client.get(reverse("part_search") + "?q=IDENTITY SEAL").content.decode()
-    assert "Аналоги:" in html
+    # Основа слова, а не форма: в подписи вида номер единственного числа, а на
+    # экране их перечисляют во множественном.
+    stem = PartNumber.Kind.ANALOG.label.split()[0].lower()[:13]
+    assert stem in html.lower(), f"подпись «{PartNumber.Kind.ANALOG.label}» не найдена"
     assert "099-ANALOG-1" in html
 
 

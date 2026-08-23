@@ -7,6 +7,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 
 from apps.catalog.models import (
+    PartAnalog,
     PartBarcode,
     PartCompatibility,
     PartNumber,
@@ -79,6 +80,8 @@ class PartLookupCandidate:
     batches: list[str] = field(default_factory=list)
     client_price: Decimal | None = None
     analogs: list[str] = field(default_factory=list)
+    # Названия деталей, для которых эта отмечена аналогом. Пусто у обычной.
+    analog_for: list[str] = field(default_factory=list)
     items: list = field(default_factory=list)
     lots: list = field(default_factory=list)
     source: str = "primary"
@@ -251,6 +254,16 @@ def _candidates(
     for row in live_stock_rows(part_ids=part_pks):
         stock_by_part.setdefault(row.part_type.pk, []).append(row)
 
+    # Один запрос на весь результат. Пометка нужна там, где в выдаче несколько
+    # деталей с одним артикулом: без неё они выглядят случайным дублем.
+    analog_for: dict[int, list[str]] = {}
+    for analog_id, original_name in (
+        PartAnalog.objects.filter(analog_id__in=part_pks)
+        .values_list("analog_id", "original__name")
+        .order_by("original__name")
+    ):
+        analog_for.setdefault(analog_id, []).append(original_name)
+
     result = []
     for part in parts:
         locations = stock_by_part.get(part.pk, [])
@@ -288,6 +301,7 @@ def _candidates(
                 batches=sorted({batch for row in locations for batch in row.batches}),
                 client_price=part.recommended_price if include_price else None,
                 analogs=[number.value for number in part.analog_numbers_for_display],
+                analog_for=analog_for.get(part.pk, []),
                 source="balance" if part.pk in balance_part_ids else "primary",
             )
         )
