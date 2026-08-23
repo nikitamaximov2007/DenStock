@@ -219,7 +219,11 @@ class PartNumber(models.Model):
     class Kind(models.TextChoices):
         OEM = "oem", "OEM"
         ARTICLE = "article", "Артикул"
-        ANALOG = "analog", "Аналог"
+        # Значение остаётся прежним: меняется только подпись. Прежнее слово
+        # «Аналог» здесь означало совсем другое - «эту же деталь могут
+        # спросить под этим номером», - и стояло рядом с настоящими
+        # аналогами-деталями. Термин взят из поиска, он уже был в продукте.
+        ANALOG = "analog", "Вспомогательный номер"
         INTERNAL_REF = "internal_ref", "Внутренний справочный"
 
     part = models.ForeignKey(PartType, on_delete=models.CASCADE, related_name="numbers")

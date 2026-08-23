@@ -1,8 +1,10 @@
+from urllib.parse import quote
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
@@ -22,13 +24,22 @@ from .forms import (
     PartTypeForm,
 )
 from .models import (
+    PartAnalog,
     PartBarcode,
     PartCompatibility,
     PartNumber,
     PartType,
     PartTypeImage,
 )
-from .services import ManualPartError, create_manual_part
+from .services import (
+    AnalogLinkError,
+    ManualPartError,
+    analog_rows,
+    create_analog_part,
+    create_manual_part,
+    link_analog,
+    unlink_analog,
+)
 
 
 class PartTypeListView(LoginRequiredMixin, ListView):
@@ -83,6 +94,7 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         ctx["numbers"] = self.object.numbers.all()
         ctx["barcodes"] = self.object.barcodes.all()
         ctx["compatibilities"] = self.object.compatibilities.select_related("vehicle_model")
+        ctx.update(_analog_context(self.object, self.request))
         images = self.object.images.filter(is_active=True)
         ctx["images"] = images
         ctx["primary_image"] = next((i for i in images if i.is_primary), None)
@@ -132,6 +144,8 @@ class PartTypeCreateView(ManagePartsMixin, FormView):
                 name=form.cleaned_data["name"],
                 article=form.cleaned_data["article"],
                 price=form.cleaned_data["price"],
+                barcode=form.cleaned_data["barcode"],
+                manufacturer_name=form.cleaned_data.get("manufacturer_name", ""),
             )
         except ManualPartError as exc:
             # Например, в справочниках нет единиц измерения. Это поправимо
@@ -290,3 +304,138 @@ def part_image_delete(request, pk):
     deactivate_image(image)
     messages.success(request, "Фото удалено.")
     return redirect("part_detail", pk=part_pk)
+# --- Аналоги ------------------------------------------------------------------
+
+
+def _analog_context(part, request):
+    """Что показывает карточка про аналоги, одинаково для обеих сторон."""
+    return {
+        "analog_rows": analog_rows(part, direction="analogs"),
+        "original_rows": analog_rows(part, direction="originals"),
+    }
+
+
+@login_required
+def analog_add(request, pk):
+    """Один экран на два случая: связать уже заведённую деталь или создать новую.
+
+    Разделять их на два экрана значило бы заставлять человека заранее знать,
+    есть такая деталь в системе или нет. Он этого не знает - именно поэтому и
+    пришёл сюда.
+    """
+    _require_parts(request)
+    original = get_object_or_404(PartType, pk=pk)
+    query = (request.GET.get("q") or "").strip()
+
+    if request.method == "POST":
+        link_pk = (request.POST.get("link_part") or "").strip()
+        if link_pk.isdigit():
+            candidate = get_object_or_404(PartType, pk=int(link_pk))
+            try:
+                _, created = link_analog(
+                    original=original, analog=candidate, by=request.user
+                )
+            except AnalogLinkError as exc:
+                messages.error(request, str(exc))
+                back = reverse("part_analog_add", args=[original.pk])
+                return redirect(f"{back}?q={quote(query)}" if query else back)
+            messages.success(
+                request,
+                f"«{candidate.name}» отмечена как аналог."
+                if created else f"«{candidate.name}» уже была отмечена как аналог.",
+            )
+            return redirect("part_detail", pk=original.pk)
+
+        form = ManualPartForm(request.POST, with_manufacturer=True)
+        if form.is_valid():
+            if form.needs_duplicate_confirmation():
+                return render(
+                    request, "catalog/part_analog_add.html",
+                    _add_page_context(original, form, query, request),
+                )
+            try:
+                analog = create_analog_part(
+                    original=original,
+                    name=form.cleaned_data["name"],
+                    article=form.cleaned_data["article"],
+                    price=form.cleaned_data["price"],
+                    barcode=form.cleaned_data["barcode"],
+                    manufacturer_name=form.cleaned_data.get("manufacturer_name", ""),
+                    by=request.user,
+                )
+            except (ManualPartError, AnalogLinkError) as exc:
+                form.add_error(None, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f"Аналог «{analog.name}» добавлен."
+                    " Остатка на складе у него пока нет: он появится после приёмки.",
+                )
+                return redirect("part_detail", pk=original.pk)
+    else:
+        form = ManualPartForm(with_manufacturer=True)
+
+    return render(
+        request, "catalog/part_analog_add.html",
+        _add_page_context(original, form, query, request),
+    )
+
+
+def _add_page_context(original, form, query, request):
+    """Поиск уже заведённых деталей плюс короткая форма создания."""
+    found = []
+    if len(query) >= 2:
+        lookup = resolve_part_lookup(
+            query, allow_partial=True, allow_name=True, allow_alias=True,
+            include_price=True,
+        )
+        linked_ids = set(
+            PartAnalog.objects.filter(original=original).values_list("analog_id", flat=True)
+        )
+        # Деталь, для которой наша уже числится аналогом. Связать её «вниз»
+        # нельзя: это тот же факт с другой стороны. Лучше сказать об этом до
+        # нажатия, чем отказом после.
+        parent_ids = set(
+            PartAnalog.objects.filter(analog=original).values_list("original_id", flat=True)
+        )
+        for candidate in lookup.candidates:
+            if candidate.part.pk == original.pk:
+                continue
+            found.append({
+                "part": candidate.part,
+                "exact_number": candidate.exact_number,
+                "manufacturer": candidate.manufacturer,
+                "price": candidate.client_price,
+                "available": candidate.available,
+                "already": candidate.part.pk in linked_ids,
+                "is_parent": candidate.part.pk in parent_ids,
+            })
+    return {
+        "title": "Добавить аналог",
+        "original": original,
+        "form": form,
+        "q": query,
+        "found": found,
+        "duplicates": getattr(form, "duplicates", []),
+    }
+
+
+@login_required
+@require_POST
+def analog_unlink(request, pk):
+    """Снять связь. Сама деталь остаётся: это отдельная складская карточка."""
+    _require_parts(request)
+    link = get_object_or_404(
+        PartAnalog.objects.select_related("original", "analog"), pk=pk
+    )
+    original_pk = link.original_id
+    back = (request.POST.get("back") or "").strip()
+    name = link.analog.name
+    unlink_analog(link)
+    messages.success(
+        request,
+        f"«{name}» больше не отмечена как аналог. Сама деталь осталась в каталоге.",
+    )
+    if back.isdigit():
+        return redirect("part_detail", pk=int(back))
+    return redirect("part_detail", pk=original_pk)

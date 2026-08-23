@@ -15,7 +15,7 @@ from .models import (
     VehicleModel,
     VehicleType,
 )
-from .services import find_parts_by_article
+from .services import ManualPartError, assert_barcode_is_free, find_parts_by_article
 
 
 class CategoryForm(forms.ModelForm):
@@ -185,14 +185,44 @@ class ManualPartForm(forms.Form):
             attrs={"inputmode": "decimal", "step": "0.01", "class": "form-control"}
         ),
     )
+    manufacturer_name = forms.CharField(
+        label="Производитель",
+        max_length=150,
+        required=False,
+        help_text="Необязательно. У аналога это часто единственное, чем он"
+                  " отличается от исходной детали на бумаге.",
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "placeholder": "Например: XYZ"}
+        ),
+    )
+    barcode = forms.CharField(
+        label="Штрихкод",
+        max_length=100,
+        required=False,
+        help_text="Необязательно. Отсканируйте прямо с коробки: потом её может"
+                  " не оказаться под рукой.",
+        widget=forms.TextInput(
+            attrs={"class": "form-control", "autocomplete": "off",
+                   "autocorrect": "off", "autocapitalize": "off",
+                   "spellcheck": "false", "placeholder": "Считайте сканером"}
+        ),
+    )
     # Артикулы не уникальны и уникальными быть не могут, поэтому совпадение не
     # запрещается, а показывается: почти всегда оператору нужна уже заведённая
     # деталь, а не вторая такая же.
     confirm_duplicate = forms.BooleanField(required=False, widget=forms.HiddenInput)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, with_manufacturer: bool = False, **kwargs):
+        """Производитель спрашивается только у аналога.
+
+        У обычной детали он почти всегда очевиден из названия и только удлиняет
+        форму. У аналога наоборот: артикул часто совпадает с исходной деталью, и
+        завод - единственное, чем они различаются на бумаге.
+        """
         super().__init__(*args, **kwargs)
         self.duplicates = []
+        if not with_manufacturer:
+            self.fields.pop("manufacturer_name")
 
     def clean_name(self):
         # Лишние пробелы схлопываются: иначе «Ремень» и «Ремень  » выглядят на
@@ -204,6 +234,23 @@ class ManualPartForm(forms.Form):
 
     def clean_article(self):
         return self.cleaned_data["article"].strip()
+
+    def clean_barcode(self):
+        """Штрихкод в модели уникален, поэтому занятый ловится сразу в поле.
+
+        Так человек видит причину рядом с тем, что набрал, а не общим
+        сообщением над формой.
+        """
+        value = self.cleaned_data["barcode"].strip()
+        if value:
+            try:
+                assert_barcode_is_free(value)
+            except ManualPartError as exc:
+                raise ValidationError(str(exc)) from exc
+        return value
+
+    def clean_manufacturer_name(self):
+        return " ".join(self.cleaned_data["manufacturer_name"].split())
 
     def clean(self):
         cleaned = super().clean()

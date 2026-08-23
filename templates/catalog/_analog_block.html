@@ -1,0 +1,62 @@
+{% comment %}
+  Блок аналогов на карточке детали. Используется в обе стороны.
+
+  Параметры:
+    rows      - строки из analog_rows();
+    heading   - заголовок блока;
+    empty     - что написать, когда связей нет;
+    part      - деталь, чья это карточка (нужна для возврата после снятия);
+    can_unlink - показывать ли «Убрать связь».
+
+  Главный вопрос оператора у прилавка - «есть ли аналог и лежит ли он сейчас на
+  складе». Поэтому наличие стоит в строке, а не за ссылкой.
+{% endcomment %}
+{% if rows %}
+  <h2>{{ heading }}</h2>
+  <table class="table table--compact">
+    <thead>
+      <tr>
+        <th>Деталь</th>
+        <th>Артикул</th>
+        <th>Производитель</th>
+        <th class="num--money">Цена (₽)</th>
+        <th class="num--qty">На складе</th>
+        {% if can_unlink %}<th class="table__actions"></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td><a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a></td>
+          <td>{{ row.exact_number|default:"·" }}</td>
+          <td class="muted">{{ row.manufacturer|default:"·" }}</td>
+          <td class="num--money">
+            {% if row.price is not None %}{{ row.price|money_int }}{% else %}не указана{% endif %}
+          </td>
+          <td class="num--qty">
+            {% if row.available %}
+              <strong>{{ row.available|quantity_int }}</strong>
+              {% if row.locations %}<span class="muted">· {{ row.locations|join:", " }}</span>{% endif %}
+            {% else %}
+              <span class="muted">нет</span>
+            {% endif %}
+          </td>
+          {% if can_unlink %}
+            <td class="table__actions">
+              <form method="post"
+                    action="{% url 'part_analog_unlink' row.link.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="back" value="{{ part.pk }}">
+                <button type="submit" class="btn btn--small btn--ghost">Убрать связь</button>
+              </form>
+            </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% elif empty %}
+  <h2>{{ heading }}</h2>
+  <p class="muted">{{ empty }}</p>
+{% endif %}

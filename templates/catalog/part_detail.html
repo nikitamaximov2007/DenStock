@@ -77,6 +77,17 @@
       {% endif %}
     </tbody>
   </table>
+
+  {% include "catalog/_analog_block.html" with rows=analog_rows heading="Аналоги" part=part can_unlink=can_manage empty="Аналоги не отмечены." %}
+  {% if can_manage %}
+    <p>
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'part_analog_add' part.pk %}">Добавить аналог</a>
+    </p>
+  {% endif %}
+
+  {% include "catalog/_analog_block.html" with rows=original_rows heading="Аналог для" part=part can_unlink=can_manage empty="" %}
+
   <h2>Номера</h2>
   <ul>
     {% for n in numbers %}

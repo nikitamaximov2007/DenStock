@@ -130,9 +130,23 @@ def test_a_part_is_created_even_when_no_category_exists(boss, db):
 # --- Обычный сценарий -----------------------------------------------------------------
 
 
-def test_the_form_asks_for_exactly_three_things(db):
+def test_the_form_stays_short(db):
+    """Четыре поля, из них обязательно одно.
+
+    Штрихкод добавлен намеренно: разбор показал, что коробка у оператора в
+    руках именно в момент заведения, а отдельным шагом штрихкод почти никогда
+    не доходит до карточки. Производителя здесь нет - он спрашивается только у
+    аналога, где артикул совпадает с исходной деталью и завод остаётся
+    единственным отличием.
+    """
     visible = [field.name for field in ManualPartForm().visible_fields()]
-    assert visible == ["name", "article", "price"]
+    assert visible == ["name", "article", "price", "barcode"]
+    assert "manufacturer_name" not in visible
+
+
+def test_the_analog_form_also_asks_the_manufacturer(db):
+    visible = [field.name for field in ManualPartForm(with_manufacturer=True).visible_fields()]
+    assert visible == ["name", "article", "price", "manufacturer_name", "barcode"]
 
 
 def test_the_operator_fills_three_fields_and_gets_a_part(boss, db):

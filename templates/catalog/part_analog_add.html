@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Аналог для «{{ original.name }}»</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'part_detail' original.pk %}">К детали</a>
+    </div>
+  </div>
+
+  <p class="muted">
+    Аналог - отдельная деталь со своим остатком, ценой и штрихкодом. Артикул у
+    него часто тот же, что у исходной детали: на коробке пишут номер, подо что
+    деталь сделана. Одинаковый номер не делает их одной деталью.
+  </p>
+
+  {% comment %}
+    Сначала поиск уже заведённых деталей, потом создание. Порядок важен: почти
+    всегда нужная деталь в каталоге уже есть, и заводить вторую не надо.
+  {% endcomment %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Найти уже заведённую деталь</h2>
+    </div>
+    <div class="card__body">
+      <form method="get" class="search-form">
+        <input type="text" name="q" value="{{ q }}" class="form-control"
+               placeholder="Название или артикул" autocomplete="off"
+               autocorrect="off" autocapitalize="off" spellcheck="false">
+        <button type="submit" class="btn btn--secondary">Найти</button>
+      </form>
+
+      {% if q and not found %}
+        <p class="muted">По запросу «{{ q }}» ничего не нашлось. Заведите деталь ниже.</p>
+      {% endif %}
+
+      {% if found %}
+        <table class="table table--compact">
+          <thead>
+            <tr>
+              <th>Деталь</th>
+              <th>Артикул</th>
+              <th>Производитель</th>
+              <th class="num--money">Цена (₽)</th>
+              <th class="num--qty">На складе</th>
+              <th class="table__actions"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in found %}
+              <tr>
+                <td><a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a></td>
+                <td>{{ row.exact_number|default:"·" }}</td>
+                <td class="muted">{{ row.manufacturer|default:"·" }}</td>
+                <td class="num--money">
+                  {% if row.price is not None %}{{ row.price|money_int }}{% else %}не указана{% endif %}
+                </td>
+                <td class="num--qty">
+                  {% if row.available %}
+                    <strong>{{ row.available|quantity_int }}</strong>
+                  {% else %}
+                    <span class="muted">нет</span>
+                  {% endif %}
+                </td>
+                <td class="table__actions">
+                  {% if row.already %}
+                    <span class="muted">уже аналог</span>
+                  {% elif row.is_parent %}
+                    <span class="muted">это исходная деталь</span>
+                  {% else %}
+                    <form method="post" class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="link_part" value="{{ row.part.pk }}">
+                      <button type="submit" class="btn btn--small btn--primary">Связать</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="muted">
+          Если одинаковых артикулов несколько, выбирайте по производителю, цене
+          и наличию: это разные детали.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% for error in form.non_field_errors %}
+    {% include "partials/_status_block.html" with kind="error" text=error %}
+  {% endfor %}
+
+  {% if duplicates %}
+    {% include "partials/_status_block.html" with kind="warning" text="Деталь с таким артикулом уже есть. Для аналога это нормально, но проверьте список выше: возможно, нужна именно она." %}
+  {% endif %}
+
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Или завести новую</h2>
+    </div>
+    <div class="card__body">
+      <form method="post" class="form">
+        {% csrf_token %}
+        {% for field in form.visible_fields %}
+          <div class="field">
+            <label class="field__label{% if field.field.required %} field__label--required{% endif %}"
+                   for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% if field.help_text %}<p class="field__hint">{{ field.help_text }}</p>{% endif %}
+            {% for error in field.errors %}<p class="field__error">{{ error }}</p>{% endfor %}
+          </div>
+        {% endfor %}
+        <div class="form-actions">
+          {% if duplicates %}
+            <button type="submit" class="btn btn--primary"
+                    name="confirm_duplicate" value="1">Всё равно создать</button>
+          {% else %}
+            <button type="submit" class="btn btn--primary">Создать аналог</button>
+          {% endif %}
+          <a class="btn btn--ghost" href="{% url 'part_detail' original.pk %}">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <p class="muted">
+    Новая карточка сразу находится поиском. Остатка на складе она не создаёт: он
+    появится, когда деталь примут на склад.
+  </p>
+{% endblock %}
