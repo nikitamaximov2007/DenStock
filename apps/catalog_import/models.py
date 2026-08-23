@@ -23,6 +23,7 @@ class CatalogImportBatch(models.Model):
 
     class Catalog(models.TextChoices):
         BRP = "brp", "BRP"
+        ANALOGS = "analogs", "Аналоги"
 
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "Загружен"

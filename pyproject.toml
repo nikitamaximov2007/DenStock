@@ -55,4 +55,5 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
     "postgresql: integration tests that require an explicit staging PostgreSQL DATABASE_URL",
+    "slow: large synthetic data; kept in the suite but easy to deselect while working",
 ]

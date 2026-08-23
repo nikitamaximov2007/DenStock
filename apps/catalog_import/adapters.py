@@ -19,6 +19,7 @@ from pathlib import Path
 from django.db.models import Max
 
 BRP = "brp"
+ANALOGS = "analogs"
 
 
 class CatalogAdapterError(RuntimeError):
@@ -171,7 +172,59 @@ def inspect_workbook(path, *, sample_rows: int = 5) -> dict:
         workbook.close()
 
 
-ADAPTERS: dict[str, CatalogAdapter] = {BRP: BrpCatalogAdapter()}
+class AnalogCatalogAdapter(CatalogAdapter):
+    """Каталог аналогов: связывает уже заведённые детали и заводит недостающие.
+
+    Разбор живёт отдельным модулем, адаптер только соединяет его с общим
+    рабочим процессом: проверка, предпросмотр, применение, защита от устаревшего
+    предпросмотра. Второй такой процесс не заводится.
+    """
+
+    key = ANALOGS
+    label = "Аналоги"
+
+    def check(self, path: Path) -> dict:
+        from apps.catalog_import.analog_catalog import AnalogCatalogError, build_plan
+
+        try:
+            return build_plan(path).as_summary()
+        except AnalogCatalogError as exc:
+            raise CatalogAdapterError(str(exc)) from exc
+
+    def apply(self, path: Path) -> dict:
+        from apps.catalog_import.analog_catalog import AnalogCatalogError, apply_file
+
+        try:
+            return apply_file(path)
+        except AnalogCatalogError as exc:
+            raise CatalogAdapterError(str(exc)) from exc
+
+    def fingerprint(self) -> str:
+        from apps.catalog_import.analog_catalog import catalog_fingerprint
+
+        return catalog_fingerprint()
+
+    def validation_error(self, summary: dict) -> str | None:
+        """Спорные строки применение не блокируют.
+
+        Из-за трёх неоднозначных строк не должно срываться заведение остальной
+        тысячи: они пропускаются и остаются в сводке. Блокировать имеет смысл
+        только файл, в котором применять нечего вовсе.
+        """
+        useful = int(summary.get("will_create_links", 0) or 0)
+        reused = int(summary.get("already_linked", 0) or 0)
+        if useful == 0 and reused == 0:
+            return (
+                "В файле нет ни одной строки, которую можно применить. "
+                "Проверьте колонки и артикулы исходных деталей."
+            )
+        return None
+
+
+ADAPTERS: dict[str, CatalogAdapter] = {
+    BRP: BrpCatalogAdapter(),
+    ANALOGS: AnalogCatalogAdapter(),
+}
 
 
 def get_adapter(catalog: str) -> CatalogAdapter:
