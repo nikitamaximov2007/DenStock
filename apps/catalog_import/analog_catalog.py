@@ -305,7 +305,7 @@ def _clean_price(value: str):
     try:
         price = Decimal(text)
     except (InvalidOperation, ValueError) as exc:
-        raise AnalogCatalogError(f"«{value}» не число") from exc
+        raise AnalogCatalogError(f"«{value}» - это не число") from exc
     if not price.is_finite() or price < 0:
         raise AnalogCatalogError(f"«{value}» не может быть ценой")
     return price.quantize(Decimal("0.01"))

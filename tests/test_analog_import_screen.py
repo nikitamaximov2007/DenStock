@@ -238,6 +238,34 @@ def test_the_screen_warns_that_the_same_file_was_already_applied(boss, original)
     assert "применял" in body.lower() or "уже" in body.lower()
 
 
+def test_the_screen_does_not_promise_a_deletion_that_will_not_happen(boss, original):
+    """Найдено при осмотре: экран показывал предупреждение от прайса поставщика.
+
+    Там файл считается полным срезом, и позиции вне его перестают быть
+    текущими. Каталог аналогов так не работает вовсе, и обещать это значило бы
+    пугать человека несуществующим удалением.
+    """
+    send(boss, [["SAME-001", "ALT-002", "Поршень XYZ", "4500", "XYZ", ""]])
+    batch = CatalogImportBatch.objects.get()
+
+    body = boss.get(reverse("catalog_import_detail", args=[batch.pk])).content.decode()
+
+    assert "перестанут использоваться" not in body
+    assert "полным актуальным каталогом" not in body
+    assert "Ничего не удаляется" in body
+
+
+def test_the_supplier_price_keeps_its_own_warning(boss, original):
+    """Проверка проверки: у прайса предупреждение обязано остаться."""
+    batch = CatalogImportBatch.objects.create(
+        catalog=CatalogImportBatch.Catalog.BRP,
+        status=CatalogImportBatch.Status.CHECKED,
+        source_filename="brp.xlsx", source_sha256="0" * 64,
+    )
+    body = boss.get(reverse("catalog_import_detail", args=[batch.pk])).content.decode()
+    assert "полным актуальным каталогом" in body
+
+
 def test_the_applied_summary_says_what_happened(boss, original):
     send(boss, [["SAME-001", "ALT-002", "Поршень XYZ", "4500", "XYZ", ""]])
     batch = CatalogImportBatch.objects.get()
