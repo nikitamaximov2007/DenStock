@@ -13,7 +13,16 @@ from apps.polaris.services import find_polaris_price_source
 from apps.procurement.models import money
 from apps.warehouse.models import ValuationSettings
 
-from .models import Category, PartNumber, PartType, Unit, normalize_number
+from .models import (
+    Category,
+    Manufacturer,
+    PartAnalog,
+    PartBarcode,
+    PartNumber,
+    PartType,
+    Unit,
+    normalize_number,
+)
 
 
 @dataclass(frozen=True)
@@ -281,7 +290,10 @@ def clean_manual_price(value) -> Decimal | None:
 
 
 @transaction.atomic
-def create_manual_part(*, name: str, article: str = "", price=None) -> PartType:
+def create_manual_part(
+    *, name: str, article: str = "", price=None, barcode: str = "",
+    manufacturer_name: str = "",
+) -> PartType:
     """Завести карточку детали вручную. Остатков НЕ создаёт.
 
     Повторяет то, что делает продвижение позиции из каталога поставщика:
@@ -291,20 +303,31 @@ def create_manual_part(*, name: str, article: str = "", price=None) -> PartType:
 
     Артикул необязателен, потому что необязателен и в модели. Без него деталь
     будет находиться только по названию.
+
+    Штрихкод спрашивается здесь же, потому что коробка у оператора в руках
+    именно сейчас. Отдельным шагом он почти никогда не доходит до карточки, и
+    деталь остаётся неотсканируемой.
     """
     clean_name = " ".join((name or "").split())
     if not clean_name:
         raise ManualPartError("Укажите название детали.")
 
     clean_article = (article or "").strip()
+    clean_barcode = (barcode or "").strip()
     recommended = clean_manual_price(price)
+    assert_barcode_is_free(clean_barcode)
 
     category, _ = Category.objects.get_or_create(
         name=MANUAL_CATEGORY_NAME, parent=None, defaults={"sort_order": 100}
     )
+    manufacturer = None
+    clean_manufacturer = " ".join((manufacturer_name or "").split())
+    if clean_manufacturer:
+        manufacturer, _ = Manufacturer.objects.get_or_create(name=clean_manufacturer[:150])
     part = PartType.objects.create(
         name=clean_name[:200],
         category=category,
+        manufacturer=manufacturer,
         unit=_manual_unit(),
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=recommended,
@@ -318,4 +341,157 @@ def create_manual_part(*, name: str, article: str = "", price=None) -> PartType:
             kind=PartNumber.Kind.ARTICLE,
             is_primary=True,
         )
+    if clean_barcode:
+        PartBarcode.objects.create(part=part, value=clean_barcode[:100])
+    return part
+def assert_barcode_is_free(barcode: str) -> None:
+    """Штрихкод в модели уникален. Занятый - повод показать, кем именно.
+
+    Оператору бесполезно сообщение «такое значение уже есть»: ему нужно знать,
+    на какой детали оно висит, чтобы понять, ту ли коробку он держит.
+    """
+    value = (barcode or "").strip()
+    if not value:
+        return
+    taken = PartBarcode.objects.select_related("part").filter(value=value).first()
+    if taken is not None:
+        raise ManualPartError(
+            f"Штрихкод {value} уже стоит на детали «{taken.part.name}». "
+            "Проверьте, не эта ли деталь у вас в руках."
+        )
+
+
+# --- Аналоги ------------------------------------------------------------------
+
+
+class AnalogLinkError(ValueError):
+    """Понятная человеку причина, по которой связь не создана."""
+
+
+@transaction.atomic
+def link_analog(*, original: PartType, analog: PartType, note: str = "", by=None):
+    """Отметить одну деталь аналогом другой. Возвращает пару (связь, создана).
+
+    Повторный вызов ничего не удваивает: это нужно и оператору, который нажал
+    дважды, и импорту каталога, который могут запустить тем же файлом.
+    """
+    if original.pk == analog.pk:
+        raise AnalogLinkError("Деталь не может быть аналогом самой себя.")
+
+    reverse = PartAnalog.objects.filter(original=analog, analog=original).first()
+    if reverse is not None:
+        # Тот же факт с другой стороны. Вторая запись показала бы одну и ту же
+        # пару и в «Аналогах», и в «Аналог для», и человек решил бы, что это
+        # разные связи.
+        raise AnalogLinkError(
+            f"«{original.name}» уже отмечена как аналог детали «{analog.name}». "
+            "Обратная связь заводится отдельно только вместе со снятием прежней."
+        )
+
+    link, created = PartAnalog.objects.get_or_create(
+        original=original,
+        analog=analog,
+        defaults={"note": (note or "").strip()[:255], "created_by": by},
+    )
+    return link, created
+
+
+def unlink_analog(link: PartAnalog) -> None:
+    """Снять связь. Сами детали остаются: это отдельные складские карточки."""
+    link.delete()
+
+
+def analog_links_of(part: PartType):
+    """Связи, где деталь выступает исходной: её аналоги."""
+    return (
+        PartAnalog.objects.filter(original=part)
+        .select_related("analog", "analog__category", "analog__manufacturer")
+    )
+
+
+def original_links_of(part: PartType):
+    """Связи, где деталь выступает аналогом: для чего она подходит."""
+    return (
+        PartAnalog.objects.filter(analog=part)
+        .select_related("original", "original__category", "original__manufacturer")
+    )
+
+
+def analog_rows(part: PartType, *, direction: str = "analogs") -> list[dict]:
+    """Строки для карточки: деталь, артикул, цена и сколько сейчас на складе.
+
+    Наличие считается тем же способом, что и в поиске, и одним запросом на все
+    строки сразу: карточка с двумя десятками аналогов не должна превращаться в
+    два десятка обращений к базе.
+    """
+    from decimal import Decimal
+
+    from apps.inventory.movement import live_stock_rows
+    from apps.inventory.presentation import (
+        manufacturer_display,
+        part_exact_number,
+        with_part_identity,
+    )
+
+    links = list(
+        analog_links_of(part) if direction == "analogs" else original_links_of(part)
+    )
+    if not links:
+        return []
+
+    other_ids = [
+        (link.analog_id if direction == "analogs" else link.original_id) for link in links
+    ]
+    # Номера подтягиваются одним prefetch на весь набор: точный артикул иначе
+    # стоил бы запроса на каждую строку.
+    by_id = {
+        item.pk: item
+        for item in with_part_identity(
+            PartType.objects.filter(pk__in=other_ids).select_related(
+                "category", "manufacturer"
+            ),
+            part_field="",
+        )
+    }
+
+    stock: dict[int, list] = {}
+    for row in live_stock_rows(part_ids=other_ids):
+        stock.setdefault(row.part_type.pk, []).append(row)
+
+    zero = Decimal("0")
+    rows = []
+    for link, other_id in zip(links, other_ids, strict=True):
+        item = by_id.get(other_id)
+        if item is None:
+            continue
+        locations = stock.get(other_id, [])
+        rows.append({
+            "link": link,
+            "part": item,
+            "exact_number": part_exact_number(item, default=""),
+            "manufacturer": manufacturer_display(item),
+            "price": item.recommended_price,
+            "available": sum((row.available for row in locations), zero),
+            "locations": [row.location.code for row in locations],
+            "note": link.note,
+        })
+    return rows
+
+
+@transaction.atomic
+def create_analog_part(
+    *, original: PartType, name: str, article: str = "", price=None,
+    barcode: str = "", manufacturer_name: str = "", note: str = "", by=None,
+) -> PartType:
+    """Завести новую деталь и сразу отметить её аналогом исходной.
+
+    Карточка создаётся тем же путём, что и любая ручная деталь: второй копии
+    этой логики нет. Обе записи в одной транзакции - иначе появилась бы деталь
+    без связи, а человек считал бы, что ничего не произошло.
+    """
+    part = create_manual_part(
+        name=name, article=article, price=price,
+        barcode=barcode, manufacturer_name=manufacturer_name,
+    )
+    link_analog(original=original, analog=part, note=note, by=by)
     return part

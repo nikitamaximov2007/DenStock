@@ -1,5 +1,6 @@
 import re
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -308,3 +309,55 @@ class PartCompatibility(models.Model):
 
     def __str__(self) -> str:
         return f"{self.part} ↔ {self.vehicle_model}"
+class PartAnalog(models.Model):
+    """«Эта деталь - аналог вот этой»: две отдельные складские карточки.
+
+    Не путать с номером вида «Аналог» у самой детали. Тот означает, что ОДНУ И
+    ТУ ЖЕ деталь могут спросить под другим номером, и никакой второй карточки
+    за ним нет. Здесь связаны разные карточки, у каждой свои остатки, партии,
+    цена, штрихкоды и история.
+
+    Артикул здесь ничего не решает. У аналога он часто совпадает с исходной
+    деталью: на коробке пишут номер, под который деталь сделана. Одинаковый
+    номер не делает две детали одной, поэтому уникальности по артикулу нет и
+    быть не может.
+
+    Связь направленная: «аналог для исходной». У одной исходной детали может
+    быть много аналогов, и один аналог может подходить к нескольким исходным.
+    Обратное направление отдельной записью не заводится: это тот же факт с
+    другой стороны, и на экранах он показывается сам.
+    """
+
+    original = models.ForeignKey(
+        PartType, verbose_name="Исходная деталь",
+        on_delete=models.CASCADE, related_name="analog_links",
+    )
+    analog = models.ForeignKey(
+        PartType, verbose_name="Аналог",
+        on_delete=models.CASCADE, related_name="original_links",
+    )
+    note = models.CharField("Примечание", max_length=255, blank=True)
+    created_at = models.DateTimeField("Создана", auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто связал",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Связь аналога"
+        verbose_name_plural = "Связи аналогов"
+        ordering = ["analog__name", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["original", "analog"], name="uniq_part_analog_pair"
+            ),
+            # Деталь не может быть аналогом самой себя. Проверка стоит в базе,
+            # потому что связь заводится не только из формы.
+            models.CheckConstraint(
+                condition=~models.Q(original=models.F("analog")),
+                name="part_analog_not_self",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.analog} — аналог {self.original}"
