@@ -50,6 +50,25 @@ SUMMARY_ROWS = (
     ("with_replacement", "С заменой номера"),
 )
 
+# Каталог аналогов: свои счётчики, свои подписи. Общий список не годится -
+# он говорит о прайсе поставщика, а здесь речь о связях между деталями.
+ANALOG_SUMMARY_ROWS = (
+    ("rows_total", "Строк в файле"),
+    ("will_create_parts", "Новых деталей"),
+    ("will_reuse_parts", "Уже заведённых деталей"),
+    ("will_create_links", "Новых связей"),
+    ("already_linked", "Связи уже есть"),
+    ("needs_attention", "Требуют внимания"),
+)
+ANALOG_APPLY_ROWS = (
+    ("rows_total", "Строк в файле"),
+    ("created_parts", "Заведено деталей"),
+    ("reused_parts", "Переиспользовано деталей"),
+    ("created_links", "Создано связей"),
+    ("already_linked", "Связи уже были"),
+    ("skipped", "Пропущено строк"),
+)
+
 
 # Счётчики строки истории, в порядке колонок таблицы. Держатся здесь, а не в
 # шаблоне, потому что «ключа нет» и «ключ равен нулю» это разные утверждения, и
@@ -117,11 +136,14 @@ def _summary_rows(summary: dict, *, applied: bool) -> list:
     Раньше недостающие ключи подставлялись нулём, и коррекция выглядела так,
     будто она пересчитала весь каталог и ничего не нашла.
     """
-    layout = (
-        CORRECTION_SUMMARY_ROWS
-        if summary.get("kind") == CORRECTION_KIND
-        else SUMMARY_ROWS
-    )
+    if "rows_total" in summary and (
+        "will_create_links" in summary or "created_links" in summary
+    ):
+        layout = ANALOG_APPLY_ROWS if applied else ANALOG_SUMMARY_ROWS
+    elif summary.get("kind") == CORRECTION_KIND:
+        layout = CORRECTION_SUMMARY_ROWS
+    else:
+        layout = SUMMARY_ROWS
     rows = []
     for key, label in layout:
         if key not in summary:
@@ -213,6 +235,10 @@ def import_detail(request, pk):
             "summary_rows": _summary_rows(summary, applied=batch.is_applied),
             "status_rows": _status_rows(summary),
             "already_applied": previous_applied(batch),
+            # Спорные строки перечисляются с номерами: только так их можно
+            # найти в самом файле и исправить.
+            "problem_rows": summary.get("problems") or [],
+            "problems_total": summary.get("problems_total") or 0,
         },
     )
 

@@ -85,6 +85,37 @@
           </tbody>
         </table>
       {% endif %}
+      {% if problem_rows %}
+        <h3 class="card__title">Строки, требующие внимания</h3>
+        <p class="muted">
+          Эти строки не применяются. Номер указывает на строку в самом файле:
+          исправьте её и загрузите файл заново. Остальные строки применятся
+          независимо от этих.
+        </p>
+        <table class="table table--compact">
+          <thead>
+            <tr>
+              <th class="num">Строка</th>
+              <th>Что не так</th>
+              <th>Подробности</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in problem_rows %}
+              <tr>
+                <td class="num">{{ row.row }}</td>
+                <td>{{ row.reason }}</td>
+                <td class="muted">{{ row.detail|default:"·" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% if problems_total > problem_rows|length %}
+          <p class="muted">
+            Показаны первые {{ problem_rows|length }} из {{ problems_total }}.
+          </p>
+        {% endif %}
+      {% endif %}
       {% if status_rows %}
         <h3 class="card__title">Статусы поставщика</h3>
         <table class="table">
