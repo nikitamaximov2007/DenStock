@@ -20,6 +20,7 @@ from django.urls import NoReverseMatch, reverse
 
 from apps.ai_support.knowledge.index import SOURCES, retrieve
 from apps.catalog.forms import ManualPartForm
+from apps.catalog.models import PartAnalog
 
 ROOT = Path(__file__).resolve().parents[1]
 KNOWLEDGE = ROOT / "docs" / "ai-support"
@@ -36,6 +37,8 @@ NEW_QUESTIONS = (
     ("Как добавить деталь, которой нет в каталоге?", "search-parts"),
     ("Нужно завести новую деталь, что делать?", "search-parts"),
     ("Не нашёл деталь в базе, как её создать?", "search-parts"),
+    ("Как добавить аналог детали?", "search-parts"),
+    ("Как импортировать каталог аналогов?", "search-parts"),
     ("Сколько нам стоили детали, выданные клиенту в ремонт?", "reports"),
     ("Где посмотреть себестоимость деталей в ремонте?", "reports"),
     ("Как узнать клиентскую цену детали?", "pricing"),
@@ -85,6 +88,18 @@ def test_the_knowledge_still_says_that_a_card_is_not_stock():
 def test_the_knowledge_explains_that_a_matching_number_is_not_a_refusal():
     body = text_of("search-and-parts.md")
     assert "Всё равно создать" in body
+
+
+def test_the_knowledge_describes_analog_cards_and_the_real_import_flow():
+    body = text_of("search-and-parts.md")
+
+    assert "Добавить аналог" in body
+    assert "Импорт каталога" in body
+    assert "Применить импорт" in body
+    assert "остатки, лоты, ячейки, движения" in body
+    assert PartAnalog._meta.get_field("original").related_model.__name__ == "PartType"
+    assert reverse("part_analog_add", args=[1]) == "/parts/1/analogs/add/"
+    assert reverse("catalog_import_list") == "/directories/catalog-import/"
 
 
 # --- Деньги в отчётах ------------------------------------------------------------
