@@ -29,6 +29,8 @@ from apps.repairs.services import (
     create_repair_order,
 )
 from apps.reports.services import get_client_part_history, resolve_period
+from apps.returns.models import StockReturnLine
+from apps.returns.services import add_repair_line_return, complete_return, create_return
 from apps.sales.models import Sale
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
@@ -155,6 +157,29 @@ def test_sales_detail_does_not_show_document_numbers(client, data, admin):
     body = _sales_detail(client, customer).content.decode()
     assert sale.number not in body, "номер документа снова стал главным элементом"
     assert "Болт" in body
+
+
+def test_client_history_uses_net_repair_quantity_after_return(data):
+    order = _repair(data, name="Иванов", items=(("belt", 3),))
+    repair_line = order.lines.get()
+    returned = create_return(source=order, by=data["admin"])
+    add_repair_line_return(
+        returned,
+        repair_line,
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    complete_return(returned, by=data["admin"])
+
+    rows = get_client_part_history(resolve_period({}), customer_name="Иванов")
+
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "repair"
+    assert rows[0]["quantity"] == Decimal("2")
+    assert rows[0]["amount"] == Decimal("1000.00")
+    assert rows[0]["cost"] == Decimal("200.00")
 
 
 # --- B: дата слева ------------------------------------------------------------------------

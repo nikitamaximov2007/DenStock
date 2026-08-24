@@ -222,8 +222,8 @@ def sales_by_client_detail(request):
 def clients_overview(request):
     """Продажи и ремонты по клиентам в одной таблице.
 
-    Денежные колонки раздельные: выручка продаж и себестоимость выданного в
-    ремонт это разные величины, общего итога у них нет.
+    Итог с клиента складывает продажи и историческую стоимость деталей в
+    ремонтах. Себестоимость остаётся отдельной ограниченной величиной.
     """
     _require_reports(request)
     period = resolve_period(request.GET)
@@ -251,12 +251,14 @@ def client_timeline(request):
     _require_reports(request)
     period = resolve_period(request.GET)
     customer_name, missing, customer_id = _customer_selection(request)
-    page_obj, is_paginated = _paginate(
-        request,
-        get_client_part_history(
-            period, customer_name=customer_name, missing=missing, customer_id=customer_id
-        ),
+    history = get_client_part_history(
+        period, customer_name=customer_name, missing=missing, customer_id=customer_id
     )
+    page_obj, is_paginated = _paginate(request, history)
+    sales_total = sum((row["amount"] or 0) for row in history if row["kind"] == "sale")
+    repair_rows = [row for row in history if row["kind"] == "repair"]
+    repair_unknown = any(row["amount"] is None for row in repair_rows)
+    repair_total = sum((row["amount"] or 0) for row in repair_rows)
     return render(
         request,
         "reports/client_timeline.html",
@@ -270,6 +272,12 @@ def client_timeline(request):
             "is_paginated": is_paginated,
             "show_money": True,
             "show_costs": request.user.can_view_purchase_cost,
+            "client_summary": {
+                "sales": sales_total,
+                "repairs": repair_total,
+                "total": sales_total + repair_total,
+                "unknown": repair_unknown,
+            },
         },
     )
 
@@ -318,11 +326,14 @@ def repairs_by_client_detail(request):
         ),
     )
     page_obj.object_list = attach_line_part_identity(page_obj.object_list)
-    from apps.repairs.services import repair_customer_line_amounts
+    from apps.repairs.services import repair_customer_line_amounts, repair_returned_quantities
 
     amounts = repair_customer_line_amounts(page_obj.object_list)
+    returned = repair_returned_quantities(page_obj.object_list)
     for line in page_obj.object_list:
+        line.net_quantity = max(line.quantity - (returned.get(line.pk) or 0), 0)
         line.customer_amount_rub = amounts[line.pk]
+        line.net_cost_rub = line.unit_cost_rub * line.net_quantity
     return render(
         request,
         "reports/repairs_by_client_detail.html",

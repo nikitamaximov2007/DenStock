@@ -46,12 +46,12 @@
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+            <td class="num--qty">{{ line.net_quantity|quantity_int }}</td>
             <td class="num--money">
               {% if line.customer_amount_rub is not None %}{{ line.customer_amount_rub|money_int }}{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
             </td>
             {% if show_costs %}
-              <td class="num--money">{{ line.total_cost_rub|money_int }}</td>
+              <td class="num--money">{{ line.net_cost_rub|money_int }}</td>
             {% endif %}
           </tr>
         {% endfor %}

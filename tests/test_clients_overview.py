@@ -19,6 +19,8 @@ from apps.reports.services import (
     get_clients_sales_and_repairs,
     resolve_period,
 )
+from apps.returns.models import StockReturnLine
+from apps.returns.services import add_repair_line_return, complete_return, create_return
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
@@ -125,6 +127,27 @@ def test_report_sums_sales_with_repair_customer_amount_not_cost(data):
     row = next(iter(get_clients_sales_and_repairs(resolve_period({}))))
     assert row["client_total_known"] == row["revenue"] + row["repair_customer_amount"]
     assert row["client_total_known"] != row["revenue"] + row["issued_cost"]
+
+
+def test_report_uses_net_repair_quantity_and_cost_after_return(data):
+    order = _repair(data, "Иванов", 3)
+    repair_line = order.lines.get()
+    returned = create_return(source=order, by=data["admin"])
+    add_repair_line_return(
+        returned,
+        repair_line,
+        Decimal("1"),
+        to_location=data["loc"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=data["admin"],
+    )
+    complete_return(returned, by=data["admin"])
+
+    row = next(iter(get_clients_sales_and_repairs(resolve_period({}))))
+
+    assert row["repair_quantity"] == Decimal("2")
+    assert row["repair_customer_amount"] == Decimal("1000.00")
+    assert row["issued_cost"] == Decimal("200.00")
 
 
 def test_client_with_only_repairs_is_present(data):
@@ -240,6 +263,19 @@ def test_timeline_page_shows_parts_not_documents(client, make_user, data):
     assert order.number not in html, "номер ремонта снова стал главным элементом"
     assert reverse("sale_detail", args=[sale.pk]) not in html
     assert reverse("repair_order_detail", args=[order.pk]) not in html
+
+
+def test_timeline_page_shows_customer_total(client, make_user, data):
+    _login(client, make_user)
+    _sale(data, "Иванов", 2)
+    _repair(data, "Иванов", 3)
+
+    html = client.get(reverse("reports_client_timeline"), {"customer": "Иванов"}).content.decode()
+
+    assert "Сумма продаж (₽)" in html
+    assert "Детали в ремонтах (₽)" in html
+    assert "Итого с клиента (₽)" in html
+    assert "2 500" in html
 
 
 def test_timeline_requires_customer(client, make_user, data):

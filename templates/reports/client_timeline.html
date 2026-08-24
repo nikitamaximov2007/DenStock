@@ -16,6 +16,23 @@
     проведении документа и не меняются при обновлении каталога.
     «Сумма» - стоимость детали для клиента. Для ремонта она не включает работы.
   </p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="num--money">Сумма продаж (₽)</th>
+        <th class="num--money">Детали в ремонтах (₽)</th>
+        <th class="num--money">Итого с клиента (₽)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="num--money">{{ client_summary.sales|money_int }}</td>
+        <td class="num--money">{{ client_summary.repairs|money_int }}{% if client_summary.unknown %}<span class="muted">*</span>{% endif %}</td>
+        <td class="num--money">{{ client_summary.total|money_int }}{% if client_summary.unknown %}<span class="muted">*</span>{% endif %}</td>
+      </tr>
+    </tbody>
+  </table>
+  {% if client_summary.unknown %}<p class="muted">* У части старых ремонтов цена деталей не была зафиксирована.</p>{% endif %}
   {% if page_obj.object_list %}
     <table class="table">
       <thead>

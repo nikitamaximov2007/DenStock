@@ -437,12 +437,10 @@ REPAIR_CUSTOMER_AGGREGATES = {
 def get_repairs_by_customer(period: Period) -> list[dict]:
     """Ремонты по клиентам за период.
 
-    ВАЖНО про деньги: у ремонтного заказа НЕТ клиентской суммы. Слой 17
-    фиксирует, куда ушли детали, и замораживает их СЕБЕСТОИМОСТЬ; цены работ,
-    оплаты и прибыли в системе нет. Поэтому здесь считается «себестоимость
-    выданного», а не выручка, и называть её выручкой нельзя. Сортировка идёт по
-    количеству, а не по деньгам: количество видно всем ролям, а себестоимость
-    закрыта правом на закупочные цены.
+    Клиентская сумма деталей берётся из исторической цены строки ремонта, а
+    себестоимость остаётся отдельной величиной с ограниченным доступом. Цена
+    работ, оплаты и прибыли в системе не хранится. Сортировка идёт по
+    количеству, а не по деньгам.
     """
     rows = _customer_rows(
         _completed_repair_lines(period),
@@ -457,7 +455,16 @@ def get_repairs_by_customer(period: Period) -> list[dict]:
         ).only("id", "customer_id", "customer_name")
     )
     amounts = repair_customer_amounts(orders)
+    repair_lines = list(
+        RepairIssueLine.objects.filter(repair_order__in=orders).only(
+            "id", "repair_order_id", "quantity", "unit_cost_rub"
+        )
+    )
+    returned = repair_returned_quantities(repair_lines)
+    order_by_id = {order.pk: order for order in orders}
     totals: dict[tuple, Decimal] = {}
+    quantities: dict[tuple, Decimal] = {}
+    costs: dict[tuple, Decimal] = {}
     unknown: set[tuple] = set()
     for order in orders:
         key = (
@@ -470,8 +477,20 @@ def get_repairs_by_customer(period: Period) -> list[dict]:
             unknown.add(key)
         else:
             totals[key] = totals.get(key, DEC0) + amount
+    for line in repair_lines:
+        order = order_by_id[line.repair_order_id]
+        key = (
+            ("card", order.customer_id)
+            if order.customer_id
+            else ("legacy", order.customer_name.strip())
+        )
+        remaining = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
+        quantities[key] = quantities.get(key, DEC0) + remaining
+        costs[key] = costs.get(key, DEC0) + line.unit_cost_rub * remaining
     for row in rows:
         key = ("card", row["customer_id"]) if row["linked"] else ("legacy", row["report_customer"])
+        row["quantity"] = quantities.get(key, DEC0)
+        row["issued_cost"] = money(costs.get(key, DEC0))
         row["repair_customer_amount"] = money(totals.get(key, DEC0))
         row["repair_customer_amount_unknown"] = key in unknown
     return rows
@@ -521,14 +540,13 @@ def get_customer_repair_operations(
     missing: bool = False,
     customer_id=None,
 ):
-    """Отдельные выдачи в ремонт с замороженной себестоимостью строки.
+    """Отдельные выдачи в ремонт с историческими суммой клиента и себестоимостью.
 
     Без ``part_type_id`` возвращается вся история выдач клиенту одной плоской
     лентой, новые сверху.
 
-    Деньги здесь есть, но это не выручка: система хранит себестоимость
-    выданного, а не сумму, которую заплатил клиент. Поэтому она показывается
-    отдельной колонкой и никогда не складывается с суммой продажи.
+    Клиентская сумма не включает работы; себестоимость показывается отдельно и
+    только пользователям с правом на закупочные цены.
     """
     lines = _customer_repair_lines(
         period, customer_name=customer_name, missing=missing, customer_id=customer_id
@@ -540,7 +558,7 @@ def get_customer_repair_operations(
     )
 
 
-# --- Клиент целиком: продажи и ремонты вместе (без общей суммы) --------------
+# --- Клиент целиком: продажи и ремонты вместе ---------------------------------
 
 
 def _client_row(name: str) -> dict:
@@ -574,14 +592,10 @@ def _later(first, second):
 def get_clients_sales_and_repairs(period: Period) -> list[dict]:
     """Клиенты с продажами И ремонтами за период, одной строкой на клиента.
 
-    ОБЩЕЙ ДЕНЕЖНОЙ СУММЫ ЗДЕСЬ НЕТ И БЫТЬ НЕ МОЖЕТ. Выручка продажи это деньги
-    клиента, а «себестоимость выданного» в ремонте это закупочная стоимость
-    деталей: клиентской суммы у ремонтного заказа система не хранит. Складывать
-    их в один итог значило бы выдумать величину, которой в системе нет, поэтому
-    деньги показываются двумя отдельными колонками со своими названиями.
-
-    Сортировка идёт по числу документов, а не по деньгам: количество документов
-    видно всем ролям, а деньги закрыты правом на закупочные цены.
+    Итог с клиента - это выручка продаж плюс историческая стоимость деталей в
+    ремонтах. Себестоимость ремонта не входит в этот итог и показывается
+    отдельно только пользователям с правом на закупочные цены. Цена работ,
+    оплаты и прибыли в системе не хранится.
     """
     # Ключ строки это идентичность клиента, а не текст: карточка объединяется по
     # PK, а документы без карточки остаются отдельными историческими строками.
@@ -635,16 +649,9 @@ def get_client_part_history(
     Отвечает на вопрос «что мы давали этому клиенту и когда». Документ здесь не
     показывается: он лишний уровень между вопросом и ответом.
 
-    Денежные величины у продажи и у ремонта разные и в одну не сводятся.
-
-    У продажи это сумма, которую заплатил клиент, из снимка проведённого
-    документа. У ремонта клиентской суммы не существует вовсе: система хранит
-    себестоимость выданных деталей, замороженную при проведении заказа. Это
-    складской расход, а не выручка, и складывать их между собой нельзя.
-
-    Поэтому у строки заполнено ровно одно из двух полей: у продажи ``amount``,
-    у ремонта ``cost``. Второе остаётся пустым, и отчёт показывает их в разных
-    колонках.
+    У продажи и ремонта есть историческая сумма для клиента. Для ремонта она
+    покрывает только детали, а себестоимость остаётся отдельным складским
+    показателем. Неизвестная цена старой строки остаётся ``None``.
     """
     sale_lines = attach_line_part_identity(
         get_customer_part_operations(
@@ -667,27 +674,29 @@ def get_client_part_history(
             "part_type_id": line.part_type_id,
             "part_name": line.part_type.name,
             "exact_number": line.exact_number,
-            "quantity": max(line.quantity - (repair_returns.get(line.pk) or DEC0), DEC0),
+            "quantity": line.quantity,
             "amount": line.total_price,
             "cost": None,
         }
         for line in sale_lines
-    ] + [
-        {
+    ]
+    for line in repair_lines:
+        net_quantity = max(line.quantity - (repair_returns.get(line.pk) or DEC0), DEC0)
+        rows.append(
+            {
             "kind": "repair",
             "kind_label": "Ремонт",
             "at": line.repair_order.completed_at,
             "part_type_id": line.part_type_id,
             "part_name": line.part_type.name,
             "exact_number": line.exact_number,
-            "quantity": line.quantity,
+            "quantity": net_quantity,
             "amount": repair_amounts[line.pk],
             # Заморожено при проведении заказа и не пересчитывается по
             # сегодняшнему каталогу: это историческая себестоимость выдачи.
-            "cost": line.total_cost_rub,
+            "cost": money(line.unit_cost_rub * net_quantity),
         }
-        for line in repair_lines
-    ]
+        )
     # Новые сверху. Вторичный ключ по названию делает порядок устойчивым, когда
     # несколько строк проведены одним документом в одну и ту же секунду.
     rows.sort(key=lambda row: (row["at"], row["part_name"]), reverse=True)
@@ -708,8 +717,8 @@ def get_client_timeline(
     значения. Каждая запись ведёт в исходный документ, поэтому суммы в ленте
     всегда можно сверить с первоисточником.
 
-    Деньги не смешиваются: у продажи это выручка, у ремонта это себестоимость
-    выданного, и каждая запись несёт только свою величину.
+    У продажи это выручка, у ремонта - историческая сумма деталей для клиента.
+    Себестоимость ремонта остаётся отдельной величиной.
     """
     start, end = _bounds(period)
     # Карточка выбрана - берём её документы по связи. Карточки нет - только
