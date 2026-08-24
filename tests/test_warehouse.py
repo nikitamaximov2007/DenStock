@@ -94,6 +94,23 @@ def test_create_v2_drawer_inside_rack(make_user, client):
     assert drawer.level == L.DRAWER
 
 
+def test_create_v2_drawer_zero_inside_rack(make_user, client):
+    make_user("drawer-zero-admin", is_superuser=True)
+    client.login(username="drawer-zero-admin", password=PASSWORD)
+    resp = client.post(
+        reverse("location_create"),
+        {
+            "location_type": "drawer",
+            "rack_number": "1",
+            "drawer_number": "0",
+            "name": "Ящик 0",
+        },
+    )
+    assert resp.status_code == 302
+    drawer = StorageLocation.objects.get(code="S01-D00")
+    assert drawer.level == L.DRAWER
+
+
 def test_create_nested_levels(db):
     wh = StorageLocation.objects.create(name="Склад", code="СКЛАД-1", level=L.WAREHOUSE)
     zone = StorageLocation.objects.create(name="A", code="A", level=L.ZONE, parent=wh)

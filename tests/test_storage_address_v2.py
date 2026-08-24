@@ -125,6 +125,23 @@ def test_v2_parser_creation_and_explicit_legacy_compatibility(db):
         create_location("S04-D01-C01")
 
 
+def test_drawer_zero_is_a_canonical_v2_identity_not_a_missing_value(db):
+    assert compose_address(3, drawer_no=0, cell_no=5) == "S03-D00-C05"
+    parsed = parse_address("s03-d00-c05")
+    assert (parsed.rack, parsed.drawer, parsed.cell, parsed.code) == (3, 0, 5, "S03-D00-C05")
+    cell = create_location(parsed.code)
+    assert cell.parent.code == "S03-D00"
+    assert cell.parent.sort_order == 0
+    assert get_or_create_location("S03-D00-C05").pk == cell.pk
+    with pytest.raises(AddressError, match="отрицательным"):
+        compose_address(3, drawer_no=-1)
+    with pytest.raises(AddressError):
+        parse_address("S03-D-1-C05")
+    # Legacy D00 remains invalid and is never reinterpreted as the new V2 D00.
+    with pytest.raises(AddressError):
+        parse_legacy_address("S03-L01-D00-C05")
+
+
 def test_alias_resolves_old_code_and_barcode_to_same_identity(db, admin):
     cell = create_location("S03-D02-C05")
     old_id = cell.pk
@@ -359,6 +376,31 @@ def test_drawer_rename_preserves_ids_adds_grouped_history_and_aliases(db, admin)
     assert resolve_scan("LOC:S03-D02-C01").id == ids["S03-D02-C01"]
     with pytest.raises(StorageLocationCreateError, match="старым адресом"):
         create_location("S03-D02-C09")
+    assert before == {
+        "movements": StockMovement.objects.count(),
+        "lots": StockLot.objects.count(),
+        "balances": StockBalance.objects.count(),
+    }
+
+
+def test_drawer_can_be_renamed_to_zero_without_mutating_stock(db, admin):
+    drawer, cells = _v2_drawer()
+    before = {
+        "movements": StockMovement.objects.count(),
+        "lots": StockLot.objects.count(),
+        "balances": StockBalance.objects.count(),
+    }
+    preview = build_drawer_rename_plan(drawer, 0)
+    assert preview.new_code == "S03-D00"
+    renamed = rename_storage_drawer(
+        drawer,
+        new_number=0,
+        expected_code=drawer.code,
+        expected_fingerprint=preview.fingerprint,
+        by=admin,
+    )
+    assert renamed.code == "S03-D00"
+    assert StorageLocation.objects.get(pk=cells[0].pk).code == "S03-D00-C01"
     assert before == {
         "movements": StockMovement.objects.count(),
         "lots": StockLot.objects.count(),
