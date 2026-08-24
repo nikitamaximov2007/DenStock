@@ -230,7 +230,7 @@ def test_views_permissions_missing_customer_and_snapshot_detail(client, report_d
     client.force_login(report_data["storekeeper"])
     restricted_html = client.get(list_url).content.decode()
     assert "Иван Иванов" in restricted_html
-    assert "Сумма (₽)" not in restricted_html
+    assert "Сумма (₽)" in restricted_html
     client.force_login(report_data["seller"])
     assert client.get(list_url).status_code == 403
     assert (

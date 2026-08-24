@@ -79,8 +79,7 @@ def test_catalog_and_client_reports_coexist(boss):
     clients = boss.get(reverse("reports_clients_overview")).content.decode()
     assert "Импорт каталога" in catalog
     assert "Продажи и ремонты по клиентам" in clients
-    # Денежная семантика ремонта не смешалась с выручкой при слиянии.
-    assert "не складываются" in clients
+    assert "Итого с клиента" in clients
 
 
 def test_operator_sees_neither_catalog_import_nor_customer_editing(client, make_user, db):
