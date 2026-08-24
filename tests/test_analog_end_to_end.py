@@ -252,7 +252,12 @@ def test_the_two_money_values_stay_in_their_own_columns_for_an_analog(scene):
 
     rows = get_client_part_history(resolve_period({}), customer_id=customer.pk)
     for row in rows:
-        assert (row["amount"] is None) != (row["cost"] is None)
+        if row["kind"] == "sale":
+            assert row["amount"] == Decimal("4500.00")
+            assert row["cost"] is None
+        else:
+            assert row["amount"] == Decimal("4500.00")
+            assert row["cost"] == Decimal("2600.00")
 
 
 def test_history_survives_the_link_being_removed(scene):
