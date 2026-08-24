@@ -88,7 +88,13 @@
                            value="{{ item.row.quantity|quantity_int }}"
                            aria-label="Количество">
                     {% if not panel.is_sale %}
-                      <input name="unit_price" type="number" min="0" step="0.01" size="6" value="{{ item.row.unit_price|default_if_none:'' }}" aria-label="Цена клиенту">
+                      <input name="unit_price"
+                             type="number"
+                             min="0"
+                             step="0.01"
+                             size="6"
+                             value="{{ item.row.unit_price|default_if_none:'' }}"
+                             aria-label="Цена клиенту">
                     {% endif %}
                     <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
                   </form>

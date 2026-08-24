@@ -47,9 +47,11 @@
             <td class="num--money">
               {% if row.amount is not None %}{{ row.amount|money_int }}{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
             </td>
-            {% if show_costs %}<td class="num--money">
-              {% if row.cost is not None %}{{ row.cost|money_int }}{% else %}<span class="muted">·</span>{% endif %}
-            </td>{% endif %}
+            {% if show_costs %}
+              <td class="num--money">
+                {% if row.cost is not None %}{{ row.cost|money_int }}{% else %}<span class="muted">·</span>{% endif %}
+              </td>
+            {% endif %}
             <td>{{ row.kind_label }}</td>
           </tr>
         {% endfor %}
