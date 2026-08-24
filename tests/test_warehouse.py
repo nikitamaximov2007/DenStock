@@ -111,6 +111,23 @@ def test_create_v2_drawer_zero_inside_rack(make_user, client):
     assert drawer.level == L.DRAWER
 
 
+def test_create_v2_drawer_rejects_negative_number_without_partial_location(make_user, client):
+    make_user("negative-drawer-admin", is_superuser=True)
+    client.login(username="negative-drawer-admin", password=PASSWORD)
+    response = client.post(
+        reverse("location_create"),
+        {
+            "location_type": "drawer",
+            "rack_number": "1",
+            "drawer_number": "-1",
+            "name": "Нельзя",
+        },
+    )
+    assert response.status_code == 200
+    assert "drawer_number" in response.context["form"].errors
+    assert not StorageLocation.objects.exists()
+
+
 def test_create_nested_levels(db):
     wh = StorageLocation.objects.create(name="Склад", code="СКЛАД-1", level=L.WAREHOUSE)
     zone = StorageLocation.objects.create(name="A", code="A", level=L.ZONE, parent=wh)
