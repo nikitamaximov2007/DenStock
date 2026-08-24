@@ -23,7 +23,7 @@ from apps.inventory.services import (
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
-from apps.warehouse.addresses import get_or_create_location
+from apps.warehouse.addresses import create_location, get_or_create_location
 from apps.warehouse.forms import StorageLocationForm
 from apps.warehouse.models import (
     StorageLocation,
@@ -126,6 +126,35 @@ def test_create_v2_drawer_rejects_negative_number_without_partial_location(make_
     assert response.status_code == 200
     assert "drawer_number" in response.context["form"].errors
     assert not StorageLocation.objects.exists()
+
+
+def test_drawer_zero_cell_supports_receiving_and_scanner_lookup(make_user, db):
+    admin = make_user("drawer-zero-receiving", is_superuser=True)
+    category = Category.objects.create(name="Drawer zero")
+    part = PartType.objects.create(
+        name="Drawer zero part",
+        category=category,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    location = create_location("S04-D00-C01")
+    supplier = Supplier.objects.create(name="Drawer zero supplier")
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    line = BatchLine.objects.create(
+        batch=batch,
+        part_type=part,
+        quantity=Decimal("2"),
+        unit_cost_currency=Decimal("100"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    line.refresh_from_db()
+    lot = create_stock_lot(line, location, Decimal("2"))
+    receive_stock_lot(lot, by=admin)
+
+    assert StockBalance.objects.get(part_type=part, location=location).quantity_available == 2
+    assert resolve_scan("S04-D00-C01").id == location.pk
 
 
 def test_create_nested_levels(db):
