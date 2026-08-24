@@ -176,20 +176,21 @@ def test_customer_without_name_is_reachable_as_missing(data):
 # --- Экраны ---------------------------------------------------------------------------------
 
 
-def test_report_page_renders_without_revenue_column(client, make_user, data):
+def test_report_page_renders_customer_parts_amount(client, make_user, data):
     _login(client, make_user)
     _repair(data, "Иванов", (data["bolt_lot"], 2))
     html = client.get(reverse("reports_repairs_by_client")).content.decode()
     assert "Ремонты по клиентам" in html
     assert "Иванов" in html
+    assert "Детали в ремонтах (₽)" in html
     assert "Себестоимость выданного (₽)" in html
     assert "Выручка" not in html
 
 
-def test_report_page_states_absence_of_repair_revenue(client, make_user, data):
+def test_report_page_explains_repair_parts_amount(client, make_user, data):
     _login(client, make_user)
     html = client.get(reverse("reports_repairs_by_client")).content.decode()
-    assert "выручки по ремонтам здесь нет" in html
+    assert "Стоимость работ система не хранит" in html
 
 
 def test_cost_hidden_without_purchase_cost_right(client, make_user, data):
@@ -200,7 +201,7 @@ def test_cost_hidden_without_purchase_cost_right(client, make_user, data):
         pytest.skip("У роли нет доступа к отчётам: правило прав проверяется отдельно.")
     html = resp.content.decode()
     assert "Себестоимость выданного (₽)" not in html
-    assert "Финансовые показатели скрыты для вашей роли." in html
+    assert "Детали в ремонтах (₽)" in html
 
 
 def test_detail_and_operations_pages_open(client, make_user, data):

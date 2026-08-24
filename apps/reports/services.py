@@ -5,6 +5,7 @@ dataclass-структуры (HTML-агностично, удобно тести
 записи: не создаём документы/движения, не меняем `StockLot`/`StockBalance`/итоги.
 Денежные поля считаются всегда; СКРЫВАЕТ их шаблон по `can_view_purchase_cost`.
 """
+
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -17,6 +18,7 @@ from apps.inventory.models import StockBalance, StockMovement
 from apps.inventory.presentation import identity_for_part_ids
 from apps.procurement.models import money
 from apps.repairs.models import RepairIssueLine, RepairOrder
+from apps.repairs.services import repair_customer_amounts, repair_customer_line_amounts
 from apps.returns.models import StockReturn
 from apps.sales.models import Sale, SaleLine
 from apps.stocktaking.models import InventoryCountDocument, InventoryCountLine
@@ -174,16 +176,20 @@ def get_sales_report(period: Period) -> SalesReport:
     sales = Sale.objects.filter(status=Sale.Status.COMPLETED, sold_at__range=(start, end))
     agg = sales.aggregate(
         count=Count("id"),
-        revenue=Sum("revenue_total"), cost=Sum("cost_total"), profit=Sum("profit_total"),
+        revenue=Sum("revenue_total"),
+        cost=Sum("cost_total"),
+        profit=Sum("profit_total"),
     )
     lines = SaleLine.objects.filter(sale__in=sales)
     top_rev = list(
         lines.values("part_type_id", "part_type__name")
-        .annotate(v=Sum("total_price")).order_by("-v")[:TOP_N]
+        .annotate(v=Sum("total_price"))
+        .order_by("-v")[:TOP_N]
     )
     top_qty = list(
         lines.values("part_type_id", "part_type__name")
-        .annotate(v=Sum("quantity")).order_by("-v")[:TOP_N]
+        .annotate(v=Sum("quantity"))
+        .order_by("-v")[:TOP_N]
     )
     identity = identity_for_part_ids(
         {r["part_type_id"] for r in top_rev} | {r["part_type_id"] for r in top_qty}
@@ -196,14 +202,16 @@ def get_sales_report(period: Period) -> SalesReport:
         profit=money(agg["profit"] or DEC0),
         top_by_revenue=[
             TopRow(
-                r["part_type__name"], money(r["v"] or DEC0),
+                r["part_type__name"],
+                money(r["v"] or DEC0),
                 identity[r["part_type_id"]].exact_number,
             )
             for r in top_rev
         ],
         top_by_quantity=[
             TopRow(
-                r["part_type__name"], r["v"] or DEC0,
+                r["part_type__name"],
+                r["v"] or DEC0,
                 identity[r["part_type_id"]].exact_number,
             )
             for r in top_qty
@@ -382,10 +390,8 @@ def get_customer_part_operations(
     )
     if part_type_id is not None:
         lines = lines.filter(part_type_id=part_type_id)
-    return (
-        lines
-        .select_related("sale", "sale__sold_by", "part_type")
-        .order_by("-sale__sold_at", "-sale_id", "pk")
+    return lines.select_related("sale", "sale__sold_by", "part_type").order_by(
+        "-sale__sold_at", "-sale_id", "pk"
     )
 
 
@@ -434,12 +440,37 @@ def get_repairs_by_customer(period: Period) -> list[dict]:
     количеству, а не по деньгам: количество видно всем ролям, а себестоимость
     закрыта правом на закупочные цены.
     """
-    return _customer_rows(
+    rows = _customer_rows(
         _completed_repair_lines(period),
         prefix="repair_order",
         aggregates=REPAIR_CUSTOMER_AGGREGATES,
         order_key=lambda row: (-(row["quantity"] or DEC0), row["display_name"]),
     )
+    orders = list(
+        RepairOrder.objects.filter(
+            status=RepairOrder.Status.COMPLETED,
+            completed_at__range=_bounds(period),
+        ).only("id", "customer_id", "customer_name")
+    )
+    amounts = repair_customer_amounts(orders)
+    totals: dict[tuple, Decimal] = {}
+    unknown: set[tuple] = set()
+    for order in orders:
+        key = (
+            ("card", order.customer_id)
+            if order.customer_id
+            else ("legacy", order.customer_name.strip())
+        )
+        amount = amounts[order.pk]
+        if amount is None:
+            unknown.add(key)
+        else:
+            totals[key] = totals.get(key, DEC0) + amount
+    for row in rows:
+        key = ("card", row["customer_id"]) if row["linked"] else ("legacy", row["report_customer"])
+        row["repair_customer_amount"] = money(totals.get(key, DEC0))
+        row["repair_customer_amount_unknown"] = key in unknown
+    return rows
 
 
 def _customer_repair_lines(
@@ -500,10 +531,8 @@ def get_customer_repair_operations(
     )
     if part_type_id is not None:
         lines = lines.filter(part_type_id=part_type_id)
-    return (
-        lines
-        .select_related("repair_order", "repair_order__created_by", "part_type")
-        .order_by("-repair_order__completed_at", "-repair_order_id", "pk")
+    return lines.select_related("repair_order", "repair_order__created_by", "part_type").order_by(
+        "-repair_order__completed_at", "-repair_order_id", "pk"
     )
 
 
@@ -522,6 +551,9 @@ def _client_row(name: str) -> dict:
         "repair_count": 0,
         "repair_quantity": DEC0,
         "issued_cost": DEC0,
+        "repair_customer_amount": DEC0,
+        "repair_customer_amount_unknown": False,
+        "client_total_known": DEC0,
         "last_sale": None,
         "last_repair": None,
     }
@@ -573,8 +605,12 @@ def get_clients_sales_and_repairs(period: Period) -> list[dict]:
         entry["repair_count"] = row["repair_count"] or 0
         entry["repair_quantity"] = row["quantity"] or DEC0
         entry["issued_cost"] = row["issued_cost"] or DEC0
+        entry["repair_customer_amount"] = row["repair_customer_amount"] or DEC0
+        entry["repair_customer_amount_unknown"] = row["repair_customer_amount_unknown"]
         entry["last_repair"] = row["last_repair"]
     for entry in rows.values():
+        entry["client_total_known"] = money(entry["revenue"] + entry["repair_customer_amount"])
+        entry["client_total_unknown"] = entry["repair_customer_amount_unknown"]
         entry["document_count"] = entry["sale_count"] + entry["repair_count"]
         entry["last_event"] = _later(entry["last_sale"], entry["last_repair"])
     return sorted(
@@ -616,6 +652,7 @@ def get_client_part_history(
             period, customer_name=customer_name, missing=missing, customer_id=customer_id
         )
     )
+    repair_amounts = repair_customer_line_amounts(repair_lines)
 
     rows = [
         {
@@ -639,7 +676,7 @@ def get_client_part_history(
             "part_name": line.part_type.name,
             "exact_number": line.exact_number,
             "quantity": line.quantity,
-            "amount": None,
+            "amount": repair_amounts[line.pk],
             # Заморожено при проведении заказа и не пересчитывается по
             # сегодняшнему каталогу: это историческая себестоимость выдачи.
             "cost": line.total_cost_rub,
@@ -696,6 +733,7 @@ def get_client_timeline(
         .annotate(line_quantity=Sum("lines__quantity"))
         .select_related("created_by")
     )
+    repair_amounts = repair_customer_amounts(repairs)
 
     events = [
         {
@@ -719,7 +757,7 @@ def get_client_timeline(
             "number": order.number,
             "at": order.completed_at,
             "quantity": order.line_quantity or DEC0,
-            "revenue": None,
+            "revenue": repair_amounts[order.pk],
             "issued_cost": order.cost_total,
             "employee": order.created_by,
             "note": " ".join(
@@ -742,7 +780,9 @@ def get_repairs_report(period: Period) -> RepairReport:
     agg = orders.aggregate(count=Count("id"), cost=Sum("cost_total"))
     top = (
         RepairIssueLine.objects.filter(repair_order__in=orders)
-        .values("part_type__name").annotate(v=Sum("quantity")).order_by("-v")[:TOP_N]
+        .values("part_type__name")
+        .annotate(v=Sum("quantity"))
+        .order_by("-v")[:TOP_N]
     )
     return RepairReport(
         count=agg["count"] or 0,
@@ -785,7 +825,9 @@ def get_writeoffs_report(period: Period) -> WriteoffReport:
     reason_labels = dict(WriteOffDocument.Reason.choices)
     top = (
         WriteOffLine.objects.filter(write_off__in=docs)
-        .values("part_type__name").annotate(v=Sum("quantity")).order_by("-v")[:TOP_N]
+        .values("part_type__name")
+        .annotate(v=Sum("quantity"))
+        .order_by("-v")[:TOP_N]
     )
     return WriteoffReport(
         count=agg["count"] or 0,
@@ -813,12 +855,12 @@ def get_stocktaking_report(period: Period) -> AdjustmentsReport:
         count_document__completed_at__range=(start, end),
         adjustment__isnull=False,
     )
-    ain = lines.filter(
-        adjustment__movement_type=StockMovement.MovementType.ADJUST_IN
-    ).aggregate(qty=Sum("adjustment__quantity"), cost=Sum("adjustment__total_cost_rub"))
-    aout = lines.filter(
-        adjustment__movement_type=StockMovement.MovementType.ADJUST_OUT
-    ).aggregate(qty=Sum("adjustment__quantity"), cost=Sum("adjustment__total_cost_rub"))
+    ain = lines.filter(adjustment__movement_type=StockMovement.MovementType.ADJUST_IN).aggregate(
+        qty=Sum("adjustment__quantity"), cost=Sum("adjustment__total_cost_rub")
+    )
+    aout = lines.filter(adjustment__movement_type=StockMovement.MovementType.ADJUST_OUT).aggregate(
+        qty=Sum("adjustment__quantity"), cost=Sum("adjustment__total_cost_rub")
+    )
     return AdjustmentsReport(
         count=count,
         adjust_in_qty=ain["qty"] or DEC0,
@@ -857,8 +899,10 @@ def get_stock_report() -> StockReport:
         total_quarantine=agg["quar"] or DEC0,
         by_location=[
             StockLocationRow(
-                r["location__code"], r["available"] or DEC0,
-                r["reserved"] or DEC0, r["quarantine"] or DEC0,
+                r["location__code"],
+                r["available"] or DEC0,
+                r["reserved"] or DEC0,
+                r["quarantine"] or DEC0,
             )
             for r in by_loc
         ],
@@ -867,14 +911,13 @@ def get_stock_report() -> StockReport:
 
 def get_low_stock_report() -> list:
     rows = (
-        StockBalance.objects.values(
-            "part_type", "part_type__name", "part_type__min_stock_level"
-        )
+        StockBalance.objects.values("part_type", "part_type__name", "part_type__min_stock_level")
         .annotate(available=Sum("quantity_available"))
         .order_by("part_type__name")
     )
     low = [
-        r for r in rows
+        r
+        for r in rows
         if (r["part_type__min_stock_level"] or DEC0) > 0
         and (r["available"] or DEC0) < (r["part_type__min_stock_level"] or DEC0)
     ]

@@ -14,13 +14,8 @@
   <p class="muted">
     Что и когда получал клиент. Величины историчные: они зафиксированы при
     проведении документа и не меняются при обновлении каталога.
-    {% if show_money %}
-      «Сумма» - это то, что заплатил клиент за проданную деталь. «Себестоимость»
-      - во сколько складу обошлась деталь, выданная в ремонт. Это разные
-      величины, складывать их между собой нельзя: цену работ система не хранит.
-    {% endif %}
+    «Сумма» - стоимость детали для клиента. Для ремонта она не включает работы.
   </p>
-  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
   {% if page_obj.object_list %}
     <table class="table">
       <thead>
@@ -29,10 +24,8 @@
           <th>Деталь</th>
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
-          {% if show_money %}
-            <th class="num--money">Сумма (₽)</th>
-            <th class="num--money">Себестоимость (₽)</th>
-          {% endif %}
+          <th class="num--money">Сумма (₽)</th>
+          {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
           <th>Тип</th>
         </tr>
       </thead>
@@ -51,14 +44,12 @@
               {% endif %}
             </td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
-            {% if show_money %}
-              <td class="num--money">
-                {% if row.amount is not None %}{{ row.amount|money_int }}{% else %}<span class="muted">·</span>{% endif %}
-              </td>
-              <td class="num--money">
-                {% if row.cost is not None %}{{ row.cost|money_int }}{% else %}<span class="muted">·</span>{% endif %}
-              </td>
-            {% endif %}
+            <td class="num--money">
+              {% if row.amount is not None %}{{ row.amount|money_int }}{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+            </td>
+            {% if show_costs %}<td class="num--money">
+              {% if row.cost is not None %}{{ row.cost|money_int }}{% else %}<span class="muted">·</span>{% endif %}
+            </td>{% endif %}
             <td>{{ row.kind_label }}</td>
           </tr>
         {% endfor %}

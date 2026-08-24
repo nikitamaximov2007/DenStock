@@ -8,11 +8,8 @@
     Только проведённые ремонтные заказы по моменту проведения.
   </p>
   <p class="muted">
-    Ремонтный заказ фиксирует, какие детали ушли на технику клиента, и
-    замораживает их себестоимость. Цены работ и оплаты система не хранит,
-    поэтому выручки по ремонтам здесь нет и быть не может.
+    Показана стоимость деталей для клиента. Стоимость работ система не хранит.
   </p>
-  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
   {% if page_obj.object_list %}
     <table class="table">
       <thead>
@@ -21,7 +18,8 @@
           <th class="num">Ремонтов</th>
           <th class="num">Уникальных артикулов</th>
           <th class="num--qty">Единиц</th>
-          {% if show_money %}<th class="num--money">Себестоимость выданного (₽)</th>{% endif %}
+          <th class="num--money">Детали в ремонтах (₽)</th>
+          {% if show_costs %}<th class="num--money">Себестоимость выданного (₽)</th>{% endif %}
           <th>Последний ремонт</th>
         </tr>
       </thead>
@@ -35,7 +33,8 @@
             <td class="num">{{ row.repair_count }}</td>
             <td class="num">{{ row.unique_parts }}</td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
-            {% if show_money %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
+            <td class="num--money">{{ row.repair_customer_amount|money_int }}{% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}</td>
+            {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
             <td>{{ row.last_repair|ru_dt }}</td>
           </tr>
         {% endfor %}
@@ -44,5 +43,6 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="chart" title="Ремонтов за период нет" text="Измените период, чтобы увидеть проведённые ремонтные заказы по клиентам." compact=1 %}
   {% endif %}
+  {% if page_obj.object_list %}<p class="muted">* У части старых ремонтов цена деталей не была зафиксирована.</p>{% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}

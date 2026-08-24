@@ -11,7 +11,13 @@ urlpatterns = [
     path("orders/<int:pk>/complete/", views.repair_order_complete, name="repair_order_complete"),
     path("orders/<int:pk>/cancel/", views.repair_order_cancel, name="repair_order_cancel"),
     path(
+        "lines/<int:pk>/price/",
+        views.repair_order_set_line_price,
+        name="repair_order_set_line_price",
+    ),
+    path(
         "orders/lines/<int:pk>/remove/",
-        views.repair_order_remove_line, name="repair_order_remove_line",
+        views.repair_order_remove_line,
+        name="repair_order_remove_line",
     ),
 ]

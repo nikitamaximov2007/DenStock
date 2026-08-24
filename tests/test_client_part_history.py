@@ -427,21 +427,19 @@ def test_repair_detail_shows_issued_part_rows_directly(client, data, admin):
 # --- O: себестоимость ремонта не выдаётся за деньги клиента --------------------------------
 
 
-def test_repair_cost_is_never_shown_as_client_money(client, data, admin):
-    """У ремонта клиентской суммы нет, и выдавать за неё себестоимость нельзя."""
+def test_repair_customer_amount_is_shown_separately_from_cost(client, data, admin):
     _login(client, admin)
     customer = Customer.objects.create(name="Иванов")
     _repair(data, customer=customer, items=(("belt", 1),))
 
     body = _repairs_detail(client, customer).content.decode()
-    assert "Сумма (₽)" not in body, "у ремонта появилась денежная колонка клиента"
+    assert "Сумма (₽)" in body
 
     rows = get_client_part_history(resolve_period({}), customer_id=customer.pk)
     repair_rows = [row for row in rows if row["kind"] == "repair"]
     assert repair_rows, "проверка бессмысленна: строк ремонта нет"
-    assert all(row["amount"] is None for row in repair_rows), (
-        "себестоимость выданного подставлена как сумма клиента"
-    )
+    assert all(row["amount"] is not None for row in repair_rows)
+    assert all(row["amount"] != row["cost"] for row in repair_rows)
 
 
 # --- P, Q: идентичность клиента не тронута --------------------------------------------------

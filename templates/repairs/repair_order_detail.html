@@ -60,6 +60,8 @@
         <th>Название детали</th>
         <th>Артикул</th>
         <th>Кол-во</th>
+        <th>Цена клиенту (₽)</th>
+        <th>Сумма деталей (₽)</th>
         {% if show_costs %}
           <th>Себестоимость за ед. (₽)</th>
           <th>Себестоимость строки (₽)</th>
@@ -75,6 +77,24 @@
         <tr>
           {% include "partials/_line_part_cells.html" %}
           <td>{{ line.quantity|quantity_int }}</td>
+          <td>
+            {% if can_manage and is_draft %}
+              <form method="post" action="{% url 'repair_order_set_line_price' line.pk %}" class="inline-form">
+                {% csrf_token %}
+                <input name="customer_unit_price_rub" type="number" min="0" step="0.01" value="{{ line.customer_unit_price_rub|default_if_none:'' }}" aria-label="Цена клиенту">
+                <button type="submit">Сохранить</button>
+              </form>
+            {% elif line.customer_unit_price_rub is not None %}
+              {{ line.customer_unit_price_rub|money_int }}
+            {% else %}
+              <span class="muted">Не зафиксировано</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if line.customer_total_rub is not None %}
+              {{ line.customer_total_rub|money_int }}
+            {% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+          </td>
           {% if show_costs %}
             <td>{{ line.unit_cost_rub|money_int }}</td>
             <td>{{ line.total_cost_rub|money_int }}</td>
@@ -106,6 +126,13 @@
           <td>{{ order.cost_total|money_int }} ₽</td>
         </tr>
       </tbody>
+    </table>
+  {% endif %}
+  {% if order.status == "completed" %}
+    <table class="table">
+      <tbody><tr><th>Сумма деталей для клиента</th><td>
+        {% if customer_amount is not None %}{{ customer_amount|money_int }} ₽{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+      </td></tr></tbody>
     </table>
   {% endif %}
   {% if can_manage and is_draft %}

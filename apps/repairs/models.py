@@ -27,22 +27,28 @@ class RepairOrder(models.Model):
         CANCELED = "canceled", "Отменён"
 
     number = models.CharField("Номер", max_length=20, unique=True, editable=False)
-    status = models.CharField(
-        "Статус", max_length=20, choices=Status.choices, default=Status.DRAFT
-    )
+    status = models.CharField("Статус", max_length=20, choices=Status.choices, default=Status.DRAFT)
     # Постоянная карточка клиента. Может быть пустой: исторические документы
     # созданы до появления справочника и живут только на снимке ниже.
     customer = models.ForeignKey(
-        "customers.Customer", verbose_name="Клиент (карточка)",
-        on_delete=models.PROTECT, null=True, blank=True, related_name="%(class)ss",
+        "customers.Customer",
+        verbose_name="Клиент (карточка)",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="%(class)ss",
     )
     # СНИМОК на момент создания документа: переименование карточки завтра не
     # переписывает историю проведённого документа.
     customer_name = models.CharField("Клиент", max_length=255)
     customer_phone = models.CharField("Телефон", max_length=50, blank=True)
     vehicle_type = models.ForeignKey(
-        "catalog.VehicleType", verbose_name="Вид техники",
-        on_delete=models.PROTECT, null=True, blank=True, related_name="+",
+        "catalog.VehicleType",
+        verbose_name="Вид техники",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
     )
     vehicle_make = models.CharField("Марка техники", max_length=120, blank=True)
     vehicle_model = models.CharField("Модель техники", max_length=150, blank=True)
@@ -53,8 +59,12 @@ class RepairOrder(models.Model):
         "Себестоимость выданного (₽)", max_digits=14, decimal_places=2, default=0
     )
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, verbose_name="Кто создал",
-        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто создал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -84,26 +94,38 @@ class RepairIssueLine(models.Model):
     """
 
     repair_order = models.ForeignKey(
-        RepairOrder, verbose_name="Ремонтный заказ",
-        on_delete=models.CASCADE, related_name="lines",
+        RepairOrder,
+        verbose_name="Ремонтный заказ",
+        on_delete=models.CASCADE,
+        related_name="lines",
     )
     part_type = models.ForeignKey(
         "catalog.PartType", verbose_name="Деталь", on_delete=models.PROTECT, related_name="+"
     )
     part_item = models.ForeignKey(
-        "inventory.PartItem", verbose_name="Экземпляр",
-        on_delete=models.PROTECT, null=True, blank=True, related_name="repair_lines",
+        "inventory.PartItem",
+        verbose_name="Экземпляр",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="repair_lines",
     )
     stock_lot = models.ForeignKey(
-        "inventory.StockLot", verbose_name="Лот",
-        on_delete=models.PROTECT, null=True, blank=True, related_name="repair_lines",
+        "inventory.StockLot",
+        verbose_name="Лот",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="repair_lines",
     )
     batch = models.ForeignKey(
         "procurement.Batch", verbose_name="Партия", on_delete=models.PROTECT, related_name="+"
     )
     batch_line = models.ForeignKey(
-        "procurement.BatchLine", verbose_name="Строка партии",
-        on_delete=models.PROTECT, related_name="+",
+        "procurement.BatchLine",
+        verbose_name="Строка партии",
+        on_delete=models.PROTECT,
+        related_name="+",
     )
     quantity = models.DecimalField("Количество", max_digits=12, decimal_places=3)
     unit_cost_rub = models.DecimalField(
@@ -111,6 +133,14 @@ class RepairIssueLine(models.Model):
     )
     total_cost_rub = models.DecimalField(
         "Себестоимость строки (₽)", max_digits=14, decimal_places=2, editable=False, default=0
+    )
+    customer_unit_price_rub = models.DecimalField(
+        "Цена детали для клиента (₽)",
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Снимок цены клиента. Пусто означает, что цена не была зафиксирована.",
     )
     note = models.CharField("Примечание", max_length=255, blank=True)
     issued_at = models.DateTimeField("Выдано (когда)", null=True, blank=True)

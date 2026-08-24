@@ -188,8 +188,8 @@ def test_each_part_of_a_repair_keeps_its_own_cost(data):
 # --- Разделение выручки и себестоимости ------------------------------------------------
 
 
-def test_a_sale_row_never_carries_a_cost_and_a_repair_never_carries_revenue(data):
-    """Их нельзя сложить, потому что они никогда не стоят в одном поле."""
+def test_sale_and_repair_keep_customer_amount_separate_from_cost(data):
+    """Repair client price is a snapshot, not a relabelled procurement cost."""
     customer = Customer.objects.create(name="Иванов")
     _sale(data, customer=customer, items=(("belt", 1),))
     _repair(data, customer=customer, items=(("filter", 1),))
@@ -201,7 +201,8 @@ def test_a_sale_row_never_carries_a_cost_and_a_repair_never_carries_revenue(data
             assert row["cost"] is None, "у продажи появилась себестоимость"
         else:
             assert row["cost"] is not None
-            assert row["amount"] is None, "себестоимость выдана за выручку"
+            assert row["amount"] is not None
+            assert row["amount"] != row["cost"]
 
 
 def test_the_sale_amount_is_unchanged(data):
@@ -227,7 +228,7 @@ def test_the_combined_report_shows_the_two_values_in_separate_columns(client, da
     ).content.decode()
     assert "Сумма (₽)" in body
     assert "Себестоимость (₽)" in body
-    assert "складывать их между собой нельзя" in body
+    assert "стоимость детали для клиента" in body
 
 
 def test_the_repairs_report_shows_the_cost(client, data, admin):
@@ -270,7 +271,7 @@ def test_a_role_without_cost_rights_sees_no_cost(client, data, make_user):
         reverse("reports_repairs_by_client_detail"), {"customer_id": customer.pk}
     )
     assert response.status_code == 200
-    assert response.context["show_money"] is False
+    assert response.context["show_costs"] is False
     assert "Себестоимость (₽)" not in response.content.decode()
 
 
@@ -523,7 +524,7 @@ def test_a_part_that_cost_the_warehouse_nothing_shows_a_real_zero(data, admin):
     assert rows[0]["cost"] is not None, "настоящий ноль превратили в пустоту"
 
 
-def test_a_sale_and_a_repair_on_the_same_day_never_share_a_column(data):
+def test_a_sale_and_repair_keep_customer_amount_and_cost_distinct(data):
     customer = Customer.objects.create(name="Иванов")
     _sale(data, customer=customer, items=(("belt", 1),), price="500")
     _repair(data, customer=customer, items=(("belt", 1),))
@@ -532,10 +533,11 @@ def test_a_sale_and_a_repair_on_the_same_day_never_share_a_column(data):
     assert len(rows) == 2
     amounts = [row["amount"] for row in rows if row["amount"] is not None]
     costs = [row["cost"] for row in rows if row["cost"] is not None]
-    assert len(amounts) == 1 and len(costs) == 1
-    # Единственная защита от сложения - то, что величины не встречаются в одном
-    # поле ни в одной строке.
-    assert all((row["amount"] is None) != (row["cost"] is None) for row in rows)
+    assert len(amounts) == 2 and len(costs) == 1
+    sale = next(row for row in rows if row["kind"] == "sale")
+    repair = next(row for row in rows if row["kind"] == "repair")
+    assert sale["cost"] is None
+    assert repair["amount"] != repair["cost"]
 
 
 # --- Запросы к базе -------------------------------------------------------------------------

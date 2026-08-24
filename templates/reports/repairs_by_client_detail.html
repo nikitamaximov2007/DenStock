@@ -13,7 +13,7 @@
   <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
   <p class="muted">
     Детали, выданные в ремонт.
-    {% if show_money %}
+    {% if show_costs %}
       Себестоимость - во сколько складу обошлась деталь; она зафиксирована при
       проведении заказа и не меняется при обновлении каталога. Это не выручка:
       цену работ система не хранит.
@@ -30,7 +30,7 @@
           <th>Деталь</th>
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
-          {% if show_money %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
+          {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -48,7 +48,7 @@
               {% endif %}
             </td>
             <td class="num--qty">{{ line.quantity|quantity_int }}</td>
-            {% if show_money %}
+            {% if show_costs %}
               <td class="num--money">{{ line.total_cost_rub|money_int }}</td>
             {% endif %}
           </tr>

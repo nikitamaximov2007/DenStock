@@ -4,6 +4,7 @@
 проводится POST + redirect (PRG). Доступ: любое из прав продаж/резервов/
 ремонта; каждый тип действия дополнительно проверяется по своему праву.
 """
+
 import datetime
 import secrets
 
@@ -139,7 +140,8 @@ def actions_scan(request):
                     candidate.part
                     for candidate in lookup.candidates
                     if str(candidate.part.pk) == selected_part_id
-                    and candidate.match_source in {
+                    and candidate.match_source
+                    in {
                         MatchSource.EXACT,
                         MatchSource.BARCODE,
                     }
@@ -320,7 +322,7 @@ def _drop_scans(request, kind: str) -> None:
 def _scans_for(request, kind: str) -> dict:
     prefix = f"{kind}:"
     scans = request.session.get(CART_SCANS_SESSION_KEY) or {}
-    return {key[len(prefix):]: value for key, value in scans.items() if key.startswith(prefix)}
+    return {key[len(prefix) :]: value for key, value in scans.items() if key.startswith(prefix)}
 
 
 def _cart_panels(request) -> list:
@@ -439,8 +441,14 @@ def actions_cart_update(request):
         messages.success(request, f"Позиция убрана из корзины: {part.name}.")
     elif operation == "set":
         try:
+            raw_unit_price = request.POST.get("unit_price")
             row = set_row_quantity(
-                cart, part, location, request.POST.get("quantity", ""), by=request.user
+                cart,
+                part,
+                location,
+                request.POST.get("quantity", ""),
+                unit_price=(raw_unit_price or None) if kind == KIND_REPAIR else None,
+                by=request.user,
             )
         except ActionError as exc:
             messages.error(request, str(exc))
@@ -529,8 +537,7 @@ def actions_cart_complete(request):
     total_qty = sum(action.quantity for action in actions)
     messages.success(
         request,
-        f"{CART_TITLES[kind]} проведена: позиций {len(actions)}, "
-        f"{quantity_int(total_qty)} шт.",
+        f"{CART_TITLES[kind]} проведена: позиций {len(actions)}, {quantity_int(total_qty)} шт.",
     )
     return redirect(back)
 
@@ -556,11 +563,7 @@ def actions_report_view(request):
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
     # Таможня и Excel — только по активным действиям (без отменённых).
-    active_actions = [
-        a
-        for a in actions
-        if not a.is_cancelled
-    ]
+    active_actions = [a for a in actions if not a.is_cancelled]
     export_rows = build_export_rows(active_actions)
     ready = [r for r in export_rows if not r["warnings"]]
     # Готовность к таможенному экспорту (Layer 33.1): область применения +
@@ -568,9 +571,7 @@ def actions_report_view(request):
     # генерическая таблица предупреждений выше (ready_count/warning_count).
     for row in export_rows:
         row["gross_weight_total_kg"] = (
-            row["gross_weight_kg"] * row["quantity"]
-            if row["gross_weight_kg"] is not None
-            else None
+            row["gross_weight_kg"] * row["quantity"] if row["gross_weight_kg"] is not None else None
         )  # только для отображения: quantity меняется от экспорта к экспорту,
         # само значение никогда не сохраняется обратно в PartCustomsInfo.
     customs_missing = [r for r in export_rows if not r["customs_ready"]]
@@ -610,9 +611,7 @@ def actions_cancel(request, pk):
     )
     if request.method == "POST":
         try:
-            cancel_warehouse_action(
-                action, by=request.user, reason=request.POST.get("reason", "")
-            )
+            cancel_warehouse_action(action, by=request.user, reason=request.POST.get("reason", ""))
         except ActionError as exc:
             messages.error(request, str(exc))
             return redirect("actions_cancel", pk=pk)
@@ -625,8 +624,11 @@ def actions_cancel(request, pk):
     return render(
         request,
         "actions/cancel.html",
-        {"action": action, "can_cancel": action.status == WarehouseAction.Status.ACTIVE
-         and action.action_type == WarehouseAction.Type.SALE},
+        {
+            "action": action,
+            "can_cancel": action.status == WarehouseAction.Status.ACTIVE
+            and action.action_type == WarehouseAction.Type.SALE,
+        },
     )
 
 
@@ -681,9 +683,7 @@ def actions_customs_edit(request, part_id):
         # вес мог быть записан с непроверенной страницы). Guard единый с
         # быстрым редактором: неполную пару весов подтвердить нельзя.
         customs.weight_verified = (
-            bool(request.POST.get("weight_verified"))
-            and gross is not None
-            and net is not None
+            bool(request.POST.get("weight_verified")) and gross is not None and net is not None
         )
         application_area = (request.POST.get("application_area") or "").strip().upper()
         if application_area and application_area not in PartCustomsInfo.ApplicationArea.values:
@@ -785,13 +785,14 @@ def actions_customs_quick_save(request, part_id):
         else:
             if gross is not _UNSET or net is not _UNSET:
                 both_weights = (
-                    customs.gross_weight_kg is not None
-                    and customs.net_weight_kg is not None
+                    customs.gross_weight_kg is not None and customs.net_weight_kg is not None
                 )
                 customs.weight_verified = both_weights
                 update_fields.append("weight_verified")
-                if both_weights and not customs.weight_source_url.strip() and (
-                    customs.weight_source_note.strip() in ("", MANUAL_WEIGHT_NOTE)
+                if (
+                    both_weights
+                    and not customs.weight_source_url.strip()
+                    and (customs.weight_source_note.strip() in ("", MANUAL_WEIGHT_NOTE))
                 ):
                     customs.weight_source_note = MANUAL_WEIGHT_NOTE
                     update_fields.append("weight_source_note")

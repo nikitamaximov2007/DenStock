@@ -8,21 +8,20 @@
     Только проведённые документы по моменту проведения.
   </p>
   <p class="muted">
-    Деньги продажи и деньги ремонта не складываются. У продажи это выручка от
-    клиента, у ремонта это себестоимость выданных деталей: клиентской суммы
-    ремонта система не хранит. Поэтому здесь две отдельные колонки и нет
-    общего итога.
+    Итого с клиента = продажи + стоимость деталей в ремонтах. Стоимость работ
+    DenisStock не хранит и в итог не входит.
   </p>
-  {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
   {% if page_obj.object_list %}
     <table class="table">
       <thead>
         <tr>
           <th>Клиент</th>
           <th class="num">Продаж</th>
-          {% if show_money %}<th class="num--money">Выручка продаж (₽)</th>{% endif %}
+          <th class="num--money">Выручка продаж (₽)</th>
           <th class="num">Ремонтов</th>
-          {% if show_money %}<th class="num--money">Себестоимость выданного (₽)</th>{% endif %}
+          <th class="num--money">Детали в ремонтах (₽)</th>
+          <th class="num--money">Итого с клиента (₽)</th>
+          {% if show_costs %}<th class="num--money">Себестоимость ремонта (₽)</th>{% endif %}
           <th>Последний документ</th>
         </tr>
       </thead>
@@ -34,9 +33,11 @@
               {% if not row.linked %}<span class="muted">&#32;· без карточки</span>{% endif %}
             </td>
             <td class="num">{{ row.sale_count }}</td>
-            {% if show_money %}<td class="num--money">{{ row.revenue|money_int }}</td>{% endif %}
+            <td class="num--money">{{ row.revenue|money_int }}</td>
             <td class="num">{{ row.repair_count }}</td>
-            {% if show_money %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
+            <td class="num--money">{{ row.repair_customer_amount|money_int }}{% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}</td>
+            <td class="num--money">{{ row.client_total_known|money_int }}{% if row.client_total_unknown %}<span class="muted">*</span>{% endif %}</td>
+            {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
             <td>{{ row.last_event|ru_dt }}</td>
           </tr>
         {% endfor %}
@@ -45,5 +46,6 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="chart" title="Документов за период нет" text="Измените период, чтобы увидеть проведённые продажи и ремонты по клиентам." compact=1 %}
   {% endif %}
+  {% if page_obj.object_list %}<p class="muted">* Итого известных сумм: у части старых ремонтов цена деталей не была зафиксирована.</p>{% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}

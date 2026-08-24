@@ -10,6 +10,7 @@
 (`is_part_item_reserved`/`active_reserved_for_lot`): нельзя выдать в ремонт то,
 что держит активная бронь. Связи repair-заказа с `Reservation` на этом слое нет.
 """
+
 from decimal import Decimal
 
 from django.db import transaction
@@ -42,12 +43,25 @@ def _freeze_repair_line_cost(line: RepairIssueLine) -> None:
     line.total_cost_rub = money(unit_cost * line.quantity)
 
 
+def _default_customer_price(part_type):
+    """Current catalog price is only a draft default, never a historical fallback."""
+    return part_type.recommended_price
+
+
 # --- Создание / наполнение заказа --------------------------------------------
 
 
 def create_repair_order(
-    *, customer_name="", customer_phone="", vehicle_type=None, vehicle_make="",
-    vehicle_model="", vehicle_identifier="", problem_description="", comment="", by=None,
+    *,
+    customer_name="",
+    customer_phone="",
+    vehicle_type=None,
+    vehicle_make="",
+    vehicle_model="",
+    vehicle_identifier="",
+    problem_description="",
+    comment="",
+    by=None,
     customer=None,
 ) -> RepairOrder:
     """Создать черновик ремонтного заказа (склад ещё не трогаем)."""
@@ -82,7 +96,9 @@ def _ensure_draft(order: RepairOrder) -> None:
 
 
 @transaction.atomic
-def add_part_item_to_repair_order(order, item, *, note="", by=None) -> RepairIssueLine:
+def add_part_item_to_repair_order(
+    order, item, *, note="", customer_unit_price_rub=None, by=None
+) -> RepairIssueLine:
     """Добавить конкретный экземпляр в заказ (целиком, quantity = 1)."""
     order = RepairOrder.objects.select_for_update().get(pk=order.pk)
     _ensure_draft(order)
@@ -94,14 +110,25 @@ def add_part_item_to_repair_order(order, item, *, note="", by=None) -> RepairIss
     if is_part_item_reserved(item):
         raise RepairError("Экземпляр зарезервирован активной бронью.")
     return RepairIssueLine.objects.create(
-        repair_order=order, part_type=item.part_type, part_item=item,
-        batch=item.batch, batch_line=item.batch_line,
-        quantity=Decimal("1"), note=(note or "").strip(),
+        repair_order=order,
+        part_type=item.part_type,
+        part_item=item,
+        batch=item.batch,
+        batch_line=item.batch_line,
+        quantity=Decimal("1"),
+        note=(note or "").strip(),
+        customer_unit_price_rub=(
+            _default_customer_price(item.part_type)
+            if customer_unit_price_rub is None
+            else Decimal(customer_unit_price_rub)
+        ),
     )
 
 
 @transaction.atomic
-def add_stock_lot_to_repair_order(order, lot, quantity, *, note="", by=None) -> RepairIssueLine:
+def add_stock_lot_to_repair_order(
+    order, lot, quantity, *, note="", customer_unit_price_rub=None, by=None
+) -> RepairIssueLine:
     """Добавить количество из лота в заказ. Доступно = qty − резерв − уже в заказе."""
     order = RepairOrder.objects.select_for_update().get(pk=order.pk)
     _ensure_draft(order)
@@ -112,20 +139,27 @@ def add_stock_lot_to_repair_order(order, lot, quantity, *, note="", by=None) -> 
     if lot.status != StockLot.Status.AVAILABLE:
         raise RepairError("Выдать в ремонт можно только доступный лот.")
     reserved = active_reserved_for_lot(lot)
-    already_in_order = (
-        RepairIssueLine.objects.filter(repair_order=order, stock_lot=lot)
-        .aggregate(s=Sum("quantity"))["s"]
-        or Decimal("0")
-    )
+    already_in_order = RepairIssueLine.objects.filter(repair_order=order, stock_lot=lot).aggregate(
+        s=Sum("quantity")
+    )["s"] or Decimal("0")
     available = lot.quantity - reserved - already_in_order
     if quantity > available:
         raise RepairError(
             f"Недостаточно в лоте: доступно для выдачи {available}, запрошено {quantity}."
         )
     return RepairIssueLine.objects.create(
-        repair_order=order, part_type=lot.part_type, stock_lot=lot,
-        batch=lot.batch, batch_line=lot.batch_line,
-        quantity=quantity, note=(note or "").strip(),
+        repair_order=order,
+        part_type=lot.part_type,
+        stock_lot=lot,
+        batch=lot.batch,
+        batch_line=lot.batch_line,
+        quantity=quantity,
+        note=(note or "").strip(),
+        customer_unit_price_rub=(
+            _default_customer_price(lot.part_type)
+            if customer_unit_price_rub is None
+            else Decimal(customer_unit_price_rub)
+        ),
     )
 
 
@@ -137,6 +171,24 @@ def remove_repair_line(line, *, by=None) -> None:
     )
     _ensure_draft(line.repair_order)
     line.delete()
+
+
+@transaction.atomic
+def set_repair_line_customer_price(line, customer_unit_price_rub, *, by=None) -> RepairIssueLine:
+    """Set the client price only while the repair is a draft."""
+    line = (
+        RepairIssueLine.objects.select_for_update().select_related("repair_order").get(pk=line.pk)
+    )
+    _ensure_draft(line.repair_order)
+    if customer_unit_price_rub in (None, ""):
+        line.customer_unit_price_rub = None
+    else:
+        price = Decimal(customer_unit_price_rub)
+        if price < 0:
+            raise RepairError("Цена клиента не может быть отрицательной.")
+        line.customer_unit_price_rub = money(price)
+    line.save(update_fields=["customer_unit_price_rub"])
+    return line
 
 
 # --- Проведение / отмена -----------------------------------------------------
@@ -171,9 +223,7 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
             _freeze_repair_line_cost(line)
             line.issued_at = now
             line.save(update_fields=["unit_cost_rub", "total_cost_rub", "issued_at"])
-            issue_part_item(
-                item, by=by, document_id=order.pk, comment=f"Ремонт {order.number}"
-            )
+            issue_part_item(item, by=by, document_id=order.pk, comment=f"Ремонт {order.number}")
         else:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status != StockLot.Status.AVAILABLE:
@@ -232,3 +282,59 @@ def calculate_repair_costs(order: RepairOrder) -> Decimal:
         remaining_used = max(line.quantity - returned, Decimal("0"))
         total += line.unit_cost_rub * remaining_used
     return money(total)
+
+
+def repair_customer_line_amounts(lines):
+    """Net historical customer amount per issue line; ``None`` preserves unknown."""
+    from apps.returns.models import StockReturnLine
+
+    lines = list(lines)
+    line_ids = [line.pk for line in lines]
+    returned = dict(
+        StockReturnLine.objects.filter(
+            stock_return__status="completed",
+            source_repair_line_id__in=line_ids,
+        )
+        .values("source_repair_line_id")
+        .annotate(quantity=Sum("quantity"))
+        .values_list("source_repair_line_id", "quantity")
+    )
+    amounts = {}
+    for line in lines:
+        remaining = max(line.quantity - (returned.get(line.pk) or Decimal("0")), Decimal("0"))
+        amounts[line.pk] = (
+            None
+            if line.customer_unit_price_rub is None and remaining
+            else money(line.customer_unit_price_rub * remaining)
+            if line.customer_unit_price_rub is not None
+            else Decimal("0")
+        )
+    return amounts
+
+
+def repair_customer_amounts(orders):
+    """Net historical customer amounts keyed by repair id.
+
+    ``None`` means at least one issued line has no historical customer price.
+    Completed returns reduce the amount using the same frozen issue-line price.
+    """
+    order_ids = [order.pk for order in orders]
+    values = {pk: Decimal("0") for pk in order_ids}
+    unknown = {pk: False for pk in order_ids}
+    lines = list(
+        RepairIssueLine.objects.filter(repair_order_id__in=order_ids).only(
+            "id", "repair_order_id", "quantity", "customer_unit_price_rub"
+        )
+    )
+    line_amounts = repair_customer_line_amounts(lines)
+    for line in lines:
+        line_amount = line_amounts[line.pk]
+        if line_amount is None:
+            unknown[line.repair_order_id] = True
+        else:
+            values[line.repair_order_id] += line_amount
+    return {pk: None if unknown[pk] else money(values[pk]) for pk in order_ids}
+
+
+def calculate_repair_customer_amount(order: RepairOrder):
+    return repair_customer_amounts([order])[order.pk]

@@ -5,6 +5,7 @@
 Hidden/query-параметры недоверенные: объект всегда перечитывается из БД,
 права/статус/доступность/количество проверяет сервис.
 """
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -26,10 +27,13 @@ from .services import (
     RepairError,
     add_part_item_to_repair_order,
     add_stock_lot_to_repair_order,
+    calculate_repair_customer_amount,
     cancel_repair_order,
     complete_repair_order,
     create_repair_order,
     remove_repair_line,
+    repair_customer_line_amounts,
+    set_repair_line_customer_price,
 )
 
 
@@ -96,6 +100,19 @@ def repair_order_detail(request, pk):
         )
     )
     attach_part_identity(lines)  # exact-артикул отдельной колонкой
+    for line in lines:
+        line.customer_total_rub = None
+    if order.status == RepairOrder.Status.COMPLETED:
+        amounts = repair_customer_line_amounts(lines)
+        for line in lines:
+            line.customer_total_rub = amounts[line.pk]
+    else:
+        for line in lines:
+            line.customer_total_rub = (
+                None
+                if line.customer_unit_price_rub is None
+                else line.customer_unit_price_rub * line.quantity
+            )
     is_draft = order.status == RepairOrder.Status.DRAFT
     return render(
         request,
@@ -107,6 +124,9 @@ def repair_order_detail(request, pk):
             "can_return": request.user.can_manage_returns,
             "is_draft": is_draft,
             "show_costs": request.user.can_view_purchase_cost,
+            "customer_amount": calculate_repair_customer_amount(order)
+            if order.status == RepairOrder.Status.COMPLETED
+            else None,
             "add_item_form": AddRepairItemForm(),
             "add_lot_form": AddRepairLotForm(),
         },
@@ -156,7 +176,12 @@ def repair_order_add_item(request, pk):
         messages.error(request, "Экземпляр по коду не найден.")
     else:
         try:
-            add_part_item_to_repair_order(order, item, by=request.user)
+            add_part_item_to_repair_order(
+                order,
+                item,
+                customer_unit_price_rub=form.cleaned_data["customer_unit_price_rub"],
+                by=request.user,
+            )
         except RepairError as exc:
             messages.error(request, str(exc))
         else:
@@ -175,13 +200,33 @@ def repair_order_add_lot(request, pk):
         return redirect("repair_order_detail", pk=pk)
     try:
         add_stock_lot_to_repair_order(
-            order, form.cleaned_data["lot"], form.cleaned_data["quantity"], by=request.user
+            order,
+            form.cleaned_data["lot"],
+            form.cleaned_data["quantity"],
+            customer_unit_price_rub=form.cleaned_data["customer_unit_price_rub"],
+            by=request.user,
         )
     except RepairError as exc:
         messages.error(request, str(exc))
     else:
         messages.success(request, "Количество из лота добавлено в заказ.")
     return redirect("repair_order_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def repair_order_set_line_price(request, pk):
+    _require_repairs(request)
+    line = get_object_or_404(RepairIssueLine, pk=pk)
+    try:
+        set_repair_line_customer_price(
+            line, request.POST.get("customer_unit_price_rub"), by=request.user
+        )
+    except RepairError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Цена детали для клиента сохранена.")
+    return redirect("repair_order_detail", pk=line.repair_order_id)
 
 
 @login_required

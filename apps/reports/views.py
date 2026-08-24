@@ -5,6 +5,7 @@
 доступ к разделу — по `can_view_reports`. Экспорт (Слой 22) использует ТЕ ЖЕ
 сервисы и право, что UI; финансовые колонки пишутся только при purchase_cost.
 """
+
 from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required
@@ -174,7 +175,8 @@ def sales_by_client(request):
             "presets": _PRESETS,
             "page_obj": page_obj,
             "is_paginated": is_paginated,
-            "show_money": request.user.can_view_purchase_cost,
+            "show_money": True,
+            "show_costs": request.user.can_view_purchase_cost,
         },
     )
 
@@ -209,7 +211,8 @@ def sales_by_client_detail(request):
             "presets": _PRESETS,
             "page_obj": page_obj,
             "is_paginated": is_paginated,
-            "show_money": request.user.can_view_purchase_cost,
+            "show_money": True,
+            "show_costs": request.user.can_view_purchase_cost,
             "missing_customer": missing,
         },
     )
@@ -236,7 +239,8 @@ def clients_overview(request):
             "presets": _PRESETS,
             "page_obj": page_obj,
             "is_paginated": is_paginated,
-            "show_money": request.user.can_view_purchase_cost,
+            "show_money": True,
+            "show_costs": request.user.can_view_purchase_cost,
         },
     )
 
@@ -264,7 +268,8 @@ def client_timeline(request):
             "presets": _PRESETS,
             "page_obj": page_obj,
             "is_paginated": is_paginated,
-            "show_money": request.user.can_view_purchase_cost,
+            "show_money": True,
+            "show_costs": request.user.can_view_purchase_cost,
         },
     )
 
@@ -294,7 +299,8 @@ def repairs_by_client(request):
             "presets": _PRESETS,
             "page_obj": page_obj,
             "is_paginated": is_paginated,
-            "show_money": request.user.can_view_purchase_cost,
+            "show_money": True,
+            "show_costs": request.user.can_view_purchase_cost,
         },
     )
 
@@ -324,7 +330,8 @@ def repairs_by_client_detail(request):
             "presets": _PRESETS,
             "page_obj": page_obj,
             "is_paginated": is_paginated,
-            "show_money": request.user.can_view_purchase_cost,
+            "show_money": True,
+            "show_costs": request.user.can_view_purchase_cost,
             "missing_customer": missing,
         },
     )

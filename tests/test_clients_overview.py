@@ -1,13 +1,4 @@
-"""Общий отчёт «Продажи и ремонты по клиентам» и лента документов клиента.
-
-Главная гарантия здесь денежная: продажи и ремонты НЕ складываются. Выручка
-продажи это деньги клиента, а «себестоимость выданного» в ремонте это
-закупочная стоимость деталей; клиентской суммы ремонта система не хранит.
-Поэтому в отчёте две отдельные денежные колонки и нет общего итога.
-
-Вторая гарантия историческая: лента показывает только проведённые документы с
-их замороженными суммами и ведёт в первоисточник.
-"""
+"""Общий отчёт «Продажи и ремонты по клиентам» и историческая лента."""
 from decimal import Decimal
 
 import pytest
@@ -124,15 +115,16 @@ def test_client_row_holds_sales_and_repairs_separately(data):
     assert row["repair_count"] == 1
     assert row["revenue"] == sale.revenue_total
     assert row["issued_cost"] == order.cost_total
+    assert row["repair_customer_amount"] == Decimal("1500.00")
+    assert row["client_total_known"] == Decimal("2500.00")
 
 
-def test_report_never_sums_revenue_with_repair_cost(data):
-    """Общего денежного итога нет: складывать выручку и себестоимость нельзя."""
+def test_report_sums_sales_with_repair_customer_amount_not_cost(data):
     _sale(data, "Иванов", 2)
     _repair(data, "Иванов", 3)
     row = next(iter(get_clients_sales_and_repairs(resolve_period({}))))
-    for forbidden in ("total", "total_money", "combined_total", "amount"):
-        assert forbidden not in row
+    assert row["client_total_known"] == row["revenue"] + row["repair_customer_amount"]
+    assert row["client_total_known"] != row["revenue"] + row["issued_cost"]
 
 
 def test_client_with_only_repairs_is_present(data):
@@ -178,7 +170,7 @@ def test_timeline_merges_documents_newest_first(data):
     assert numbers == {sale.number, order.number}
 
 
-def test_timeline_keeps_money_in_its_own_column(data):
+def test_timeline_keeps_repair_customer_amount_separate_from_cost(data):
     sale = _sale(data, "Иванов", 2)
     order = _repair(data, "Иванов", 1)
     events = {event["kind"]: event for event in get_client_timeline(
@@ -187,7 +179,8 @@ def test_timeline_keeps_money_in_its_own_column(data):
     assert events["sale"]["revenue"] == sale.revenue_total
     assert events["sale"]["issued_cost"] is None
     assert events["repair"]["issued_cost"] == order.cost_total
-    assert events["repair"]["revenue"] is None
+    assert events["repair"]["revenue"] == Decimal("500.00")
+    assert events["repair"]["revenue"] != events["repair"]["issued_cost"]
 
 
 def test_timeline_points_to_source_documents(data):
@@ -218,15 +211,14 @@ def test_overview_page_shows_two_money_columns(client, make_user, data):
     html = client.get(reverse("reports_clients_overview")).content.decode()
     assert "Продажи и ремонты по клиентам" in html
     assert "Выручка продаж (₽)" in html
-    assert "Себестоимость выданного (₽)" in html
-    assert "Общая сумма" not in html
-    assert "Итого по клиенту" not in html
+    assert "Детали в ремонтах (₽)" in html
+    assert "Итого с клиента (₽)" in html
 
 
-def test_overview_page_states_money_is_not_summed(client, make_user, data):
+def test_overview_page_explains_client_total(client, make_user, data):
     _login(client, make_user)
     html = client.get(reverse("reports_clients_overview")).content.decode()
-    assert "не складываются" in html
+    assert "Итого с клиента" in html
 
 
 def test_timeline_page_shows_parts_not_documents(client, make_user, data):
@@ -255,7 +247,7 @@ def test_timeline_requires_customer(client, make_user, data):
     assert client.get(reverse("reports_client_timeline")).status_code == 404
 
 
-def test_money_hidden_without_purchase_cost_right(client, make_user, data):
+def test_customer_totals_are_visible_without_purchase_cost_right(client, make_user, data):
     from apps.accounts import roles
 
     _sale(data, "Иванов", 2)
@@ -265,5 +257,6 @@ def test_money_hidden_without_purchase_cost_right(client, make_user, data):
     if resp.status_code == 403:
         pytest.skip("У роли нет доступа к отчётам: правило прав проверяется отдельно.")
     html = resp.content.decode()
-    assert "Выручка продаж (₽)" not in html
-    assert "Финансовые показатели скрыты для вашей роли." in html
+    assert "Выручка продаж (₽)" in html
+    assert "Детали в ремонтах (₽)" in html
+    assert "Себестоимость ремонта (₽)" not in html

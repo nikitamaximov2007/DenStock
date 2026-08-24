@@ -54,7 +54,7 @@
               <th>Артикул</th>
               <th>Ячейка</th>
               <th class="num--qty">Количество</th>
-              {% if panel.is_sale %}<th class="num--money">Сумма</th>{% endif %}
+              {% if panel.is_sale %}<th class="num--money">Сумма</th>{% else %}<th class="num--money">Цена клиенту</th><th class="num--money">Сумма</th>{% endif %}
               <th></th>
             </tr>
           </thead>
@@ -87,11 +87,17 @@
                            size="4"
                            value="{{ item.row.quantity|quantity_int }}"
                            aria-label="Количество">
+                    {% if not panel.is_sale %}
+                      <input name="unit_price" type="number" min="0" step="0.01" size="6" value="{{ item.row.unit_price|default_if_none:'' }}" aria-label="Цена клиенту">
+                    {% endif %}
                     <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
                   </form>
                 </td>
                 {% if panel.is_sale %}
                   <td class="num--money">{% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}</td>
+                {% else %}
+                  <td class="num--money">{% if item.row.unit_price is not None %}{{ item.row.unit_price|money_int }} ₽{% else %}<span class="muted">Не указана</span>{% endif %}</td>
+                  <td class="num--money">{% if item.row.total_price is not None %}{{ item.row.total_price|money_int }} ₽{% else %}<span class="muted">Не указана</span>{% endif %}</td>
                 {% endif %}
                 <td>
                   <form method="post"
@@ -111,7 +117,7 @@
         </table>
         <p class="muted">
           Позиций: {{ panel.positions }}.
-          {% if panel.is_sale %}Сумма: {{ panel.total|money_int }} ₽.{% endif %}
+          Сумма: {% if panel.total is not None %}{{ panel.total|money_int }} ₽{% else %}не указана{% endif %}.
           Склад изменится только при проведении.
         </p>
         <form method="post"

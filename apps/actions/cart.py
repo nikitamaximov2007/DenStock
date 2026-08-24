@@ -122,9 +122,7 @@ def open_cart(kind: str, *, by=None):
     if kind == KIND_SALE:
         return create_sale(customer_name=CART_PLACEHOLDER_NAME, comment=CART_COMMENT, by=by)
     if kind == KIND_REPAIR:
-        return create_repair_order(
-            customer_name=CART_PLACEHOLDER_NAME, comment=CART_COMMENT, by=by
-        )
+        return create_repair_order(customer_name=CART_PLACEHOLDER_NAME, comment=CART_COMMENT, by=by)
     raise ActionError("Неизвестный тип корзины.")
 
 
@@ -152,7 +150,9 @@ def cart_rows(cart) -> list[CartRow]:
                 "part": line.part_type,
                 "location": line.stock_lot.location,
                 "quantity": Decimal("0"),
-                "unit_price": getattr(line, "unit_price", None),
+                "unit_price": (
+                    line.unit_price if isinstance(cart, Sale) else line.customer_unit_price_rub
+                ),
             },
         )
         row["quantity"] += line.quantity
@@ -172,7 +172,7 @@ def cart_rows(cart) -> list[CartRow]:
 
 
 def cart_total(cart) -> Decimal:
-    """Сумма корзины (для продажи). Для ремонта цены клиента нет — ноль."""
+    """Known customer total for either sale or repair draft."""
     return money(sum((row.total_price or Decimal("0") for row in cart_rows(cart)), Decimal("0")))
 
 
@@ -200,7 +200,7 @@ def _drop_row_lines(cart, part, location) -> None:
 
 
 @transaction.atomic
-def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | None:
+def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None) -> CartRow | None:
     """Задать итоговое количество детали в ячейке (0 — убрать позицию).
 
     Позиция пересобирается по лотам заново (FIFO): доступность проверяют те же
@@ -209,6 +209,7 @@ def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | No
     """
     _ensure_draft(cart)
     quantity = parse_quantity(quantity, allow_zero=True)
+    prior = find_row(cart, part, location)
     _drop_row_lines(cart, part, location)
     if quantity == 0:
         return None
@@ -218,13 +219,18 @@ def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | No
         .order_by("created_at", "pk")
     )
     portions = _split_quantity_over_lots(lots, quantity)
-    unit_price = part.recommended_price or Decimal("0")
+    if unit_price is None:
+        unit_price = prior.unit_price if prior is not None else part.recommended_price
     try:
         for lot, portion in portions:
             if isinstance(cart, Sale):
-                add_stock_lot_to_sale(cart, lot, portion, unit_price=unit_price, by=by)
+                add_stock_lot_to_sale(
+                    cart, lot, portion, unit_price=unit_price or Decimal("0"), by=by
+                )
             else:
-                add_stock_lot_to_repair_order(cart, lot, portion, by=by)
+                add_stock_lot_to_repair_order(
+                    cart, lot, portion, customer_unit_price_rub=unit_price, by=by
+                )
     except (SaleError, RepairError) as exc:
         raise ActionError(str(exc)) from exc
     return find_row(cart, part, location)
