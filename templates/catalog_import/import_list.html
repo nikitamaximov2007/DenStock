@@ -76,9 +76,7 @@
                   поэтому фильтр default здесь не годится: для него ноль пустой.
                 {% endcomment %}
                 {% for value in batch.history_counters %}
-                  <td class="num">
-                    {% if value is not None %}{{ value }}{% else %}·{% endif %}
-                  </td>
+                  <td class="num">{% if value is not None %}{{ value }}{% else %}·{% endif %}</td>
                 {% endfor %}
                 <td>{{ batch.created_by|default:"·" }}</td>
                 <td>{{ batch.created_at|ru_dt }}</td>

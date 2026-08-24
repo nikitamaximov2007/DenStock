@@ -90,7 +90,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Складские действия / Таможня",
             "Статистика",
         ],
-        "settings": ["Импорт каталога BRP", "Цены", "Пользователи", "Бэкапы"],
+        "settings": ["Импорт каталога", "Цены", "Пользователи", "Бэкапы"],
     }
     assert html.count('data-nav-group-toggle') == 5
     assert html.count('aria-expanded="true"') >= 5
@@ -323,7 +323,7 @@ def test_directories_stay_internal_without_sidebar_entry(client, make_nav_user):
     _login(client, make_nav_user("directory-admin", superuser=True))
     dashboard = _html(client, "dashboard")
     assert _sidebar_groups(dashboard)["settings"] == [
-        "Импорт каталога BRP",
+        "Импорт каталога",
         "Цены",
         "Пользователи",
         "Бэкапы",

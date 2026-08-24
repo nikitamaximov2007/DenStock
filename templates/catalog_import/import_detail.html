@@ -111,9 +111,7 @@
           </tbody>
         </table>
         {% if problems_total > problem_rows|length %}
-          <p class="muted">
-            Показаны первые {{ problem_rows|length }} из {{ problems_total }}.
-          </p>
+          <p class="muted">Показаны первые {{ problem_rows|length }} из {{ problems_total }}.</p>
         {% endif %}
       {% endif %}
       {% if status_rows %}

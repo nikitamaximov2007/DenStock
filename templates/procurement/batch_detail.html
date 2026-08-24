@@ -61,7 +61,7 @@
           <th>Себестоимость зафиксирована</th>
           <td>
             {{ batch.cost_finalized_at|date:"d.m.Y H:i" }}
-            {% if batch.cost_finalized_by %} · {{ batch.cost_finalized_by }}{% endif %}
+            {% if batch.cost_finalized_by %}· {{ batch.cost_finalized_by }}{% endif %}
           </td>
         </tr>
       {% endif %}

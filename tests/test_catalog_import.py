@@ -526,31 +526,31 @@ def test_history_page_lists_batches(client, make_user, db, admin, settings, tmp_
     assert "brp.xlsx" in html
 
 
-def test_settings_exposes_brp_catalog_import_to_authorized_user(client, make_user, db):
+def test_settings_exposes_catalog_import_to_authorized_user(client, make_user, db):
     _login(client, make_user)
 
     response = client.get(reverse("directory_index"))
 
     assert response.status_code == 200
-    assert "Импорт каталога BRP" in response.content.decode()
+    assert "Импорт каталога" in response.content.decode()
     assert reverse("catalog_import_list") in response.content.decode()
     import_page = client.get(reverse("catalog_import_list"))
-    assert "Выберите Excel-каталог BRP" in import_page.content.decode()
+    assert "Загрузить Excel-каталог" in import_page.content.decode()
     assert "Проверить файл" in import_page.content.decode()
 
 
-def test_sidebar_exposes_direct_brp_catalog_import_to_authorized_user(client, make_user, db):
+def test_sidebar_exposes_direct_catalog_import_to_authorized_user(client, make_user, db):
     _login(client, make_user)
 
     response = client.get(reverse("directory_index"))
     sidebar = response.content.decode().split('<nav class="sidebar"', 1)[1].split("</nav>", 1)[0]
 
     assert 'data-nav-group="settings"' in sidebar
-    assert "Импорт каталога BRP" in sidebar
+    assert "Импорт каталога" in sidebar
     assert reverse("catalog_import_list") in sidebar
 
 
-def test_settings_hides_brp_catalog_import_without_catalog_permission(client, make_user, db):
+def test_settings_hides_catalog_import_without_catalog_permission(client, make_user, db):
     from apps.accounts import roles
 
     _login(client, make_user, role=roles.STOREKEEPER, superuser=False)
@@ -558,7 +558,7 @@ def test_settings_hides_brp_catalog_import_without_catalog_permission(client, ma
     response = client.get(reverse("directory_index"))
 
     assert response.status_code == 200
-    assert "Импорт каталога BRP" not in response.content.decode()
+    assert "Импорт каталога" not in response.content.decode()
     assert client.get(reverse("catalog_import_list")).status_code == 403
 
 
