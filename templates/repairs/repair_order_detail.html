@@ -76,7 +76,7 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity|quantity_int }}</td>
+          <td>{{ line.net_quantity|quantity_int }}</td>
           <td>
             {% if can_manage and is_draft %}
               <form method="post" action="{% url 'repair_order_set_line_price' line.pk %}" class="inline-form">

@@ -368,8 +368,7 @@ def test_the_menu_matches_the_permission(client, data, make_user):
     )
 
 
-def test_reports_without_money_right_hide_the_amount(client, data, make_user):
-    """Кладовщик отчёты видит, а денежные суммы ему закрыты."""
+def test_reports_without_cost_right_still_show_customer_amount(client, data, make_user):
     customer = Customer.objects.create(name="Иванов")
     _sale(data, customer=customer)
     keeper = make_user("kladovshik", role=roles.STOREKEEPER)
@@ -377,8 +376,8 @@ def test_reports_without_money_right_hide_the_amount(client, data, make_user):
 
     resp = _sales_detail(client, customer)
     assert resp.status_code == 200
-    assert resp.context["show_money"] is False
-    assert "Сумма (₽)" not in resp.content.decode()
+    assert resp.context["show_costs"] is False
+    assert "Сумма (₽)" in resp.content.decode()
 
 
 # --- M: без N+1 ----------------------------------------------------------------------------

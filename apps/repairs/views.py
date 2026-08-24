@@ -33,6 +33,7 @@ from .services import (
     create_repair_order,
     remove_repair_line,
     repair_customer_line_amounts,
+    repair_returned_quantities,
     set_repair_line_customer_price,
 )
 
@@ -104,8 +105,10 @@ def repair_order_detail(request, pk):
         line.customer_total_rub = None
     if order.status == RepairOrder.Status.COMPLETED:
         amounts = repair_customer_line_amounts(lines)
+        returned = repair_returned_quantities(lines)
         for line in lines:
             line.customer_total_rub = amounts[line.pk]
+            line.net_quantity = max(line.quantity - (returned.get(line.pk) or 0), 0)
     else:
         for line in lines:
             line.customer_total_rub = (
@@ -113,6 +116,7 @@ def repair_order_detail(request, pk):
                 if line.customer_unit_price_rub is None
                 else line.customer_unit_price_rub * line.quantity
             )
+            line.net_quantity = line.quantity
     is_draft = order.status == RepairOrder.Status.DRAFT
     return render(
         request,

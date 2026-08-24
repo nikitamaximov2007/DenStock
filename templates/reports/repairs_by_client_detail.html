@@ -12,14 +12,12 @@
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
   <p class="muted">
-    Детали, выданные в ремонт.
+    Детали, выданные в ремонт. Сумма - историческая стоимость детали для клиента;
+    стоимость работ не учитывается.
     {% if show_costs %}
       Себестоимость - во сколько складу обошлась деталь; она зафиксирована при
       проведении заказа и не меняется при обновлении каталога. Это не выручка:
       цену работ система не хранит.
-    {% else %}
-      Суммы клиента здесь нет: система фиксирует, куда ушли детали, а цену
-      работ не хранит.
     {% endif %}
   </p>
   {% if page_obj.object_list %}
@@ -30,6 +28,7 @@
           <th>Деталь</th>
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
+          <th class="num--money">Сумма (₽)</th>
           {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
         </tr>
       </thead>
@@ -48,6 +47,9 @@
               {% endif %}
             </td>
             <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+            <td class="num--money">
+              {% if line.customer_amount_rub is not None %}{{ line.customer_amount_rub|money_int }}{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+            </td>
             {% if show_costs %}
               <td class="num--money">{{ line.total_cost_rub|money_int }}</td>
             {% endif %}

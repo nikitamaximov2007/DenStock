@@ -318,6 +318,11 @@ def repairs_by_client_detail(request):
         ),
     )
     page_obj.object_list = attach_line_part_identity(page_obj.object_list)
+    from apps.repairs.services import repair_customer_line_amounts
+
+    amounts = repair_customer_line_amounts(page_obj.object_list)
+    for line in page_obj.object_list:
+        line.customer_amount_rub = amounts[line.pk]
     return render(
         request,
         "reports/repairs_by_client_detail.html",

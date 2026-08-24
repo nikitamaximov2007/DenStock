@@ -18,7 +18,11 @@ from apps.inventory.models import StockBalance, StockMovement
 from apps.inventory.presentation import identity_for_part_ids
 from apps.procurement.models import money
 from apps.repairs.models import RepairIssueLine, RepairOrder
-from apps.repairs.services import repair_customer_amounts, repair_customer_line_amounts
+from apps.repairs.services import (
+    repair_customer_amounts,
+    repair_customer_line_amounts,
+    repair_returned_quantities,
+)
 from apps.returns.models import StockReturn
 from apps.sales.models import Sale, SaleLine
 from apps.stocktaking.models import InventoryCountDocument, InventoryCountLine
@@ -653,6 +657,7 @@ def get_client_part_history(
         )
     )
     repair_amounts = repair_customer_line_amounts(repair_lines)
+    repair_returns = repair_returned_quantities(repair_lines)
 
     rows = [
         {
@@ -662,7 +667,7 @@ def get_client_part_history(
             "part_type_id": line.part_type_id,
             "part_name": line.part_type.name,
             "exact_number": line.exact_number,
-            "quantity": line.quantity,
+            "quantity": max(line.quantity - (repair_returns.get(line.pk) or DEC0), DEC0),
             "amount": line.total_price,
             "cost": None,
         }

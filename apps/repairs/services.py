@@ -284,13 +284,13 @@ def calculate_repair_costs(order: RepairOrder) -> Decimal:
     return money(total)
 
 
-def repair_customer_line_amounts(lines):
-    """Net historical customer amount per issue line; ``None`` preserves unknown."""
+def repair_returned_quantities(lines):
+    """Completed return quantities keyed by issued repair line."""
     from apps.returns.models import StockReturnLine
 
     lines = list(lines)
     line_ids = [line.pk for line in lines]
-    returned = dict(
+    return dict(
         StockReturnLine.objects.filter(
             stock_return__status="completed",
             source_repair_line_id__in=line_ids,
@@ -299,6 +299,12 @@ def repair_customer_line_amounts(lines):
         .annotate(quantity=Sum("quantity"))
         .values_list("source_repair_line_id", "quantity")
     )
+
+
+def repair_customer_line_amounts(lines):
+    """Net historical customer amount per issue line; ``None`` preserves unknown."""
+    lines = list(lines)
+    returned = repair_returned_quantities(lines)
     amounts = {}
     for line in lines:
         remaining = max(line.quantity - (returned.get(line.pk) or Decimal("0")), Decimal("0"))
