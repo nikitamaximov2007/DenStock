@@ -111,7 +111,7 @@
         <h2 class="card__title">Добавить позицию</h2>
         {% if can_manage_parts %}
           <a class="btn btn--small btn--secondary"
-             href="{% url 'part_create' %}?next={% url 'receipt_detail' receipt.pk %}">+ Новая деталь</a>
+             href="{% url 'part_create' %}?next={% url 'receipt_detail' receipt.pk %}">Завести деталь</a>
         {% endif %}
       </div>
       <div class="card__body">

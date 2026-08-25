@@ -95,7 +95,7 @@ def _dashboard_actions(user) -> list[dict]:
     if user.can_manage_reservations:
         actions.append({"label": "Новый резерв", "url": reverse("reservation_create")})
     if user.can_manage_parts:
-        actions.append({"label": "Добавить деталь", "url": reverse("part_create")})
+        actions.append({"label": "Завести деталь", "url": reverse("part_create")})
     if user.can_manage_batches:
         actions.append({"label": "Создать партию", "url": reverse("batch_create")})
     if user.can_view_reports:

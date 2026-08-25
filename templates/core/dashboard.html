@@ -51,7 +51,7 @@
         {% if user.can_manage_parts %}
           {% url 'part_create' as create_url %}
         {% endif %}
-        {% include "partials/_empty_state.html" with icon="box" title="Деталей пока нет" text="Начните с добавления первой детали в каталог." action_url=create_url action_label="Добавить деталь" %}
+        {% include "partials/_empty_state.html" with icon="box" title="Деталей пока нет" text="Начните с заведения первой детали в каталог." action_url=create_url action_label="Завести деталь" %}
       {% elif stock_empty %}
         {% if user.can_manage_inventory %}
           {% url 'scanner_receiving' as recv_url %}

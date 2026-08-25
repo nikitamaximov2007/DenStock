@@ -68,7 +68,7 @@ def test_the_answer_is_the_same_every_time(question, _expected):
 def test_the_knowledge_describes_the_form_that_exists_now():
     """Раньше поддержке было нечего ответить: раздела про это не было вовсе."""
     body = text_of("search-and-parts.md")
-    assert "Добавить деталь" in body
+    assert "Завести деталь" in body
     for label in (field.label for field in ManualPartForm().visible_fields()):
         assert label in body, f"поддержка не знает поле «{label}»"
 
