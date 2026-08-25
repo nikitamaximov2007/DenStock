@@ -171,6 +171,57 @@ def test_polaris_superseded_is_explicit_alias(lookup_data):
     assert candidate.match_source == MatchSource.SUPERSEDED
 
 
+def test_use_article_resolves_to_the_promoted_replacement_without_copying_old_price(
+    lookup_data,
+):
+    replacement_catalog = BrpCatalogPart.objects.create(
+        material_no="250400101",
+        part_desc="Current replacement",
+        wholesale_price_usd=Decimal("1.00"),
+    )
+    replacement = _part(
+        lookup_data["category"], lookup_data["unit"], "Current replacement", "250400101"
+    )
+    replacement.recommended_price = Decimal("131")
+    replacement.save(update_fields=["recommended_price"])
+    BrpPartLink.objects.create(
+        part=replacement,
+        brp_part=replacement_catalog,
+        brp_wholesale_price_usd=Decimal("1.00"),
+        usd_rate_used=Decimal("100"),
+        markup_percent_used=Decimal("40"),
+    )
+    BrpCatalogPart.objects.create(
+        material_no="250400074",
+        brp_status="USE",
+        wholesale_price_usd=Decimal("0"),
+        retail_price_usd=Decimal("0"),
+        replacement_no_1="250400101",
+    )
+
+    alias = resolve_part_lookup("250400074", allow_alias=True)
+    direct = resolve_part_lookup("250400101", allow_alias=True)
+
+    assert alias.found
+    assert alias.candidate.part.pk == replacement.pk
+    assert alias.candidate.match_source == MatchSource.USE_REPLACEMENT
+    assert alias.candidate.alias_message == "Артикул 250400074 заменён на 250400101"
+    assert alias.candidate.part.recommended_price == Decimal("131")
+    assert direct.found
+    assert direct.candidate.part.pk == replacement.pk
+    assert PartType.objects.filter(pk=replacement.pk).count() == 1
+
+
+def test_non_use_catalog_row_is_not_a_replacement_alias(lookup_data):
+    BrpCatalogPart.objects.create(
+        material_no="OBSOLETE-100",
+        brp_status="OBS",
+        replacement_no_1="BRP 420",
+    )
+
+    assert not resolve_part_lookup("OBSOLETE-100", allow_alias=True).found
+
+
 def test_ambiguous_alias_never_selects_random_part(lookup_data):
     second = _part(lookup_data["category"], lookup_data["unit"], "Other", "OTHER 1")
     PartNumber.objects.create(part=second, value="BRP 419", kind=PartNumber.Kind.ANALOG)

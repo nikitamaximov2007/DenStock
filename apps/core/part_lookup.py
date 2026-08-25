@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
 
+from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
     PartAnalog,
     PartBarcode,
@@ -33,6 +34,7 @@ class MatchSource:
     BARCODE = "barcode"
     REPLACEMENT = "replacement"
     SUPERSEDED = "superseded"
+    USE_REPLACEMENT = "use_replacement"
     ALIAS = "alias"
     INTERNAL = "internal_number"
     SERIAL = "serial_number"
@@ -46,6 +48,7 @@ SOURCE_LABELS = {
     MatchSource.BARCODE: "штрихкоду",
     MatchSource.REPLACEMENT: "заменённому номеру",
     MatchSource.SUPERSEDED: "superseded номеру",
+    MatchSource.USE_REPLACEMENT: "старому номеру USE",
     MatchSource.ALIAS: "вспомогательному номеру",
     MatchSource.INTERNAL: "внутреннему номеру",
     MatchSource.SERIAL: "серийному номеру",
@@ -96,6 +99,8 @@ class PartLookupCandidate:
             return f"Найдено по заменённому номеру: {self.matched_value}"
         if self.match_source == MatchSource.SUPERSEDED:
             return f"Найдено по superseded номеру: {self.matched_value}"
+        if self.match_source == MatchSource.USE_REPLACEMENT:
+            return f"Артикул {self.matched_value} заменён на {self.exact_number}"
         if self.is_alias:
             return f"Найдено по вспомогательному номеру: {self.matched_value}"
         return ""
@@ -155,6 +160,31 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
         if alias_ids:
             sources = {part_id: MatchSource.ALIAS for part_id in alias_ids}
             return alias_ids, sources, raw, len(alias_ids) > 1
+
+        # USE is a supplier replacement, not a second warehouse identity.  When
+        # the old current BRP number is searched, resolve only to a warehouse
+        # card promoted from its current replacement catalog row.
+        replacement_norms = set()
+        for first, second in BrpCatalogPart.objects.filter(
+            is_current=True,
+            brp_status="USE",
+            material_no_norm=norm,
+        ).values_list("replacement_no_1_norm", "replacement_no_2_norm"):
+            replacement_norms.update(value for value in (first, second) if value)
+        if replacement_norms:
+            replacement_part_ids = list(
+                BrpPartLink.objects.filter(
+                    brp_part__is_current=True,
+                    brp_part__material_no_norm__in=replacement_norms,
+                )
+                .values_list("part_id", flat=True)
+                .distinct()[: RESULT_LIMIT + 1]
+            )
+            if replacement_part_ids:
+                sources = {
+                    part_id: MatchSource.USE_REPLACEMENT for part_id in replacement_part_ids
+                }
+                return replacement_part_ids, sources, raw, len(replacement_part_ids) > 1
     return None
 
 
