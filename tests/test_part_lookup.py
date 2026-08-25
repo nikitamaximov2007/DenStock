@@ -7,6 +7,7 @@ import pytest
 from apps.actions.services import perform_action
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import Category, PartBarcode, PartNumber, PartType, Unit
+from apps.catalog.services import create_manual_part
 from apps.core.part_lookup import MatchSource, resolve_part_lookup
 from apps.counting.models import InventoryCountingLine
 from apps.counting.services import start_session
@@ -210,6 +211,37 @@ def test_use_article_resolves_to_the_promoted_replacement_without_copying_old_pr
     assert direct.found
     assert direct.candidate.part.pk == replacement.pk
     assert PartType.objects.filter(pk=replacement.pk).count() == 1
+
+
+def test_exact_manual_article_precedes_use_replacement_fallback(lookup_data):
+    """A stocked operator-created part must win over a catalog-only USE alias."""
+    replacement_catalog = BrpCatalogPart.objects.create(
+        material_no="250400101",
+        part_desc="Current replacement",
+    )
+    replacement = _part(
+        lookup_data["category"], lookup_data["unit"], "Current replacement", "250400101"
+    )
+    BrpPartLink.objects.create(
+        part=replacement,
+        brp_part=replacement_catalog,
+        usd_rate_used=Decimal("100"),
+        markup_percent_used=Decimal("40"),
+    )
+    BrpCatalogPart.objects.create(
+        material_no="250400074",
+        brp_status="USE",
+        replacement_no_1="250400101",
+    )
+    manual = create_manual_part(
+        name="Manual old article", article="250400074", price=Decimal("2750")
+    )
+
+    result = resolve_part_lookup("250400074", allow_alias=True)
+
+    assert result.found
+    assert result.candidate.part.pk == manual.pk
+    assert result.candidate.match_source == MatchSource.EXACT
 
 
 def test_non_use_catalog_row_is_not_a_replacement_alias(lookup_data):
