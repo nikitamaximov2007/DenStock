@@ -72,6 +72,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
     assert _primary_labels(html) == ["Главная", "Поиск", "ИИ-поддержка"]
     assert _sidebar_groups(html) == {
         "warehouse": [
+            "Все детали",
             "Остатки",
             "Ячейки",
             "Поступление",
@@ -103,6 +104,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             roles.STOREKEEPER,
             {
                 "warehouse": [
+                    "Все детали",
                     "Остатки",
                     "Ячейки",
                     "Поступление",
@@ -208,6 +210,20 @@ def test_catalog_tabs_are_direct_without_restoring_catalog_sidebar(
     assert f'aria-current="page">{active_label}</a>' in html
     assert "Все детали" in html and "BRP" in html and "Polaris" in html
     assert "Каталог" not in _sidebar(html)
+
+
+def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
+    client,
+    make_nav_user,
+):
+    _login(client, make_nav_user("parts-sidebar", superuser=True))
+    html = _html(client, "part_list")
+    sidebar = " ".join(_sidebar(html).split())
+
+    assert _sidebar_groups(html)["warehouse"][0] == "Все детали"
+    assert f'href="{reverse("part_list")}" aria-current="page">Все детали</a>' in sidebar
+    assert 'class="nav__group is-active" data-nav-group="warehouse"' in sidebar
+    assert 'href="/parts/new/"' in html
 
 
 @pytest.mark.parametrize(

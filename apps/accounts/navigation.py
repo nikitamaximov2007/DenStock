@@ -252,6 +252,16 @@ def _catalog_tabs(path):
 
 def _warehouse_tabs(user, path):
     tabs = []
+    if user.can_manage_parts:
+        tabs.append(
+            _tab(
+                "Все детали",
+                reverse("part_list"),
+                sidebar_key="all-parts",
+                icon="box",
+                active=path.startswith("/parts/"),
+            )
+        )
     if user.can_manage_inventory or user.is_viewer:
         tabs.append(
             _tab(
@@ -602,7 +612,7 @@ def _sidebar_groups(request, section, user):
                 "Склад",
                 "warehouse",
                 _warehouse_tabs(user, path),
-                active=section == "warehouse",
+                active=section in {"warehouse", "catalog"},
             )
             if _can_open_warehouse(user)
             else None
