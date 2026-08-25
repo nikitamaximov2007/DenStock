@@ -326,6 +326,15 @@ Health проверяет nftables до proxy process. Затем проверя
 - `denstock-ai-launcher.socket`: local Unix socket `0660`;
 - `denstock-ai-launcher@.service`: один root launcher на connection с drop UID.
 
+Firewall и proxy являются ранними prerequisites сокета. У обоих units отключены
+default dependencies и явно заданы `local-fs.target`/`network-online.target`,
+`Before=denstock-ai-launcher.socket` и shutdown ordering. Это важно: default
+`After=basic.target` у service, который обязателен для socket в
+`sockets.target`, создаёт systemd ordering cycle. При cycle systemd может удалить
+job socket, а Docker с `unless-stopped` попытается поднять web до появления
+`/run/denstock-ai/launcher.sock` и оставит сайт на 502. После normal reboot
+сокет должен быть listening до automatic Docker restore; ручной start не нужен.
+
 Launcher service дополнительно использует `IPAddressDeny=any` и
 `IPAddressAllow=localhost`. Это cgroup defense поверх nftables. `PrivateNetwork`
 не используется, так как отдельный namespace не видел бы host loopback proxy.

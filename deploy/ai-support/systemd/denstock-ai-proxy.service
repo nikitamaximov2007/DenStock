@@ -1,8 +1,11 @@
 [Unit]
 Description=DenisStock AI local-only MAXINIK proxy
 Documentation=file:/usr/local/share/doc/denstock-ai/ai-support-maxinik-network.md
+DefaultDependencies=no
 Wants=network-online.target
-After=network-online.target
+After=local-fs.target network-online.target
+Before=denstock-ai-launcher.socket shutdown.target
+Conflicts=shutdown.target
 
 [Service]
 Type=simple

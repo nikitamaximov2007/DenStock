@@ -317,6 +317,20 @@ def test_socket_is_local_unix_ipc_with_narrow_group_access(deploy_root):
     assert "ListenDatagram" not in unit
 
 
+def test_socket_boot_prerequisites_do_not_create_a_basic_target_cycle(deploy_root):
+    firewall = (deploy_root / "systemd" / "denstock-ai-firewall.service").read_text()
+    proxy = (deploy_root / "systemd" / "denstock-ai-proxy.service").read_text()
+
+    for unit in (firewall, proxy):
+        assert "DefaultDependencies=no" in unit
+        assert "Conflicts=shutdown.target" in unit
+        before = next(line for line in unit.splitlines() if line.startswith("Before="))
+        assert "denstock-ai-launcher.socket" in before
+        assert "shutdown.target" in before
+    assert "After=local-fs.target" in firewall
+    assert "After=local-fs.target network-online.target" in proxy
+
+
 def test_firewall_unit_has_only_required_network_capability(deploy_root):
     unit = (deploy_root / "systemd" / "denstock-ai-firewall.service").read_text()
 

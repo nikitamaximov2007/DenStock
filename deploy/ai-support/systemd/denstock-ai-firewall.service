@@ -1,6 +1,9 @@
 [Unit]
 Description=Fail-closed egress policy for denstock-ai
-Before=denstock-ai-launcher.socket
+DefaultDependencies=no
+After=local-fs.target
+Before=denstock-ai-proxy.service denstock-ai-launcher.socket shutdown.target
+Conflicts=shutdown.target
 
 [Service]
 Type=oneshot
