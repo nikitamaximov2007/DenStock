@@ -55,13 +55,13 @@ class DrawerRenamePlan:
         }
 
 
-def _positive_drawer_number(value) -> int:
+def _drawer_number(value) -> int:
     try:
         number = int(value)
     except (TypeError, ValueError) as exc:
         raise StorageLocationRenameError("Номер ящика должен быть целым числом.") from exc
-    if number < 1:
-        raise StorageLocationRenameError("Нумерация ящиков начинается с D01.")
+    if number < 0:
+        raise StorageLocationRenameError("Номер ящика не может быть отрицательным.")
     return number
 
 
@@ -101,7 +101,7 @@ def _plan_fingerprint(drawer, children, aliases, locks, new_code) -> str:
 def build_drawer_rename_plan(drawer: StorageLocation, new_number) -> DrawerRenamePlan:
     """Build a read-only preview and reject every ambiguous descendant."""
     drawer = StorageLocation.objects.select_related("parent").get(pk=drawer.pk)
-    new_number = _positive_drawer_number(new_number)
+    new_number = _drawer_number(new_number)
     try:
         parsed = parse_address(drawer.code)
     except AddressError as exc:

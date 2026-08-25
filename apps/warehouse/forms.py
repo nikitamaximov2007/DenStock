@@ -24,7 +24,7 @@ class StorageAddressV2CreateForm(forms.Form):
         ],
     )
     rack_number = forms.IntegerField(label="Стеллаж (S)", min_value=1)
-    drawer_number = forms.IntegerField(label="Ящик (D)", min_value=1, required=False)
+    drawer_number = forms.IntegerField(label="Ящик (D)", min_value=0, required=False)
     cell_number = forms.IntegerField(label="Ячейка (C)", min_value=1, required=False)
     name = forms.CharField(label="Название", max_length=150, required=False)
     purpose = forms.ChoiceField(
@@ -45,7 +45,7 @@ class StorageAddressV2CreateForm(forms.Form):
         location_type = cleaned["location_type"]
         drawer = cleaned.get("drawer_number")
         cell = cleaned.get("cell_number")
-        if location_type in {self.LocationType.DRAWER, self.LocationType.CELL} and not drawer:
+        if location_type in {self.LocationType.DRAWER, self.LocationType.CELL} and drawer is None:
             self.add_error("drawer_number", "Для ящика или ячейки укажите номер D.")
             return cleaned
         if location_type == self.LocationType.CELL and not cell:
@@ -138,4 +138,4 @@ class StorageLocationRenameForm(forms.Form):
 class StorageDrawerRenameForm(forms.Form):
     expected_code = forms.CharField(widget=forms.HiddenInput)
     expected_fingerprint = forms.CharField(required=False, widget=forms.HiddenInput)
-    new_number = forms.IntegerField(label="Новый номер ящика D", min_value=1)
+    new_number = forms.IntegerField(label="Новый номер ящика D", min_value=0)

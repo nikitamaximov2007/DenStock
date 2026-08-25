@@ -96,6 +96,24 @@ def _positive_number(value, label: str) -> int:
     return number
 
 
+def _drawer_number(value) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise AddressError("Номер ящика должен быть целым числом.") from exc
+    if number < 0:
+        raise AddressError("Номер ящика не может быть отрицательным.")
+    return number
+
+
+def _sort_order(address: StorageAddress) -> int:
+    if address.cell is not None:
+        return address.cell
+    if address.drawer is not None:
+        return address.drawer
+    return address.rack
+
+
 def compose_address(
     rack: int,
     *,
@@ -106,7 +124,7 @@ def compose_address(
     rack = _positive_number(rack, "Номер стеллажа")
     parts = [f"S{rack:02d}"]
     if drawer_no is not None:
-        drawer_no = _positive_number(drawer_no, "Номер ящика")
+        drawer_no = _drawer_number(drawer_no)
         parts.append(f"D{drawer_no:02d}")
     if cell_no is not None:
         if drawer_no is None:
@@ -124,7 +142,7 @@ def parse_address(raw: str) -> StorageAddress:
         raise AddressError("Ожидается адрес вида S03, S03-D02 или S03-D02-C05.")
     rack = _positive_number(match.group("rack"), "Номер стеллажа")
     drawer = (
-        _positive_number(match.group("drawer"), "Номер ящика")
+        _drawer_number(match.group("drawer"))
         if match.group("drawer")
         else None
     )
@@ -222,7 +240,7 @@ def _create_v2_location(address: StorageAddress, *, name: str) -> StorageLocatio
                 level=address.level,
                 parent=parent,
                 storage_allowed=address.level == StorageLocation.Level.CELL,
-                sort_order=address.cell or address.drawer or address.rack,
+                sort_order=_sort_order(address),
             )
     except IntegrityError as exc:
         existing = _identity_owner(address.code)
@@ -264,7 +282,7 @@ def create_location(
                 parent=parent,
                 purpose=purpose,
                 storage_allowed=parsed.level == StorageLocation.Level.CELL,
-                sort_order=parsed.cell or parsed.drawer or parsed.rack,
+                sort_order=_sort_order(parsed),
                 description=description,
                 capacity=capacity,
             )

@@ -10,7 +10,7 @@ class CountingStartForm(forms.Form):
 
     rack_number = forms.IntegerField(label="Стеллаж (S)", min_value=1)
     drawer_number = forms.IntegerField(
-        label="Ящик снизу вверх (D)", min_value=1
+        label="Ящик снизу вверх (D)", min_value=0
     )
     cell_number = forms.IntegerField(label="Ячейка (C)", min_value=1)
     comment = forms.CharField(label="Описание ячейки", max_length=255, required=False)
