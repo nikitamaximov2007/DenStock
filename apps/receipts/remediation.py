@@ -29,6 +29,7 @@ class HistoricalLotCostPlan:
     repair_line_ids: tuple[int, ...]
     sale_line_ids: tuple[int, ...]
     return_line_ids: tuple[int, ...]
+    already_applied: bool = False
 
     @property
     def changes(self) -> int:
@@ -53,7 +54,7 @@ def plan_historical_lot_cost_remediation(*, lot_id, receipt_line_id, expected_ol
     )
     old_cost = money(Decimal(expected_old_cost))
     proven_cost = money(Decimal(new_cost))
-    if lot.landed_unit_cost_rub != old_cost:
+    if lot.landed_unit_cost_rub not in (old_cost, proven_cost):
         raise HistoricalLotCostRemediationError(
             "Текущая себестоимость лота не совпадает с expected-old-cost."
         )
@@ -91,6 +92,9 @@ def plan_historical_lot_cost_remediation(*, lot_id, receipt_line_id, expected_ol
         repair_line_ids=repairs,
         sale_line_ids=sales,
         return_line_ids=returns,
+        # A repeated invocation with exactly the previously proven target is
+        # safe: it is a no-op, not permission to overwrite a different value.
+        already_applied=lot.landed_unit_cost_rub == proven_cost,
     )
 
 
@@ -103,6 +107,8 @@ def apply_historical_lot_cost_remediation(plan: HistoricalLotCostPlan):
         expected_old_cost=plan.old_cost,
         new_cost=plan.new_cost,
     )
+    if plan.already_applied:
+        return plan
     lot = StockLot.objects.select_for_update().select_related("batch_line").get(pk=plan.lot_id)
     batch_line = lot.batch_line
     batch_line.landed_unit_cost_rub = plan.new_cost

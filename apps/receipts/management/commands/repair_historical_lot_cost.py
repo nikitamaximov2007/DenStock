@@ -39,6 +39,9 @@ class Command(BaseCommand):
         if not options["apply"]:
             self.stdout.write("DRY-RUN: база данных не изменена.")
             return
+        if plan.already_applied:
+            self.stdout.write("Уже применено: база данных не изменена.")
+            return
         try:
             apply_historical_lot_cost_remediation(plan)
         except HistoricalLotCostRemediationError as exc:

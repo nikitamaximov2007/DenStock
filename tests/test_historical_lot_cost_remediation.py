@@ -11,7 +11,6 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.receipts.models import Receipt, ReceiptLine
 from apps.receipts.remediation import (
-    HistoricalLotCostRemediationError,
     apply_historical_lot_cost_remediation,
     plan_historical_lot_cost_remediation,
 )
@@ -87,8 +86,8 @@ def test_plan_is_dry_run_and_apply_repairs_only_proven_lineage(bad_lot):
         Decimal("640.00"),
     ]
     assert all(order.lines.get().customer_unit_price_rub == Decimal("5000") for order in orders)
-    with pytest.raises(HistoricalLotCostRemediationError):
-        apply_historical_lot_cost_remediation(plan)
+    repeated = apply_historical_lot_cost_remediation(plan)
+    assert repeated.already_applied is True
 
 
 def test_command_dry_run_does_not_write_and_wrong_guard_refuses(bad_lot):
