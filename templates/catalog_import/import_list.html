@@ -39,6 +39,13 @@
         и показывает, что изменится. Ничего не применяется, пока вы не нажмёте
         «Применить импорт».
       </p>
+      <p class="muted">
+        Файл связей аналогов содержит исходный артикул и артикул аналога. Если
+        в книге есть Manufacturer, Manufacturer Number и Description, DenisStock
+        распознает каталог aftermarket и создаст самостоятельные карточки без
+        автоматической связи с оригиналом. MSRP и Dlr Cost в таком формате
+        сохраняются как USD-значения каталога.
+      </p>
     </div>
   </div>
   <div class="card">
@@ -76,7 +83,13 @@
                   поэтому фильтр default здесь не годится: для него ноль пустой.
                 {% endcomment %}
                 {% for value in batch.history_counters %}
-                  <td class="num">{% if value is not None %}{{ value }}{% else %}·{% endif %}</td>
+                  <td class="num">
+                    {% if value is not None %}
+                      {{ value }}
+                    {% else %}
+                      ·
+                    {% endif %}
+                  </td>
                 {% endfor %}
                 <td>{{ batch.created_by|default:"·" }}</td>
                 <td>{{ batch.created_at|ru_dt }}</td>
