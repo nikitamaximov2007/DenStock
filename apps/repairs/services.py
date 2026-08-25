@@ -11,12 +11,14 @@
 что держит активная бронь. Связи repair-заказа с `Reservation` на этом слое нет.
 """
 
+from dataclasses import dataclass
 from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from apps.catalog.models import PartType
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import issue_part_item, issue_stock_lot
@@ -44,7 +46,7 @@ def _freeze_repair_line_cost(line: RepairIssueLine) -> None:
 
 
 def _default_customer_price(part_type):
-    """Current catalog price is only a draft default, never a historical fallback."""
+    """Current catalog price is the default for a new repair draft."""
     return part_type.recommended_price
 
 
@@ -301,19 +303,51 @@ def repair_returned_quantities(lines):
     )
 
 
+@dataclass(frozen=True)
+class RepairCustomerPrice:
+    """Customer price resolved for a repair line without rewriting its snapshot."""
+
+    unit_price_rub: Decimal | None
+    source: str
+
+
+def repair_customer_line_prices(lines):
+    """Resolve customer prices for repair lines.
+
+    A saved issue-line price is historical.  Older lines without that snapshot
+    use the current recommended price of the *same selected Part* when it is
+    positive.  The fallback is intentionally runtime-only, so it never claims
+    to be a historical snapshot and can change with the catalog price.
+    """
+    lines = list(lines)
+    missing_part_ids = {line.part_type_id for line in lines if line.customer_unit_price_rub is None}
+    fallback_prices = dict(
+        PartType.objects.filter(pk__in=missing_part_ids, recommended_price__gt=0).values_list(
+            "pk", "recommended_price"
+        )
+    )
+    prices = {}
+    for line in lines:
+        if line.customer_unit_price_rub is not None:
+            prices[line.pk] = RepairCustomerPrice(line.customer_unit_price_rub, "historical")
+        elif (fallback := fallback_prices.get(line.part_type_id)) is not None:
+            prices[line.pk] = RepairCustomerPrice(fallback, "current_fallback")
+        else:
+            prices[line.pk] = RepairCustomerPrice(None, "missing")
+    return prices
+
+
 def repair_customer_line_amounts(lines):
-    """Net historical customer amount per issue line; ``None`` preserves unknown."""
+    """Net customer amount per issue line; ``None`` means price setup is required."""
     lines = list(lines)
     returned = repair_returned_quantities(lines)
+    prices = repair_customer_line_prices(lines)
     amounts = {}
     for line in lines:
         remaining = max(line.quantity - (returned.get(line.pk) or Decimal("0")), Decimal("0"))
+        price = prices[line.pk].unit_price_rub
         amounts[line.pk] = (
-            None
-            if line.customer_unit_price_rub is None and remaining
-            else money(line.customer_unit_price_rub * remaining)
-            if line.customer_unit_price_rub is not None
-            else Decimal("0")
+            Decimal("0") if not remaining else None if price is None else money(price * remaining)
         )
     return amounts
 
@@ -329,7 +363,11 @@ def repair_customer_amounts(orders):
     unknown = {pk: False for pk in order_ids}
     lines = list(
         RepairIssueLine.objects.filter(repair_order_id__in=order_ids).only(
-            "id", "repair_order_id", "quantity", "customer_unit_price_rub"
+            "id",
+            "repair_order_id",
+            "part_type_id",
+            "quantity",
+            "customer_unit_price_rub",
         )
     )
     line_amounts = repair_customer_line_amounts(lines)
