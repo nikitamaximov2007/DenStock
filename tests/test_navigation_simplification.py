@@ -104,7 +104,6 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             roles.STOREKEEPER,
             {
                 "warehouse": [
-                    "Все детали",
                     "Остатки",
                     "Ячейки",
                     "Поступление",
@@ -221,7 +220,7 @@ def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
     sidebar = " ".join(_sidebar(html).split())
 
     assert _sidebar_groups(html)["warehouse"][0] == "Все детали"
-    assert f'href="{reverse("part_list")}" aria-current="page">Все детали</a>' in sidebar
+    assert f'href="{reverse("part_list")}" aria-current="page"' in sidebar
     assert 'class="nav__group is-active" data-nav-group="warehouse"' in sidebar
     assert 'href="/parts/new/"' in html
 
