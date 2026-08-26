@@ -54,7 +54,12 @@
               <th>Артикул</th>
               <th>Ячейка</th>
               <th class="num--qty">Количество</th>
-              {% if panel.is_sale %}<th class="num--money">Сумма</th>{% else %}<th class="num--money">Цена клиенту</th><th class="num--money">Сумма</th>{% endif %}
+              {% if panel.is_sale %}
+                <th class="num--money">Сумма</th>
+              {% else %}
+                <th class="num--money">Цена клиенту</th>
+                <th class="num--money">Сумма</th>
+              {% endif %}
               <th></th>
             </tr>
           </thead>
@@ -102,8 +107,20 @@
                 {% if panel.is_sale %}
                   <td class="num--money">{% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}</td>
                 {% else %}
-                  <td class="num--money">{% if item.row.unit_price is not None %}{{ item.row.unit_price|money_int }} ₽{% else %}<span class="muted">Не указана</span>{% endif %}</td>
-                  <td class="num--money">{% if item.row.total_price is not None %}{{ item.row.total_price|money_int }} ₽{% else %}<span class="muted">Не указана</span>{% endif %}</td>
+                  <td class="num--money">
+                    {% if item.row.unit_price is not None %}
+                      {{ item.row.unit_price|money_int }} ₽
+                    {% else %}
+                      <span class="muted">Не указана</span>
+                    {% endif %}
+                  </td>
+                  <td class="num--money">
+                    {% if item.row.total_price is not None %}
+                      {{ item.row.total_price|money_int }} ₽
+                    {% else %}
+                      <span class="muted">Не указана</span>
+                    {% endif %}
+                  </td>
                 {% endif %}
                 <td>
                   <form method="post"
@@ -123,7 +140,13 @@
         </table>
         <p class="muted">
           Позиций: {{ panel.positions }}.
-          Сумма: {% if panel.total is not None %}{{ panel.total|money_int }} ₽{% else %}не указана{% endif %}.
+          Сумма:
+          {% if panel.total is not None %}
+            {{ panel.total|money_int }} ₽
+          {% else %}
+            не указана
+          {% endif %}
+          .
           Склад изменится только при проведении.
         </p>
         <form method="post"
@@ -146,11 +169,21 @@
           <p>
             <label for="customer-select-{{ panel.kind }}">Клиент</label>
             <br>
-            <select id="customer-select-{{ panel.kind }}" name="customer_id" required style="min-width: 280px">
+            <select id="customer-select-{{ panel.kind }}"
+                    name="customer_id"
+                    required
+                    style="min-width: 280px">
               <option value="">Выберите карточку клиента</option>
               {% for customer in customers %}
-                <option value="{{ customer.pk }}" data-customer-search="{{ customer.name|lower }} {{ customer.phone|lower }}" {% if selected_customer_id == customer.pk|stringformat:'s' %}selected{% endif %}>
-                  {{ customer.name }}{% if customer.phone %} · {{ customer.phone }}{% else %} · №{{ customer.pk }}{% endif %}
+                <option value="{{ customer.pk }}"
+                        data-customer-search="{{ customer.name|lower }} {{ customer.phone|lower }}"
+                        {% if selected_customer_id == customer.pk|stringformat:'s' %}selected{% endif %}>
+                  {{ customer.name }}
+                  {% if customer.phone %}
+                    · {{ customer.phone }}
+                  {% else %}
+                    · №{{ customer.pk }}
+                  {% endif %}
                 </option>
               {% endfor %}
             </select>
@@ -197,9 +230,7 @@
             {% endif %}
             · <strong>Доступно: {{ overview.total_available|quantity_int }}</strong>
           </p>
-          {% if overview.lookup.alias_message %}
-            <p class="muted">{{ overview.lookup.alias_message }}</p>
-          {% endif %}
+          {% if overview.lookup.alias_message %}<p class="muted">{{ overview.lookup.alias_message }}</p>{% endif %}
           {% if overview.unit_items %}
             <p class="muted">
               Поштучных экземпляров: {{ overview.unit_items }}. Продажа и выдача
@@ -280,7 +311,13 @@
                 <input type="hidden" name="quantity" value="1">
               {% endif %}
               <div class="form-actions">
-                <button type="submit" class="btn btn--primary">{% if selected_action_kind == 'reserve' %}Создать резерв{% else %}Добавить выбранную ячейку{% endif %}</button>
+                <button type="submit" class="btn btn--primary">
+                  {% if selected_action_kind == 'reserve' %}
+                    Создать резерв
+                  {% else %}
+                    Добавить выбранную ячейку
+                  {% endif %}
+                </button>
               </div>
             </form>
             <p class="muted">
