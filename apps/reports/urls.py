@@ -16,6 +16,11 @@ urlpatterns = [
         name="reports_sales_by_client_operations",
     ),
     path("clients/", views.clients_overview, name="reports_clients_overview"),
+    path(
+        "clients/payment-status/",
+        views.client_period_payment_status,
+        name="reports_client_period_payment_status",
+    ),
     path("clients/timeline/", views.client_timeline, name="reports_client_timeline"),
     path("repairs-by-client/", views.repairs_by_client, name="reports_repairs_by_client"),
     path(

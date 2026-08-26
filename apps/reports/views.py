@@ -8,15 +8,19 @@
 
 from urllib.parse import urlencode
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.http import Http404
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from apps.catalog.models import PartType
 
 from . import exporters
+from .payment_status import payment_statuses_for_rows
 from .services import (
     CLIENTS_SORT_DATE,
     CLIENTS_SORT_DOCUMENTS,
@@ -54,6 +58,11 @@ def _require_reports(request) -> None:
 def _require_finance(request) -> None:
     if not request.user.can_view_finance:
         raise PermissionDenied
+
+
+def _can_manage_payment_acknowledgements(request) -> bool:
+    """Payment acknowledgement is a managerial finance action, never a viewer action."""
+    return request.user.is_admin or request.user.is_manager
 
 
 def _period_query(period) -> str:
@@ -253,6 +262,11 @@ def clients_overview(request):
     for row in page_obj.object_list:
         row["customer_qs"] = _row_query(row)
     by_date = sort == CLIENTS_SORT_DATE
+    # Статус оплаты считается по СТРАНИЦЕ, а не по всему отчёту: порядок строк
+    # уже выбран, и лишние клиенты сюда не попадают.
+    payment_statuses = payment_statuses_for_rows(rows=page_obj.object_list, period=period)
+    for row in page_obj.object_list:
+        row["payment_status"] = payment_statuses.get(row.get("customer_id"))
     return render(
         request,
         "reports/clients_overview.html",
@@ -276,8 +290,45 @@ def clients_overview(request):
             "active_sort": sort if by_date else "",
             "active_direction": direction if by_date else "",
             "sort_qs": urlencode({"sort": sort, "direction": direction}) if by_date else "",
+            "can_manage_payment_acknowledgements": _can_manage_payment_acknowledgements(request),
         },
     )
+
+
+@login_required
+@require_POST
+def client_period_payment_status(request):
+    """Create or revoke a payment acknowledgement after server-side recomputation."""
+    _require_reports(request)
+    if not _can_manage_payment_acknowledgements(request):
+        raise PermissionDenied
+    period = resolve_period(request.POST)
+    try:
+        customer_id = int(request.POST.get("customer_id") or "")
+    except ValueError as exc:
+        raise Http404("Клиент не указан.") from exc
+
+    from apps.customers.models import Customer
+    from apps.customers.services import (
+        PaymentAcknowledgementError,
+        acknowledge_customer_period_payment,
+        revoke_customer_period_payment,
+    )
+    get_object_or_404(Customer, pk=customer_id)
+
+    if request.POST.get("paid") == "1":
+        try:
+            acknowledge_customer_period_payment(
+                customer_id=customer_id, period=period, by=request.user
+            )
+        except PaymentAcknowledgementError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Оплата клиента за выбранный период подтверждена.")
+    else:
+        revoke_customer_period_payment(customer_id=customer_id, period=period, by=request.user)
+        messages.success(request, "Подтверждение оплаты за выбранный период снято.")
+    return redirect(f"{reverse('reports_clients_overview')}?{_period_query(period)}")
 
 
 @login_required
