@@ -90,7 +90,10 @@ def env(db, admin):
     return {"sup": sup, "loc": loc, "loc2": loc2, "admin": admin}
 
 
-def _brp(env, *, material, retail="10", wholesale="7", replacement="", desc="BELT DRIVE", qty=5):
+def _brp(
+    env, *, material, retail="10", wholesale="7", replacement="",
+    desc="BELT DRIVE", qty=5, customs=True,
+):
     brp = BrpCatalogPart.objects.create(
         material_no=material, part_desc=desc,
         retail_price_usd=Decimal(retail), replacement_no_1=replacement,
@@ -98,10 +101,15 @@ def _brp(env, *, material, retail="10", wholesale="7", replacement="", desc="BEL
     )
     part = promote_brp(brp, by=env["admin"])
     _stock(part, env["loc"], qty, env["sup"], env["admin"])
+    if customs:
+        _card(part)
     return part, brp
 
 
-def _polaris(env, *, number, wholesale="6", retail="20", superseded="", desc="SEAL", qty=5):
+def _polaris(
+    env, *, number, wholesale="6", retail="20", superseded="",
+    desc="SEAL", qty=5, customs=True,
+):
     pol = PolarisCatalogPart.objects.create(
         part_number=number, part_name=desc, superseded_number=superseded,
         wholesale_price_usd=Decimal(wholesale) if wholesale is not None else None,
@@ -109,10 +117,12 @@ def _polaris(env, *, number, wholesale="6", retail="20", superseded="", desc="SE
     )
     part = promote_polaris(pol, by=env["admin"])
     _stock(part, env["loc"], qty, env["sup"], env["admin"])
+    if customs:
+        _card(part, manufacturer="POLARIS")
     return part, pol
 
 
-def _warehouse_only(env, *, number="WH-500", name="РУЧНАЯ ДЕТАЛЬ", qty=5):
+def _warehouse_only(env, *, number="WH-500", name="РУЧНАЯ ДЕТАЛЬ", qty=5, customs=True):
     part = PartType.objects.create(
         name=name, category=Category.objects.create(name=f"cat-{number}"),
         unit=Unit.objects.get(name="Штука"),
@@ -120,6 +130,8 @@ def _warehouse_only(env, *, number="WH-500", name="РУЧНАЯ ДЕТАЛЬ", q
     )
     PartNumber.objects.create(part=part, value=number, kind=PartNumber.Kind.OEM, is_primary=True)
     _stock(part, env["loc"], qty, env["sup"], env["admin"])
+    if customs:
+        _card(part)
     return part
 
 
@@ -145,6 +157,22 @@ def _b_column(sheet, count=6):
 
 # --- Регрессия production-500: шаблон должен ехать в образ -----------------------------
 
+
+def _card(part, **overrides):
+    """Заведённая таможенная карточка детали.
+
+    Область применения намеренно не задана: её подхватывает автоопределение по
+    совместимости, ровно как и до появления версий.
+    """
+    values = {
+        "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_en": "BELT DRIVE",
+        "manufacturer": "BRP",
+        "country_of_origin": "CANADA",
+        "customs_unit_price_usd": Decimal("7"),
+    }
+    values.update(overrides)
+    return PartCustomsInfo.objects.create(part_type=part, **values)
 
 def test_template_lives_inside_app_package_not_docs():
     """Первопричина 500: шаблон был в docs/, а docs/ исключён из Docker-образа."""
@@ -243,15 +271,16 @@ def test_brp_replacement_does_not_replace_number(client, make_user, env):
         wholesale_price_usd=Decimal("3"), replacement_no_1="420931285",
     )
     part, _ = _brp(env, material="420931285", retail="0", wholesale="0",
-                   replacement="420931284")
+                   replacement="420931284", customs=False)
+    _card(part, customs_unit_price_usd=Decimal("3.75"))
     _sell(env, part, number="420931285")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
     numbers = _b_column(sheet)
     assert "420931285" in numbers  # exact identity
-    assert "420931284" not in numbers  # replacement — только источник цены
-    assert sheet[f"K{DATA_ROW}"].value == Decimal("3")  # ОПТОВАЯ от источника
-    assert sheet[f"K{DATA_ROW}"].value != Decimal("4")  # не розница источника
+    assert "420931284" not in numbers  # номер замены в таможню не попадает
+    assert _price(sheet) == Decimal("3.75")  # введено пользователем
+    assert _price(sheet) != Decimal("3")  # оптовая замены цену не подменяет
 
 
 def test_polaris_exports_exact_part_number(client, make_user, env):
@@ -390,10 +419,21 @@ def test_location_filter_applied(client, make_user, env):
 
 def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     # нет оптовой цены и весов
-    part, _ = _brp(env, material="777000111", retail="0", wholesale="0")
+    part, _ = _brp(env, material="777000111", retail="0", wholesale="0", customs=False)
     _sell(env, part, number="777000111")
     assert not PartCustomsInfo.objects.filter(part_type=part).exists()
     _login(client, make_user)
+    resp = client.get(reverse("actions_export"))
+    # Данных нет вовсе, достроить их неоткуда: внятный отказ, а не 500 и не
+    # выгрузка с выдуманными значениями.
+    assert resp.status_code == 302
+    assert resp.url.startswith(reverse("actions_report"))
+    html = client.get(resp.url).content.decode()
+    assert "не заведены таможенные данные" in html
+
+    # Заведённая, но неполная карточка выгрузку не блокирует: пустое поле
+    # так и остаётся пустым.
+    _card(part, customs_unit_price_usd=None)
     resp = client.get(reverse("actions_export"))
     assert resp.status_code == 200
     sheet = _sheet(resp.content)
@@ -436,7 +476,8 @@ def test_control_character_in_name_does_not_break_workbook(client, make_user, en
 
 
 def test_formula_like_name_is_not_a_formula(client, make_user, env):
-    part, _ = _brp(env, material="219800345", desc="=HYPERLINK(1)")
+    part, _ = _brp(env, material="219800345", desc="=HYPERLINK(1)", customs=False)
+    _card(part, customs_name_en="=HYPERLINK(1)")
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
@@ -576,21 +617,31 @@ def _price(sheet, row=DATA_ROW):
     return None if value is None else Decimal(str(value))
 
 
-def test_brp_uses_wholesale_not_retail(client, make_user, env):
-    part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15")
+def test_catalog_prices_never_reach_customs(client, make_user, env):
+    """Ни оптовая, ни розничная цена прайса не выдаёт себя за таможенную.
+
+    Таможенная стоимость - заявление декларанта, а не цена поставщика. В
+    выгрузку идёт только то, что пользователь ввёл сам.
+    """
+    part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15",
+                   customs=False)
+    _card(part, customs_unit_price_usd=Decimal("12.50"))
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert _price(sheet) == Decimal("28.15")
-    assert _price(sheet) != Decimal("35.99")  # не розница
+    assert _price(sheet) == Decimal("12.50")  # введено пользователем
+    assert _price(sheet) != Decimal("28.15")  # не оптовая прайса
+    assert _price(sheet) != Decimal("35.99")  # и не розничная
 
 
-def test_polaris_uses_wholesale_price(client, make_user, env):
-    part, _ = _polaris(env, number="3610075", wholesale="6", retail="20")
+def test_polaris_catalog_price_not_used_for_customs(client, make_user, env):
+    part, _ = _polaris(env, number="3610075", wholesale="6", retail="20", customs=False)
+    _card(part, manufacturer="POLARIS", customs_unit_price_usd=Decimal("11"))
     _sell(env, part, number="3610075")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert _price(sheet) == Decimal("6")
+    assert _price(sheet) == Decimal("11")
+    assert _price(sheet) != Decimal("6")
 
 
 def test_polaris_superseded_only_supplies_wholesale(client, make_user, env):
@@ -598,20 +649,25 @@ def test_polaris_superseded_only_supplies_wholesale(client, make_user, env):
         part_number="1111111", part_name="OLD", retail_price_usd=Decimal("15"),
         wholesale_price_usd=Decimal("9"), superseded_number="2222222",
     )
-    part, _ = _polaris(env, number="2222222", retail="0", wholesale="0", superseded="1111111")
+    part, _ = _polaris(env, number="2222222", retail="0", wholesale="0",
+                       superseded="1111111", customs=False)
+    _card(part, manufacturer="POLARIS", customs_unit_price_usd=Decimal("9.50"))
     _sell(env, part, number="2222222")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
     assert "2222222" in _b_column(sheet)  # exact part_number не подменён
     assert "1111111" not in _b_column(sheet)
-    assert _price(sheet) == Decimal("9")  # связь дала только цену
+    assert _price(sheet) == Decimal("9.50")  # введено пользователем
+    assert _price(sheet) != Decimal("9")  # оптовая предшественника не подменяет
 
 
 def test_wholesale_ignores_rate_and_markup(client, make_user, env):
     from apps.brp.models import BrpPricingSettings
     from apps.warehouse.models import ValuationSettings
 
-    part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15")
+    part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15",
+                   customs=False)
+    _card(part, customs_unit_price_usd=Decimal("28.15"))
     _sell(env, part, number="219800345")
     rate = ValuationSettings.get()
     rate.current_usd_rate = Decimal("500")
@@ -621,15 +677,18 @@ def test_wholesale_ignores_rate_and_markup(client, make_user, env):
     markup.save()
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert _price(sheet) == Decimal("28.15")  # чистый USD прайса
+    assert _price(sheet) == Decimal("28.15")  # чистый USD, без курса и наценки
 
 
-def test_missing_wholesale_leaves_cell_empty(client, make_user, env):
-    part, _ = _brp(env, material="219800345", retail="35.99", wholesale="0")
+def test_unentered_customs_price_leaves_cell_empty(client, make_user, env):
+    """Незаполненная таможенная цена остаётся пустой ячейкой, а не нулём."""
+    part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15",
+                   customs=False)
+    _card(part, customs_unit_price_usd=None)
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert _price(sheet) is None  # клиентскую цену не подставляем
+    assert _price(sheet) is None  # ни каталожной цены, ни выдуманного нуля
 
 
 # --- Область применения (§6-§7) --------------------------------------------------------
@@ -650,6 +709,26 @@ def _application_for(client, make_user, env, part, number):
     sheet = _sheet(client.get(reverse("actions_export")).content)
     return sheet[f"M{DATA_ROW}"].value
 
+
+def _customs(part, **overrides):
+    """Полностью заполненная таможенная карточка.
+
+    Таможенный экспорт берёт факты только из введённых пользователем данных,
+    поэтому неполная карточка Excel больше не даёт. Тесты, проверяющие саму
+    неполноту, создают PartCustomsInfo напрямую и этой обёрткой не пользуются.
+    """
+    values = {
+        "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_en": "BELT DRIVE",
+        "manufacturer": "BRP",
+        "country_of_origin": "CANADA",
+        "gross_weight_kg": Decimal("0.35"),
+        "net_weight_kg": Decimal("0.30"),
+        "customs_unit_price_usd": Decimal("7"),
+        "application_area": PartCustomsInfo.ApplicationArea.SNOWMOBILE,
+    }
+    values.update(overrides)
+    return PartCustomsInfo.objects.create(part_type=part, **values)
 
 def test_sea_doo_is_watercraft(client, make_user, env):
     part, _ = _brp(env, material="219800345")
@@ -701,17 +780,17 @@ def test_multiple_applications_use_single_rule(client, make_user, env):
 
 
 def test_legacy_default_does_not_override_real_applicability(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     _compat(part, "Ski-Doo", "Снегоход", "SUMMIT")
-    PartCustomsInfo.objects.create(part_type=part, application_area="МОТО ЗАПЧАСТИ")
+    _customs(part, application_area="МОТО ЗАПЧАСТИ")
     # Легаси-значение модели считается «не заполнено».
     assert _application_for(client, make_user, env, part, "219800345") == "СНЕГОХОД"
 
 
 def test_manual_application_wins_over_catalog(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     _compat(part, "Ski-Doo", "Снегоход", "SUMMIT")
-    PartCustomsInfo.objects.create(part_type=part, application_area="Катер / лодка")
+    _customs(part, application_area="Катер / лодка")
     assert _application_for(client, make_user, env, part, "219800345") == "КАТЕР / ЛОДКА"
 
 

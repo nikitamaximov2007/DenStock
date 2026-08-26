@@ -47,9 +47,10 @@ from .services import (
     NOT_FOUND_MESSAGE,
     ActionError,
     actions_report,
-    build_export_rows,
     cancel_warehouse_action,
     get_or_create_customs,
+    historical_customs_rows,
+    parse_customs_usd,
     parse_weight_kg,
     perform_action,
     stock_overview,
@@ -562,9 +563,7 @@ def actions_report_view(request):
     filters = _report_filters(request)
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
-    # Таможня и Excel — только по активным действиям (без отменённых).
-    active_actions = [a for a in actions if not a.is_cancelled]
-    export_rows = build_export_rows(active_actions)
+    export_rows = historical_customs_rows(**filters)
     ready = [r for r in export_rows if not r["warnings"]]
     # Готовность к таможенному экспорту (Layer 33.1): область применения +
     # оба веса одной штуки. Цена и название сюда не входят - у них своя
@@ -589,6 +588,7 @@ def actions_report_view(request):
             "warning_count": len(export_rows) - len(ready),
             "customs_ready_count": len(export_rows) - len(customs_missing),
             "customs_missing_count": len(customs_missing),
+            "customs_absent_count": sum(1 for r in export_rows if not r["customs_entered"]),
             "application_choices": PartCustomsInfo.ApplicationArea.choices,
             "export_query": request.GET.urlencode(),
             "current_path_query": request.get_full_path(),
@@ -648,8 +648,20 @@ def actions_export(request):
     from .services import export_customs_xlsx
 
     filters = _report_filters(request)
-    actions, _totals = actions_report(**filters)  # include_cancelled=False
-    buffer = export_customs_xlsx(actions)
+    rows = historical_customs_rows(**filters)
+    # Позиция без единой сохранённой версии — это деталь, по которой
+    # таможенных данных не вводили вовсе. Достроить их неоткуда: каталог для
+    # таможни не источник. Отдельные незаполненные поля экспорт не блокируют,
+    # они остаются пустыми, как и раньше.
+    missing = [row for row in rows if not row["customs_entered"]]
+    if missing:
+        messages.error(
+            request,
+            f"Нельзя сформировать Excel: у {len(missing)} деталей "
+            "не заведены таможенные данные.",
+        )
+        return redirect(f"{reverse('actions_report')}?{urlencode(request.GET)}")
+    buffer = export_customs_xlsx(rows=rows)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()
     filename = f"customs_order_{date_from}_{date_to}.xlsx"
@@ -670,18 +682,24 @@ def actions_customs_edit(request, part_id):
     if request.method == "POST":
         name_ru = (request.POST.get("customs_name_ru") or "").strip()
         customs.customs_name_ru = name_ru
+        customs.customs_name_en = (request.POST.get("customs_name_en") or "").strip()
+        customs.manufacturer = (request.POST.get("manufacturer") or "").strip().upper()
+        customs.country_of_origin = (request.POST.get("country_of_origin") or "").strip().upper()
+        customs.source_reference = (request.POST.get("source_reference") or "").strip()
         customs.customs_name_source = (
             customs.NameSource.MANUAL if name_ru else customs.NameSource.AUTO
         )
         try:
             gross = parse_weight_kg(request.POST.get("gross_weight_kg"))
             net = parse_weight_kg(request.POST.get("net_weight_kg"))
+            customs_price = parse_customs_usd(request.POST.get("customs_unit_price_usd"))
             validate_weight_pair(gross, net)
         except ValueError as exc:
             messages.error(request, str(exc))
             return redirect("actions_customs_edit", part_id=part.pk)
         customs.gross_weight_kg = gross
         customs.net_weight_kg = net
+        customs.customs_unit_price_usd = customs_price
         customs.weight_source_url = (request.POST.get("weight_source_url") or "").strip()
         customs.weight_source_note = (request.POST.get("weight_source_note") or "").strip()
         # Чекбокс — явное решение пользователя (здесь есть поля источника:

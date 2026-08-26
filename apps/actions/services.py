@@ -29,7 +29,7 @@ from apps.core.part_lookup import (
     resolve_part_lookup,
 )
 from apps.counting.services import find_brp_price_source
-from apps.inventory.models import PartItem, StockLot
+from apps.inventory.models import PartItem, StockLot, StockMovement
 from apps.inventory.presentation import (
     NO_EXACT_NUMBER,
     manufacturer_display,
@@ -56,7 +56,7 @@ from apps.sales.services import (
     create_sale,
 )
 
-from .models import PartCustomsInfo, WarehouseAction
+from .models import PartCustomsDataVersion, PartCustomsInfo, WarehouseAction
 
 # Шаблон — РАНТАЙМ-АССЕТ и лежит внутри пакета приложения, а не в docs/:
 # каталог docs/ исключён из Docker-образа (.dockerignore), поэтому шаблон
@@ -641,6 +641,33 @@ def read_customs(part: PartType) -> PartCustomsInfo:
     return PartCustomsInfo(part_type=part, **_customs_defaults(part))  # не сохраняем
 
 
+def record_customs_data_version(customs: PartCustomsInfo, *, by=None) -> PartCustomsDataVersion:
+    """Дописать неизменяемую версию таможенных данных, введённых оператором.
+
+    Значений каталога здесь нет намеренно. Сохранение без изменений
+    идемпотентно, а настоящая правка становится новой исторической версией.
+    """
+    fields = (
+        "customs_name_ru", "customs_name_en", "manufacturer", "country_of_origin",
+        "gross_weight_kg", "net_weight_kg", "customs_unit_price_usd",
+        "application_area", "source_reference",
+    )
+    values = {field: getattr(customs, field) for field in fields}
+    previous = customs.part_type.customs_data_versions.order_by("-version").first()
+    unchanged = previous is not None and all(
+        getattr(previous, field) == value for field, value in values.items()
+    )
+    if unchanged:
+        return previous
+    return PartCustomsDataVersion.objects.create(
+        part_type=customs.part_type,
+        version=(previous.version + 1) if previous is not None else 1,
+        effective_from=timezone.now(),
+        created_by=by or customs.updated_by,
+        **values,
+    )
+
+
 def _brp_part_for(part: PartType):
     link = BrpPartLink.objects.filter(part=part).select_related("brp_part").first()
     return link.brp_part if link else None
@@ -792,6 +819,22 @@ def parse_weight_kg(raw) -> Decimal | None:
     return value
 
 
+def parse_customs_usd(raw) -> Decimal | None:
+    """Явная таможенная стоимость единицы: подстановки цены каталога здесь нет."""
+    raw = (str(raw) if raw is not None else "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        value = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError("Таможенная цена должна быть числом в USD.") from exc
+    if not value.is_finite() or value <= 0:
+        raise ValueError("Таможенная цена должна быть больше нуля.")
+    if value.as_tuple().exponent < -2:
+        raise ValueError("Таможенная цена: не более 2 знаков после запятой.")
+    return value
+
+
 def validate_weight_pair(gross: Decimal | None, net: Decimal | None) -> None:
     """Вес брутто не может быть меньше веса нетто (только когда заданы оба)."""
     if gross is not None and net is not None and gross < net:
@@ -808,29 +851,15 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     цены. Рублёвые цены в таможенную форму не подмешиваются.
     """
     customs = read_customs(part)  # read-only: экспорт/отчёт не пишут в базу
-    brp = _brp_part_for(part)
-    polaris = _polaris_part_for(part)
     if not number:
         number = identity_number(part)
-    if polaris is not None:
-        english_name = (polaris.part_name or part.name).strip()
-    else:
-        english_name = (brp.part_desc if brp and brp.part_desc else part.name).strip()
-    name_ru = customs.customs_name_ru.strip() or auto_customs_name_ru(english_name)
-    # «Стоимость за шт» — ОПТОВАЯ цена прайса в USD (без курса и наценки).
-    usd_price = None
-    if brp is not None:
-        usd_price = _brp_wholesale_usd(brp)
-    elif polaris is not None:
-        usd_price = _polaris_wholesale_usd(polaris)
-    if polaris is not None:
-        manufacturer = (customs.manufacturer or "POLARIS").upper()
-        if manufacturer == "BRP":
-            manufacturer = "POLARIS"
-    else:
-        manufacturer = (customs.manufacturer or "BRP").upper()
-    # Страна для этого таможенного экспорта всегда латиницей.
-    country = CUSTOMS_COUNTRY
+    english_name = customs.customs_name_en.strip()
+    name_ru = customs.customs_name_ru.strip()
+    # Customs facts are explicit operator input. Neither current catalog
+    # wholesale nor a manufacturer default may masquerade as historical truth.
+    usd_price = customs.customs_unit_price_usd
+    manufacturer = customs.manufacturer.strip().upper()
+    country = customs.country_of_origin.strip().upper()
     # Область применения: приоритет 1) ручное значение карточки, 2) автоопределение
     # по PartCompatibility, 3) пусто. Легаси-хардкод «МОТО ЗАПЧАСТИ» (старый
     # default модели) считается «не заполнено» и в форму не попадает никогда.
@@ -843,13 +872,17 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         application_source = "compatibility" if application_area else "none"
     warnings = []
     if not customs.customs_name_ru.strip():
-        warnings.append("русское название: автоперевод, проверьте")
+        warnings.append("не заполнено русское название")
+    if not english_name:
+        warnings.append("не заполнено английское название")
     if customs.gross_weight_kg is None:
         warnings.append("нет веса брутто")
     if customs.net_weight_kg is None:
         warnings.append("нет веса нетто")
     if usd_price is None:
-        warnings.append("нет оптовой цены в USD")
+        warnings.append("нет таможенной цены в USD")
+    if not country:
+        warnings.append("не заполнена страна производства")
     if not application_area:
         warnings.append("не определена область применения")
     # Источник веса для UI (Layer 33.1): автоматического источника весов в
@@ -971,6 +1004,307 @@ def build_export_rows(actions) -> list[dict]:
     return sorted(rows, key=lambda row: (row["number"], row["manufacturer"]))
 
 
+_CUSTOMS_OUTBOUND_TYPES = (
+    StockMovement.MovementType.SALE_ITEM, StockMovement.MovementType.SALE_LOT,
+    StockMovement.MovementType.ISSUE_ITEM, StockMovement.MovementType.ISSUE_LOT,
+    StockMovement.MovementType.WRITE_OFF_ITEM, StockMovement.MovementType.WRITE_OFF_LOT,
+)
+_CUSTOMS_RETURN_TYPES = (
+    StockMovement.MovementType.RETURN_ITEM, StockMovement.MovementType.RETURN_LOT,
+)
+_ACTION_TYPE_MOVEMENTS = {
+    WarehouseAction.Type.SALE: (
+        StockMovement.MovementType.SALE_ITEM, StockMovement.MovementType.SALE_LOT,
+    ),
+    WarehouseAction.Type.REPAIR: (
+        StockMovement.MovementType.ISSUE_ITEM, StockMovement.MovementType.ISSUE_LOT,
+    ),
+}
+
+
+def _customs_row_from_version(
+    part: PartType, version, quantity: Decimal, *, customs=None
+) -> dict:
+    """Одна строка Excel, факты которой взяты ТОЛЬКО из сохранённой версии.
+
+    Каталог сюда не заглядывает: ни оптовая цена прайса, ни производитель по
+    умолчанию не имеют права выдавать себя за исторический факт.
+    """
+    if version is None:
+        values = {"name_ru": "", "name_en": "", "manufacturer": "", "country": "",
+                  "gross_weight_kg": None, "net_weight_kg": None, "usd_price": None,
+                  "application_area": "", "source_reference": ""}
+    else:
+        application = (version.application_area or "").strip().upper()
+        if application == LEGACY_APPLICATION:
+            application = ""  # легаси-хардкод считается «не заполнено»
+        if not application:
+            # Автоопределение по PartCompatibility (Слой 33.1) сохраняется: это
+            # не каталог поставщика, а подтверждённая пользователем
+            # совместимость с техникой. Ценой, страной и названиями подменять
+            # ничего нельзя, а область применения так работала и раньше.
+            application = resolve_customs_application(part)
+        values = {
+            "name_ru": version.customs_name_ru.strip().upper(),
+            "name_en": version.customs_name_en.strip().upper(),
+            "manufacturer": version.manufacturer.strip().upper(),
+            "country": version.country_of_origin.strip().upper(),
+            "gross_weight_kg": version.gross_weight_kg,
+            "net_weight_kg": version.net_weight_kg,
+            "usd_price": version.customs_unit_price_usd,
+            "application_area": application,
+            "source_reference": version.source_reference,
+        }
+    missing = [label for key, label in (
+        ("name_ru", "не заполнено русское название"),
+        ("name_en", "не заполнено английское название"),
+        ("manufacturer", "не заполнен производитель"),
+        ("country", "не заполнена страна производства"),
+        ("gross_weight_kg", "нет веса брутто"),
+        ("net_weight_kg", "нет веса нетто"),
+        ("usd_price", "нет таможенной цены в USD"),
+        ("application_area", "не определена область применения"),
+    ) if not values[key]]
+    return {
+        "part": part,
+        "customs": customs if customs is not None else read_customs(part),
+        "number": part_exact_number(part, default=""),
+        "quantity": quantity,
+        "version": version,
+        "version_number": version.version if version is not None else None,
+        "application_source": _application_source(version, values["application_area"]),
+        "weight_source": "customs_version" if version is not None else "none",
+        # «Данные заведены» и «данные полны» — разные вопросы. Excel не
+        # выдаётся, когда таможенных данных нет ВООБЩЕ: выдумывать их неоткуда.
+        # Отдельное незаполненное поле остаётся пустым, как и раньше.
+        "customs_entered": version is not None,
+        "customs_ready": not missing,
+        "customs_missing_reasons": missing,
+        "warnings": missing, **values,
+    }
+
+
+def _application_source(version, application_area: str) -> str:
+    if not application_area:
+        return "none"
+    if version is not None and (version.application_area or "").strip():
+        return "manual"
+    return "compatibility"
+
+
+def _customs_versions_by_part(part_ids) -> dict[int, list]:
+    """Все сохранённые версии запрошенных деталей одним запросом."""
+    versions: dict[int, list] = {part_id: [] for part_id in part_ids}
+    saved = PartCustomsDataVersion.objects.filter(part_type_id__in=part_ids).order_by(
+        "part_type_id", "effective_from", "version"
+    )
+    for version in saved:
+        versions[version.part_type_id].append(version)
+    return versions
+
+
+def _version_at(versions: list, at):
+    """Версия, действовавшая в момент движения.
+
+    Первая версия намеренно покрывает и более ранние движения: пользователь
+    заполняет таможенную карточку уже после того, как деталь появилась.
+    Последующие версии никогда не переписывают более раннее движение.
+    """
+    if not versions:
+        return None
+    effective = [version for version in versions if version.effective_from <= at]
+    return effective[-1] if effective else versions[0]
+
+
+def customs_data_version_for(part: PartType, at):
+    """Версия таможенных данных детали на момент ``at``."""
+    return _version_at(
+        list(part.customs_data_versions.order_by("effective_from", "version")), at
+    )
+
+
+def _movement_source(movement) -> tuple[str, int | None]:
+    """Происхождение движения: лот или экземпляр (ровно одно из двух)."""
+    if movement.stock_lot_id is not None:
+        return ("lot", movement.stock_lot_id)
+    return ("item", movement.part_item_id)
+
+
+def _number_snapshots(movements) -> dict[int, str]:
+    """Снимок номера, под которым деталь реально ушла со склада.
+
+    Номер фиксируется журналом действий в момент операции: у одной детали
+    может быть несколько точных номеров, и продажа по WH-100 не имеет права
+    превратиться в строку по WH-200. В самом складском журнале снимка нет,
+    поэтому количество движений разбирается по количествам действий той же
+    детали в хронологическом порядке - ровно так их создаёт perform_action,
+    одной транзакцией. Одно действие может лечь на несколько лотов, поэтому
+    считается именно количество, а не число записей.
+
+    Движению без действия (продажа из другого экрана, ремонт, списание)
+    снимок не достаётся, и номер берётся из личности детали.
+    """
+    part_ids = {movement.part_type_id for movement in movements}
+    queues: dict[int, list[list]] = {}
+    actions = WarehouseAction.objects.filter(part_type_id__in=part_ids).order_by(
+        "created_at", "pk"
+    ).values_list("part_type_id", "quantity", "part_number")
+    for part_id, quantity, number in actions:
+        if not number or number == NO_EXACT_NUMBER:
+            continue
+        queues.setdefault(part_id, []).append([quantity, number])
+    snapshots = {}
+    for movement in movements:
+        if movement.movement_type not in _CUSTOMS_OUTBOUND_TYPES:
+            continue
+        queue = queues.get(movement.part_type_id)
+        if not queue:
+            continue
+        snapshots[movement.pk] = queue[0][1]
+        remaining = movement.quantity
+        while remaining > 0 and queue:
+            taken = min(queue[0][0], remaining)
+            queue[0][0] -= taken
+            remaining -= taken
+            if queue[0][0] <= 0:
+                queue.pop(0)
+    return snapshots
+
+
+def _net_part_consumption(movements, versions, snapshots, default_number):
+    """Свести журнал детали, списав возврат на ту выдачу, которую он отменяет.
+
+    Внешнего ключа с возврата на отменяемое движение в журнале нет, поэтому
+    родословная восстанавливается: товар вернулся из последней незакрытой
+    выдачи того же лота или экземпляра, и только затем из любой другой
+    незакрытой выдачи этой детали. Списать возврат на версию, действующую в
+    день ВОЗВРАТА, значило бы придумать расход по профилю, под которым товар
+    склад никогда не покидал.
+
+    Отмена действия проходит здесь же: она заводит компенсирующее возвратное
+    движение, поэтому отменённая продажа гасится своей же выдачей и в
+    таможенный расход не попадает.
+    """
+    outstanding: list[list] = []  # [версия, остаток, происхождение, номер]
+    for movement in movements:
+        if movement.movement_type in _CUSTOMS_OUTBOUND_TYPES:
+            outstanding.append([
+                _version_at(versions, movement.created_at),
+                movement.quantity,
+                _movement_source(movement),
+                snapshots.get(movement.pk) or default_number,
+            ])
+            continue
+        remaining = movement.quantity
+        source = _movement_source(movement)
+        # Сначала точное совпадение по лоту/экземпляру, затем любая выдача той
+        # же детали: возврат не может уменьшить расход чужой детали.
+        for exact_only in (True, False):
+            for entry in reversed(outstanding):
+                if remaining <= 0:
+                    break
+                if exact_only and entry[2] != source:
+                    continue
+                taken = min(entry[1], remaining)
+                entry[1] -= taken
+                remaining -= taken
+            if remaining <= 0:
+                break
+        # Остаток возврата без выдачи в окне (выдача была раньше периода) не
+        # уходит в минус: отрицательного расхода на таможне не бывает.
+    totals: dict[tuple, Decimal] = {}
+    for version, quantity, _source, number in outstanding:
+        if quantity <= 0:
+            continue
+        key = (version.pk if version is not None else None, number)
+        totals[key] = totals.get(key, Decimal("0")) + quantity
+    return totals
+
+
+def _customs_movements(*, date_from, date_to, action_type, q, part_number, location_code):
+    """Канонический журнал выбытия, суженный теми же фильтрами, что и отчёт."""
+    movements = StockMovement.objects.filter(
+        movement_type__in=(*_CUSTOMS_OUTBOUND_TYPES, *_CUSTOMS_RETURN_TYPES)
+    )
+    if date_from:
+        movements = movements.filter(created_at__date__gte=date_from)
+    if date_to:
+        movements = movements.filter(created_at__date__lte=date_to)
+    if action_type:
+        types = _ACTION_TYPE_MOVEMENTS.get(action_type)
+        if types:
+            movements = movements.filter(
+                movement_type__in=(*types, *_CUSTOMS_RETURN_TYPES)
+            )
+    if q:
+        movements = movements.filter(comment__icontains=q)
+    if part_number:
+        norm = normalize_number(part_number)
+        part_ids = list(
+            PartNumber.objects.filter(normalized_value=norm).values_list("part_id", flat=True)
+        )
+        movements = movements.filter(
+            Q(part_type_id__in=part_ids) | Q(part_type__name__icontains=part_number)
+        )
+    if location_code:
+        # Выбытие уходит ИЗ ячейки, возврат приходит В неё: чтобы возврат
+        # гасил свою же выдачу, в выборку должны попасть оба направления.
+        movements = movements.filter(
+            Q(from_location__code__icontains=location_code)
+            | Q(to_location__code__icontains=location_code)
+        )
+    return list(movements.order_by("created_at", "pk"))
+
+
+def historical_customs_rows(
+    *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+) -> list[dict]:
+    """Исторический таможенный расход по сохранённым профилям деталей.
+
+    Приёмки, перемещения и корректировки инвентаризации исключены по типу: это
+    не выбытие товара со склада. Строки несут только сохранённый ввод
+    оператора, никогда не текущий каталог.
+    """
+    movements = _customs_movements(
+        date_from=date_from, date_to=date_to, action_type=action_type, q=q,
+        part_number=part_number, location_code=location_code,
+    )
+    if not movements:
+        return []
+
+    part_ids = {movement.part_type_id for movement in movements}
+    versions_by_part = _customs_versions_by_part(part_ids)
+    parts = {
+        part.pk: part
+        for part in PartType.objects.filter(pk__in=part_ids).prefetch_related("numbers")
+    }
+    customs_by_part = {
+        info.part_type_id: info
+        for info in PartCustomsInfo.objects.filter(part_type_id__in=part_ids)
+    }
+    snapshots = _number_snapshots(movements)
+    by_part: dict[int, list] = {}
+    for movement in movements:
+        by_part.setdefault(movement.part_type_id, []).append(movement)
+
+    rows = []
+    for part_id, part_movements in by_part.items():
+        part = parts[part_id]
+        versions = versions_by_part.get(part_id, [])
+        by_version = {version.pk: version for version in versions}
+        consumption = _net_part_consumption(
+            part_movements, versions, snapshots, part_exact_number(part, default="")
+        )
+        for (version_pk, number), quantity in consumption.items():
+            row = _customs_row_from_version(
+                part, by_version.get(version_pk), quantity,
+                customs=customs_by_part.get(part_id),
+            )
+            row["number"] = number
+            rows.append(row)
+    return sorted(rows, key=lambda row: (row["number"], row["version_number"] or 0))
+
+
 def _center_data_row(sheet, row: int) -> None:
     """Единое оформление строки данных: центр по обеим осям + перенос текста.
 
@@ -992,7 +1326,7 @@ def _center_data_row(sheet, row: int) -> None:
     sheet.row_dimensions[row].height = None
 
 
-def export_customs_xlsx(actions) -> BytesIO:
+def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
     """Заполнить копию шаблона «Форма для заказа» отфильтрованными действиями.
 
     Шаблон: лист «Лист1», строки 1-9 (инструкции/шапка) сохраняются. Товарный
@@ -1008,7 +1342,8 @@ def export_customs_xlsx(actions) -> BytesIO:
     """
     import openpyxl
 
-    rows = build_export_rows(actions)
+    if rows is None:
+        rows = build_export_rows(actions or [])
     if not TEMPLATE_PATH.exists():  # явная причина вместо голого FileNotFoundError
         raise ActionError(
             f"Шаблон таможенной формы не найден: {TEMPLATE_PATH}. "
@@ -1017,11 +1352,38 @@ def export_customs_xlsx(actions) -> BytesIO:
     workbook = openpyxl.load_workbook(str(TEMPLATE_PATH))
     sheet = workbook[TEMPLATE_SHEET]
 
+    # Раздвинуть шаблон ПЕРЕД строкой итога: ни одна историческая строка не
+    # имеет права затереть итог или пропасть за пределами исходных 140 строк.
+    capacity = TEMPLATE_DATA_END_ROW - TEMPLATE_DATA_START_ROW + 1
+    if len(rows) > capacity:
+        from copy import copy
+
+        extra = len(rows) - capacity
+        totals_row = TEMPLATE_DATA_END_ROW + 1
+        sheet.insert_rows(totals_row, extra)
+        for target_row in range(totals_row, totals_row + extra):
+            for column in TEMPLATE_DATA_COLUMNS:
+                source = sheet[f"{column}{TEMPLATE_DATA_END_ROW}"]
+                target = sheet[f"{column}{target_row}"]
+                target._style = copy(source._style)
+                target.number_format = source.number_format
+        # openpyxl НЕ двигает объединённые диапазоны при вставке строк: без
+        # этого подпись итога осталась бы поверх строки данных и склеила бы
+        # три её колонки (в том числе вес нетто).
+        for merged in list(sheet.merged_cells.ranges):
+            if merged.min_row >= totals_row:
+                sheet.unmerge_cells(str(merged))
+                sheet.merge_cells(
+                    start_row=merged.min_row + extra, start_column=merged.min_col,
+                    end_row=merged.max_row + extra, end_column=merged.max_col,
+                )
+
+    data_end_row = max(TEMPLATE_DATA_END_ROW, TEMPLATE_DATA_START_ROW + len(rows) - 1)
     # Очистка ТОЛЬКО значений товарного диапазона (стили/границы остаются).
     # Объединённые ячейки шаблона пропускаем: у них value read-only.
     from openpyxl.cell.cell import MergedCell
 
-    for r in range(TEMPLATE_DATA_START_ROW, TEMPLATE_DATA_END_ROW + 1):
+    for r in range(TEMPLATE_DATA_START_ROW, data_end_row + 1):
         for column in TEMPLATE_DATA_COLUMNS:
             cell = sheet[f"{column}{r}"]
             if not isinstance(cell, MergedCell):
@@ -1049,6 +1411,10 @@ def export_customs_xlsx(actions) -> BytesIO:
         sheet[f"L{r}"] = f"=K{r}*J{r}"
         sheet[f"M{r}"] = excel_safe_text(row["application_area"])
         _center_data_row(sheet, r)  # включая последнюю строку
+
+    # Итог по весу брутто. Диапазон начинается там же, где в самом шаблоне
+    # (строка 7), иначе после раздвижки суммировалась бы часть строк.
+    sheet[f"I{data_end_row + 1}"] = f"=SUM(I7:I{data_end_row})"
 
     buffer = BytesIO()
     workbook.save(buffer)
