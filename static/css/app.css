@@ -218,6 +218,11 @@ body.app {
 .table th { background: var(--bg); font-size: 14px; color: var(--muted); }
 .table-sort-link { color: inherit; text-decoration: none; white-space: nowrap; }
 .table-sort-link:hover, .table-sort-link--active { color: var(--accent); text-decoration: underline; }
+/* Заголовок-сортировка обычно короткий и переносу не подлежит: стрелка
+   должна оставаться при своём слове. Но в широкой таблице длинный заголовок
+   в одну строку раздвигает колонку и уводит вбок всю страницу, поэтому
+   такому заголовку перенос разрешён - стрелку держит неразрывный пробел. */
+.table-sort-link--wrap { white-space: normal; }
 .inline-form { display: inline; margin-left: 8px; }
 .inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
   border-radius: 6px; background: #fff; }
