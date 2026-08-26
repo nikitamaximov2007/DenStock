@@ -96,7 +96,7 @@ def test_custom_price_multi_item_and_legacy_unknown(repair_data):
     _part_c, lot_c = stock("Старый", "9000")
     legacy = _completed(user, lot_c, "1")
     legacy.lines.update(customer_unit_price_rub=None)
-    assert repair_customer_amounts([legacy])[legacy.pk] is None
+    assert repair_customer_amounts([legacy])[legacy.pk] == Decimal("9000.00")
 
 
 def test_partial_return_reduces_customer_amount_and_cancel_restores_it(repair_data):
@@ -120,9 +120,27 @@ def test_partial_return_reduces_customer_amount_and_cancel_restores_it(repair_da
     assert calculate_repair_customer_amount(order) == Decimal("5000.00")
 
 
-def test_missing_price_is_unknown_not_zero(repair_data):
+def test_missing_price_without_positive_catalog_value_requires_price_setup(repair_data):
     user, _location, stock = repair_data
     _part, lot = stock("Без цены", None)
     order = _completed(user, lot, "1")
     assert order.lines.get().customer_unit_price_rub is None
     assert calculate_repair_customer_amount(order) is None
+
+
+def test_legacy_fallback_is_current_but_new_snapshot_stays_frozen(repair_data):
+    user, _location, stock = repair_data
+    part, lot = stock("Старый насос", "5000", cost="2500")
+    legacy = _completed(user, lot, "2")
+    legacy.lines.update(customer_unit_price_rub=None)
+    assert calculate_repair_customer_amount(legacy) == Decimal("10000.00")
+    part.recommended_price = Decimal("9000")
+    part.save(update_fields=["recommended_price"])
+    assert calculate_repair_customer_amount(legacy) == Decimal("18000.00")
+
+
+def test_explicit_zero_snapshot_is_not_missing_price(repair_data):
+    user, _location, stock = repair_data
+    _part, lot = stock("Бесплатная деталь", "5000")
+    order = _completed(user, lot, "1", price="0")
+    assert calculate_repair_customer_amount(order) == Decimal("0.00")

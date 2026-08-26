@@ -91,32 +91,37 @@
                        aria-label="Цена клиенту">
                 <button type="submit">Сохранить</button>
               </form>
-            {% elif line.customer_unit_price_rub is not None %}
-              {{ line.customer_unit_price_rub|money_int }}
+            {% elif line.customer_display_unit_price_rub is not None %}
+              {{ line.customer_display_unit_price_rub|money_int }}
+              {% if line.customer_price_source == "current_fallback" %}
+                <span class="muted">(текущая цена)</span>
+              {% endif %}
             {% else %}
-              <span class="muted">Не зафиксировано</span>
+              <span class="muted">Цена не настроена</span>
             {% endif %}
           </td>
           <td>
             {% if line.customer_total_rub is not None %}
               {{ line.customer_total_rub|money_int }}
-      {% else %}<span class="muted">Не зафиксировано</span>{% endif %}
-        </td>
-        {% if show_costs %}
-          <td>{{ line.unit_cost_rub|money_int }}</td>
-          <td>{{ line.total_cost_rub|money_int }}</td>
-        {% endif %}
-        <td>{% include "partials/_line_source.html" %}</td>
-        {% if can_manage and is_draft %}
-          <td>
-            <form method="post"
-                  action="{% url 'repair_order_remove_line' line.pk %}"
-                  class="inline-form">
-              {% csrf_token %}
-              <button type="submit">Снять</button>
-            </form>
+            {% else %}
+              <span class="muted">Не зафиксировано</span>
+            {% endif %}
           </td>
-        {% endif %}
+          {% if show_costs %}
+            <td>{{ line.unit_cost_rub|money_int }}</td>
+            <td>{{ line.total_cost_rub|money_int }}</td>
+          {% endif %}
+          <td>{% include "partials/_line_source.html" %}</td>
+          {% if can_manage and is_draft %}
+            <td>
+              <form method="post"
+                    action="{% url 'repair_order_remove_line' line.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">Снять</button>
+              </form>
+            </td>
+          {% endif %}
         </tr>
       {% empty %}
         <tr>
@@ -141,7 +146,11 @@
         <tr>
           <th>Сумма деталей для клиента</th>
           <td>
-            {% if customer_amount is not None %}{{ customer_amount|money_int }} ₽{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+            {% if customer_amount is not None %}
+              {{ customer_amount|money_int }} ₽
+            {% else %}
+              <span class="muted">Не зафиксировано</span>
+            {% endif %}
           </td>
         </tr>
       </tbody>

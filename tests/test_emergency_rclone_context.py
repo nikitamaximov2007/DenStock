@@ -12,6 +12,7 @@ rclone не найдёт свои настройки, источник копи�
 умолчанию наследует права профиля. На живой Windows его читали группы
 «Пользователи» и «Прошедшие проверку», то есть любая учётная запись компьютера.
 """
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,6 +31,21 @@ POWERSHELL = shutil.which("powershell") or shutil.which("powershell.exe")
 needs_powershell = pytest.mark.skipif(POWERSHELL is None, reason="нужен Windows PowerShell")
 
 
+def _windows_powershell_environment() -> dict[str, str]:
+    """Keep Windows PowerShell tests from inheriting PowerShell 7 modules."""
+    environment = os.environ.copy()
+    system_root = Path(environment.get("SystemRoot", r"C:\\Windows"))
+    module_paths = [
+        Path.home() / "Documents" / "WindowsPowerShell" / "Modules",
+        Path(environment.get("ProgramFiles", r"C:\\Program Files"))
+        / "WindowsPowerShell"
+        / "Modules",
+        system_root / "System32" / "WindowsPowerShell" / "v1.0" / "Modules",
+    ]
+    environment["PSModulePath"] = ";".join(str(path) for path in module_paths)
+    return environment
+
+
 def run_powershell(body: str, timeout: int = 180) -> str:
     prelude = (
         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
@@ -38,10 +54,19 @@ def run_powershell(body: str, timeout: int = 180) -> str:
     result = subprocess.run(
         [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
          prelude + f". '{HELPER}'\n{body}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=_windows_powershell_environment(),
     )
     assert result.returncode == 0, f"PowerShell завершился с ошибкой: {result.stderr}"
     return result.stdout.strip()
+
+
+def test_windows_powershell_environment_excludes_powershell_7_modules():
+    assert "PowerShell\\7\\Modules" not in _windows_powershell_environment()["PSModulePath"]
 
 
 # --- Откуда берётся путь --------------------------------------------------------
