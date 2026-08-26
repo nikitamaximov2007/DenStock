@@ -352,6 +352,40 @@ def test_version_lookup_returns_the_one_in_force(env):
     assert customs_data_version_for(part, long_ago).version == 1  # история покрыта
 
 
+def test_period_report_keeps_each_sale_under_its_own_number(env):
+    """Отчёт за период не должен разбирать номера с начала истории.
+
+    У детали два точных номера, и она уходила под каждым. Если снимок номера
+    подбирать только по движениям выбранного периода, второй продаже достался
+    бы номер первой - и позиция ушла бы в декларацию под чужим артикулом.
+    """
+    import datetime
+
+    part = _part(env, number="WH-100")
+    PartNumber.objects.create(part=part, value="WH-200", kind=PartNumber.Kind.ARTICLE)
+    _receive(env, part, quantity="20")
+    _card(part)
+    first = _sell(env, part, quantity="2", number="WH-100")
+    second = _sell(env, part, quantity="3", number="WH-200")
+    assert (first.part_number, second.part_number) == ("WH-100", "WH-200")
+
+    # Обе продажи разом: две отдельные строки, номера не слиты.
+    numbers = sorted(row["number"] for row in historical_customs_rows())
+    assert numbers == ["WH-100", "WH-200"]
+
+    # Отчёт со сдвинутым началом периода: первая продажа отодвинута в прошлое,
+    # в окно попадает только вторая - и она обязана остаться WH-200.
+    yesterday = timezone.now() - datetime.timedelta(days=1)
+    moved = StockMovement.objects.filter(
+        part_type=part, movement_type=StockMovement.MovementType.SALE_LOT
+    ).order_by("created_at", "pk").first()
+    StockMovement.objects.filter(pk=moved.pk).update(created_at=yesterday)
+
+    rows = historical_customs_rows(date_from=timezone.now().date())
+    assert [row["number"] for row in rows] == ["WH-200"]
+    assert rows[0]["quantity"] == Decimal("3")
+
+
 # --- 9-12. Родословная возвратов -------------------------------------------
 
 
@@ -432,6 +466,37 @@ def test_cancelled_sale_leaves_no_customs_consumption(env):
     _sell(env, part, quantity="3", number="219800345")
     cancel_warehouse_action(bad, by=env["admin"], reason="Дубль")
     assert _row_for(historical_customs_rows(), "219800345")["quantity"] == Decimal("3")
+
+
+def test_customer_filter_narrows_the_declaration(env):
+    """Фильтр «Клиент / комментарий» должен сужать и таможенные строки.
+
+    Имя клиента хранится в журнале действий, а не в складском движении, у
+    которого свой служебный комментарий. Если искать по комментарию движения,
+    отчёт по клиенту молча выходил бы пустым при полном журнале.
+    """
+    ivanov = _part(env, number="111000111", name="ИВАНОВСКАЯ")
+    petrov = _part(env, number="222000222", name="ПЕТРОВСКАЯ")
+    for part in (ivanov, petrov):
+        _receive(env, part, quantity="10")
+        _card(part)
+    perform_action(
+        part=ivanov, location=env["loc"], action_type="sale", quantity="2",
+        customer_comment="Иванов", scanned_number="111000111", by=env["admin"],
+    )
+    perform_action(
+        part=petrov, location=env["loc"], action_type="sale", quantity="3",
+        customer_comment="Петров", scanned_number="222000222", by=env["admin"],
+    )
+
+    assert sorted(r["number"] for r in historical_customs_rows()) == [
+        "111000111", "222000222",
+    ]
+    only_ivanov = historical_customs_rows(q="Иванов")
+    assert [r["number"] for r in only_ivanov] == ["111000111"]
+    assert only_ivanov[0]["quantity"] == Decimal("2")
+    assert [r["number"] for r in historical_customs_rows(q="Петров")] == ["222000222"]
+    assert historical_customs_rows(q="Сидоров") == []  # никого не нашли - пусто
 
 
 # --- 13-17. Канонический журнал: что считается выбытием ---------------------

@@ -1154,6 +1154,10 @@ def _number_snapshots(movements) -> dict[int, str]:
 
     Движению без действия (продажа из другого экрана, ремонт, списание)
     снимок не достаётся, и номер берётся из личности детали.
+
+    Разбор идёт по ВСЕЙ истории детали, а не по выбранному периоду: иначе
+    отчёт за февраль начал бы разбирать очередь с январского действия и выдал
+    бы февральской продаже чужой номер.
     """
     part_ids = {movement.part_type_id for movement in movements}
     queues: dict[int, list[list]] = {}
@@ -1164,15 +1168,16 @@ def _number_snapshots(movements) -> dict[int, str]:
         if not number or number == NO_EXACT_NUMBER:
             continue
         queues.setdefault(part_id, []).append([quantity, number])
+    history = StockMovement.objects.filter(
+        part_type_id__in=part_ids, movement_type__in=_CUSTOMS_OUTBOUND_TYPES
+    ).order_by("created_at", "pk").values_list("pk", "part_type_id", "quantity")
     snapshots = {}
-    for movement in movements:
-        if movement.movement_type not in _CUSTOMS_OUTBOUND_TYPES:
-            continue
-        queue = queues.get(movement.part_type_id)
+    for movement_pk, part_id, quantity in history:
+        queue = queues.get(part_id)
         if not queue:
             continue
-        snapshots[movement.pk] = queue[0][1]
-        remaining = movement.quantity
+        snapshots[movement_pk] = queue[0][1]
+        remaining = quantity
         while remaining > 0 and queue:
             taken = min(queue[0][0], remaining)
             queue[0][0] -= taken
@@ -1248,7 +1253,24 @@ def _customs_movements(*, date_from, date_to, action_type, q, part_number, locat
                 movement_type__in=(*types, *_CUSTOMS_RETURN_TYPES)
             )
     if q:
-        movements = movements.filter(comment__icontains=q)
+        # «Клиент / комментарий» живёт в журнале действий, а не в складском
+        # движении: у движения свой служебный комментарий. Поэтому поиск идёт
+        # через документы найденных действий - продажу, заказ ремонта, возврат.
+        matched = WarehouseAction.objects.filter(customer_comment__icontains=q)
+        documents = Q()
+        found = False
+        for field, document_type in (
+            ("sale_id", "sale"),
+            ("repair_order_id", "repair_order"),
+            ("stock_return_id", "stock_return"),
+        ):
+            ids = list(
+                matched.exclude(**{field: None}).values_list(field, flat=True)
+            )
+            if ids:
+                documents |= Q(document_type=document_type, document_id__in=ids)
+                found = True
+        movements = movements.filter(documents) if found else movements.none()
     if part_number:
         norm = normalize_number(part_number)
         part_ids = list(
