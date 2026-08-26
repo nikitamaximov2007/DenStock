@@ -49,6 +49,8 @@ from apps.sales.models import Sale
 from apps.sales.services import (
     activate_reservation,
     active_reserved_for_lot,
+    active_reserved_for_lots,
+    active_reserved_item_ids,
     add_stock_lot_to_reservation,
     add_stock_lot_to_sale,
     complete_sale,
@@ -166,6 +168,7 @@ def stock_overview(part: PartType) -> dict:
         .order_by("created_at", "pk")
     )
     by_location: dict[int, dict] = {}
+    reserved_by_lot = active_reserved_for_lots(lots)
     for lot in lots:
         row = by_location.setdefault(
             lot.location_id,
@@ -177,21 +180,29 @@ def stock_overview(part: PartType) -> dict:
                 "lots": [],
             },
         )
-        reserved = active_reserved_for_lot(lot)
+        reserved = reserved_by_lot.get(lot.pk, Decimal("0"))
         row["physical"] += lot.quantity
         row["reserved"] += reserved
         row["available"] += lot.quantity - reserved
         row["lots"].append(lot)
     locations = sorted(by_location.values(), key=lambda row: row["location"].code)
-    unit_items = PartItem.objects.filter(
-        part_type=part, status=PartItem.Status.AVAILABLE
-    ).count()
+    unit_item_ids = list(
+        PartItem.objects.filter(part_type=part, status=PartItem.Status.AVAILABLE)
+        .values_list("pk", flat=True)
+    )
+    reserved_item_ids = active_reserved_item_ids(unit_item_ids)
+    unit_items = len(unit_item_ids)
+    unit_available = unit_items - len(reserved_item_ids)
     return {
         "part": candidate.part,
         "lookup": candidate,
         "locations": locations,
+        # This is the same availability rule used by sale/repair completion:
+        # available state minus active reservations. Quarantine is deliberately
+        # excluded from an operator's sell/repair availability.
         "total_available": sum((row["available"] for row in locations), Decimal("0")),
         "unit_items": unit_items,
+        "unit_available": unit_available,
     }
 
 

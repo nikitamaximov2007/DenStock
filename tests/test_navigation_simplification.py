@@ -81,7 +81,6 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Быстрые действия",
             "История",
         ],
-        "sales": ["Клиенты", "Продажи", "Резервы", "Возвраты покупателей"],
         "repairs": ["Ремонты", "Возвраты из ремонта"],
         "reports": [
             "Сводка",
@@ -93,8 +92,8 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
         ],
         "settings": ["Импорт каталога", "Цены", "Пользователи", "Бэкапы"],
     }
-    assert html.count('data-nav-group-toggle') == 5
-    assert html.count('aria-expanded="true"') >= 5
+    assert html.count('data-nav-group-toggle') == 4
+    assert html.count('aria-expanded="true"') >= 4
 
 
 @pytest.mark.parametrize(
@@ -112,7 +111,6 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Быстрые действия",
                     "История",
                 ],
-                "sales": ["Клиенты", "Возвраты покупателей"],
                 "repairs": ["Ремонты", "Возвраты из ремонта"],
                 "reports": [
                     "Сводка",
@@ -132,7 +130,6 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                 # добраться до него мышью было нельзя. В разделе «Склад» роль видит
                 # только эту вкладку, остальные ограничены своими возможностями.
                 "warehouse": ["Быстрые действия"],
-                "sales": ["Клиенты", "Продажи", "Резервы"],
                 "repairs": ["Ремонты"],
                 "reports": ["Складские действия / Таможня"],
             },
@@ -388,7 +385,6 @@ def test_navigation_context_has_constant_role_query_count(
     assert len(context["nav_items"]) == 3
     assert [group["key"] for group in context["nav_groups"]] == [
         "warehouse",
-        "sales",
         "repairs",
         "reports",
         "settings",

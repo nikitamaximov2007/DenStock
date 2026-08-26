@@ -226,6 +226,17 @@ def test_cost_visible_for_manager(make_user, client, data):
     assert "120" in html
 
 
+def test_search_actions_open_canonical_quick_routes(make_user, client, data):
+    make_user("boss-actions", role=roles.MANAGER)
+    client.login(username="boss-actions", password=PASSWORD)
+    html = client.get(reverse("part_search"), {"q": "Насос-Поиск"}).content.decode()
+    assert f"{reverse('actions_scan')}?kind=sale" in html
+    assert f"{reverse('actions_scan')}?kind=repair" in html
+    assert f"{reverse('write_off_quick')}?q=" in html
+    assert reverse("sale_create") not in html
+    assert reverse("repair_order_create") not in html
+
+
 def test_empty_query_message(make_user, client, data):
     make_user("u")
     client.login(username="u", password=PASSWORD)

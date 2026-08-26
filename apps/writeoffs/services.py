@@ -14,13 +14,18 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import write_off_part_item, write_off_stock_lot_quantity
 from apps.procurement.models import money
-from apps.sales.services import active_reserved_for_lot, is_part_item_reserved
+from apps.sales.services import (
+    active_reserved_for_lot,
+    active_reserved_for_lots,
+    active_reserved_item_ids,
+    is_part_item_reserved,
+)
 
 from .models import WriteOffDocument, WriteOffLine
 
@@ -57,6 +62,78 @@ def create_write_off(*, reason, comment="", by=None) -> WriteOffDocument:
         reason=reason, comment=(comment or "").strip(),
         created_by=by, status=WriteOffDocument.Status.DRAFT,
     )
+
+
+def available_quantity(part) -> Decimal:
+    """Canonical operator availability: available stock less active reserves.
+
+    It intentionally excludes quarantine. The regular technical document still
+    supports quarantine write-off for exceptional controlled workflows.
+    """
+    lots = list(
+        StockLot.objects.filter(part_type=part, status=StockLot.Status.AVAILABLE)
+        .only("pk", "quantity")
+    )
+    reserved = active_reserved_for_lots(lots)
+    bulk = sum((lot.quantity - reserved[lot.pk] for lot in lots), Decimal("0"))
+    items = list(
+        PartItem.objects.filter(part_type=part, status=PartItem.Status.AVAILABLE).only("pk")
+    )
+    reserved_item_ids = active_reserved_item_ids(items)
+    serial = Decimal(len(items) - len(reserved_item_ids))
+    return bulk + serial
+
+
+@transaction.atomic
+def quick_write_off(*, part, scanned_code, reason, business_author, by=None) -> WriteOffDocument:
+    """Write off exactly one scanned unit without exposing lot internals.
+
+    Allocation is FIFO across canonical available lots.  The final write goes
+    through ``complete_write_off`` so StockMovement, cost snapshots and locks
+    retain exactly the normal document semantics.
+    """
+    reason = (reason or "").strip()
+    business_author = (business_author or "").strip()
+    if not reason:
+        raise WriteOffError("Укажите причину списания.")
+    if not business_author:
+        raise WriteOffError("Укажите автора списания.")
+    code = (scanned_code or "").strip()
+    item = (
+        PartItem.objects.select_for_update()
+        .filter(part_type=part)
+        .filter(
+            Q(internal_number__iexact=code)
+            | Q(internal_barcode__iexact=code)
+            | Q(serial_number__iexact=code)
+        )
+        .first()
+    )
+    doc = WriteOffDocument.objects.create(
+        reason=WriteOffDocument.Reason.OTHER,
+        comment=reason,
+        business_author=business_author,
+        created_by=by,
+        status=WriteOffDocument.Status.DRAFT,
+    )
+    if part.tracking_mode == part.TrackingMode.SERIAL:
+        if item is None:
+            raise WriteOffError("Отсканируйте серийный номер экземпляра.")
+        add_part_item_to_write_off(doc, item, by=by)
+    else:
+        lots = list(
+            StockLot.objects.select_for_update()
+            .filter(part_type=part, status=StockLot.Status.AVAILABLE, quantity__gt=0)
+            .order_by("created_at", "pk")
+        )
+        for lot in lots:
+            available = lot.quantity - active_reserved_for_lot(lot)
+            if available > 0:
+                add_stock_lot_to_write_off(doc, lot, min(available, Decimal("1")), by=by)
+                break
+        else:
+            raise WriteOffError(f"Доступно только {available_quantity(part)} шт.")
+    return complete_write_off(doc, by=by)
 
 
 def _ensure_draft(doc: WriteOffDocument) -> None:

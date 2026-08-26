@@ -618,13 +618,6 @@ def _sidebar_groups(request, section, user):
             else None
         ),
         _group(
-            "sales",
-            "Продажи",
-            "cart",
-            _sales_tabs(user, path, source),
-            active=section == "sales",
-        ),
-        _group(
             "repairs",
             "Ремонты",
             "wrench",

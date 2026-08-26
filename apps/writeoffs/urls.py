@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path("", views.write_off_list, name="write_off_list"),
     path("new/", views.write_off_create, name="write_off_create"),
+    path("quick/", views.write_off_quick, name="write_off_quick"),
     path("<int:pk>/", views.write_off_detail, name="write_off_detail"),
     path("<int:pk>/add-item/", views.write_off_add_item, name="write_off_add_item"),
     path("<int:pk>/add-lot/", views.write_off_add_lot, name="write_off_add_lot"),

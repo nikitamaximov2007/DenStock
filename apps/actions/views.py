@@ -176,7 +176,7 @@ def actions_cart_scan(request):
     if permission is None or not getattr(request.user, permission, False):
         raise PermissionDenied
     kind = kind_value
-    back = reverse("actions_scan") + (f"?{urlencode({'kind': kind})}")
+    back = reverse("actions_scan") + f"?{urlencode({'kind': kind, 'q': q})}"
     if not q:
         messages.error(request, "Отсканируйте номер детали.")
         return redirect(back)
