@@ -33,6 +33,26 @@
           Если оставить пустым, в экспорт пойдёт автоперевод: «{{ auto_name }}».
           Это таможенное название, не техническое: его можно упростить.
         </p>
+        <p>
+          <label for="customs-name-en">Таможенное название (EN)</label>
+          <br>
+          <input id="customs-name-en" name="customs_name_en" type="text" maxlength="255"
+                 value="{{ customs.customs_name_en }}" style="min-width: 320px">
+        </p>
+        <div class="form-grid form-grid--2">
+          <p>
+            <label for="customs-manufacturer">Производитель</label>
+            <br>
+            <input id="customs-manufacturer" name="manufacturer" type="text" maxlength="80"
+                   value="{{ customs.manufacturer }}">
+          </p>
+          <p>
+            <label for="customs-country">Страна производства</label>
+            <br>
+            <input id="customs-country" name="country_of_origin" type="text" maxlength="80"
+                   value="{{ customs.country_of_origin }}">
+          </p>
+        </div>
         <div class="form-grid form-grid--2">
           <p>
             <label for="gross-weight">Вес брутто, кг/шт</label>
@@ -53,6 +73,12 @@
                    value="{{ customs.net_weight_kg|default_if_none:''|unlocalize }}">
           </p>
         </div>
+        <p>
+          <label for="customs-unit-price">Таможенная цена за единицу, USD</label>
+          <br>
+          <input id="customs-unit-price" name="customs_unit_price_usd" type="text"
+                 inputmode="decimal" value="{{ customs.customs_unit_price_usd|default_if_none:''|unlocalize }}">
+        </p>
         <p class="muted">
           Источник веса: {{ weight_source_label }}. Значение запоминается на
           карточке детали и подставляется автоматически во всех следующих
@@ -76,6 +102,12 @@
                  maxlength="255"
                  value="{{ customs.weight_source_note }}"
                  style="min-width: 320px">
+        </p>
+        <p>
+          <label for="customs-source-reference">Источник / документ</label>
+          <br>
+          <input id="customs-source-reference" name="source_reference" type="text" maxlength="255"
+                 value="{{ customs.source_reference }}" style="min-width: 320px">
         </p>
         <p>
           <label>

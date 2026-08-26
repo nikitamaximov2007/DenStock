@@ -88,7 +88,10 @@ def env(db, admin):
     return {"sup": sup, "loc": loc, "admin": admin}
 
 
-def _brp(env, *, material, retail="10", wholesale="7", replacement="", desc="BELT DRIVE", qty=5):
+def _brp(
+    env, *, material, retail="10", wholesale="7", replacement="",
+    desc="BELT DRIVE", qty=5, customs=True,
+):
     brp = BrpCatalogPart.objects.create(
         material_no=material, part_desc=desc,
         retail_price_usd=Decimal(retail), replacement_no_1=replacement,
@@ -96,10 +99,15 @@ def _brp(env, *, material, retail="10", wholesale="7", replacement="", desc="BEL
     )
     part = promote_brp(brp, by=env["admin"])
     _stock(part, env["loc"], qty, env["sup"], env["admin"])
+    if customs:
+        _card(part)
     return part, brp
 
 
-def _polaris(env, *, number, wholesale="6", retail="20", superseded="", desc="SEAL", qty=5):
+def _polaris(
+    env, *, number, wholesale="6", retail="20", superseded="",
+    desc="SEAL", qty=5, customs=True,
+):
     pol = PolarisCatalogPart.objects.create(
         part_number=number, part_name=desc, superseded_number=superseded,
         wholesale_price_usd=Decimal(wholesale) if wholesale is not None else None,
@@ -107,6 +115,8 @@ def _polaris(env, *, number, wholesale="6", retail="20", superseded="", desc="SE
     )
     part = promote_polaris(pol, by=env["admin"])
     _stock(part, env["loc"], qty, env["sup"], env["admin"])
+    if customs:
+        _card(part)
     return part, pol
 
 
@@ -133,6 +143,43 @@ def _save(client, part, **fields):
 
 # --- 1-3. Сохранение и повторное открытие -----------------------------------------------
 
+
+def _customs(part, **overrides):
+    """Полностью заполненная таможенная карточка.
+
+    Таможенный экспорт берёт факты только из введённых пользователем данных,
+    поэтому неполная карточка Excel больше не даёт. Тесты, проверяющие саму
+    неполноту, создают PartCustomsInfo напрямую и этой обёрткой не пользуются.
+    """
+    values = {
+        "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_en": "BELT DRIVE",
+        "manufacturer": "BRP",
+        "country_of_origin": "CANADA",
+        "gross_weight_kg": Decimal("0.35"),
+        "net_weight_kg": Decimal("0.30"),
+        "customs_unit_price_usd": Decimal("7"),
+        "application_area": PartCustomsInfo.ApplicationArea.SNOWMOBILE,
+    }
+    values.update(overrides)
+    return PartCustomsInfo.objects.create(part_type=part, **values)
+
+
+def _card(part, **overrides):
+    """Заведённая таможенная карточка детали.
+
+    Область применения намеренно не задана: её подхватывает автоопределение по
+    совместимости, ровно как и до появления версий.
+    """
+    values = {
+        "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_en": "BELT DRIVE",
+        "manufacturer": "BRP",
+        "country_of_origin": "CANADA",
+        "customs_unit_price_usd": Decimal("7"),
+    }
+    values.update(overrides)
+    return PartCustomsInfo.objects.create(part_type=part, **values)
 
 def test_post_saves_gross_weight(client, make_user, env):
     part, _ = _brp(env, material="219800345")
@@ -181,8 +228,8 @@ def test_next_sale_of_same_part_uses_saved_weights(client, make_user, env):
 
 
 def test_export_uses_saved_gross(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(part_type=part, gross_weight_kg=Decimal("0.35"))
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, gross_weight_kg=Decimal("0.35"))
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
@@ -190,8 +237,8 @@ def test_export_uses_saved_gross(client, make_user, env):
 
 
 def test_export_uses_saved_net(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(part_type=part, net_weight_kg=Decimal("0.30"))
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, net_weight_kg=Decimal("0.30"))
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
@@ -202,7 +249,7 @@ def test_export_uses_saved_net(client, make_user, env):
 
 
 def test_gross_total_is_gross_times_quantity(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(part_type=part, gross_weight_kg=Decimal("0.35"))
     _sell(env, part, number="219800345", qty="2")
     row = part_export_data(part)
@@ -215,8 +262,8 @@ def test_gross_total_is_gross_times_quantity(client, make_user, env):
 
 
 def test_gross_total_recalculates_for_different_quantity(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(part_type=part, gross_weight_kg=Decimal("0.350"))
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, gross_weight_kg=Decimal("0.350"))
     _login(client, make_user)
 
     _sell(env, part, number="219800345", qty="2")
@@ -254,8 +301,8 @@ def test_decimal_used_without_float_errors(client, make_user, env):
 
 
 def test_tiny_weight_not_rounded_to_zero(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(part_type=part, gross_weight_kg=Decimal("0.001"))
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, gross_weight_kg=Decimal("0.001"))
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
@@ -273,7 +320,7 @@ def test_zero_weight_rejected():
 
 
 def test_gross_less_than_net_rejected(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     _login(client, make_user)
     resp = _save(client, part, gross_weight_kg="0.1", net_weight_kg="0.5")
     assert resp.status_code == 302
@@ -282,7 +329,7 @@ def test_gross_less_than_net_rejected(client, make_user, env):
 
 def test_gross_less_than_net_rejected_against_existing_value(client, make_user, env):
     """Кросс-проверка учитывает уже сохранённое значение другого поля."""
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(part_type=part, gross_weight_kg=Decimal("0.2"))
     _login(client, make_user)
     _save(client, part, net_weight_kg="0.5")  # 0.2 (старый gross) < 0.5 (новый net)
@@ -302,7 +349,7 @@ def test_empty_weight_stays_none_not_zero(client, make_user, env):
 
 
 def test_only_gross_filled_is_not_ready(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, application_area=ApplicationArea.SNOWMOBILE,
         gross_weight_kg=Decimal("0.5"),
@@ -313,7 +360,7 @@ def test_only_gross_filled_is_not_ready(client, make_user, env):
 
 
 def test_only_net_filled_is_not_ready(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, application_area=ApplicationArea.SNOWMOBILE,
         net_weight_kg=Decimal("0.4"),
@@ -324,7 +371,7 @@ def test_only_net_filled_is_not_ready(client, make_user, env):
 
 
 def test_both_weights_and_application_area_is_ready(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, application_area=ApplicationArea.SNOWMOBILE,
         gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
@@ -338,7 +385,7 @@ def test_both_weights_and_application_area_is_ready(client, make_user, env):
 
 
 def test_changing_application_area_does_not_erase_weights(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
     )
@@ -351,7 +398,7 @@ def test_changing_application_area_does_not_erase_weights(client, make_user, env
 
 
 def test_changing_weights_does_not_erase_application_area(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(part_type=part, application_area=ApplicationArea.ATV)
     _login(client, make_user)
     _save(client, part, gross_weight_kg="0.5", net_weight_kg="0.4")  # без ключа области
@@ -365,7 +412,7 @@ def test_changing_weights_does_not_erase_application_area(client, make_user, env
 
 
 def test_report_get_does_not_create_customs_row_for_weights(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     _sell(env, part, number="219800345")
     _login(client, make_user)
     client.get(reverse("actions_report"))
@@ -373,7 +420,7 @@ def test_report_get_does_not_create_customs_row_for_weights(client, make_user, e
 
 
 def test_export_get_does_not_create_customs_row_for_weights(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     _sell(env, part, number="219800345")
     _login(client, make_user)
     client.get(reverse("actions_export"))
@@ -384,7 +431,7 @@ def test_export_get_does_not_create_customs_row_for_weights(client, make_user, e
 
 
 def test_unauthenticated_cannot_save_weights(client, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     resp = _save(client, part, gross_weight_kg="0.5")
     assert resp.status_code == 302
     assert "login" in resp.url
@@ -392,7 +439,7 @@ def test_unauthenticated_cannot_save_weights(client, env):
 
 
 def test_viewer_role_cannot_save_weights(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     make_user("viewer", role=roles.VIEWER)
     client.login(username="viewer", password=PASSWORD)
     resp = _save(client, part, gross_weight_kg="0.5")
@@ -415,25 +462,26 @@ def test_brp_and_polaris_same_number_weights_not_mixed(client, make_user, env):
 
 def test_replacement_does_not_get_exact_part_weight(client, make_user, env):
     exact_part, _ = _brp(
-        env, material="250000059", retail="0", wholesale="0", replacement="250000418"
+        env, material="250000059", retail="0", wholesale="0", replacement="250000418",
+        customs=False,
     )
-    replacement_part, _ = _brp(env, material="250000418", retail="4.19", wholesale="3.29")
-    PartCustomsInfo.objects.create(
-        part_type=replacement_part, gross_weight_kg=Decimal("2"), net_weight_kg=Decimal("1.8"),
+    replacement_part, _ = _brp(
+        env, material="250000418", retail="4.19", wholesale="3.29", customs=False
+    )
+    _customs(replacement_part, gross_weight_kg=Decimal("2"), net_weight_kg=Decimal("1.8"),
     )
     row = part_export_data(exact_part)
-    assert row["usd_price"] == Decimal("3.29")  # цена - от замены (уже покрыто ранее)
     assert row["gross_weight_kg"] is None  # вес замены не унаследован
     assert row["net_weight_kg"] is None
+    assert row["usd_price"] is None  # и цена замены тоже: это чужие данные
 
 
 # --- 27-29. Excel: числовые ячейки, формула ------------------------------------------------
 
 
 def test_xlsx_with_weights_opens_via_openpyxl(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(
-        part_type=part, gross_weight_kg=Decimal("0.35"), net_weight_kg=Decimal("0.30"),
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, gross_weight_kg=Decimal("0.35"), net_weight_kg=Decimal("0.30"),
     )
     _sell(env, part, number="219800345")
     _login(client, make_user)
@@ -443,9 +491,8 @@ def test_xlsx_with_weights_opens_via_openpyxl(client, make_user, env):
 
 
 def test_gross_and_net_cells_are_numeric(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(
-        part_type=part, gross_weight_kg=Decimal("0.35"), net_weight_kg=Decimal("0.30"),
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, gross_weight_kg=Decimal("0.35"), net_weight_kg=Decimal("0.30"),
     )
     _sell(env, part, number="219800345")
     _login(client, make_user)
@@ -456,8 +503,8 @@ def test_gross_and_net_cells_are_numeric(client, make_user, env):
 
 
 def test_formula_references_correct_row_and_quantity_column(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
-    PartCustomsInfo.objects.create(part_type=part, gross_weight_kg=Decimal("0.35"))
+    part, _ = _brp(env, material="219800345", customs=False)
+    _customs(part, gross_weight_kg=Decimal("0.35"))
     _sell(env, part, number="219800345", qty="4")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
@@ -495,7 +542,7 @@ def test_quick_save_only_net_does_not_verify(client, make_user, env):
 
 
 def test_clearing_one_weight_resets_verified(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, application_area=ApplicationArea.SNOWMOBILE,
         gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
@@ -512,7 +559,7 @@ def test_clearing_one_weight_resets_verified(client, make_user, env):
 
 
 def test_changing_only_application_area_keeps_verified(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
         weight_verified=True,
@@ -527,7 +574,7 @@ def test_changing_only_application_area_keeps_verified(client, make_user, env):
 
 
 def test_invalid_weights_do_not_change_verified(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
         weight_verified=True,
@@ -544,14 +591,14 @@ def test_invalid_weights_do_not_change_verified(client, make_user, env):
 
 
 def test_invalid_weights_on_new_card_do_not_verify(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     _login(client, make_user)
     _save(client, part, gross_weight_kg="0.1", net_weight_kg="0.5")  # gross < net
     assert not PartCustomsInfo.objects.filter(part_type=part).exists()
 
 
 def test_get_does_not_change_verified(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
         weight_verified=False,
@@ -567,7 +614,7 @@ def test_get_does_not_change_verified(client, make_user, env):
 
 
 def test_unauthenticated_cannot_verify_weights(client, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
         weight_verified=False,
@@ -578,7 +625,7 @@ def test_unauthenticated_cannot_verify_weights(client, env):
 
 
 def test_viewer_cannot_verify_weights(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
         weight_verified=False,
@@ -606,7 +653,7 @@ def test_quick_save_writes_manual_note_without_url(client, make_user, env):
 
 
 def test_quick_save_preserves_real_source_note(client, make_user, env):
-    part, _ = _brp(env, material="219800345")
+    part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, weight_source_url="https://example.com/spec",
         weight_source_note="страница поставщика",

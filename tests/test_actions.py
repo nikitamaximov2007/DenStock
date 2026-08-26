@@ -131,6 +131,23 @@ def _login(client, make_user, *, role=None, superuser=False, name="u"):
 # --- Поиск по скану и обзор остатков --------------------------------------------------
 
 
+
+def _card(part, **overrides):
+    """Заведённая таможенная карточка детали.
+
+    Таможенный экспорт берёт факты только из введённых пользователем данных,
+    поэтому без заведённой карточки Excel не выдаётся вовсе.
+    """
+    values = {
+        "customs_name_ru": "РОЛИК ШКИВ",
+        "customs_name_en": "ROLLER PULLEY",
+        "manufacturer": "BRP",
+        "country_of_origin": "CANADA",
+        "customs_unit_price_usd": Decimal("20"),
+    }
+    values.update(overrides)
+    return PartCustomsInfo.objects.create(part_type=part, **values)
+
 def test_resolve_part_by_number_and_barcode(data):
     assert resolve_part("417127016") == data["roller"]
     assert resolve_part("417 127 016") == data["roller"]  # нормализация
@@ -424,7 +441,7 @@ def test_auto_customs_name_ru():
     assert auto_customs_name_ru("UNKNOWNWORD 42") == "UNKNOWNWORD 42"  # не выдумываем
 
 
-def test_part_export_data_uses_effective_wholesale_price(data):
+def test_catalog_price_is_not_customs_value(data):
     # Точный номер без оптовой + замена с оптовой: цена от источника,
     # номер детали остаётся точным.
     zero = BrpCatalogPart.objects.create(
@@ -439,9 +456,9 @@ def test_part_export_data_uses_effective_wholesale_price(data):
     part = promote_to_warehouse(zero, by=data["admin"])
     row = part_export_data(part)
     assert row["number"] == "250000059"  # личность остаётся отсканированной
-    assert row["usd_price"] == Decimal("3.29")  # ОПТОВАЯ от эффективного источника
-    assert row["usd_price"] != Decimal("4.19")  # не розница
-    assert "нет оптовой цены в USD" not in row["warnings"]
+    # Цена замены - чужие данные каталога: в таможенную форму она не идёт.
+    assert row["usd_price"] is None
+    assert "нет таможенной цены в USD" in row["warnings"]
     assert "нет веса брутто" in row["warnings"]  # вес не выдуман
 
 
@@ -470,8 +487,13 @@ def test_customs_edit_saves_manual_data(client, make_user, data):
     # Ручное название уходит в экспорт в ВЕРХНЕМ регистре.
     row = part_export_data(data["roller"])
     assert row["name_ru"] == "РОЛИК ВАРИАТОРА"
-    # Применимость у карточки не заполнена — остаётся только это предупреждение.
-    assert row["warnings"] == ["не определена область применения"]
+    # Что не введено, то и перечислено: выдумывать эти значения неоткуда.
+    assert row["warnings"] == [
+        "не заполнено английское название",
+        "нет таможенной цены в USD",
+        "не заполнена страна производства",
+        "не определена область применения",
+    ]
 
 
 def test_export_rows_group_by_part(data):
@@ -488,6 +510,9 @@ def test_export_rows_group_by_part(data):
 def test_export_xlsx_structure(client, make_user, data):
     import openpyxl
 
+    _card(data["roller"])
+    _card(data["single"], customs_name_ru="ДЕТАЛЬ СКЛАДСКАЯ",
+          customs_name_en="WAREHOUSE PART", customs_unit_price_usd=None)
     perform_action(part=data["roller"], location=data["loc2"], action_type="sale",
                    quantity="2", customer_comment="Иванов", by=data["admin"])
     perform_action(part=data["single"], location=data["loc1"], action_type="repair",
@@ -514,10 +539,10 @@ def test_export_xlsx_structure(client, make_user, data):
     assert sheet["G10"].value is None and sheet["H10"].value is None  # весов нет: пусто
     assert sheet["I10"].value == "=J10*G10"
     assert Decimal(str(sheet["J10"].value)) == Decimal("2")
-    assert Decimal(str(sheet["K10"].value)) == Decimal("20")  # ОПТОВАЯ BRP в USD
+    assert Decimal(str(sheet["K10"].value)) == Decimal("20")  # введено пользователем
     assert sheet["L10"].value == "=K10*J10"
     assert sheet["M10"].value is None  # применимость не задана — не выдумываем
-    # Вторая строка: деталь без BRP-связи: номер со склада, цены USD нет.
+    # Вторая строка: цена не введена - ячейка пустая, а не выдуманный ноль.
     assert str(sheet["B11"].value) == "700100"
     assert sheet["K11"].value is None
 
@@ -526,6 +551,12 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
     perform_action(part=data["single"], location=data["loc1"], action_type="sale",
                    quantity="1", customer_comment="Иванов", by=data["admin"])
     _login(client, make_user, superuser=True, name="boss")
+    html = client.get(reverse("actions_report")).content.decode()
+    # Данных ещё не вводили: выгружать нечего, и кнопки нет.
+    assert "Экспорт в Excel для таможни" not in html
+    assert "Сначала заведите таможенные данные" in html
+
+    _card(data["single"], gross_weight_kg=None)
     html = client.get(reverse("actions_report")).content.decode()
     assert "Экспорт в Excel для таможни" in html
     assert "нет веса брутто" in html

@@ -167,20 +167,25 @@ class PartCustomsInfo(models.Model):
         on_delete=models.CASCADE, related_name="customs_info",
     )
     customs_name_ru = models.CharField("Таможенное название (RU)", max_length=255, blank=True)
+    customs_name_en = models.CharField("Таможенное название (EN)", max_length=255, blank=True)
     customs_name_source = models.CharField(
         "Источник названия", max_length=20,
         choices=NameSource.choices, default=NameSource.AUTO,
     )
     manufacturer = models.CharField("Производитель", max_length=80, default="BRP")
-    country_of_origin = models.CharField("Страна производства", max_length=80, default="КАНАДА")
+    country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)
     gross_weight_kg = models.DecimalField(
         "Вес брутто, кг/шт", max_digits=8, decimal_places=3, null=True, blank=True
     )
     net_weight_kg = models.DecimalField(
         "Вес нетто, кг/шт", max_digits=8, decimal_places=3, null=True, blank=True
     )
+    customs_unit_price_usd = models.DecimalField(
+        "Таможенная цена за единицу, USD", max_digits=12, decimal_places=2, null=True, blank=True
+    )
     weight_source_url = models.URLField("Источник веса (URL)", blank=True)
     weight_source_note = models.CharField("Источник веса (примечание)", max_length=255, blank=True)
+    source_reference = models.CharField("Источник / документ", max_length=255, blank=True)
     weight_verified = models.BooleanField("Вес проверен", default=False)
     # Раньше default был легаси-хардкодом «МОТО ЗАПЧАСТИ» (компания мотоциклы
     # не обслуживает). Пустая строка = «не заполнено»: экспорт тогда пробует
@@ -204,3 +209,48 @@ class PartCustomsInfo(models.Model):
 
     def __str__(self) -> str:
         return f"Таможенные данные: {self.part_type}"
+
+
+class PartCustomsDataVersion(models.Model):
+    """Неизменяемая версия введённых оператором таможенных данных детали.
+
+    Первая версия применяется к более ранним движениям этой детали, поскольку
+    пользователь заполняет историю после её появления. Каждая следующая
+    версия применяется только к движениям с момента её сохранения.
+    """
+
+    part_type = models.ForeignKey(
+        "catalog.PartType", verbose_name="Деталь", on_delete=models.PROTECT,
+        related_name="customs_data_versions",
+    )
+    version = models.PositiveIntegerField("Версия")
+    effective_from = models.DateTimeField("Действует с", db_index=True)
+    customs_name_ru = models.CharField("Таможенное название (RU)", max_length=255, blank=True)
+    customs_name_en = models.CharField("Таможенное название (EN)", max_length=255, blank=True)
+    manufacturer = models.CharField("Производитель", max_length=80, blank=True)
+    country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)
+    gross_weight_kg = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
+    net_weight_kg = models.DecimalField(max_digits=8, decimal_places=3, null=True, blank=True)
+    customs_unit_price_usd = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    application_area = models.CharField(max_length=120, blank=True)
+    source_reference = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто сохранил", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Версия таможенных данных"
+        verbose_name_plural = "Версии таможенных данных"
+        ordering = ["part_type_id", "version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["part_type", "version"], name="customs_version_per_part"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.part_type}: версия {self.version}"

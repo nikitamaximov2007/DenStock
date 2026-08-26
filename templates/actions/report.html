@@ -6,10 +6,12 @@
     <h1 class="page-title">Отчёт действий со склада</h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
-      {% if actions %}
+      {% if export_rows and not customs_absent_count %}
         <a class="btn btn--small btn--primary"
            data-full-navigation
            href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
+      {% elif export_rows %}
+        <span class="muted">Сначала заведите таможенные данные для всех позиций.</span>
       {% endif %}
     </div>
   </div>
@@ -228,8 +230,10 @@
               <th>Название</th>
               <th class="num--qty">Кол-во</th>
               <th>Область применения</th>
+              <th>Страна</th>
               <th class="num--qty">Брутто/шт, кг</th>
               <th class="num--qty">Нетто/шт, кг</th>
+              <th class="num--qty">Таможенная цена, USD</th>
               <th class="num--qty">Брутто всего, кг</th>
               <th>Статус</th>
               <th></th>
@@ -243,8 +247,10 @@
                 <td>{{ row.name_ru }}</td>
                 <td class="num--qty">{{ row.quantity|quantity_int }}</td>
                 <td>{{ row.application_area|default:"не заполнено" }}</td>
+                <td>{{ row.country|default:"не заполнено" }}</td>
                 <td class="num--qty">{{ row.gross_weight_kg|floatformat:3|default:"не заполнено" }}</td>
                 <td class="num--qty">{{ row.net_weight_kg|floatformat:3|default:"не заполнено" }}</td>
+                <td class="num--qty">{{ row.usd_price|floatformat:2|default:"не заполнено" }}</td>
                 <td class="num--qty">{{ row.gross_weight_total_kg|floatformat:3|default:"·" }}</td>
                 <td>
                   {% if row.customs_ready %}
