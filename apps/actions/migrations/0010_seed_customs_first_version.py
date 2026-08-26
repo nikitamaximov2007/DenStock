@@ -11,6 +11,8 @@
 """
 from django.db import migrations
 
+LEGACY_APPLICATION = "МОТО ЗАПЧАСТИ"  # старый хардкод модели, не выбор человека
+
 
 def seed_first_version(apps, schema_editor):
     PartCustomsInfo = apps.get_model("actions", "PartCustomsInfo")
@@ -23,6 +25,26 @@ def seed_first_version(apps, schema_editor):
     existing = set(
         PartCustomsDataVersion.objects.values_list("part_type_id", flat=True)
     )
+
+    def carries_a_fact(card):
+        """Есть ли в карточке хоть один заявляемый факт.
+
+        Открытие формы правки заводит карточку до того, как пользователь
+        что-либо ввёл, и у такой карточки заполнен только производитель -
+        значением по умолчанию. Перенести её версией нельзя: версия станет
+        самой ранней и перехватит всю историю списаний, оставив декларацию
+        пустой. Легаси-значение области применения фактом тоже не считается.
+        """
+        for field in fields:
+            if field == "manufacturer":
+                continue  # только умолчание модели, само по себе ни о чём
+            value = getattr(card, field)
+            if field == "application_area" and value == LEGACY_APPLICATION:
+                continue
+            if value:
+                return True
+        return False
+
     versions = [
         PartCustomsDataVersion(
             part_type_id=card.part_type_id,
@@ -32,7 +54,7 @@ def seed_first_version(apps, schema_editor):
             **{field: getattr(card, field) for field in fields},
         )
         for card in PartCustomsInfo.objects.all()
-        if card.part_type_id not in existing
+        if card.part_type_id not in existing and carries_a_fact(card)
     ]
     PartCustomsDataVersion.objects.bulk_create(versions, batch_size=500)
 
