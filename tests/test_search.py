@@ -242,7 +242,7 @@ def test_empty_query_message(make_user, client, data):
         ("123456789", "Деталь 123456789 не найдена."),
     ],
 )
-def test_not_found_lookup_keeps_trimmed_operator_identifier(raw, expected):
+def test_not_found_lookup_keeps_trimmed_operator_identifier(db, raw, expected):
     result = resolve_part_lookup(raw)
 
     assert result.status == "not_found"
@@ -250,6 +250,7 @@ def test_not_found_lookup_keeps_trimmed_operator_identifier(raw, expected):
 
 
 def test_empty_lookup_keeps_existing_empty_validation():
+    # Пустой запрос отсекается ДО обращения к каталогу, поэтому базы здесь нет.
     assert resolve_part_lookup("   ").message == "Пустой запрос."
 
 
