@@ -3,11 +3,15 @@
 Доступ повторяет существующую модель прав: карточка клиента нужна тем, кто
 оформляет продажи, резервы или ремонты. Отдельного ACL не заводим.
 """
+
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.repairs.models import RepairOrder
 from apps.sales.models import Reservation, Sale
@@ -17,6 +21,27 @@ from .models import Customer
 from .services import search_customers
 
 PAGE_SIZE = 50
+
+
+def _return_to_new_customer_flow(request, customer):
+    """Return safely to a local operator flow and keep the newly made card selected."""
+    target = request.POST.get("next") or request.GET.get("next") or ""
+    if not target or not url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return None
+    parsed = urlsplit(target)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["customer_id"] = str(customer.pk)
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query),
+            parsed.fragment,
+        )
+    )
 
 
 def _require_access(request) -> None:
@@ -66,13 +91,21 @@ def customer_create(request):
         if form.is_valid():
             customer = form.save()
             messages.success(request, f"Клиент {customer.name} создан.")
+            target = _return_to_new_customer_flow(request, customer)
+            if target:
+                return redirect(target)
             return redirect("customer_detail", pk=customer.pk)
     else:
         form = CustomerForm(initial={"name": (request.GET.get("name") or "").strip()})
     return render(
         request,
         "customers/customer_form.html",
-        {"form": form, "title": "Новый клиент", "customer": None},
+        {
+            "form": form,
+            "title": "Новый клиент",
+            "customer": None,
+            "next": request.POST.get("next") or request.GET.get("next") or "",
+        },
     )
 
 
@@ -100,16 +133,16 @@ def customer_detail(request, pk):
     _require_access(request)
     customer = get_object_or_404(Customer, pk=pk)
     sales = list(
-        Sale.objects.filter(customer=customer).select_related("sold_by").order_by("-created_at")[:20]
+        Sale.objects.filter(customer=customer)
+        .select_related("sold_by")
+        .order_by("-created_at")[:20]
     )
     repairs = list(
         RepairOrder.objects.filter(customer=customer)
         .select_related("created_by")
         .order_by("-created_at")[:20]
     )
-    reservations = list(
-        Reservation.objects.filter(customer=customer).order_by("-created_at")[:20]
-    )
+    reservations = list(Reservation.objects.filter(customer=customer).order_by("-created_at")[:20])
     return render(
         request,
         "customers/customer_detail.html",
