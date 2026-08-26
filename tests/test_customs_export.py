@@ -17,6 +17,7 @@ import pytest
 from django.contrib.auth.models import Group
 from django.urls import reverse
 
+from apps.accounts import roles
 from apps.actions.models import PartCustomsInfo, WarehouseAction
 from apps.actions.services import (
     TEMPLATE_PATH,
@@ -193,6 +194,16 @@ def test_export_returns_valid_xlsx(client, make_user, env):
     assert resp["Content-Disposition"].isascii()  # безопасное имя файла
     workbook = openpyxl.load_workbook(BytesIO(resp.content))
     assert SHEET in workbook.sheetnames
+
+
+def test_export_requires_purchase_cost_permission(client, make_user, env):
+    """Оптовая USD-цена в колонке K не доступна обычному продавцу."""
+    part, _ = _brp(env, material="219800345")
+    _sell(env, part, number="219800345")
+    user = make_user("seller", role=roles.SELLER)
+    client.force_login(user)
+    response = client.get(reverse("actions_export"))
+    assert response.status_code == 403
 
 
 def test_headers_preserved_in_order(client, make_user, env):

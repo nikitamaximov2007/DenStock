@@ -638,8 +638,13 @@ def actions_export(request):
 
     Read-only: тот же набор действий, что показывает отчёт, и только активные
     (отменённые в таможенный экспорт не попадают, как и в блоке готовности).
+    Файл содержит оптовую цену в USD, поэтому одного права на проведение
+    складских действий недостаточно: нужно также право просмотра закупочной
+    стоимости.
     """
     _require_access(request)
+    if not request.user.can_view_purchase_cost:
+        raise PermissionDenied
     from .services import export_customs_xlsx
 
     filters = _report_filters(request)
