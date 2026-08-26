@@ -322,11 +322,51 @@ SALE_CUSTOMER_AGGREGATES = {
 
 def get_sales_by_customer(period: Period) -> list[dict]:
     """Продажи по клиентам: карточки отдельно, документы без карточки отдельно."""
-    return _customer_rows(
+    rows = _customer_rows(
         _completed_sale_lines(period),
         prefix="sale",
         aggregates=SALE_CUSTOMER_AGGREGATES,
         order_key=lambda row: (-(row["revenue"] or DEC0), row["display_name"]),
+    )
+    sale_lines = list(
+        _completed_sale_lines(period).select_related("sale").only(
+            "id", "sale_id", "quantity", "unit_price", "sale__customer_id", "sale__customer_name"
+        )
+    )
+    returned = _sale_returned_quantities(sale_lines)
+    totals: dict[tuple, Decimal] = {}
+    quantities: dict[tuple, Decimal] = {}
+    for line in sale_lines:
+        key = (
+            ("card", line.sale.customer_id)
+            if line.sale.customer_id
+            else ("legacy", line.sale.customer_name.strip())
+        )
+        remaining = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
+        quantities[key] = quantities.get(key, DEC0) + remaining
+        totals[key] = totals.get(key, DEC0) + money(line.unit_price * remaining)
+    for row in rows:
+        key = ("card", row["customer_id"]) if row["linked"] else ("legacy", row["report_customer"])
+        row["quantity"] = quantities.get(key, DEC0)
+        row["revenue"] = money(totals.get(key, DEC0))
+    return rows
+
+
+def _sale_returned_quantities(lines):
+    """Completed return quantities keyed by completed sale line."""
+    from apps.returns.models import StockReturnLine
+
+    lines = list(lines)
+    line_ids = [line.pk for line in lines]
+    if not line_ids:
+        return {}
+    return dict(
+        StockReturnLine.objects.filter(
+            stock_return__status="completed", source_sale_line_id__in=line_ids
+        )
+        .values("source_sale_line_id")
+        .annotate(quantity=Sum("quantity"))
+        .values_list("source_sale_line_id", "quantity")
     )
 
 
