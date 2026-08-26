@@ -368,6 +368,11 @@ th.num, td.num, .table th.num, .table td.num,
 /* --- Таблицы: вспомогательные модификаторы (базовый .table без изменений) --- */
 .table tbody tr:hover { background: var(--bg); }
 .table--compact th, .table--compact td { padding: 6px 10px; font-size: 14px; }
+/* Таможенная готовность несёт больше колонок, чем обычная таблица: артикул,
+   название, количество, применимость, страна, оба веса штуки, общий вес и
+   таможенная цена. На узком экране такая таблица уводила вбок всю страницу,
+   поэтому она прокручивается по горизонтали внутри своих границ. */
+.customs-readiness { display: block; overflow-x: auto; }
 .table__actions { white-space: nowrap; text-align: right; }
 
 /* --- Поиск / сканер: классы уже используются в шаблонах, но не имели CSS --- */
