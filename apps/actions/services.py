@@ -641,7 +641,9 @@ def read_customs(part: PartType) -> PartCustomsInfo:
     return PartCustomsInfo(part_type=part, **_customs_defaults(part))  # не сохраняем
 
 
-def record_customs_data_version(customs: PartCustomsInfo, *, by=None) -> PartCustomsDataVersion:
+def record_customs_data_version(
+    customs: PartCustomsInfo, *, by=None
+) -> PartCustomsDataVersion | None:
     """Дописать неизменяемую версию таможенных данных, введённых оператором.
 
     Значений каталога здесь нет намеренно. Сохранение без изменений
@@ -653,6 +655,15 @@ def record_customs_data_version(customs: PartCustomsInfo, *, by=None) -> PartCus
         "application_area", "source_reference",
     )
     values = {field: getattr(customs, field) for field in fields}
+    # Открытие формы правки заводит карточку со значениями по умолчанию - это
+    # ещё не заявление пользователя. Записать её версией нельзя: она станет
+    # самой ранней и перехватит всю историю списаний, оставив декларацию
+    # пустой. Значением по умолчанию считается и «BRP» у производителя.
+    untouched = PartCustomsInfo(
+        part_type=customs.part_type, **_customs_defaults(customs.part_type)
+    )
+    if all(getattr(untouched, field) == value for field, value in values.items()):
+        return None
     previous = customs.part_type.customs_data_versions.order_by("-version").first()
     unchanged = previous is not None and all(
         getattr(previous, field) == value for field, value in values.items()
