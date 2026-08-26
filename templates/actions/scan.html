@@ -183,7 +183,7 @@
             {% else %}
               не указана
             {% endif %}
-            · Доступно всего: {{ overview.total_available|quantity_int }}
+            · <strong>Доступно: {{ overview.total_available|quantity_int }}</strong>
           </p>
           {% if overview.lookup.alias_message %}
             <p class="muted">{{ overview.lookup.alias_message }}</p>

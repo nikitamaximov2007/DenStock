@@ -20,6 +20,10 @@
         <td>{{ doc.comment|default:"·" }}</td>
       </tr>
       <tr>
+        <th>Автор списания</th>
+        <td>{{ doc.business_author|default:"·" }}</td>
+      </tr>
+      <tr>
         <th>Проведён</th>
         <td>
           {% if doc.completed_at %}

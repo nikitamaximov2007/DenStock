@@ -200,11 +200,11 @@
       {% endif %}
       {% if can_sell or can_repair or can_write_off %}
         <p>
-          {% if can_sell %}<a href="{% url 'sale_create' %}">Продать</a>{% endif %}
+          {% if can_sell %}<a href="{% url 'actions_scan' %}?kind=sale&amp;q={{ row.exact_number|default:q|urlencode }}">Продать</a>{% endif %}
           {% if can_sell and can_repair %}·{% endif %}
-          {% if can_repair %}<a href="{% url 'repair_order_create' %}">Выдать в ремонт</a>{% endif %}
+          {% if can_repair %}<a href="{% url 'actions_scan' %}?kind=repair&amp;q={{ row.exact_number|default:q|urlencode }}">Выдать в ремонт</a>{% endif %}
           {% if can_write_off and can_sell or can_write_off and can_repair %}·{% endif %}
-          {% if can_write_off %}<a href="{% url 'write_off_create' %}">Списать</a>{% endif %}
+          {% if can_write_off %}<a href="{% url 'write_off_quick' %}?q={{ row.exact_number|default:q|urlencode }}">Списать</a>{% endif %}
         </p>
       {% endif %}
       {% if can_view_inventory %}
