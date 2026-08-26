@@ -178,12 +178,17 @@ def test_cost_hidden_from_storekeeper(make_user, client, refs, admin):
     make_user("sklad", role=roles.STOREKEEPER)
     client.login(username="sklad", password=PASSWORD)
     html = client.get(reverse("item_detail", args=[item.pk])).content.decode()
-    assert "120" not in html
+    # Ищем именно блок себестоимости, а не голое число: «120» находилось
+    # внутри value="1201" очередной ячейки хранения, и проверка падала от
+    # того, каким по счёту оказался идентификатор.
+    assert "Себестоимость" not in html
+    assert "120 ₽" not in html
 
     client.logout()
     client.login(username="admin", password=PASSWORD)
     admin_html = client.get(reverse("item_detail", args=[item.pk])).content.decode()
-    assert "120" in admin_html
+    assert "Себестоимость" in admin_html
+    assert "120 ₽" in admin_html
 
 
 def test_seller_cannot_view_inventory(make_user, client):
