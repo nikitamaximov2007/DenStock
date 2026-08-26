@@ -12,7 +12,6 @@ import urllib.parse
 import urllib.request
 from decimal import Decimal
 from http.cookiejar import CookieJar
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,7 +25,12 @@ from django.urls import reverse
 
 from apps.accounts import roles
 from apps.actions.models import WarehouseAction
-from apps.actions.services import actions_report, build_export_rows, perform_action
+from apps.actions.services import (
+    actions_report,
+    build_export_rows,
+    historical_customs_rows,
+    perform_action,
+)
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse as promote_brp_to_warehouse
 from apps.catalog.models import Category, PartNumber, PartType, Unit
@@ -931,11 +935,9 @@ def test_repair_return_is_visible_and_net_selector_ignores_return_only(data, cli
     assert ret.number in html
     assert data["order"].number in html
     assert "Возврат из ремонта" in html
-    with patch("apps.actions.services.export_customs_xlsx", return_value=BytesIO()) as export:
-        assert client.get(reverse("actions_export")).status_code == 200
-    exported_actions = export.call_args.args[0]
-    assert exported_actions.filter(pk=action.pk).exists()
-    assert build_export_rows(exported_actions) == []
+    # Возврат виден в журнале, но таможенного расхода за собой не тянет:
+    # товар вернулся на склад, декларировать нечего.
+    assert historical_customs_rows(action_type=WarehouseAction.Type.REPAIR_RETURN) == []
 
 
 def test_repair_return_draft_detail_shows_source_and_expected_cost(data, client):

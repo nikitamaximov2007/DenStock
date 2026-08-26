@@ -7,7 +7,11 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import roles
-from apps.actions.services import actions_report, export_customs_xlsx, perform_action
+from apps.actions.services import (
+    export_customs_xlsx,
+    historical_customs_rows,
+    perform_action,
+)
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartNumber
 from apps.counting.services import convert_to_receipt, record_scan, start_session
@@ -252,11 +256,22 @@ def test_actions_polaris_price_source_does_not_replace_identity(db, admin):
     assert action.price_source_number == "250000418"
 
 
-def test_customs_export_polaris_exact_number_country_and_application(db, admin):
+def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
+    """Каталог Polaris таможенную форму не заполняет.
+
+    Название, страна и стоимость - заявление декларанта. Раньше сюда
+    подставлялись имя из прайса и жёстко зашитая CANADA.
+    """
+    from apps.actions.models import PartCustomsInfo
+
     polaris = PolarisCatalogPart.objects.create(
         part_number="420931285", part_name="OIL SEAL", retail_price_usd=Decimal("24.49")
     )
     part = promote_to_warehouse(polaris, by=admin)
+    PartCustomsInfo.objects.create(
+        part_type=part, customs_name_ru="САЛЬНИК", customs_name_en="SEAL RING",
+        manufacturer="POLARIS", country_of_origin="AUSTRIA",
+    )
     location = StorageLocation.objects.create(
         name="Ячейка", code="S04-L03-D01-C04", storage_allowed=True, is_active=True
     )
@@ -270,12 +285,15 @@ def test_customs_export_polaris_exact_number_country_and_application(db, admin):
         scanned_number="420931285",
         by=admin,
     )
-    sheet = openpyxl.load_workbook(export_customs_xlsx(actions_report()[0]))["Лист1"]
-    assert str(sheet["B10"].value) == "420931285"
-    assert sheet["D10"].value == "OIL SEAL"
+    sheet = openpyxl.load_workbook(
+        export_customs_xlsx(rows=historical_customs_rows())
+    )["Лист1"]
+    assert str(sheet["B10"].value) == "420931285"  # личность детали не подменена
+    assert sheet["D10"].value == "SEAL RING"  # введено человеком
+    assert sheet["D10"].value != "OIL SEAL"  # имя из прайса в декларацию не идёт
     assert sheet["E10"].value == "POLARIS"
-    assert sheet["F10"].value == "CANADA"  # страна всегда латиницей
-    assert sheet["K10"].value is None  # оптовой цены в прайсе нет — розницу не подставляем
+    assert sheet["F10"].value == "AUSTRIA"  # прежнего хардкода CANADA больше нет
+    assert sheet["K10"].value is None  # цена не введена — розницу не подставляем
     assert sheet["M10"].value is None  # применимость не задана — категорию не выдумываем
 
 

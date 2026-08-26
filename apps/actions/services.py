@@ -1012,6 +1012,9 @@ _CUSTOMS_OUTBOUND_TYPES = (
 _CUSTOMS_RETURN_TYPES = (
     StockMovement.MovementType.RETURN_ITEM, StockMovement.MovementType.RETURN_LOT,
 )
+# Какое выбытие стоит за типом действия. Резерв и возврат из ремонта товар со
+# склада НЕ выводят, поэтому таможенного расхода за ними нет вовсе: пустой
+# кортеж означает «выбытия нет», а не «фильтр не применяется».
 _ACTION_TYPE_MOVEMENTS = {
     WarehouseAction.Type.SALE: (
         StockMovement.MovementType.SALE_ITEM, StockMovement.MovementType.SALE_LOT,
@@ -1019,6 +1022,8 @@ _ACTION_TYPE_MOVEMENTS = {
     WarehouseAction.Type.REPAIR: (
         StockMovement.MovementType.ISSUE_ITEM, StockMovement.MovementType.ISSUE_LOT,
     ),
+    WarehouseAction.Type.RESERVE: (),
+    WarehouseAction.Type.REPAIR_RETURN: (),
 }
 
 
@@ -1232,7 +1237,7 @@ def _customs_movements(*, date_from, date_to, action_type, q, part_number, locat
         movements = movements.filter(created_at__date__lte=date_to)
     if action_type:
         types = _ACTION_TYPE_MOVEMENTS.get(action_type)
-        if types:
+        if types is not None:
             movements = movements.filter(
                 movement_type__in=(*types, *_CUSTOMS_RETURN_TYPES)
             )
