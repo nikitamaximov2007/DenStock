@@ -127,8 +127,10 @@ def _card(part, **overrides):
         "application_area": ApplicationArea.SNOWMOBILE,
     }
     values.update(overrides)
-    card, _created = PartCustomsInfo.objects.get_or_create(part_type=part, defaults=values)
-    return card
+    card = PartCustomsInfo.objects.filter(part_type=part).first()
+    if card is None:
+        return PartCustomsInfo.objects.create(part_type=part, **values)
+    return _edit(card, **values)  # уже открытую карточку правим, как это делает форма
 
 
 def _edit(card, **changes):
@@ -189,6 +191,40 @@ def test_unchanged_save_does_not_create_a_version(env):
     card = _card(part)
     card.save()
     card.save()
+    assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 1
+
+
+def test_opening_the_form_does_not_record_a_version(client, env, make_user):
+    """Открытая, но не заполненная форма истории не создаёт.
+
+    Страница правки заводит карточку со значениями по умолчанию уже на GET.
+    Если считать её версией, она станет самой ранней и перехватит все прошлые
+    списания - декларация уйдёт пустой при заполненной карточке.
+    """
+    part = _part(env, number="219800345")
+    _receive(env, part, quantity="10")
+    _sell(env, part, quantity="2", number="219800345")
+    _login(client, make_user)
+    client.get(reverse("actions_customs_edit", args=[part.pk]))
+    assert PartCustomsInfo.objects.filter(part_type=part).exists()  # карточка есть
+    assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 0
+
+    _card(part, customs_unit_price_usd=Decimal("12.50"))
+    versions = PartCustomsDataVersion.objects.filter(part_type=part)
+    assert [v.version for v in versions] == [1]  # первая версия - настоящий ввод
+    row = _row_for(historical_customs_rows(), "219800345")
+    assert row["version_number"] == 1
+    assert row["usd_price"] == Decimal("12.50")  # история не перехвачена пустышкой
+
+
+def test_default_manufacturer_alone_is_not_an_entry(env):
+    """Одно лишь «BRP» из умолчания модели заявлением не считается."""
+    part = _part(env, number="219800345")
+    PartCustomsInfo.objects.create(part_type=part)  # ровно умолчания
+    assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 0
+    card = PartCustomsInfo.objects.get(part_type=part)
+    assert card.manufacturer == "BRP"  # умолчание на месте
+    _edit(card, country_of_origin="CANADA")  # первый настоящий факт
     assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 1
 
 
