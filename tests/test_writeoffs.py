@@ -41,9 +41,11 @@ from apps.writeoffs.services import (
     WriteOffError,
     add_part_item_to_write_off,
     add_stock_lot_to_write_off,
+    available_quantity,
     cancel_write_off,
     complete_write_off,
     create_write_off,
+    quick_write_off,
     remove_write_off_line,
 )
 
@@ -231,6 +233,57 @@ def test_write_off_stock_lot_quantity(data):
     line = doc.lines.get()
     assert line.unit_cost_rub == Decimal("104.00")
     assert line.total_cost_rub == Decimal("208.00")
+
+
+def test_quick_write_off_uses_available_fifo_cost_and_audit(data):
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, data["loc"], Decimal("3"))
+    receive_stock_lot(second, by=data["admin"])
+
+    doc = quick_write_off(
+        part=data["lot"].part_type,
+        scanned_code="BOLT-ARTICLE",
+        reason="Брак упаковки",
+        business_author="Иван",
+        by=data["admin"],
+    )
+
+    assert doc.status == WriteOffDocument.Status.COMPLETED
+    assert doc.comment == "Брак упаковки"
+    assert doc.business_author == "Иван"
+    assert doc.lines.count() == 1
+    assert doc.lines.get().stock_lot_id == data["lot"].pk
+    assert doc.lines.get().unit_cost_rub == Decimal("104.00")
+    assert StockMovement.objects.filter(document_id=doc.pk, document_type="write_off").exists()
+
+
+def test_quick_write_off_respects_reservation_and_requires_author(data):
+    reservation = create_reservation(customer_name="Бронь", by=data["admin"])
+    add_stock_lot_to_reservation(reservation, data["lot"], Decimal("5"), by=data["admin"])
+    activate_reservation(reservation, by=data["admin"])
+    assert available_quantity(data["lot"].part_type) == Decimal("0")
+    with pytest.raises(WriteOffError, match="Доступно только 0"):
+        quick_write_off(
+            part=data["lot"].part_type,
+            scanned_code="BOLT-ARTICLE",
+            reason="Брак",
+            business_author="Иван",
+            by=data["admin"],
+        )
+    with pytest.raises(WriteOffError, match="автора"):
+        quick_write_off(
+            part=data["lot"].part_type,
+            scanned_code="BOLT-ARTICLE",
+            reason="Брак",
+            business_author=" ",
+            by=data["admin"],
+        )
 
 
 def test_write_off_quarantine_stock_lot(data):
