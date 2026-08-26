@@ -22,6 +22,7 @@
           <th class="num--money">Детали в ремонтах (₽)</th>
           <th class="num--money">Итого с клиента (₽)</th>
           {% if show_costs %}<th class="num--money">Себестоимость ремонта (₽)</th>{% endif %}
+          <th>Оплатил</th>
           <th>Последний документ</th>
         </tr>
       </thead>
@@ -35,9 +36,54 @@
             <td class="num">{{ row.sale_count }}</td>
             <td class="num--money">{{ row.revenue|money_int }}</td>
             <td class="num">{{ row.repair_count }}</td>
-            <td class="num--money">{{ row.repair_customer_amount|money_int }}{% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}</td>
-            <td class="num--money">{{ row.client_total_known|money_int }}{% if row.client_total_unknown %}<span class="muted">*</span>{% endif %}</td>
+            <td class="num--money">
+              {{ row.repair_customer_amount|money_int }}
+              {% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}
+            </td>
+            <td class="num--money">
+              {{ row.client_total_known|money_int }}
+              {% if row.client_total_unknown %}<span class="muted">*</span>{% endif %}
+            </td>
             {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
+            <td>
+              {% if row.linked %}
+                {% if row.payment_status.acknowledgeable %}
+                  {% if can_manage_payment_acknowledgements %}
+                    <form method="post"
+                          action="{% url 'reports_client_period_payment_status' %}"
+                          class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="customer_id" value="{{ row.customer_id }}">
+                      <input type="hidden"
+                             name="date_from"
+                             value="{{ period.date_from|date:'Y-m-d' }}">
+                      <input type="hidden"
+                             name="date_to"
+                             value="{{ period.date_to|date:'Y-m-d' }}">
+                      <label>
+                        <input type="checkbox"
+                               name="paid"
+                               value="1"
+                               {% if row.payment_status.paid %}checked{% endif %}
+                               onchange="this.form.submit()">
+                        <span class="visually-hidden">Клиент оплатил за выбранный период</span>
+                      </label>
+                    </form>
+                  {% elif row.payment_status.paid %}
+                    <span>Да</span>
+                  {% else %}
+                    <span class="muted">Нет</span>
+                  {% endif %}
+                  {% if row.payment_status.acknowledgement and not row.payment_status.paid %}
+                    <span class="muted">состав изменён</span>
+                  {% endif %}
+                {% else %}
+                  <span class="muted">Сумма не определена</span>
+                {% endif %}
+              {% else %}
+                <span class="muted">Нужна карточка</span>
+              {% endif %}
+            </td>
             <td>{{ row.last_event|ru_dt }}</td>
           </tr>
         {% endfor %}
@@ -46,6 +92,8 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="chart" title="Документов за период нет" text="Измените период, чтобы увидеть проведённые продажи и ремонты по клиентам." compact=1 %}
   {% endif %}
-  {% if page_obj.object_list %}<p class="muted">* Итого известных сумм: у части старых ремонтов цена деталей не была зафиксирована.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <p class="muted">* Итого известных сумм: у части старых ремонтов цена деталей не была зафиксирована.</p>
+  {% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}
