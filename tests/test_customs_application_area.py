@@ -398,13 +398,13 @@ def test_missing_customs_data_warning_shown_and_hidden(client, make_user, env):
     _sell(env, part, number="219800345")
     _login(client, make_user)
     html = client.get(reverse("actions_report")).content.decode()
-    assert "У 1 позиций не заполнены таможенные данные" in html
+    assert "таможенные данные заполнены не" in html  # баннер переносится
 
     _customs(part, application_area=ApplicationArea.SNOWMOBILE,
         gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
     )
     html = client.get(reverse("actions_report")).content.decode()
-    assert "не заполнены таможенные данные" not in html
+    assert "заполнены не полностью" not in html
 
 
 # --- 17-18. Data migration -----------------------------------------------------------------

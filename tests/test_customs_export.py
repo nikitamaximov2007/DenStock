@@ -383,13 +383,25 @@ def test_date_filter_applied(client, make_user, env):
 
 
 def test_type_filter_applied(client, make_user, env):
+    """Резерв товар со склада не выводит, и декларировать в нём нечего.
+
+    Бронь держит остаток, но груз никуда не поехал. Раньше отчёт по резерву
+    выдавал таможенную строку, то есть предлагал задекларировать то, что всё
+    ещё лежит на полке.
+    """
     part, _ = _brp(env, material="219800345", qty=10)
-    _sell(env, part, number="219800345")
+    _sell(env, part, number="219800345", qty="2")
     perform_action(part=part, location=env["loc"], action_type="reserve", quantity="1",
                    customer_comment="Петров", scanned_number="219800345", by=env["admin"])
     _login(client, make_user)
+
     sheet = _sheet(client.get(reverse("actions_export") + "?action_type=reserve").content)
-    assert Decimal(str(sheet[f"J{DATA_ROW}"].value)) == Decimal("1")  # только резерв
+    assert sheet[f"B{DATA_ROW}"].value is None  # по резерву строк нет
+    assert sheet[f"J{DATA_ROW}"].value is None
+
+    sheet = _sheet(client.get(reverse("actions_export") + "?action_type=sale").content)
+    assert str(sheet[f"B{DATA_ROW}"].value) == "219800345"
+    assert Decimal(str(sheet[f"J{DATA_ROW}"].value)) == Decimal("2")  # только продажа
 
 
 def test_part_number_filter_applied(client, make_user, env):
