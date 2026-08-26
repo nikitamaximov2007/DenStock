@@ -60,7 +60,7 @@ from apps.warehouse.services import (
 )
 
 from .models import UnresolvedScan
-from .part_lookup import MatchSource, clean_lookup_value
+from .part_lookup import MatchSource, clean_lookup_value, part_not_found_message
 from .receiving_queue import (
     ReceivingQueueError,
     _location_guidance,
@@ -361,6 +361,7 @@ def search_page(request: HttpRequest) -> HttpResponse:
         "can_repair": request.user.can_manage_repairs,
         "can_write_off": request.user.can_manage_write_offs,
         "too_short": 0 < len(q) < 2,
+        "not_found_message": part_not_found_message(q),
     }
     return render(request, "core/search.html", ctx)
 

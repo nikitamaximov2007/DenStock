@@ -22,6 +22,7 @@ from apps.catalog.models import (
     VehicleModel,
     VehicleType,
 )
+from apps.core.part_lookup import resolve_part_lookup
 from apps.core.search import search_parts
 from apps.inventory.models import StockBalance, StockMovement
 from apps.inventory.services import (
@@ -241,7 +242,36 @@ def test_empty_query_message(make_user, client, data):
     make_user("u")
     client.login(username="u", password=PASSWORD)
     html = client.get(reverse("part_search"), {"q": "zzz-нет-такого"}).content.decode()
-    assert "Ничего не найдено" in html
+    assert "Деталь zzz-нет-такого не найдена." in html
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("ZZ-DOES-NOT-EXIST-123", "Деталь ZZ-DOES-NOT-EXIST-123 не найдена."),
+        ("  2504000749  ", "Деталь 2504000749 не найдена."),
+        ("123456789", "Деталь 123456789 не найдена."),
+    ],
+)
+def test_not_found_lookup_keeps_trimmed_operator_identifier(raw, expected):
+    result = resolve_part_lookup(raw)
+
+    assert result.status == "not_found"
+    assert result.message == expected
+
+
+def test_empty_lookup_keeps_existing_empty_validation():
+    assert resolve_part_lookup("   ").message == "Пустой запрос."
+
+
+def test_global_search_escapes_unknown_query(make_user, client, data):
+    make_user("escaped")
+    client.login(username="escaped", password=PASSWORD)
+
+    html = client.get(reverse("part_search"), {"q": "<script>alert(1)</script>"}).content.decode()
+
+    assert "Деталь &lt;script&gt;alert(1)&lt;/script&gt; не найдена." in html
+    assert "<script>alert(1)</script>" not in html
 
 
 # --- Граница: поиск read-only ------------------------------------------------

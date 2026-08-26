@@ -363,7 +363,7 @@ def resolve_part_lookup(
             norm, query, allow_partial=allow_partial, allow_name=allow_name
         )
     if matched is None:
-        return PartLookupResult(query, norm, "not_found", message="Деталь не найдена.")
+        return PartLookupResult(query, norm, "not_found", message=part_not_found_message(query))
 
     part_ids, source, matched_value, *rest = matched
     ambiguous = bool(rest[0]) if rest else False
@@ -384,6 +384,12 @@ def resolve_part_lookup(
         )
     status = "found" if len(candidates) == 1 else "multiple"
     return PartLookupResult(query, norm, status, candidates)
+
+
+def part_not_found_message(raw) -> str:
+    """Keep the operator's trimmed identifier in a missing-part message."""
+    query = clean_lookup_value(raw)
+    return f"Деталь {query} не найдена." if query else "Деталь не найдена."
 
 
 def lookup_part_by_id(part, *, include_price: bool = False) -> PartLookupCandidate:
