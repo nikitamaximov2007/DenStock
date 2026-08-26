@@ -18,6 +18,9 @@ from apps.catalog.models import PartType
 
 from . import exporters
 from .services import (
+    CLIENTS_SORT_DATE,
+    CLIENTS_SORT_DOCUMENTS,
+    CLIENTS_SORTS,
     attach_customer_part_identity,
     attach_line_part_identity,
     get_client_part_history,
@@ -34,6 +37,7 @@ from .services import (
     get_stock_report,
     get_stocktaking_report,
     get_writeoffs_report,
+    order_clients_rows,
     resolve_period,
 )
 from .statistics import STATS_PRESETS, get_statistics, resolve_stats_period
@@ -218,18 +222,37 @@ def sales_by_client_detail(request):
     )
 
 
+def _clients_sort(request) -> tuple[str, str]:
+    """Только разрешённый порядок из адреса, иначе прежнее умолчание.
+
+    Незнакомое или испорченное значение молча возвращает отчёт к умолчанию:
+    сортировка не тот повод, чтобы показывать оператору ошибку.
+    """
+    sort = request.GET.get("sort", CLIENTS_SORT_DOCUMENTS)
+    direction = request.GET.get("direction", "desc")
+    if sort not in CLIENTS_SORTS or direction not in {"asc", "desc"}:
+        return CLIENTS_SORT_DOCUMENTS, "desc"
+    return sort, direction
+
+
 @login_required
 def clients_overview(request):
     """Продажи и ремонты по клиентам в одной таблице.
 
     Итог с клиента складывает продажи и историческую стоимость деталей в
     ремонтах. Себестоимость остаётся отдельной ограниченной величиной.
+    Сортировка меняет только порядок строк, но не сами суммы.
     """
     _require_reports(request)
     period = resolve_period(request.GET)
-    page_obj, is_paginated = _paginate(request, get_clients_sales_and_repairs(period))
+    sort, direction = _clients_sort(request)
+    rows = order_clients_rows(
+        get_clients_sales_and_repairs(period), sort=sort, direction=direction
+    )
+    page_obj, is_paginated = _paginate(request, rows)
     for row in page_obj.object_list:
         row["customer_qs"] = _row_query(row)
+    by_date = sort == CLIENTS_SORT_DATE
     return render(
         request,
         "reports/clients_overview.html",
@@ -241,6 +264,13 @@ def clients_overview(request):
             "is_paginated": is_paginated,
             "show_money": True,
             "show_costs": request.user.can_view_purchase_cost,
+            "date_sort": {
+                "active": by_date,
+                "newest_first": by_date and direction != "asc",
+                # Клик по заголовку переворачивает порядок; с умолчания
+                # первый клик даёт «сначала новые» - у даты это ожидаемое.
+                "next_direction": "asc" if by_date and direction != "asc" else "desc",
+            },
         },
     )
 

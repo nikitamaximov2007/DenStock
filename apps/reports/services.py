@@ -637,6 +637,34 @@ def get_clients_sales_and_repairs(period: Period) -> list[dict]:
     )
 
 
+CLIENTS_SORT_DOCUMENTS = "documents"
+CLIENTS_SORT_DATE = "date"
+CLIENTS_SORTS = (CLIENTS_SORT_DOCUMENTS, CLIENTS_SORT_DATE)
+
+
+def order_clients_rows(rows: list[dict], *, sort: str, direction: str) -> list[dict]:
+    """Порядок строк отчёта по клиентам. Суммы от порядка не зависят.
+
+    Дата это `last_event` - момент последнего документа клиента, попавшего в
+    отчёт: максимум из даты продажи и даты завершения ремонта. Обе величины
+    уже посчитаны агрегатом в базе, поэтому сортировка не делает ни одного
+    дополнительного запроса.
+
+    При равных датах порядок задаётся именем клиента по алфавиту в обоих
+    направлениях: иначе одинаковые даты выстраивались бы произвольно и
+    страницы «поехали» бы между запросами. Строки без даты уходят в конец
+    тоже в обоих направлениях: «нет даты» это не «очень давно».
+    """
+    if sort != CLIENTS_SORT_DATE:
+        return rows
+    dated = [entry for entry in rows if entry["last_event"] is not None]
+    undated = [entry for entry in rows if entry["last_event"] is None]
+    dated.sort(key=lambda entry: entry["display_name"])
+    dated.sort(key=lambda entry: entry["last_event"], reverse=direction != "asc")
+    undated.sort(key=lambda entry: entry["display_name"])
+    return dated + undated
+
+
 def _client_filter(customer_name: str, missing: bool) -> str:
     return "" if missing else (customer_name or "").strip()
 
