@@ -21,9 +21,10 @@
     группируются по детали, количество суммируется.
   </p>
   {% if customs_missing_count %}
-    <p class="pill pill--warning">
-      У {{ customs_missing_count }} позиций не заполнены таможенные данные
-      (область применения и/или вес). В Excel часть ячеек останется пустой.
+    <p class="pill pill--warning pill--block">
+      У {{ customs_missing_count }} позиций таможенные данные заполнены не
+      полностью. Незаполненные ячейки останутся в Excel пустыми: выдумывать
+      их значения нельзя.
     </p>
   {% endif %}
   <form method="get" class="filter-toolbar">
