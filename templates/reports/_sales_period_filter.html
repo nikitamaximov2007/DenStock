@@ -1,11 +1,13 @@
 <form method="get" class="filter-toolbar">
   {% if customer_value %}<input type="hidden" name="customer" value="{{ customer_value }}">{% endif %}
   {% if missing_customer %}<input type="hidden" name="missing" value="1">{% endif %}
+  {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
+  {% if active_direction %}<input type="hidden" name="direction" value="{{ active_direction }}">{% endif %}
   <div class="filter-field">
     <span class="filter-label">Быстрый период</span>
     <div class="segmented">
       {% for value, label in presets %}
-        <a href="?{% if customer_qs %}{{ customer_qs }}&amp;{% endif %}preset={{ value }}"
+        <a href="?{% if customer_qs %}{{ customer_qs }}&amp;{% endif %}preset={{ value }}{% if sort_qs %}&amp;{{ sort_qs }}{% endif %}"
            class="{% if period.preset == value %}is-active{% endif %}">{{ label }}</a>
       {% endfor %}
     </div>
