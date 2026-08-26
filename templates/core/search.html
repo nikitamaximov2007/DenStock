@@ -55,7 +55,7 @@
       {% endfor %}
     </ul>
   {% elif q and not rows and not brp_hits and not polaris_hits %}
-    {% include "partials/_status_block.html" with kind="warning" text="Ничего не найдено по запросу." %}
+    {% include "partials/_status_block.html" with kind="warning" text=not_found_message %}
   {% endif %}
   {% if brp_hits %}
     <div class="card">
