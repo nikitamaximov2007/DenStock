@@ -228,6 +228,58 @@ def test_default_manufacturer_alone_is_not_an_entry(env):
     assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 1
 
 
+def test_migration_carries_only_cards_with_a_real_fact(env):
+    """Перенос старых карточек в версию 1 повторяет то же правило.
+
+    В production уже есть карточки, заведённые открытием формы и не
+    заполненные. Перенести их версией нельзя по той же причине, по какой их
+    не пишет сигнал: пустая версия станет самой ранней и перехватит историю.
+    """
+    from importlib import import_module
+
+    from django.apps import apps as registry
+
+    migration = import_module("apps.actions.migrations.0010_seed_customs_first_version")
+
+    empty_part = _part(env, number="111000111", name="ПУСТАЯ")
+    filled_part = _part(env, number="222000222", name="ЗАПОЛНЕННАЯ")
+    legacy_part = _part(env, number="333000333", name="ЛЕГАСИ")
+    # bulk_create не поднимает сигнал: так карточки и лежат в production,
+    # заведённые до появления версий.
+    PartCustomsInfo.objects.bulk_create([
+        PartCustomsInfo(part_type=empty_part),
+        PartCustomsInfo(part_type=filled_part, country_of_origin="CANADA"),
+        PartCustomsInfo(part_type=legacy_part, application_area="МОТО ЗАПЧАСТИ"),
+    ])
+    assert PartCustomsDataVersion.objects.count() == 0
+
+    migration.seed_first_version(registry, None)
+
+    carried = set(
+        PartCustomsDataVersion.objects.values_list("part_type_id", flat=True)
+    )
+    assert carried == {filled_part.pk}
+    assert empty_part.pk not in carried  # только умолчание производителя
+    assert legacy_part.pk not in carried  # легаси-хардкод фактом не считается
+    version = PartCustomsDataVersion.objects.get(part_type=filled_part)
+    assert version.version == 1
+    assert version.country_of_origin == "CANADA"  # значение перенесено один в один
+
+
+def test_migration_does_not_duplicate_existing_versions(env):
+    part = _part(env, number="219800345")
+    _card(part, country_of_origin="AUSTRIA")
+    assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 1
+
+    from importlib import import_module
+
+    from django.apps import apps as registry
+
+    migration = import_module("apps.actions.migrations.0010_seed_customs_first_version")
+    migration.seed_first_version(registry, None)
+    assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 1
+
+
 def test_real_correction_creates_next_version(env):
     part = _part(env, number="219800345")
     card = _card(part, customs_unit_price_usd=Decimal("10"))
