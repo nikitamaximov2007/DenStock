@@ -20,6 +20,7 @@ from django.db.models import Max
 
 BRP = "brp"
 ANALOGS = "analogs"
+AFTERMARKET = "aftermarket"
 
 
 class CatalogAdapterError(RuntimeError):
@@ -221,9 +222,46 @@ class AnalogCatalogAdapter(CatalogAdapter):
         return None
 
 
+class AftermarketCatalogAdapter(CatalogAdapter):
+    """Known dealer format with independent aftermarket parts and USD facts."""
+
+    key = AFTERMARKET
+    label = "Каталог аналогов / aftermarket"
+
+    def check(self, path: Path) -> dict:
+        from apps.catalog_import.aftermarket_catalog import AftermarketCatalogError, build_plan
+
+        try:
+            return build_plan(path).as_summary()
+        except AftermarketCatalogError as exc:
+            raise CatalogAdapterError(str(exc)) from exc
+
+    def apply(self, path: Path) -> dict:
+        from apps.catalog_import.aftermarket_catalog import AftermarketCatalogError, apply_file
+
+        try:
+            return apply_file(path)
+        except AftermarketCatalogError as exc:
+            raise CatalogAdapterError(str(exc)) from exc
+
+    def fingerprint(self) -> str:
+        from apps.catalog_import.aftermarket_catalog import catalog_fingerprint
+
+        return catalog_fingerprint()
+
+    def validation_error(self, summary: dict) -> str | None:
+        if int(summary.get("valid", 0) or 0) == 0:
+            return "В файле нет ни одной безопасно применимой строки aftermarket-каталога."
+        return None
+
+    def inspect(self, path: Path, *, sample_rows: int = 5) -> dict:
+        return inspect_workbook(path, sample_rows=sample_rows)
+
+
 ADAPTERS: dict[str, CatalogAdapter] = {
     BRP: BrpCatalogAdapter(),
     ANALOGS: AnalogCatalogAdapter(),
+    AFTERMARKET: AftermarketCatalogAdapter(),
 }
 
 
@@ -232,6 +270,30 @@ def get_adapter(catalog: str) -> CatalogAdapter:
     if adapter is None:
         raise CatalogAdapterError("Неизвестный каталог.")
     return adapter
+
+
+def detect_catalog(path: Path, selected: str) -> str:
+    """Recognize the known dealer sheet before the normal analog parser rejects it."""
+    if selected != ANALOGS:
+        return selected
+    try:
+        from openpyxl import load_workbook
+
+        book = load_workbook(path, read_only=True, data_only=True)
+        try:
+            if "priceupdate" not in book.sheetnames:
+                return selected
+            headers = {
+                " ".join(str(cell.value or "").replace("\xa0", " ").lower().split())
+                for cell in next(book["priceupdate"].iter_rows())
+            }
+            if {"manufacturer", "manufacturer number", "description"} <= headers:
+                return AFTERMARKET
+        finally:
+            book.close()
+    except Exception:  # The selected adapter renders the user-facing parse error.
+        return selected
+    return selected
 
 
 def file_sha256(path) -> str:

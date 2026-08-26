@@ -21,7 +21,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .adapters import CatalogAdapterError, file_sha256, get_adapter
+from .adapters import CatalogAdapterError, detect_catalog, file_sha256, get_adapter
 from .models import CatalogImportBatch
 
 MAX_UPLOAD_BYTES = 80 * 1024 * 1024
@@ -72,8 +72,10 @@ def save_upload(upload, *, catalog: str, by=None) -> CatalogImportBatch:
         for chunk in upload.chunks():
             handle.write(chunk)
 
+    detected_catalog = detect_catalog(target, catalog)
+
     return CatalogImportBatch.objects.create(
-        catalog=catalog,
+        catalog=detected_catalog,
         status=CatalogImportBatch.Status.UPLOADED,
         source_filename=name[:255],
         source_sha256=file_sha256(target),

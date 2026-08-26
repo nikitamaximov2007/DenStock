@@ -14,6 +14,7 @@ BRP порядка 130 тысяч строк, и подавляющее боль
 Неизменившиеся считаются агрегатно, детально сохраняются только созданные,
 изменённые, предупреждения и ошибки.
 """
+
 from django.conf import settings
 from django.db import models
 
@@ -24,6 +25,7 @@ class CatalogImportBatch(models.Model):
     class Catalog(models.TextChoices):
         BRP = "brp", "BRP"
         ANALOGS = "analogs", "Аналоги"
+        AFTERMARKET = "aftermarket", "Каталог аналогов / aftermarket"
 
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "Загружен"
@@ -53,15 +55,23 @@ class CatalogImportBatch(models.Model):
     error_text = models.TextField("Ошибка", blank=True)
 
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, verbose_name="Кто загрузил",
-        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто загрузил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
     )
     created_at = models.DateTimeField("Загружен", auto_now_add=True)
     checked_at = models.DateTimeField("Проверен (когда)", null=True, blank=True)
     applied_at = models.DateTimeField("Применён (когда)", null=True, blank=True)
     applied_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, verbose_name="Кто применил",
-        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто применил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
     )
 
     class Meta:
@@ -87,3 +97,51 @@ class CatalogImportBatch(models.Model):
     def counter(self, name: str, default=0):
         """Значение счётчика из сводки проверки (сводка это JSON от импортёра)."""
         return (self.summary or {}).get(name, default)
+
+
+class AftermarketCatalogPart(models.Model):
+    """Current supplier-catalog facts for an independent aftermarket part.
+
+    These USD values are source data, not warehouse cost and not a RUB selling
+    price.  Stock and historical documents deliberately have no relation to
+    this model.
+    """
+
+    SOURCE_DEALER_2023 = "dealer_2023"
+    SOURCE_CHOICES = ((SOURCE_DEALER_2023, "Dealer 2023"),)
+
+    source = models.CharField("Источник каталога", max_length=40, choices=SOURCE_CHOICES)
+    part = models.OneToOneField(
+        "catalog.PartType", on_delete=models.PROTECT, related_name="aftermarket_catalog_entry"
+    )
+    manufacturer = models.ForeignKey("catalog.Manufacturer", on_delete=models.PROTECT)
+    manufacturer_number = models.CharField("Номер производителя", max_length=100)
+    normalized_manufacturer_number = models.CharField(max_length=100, db_index=True)
+    supplier_sku = models.CharField("SKU поставщика", max_length=100, blank=True)
+    source_description = models.CharField("Описание поставщика", max_length=200)
+    msrp_usd = models.DecimalField(
+        "MSRP, USD", max_digits=14, decimal_places=2, null=True, blank=True
+    )
+    dealer_cost_usd = models.DecimalField(
+        "Dlr Cost, USD", max_digits=14, decimal_places=2, null=True, blank=True
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Позиция aftermarket-каталога"
+        verbose_name_plural = "Позиции aftermarket-каталога"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "manufacturer", "normalized_manufacturer_number"],
+                name="uniq_aftermarket_source_manufacturer_number",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.manufacturer}: {self.manufacturer_number}"
+
+    def save(self, *args, **kwargs):
+        from apps.catalog.models import normalize_number
+
+        self.normalized_manufacturer_number = normalize_number(self.manufacturer_number)
+        super().save(*args, **kwargs)

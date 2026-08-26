@@ -4,6 +4,7 @@
 цены, поэтому обычный складской сотрудник сюда не попадает. Исходный прайс это
 коммерческий документ, поэтому скачивание закрыто тем же правом.
 """
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -67,6 +68,26 @@ ANALOG_APPLY_ROWS = (
     ("created_links", "Создано связей"),
     ("already_linked", "Связи уже были"),
     ("skipped", "Пропущено строк"),
+)
+AFTERMARKET_SUMMARY_ROWS = (
+    ("format_label", "Распознанный формат"),
+    ("sheet", "Лист"),
+    ("rows_scanned", "Строк обработано"),
+    ("valid", "Корректных строк"),
+    ("blank_rows", "Пустых строк"),
+    ("new_parts", "Новых деталей"),
+    ("updates", "Обновлений"),
+    ("unchanged", "Без изменений"),
+    ("ambiguous", "Неоднозначных"),
+    ("invalid", "Некорректных"),
+    ("duplicate_source_identities", "Повторов идентичности поставщика"),
+    ("currency", "Валюта каталоговых цен"),
+    ("msrp_label", "Рекомендованная цена поставщика"),
+    ("dealer_cost_label", "Справочная цена дилера"),
+)
+AFTERMARKET_APPLY_ROWS = AFTERMARKET_SUMMARY_ROWS + (
+    ("created_parts", "Заведено деталей"),
+    ("updated_parts", "Обновлено деталей"),
 )
 
 
@@ -136,7 +157,9 @@ def _summary_rows(summary: dict, *, applied: bool) -> list:
     Раньше недостающие ключи подставлялись нулём, и коррекция выглядела так,
     будто она пересчитала весь каталог и ничего не нашла.
     """
-    if "rows_total" in summary and (
+    if summary.get("format") == "AFTERMARKET_SUPPLIER_CATALOG":
+        layout = AFTERMARKET_APPLY_ROWS if applied else AFTERMARKET_SUMMARY_ROWS
+    elif "rows_total" in summary and (
         "will_create_links" in summary or "created_links" in summary
     ):
         layout = ANALOG_APPLY_ROWS if applied else ANALOG_SUMMARY_ROWS
@@ -232,6 +255,7 @@ def import_detail(request, pk):
         "catalog_import/import_detail.html",
         {
             "batch": batch,
+            "summary": summary,
             "summary_rows": _summary_rows(summary, applied=batch.is_applied),
             "status_rows": _status_rows(summary),
             "already_applied": previous_applied(batch),
@@ -270,10 +294,11 @@ def import_apply(request, pk):
     except CatalogImportError as exc:
         messages.error(request, str(exc))
         return redirect("catalog_import_detail", pk=pk)
-    messages.success(
-        request,
-        "Каталог BRP успешно обновлён. Складские остатки не изменены.",
-    )
+    if batch.catalog == CatalogImportBatch.Catalog.BRP:
+        text = "Каталог BRP успешно обновлён. Складские остатки не изменены."
+    else:
+        text = f"{batch.get_catalog_display()} успешно обновлён. Складские остатки не изменены."
+    messages.success(request, text)
     return redirect("catalog_import_detail", pk=pk)
 
 
