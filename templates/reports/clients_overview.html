@@ -10,6 +10,13 @@
   <p class="muted">
     Итого с клиента = продажи + стоимость деталей в ремонтах. Стоимость работ
     DenisStock не хранит и в итог не входит.
+    {% if date_sort.active %}
+      Порядок: по дате последнего документа,
+      {% if date_sort.newest_first %}сначала новые{% else %}сначала старые{% endif %}.
+    {% else %}
+      Порядок: по числу документов. Нажмите «Последний документ», чтобы
+      отсортировать по дате.
+    {% endif %}
   </p>
   {% if page_obj.object_list %}
     <table class="table">
@@ -22,7 +29,16 @@
           <th class="num--money">Детали в ремонтах (₽)</th>
           <th class="num--money">Итого с клиента (₽)</th>
           {% if show_costs %}<th class="num--money">Себестоимость ремонта (₽)</th>{% endif %}
-          <th>Последний документ</th>
+          <th>
+            <a class="table-sort-link{% if date_sort.active %} table-sort-link--active{% endif %}"
+               href="{% querystring sort='date' direction=date_sort.next_direction page=1 %}">
+              Последний документ
+              {% if date_sort.active %}{% if date_sort.newest_first %}↓{% else %}↑{% endif %}{% endif %}
+            </a>
+            {% if date_sort.active %}
+              <a class="muted" href="{% querystring sort=None direction=None page=1 %}">сбросить</a>
+            {% endif %}
+          </th>
         </tr>
       </thead>
       <tbody>

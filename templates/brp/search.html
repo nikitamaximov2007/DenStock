@@ -118,7 +118,6 @@
             <th>Номер BRP</th>
             <th>Описание BRP</th>
             <th>Статус BRP</th>
-            <th class="num--money">Розница BRP ($)</th>
             <th class="num--money">Цена клиента (₽)</th>
             <th>Замена номера</th>
             <th></th>
@@ -138,7 +137,6 @@
                   ·
                 {% endif %}
               </td>
-              <td class="num--money">{{ row.brp.retail_price_usd|default:"·" }}</td>
               <td class="num--money">
                 {% if row.customer_price is not None %}
                   {{ row.customer_price|money_int }}
