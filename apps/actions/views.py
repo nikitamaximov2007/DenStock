@@ -20,6 +20,7 @@ from django.utils.http import urlencode
 from apps.catalog.models import PartType
 from apps.core.part_lookup import MatchSource, resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
+from apps.customers.models import Customer
 from apps.inventory.presentation import identity_for_part_ids
 from apps.warehouse.models import StorageLocation
 
@@ -130,6 +131,8 @@ def actions_scan(request):
         "cart_panels": _cart_panels(request),
         "cart_token": secrets.token_urlsafe(32),
         "selected_action_kind": selected_action_kind,
+        "customers": Customer.objects.order_by("name", "pk")[:500],
+        "selected_customer_id": request.GET.get("customer_id", ""),
     }
     if q:
         lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
@@ -524,9 +527,10 @@ def actions_cart_complete(request):
         messages.error(request, "Корзина пуста: отсканируйте хотя бы одну деталь.")
         return redirect(back)
     try:
+        customer = get_object_or_404(Customer, pk=request.POST.get("customer_id"))
         actions = complete_cart(
             cart,
-            customer_comment=request.POST.get("customer_comment", ""),
+            customer=customer,
             by=request.user,
             scanned_numbers=_scans_for(request, kind),
             request_token=request.POST.get("request_token"),
@@ -657,8 +661,7 @@ def actions_export(request):
     if missing:
         messages.error(
             request,
-            f"Нельзя сформировать Excel: у {len(missing)} деталей "
-            "не заведены таможенные данные.",
+            f"Нельзя сформировать Excel: у {len(missing)} деталей не заведены таможенные данные.",
         )
         return redirect(f"{reverse('actions_report')}?{urlencode(request.GET)}")
     buffer = export_customs_xlsx(rows=rows)

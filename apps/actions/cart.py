@@ -26,6 +26,7 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from apps.customers.models import Customer
 from apps.inventory.models import StockLot
 from apps.procurement.models import money
 from apps.repairs.models import RepairOrder
@@ -285,7 +286,7 @@ def _existing_actions_for_token(token):
 
 @transaction.atomic
 def complete_cart(
-    cart, *, customer_comment, by=None, scanned_numbers=None, request_token=None
+    cart, *, customer_comment="", customer=None, by=None, scanned_numbers=None, request_token=None
 ) -> list[WarehouseAction]:
     """Провести корзину одним документом и записать действия в журнал.
 
@@ -314,8 +315,15 @@ def complete_cart(
     if locked.status != model.Status.DRAFT:
         raise ActionError("Документ уже проведён или отменён — провести повторно нельзя.")
     customer_comment = (customer_comment or "").strip()
+    if customer is not None:
+        # Карточка, а не свободный текст, является личностью клиента. Имя и
+        # телефон ниже становятся документным снимком через тот же обычный
+        # сервисный контракт Sale/Repair.
+        if not isinstance(customer, Customer):
+            customer = Customer.objects.get(pk=customer)
+        customer_comment = customer.name
     if not customer_comment:
-        raise ActionError("Укажите клиента или комментарий.")
+        raise ActionError("Выберите карточку клиента.")
     rows = cart_rows(cart)
     if not rows:
         raise ActionError(EMPTY_CART_MESSAGE)
@@ -334,9 +342,13 @@ def complete_cart(
         for row in rows
     ]
 
+    cart.customer = customer
     cart.customer_name = customer_comment
+    cart.customer_phone = customer.phone if customer is not None else cart.customer_phone
     cart.comment = CART_COMMENT
-    cart.save(update_fields=["customer_name", "comment", "updated_at"])
+    cart.save(
+        update_fields=["customer", "customer_name", "customer_phone", "comment", "updated_at"]
+    )
 
     try:
         document = complete_sale(cart, by=by) if is_sale else complete_repair_order(cart, by=by)

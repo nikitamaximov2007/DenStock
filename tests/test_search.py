@@ -4,6 +4,7 @@
 Ключевое: поиск ничего не пишет (нет движений, баланс не меняется) и НЕ удваивает
 остаток (кэш StockBalance ИЛИ первичка, не их сумма).
 """
+
 from decimal import Decimal
 
 import pytest
@@ -61,8 +62,10 @@ def admin(make_user):
 def _finalized_line(sup, part, admin, *, qty="2", unit_cost="100", shipping="40"):
     batch = Batch.objects.create(supplier=sup, shipping_cost=Decimal(shipping))
     line = BatchLine.objects.create(
-        batch=batch, part_type=part,
-        quantity=Decimal(qty), unit_cost_currency=Decimal(unit_cost),
+        batch=batch,
+        part_type=part,
+        quantity=Decimal(qty),
+        unit_cost_currency=Decimal(unit_cost),
     )
     batch.status = Batch.Status.ACCEPTED
     batch.save(update_fields=["status"])
@@ -84,9 +87,12 @@ def data(db, admin):
     )
 
     serial = PartType.objects.create(
-        name="Насос-Поиск", category=cat, unit=unit,
+        name="Насос-Поиск",
+        category=cat,
+        unit=unit,
         tracking_mode=PartType.TrackingMode.SERIAL,
-        recommended_price=Decimal("500"), min_price=Decimal("400"),
+        recommended_price=Decimal("500"),
+        min_price=Decimal("400"),
     )
     PartBarcode.objects.create(part=serial, value="4607123456789")
     PartNumber.objects.create(part=serial, value="0 986-221.047", kind=PartNumber.Kind.OEM)
@@ -113,9 +119,13 @@ def data(db, admin):
     create_stock_lot(bline2, loc2, Decimal("7"))  # receiving, БЕЗ строк баланса
 
     return {
-        "serial": serial, "item": item, "serial_batch": iline.batch,
-        "bulk_cache": bulk_cache, "bulk_fallback": bulk_fallback,
-        "loc": loc, "loc2": loc2,
+        "serial": serial,
+        "item": item,
+        "serial_batch": iline.batch,
+        "bulk_cache": bulk_cache,
+        "bulk_fallback": bulk_fallback,
+        "loc": loc,
+        "loc2": loc2,
     }
 
 

@@ -11,6 +11,7 @@
 * документы без карточки (созданные до справочника) продолжают работать;
 * никакой автоматической привязки истории не происходит.
 """
+
 from decimal import Decimal
 
 import pytest
@@ -258,6 +259,31 @@ def test_customer_can_be_created_and_edited_through_ui(client, make_user, db):
     assert customer.phone_normalized == ""
 
 
+def test_customer_create_returns_to_local_operator_flow_with_selected_card(client, make_user, db):
+    _login(client, make_user)
+    target = reverse("actions_scan") + "?kind=sale"
+    response = client.post(
+        reverse("customer_create"),
+        {"name": "Новый клиент", "phone": "", "comment": "", "next": target},
+    )
+
+    customer = Customer.objects.get(name="Новый клиент")
+    assert response.status_code == 302
+    assert response["Location"] == f"{target}&customer_id={customer.pk}"
+
+
+def test_customer_create_rejects_external_return_target(client, make_user, db):
+    _login(client, make_user)
+    response = client.post(
+        reverse("customer_create"),
+        {"name": "Новый клиент", "phone": "", "comment": "", "next": "https://bad.example/"},
+    )
+
+    customer = Customer.objects.get(name="Новый клиент")
+    assert response.status_code == 302
+    assert response["Location"] == reverse("customer_detail", args=[customer.pk])
+
+
 def test_customer_form_rejects_empty_name(client, make_user, db):
     _login(client, make_user)
     client.post(reverse("customer_create"), {"name": "   ", "phone": "", "comment": ""})
@@ -382,9 +408,14 @@ def test_repair_form_selects_customer(client, make_user, db):
     client.post(
         reverse("repair_order_create"),
         {
-            "customer": customer.pk, "customer_name": "", "customer_phone": "",
-            "vehicle_make": "", "vehicle_model": "", "vehicle_identifier": "",
-            "problem_description": "", "comment": "",
+            "customer": customer.pk,
+            "customer_name": "",
+            "customer_phone": "",
+            "vehicle_make": "",
+            "vehicle_model": "",
+            "vehicle_identifier": "",
+            "problem_description": "",
+            "comment": "",
         },
         follow=True,
     )
@@ -434,9 +465,9 @@ def test_customer_card_query_count_does_not_grow_with_documents(
 @pytest.mark.parametrize(
     "role,can_open,can_create",
     [
-        ("STOREKEEPER", True, True),   # ремонты: оформляет документы клиента
-        ("SELLER", True, True),        # продажи и резервы
-        ("VIEWER", True, False),       # только чтение через право отчётов
+        ("STOREKEEPER", True, True),  # ремонты: оформляет документы клиента
+        ("SELLER", True, True),  # продажи и резервы
+        ("VIEWER", True, False),  # только чтение через право отчётов
     ],
 )
 def test_customer_access_matrix(client, make_user, db, role, can_open, can_create):

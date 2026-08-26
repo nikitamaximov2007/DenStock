@@ -135,15 +135,27 @@
           <input type="hidden" name="q" value="{{ q }}">
           <input type="hidden" name="request_token" value="{{ cart_token }}">
           <p>
-            <label for="cart-comment-{{ panel.kind }}">Клиент / комментарий</label>
+            <label for="customer-filter-{{ panel.kind }}">Найти клиента</label>
             <br>
-            <input id="cart-comment-{{ panel.kind }}"
-                   name="customer_comment"
-                   type="text"
-                   maxlength="255"
-                   placeholder="Например: Иванов, снегоход Ski-Doo"
-                   required
+            <input id="customer-filter-{{ panel.kind }}"
+                   type="search"
+                   placeholder="Имя или телефон"
+                   data-customer-filter="customer-select-{{ panel.kind }}"
                    style="min-width: 280px">
+          </p>
+          <p>
+            <label for="customer-select-{{ panel.kind }}">Клиент</label>
+            <br>
+            <select id="customer-select-{{ panel.kind }}" name="customer_id" required style="min-width: 280px">
+              <option value="">Выберите карточку клиента</option>
+              {% for customer in customers %}
+                <option value="{{ customer.pk }}" data-customer-search="{{ customer.name|lower }} {{ customer.phone|lower }}" {% if selected_customer_id == customer.pk|stringformat:'s' %}selected{% endif %}>
+                  {{ customer.name }}{% if customer.phone %} · {{ customer.phone }}{% else %} · №{{ customer.pk }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <br>
+            <a href="{% url 'customer_create' %}?next={% url 'actions_scan' %}%3Fkind%3D{{ panel.kind|urlencode }}">Создать клиента</a>
           </p>
           <div class="form-actions">
             <button type="submit" class="btn btn--primary">Провести {{ panel.title|lower }}</button>
@@ -290,4 +302,16 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="scan" title="Отсканируйте деталь" text="Поставьте курсор в поле сканера и отсканируйте номер. Система покажет остатки по ячейкам." compact=1 %}
   {% endif %}
+  <script>
+    document.querySelectorAll('[data-customer-filter]').forEach((input) => {
+      const select = document.getElementById(input.dataset.customerFilter);
+      input.addEventListener('input', () => {
+        const term = input.value.trim().toLowerCase();
+        Array.from(select.options).forEach((option, index) => {
+          if (!index) return;
+          option.hidden = Boolean(term) && !option.dataset.customerSearch.includes(term);
+        });
+      });
+    });
+  </script>
 {% endblock %}
