@@ -271,6 +271,11 @@ def clients_overview(request):
                 # первый клик даёт «сначала новые» - у даты это ожидаемое.
                 "next_direction": "asc" if by_date and direction != "asc" else "desc",
             },
+            # Смена периода не должна сбрасывать выбранный порядок: форма
+            # фильтра и быстрые пресеты несут его дальше сами.
+            "active_sort": sort if by_date else "",
+            "active_direction": direction if by_date else "",
+            "sort_qs": urlencode({"sort": sort, "direction": direction}) if by_date else "",
         },
     )
 

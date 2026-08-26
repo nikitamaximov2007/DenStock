@@ -359,6 +359,43 @@ def test_broken_sort_parameters_fall_back_to_default(client, data, make_user):
         assert "по числу документов" in html
 
 
+def test_period_form_carries_the_chosen_order(client, data, make_user):
+    """Смена периода не должна сбрасывать выбранный порядок.
+
+    Форма фильтра отправляется методом GET и несёт только свои поля, поэтому
+    порядок в ней приходится передавать скрытыми полями, а в быстрых
+    пресетах - параметром ссылки.
+    """
+    _sale(data, "Старый", days_ago=20)
+    _sale(data, "Новый", days_ago=1)
+    _login(client, make_user)
+    url = reverse("reports_clients_overview")
+
+    html = client.get(f"{url}?sort=date&direction=asc").content.decode()
+    assert 'name="sort" value="date"' in html
+    assert 'name="direction" value="asc"' in html
+    assert "preset=7&amp;sort=date&amp;direction=asc" in html
+
+    # Умолчание ничего лишнего в форму не добавляет.
+    html = client.get(url).content.decode()
+    assert 'name="sort"' not in html
+    assert 'name="direction"' not in html
+
+
+def test_period_change_keeps_the_order(client, data, make_user):
+    _sale(data, "Старый", days_ago=6)
+    _sale(data, "Новый", days_ago=2)
+    _login(client, make_user)
+    today = timezone.localdate()
+    html = client.get(
+        f"{reverse('reports_clients_overview')}?sort=date&direction=asc"
+        f"&date_from={(today - timedelta(days=7)).isoformat()}"
+        f"&date_to={today.isoformat()}"
+    ).content.decode()
+    assert html.index("Старый") < html.index("Новый")
+    assert "сначала старые" in html
+
+
 def test_pagination_continues_the_same_order(client, data, make_user):
     from apps.reports.views import _CLIENT_REPORT_PAGE_SIZE
 
