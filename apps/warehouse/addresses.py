@@ -191,14 +191,14 @@ def is_v2_address(raw: str) -> bool:
 
 def _identity_owner(code: str):
     canonical = StorageLocation.objects.filter(code__iexact=code).first()
-    alias = StorageLocationAlias.objects.filter(code__iexact=code).select_related(
-        "location"
-    ).first()
-    if canonical and alias and canonical.pk != alias.location_id:
-        raise StorageLocationCreateError(
-            "Код неоднозначен: он одновременно canonical и historical alias."
-        )
-    return canonical or (alias.location if alias else None)
+    if canonical is not None:
+        return canonical
+    alias = (
+        StorageLocationAlias.objects.filter(is_active=True, code__iexact=code)
+        .select_related("location")
+        .first()
+    )
+    return alias.location if alias else None
 
 
 def _get_or_create_canonical_parent(address: StorageAddress) -> StorageLocation:
@@ -211,7 +211,9 @@ def _get_or_create_canonical_parent(address: StorageAddress) -> StorageLocation:
         if not canonical.is_active:
             raise StorageLocationCreateError(f"Родитель {address.code} архивирован.")
         return canonical
-    if StorageLocationAlias.objects.filter(code__iexact=address.code).exists():
+    if StorageLocationAlias.objects.filter(
+        is_active=True, code__iexact=address.code
+    ).exists():
         raise StorageLocationCreateError(
             f"Родитель {address.code} является старым адресом. Используйте текущий адрес."
         )

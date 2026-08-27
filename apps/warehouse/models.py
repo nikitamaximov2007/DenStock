@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models.functions import Upper
 
 
 class StorageLocation(models.Model):
@@ -165,9 +166,18 @@ class StorageLocationAlias(models.Model):
         on_delete=models.PROTECT,
         related_name="aliases",
     )
-    code = models.CharField("Исторический код", max_length=60, unique=True)
-    barcode = models.CharField(
-        "Исторический штрихкод", max_length=80, unique=True, null=True, blank=True
+    code = models.CharField("Исторический код", max_length=60)
+    barcode = models.CharField(  # noqa: DJ001 - legacy aliases already store NULL barcodes.
+        "Исторический штрихкод", max_length=80, null=True, blank=True
+    )
+    is_active = models.BooleanField(
+        "Участвует в operational lookup",
+        default=True,
+        db_index=True,
+        help_text=(
+            "Выключается навсегда, когда historical code повторно становится "
+            "текущим кодом другой ячейки."
+        ),
     )
     kind = models.CharField(
         "Источник", max_length=20, choices=Kind.choices, default=Kind.RENAME
@@ -186,6 +196,18 @@ class StorageLocationAlias(models.Model):
         verbose_name = "Исторический адрес места"
         verbose_name_plural = "Исторические адреса мест"
         ordering = ["-created_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                Upper("code"),
+                condition=models.Q(is_active=True),
+                name="warehouse_active_alias_code_ci_uniq",
+            ),
+            models.UniqueConstraint(
+                Upper("barcode"),
+                condition=models.Q(is_active=True, barcode__isnull=False),
+                name="warehouse_active_alias_barcode_ci_uniq",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.code} -> {self.location.code}"

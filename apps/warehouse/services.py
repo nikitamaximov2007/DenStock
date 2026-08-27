@@ -80,11 +80,18 @@ def resolve_storage_location(
     if not allow_code and not allow_barcode:
         return None, False
     canonical = list(StorageLocation.objects.filter(canonical_filter)[:2])
+    if canonical:
+        if len(canonical) > 1:
+            raise StorageLocationResolutionError(
+                "Адрес неоднозначно совпал с несколькими текущими ячейками."
+            )
+        return canonical[0], False
     aliases = list(
-        StorageLocationAlias.objects.filter(alias_filter).select_related("location")[:2]
+        StorageLocationAlias.objects.filter(is_active=True)
+        .filter(alias_filter)
+        .select_related("location")[:2]
     )
-    owners = {location.pk: location for location in canonical}
-    owners.update({alias.location_id: alias.location for alias in aliases})
+    owners = {alias.location_id: alias.location for alias in aliases}
     if len(owners) > 1:
         raise StorageLocationResolutionError(
             "Адрес неоднозначен: canonical и historical alias относятся к разным ячейкам."
@@ -92,27 +99,36 @@ def resolve_storage_location(
     if not owners:
         return None, False
     location = next(iter(owners.values()))
-    return location, not any(item.pk == location.pk for item in canonical)
+    return location, True
 
 
 def _assert_location_identity_available(
-    *, code: str, barcode: str | None, exclude_location_id: int | None = None
+    *,
+    code: str,
+    barcode: str | None,
+    exclude_location_id: int | None = None,
+    allow_alias_reclaim: bool = False,
 ) -> None:
     canonical = StorageLocation.objects.all()
-    aliases = StorageLocationAlias.objects.all()
+    aliases = StorageLocationAlias.objects.filter(is_active=True)
     if exclude_location_id is not None:
         canonical = canonical.exclude(pk=exclude_location_id)
         aliases = aliases.exclude(location_id=exclude_location_id)
     code_collision = Q(code__iexact=code) | Q(barcode__iexact=code)
-    if canonical.filter(code_collision).exists() or aliases.filter(code_collision).exists():
-        raise StorageLocationRenameError("Место или historical alias с таким кодом уже существует.")
+    if canonical.filter(code_collision).exists():
+        raise StorageLocationRenameError("Ячейка с таким кодом уже существует.")
+    if not allow_alias_reclaim and aliases.filter(code_collision).exists():
+        raise StorageLocationRenameError("Historical alias с таким кодом уже существует.")
     if barcode and (
         canonical.filter(Q(code__iexact=barcode) | Q(barcode__iexact=barcode)).exists()
-        or aliases.filter(Q(code__iexact=barcode) | Q(barcode__iexact=barcode)).exists()
     ):
-        raise StorageLocationRenameError(
-            "Штрихкод уже используется местом или historical alias."
-        )
+        raise StorageLocationRenameError("Штрихкод уже используется другой ячейкой.")
+    if (
+        barcode
+        and not allow_alias_reclaim
+        and aliases.filter(Q(code__iexact=barcode) | Q(barcode__iexact=barcode)).exists()
+    ):
+        raise StorageLocationRenameError("Штрихкод уже используется historical alias.")
 
 
 def create_location_alias(
@@ -126,7 +142,9 @@ def create_location_alias(
     """Сохранить старый адрес без возможности направить его на другую identity."""
     code = normalize_storage_location_code(code)
     barcode = barcode.strip().upper() if barcode else None
-    existing = StorageLocationAlias.objects.filter(code__iexact=code).first()
+    existing = StorageLocationAlias.objects.filter(
+        is_active=True, code__iexact=code
+    ).first()
     if existing is not None:
         if existing.location_id != location.pk or (
             barcode and existing.barcode != barcode
@@ -140,7 +158,7 @@ def create_location_alias(
         .exclude(pk=location.pk)
         .exists()
         or StorageLocationAlias.objects.filter(
-            Q(code__iexact=code) | Q(barcode__iexact=code)
+            Q(code__iexact=code) | Q(barcode__iexact=code), is_active=True
         )
         .exclude(location_id=location.pk)
         .exists()
@@ -155,7 +173,7 @@ def create_location_alias(
         .exclude(pk=location.pk)
         .exists()
         or StorageLocationAlias.objects.filter(
-            Q(code__iexact=barcode) | Q(barcode__iexact=barcode)
+            Q(code__iexact=barcode) | Q(barcode__iexact=barcode), is_active=True
         )
         .exclude(location_id=location.pk)
         .exists()
@@ -170,6 +188,16 @@ def create_location_alias(
         kind=kind,
         created_by=by,
     )
+
+
+def _retire_aliases_claimed_by_current_identity(*, code: str, barcode: str | None) -> None:
+    """Навсегда убрать повторно выданный historical address из operational lookup."""
+    claimed = Q(code__iexact=code) | Q(barcode__iexact=code)
+    if barcode:
+        claimed |= Q(code__iexact=barcode) | Q(barcode__iexact=barcode)
+    StorageLocationAlias.objects.select_for_update().filter(
+        is_active=True
+    ).filter(claimed).update(is_active=False)
 
 
 def location_code_at(location: StorageLocation | None, moment) -> str:
@@ -372,6 +400,7 @@ def _persist_location_rename(
     updates = {"code": new_code}
     if new_barcode is not None:
         updates["barcode"] = new_barcode
+    _retire_aliases_claimed_by_current_identity(code=new_code, barcode=new_barcode)
     create_location_alias(
         location,
         code=old_code,
@@ -388,9 +417,9 @@ def _persist_location_rename(
     promoted_filter = Q(code__iexact=new_code)
     if new_barcode is not None:
         promoted_filter |= Q(barcode__iexact=new_barcode)
-    StorageLocationAlias.objects.filter(location=location).filter(
+    StorageLocationAlias.objects.filter(location=location, is_active=True).filter(
         promoted_filter
-    ).delete()
+    ).update(is_active=False)
     StorageLocation.objects.filter(pk=location.pk).update(**updates)
     StorageLocationRenameHistory.objects.create(
         location=location,
@@ -436,10 +465,29 @@ def rename_storage_location(
         if is_auto_location_barcode(old_barcode, old_code)
         else None
     )
+    target_identity = Q(code__iexact=normalized_code) | Q(
+        barcode__iexact=normalized_code
+    )
+    if new_barcode:
+        target_identity |= Q(code__iexact=new_barcode) | Q(
+            barcode__iexact=new_barcode
+        )
+    list(
+        StorageLocation.objects.select_for_update()
+        .filter(target_identity)
+        .exclude(pk=locked_location.pk)
+        .order_by("pk")
+    )
+    list(
+        StorageLocationAlias.objects.select_for_update()
+        .filter(target_identity, is_active=True)
+        .order_by("pk")
+    )
     _assert_location_identity_available(
         code=normalized_code,
         barcode=new_barcode,
         exclude_location_id=locked_location.pk,
+        allow_alias_reclaim=True,
     )
 
     try:

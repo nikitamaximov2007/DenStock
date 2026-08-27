@@ -146,7 +146,7 @@ def build_storage_address_v2_plan(raw_mapping: dict) -> AddressMigrationPlan:
     mapping, mapping_conflicts = _normalize_mapping(raw_mapping)
     plan = AddressMigrationPlan(mapping=mapping, conflicts=mapping_conflicts)
     locations = list(StorageLocation.objects.all().order_by("pk"))
-    aliases = list(StorageLocationAlias.objects.all().order_by("pk"))
+    aliases = list(StorageLocationAlias.objects.filter(is_active=True).order_by("pk"))
     locks = list(
         StockLocationLock.objects.filter(released_at__isnull=True).order_by("pk")
     )
@@ -351,7 +351,11 @@ def apply_storage_address_v2_plan(
         raise StorageAddressMigrationError("Address V2 plan содержит blockers.")
     with transaction.atomic():
         list(StorageLocation.objects.select_for_update().order_by("pk"))
-        list(StorageLocationAlias.objects.select_for_update().order_by("pk"))
+        list(
+            StorageLocationAlias.objects.select_for_update()
+            .filter(is_active=True)
+            .order_by("pk")
+        )
         list(
             StockLocationLock.objects.select_for_update()
             .filter(released_at__isnull=True)

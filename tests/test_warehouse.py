@@ -327,6 +327,113 @@ def renamed_inventory(db, make_user):
     }
 
 
+def test_reuses_retired_historical_code_without_moving_stock(db, make_user):
+    admin = make_user("storage-code-reuse-admin", is_superuser=True)
+    supplier = Supplier.objects.create(name="Поставка для повторного кода")
+    category = Category.objects.create(name="Повторное использование ячеек")
+    unit = Unit.objects.get(name="Штука")
+    location_a = create_location("S03-D02-C07", name="Ячейка A")
+    location_b = create_location("S03-D02-C08", name="Ячейка B")
+    part_a = PartType.objects.create(
+        name="Деталь A",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    part_b = PartType.objects.create(
+        name="Деталь B",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    line_a = _finalized_line(supplier, part_a, admin, quantity="2")
+    line_b = _finalized_line(supplier, part_b, admin, quantity="3")
+    lot_a = create_stock_lot(line_a, location_a, Decimal("2"))
+    lot_b = create_stock_lot(line_b, location_b, Decimal("3"))
+    receive_stock_lot(lot_a, by=admin)
+    receive_stock_lot(lot_b, by=admin)
+    movements_before = StockMovement.objects.count()
+
+    rename_storage_location(
+        location_a,
+        new_code="S03-D02-C10",
+        expected_code="S03-D02-C07",
+        by=admin,
+    )
+    old_alias_a = StorageLocationAlias.objects.get(
+        location=location_a, code="S03-D02-C07"
+    )
+    assert old_alias_a.is_active is True
+
+    rename_storage_location(
+        location_b,
+        new_code="S03-D02-C07",
+        expected_code="S03-D02-C08",
+        by=admin,
+    )
+
+    location_a.refresh_from_db()
+    location_b.refresh_from_db()
+    lot_a.refresh_from_db()
+    lot_b.refresh_from_db()
+    old_alias_a.refresh_from_db()
+    assert location_a.code == "S03-D02-C10"
+    assert location_b.code == "S03-D02-C07"
+    assert (lot_a.location_id, lot_a.quantity) == (location_a.pk, Decimal("2"))
+    assert (lot_b.location_id, lot_b.quantity) == (location_b.pk, Decimal("3"))
+    assert old_alias_a.is_active is False
+    assert resolve_scan("S03-D02-C07").id == location_b.pk
+    assert resolve_scan("S03-D02-C07").is_alias is False
+    assert resolve_scan("LOC:S03-D02-C07").id == location_b.pk
+    assert resolve_scan("LOC:S03-D02-C07").is_alias is False
+    assert resolve_scan("S03-D02-C10").id == location_a.pk
+    assert StockMovement.objects.count() == movements_before
+    assert StorageLocationRenameHistory.objects.filter(
+        location=location_a,
+        old_code="S03-D02-C07",
+        new_code="S03-D02-C10",
+    ).exists()
+
+    with pytest.raises(StorageLocationRenameError, match="Ячейка с таким кодом"):
+        rename_storage_location(
+            location_a,
+            new_code="S03-D02-C07",
+            expected_code="S03-D02-C10",
+            by=admin,
+        )
+    location_a.refresh_from_db()
+    assert location_a.code == "S03-D02-C10"
+
+    rename_storage_location(
+        location_b,
+        new_code="S03-D02-C11",
+        expected_code="S03-D02-C07",
+        by=admin,
+    )
+    assert resolve_scan("S03-D02-C11").id == location_b.pk
+    reused_alias = StorageLocationAlias.objects.get(
+        location=location_b,
+        code="S03-D02-C07",
+        is_active=True,
+    )
+    assert resolve_scan("S03-D02-C07").id == reused_alias.location_id
+    assert resolve_scan("LOC:S03-D02-C07").id == location_b.pk
+    assert StorageLocationAlias.objects.filter(
+        location=location_a,
+        code="S03-D02-C07",
+        is_active=False,
+    ).exists()
+    assert list(
+        StorageLocationRenameHistory.objects.filter(location=location_b)
+        .order_by("pk")
+        .values_list("old_code", "new_code")
+    ) == [
+        ("S03-D02-C08", "S03-D02-C07"),
+        ("S03-D02-C07", "S03-D02-C11"),
+    ]
+    assert StockMovement.objects.count() == movements_before
+
+
 def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_inventory, client):
     data = renamed_inventory
     location = data["location"]
@@ -663,6 +770,34 @@ def test_rename_view_permissions_double_post_and_generic_edit_guard(
     location.refresh_from_db()
     assert location.name == "Новое имя"
     assert location.code == "S04-L03-D01-C05"
+
+
+def test_rename_view_allows_reusing_an_old_alias(make_user, client):
+    admin = make_user("storage-reuse-view-admin", is_superuser=True)
+    location_a = create_location("S03-D02-C07", name="Ячейка A")
+    location_b = create_location("S03-D02-C08", name="Ячейка B")
+    client.force_login(admin)
+
+    first = client.post(
+        reverse("location_rename", args=[location_a.pk]),
+        {"expected_code": "S03-D02-C07", "new_code": "S03-D02-C10"},
+    )
+    second = client.post(
+        reverse("location_rename", args=[location_b.pk]),
+        {"expected_code": "S03-D02-C08", "new_code": "S03-D02-C07"},
+    )
+
+    assert first.status_code == 302
+    assert second.status_code == 302
+    location_a.refresh_from_db()
+    location_b.refresh_from_db()
+    assert location_a.code == "S03-D02-C10"
+    assert location_b.code == "S03-D02-C07"
+    detail_a = client.get(reverse("location_detail", args=[location_a.pk]))
+    detail_b = client.get(reverse("location_detail", args=[location_b.pk]))
+    assert "S03-D02-C07" in detail_a.content.decode()
+    assert "S03-D02-C10" in detail_a.content.decode()
+    assert detail_b.status_code == 200
 
 
 def test_existing_location_edit_keeps_code_and_barcode_server_side(renamed_inventory, client):
