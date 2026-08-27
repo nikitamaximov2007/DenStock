@@ -242,12 +242,9 @@ def counting_scan(request, pk):
     except CountingError as exc:
         messages.error(request, str(exc))
     else:
-        label = {
-            "warehouse": "склад",
-            "brp_catalog": "BRP",
-            "polaris_catalog": "Polaris",
-            "unknown": "неизвестно",
-        }.get(line.source, line.source)
+        # Подпись берётся из самой модели: список источников пополняется, а
+        # словарь рядом с ним отставал и показывал оператору служебное слово.
+        label = line.get_source_display()
         qty = quantity_int(line.quantity_counted)
         messages.success(
             request,

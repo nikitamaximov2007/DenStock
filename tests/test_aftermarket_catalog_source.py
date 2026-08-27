@@ -241,6 +241,22 @@ def test_posting_the_count_puts_the_part_in_the_warehouse(boss):
     assert "S02-D01-C01" in body
 
 
+def test_the_scan_message_speaks_russian(boss):
+    """Оператор читает подпись, а не служебное слово из перечня."""
+    _import(boss)
+    location = get_or_create_location("S02-D01-C03", name="Ячейка 3")
+    session = start_session(location=location, by=boss.user)
+
+    response = boss.post(
+        reverse("counting_scan", args=[session.pk]),
+        {"code": "01.1395.100"},
+        follow=True,
+    )
+    text = " ".join(str(m) for m in response.context["messages"])
+    assert "Каталог аналогов" in text
+    assert "aftermarket_catalog" not in text
+
+
 def test_a_brp_scan_keeps_its_own_source(boss):
     BrpCatalogPart.objects.create(
         material_no="219800345", material_no_norm="219800345", part_desc="BELT DRIVE",
