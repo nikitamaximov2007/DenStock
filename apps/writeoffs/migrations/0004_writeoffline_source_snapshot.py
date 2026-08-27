@@ -4,7 +4,7 @@ import django.db.models.deletion
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("warehouse", "0006_retire_reused_location_aliases"),
+        ("warehouse", "0005_storagelocationrenamehistory_operation_key_and_more"),
         ("writeoffs", "0003_writeoffdocument_business_author"),
     ]
 
