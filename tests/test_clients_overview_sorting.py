@@ -174,7 +174,7 @@ def test_customer_card_dates_are_not_used(data):
     from apps.customers.models import Customer
 
     customer = Customer.objects.create(name="Иванов")
-    assert customer.created_at.date() == timezone.localdate()
+    assert timezone.localdate(customer.created_at) == timezone.localdate()
     moment = _sale(data, "Иванов", days_ago=20)
     row = _rows()[0]
     assert row["last_event"] == moment

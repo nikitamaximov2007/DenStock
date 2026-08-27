@@ -375,13 +375,17 @@ def test_period_report_keeps_each_sale_under_its_own_number(env):
 
     # Отчёт со сдвинутым началом периода: первая продажа отодвинута в прошлое,
     # в окно попадает только вторая - и она обязана остаться WH-200.
-    yesterday = timezone.now() - datetime.timedelta(days=1)
+    yesterday = timezone.make_aware(
+        datetime.datetime.combine(
+            timezone.localdate() - datetime.timedelta(days=1), datetime.time(hour=12)
+        )
+    )
     moved = StockMovement.objects.filter(
         part_type=part, movement_type=StockMovement.MovementType.SALE_LOT
     ).order_by("created_at", "pk").first()
     StockMovement.objects.filter(pk=moved.pk).update(created_at=yesterday)
 
-    rows = historical_customs_rows(date_from=timezone.now().date())
+    rows = historical_customs_rows(date_from=timezone.localdate())
     assert [row["number"] for row in rows] == ["WH-200"]
     assert rows[0]["quantity"] == Decimal("3")
 
