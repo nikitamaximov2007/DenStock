@@ -382,7 +382,7 @@ def test_search_shows_the_calculated_rub_price(boss, rates):
     _import(boss, REAL_SHAPED_ROWS)
     html = boss.get(reverse("part_search") + "?q=14-1001").content.decode()
     expected = _canonical(Decimal("32.74"))
-    assert "Рекомендуемая цена" in html
+    assert "Цена:" in html  # операторский словарь: одна «Цена»
     assert f"{expected:,}".replace(",", " ") in html.replace(" ", " ")
 
 

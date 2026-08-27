@@ -56,6 +56,15 @@
           <a href="{% url 'batch_detail' lot.batch_id %}">{{ lot.batch.number }}</a>
         </td>
       </tr>
+      {% comment %}
+        Цена детали - то, что оператор называет клиенту. Себестоимость лота
+        это учётная величина склада: она остаётся рядом, но под своим именем
+        и только тем, кому открыты закупочные цены.
+      {% endcomment %}
+      <tr>
+        <th>Цена</th>
+        <td>{{ lot.part_type.recommended_price|money_int }} ₽</td>
+      </tr>
       {% if show_costs %}
         <tr>
           <th>Себестоимость за ед.</th>

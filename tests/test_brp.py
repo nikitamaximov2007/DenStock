@@ -572,7 +572,7 @@ def test_inactive_catalog_row_does_not_hide_promoted_warehouse_part(
     assert "На складе" in html
     assert part.name in html
     assert "нет в текущем каталоге" in html
-    assert "Цена клиента (₽)" in html
+    assert "Цена (₽)" in html  # операторский словарь: одна «Цена»
 
 
 def test_brp_preview_when_not_in_warehouse(client, make_user, imported):

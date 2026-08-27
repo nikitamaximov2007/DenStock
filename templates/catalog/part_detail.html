@@ -42,7 +42,7 @@
         <td>{{ part.get_tracking_mode_display }}</td>
       </tr>
       <tr>
-        <th>Рекомендуемая цена</th>
+        <th>Цена</th>
         <td>{{ part.recommended_price|money_int }}</td>
       </tr>
       {% if part.brp_link and not part.brp_link.brp_part.is_current %}
@@ -51,10 +51,11 @@
           <td>Позиция отсутствует в текущем каталоге BRP.</td>
         </tr>
       {% endif %}
-      <tr>
-        <th>Минимальная цена</th>
-        <td>{{ part.min_price|money_int }}</td>
-      </tr>
+      {% comment %}
+        Минимальная цена осталась в модели и в правилах ценообразования, но
+        оператору рядом с ценой продажи не показывается: две цены подряд
+        читаются как противоречие.
+      {% endcomment %}
       <tr>
         <th>Минимальный остаток</th>
         <td>{{ part.min_stock_level }}</td>

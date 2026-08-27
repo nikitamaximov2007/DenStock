@@ -173,7 +173,7 @@
         {% if row.quarantine %}· карантин: {{ row.quarantine|quantity_int }}{% endif %}
         {% if row.receiving %}· на приёмке: {{ row.receiving|quantity_int }}{% endif %}
       </p>
-      <p>Рекомендуемая цена: {{ row.part.recommended_price|money_int }} · минимальная: {{ row.part.min_price|money_int }}</p>
+      <p>Цена: {{ row.part.recommended_price|money_int }}</p>
       {% if row.location_rows %}
         <table class="table table--compact">
           <thead>

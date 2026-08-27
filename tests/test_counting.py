@@ -965,7 +965,7 @@ def test_detail_page_value_breakdown_modal(client, make_user, refs, location, ad
     assert "Всего позиций: 1" in html
     assert "Итоговая стоимость: 11 760 ₽" in html
     # Колонки таблицы разбора.
-    for col in ("Номер", "Название", "Источник", "Кол-во", "Цена клиента", "Расчёт", "Сумма"):
+    for col in ("Номер", "Название", "Источник", "Кол-во", "Цена", "Расчёт", "Сумма"):
         assert col in html
     # Расчёт строки и итог; итог модалки равен значению плитки.
     assert "1 × 11 760 ₽" in html
