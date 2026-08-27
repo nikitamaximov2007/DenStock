@@ -852,7 +852,8 @@ def scanner_move_locations(request: HttpRequest) -> JsonResponse:
         locations = locations.exclude(pk=exclude_id)
     if query:
         alias_location_ids = StorageLocationAlias.objects.filter(
-            Q(code__icontains=query) | Q(barcode__icontains=query)
+            Q(code__icontains=query) | Q(barcode__icontains=query),
+            is_active=True,
         ).values("location_id")
         locations = locations.filter(
             Q(code__icontains=query)

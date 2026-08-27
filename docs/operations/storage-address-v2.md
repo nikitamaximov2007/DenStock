@@ -43,11 +43,16 @@ Legacy-типы и legacy-коды остаются читаемыми для и
 
 ## Aliases и история
 
-При migration или rename старые code и auto-barcode становятся уникальными
-aliases той же `StorageLocation`. Scanner и точный ввод могут найти текущую
-ячейку по старой наклейке, но новый canonical code всегда показывается как
-основной. Alias нельзя создать, если он совпадает с canonical code/barcode
-другой Location или другим alias.
+При migration или rename старые code и auto-barcode становятся aliases той же
+`StorageLocation`. Scanner и точный ввод могут найти текущую ячейку по активному
+старому адресу, но текущий canonical code всегда имеет приоритет.
+
+Historical alias не резервирует namespace навсегда. Если освободившийся код
+выдают другой текущей ячейке, прежний alias атомарно становится inactive и
+больше не участвует в scanner/operator lookup. Сама строка alias и неизменяемая
+`StorageLocationRenameHistory` сохраняются. Когда код освобождается снова,
+старый inactive alias автоматически не оживает; новый redirect создаётся только
+следующим фактическим rename владельца этого кода.
 
 `StorageLocationRenameHistory` хранит old/new code, actor, reason и общий
 operation key. Групповой rename ящика создаёт записи для ящика и каждой ячейки.

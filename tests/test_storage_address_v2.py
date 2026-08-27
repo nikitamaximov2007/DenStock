@@ -571,6 +571,34 @@ def test_postgresql_concurrent_drawer_rename_has_one_atomic_winner(admin):
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.skipif(
     connection.vendor != "postgresql",
+    reason="PostgreSQL current-code uniqueness integration test",
+)
+def test_postgresql_concurrent_single_rename_has_one_atomic_winner(admin):
+    first = create_location("S03-D02-C07")
+    second = create_location("S03-D02-C08")
+
+    def rename(location):
+        return _captured_call(
+            rename_storage_location,
+            location,
+            new_code="S03-D02-C09",
+            expected_code=location.code,
+            by=admin,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(rename, (first, second)))
+
+    assert sum(isinstance(result, StorageLocation) for result in results) == 1
+    assert sum(isinstance(result, StorageLocationRenameError) for result in results) == 1
+    assert StorageLocation.objects.filter(code="S03-D02-C09").count() == 1
+    assert StorageLocationRenameHistory.objects.count() == 1
+    assert StorageLocationAlias.objects.filter(is_active=True).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.skipif(
+    connection.vendor != "postgresql",
     reason="PostgreSQL row-lock integration test",
 )
 def test_postgresql_concurrent_address_mapping_has_one_atomic_winner(admin):

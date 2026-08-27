@@ -128,7 +128,7 @@ def build_drawer_rename_plan(drawer: StorageLocation, new_number) -> DrawerRenam
         raise StorageLocationRenameError("Новый номер совпадает с текущим номером ящика.")
 
     children = list(drawer.children.all().order_by("code", "pk"))
-    aliases = list(StorageLocationAlias.objects.all().order_by("pk"))
+    aliases = list(StorageLocationAlias.objects.filter(is_active=True).order_by("pk"))
     affected_ids = {drawer.pk, *(child.pk for child in children)}
     locks = list(
         StockLocationLock.objects.filter(
@@ -275,7 +275,11 @@ def rename_storage_drawer(
                 .filter(pk__in=[drawer.parent_id, *affected_ids])
                 .order_by("pk")
             )
-            list(StorageLocationAlias.objects.select_for_update().order_by("pk"))
+            list(
+                StorageLocationAlias.objects.select_for_update()
+                .filter(is_active=True)
+                .order_by("pk")
+            )
             list(
                 StockLocationLock.objects.select_for_update()
                 .filter(location_id__in=affected_ids, released_at__isnull=True)

@@ -46,7 +46,8 @@ class StorageLocationRenameHistoryAdmin(admin.ModelAdmin):
 
 @admin.register(StorageLocationAlias)
 class StorageLocationAliasAdmin(admin.ModelAdmin):
-    list_display = ("code", "barcode", "location", "kind", "created_at")
+    list_display = ("code", "barcode", "location", "kind", "is_active", "created_at")
+    list_filter = ("is_active", "kind")
     list_select_related = ("location", "created_by")
     search_fields = ("code", "barcode", "location__code")
     readonly_fields = (
@@ -54,6 +55,7 @@ class StorageLocationAliasAdmin(admin.ModelAdmin):
         "code",
         "barcode",
         "kind",
+        "is_active",
         "created_by",
         "created_at",
     )
