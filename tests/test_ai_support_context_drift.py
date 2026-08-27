@@ -136,9 +136,15 @@ def test_the_knowledge_mentions_the_permission_on_money():
 
 
 def test_the_knowledge_uses_the_same_name_for_the_catalog_price():
+    """Поддержка называет цену так же, как её называет экран оператора."""
+    from apps.catalog.forms import ManualPartForm
+
     body = text_of("pricing.md")
-    assert "Рекомендуемая цена" in body
+    label = ManualPartForm().fields["price"].label.split(",")[0]
+    assert f"«{label}»" in body
+    assert "Рекомендуемая цена" not in body, "вернулось прежнее название"
     assert "Цена продажи за ед. (₽)" in body, "цена строки продажи должна остаться отдельной"
+    assert "Себестоимость" in body, "разницу с себестоимостью надо объяснить"
 
 
 # --- Общая защита от расхождения --------------------------------------------------

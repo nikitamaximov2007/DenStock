@@ -400,7 +400,7 @@
 | Показатель | Где хранится |
 |---|---|
 | Себестоимость (landed) | `BatchLine.landed_unit_cost_rub` → заморожена в `PartItem`/`StockLot.unit_cost_rub` |
-| Рекомендуемая цена | `PartType.recommended_price` |
+| Цена (в интерфейсе) | `PartType.recommended_price` |
 | Минимальная цена | `PartType.min_price` |
 | Фактическая цена | `SaleLine.unit_price` / `InstallationLine.price_charged` |
 | Скидка | `Sale.discount_total`, `SaleLine.discount` |
