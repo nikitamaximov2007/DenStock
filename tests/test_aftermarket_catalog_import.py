@@ -86,7 +86,15 @@ def test_known_dealer_format_is_detected_previewed_and_applied_without_stock(bos
     assert entry.supplier_sku == "00128006"
     assert entry.msrp_usd == Decimal("101.95")
     assert entry.dealer_cost_usd == Decimal("63.31")
-    assert entry.part.recommended_price is None
+    # Дилерская цена поставщика становится рублёвой ценой клиента той же
+    # формулой, что и оптовая цена BRP: своей арифметики у аналогов нет.
+    from apps.brp.pricing import customer_price_rub
+    from apps.catalog.services import get_current_price_settings
+
+    pricing = get_current_price_settings(create=False)
+    assert entry.part.recommended_price == customer_price_rub(
+        entry.dealer_cost_usd, pricing.current_usd_rate, pricing.brp_markup_percent
+    )
     assert entry.part.numbers.get(kind=PartNumber.Kind.ARTICLE).value == "SM-12750"
     assert entry.part.numbers.get(kind=PartNumber.Kind.INTERNAL_REF).value == "00128006"
     assert stock_snapshot() == before
