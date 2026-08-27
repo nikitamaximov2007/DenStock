@@ -195,8 +195,8 @@ def test_a_real_write_off_moves_stock_and_records_why(env):
     assert movement.unit_cost_rub == Decimal("100.00")  # себестоимость лота
 
 
-def test_a_completed_write_off_cannot_be_cancelled(env):
-    """Проведённый документ склада неизменяем - и дважды тоже."""
+def test_cancelling_a_write_off_returns_the_unit_exactly_once(env):
+    """Отмена возвращает ровно списанное; вторая отмена ничего не добавляет."""
     from apps.writeoffs.services import cancel_write_off
 
     part = _part(env)
@@ -208,13 +208,17 @@ def test_a_completed_write_off_cannot_be_cancelled(env):
     lot.refresh_from_db()
     assert lot.quantity == Decimal("4")
 
-    for _ in range(2):
-        with pytest.raises(WriteOffError):
-            cancel_write_off(document, by=env["admin"])
-        lot.refresh_from_db()
-        assert lot.quantity == Decimal("4")  # склад не шелохнулся ни разу
+    cancel_write_off(document, by=env["admin"])
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("5")  # единица вернулась в свой лот
+    assert lot.location_id == env["cell"].pk  # и в свою ячейку
+    assert available_quantity(part) == Decimal("5")
+
+    cancel_write_off(document, by=env["admin"])
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("5")  # вторая отмена не удваивает возврат
     document.refresh_from_db()
-    assert document.status == WriteOffDocument.Status.COMPLETED
+    assert document.status == WriteOffDocument.Status.CANCELED
 
 
 def test_cancelling_a_draft_is_idempotent(env):
