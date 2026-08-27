@@ -74,8 +74,13 @@ def available_quantity(part) -> Decimal:
         StockLot.objects.filter(part_type=part, status=StockLot.Status.AVAILABLE)
         .only("pk", "quantity")
     )
+    # active_reserved_for_lots возвращает ТОЛЬКО лоты, на которых есть бронь.
+    # Обращение по ключу роняло экран на первом же лоте без брони - то есть
+    # почти всегда: у обычного лота брони нет, и это норма, а не исключение.
     reserved = active_reserved_for_lots(lots)
-    bulk = sum((lot.quantity - reserved[lot.pk] for lot in lots), Decimal("0"))
+    bulk = sum(
+        (lot.quantity - reserved.get(lot.pk, Decimal("0")) for lot in lots), Decimal("0")
+    )
     items = list(
         PartItem.objects.filter(part_type=part, status=PartItem.Status.AVAILABLE).only("pk")
     )
