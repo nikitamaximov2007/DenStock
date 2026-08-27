@@ -15,6 +15,8 @@ from apps.catalog.models import (
     PartType,
     normalize_number,
 )
+from apps.catalog_import.origin import LABELS as ORIGIN_LABELS
+from apps.catalog_import.origin import aftermarket_part_ids, catalog_origin
 from apps.inventory.models import PartItem, StockBalance
 from apps.inventory.movement import LiveStockRow, live_stock_rows
 from apps.inventory.presentation import (
@@ -88,6 +90,14 @@ class PartLookupCandidate:
     items: list = field(default_factory=list)
     lots: list = field(default_factory=list)
     source: str = "primary"
+    # Откуда деталь известна складу. Пусто у обычной складской карточки:
+    # заполняется только там, где иначе каталожная позиция читалась бы как
+    # лежащая в ячейке.
+    catalog_origin: str = ""
+
+    @property
+    def catalog_origin_label(self) -> str:
+        return ORIGIN_LABELS.get(self.catalog_origin, "")
 
     @property
     def match_label(self) -> str:
@@ -294,9 +304,12 @@ def _candidates(
     ):
         analog_for.setdefault(analog_id, []).append(original_name)
 
+    aftermarket_ids = aftermarket_part_ids(part_pks)
+
     result = []
     for part in parts:
         locations = stock_by_part.get(part.pk, [])
+        physical = sum((row.physical for row in locations), DEC0)
         candidate_source = (
             source.get(part.pk, MatchSource.ALIAS)
             if isinstance(source, dict)
@@ -323,7 +336,7 @@ def _candidates(
                 },
                 locations=[row.location.code for row in locations],
                 location_rows=locations,
-                physical=sum((row.physical for row in locations), DEC0),
+                physical=physical,
                 available=sum((row.available for row in locations), DEC0),
                 reserved=sum((row.reserved for row in locations), DEC0),
                 quarantine=sum((row.quarantine for row in locations), DEC0),
@@ -333,6 +346,10 @@ def _candidates(
                 analogs=[number.value for number in part.analog_numbers_for_display],
                 analog_for=analog_for.get(part.pk, []),
                 source="balance" if part.pk in balance_part_ids else "primary",
+                catalog_origin=catalog_origin(
+                    is_aftermarket=part.pk in aftermarket_ids, has_stock=physical > DEC0
+                )
+                or "",
             )
         )
     return result

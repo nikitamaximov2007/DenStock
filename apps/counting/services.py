@@ -15,6 +15,11 @@ from apps.brp.models import BrpCatalogPart, BrpPricingSettings
 from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import PartType, normalize_number
+from apps.catalog_import.origin import (
+    AFTERMARKET_CATALOG,
+    aftermarket_part_ids,
+    has_physical_stock,
+)
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
 from apps.inventory.models import NumberSequence
 from apps.polaris.models import PolarisCatalogPart, PolarisPricingSettings
@@ -222,6 +227,21 @@ def _warehouse_part_by_scan(norm: str, raw: str) -> PartType | None:
     return lookup.candidate.part if lookup.found else None
 
 
+def _part_source(part) -> str:
+    """«На складе» - только когда деталь действительно где-то лежит.
+
+    Карточка из каталога аналогов приходит без остатка: её никто не принимал.
+    Пока пересчёт не создаст настоящий остаток, источник у такой строки -
+    каталог, а не склад. Карточки BRP и заведённые вручную сюда не попадают:
+    признак берётся из записи каталога аналогов, а не из отсутствия остатка.
+    """
+    if has_physical_stock(part.pk):
+        return "warehouse"
+    if aftermarket_part_ids([part.pk]):
+        return AFTERMARKET_CATALOG
+    return "warehouse"
+
+
 def _match(norm: str, raw: str):
     """Find match: source, warehouse_part, brp_part, polaris_part, display, price."""
     warehouse_lookup = resolve_part_lookup(raw)
@@ -236,7 +256,7 @@ def _match(norm: str, raw: str):
         )
     part = warehouse_lookup.candidate.part if warehouse_lookup.found else None
     if part is not None:
-        return ("warehouse", part, None, None, part.name, part.recommended_price)
+        return (_part_source(part), part, None, None, part.name, part.recommended_price)
 
     brp = find_brp_by_number(norm)
     polaris = find_polaris_by_number(norm)
@@ -628,7 +648,7 @@ def resolve_unknown_to_part(line: InventoryCountingLine, part: PartType) -> None
     line.warehouse_part = part
     line.brp_catalog_part = None
     line.polaris_catalog_part = None
-    line.source = InventoryCountingLine.Source.WAREHOUSE
+    line.source = _part_source(part)
     line.display_name = part.name[:255]
     line.final_customer_price_rub = part.recommended_price
     line.save()
@@ -761,6 +781,11 @@ def post_session(session: InventoryCountingSession, *, by=None) -> Receipt:
         receipt = convert_to_receipt(session, by=by)
         session.refresh_from_db()
     post_receipt(receipt, by=by)
+    # Остаток появился по адресу сессии: строки, известные до этого только по
+    # каталогу аналогов, теперь действительно лежат в ячейке.
+    session.lines.filter(source=InventoryCountingLine.Source.AFTERMARKET).update(
+        source=InventoryCountingLine.Source.WAREHOUSE
+    )
     session.status = InventoryCountingSession.Status.POSTED
     session.posted_at = timezone.now()
     # Layer 34: пользовательский документ пересчёта — «Инвентаризация» с

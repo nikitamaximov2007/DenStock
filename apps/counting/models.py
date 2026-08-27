@@ -140,6 +140,9 @@ class InventoryCountingLine(models.Model):
 
     class Source(models.TextChoices):
         WAREHOUSE = "warehouse", "На складе"
+        # Карточка есть, остатка нет: деталь известна только по каталогу
+        # аналогов. «На складе» здесь было бы неправдой.
+        AFTERMARKET = "aftermarket_catalog", "Каталог аналогов"
         BRP = "brp_catalog", "BRP-каталог"
         POLARIS = "polaris_catalog", "Polaris-каталог"
         UNKNOWN = "unknown", "Неизвестно"

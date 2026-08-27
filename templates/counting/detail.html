@@ -181,6 +181,8 @@
             <td>
               {% if line.source == "warehouse" %}
                 <span class="pill pill--success">На складе</span>
+              {% elif line.source == "aftermarket_catalog" %}
+                <span class="pill pill--info">Каталог аналогов</span>
               {% elif line.source == "brp_catalog" %}
                 <span class="pill pill--info">BRP-каталог</span>
               {% elif line.source == "polaris_catalog" %}

@@ -11,6 +11,12 @@ from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, FormView, ListView, UpdateView
 
 from apps.accounts.permissions import ManagePartsMixin
+from apps.catalog_import.origin import (
+    aftermarket_part_ids,
+    catalog_origin,
+    catalog_origin_label,
+    has_physical_stock,
+)
 from apps.core.forms import ImageUploadForm
 from apps.core.images import add_image, deactivate_image, set_primary
 from apps.core.part_lookup import resolve_part_lookup
@@ -94,6 +100,17 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         ctx["numbers"] = self.object.numbers.all()
         ctx["barcodes"] = self.object.barcodes.all()
         ctx["compatibilities"] = self.object.compatibilities.select_related("vehicle_model")
+        # Карточка из каталога аналогов ничем не отличается на вид от складской:
+        # имя, производитель, артикул, цена. Разница в том, лежит ли деталь
+        # где-нибудь на самом деле, и об этом карточка говорит прямо.
+        is_aftermarket = bool(aftermarket_part_ids([self.object.pk]))
+        in_stock = has_physical_stock(self.object.pk)
+        ctx["catalog_origin"] = catalog_origin(
+            is_aftermarket=is_aftermarket, has_stock=in_stock
+        )
+        ctx["catalog_origin_label"] = catalog_origin_label(
+            is_aftermarket=is_aftermarket, has_stock=in_stock
+        )
         ctx.update(_analog_context(self.object, self.request))
         images = self.object.images.filter(is_active=True)
         ctx["images"] = images
