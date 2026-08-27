@@ -315,6 +315,7 @@ def complete_cart(
     if locked.status != model.Status.DRAFT:
         raise ActionError("Документ уже проведён или отменён — провести повторно нельзя.")
     customer_comment = (customer_comment or "").strip()
+    customer = customer if customer is not None else locked.customer
     if customer is not None:
         # Карточка, а не свободный текст, является личностью клиента. Имя и
         # телефон ниже становятся документным снимком через тот же обычный

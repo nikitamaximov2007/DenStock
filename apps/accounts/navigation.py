@@ -337,6 +337,16 @@ def _warehouse_tabs(user, path):
                 and not path.startswith("/inventory/actions/report/"),
             )
         )
+    if user.can_manage_sales or user.can_manage_repairs or user.can_manage_reservations:
+        tabs.append(
+            _tab(
+                "Клиенты",
+                reverse("customer_list"),
+                sidebar_key="customers",
+                icon="users",
+                active=path.startswith("/sales/customers/"),
+            )
+        )
     if user.can_manage_inventory or user.is_viewer:
         tabs.append(
             _tab(
