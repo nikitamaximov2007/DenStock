@@ -149,6 +149,32 @@ def _price(value: object, label: str) -> Decimal | None:
         raise AftermarketCatalogError(f"{label}: цена слишком велика.") from exc
 
 
+PRICE_SHEET = "priceupdate"
+
+
+def _price_sheet_name(names) -> str:
+    """Имя листа с прайсом среди листов книги.
+
+    Поставщики называют вкладку своим именем: «diorlight priceupdate»,
+    «priceupdate 2026». Ключевое слово остаётся, поэтому лист ищется по
+    вхождению, а не по точному совпадению.
+
+    Угадывать нельзя: если подходящих листов несколько, книга отклоняется с
+    перечислением - выбрать нужный должен человек, а не импортёр.
+    """
+    matches = [name for name in names if PRICE_SHEET in _header_key(name).replace(" ", "")]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise AftermarketCatalogError(
+            "В каталоге aftermarket нужен лист priceupdate. Найдены листы: "
+            + (", ".join(names) or "ни одного")
+        )
+    raise AftermarketCatalogError(
+        "В книге несколько листов с прайсом, нужен ровно один: " + ", ".join(matches)
+    )
+
+
 def _mapping(cells) -> dict[str, int]:
     found: dict[str, int] = {}
     for index, cell in enumerate(cells):
@@ -180,9 +206,7 @@ def _read(path: Path) -> tuple[str, list[IncomingRow], Plan]:
     except Exception as exc:  # noqa: BLE001
         raise AftermarketCatalogError(f"Файл не читается как Excel: {exc}") from exc
     try:
-        if "priceupdate" not in book.sheetnames:
-            raise AftermarketCatalogError("В каталоге aftermarket нужен лист priceupdate.")
-        sheet = book["priceupdate"]
+        sheet = book[_price_sheet_name(book.sheetnames)]
         rows = sheet.iter_rows()
         try:
             header_cells = next(rows)

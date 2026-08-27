@@ -281,14 +281,23 @@ def detect_catalog(path: Path, selected: str) -> str:
 
         book = load_workbook(path, read_only=True, data_only=True)
         try:
-            if "priceupdate" not in book.sheetnames:
+            # Поставщик приписывает к вкладке своё имя («diorlight priceupdate»),
+            # поэтому лист ищется по вхождению ключевого слова. Если подходящих
+            # листов несколько, книгу всё равно ведём в aftermarket: там она
+            # получит внятный отказ с перечислением, а не чужую ошибку разбора.
+            candidates = [
+                name for name in book.sheetnames
+                if "priceupdate" in " ".join(str(name).lower().split()).replace(" ", "")
+            ]
+            if not candidates:
                 return selected
-            headers = {
-                " ".join(str(cell.value or "").replace("\xa0", " ").lower().split())
-                for cell in next(book["priceupdate"].iter_rows())
-            }
-            if {"manufacturer", "manufacturer number", "description"} <= headers:
-                return AFTERMARKET
+            for name in candidates:
+                headers = {
+                    " ".join(str(cell.value or "").replace("\xa0", " ").lower().split())
+                    for cell in next(book[name].iter_rows())
+                }
+                if {"manufacturer", "manufacturer number", "description"} <= headers:
+                    return AFTERMARKET
         finally:
             book.close()
     except Exception:  # The selected adapter renders the user-facing parse error.
