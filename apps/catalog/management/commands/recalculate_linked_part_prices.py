@@ -11,8 +11,8 @@ from apps.catalog.services import (
 
 class Command(BaseCommand):
     help = (
-        "Пересчитать текущие рекомендованные цены BRP/Polaris из оптовых цен. "
-        "По умолчанию только dry-run."
+        "Пересчитать текущие рекомендованные цены BRP/Polaris/аналогов из "
+        "оптовых цен. По умолчанию только dry-run."
     )
 
     def add_arguments(self, parser):
@@ -23,14 +23,14 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--catalog",
-            choices=("all", "brp", "polaris"),
+            choices=("all", "brp", "polaris", "aftermarket"),
             default="all",
-            help="Ограничить пересчёт одним каталогом (по умолчанию оба).",
+            help="Ограничить пересчёт одним каталогом (по умолчанию все).",
         )
 
     def handle(self, *args, **options):
         catalogs = (
-            frozenset({"brp", "polaris"})
+            frozenset({"brp", "polaris", "aftermarket"})
             if options["catalog"] == "all"
             else frozenset({options["catalog"]})
         )
@@ -48,8 +48,10 @@ class Command(BaseCommand):
         write(f"Курс USD: {pricing.current_usd_rate}")
         write(f"Наценка BRP: {pricing.brp_markup_percent}%")
         write(f"Наценка Polaris: {pricing.polaris_markup_percent}%")
+        write(f"Наценка для аналогов: {pricing.brp_markup_percent}% (та же, что у BRP)")
         write(f"Расчётных BRP-связей: {plan.brp_links}")
         write(f"Расчётных Polaris-связей: {plan.polaris_links}")
+        write(f"Карточек каталога аналогов: {plan.aftermarket_links}")
         write(f"Ручных цен пропущено: {plan.skipped_manual}")
         write(f"Без оптовой цены, текущая цена сохранена: {plan.skipped_without_wholesale}")
         write(f"Без изменения: {plan.unchanged}")

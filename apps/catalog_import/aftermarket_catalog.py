@@ -311,6 +311,34 @@ def _source_index(records: list[IncomingRow], manufacturers: dict[str, Manufactu
     return {(item.manufacturer_id, item.normalized_manufacturer_number): item for item in rows}
 
 
+def _customer_price_rub(dealer_cost_usd):
+    """Цена клиента в рублях из дилерской цены поставщика.
+
+    Дилерская цена аналога - та же оптовая цена в долларах, что и у BRP,
+    поэтому расчёт идёт через единственную в проекте формулу
+    `apps.brp.pricing.customer_price_rub` по текущему курсу и наценке.
+    Своей арифметики у аналогов нет: наценка магазина одна на всех.
+
+    Ни MSRP, ни описание, ни SKU ценой не становятся. Если дилерской цены
+    нет или она неположительная, цена клиента остаётся неизвестной - пустая
+    клетка честнее выдуманного нуля.
+    """
+    from apps.brp.models import BrpPricingSettings
+    from apps.brp.pricing import customer_price_rub
+    from apps.warehouse.models import ValuationSettings
+
+    if dealer_cost_usd is None:
+        return None
+    price = customer_price_rub(
+        dealer_cost_usd,
+        ValuationSettings.get().current_usd_rate,
+        BrpPricingSettings.get().brp_markup_percent,
+    )
+    if price is None or price <= 0:
+        return None
+    return price
+
+
 def _chunks(values, size: int = 500):
     for start in range(0, len(values), size):
         yield values[start : start + size]
@@ -456,6 +484,7 @@ def apply_file(path) -> dict:
                 manufacturer=manufacturer,
                 unit=unit,
                 tracking_mode=PartType.TrackingMode.BULK,
+                recommended_price=_customer_price_rub(record.dealer_cost_usd),
             )
             for record, manufacturer in chunk
         ]
@@ -522,9 +551,19 @@ def apply_file(path) -> dict:
             if getattr(entry, field_name) != value:
                 setattr(entry, field_name, value)
                 changed = True
+        part_changed = False
         if entry.part.name != record.description or entry.part.description != record.description:
             entry.part.name = record.description
             entry.part.description = record.description
+            part_changed = True
+        # Цена клиента следует за дилерской ценой поставщика. Отсутствующая
+        # дилерская цена уже стоящую цену НЕ стирает: неполный прайс не должен
+        # обнулять подсказку продавцу на заведённой карточке.
+        price = _customer_price_rub(entry.dealer_cost_usd)
+        if price is not None and entry.part.recommended_price != price:
+            entry.part.recommended_price = price
+            part_changed = True
+        if part_changed:
             updated_cards.append(entry.part)
             changed = True
         if changed:
@@ -548,7 +587,9 @@ def apply_file(path) -> dict:
                 sku.normalized_value = normalize_number(record.supplier_sku)
                 sku_updates.append(sku)
     if updated_cards:
-        PartType.objects.bulk_update(updated_cards, ["name", "description"])
+        PartType.objects.bulk_update(
+            updated_cards, ["name", "description", "recommended_price"], batch_size=1000
+        )
     if updated_entries:
         AftermarketCatalogPart.objects.bulk_update(
             updated_entries,

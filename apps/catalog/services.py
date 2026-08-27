@@ -5,6 +5,7 @@ from django.db import transaction
 
 from apps.brp.models import BrpPartLink, BrpPricingSettings
 from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
+from apps.brp.pricing import customer_price_rub
 from apps.counting.services import find_brp_price_source
 from apps.inventory.presentation import EXACT_NUMBER_KINDS
 from apps.polaris.models import PolarisPartLink, PolarisPricingSettings
@@ -104,6 +105,7 @@ class LinkedPriceRefreshPlan:
     skipped_manual: int = 0
     brp_links: int = 0
     polaris_links: int = 0
+    aftermarket_links: int = 0
 
     @property
     def updated(self) -> int:
@@ -118,8 +120,8 @@ def plan_linked_part_price_refresh(
     catalogs: frozenset[str] | None = None,
 ) -> LinkedPriceRefreshPlan:
     """Build a dry-run-safe plan using current wholesale catalog prices."""
-    selected_catalogs = catalogs or frozenset({"brp", "polaris"})
-    unknown = selected_catalogs - {"brp", "polaris"}
+    selected_catalogs = catalogs or frozenset({"brp", "polaris", "aftermarket"})
+    unknown = selected_catalogs - {"brp", "polaris", "aftermarket"}
     if unknown:
         raise ValueError(f"Неизвестный каталог для пересчёта: {', '.join(sorted(unknown))}")
 
@@ -167,7 +169,48 @@ def plan_linked_part_price_refresh(
                 continue
             link.part.recommended_price = recommended
             plan.parts_to_update[link.part_id] = link.part
+
+    if "aftermarket" in selected_catalogs:
+        _plan_aftermarket_prices(plan, usd_rate=usd_rate, markup=brp_markup)
     return plan
+
+
+def _plan_aftermarket_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> None:
+    """Цена клиента для карточек каталога аналогов из дилерской цены.
+
+    Дилерская цена поставщика - это та же оптовая цена в долларах, что и у
+    BRP, поэтому она идёт через ту же формулу `customer_price_rub`. Своей
+    арифметики у аналогов нет и быть не должно: наценка магазина одна.
+
+    Надбавка за винтажный склад сюда не применяется - это правило поставщика
+    BRP, у каталога аналогов такого понятия нет.
+
+    Отличать «цену из каталога» от «цены, вписанной руками» у аналогов нечем:
+    в отличие от BRP и Polaris у карточки нет поля происхождения цены. Значит,
+    владельцем цены остаётся импортёр, и пересчёт её обновляет.
+    """
+    from apps.catalog_import.models import AftermarketCatalogPart
+
+    entries = (
+        AftermarketCatalogPart.objects.select_related("part")
+        .only("id", "dealer_cost_usd", "part__id", "part__recommended_price")
+        .iterator(chunk_size=2000)
+    )
+    for entry in entries:
+        plan.aftermarket_links += 1
+        price = customer_price_rub(entry.dealer_cost_usd, usd_rate, markup)
+        if price is None or price <= 0:
+            # Нет дилерской цены или она неположительная: цену не выдумываем и
+            # уже стоящую не стираем - ровно как в ветках BRP и Polaris.
+            plan.skipped_without_wholesale += 1
+            continue
+        plan.calculated_links += 1
+        recommended = money(price)
+        if entry.part.recommended_price == recommended:
+            plan.unchanged += 1
+            continue
+        entry.part.recommended_price = recommended
+        plan.parts_to_update[entry.part_id] = entry.part
 
 
 def refresh_linked_part_prices(
@@ -192,7 +235,11 @@ def refresh_linked_part_prices(
     if plan.parts_to_update:
         from apps.catalog.models import PartType
 
-        PartType.objects.bulk_update(plan.parts_to_update.values(), ["recommended_price"])
+        # Пачками: каталог аналогов насчитывает больше ста тысяч карточек, и
+        # одним запросом такой bulk_update упирается в лимит параметров.
+        PartType.objects.bulk_update(
+            list(plan.parts_to_update.values()), ["recommended_price"], batch_size=1000
+        )
     return plan.updated
 
 
