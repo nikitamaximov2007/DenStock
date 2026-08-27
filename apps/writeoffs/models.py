@@ -105,6 +105,18 @@ class WriteOffLine(models.Model):
     )
     note = models.CharField("Примечание", max_length=255, blank=True)
     written_off_at = models.DateTimeField("Списано (когда)", null=True, blank=True)
+    source_status = models.CharField(
+        "Исходный статус для отмены", max_length=20, blank=True, editable=False
+    )
+    source_location = models.ForeignKey(
+        "warehouse.StorageLocation",
+        verbose_name="Исходная ячейка для отмены",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name="+",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -98,6 +98,11 @@ def write_off_detail(request, pk):
     )
     attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_draft = doc.status == WriteOffDocument.Status.DRAFT
+    is_cancellable = is_draft or (
+        doc.status == WriteOffDocument.Status.COMPLETED
+        and doc.lines.exists()
+        and not doc.lines.filter(Q(source_status="") | Q(source_location__isnull=True)).exists()
+    )
     return render(
         request,
         "writeoffs/write_off_detail.html",
@@ -106,6 +111,7 @@ def write_off_detail(request, pk):
             "lines": lines,
             "can_manage": request.user.can_manage_write_offs,
             "is_draft": is_draft,
+            "is_cancellable": is_cancellable,
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddWriteOffItemForm(),
             "add_lot_form": AddWriteOffLotForm(),
@@ -152,6 +158,7 @@ def write_off_quick(request):
                     scanned_code=q,
                     reason=request.POST.get("reason"),
                     business_author=request.POST.get("business_author"),
+                    quantity=request.POST.get("quantity", "1"),
                     by=request.user,
                 )
             except WriteOffError as exc:

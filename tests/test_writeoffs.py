@@ -14,7 +14,7 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import roles
-from apps.catalog.models import Category, PartType, Unit
+from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
     create_part_items,
@@ -263,6 +263,54 @@ def test_quick_write_off_uses_available_fifo_cost_and_audit(data):
     assert StockMovement.objects.filter(document_id=doc.pk, document_type="write_off").exists()
 
 
+def test_quick_write_off_allocates_requested_bulk_quantity_across_fifo_lots(data):
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, data["loc"], Decimal("3"))
+    receive_stock_lot(second, by=data["admin"])
+
+    doc = quick_write_off(
+        part=data["lot"].part_type,
+        scanned_code="BOLT-ARTICLE",
+        reason="Фактически отсутствуют на складе",
+        business_author="test operator",
+        quantity="6",
+        by=data["admin"],
+    )
+
+    assert doc.status == WriteOffDocument.Status.COMPLETED
+    assert list(doc.lines.order_by("stock_lot_id").values_list("quantity", flat=True)) == [
+        Decimal("5"),
+        Decimal("1"),
+    ]
+    data["lot"].refresh_from_db()
+    second.refresh_from_db()
+    assert data["lot"].quantity == Decimal("0")
+    assert second.quantity == Decimal("2")
+    assert StockMovement.objects.filter(document_id=doc.pk, document_type="write_off").count() == 2
+
+
+def test_quick_write_off_rejects_insufficient_quantity_without_partial_document(data):
+    with pytest.raises(WriteOffError, match="Доступно только 5"):
+        quick_write_off(
+            part=data["lot"].part_type,
+            scanned_code="BOLT-ARTICLE",
+            reason="Брак",
+            business_author="test operator",
+            quantity="6",
+            by=data["admin"],
+        )
+
+    assert WriteOffDocument.objects.count() == 0
+    data["lot"].refresh_from_db()
+    assert data["lot"].quantity == Decimal("5")
+
+
 def test_quick_write_off_respects_reservation_and_requires_author(data):
     reservation = create_reservation(customer_name="Бронь", by=data["admin"])
     add_stock_lot_to_reservation(reservation, data["lot"], Decimal("5"), by=data["admin"])
@@ -284,6 +332,21 @@ def test_quick_write_off_respects_reservation_and_requires_author(data):
             business_author=" ",
             by=data["admin"],
         )
+
+
+def test_quick_write_off_page_renders_for_an_unreserved_bulk_lot(client, data):
+    """A zero-reservation aggregate omits the lot key; the operator page is still 200."""
+    PartNumber.objects.create(
+        part=data["lot"].part_type,
+        value="QA-UNRESERVED-WRITEOFF",
+        kind=PartNumber.Kind.OEM,
+    )
+    client.force_login(data["admin"])
+
+    response = client.get(f"{reverse('write_off_quick')}?q=QA-UNRESERVED-WRITEOFF")
+
+    assert response.status_code == 200
+    assert "Доступно: 5" in response.content.decode()
 
 
 def test_write_off_quarantine_stock_lot(data):
@@ -362,7 +425,7 @@ def test_cannot_write_off_already_written_off(data):
         add_part_item_to_write_off(doc2, data["item_a"], by=data["admin"])
 
 
-def test_completed_document_is_immutable(data):
+def test_completed_document_is_immutable_except_for_its_single_compensating_cancel(data):
     doc = create_write_off(reason=R.DEFECT, by=data["admin"])
     line = add_part_item_to_write_off(doc, data["item_a"], by=data["admin"])
     complete_write_off(doc, by=data["admin"])
@@ -370,8 +433,55 @@ def test_completed_document_is_immutable(data):
         complete_write_off(doc, by=data["admin"])
     with pytest.raises(WriteOffError):
         remove_write_off_line(line, by=data["admin"])
-    with pytest.raises(WriteOffError):
+    cancel_write_off(doc, by=data["admin"])
+    doc.refresh_from_db()
+    data["item_a"].refresh_from_db()
+    assert doc.status == WriteOffDocument.Status.CANCELED
+    assert data["item_a"].status == PartItem.Status.AVAILABLE
+    assert StockMovement.objects.filter(
+        document_id=doc.pk,
+        movement_type=StockMovement.MovementType.WRITE_OFF_CANCEL_ITEM,
+    ).count() == 1
+
+    cancel_write_off(doc, by=data["admin"])
+    assert StockMovement.objects.filter(
+        document_id=doc.pk,
+        movement_type=StockMovement.MovementType.WRITE_OFF_CANCEL_ITEM,
+    ).count() == 1
+
+
+def test_completed_bulk_write_off_cancel_restores_exact_lot_once(data):
+    doc = create_write_off(reason=R.DEFECT, by=data["admin"])
+    add_stock_lot_to_write_off(doc, data["lot"], Decimal("2"), by=data["admin"])
+    complete_write_off(doc, by=data["admin"])
+
+    cancel_write_off(doc, by=data["admin"])
+
+    data["lot"].refresh_from_db()
+    doc.refresh_from_db()
+    assert doc.status == WriteOffDocument.Status.CANCELED
+    assert data["lot"].quantity == Decimal("5")
+    assert data["lot"].status == StockLot.Status.AVAILABLE
+    assert StockMovement.objects.filter(
+        document_id=doc.pk,
+        movement_type=StockMovement.MovementType.WRITE_OFF_CANCEL_LOT,
+        stock_lot=data["lot"],
+    ).count() == 1
+
+
+def test_historical_completed_write_off_without_source_snapshot_is_not_reversed(data):
+    doc = create_write_off(reason=R.DEFECT, by=data["admin"])
+    line = add_stock_lot_to_write_off(doc, data["lot"], Decimal("2"), by=data["admin"])
+    complete_write_off(doc, by=data["admin"])
+    WriteOffLine.objects.filter(pk=line.pk).update(source_status="", source_location=None)
+
+    with pytest.raises(WriteOffError, match="исторического списания"):
         cancel_write_off(doc, by=data["admin"])
+
+    doc.refresh_from_db()
+    data["lot"].refresh_from_db()
+    assert doc.status == WriteOffDocument.Status.COMPLETED
+    assert data["lot"].quantity == Decimal("3")
 
 
 # --- Границы: списание — не продажа / ремонт / возврат / оплата ---------------

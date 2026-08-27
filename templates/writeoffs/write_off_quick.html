@@ -37,6 +37,16 @@
       {% include "partials/_status_block.html" with kind="warning" text="Деталь не найдена в остатках склада." %}
     {% endif %}
     <p>
+      <label for="quick-write-off-quantity">Количество</label>
+      <br>
+      <input id="quick-write-off-quantity"
+             name="quantity"
+             type="text"
+             inputmode="decimal"
+             value="{{ request.POST.quantity|default:'1' }}"
+             required>
+    </p>
+    <p>
       <label for="quick-write-off-author">Автор</label>
       <br>
       <input id="quick-write-off-author"
@@ -47,5 +57,5 @@
     </p>
     <button type="submit" class="btn btn--primary">Списать</button>
   </form>
-  <p class="muted">Одна операция списывает одну отсканированную единицу. Источник и себестоимость выбираются автоматически.</p>
+  <p class="muted">Источник и себестоимость выбираются автоматически. Количественная деталь может быть распределена по нескольким лотам; поштучную списывают по одному серийному номеру.</p>
 {% endblock %}
