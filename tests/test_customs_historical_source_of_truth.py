@@ -15,6 +15,7 @@
 выдачи в ремонт, проведённые не сканером.
 """
 import datetime
+import re
 from decimal import Decimal
 from io import BytesIO
 
@@ -690,7 +691,10 @@ def test_preview_shows_the_saved_version_not_the_current_card(client, env, make_
     html = client.get(reverse("actions_report")).content.decode()
     assert "CANADA" in html  # то, что действовало в момент списания
     assert "AUSTRIA" not in html
-    assert "99" not in html.split("Таможенные данные")[-1][:4000]
+    # Проверяем именно ячейку экспортной таблицы, а не случайную подстроку
+    # в CSRF-токене или URL формы быстрого сохранения.
+    assert re.search(r'<td class="num--qty">\s*10(?:[,.]0+)?\s*</td>', html)
+    assert not re.search(r'<td class="num--qty">\s*99(?:[,.]0+)?\s*</td>', html)
 
 
 def test_excel_carries_the_same_version_the_preview_showed(client, env, make_user):
