@@ -5,6 +5,7 @@
 остаток, повторное проведение, повторная отмена и отмена мультипозиционной
 продажи из любой её журнальной записи.
 """
+
 from decimal import Decimal
 
 import pytest
@@ -57,8 +58,10 @@ def admin(make_user):
 def _lot(part, location, qty, sup, admin, *, unit_cost="100"):
     batch = Batch.objects.create(supplier=sup, shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
-        batch=batch, part_type=part,
-        quantity=Decimal(str(qty)), unit_cost_currency=Decimal(unit_cost),
+        batch=batch,
+        part_type=part,
+        quantity=Decimal(str(qty)),
+        unit_cost_currency=Decimal(unit_cost),
     )
     batch.status = Batch.Status.ACCEPTED
     batch.save(update_fields=["status"])
@@ -81,12 +84,19 @@ def data(db, admin):
         name="Ячейка 2", code="S02-D01-C01", storage_allowed=True, is_active=True
     )
     bolt = PartType.objects.create(
-        name="Болт", category=cat, unit=unit,
-        tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
+        name="Болт",
+        category=cat,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("100"),
     )
     PartNumber.objects.create(part=bolt, value="700100", kind=PartNumber.Kind.OEM)
     return {
-        "sup": sup, "admin": admin, "loc1": loc1, "loc2": loc2, "bolt": bolt,
+        "sup": sup,
+        "admin": admin,
+        "loc1": loc1,
+        "loc2": loc2,
+        "bolt": bolt,
         # Два лота ОДНОЙ детали в ОДНОЙ ячейке: проверяем FIFO-раскладку.
         "lot_a": _lot(bolt, loc1, 3, sup, admin, unit_cost="100"),
         "lot_b": _lot(bolt, loc1, 5, sup, admin, unit_cost="200"),
@@ -241,9 +251,7 @@ def test_cancel_after_sibling_action_already_cancelled(data):
     add_scan(cart, data["bolt"], data["loc2"], quantity=Decimal("1"), by=data["admin"])
     actions = complete_cart(cart, customer_comment="Иванов", by=data["admin"])
 
-    WarehouseAction.objects.filter(pk=actions[0].pk).update(
-        status=WarehouseAction.Status.CANCELLED
-    )
+    WarehouseAction.objects.filter(pk=actions[0].pk).update(status=WarehouseAction.Status.CANCELLED)
     # Документ ещё не сторнирован, поэтому отмена через вторую запись обязана
     # пройти и привести журнал в согласованное состояние.
     cancel_warehouse_action(actions[1], by=data["admin"], reason="доотмена")
@@ -280,13 +288,18 @@ def test_double_submit_of_complete_form_does_not_double_deduct(client, make_user
     client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-            "action_type": "sale", "quantity": "2", "q": "700100",
+            "part_id": data["bolt"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "sale",
+            "quantity": "2",
+            "q": "700100",
         },
     )
+    from apps.customers.models import Customer
+
     payload = {
         "kind": KIND_SALE,
-        "customer_comment": "Иванов",
+        "customer_id": Customer.objects.create(name="Иванов").pk,
         "q": "700100",
         "request_token": "double-submit-token",
     }

@@ -1,7 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Продажи и ремонты по клиентам · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Продажи и ремонты по клиентам</h1>
+  <div class="page-header">
+    <h1 class="page-title">Продажи и ремонты по клиентам</h1>
+    <div class="page-actions">
+      <a class="btn btn--primary"
+         href="{% url 'customer_create' %}?next={{ request.get_full_path|urlencode }}">Создать клиента</a>
+    </div>
+  </div>
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">
     Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
@@ -12,7 +18,11 @@
     DenisStock не хранит и в итог не входит.
     {% if date_sort.active %}
       Порядок: по дате последнего документа,
-      {% if date_sort.newest_first %}сначала новые{% else %}сначала старые{% endif %}
+      {% if date_sort.newest_first %}
+        сначала новые
+      {% else %}
+        сначала старые
+      {% endif %}
       (<a href="{% querystring sort=None direction=None page=1 %}">вернуть по числу документов</a>).
     {% else %}
       Порядок: по числу документов. Нажмите «Последний документ», чтобы
@@ -34,7 +44,14 @@
           <th>
             <a class="table-sort-link table-sort-link--wrap{% if date_sort.active %} table-sort-link--active{% endif %}"
                href="{% querystring sort='date' direction=date_sort.next_direction page=1 %}">
-              Последний документ{% if date_sort.active %}{% if date_sort.newest_first %} ↓{% else %} ↑{% endif %}{% endif %}
+              Последний документ
+              {% if date_sort.active %}
+                {% if date_sort.newest_first %}
+                   ↓
+                {% else %}
+                   ↑
+                {% endif %}
+              {% endif %}
             </a>
           </th>
         </tr>
@@ -43,7 +60,12 @@
         {% for row in page_obj.object_list %}
           <tr>
             <td>
-              <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+              {% if row.linked %}
+                <a href="{% url 'customer_detail' row.customer_id %}">{{ row.display_name }}</a>
+                <span class="muted">· <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">история</a></span>
+              {% else %}
+                <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+              {% endif %}
               {% if not row.linked %}<span class="muted">&#32;· без карточки</span>{% endif %}
             </td>
             <td class="num">{{ row.sale_count }}</td>

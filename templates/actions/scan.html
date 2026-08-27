@@ -54,7 +54,12 @@
               <th>Артикул</th>
               <th>Ячейка</th>
               <th class="num--qty">Количество</th>
-              {% if panel.is_sale %}<th class="num--money">Сумма</th>{% else %}<th class="num--money">Цена клиенту</th><th class="num--money">Сумма</th>{% endif %}
+              {% if panel.is_sale %}
+                <th class="num--money">Сумма</th>
+              {% else %}
+                <th class="num--money">Цена клиенту</th>
+                <th class="num--money">Сумма</th>
+              {% endif %}
               <th></th>
             </tr>
           </thead>
@@ -102,8 +107,20 @@
                 {% if panel.is_sale %}
                   <td class="num--money">{% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}</td>
                 {% else %}
-                  <td class="num--money">{% if item.row.unit_price is not None %}{{ item.row.unit_price|money_int }} ₽{% else %}<span class="muted">Не указана</span>{% endif %}</td>
-                  <td class="num--money">{% if item.row.total_price is not None %}{{ item.row.total_price|money_int }} ₽{% else %}<span class="muted">Не указана</span>{% endif %}</td>
+                  <td class="num--money">
+                    {% if item.row.unit_price is not None %}
+                      {{ item.row.unit_price|money_int }} ₽
+                    {% else %}
+                      <span class="muted">Не указана</span>
+                    {% endif %}
+                  </td>
+                  <td class="num--money">
+                    {% if item.row.total_price is not None %}
+                      {{ item.row.total_price|money_int }} ₽
+                    {% else %}
+                      <span class="muted">Не указана</span>
+                    {% endif %}
+                  </td>
                 {% endif %}
                 <td>
                   <form method="post"
@@ -123,7 +140,13 @@
         </table>
         <p class="muted">
           Позиций: {{ panel.positions }}.
-          Сумма: {% if panel.total is not None %}{{ panel.total|money_int }} ₽{% else %}не указана{% endif %}.
+          Сумма:
+          {% if panel.total is not None %}
+            {{ panel.total|money_int }} ₽
+          {% else %}
+            не указана
+          {% endif %}
+          .
           Склад изменится только при проведении.
         </p>
         <form method="post"
@@ -135,15 +158,37 @@
           <input type="hidden" name="q" value="{{ q }}">
           <input type="hidden" name="request_token" value="{{ cart_token }}">
           <p>
-            <label for="cart-comment-{{ panel.kind }}">Клиент / комментарий</label>
+            <label for="customer-filter-{{ panel.kind }}">Найти клиента</label>
             <br>
-            <input id="cart-comment-{{ panel.kind }}"
-                   name="customer_comment"
-                   type="text"
-                   maxlength="255"
-                   placeholder="Например: Иванов, снегоход Ski-Doo"
-                   required
+            <input id="customer-filter-{{ panel.kind }}"
+                   type="search"
+                   placeholder="Имя или телефон"
+                   data-customer-filter="customer-select-{{ panel.kind }}"
                    style="min-width: 280px">
+          </p>
+          <p>
+            <label for="customer-select-{{ panel.kind }}">Клиент</label>
+            <br>
+            <select id="customer-select-{{ panel.kind }}"
+                    name="customer_id"
+                    required
+                    style="min-width: 280px">
+              <option value="">Выберите карточку клиента</option>
+              {% for customer in customers %}
+                <option value="{{ customer.pk }}"
+                        data-customer-search="{{ customer.name|lower }} {{ customer.phone|lower }}"
+                        {% if selected_customer_id == customer.pk|stringformat:'s' %}selected{% endif %}>
+                  {{ customer.name }}
+                  {% if customer.phone %}
+                    · {{ customer.phone }}
+                  {% else %}
+                    · №{{ customer.pk }}
+                  {% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <br>
+            <a href="{% url 'customer_create' %}?next={% url 'actions_scan' %}%3Fkind%3D{{ panel.kind|urlencode }}">Создать клиента</a>
           </p>
           <div class="form-actions">
             <button type="submit" class="btn btn--primary">Провести {{ panel.title|lower }}</button>
@@ -183,11 +228,9 @@
             {% else %}
               не указана
             {% endif %}
-            · Доступно всего: {{ overview.total_available|quantity_int }}
+            · <strong>Доступно: {{ overview.total_available|quantity_int }}</strong>
           </p>
-          {% if overview.lookup.alias_message %}
-            <p class="muted">{{ overview.lookup.alias_message }}</p>
-          {% endif %}
+          {% if overview.lookup.alias_message %}<p class="muted">{{ overview.lookup.alias_message }}</p>{% endif %}
           {% if overview.unit_items %}
             <p class="muted">
               Поштучных экземпляров: {{ overview.unit_items }}. Продажа и выдача
@@ -268,7 +311,13 @@
                 <input type="hidden" name="quantity" value="1">
               {% endif %}
               <div class="form-actions">
-                <button type="submit" class="btn btn--primary">{% if selected_action_kind == 'reserve' %}Создать резерв{% else %}Добавить выбранную ячейку{% endif %}</button>
+                <button type="submit" class="btn btn--primary">
+                  {% if selected_action_kind == 'reserve' %}
+                    Создать резерв
+                  {% else %}
+                    Добавить выбранную ячейку
+                  {% endif %}
+                </button>
               </div>
             </form>
             <p class="muted">
@@ -290,4 +339,16 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="scan" title="Отсканируйте деталь" text="Поставьте курсор в поле сканера и отсканируйте номер. Система покажет остатки по ячейкам." compact=1 %}
   {% endif %}
+  <script>
+    document.querySelectorAll('[data-customer-filter]').forEach((input) => {
+      const select = document.getElementById(input.dataset.customerFilter);
+      input.addEventListener('input', () => {
+        const term = input.value.trim().toLowerCase();
+        Array.from(select.options).forEach((option, index) => {
+          if (!index) return;
+          option.hidden = Boolean(term) && !option.dataset.customerSearch.includes(term);
+        });
+      });
+    });
+  </script>
 {% endblock %}

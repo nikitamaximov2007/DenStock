@@ -7,6 +7,7 @@
 
 Django test client (без тяжёлого браузерного фреймворка).
 """
+
 import pytest
 from django.contrib.auth.models import Group
 from django.urls import reverse
@@ -91,13 +92,14 @@ def test_shell_present_on_pages(admin_client):
 
 
 def test_desktop_sidebar_has_clean_expandable_sections(admin_client):
-    """Desktop sidebar содержит три входа и пять раскрывающихся разделов."""
+    """Desktop sidebar не показывает удалённую из потока группу продаж."""
     html = admin_client.get(reverse("dashboard")).content.decode()
-    assert html.count('data-nav-group-toggle') == 5
+    assert html.count("data-nav-group-toggle") == 4
     for label in ("Главная", "Поиск", "ИИ-поддержка"):
         assert f'<span class="nav__label">{label}</span>' in html
-    for label in ("Склад", "Продажи", "Ремонты", "Отчёты", "Настройки"):
+    for label in ("Склад", "Ремонты", "Отчёты", "Настройки"):
         assert f"<span>{label}</span>" in html
+    assert "<span>Продажи</span>" not in html
     assert '<span class="nav__label">Каталог</span>' not in html
 
 

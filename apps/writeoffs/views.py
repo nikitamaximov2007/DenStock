@@ -12,6 +12,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.core.part_lookup import resolve_part_lookup
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
     attach_document_composition,
@@ -26,9 +27,11 @@ from .services import (
     WriteOffError,
     add_part_item_to_write_off,
     add_stock_lot_to_write_off,
+    available_quantity,
     cancel_write_off,
     complete_write_off,
     create_write_off,
+    quick_write_off,
     remove_write_off_line,
 )
 
@@ -130,6 +133,47 @@ def write_off_create(request):
     else:
         form = WriteOffForm()
     return render(request, "writeoffs/write_off_form.html", {"form": form})
+
+
+@login_required
+def write_off_quick(request):
+    """The operator route: scan article, enter reason and business author, post."""
+    _require_write_offs(request)
+    q = (request.POST.get("q") if request.method == "POST" else request.GET.get("q") or "").strip()
+    lookup = resolve_part_lookup(q) if q else None
+    part = lookup.candidate.part if lookup and lookup.found and not lookup.ambiguous else None
+    if request.method == "POST":
+        if part is None:
+            messages.error(request, (lookup.message if lookup else "") or "Деталь не найдена.")
+        else:
+            try:
+                doc = quick_write_off(
+                    part=part,
+                    scanned_code=q,
+                    reason=request.POST.get("reason"),
+                    business_author=request.POST.get("business_author"),
+                    by=request.user,
+                )
+            except WriteOffError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f"Деталь {lookup.candidate.exact_number} списана. "
+                    f"Причина: {doc.comment}. Автор: {doc.business_author}.",
+                )
+                return redirect("write_off_detail", pk=doc.pk)
+    return render(
+        request,
+        "writeoffs/write_off_quick.html",
+        {
+            "q": q,
+            "part": part,
+            "lookup": lookup.candidate if part else None,
+            "available": available_quantity(part) if part else None,
+            "not_found": bool(q and part is None),
+        },
+    )
 
 
 @login_required

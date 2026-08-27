@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Быстрое списание · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Быстрое списание</h1>
+  </div>
+  <form method="post" class="form action-panel">
+    {% csrf_token %}
+    <p>
+      <label for="quick-write-off-reason">Причина</label>
+      <br>
+      <input id="quick-write-off-reason"
+             name="reason"
+             maxlength="255"
+             required
+             value="{{ request.POST.reason|default:'' }}">
+    </p>
+    <p>
+      <label for="quick-write-off-scan">Артикул / скан детали</label>
+      <br>
+      <input id="quick-write-off-scan"
+             name="q"
+             class="scanner-page__input"
+             autocomplete="off"
+             autocorrect="off"
+             autocapitalize="off"
+             spellcheck="false"
+             autofocus
+             data-scan-input
+             value="{{ q }}"
+             required>
+    </p>
+    {% if part %}
+      <p><span class="code-pill">{{ lookup.exact_number }}</span> <strong>{{ part.name }}</strong></p>
+      <p><strong>Доступно: {{ available|quantity_int }}</strong></p>
+    {% elif not_found %}
+      {% include "partials/_status_block.html" with kind="warning" text="Деталь не найдена в остатках склада." %}
+    {% endif %}
+    <p>
+      <label for="quick-write-off-author">Автор</label>
+      <br>
+      <input id="quick-write-off-author"
+             name="business_author"
+             maxlength="150"
+             required
+             value="{{ request.POST.business_author|default:'' }}">
+    </p>
+    <button type="submit" class="btn btn--primary">Списать</button>
+  </form>
+  <p class="muted">Одна операция списывает одну отсканированную единицу. Источник и себестоимость выбираются автоматически.</p>
+{% endblock %}

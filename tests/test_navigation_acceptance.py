@@ -8,6 +8,7 @@
 Проверяется доступность через меню, а не наличие маршрута. Функция, до которой
 можно добраться только зная адрес, для сотрудника не существует.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -37,16 +38,12 @@ DAILY_FUNCTIONS = {
     ],
     roles.SELLER: [
         "actions_scan",
-        "sale_list",
-        "reservation_list",
         "repair_order_list",
         "customer_list",
     ],
     roles.MANAGER: [
         "balance_list",
         "receipt_list",
-        "sale_list",
-        "reservation_list",
         "repair_order_list",
         "customer_list",
         "reports_dashboard",
@@ -56,7 +53,6 @@ DAILY_FUNCTIONS = {
     roles.ADMIN: [
         "balance_list",
         "receipt_list",
-        "sale_list",
         "repair_order_list",
         "customer_list",
         "reports_dashboard",
@@ -70,9 +66,7 @@ DAILY_FUNCTIONS = {
 @pytest.fixture
 def make_user(db, django_user_model):
     def _make(role):
-        user = django_user_model.objects.create_user(
-            username=f"user-{role}", password=PASSWORD
-        )
+        user = django_user_model.objects.create_user(username=f"user-{role}", password=PASSWORD)
         user.groups.add(Group.objects.get(name=role))
         return user
 

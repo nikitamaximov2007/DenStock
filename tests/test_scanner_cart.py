@@ -15,6 +15,7 @@
 * журнал действий остаётся построчным (снимок номера/ячейки на позицию), но все
   записи ссылаются на один документ, и сторно отменяет их все.
 """
+
 from decimal import Decimal
 
 import pytest
@@ -35,6 +36,7 @@ from apps.actions.cart import (
 from apps.actions.models import WarehouseAction
 from apps.actions.services import ActionError, cancel_warehouse_action
 from apps.catalog.models import Category, PartBarcode, PartNumber, PartType, Unit
+from apps.customers.models import Customer
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
@@ -69,8 +71,10 @@ def admin(make_user):
 def _finalized_line(sup, part, admin, *, qty, unit_cost="100"):
     batch = Batch.objects.create(supplier=sup, shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
-        batch=batch, part_type=part,
-        quantity=Decimal(qty), unit_cost_currency=Decimal(unit_cost),
+        batch=batch,
+        part_type=part,
+        quantity=Decimal(qty),
+        unit_cost_currency=Decimal(unit_cost),
     )
     batch.status = Batch.Status.ACCEPTED
     batch.save(update_fields=["status"])
@@ -98,19 +102,31 @@ def data(db, admin):
         name="Ячейка 2", code="S04-D01-C01", storage_allowed=True, is_active=True
     )
     bolt = PartType.objects.create(
-        name="Болт", category=cat, unit=unit,
-        tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
+        name="Болт",
+        category=cat,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("100"),
     )
     PartNumber.objects.create(part=bolt, value="700100", kind=PartNumber.Kind.OEM)
     PartBarcode.objects.create(part=bolt, value="BAR-700100")
     ring = PartType.objects.create(
-        name="Кольцо", category=cat, unit=unit,
-        tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("250"),
+        name="Кольцо",
+        category=cat,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("250"),
     )
     PartNumber.objects.create(part=ring, value="700200", kind=PartNumber.Kind.OEM)
     return {
-        "sup": sup, "cat": cat, "unit": unit, "admin": admin,
-        "loc1": loc1, "loc2": loc2, "bolt": bolt, "ring": ring,
+        "sup": sup,
+        "cat": cat,
+        "unit": unit,
+        "admin": admin,
+        "loc1": loc1,
+        "loc2": loc2,
+        "bolt": bolt,
+        "ring": ring,
         "bolt_lot": _stock(bolt, loc1, 10, sup, admin),
         "ring_lot": _stock(ring, loc1, 4, sup, admin),
         "bolt_lot2": _stock(bolt, loc2, 3, sup, admin),
@@ -183,8 +199,11 @@ def test_scan_by_oem_and_by_barcode_is_one_row(client, make_user, data):
         resp = client.post(
             reverse("actions_cart_add"),
             {
-                "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-                "action_type": "sale", "quantity": "1", "q": scanned,
+                "part_id": data["bolt"].pk,
+                "location_id": data["loc1"].pk,
+                "action_type": "sale",
+                "quantity": "1",
+                "q": scanned,
             },
             follow=True,
         )
@@ -227,8 +246,8 @@ def test_auto_scan_uses_one_selected_document_kind_and_invalid_scan_keeps_cart(
     assert [(row.part, row.quantity) for row in cart_rows(cart)] == [(data["ring"], Decimal("1"))]
     page = client.get(reverse("actions_scan")).content.decode()
     assert "В корзину" not in page
-    assert "autocorrect=\"off\"" in page
-    assert "autocapitalize=\"off\"" in page
+    assert 'autocorrect="off"' in page
+    assert 'autocapitalize="off"' in page
 
 
 def test_multi_location_scan_requires_choice_before_adding_to_cart(client, make_user, data):
@@ -247,7 +266,8 @@ def test_multi_location_scan_requires_choice_before_adding_to_cart(client, make_
 def test_reserve_remains_available_without_becoming_a_cart_type(client, make_user, data):
     _login(client, make_user)
     response = client.post(
-        reverse("actions_cart_scan"), {"kind": WarehouseAction.Type.RESERVE, "q": "700200"},
+        reverse("actions_cart_scan"),
+        {"kind": WarehouseAction.Type.RESERVE, "q": "700200"},
         follow=True,
     )
 
@@ -301,8 +321,11 @@ def test_failed_first_scan_leaves_no_empty_draft(client, make_user, data):
     resp = client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["ring"].pk, "location_id": data["loc1"].pk,
-            "action_type": "sale", "quantity": "99", "q": "700200",
+            "part_id": data["ring"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "sale",
+            "quantity": "99",
+            "q": "700200",
         },
         follow=True,
     )
@@ -315,15 +338,21 @@ def test_scan_page_shows_cart_panel(client, make_user, data):
     client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-            "action_type": "sale", "quantity": "2", "q": "700100",
+            "part_id": data["bolt"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "sale",
+            "quantity": "2",
+            "q": "700100",
         },
     )
     client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["ring"].pk, "location_id": data["loc1"].pk,
-            "action_type": "repair", "quantity": "1", "q": "700200",
+            "part_id": data["ring"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "repair",
+            "quantity": "1",
+            "q": "700200",
         },
     )
     html = client.get(reverse("actions_scan")).content.decode()
@@ -340,13 +369,20 @@ def test_completed_cart_snapshot_keeps_scanned_number(client, make_user, data):
     client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-            "action_type": "sale", "quantity": "2", "q": "700100",
+            "part_id": data["bolt"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "sale",
+            "quantity": "2",
+            "q": "700100",
         },
     )
     client.post(
         reverse("actions_cart_complete"),
-        {"kind": KIND_SALE, "customer_comment": "Иванов", "q": "700100"},
+        {
+            "kind": KIND_SALE,
+            "customer_id": Customer.objects.create(name="Иванов").pk,
+            "q": "700100",
+        },
         follow=True,
     )
     action = WarehouseAction.objects.get(part_type=data["bolt"])
@@ -359,8 +395,11 @@ def test_clear_requires_confirmation_page(client, make_user, data):
     client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-            "action_type": "sale", "quantity": "2", "q": "700100",
+            "part_id": data["bolt"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "sale",
+            "quantity": "2",
+            "q": "700100",
         },
     )
     page = client.get(reverse("actions_cart_clear", args=[KIND_SALE]))
@@ -437,6 +476,40 @@ def test_complete_repair_cart_creates_one_order_with_many_lines(data):
     assert len(actions) == 2
     assert {action.repair_order_id for action in actions} == {cart.pk}
     assert all(action.action_type == WarehouseAction.Type.REPAIR for action in actions)
+
+
+@pytest.mark.parametrize("kind", [KIND_SALE, KIND_REPAIR])
+def test_complete_cart_uses_selected_customer_card_and_frozen_snapshot(data, kind):
+    customer = Customer.objects.create(name="Алексей Иванов", phone="+7 912 123-45-67")
+    cart = open_cart(kind, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+
+    complete_cart(cart, customer=customer, by=data["admin"])
+
+    cart.refresh_from_db()
+    assert cart.customer_id == customer.pk
+    assert cart.customer_name == "Алексей Иванов"
+    assert cart.customer_phone == "+7 912 123-45-67"
+    customer.name = "Алексей Петров"
+    customer.save()
+    cart.refresh_from_db()
+    assert cart.customer_name == "Алексей Иванов"
+
+
+def test_quick_cart_page_requires_card_selector_not_customer_comment(client, make_user, data):
+    _login(client, make_user)
+    Customer.objects.create(name="Алексей Иванов", phone="+79121234567")
+    cart = open_cart(KIND_SALE, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+    session = client.session
+    session["actions_cart_sale"] = cart.pk
+    session.save()
+
+    html = client.get(reverse("actions_scan")).content.decode()
+
+    assert "Выберите карточку клиента" in html
+    assert "Клиент / комментарий" not in html
+    assert "Создать клиента" in html
 
 
 def test_completed_actions_keep_identity_snapshots(data):
@@ -540,8 +613,11 @@ def test_reserve_cannot_be_added_to_cart(client, make_user, data):
     resp = client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-            "action_type": "reserve", "quantity": "1", "q": "700100",
+            "part_id": data["bolt"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "reserve",
+            "quantity": "1",
+            "q": "700100",
         },
         follow=True,
     )
@@ -556,8 +632,11 @@ def test_cart_add_respects_action_permission(client, make_user, data):
     resp = client.post(
         reverse("actions_cart_add"),
         {
-            "part_id": data["bolt"].pk, "location_id": data["loc1"].pk,
-            "action_type": "sale", "quantity": "1", "q": "700100",
+            "part_id": data["bolt"].pk,
+            "location_id": data["loc1"].pk,
+            "action_type": "sale",
+            "quantity": "1",
+            "q": "700100",
         },
     )
     assert resp.status_code == 403
