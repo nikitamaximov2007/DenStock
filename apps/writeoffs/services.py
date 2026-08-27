@@ -11,14 +11,20 @@
 (`is_part_item_reserved`/`active_reserved_for_lot`). Авто-отмену брони не делаем —
 резерв снимают отдельно до списания.
 """
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockLot
-from apps.inventory.services import write_off_part_item, write_off_stock_lot_quantity
+from apps.inventory.services import (
+    InventoryError,
+    restore_written_off_part_item,
+    restore_written_off_stock_lot_quantity,
+    write_off_part_item,
+    write_off_stock_lot_quantity,
+)
 from apps.procurement.models import money
 from apps.sales.services import (
     active_reserved_for_lot,
@@ -90,8 +96,10 @@ def available_quantity(part) -> Decimal:
 
 
 @transaction.atomic
-def quick_write_off(*, part, scanned_code, reason, business_author, by=None) -> WriteOffDocument:
-    """Write off exactly one scanned unit without exposing lot internals.
+def quick_write_off(
+    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), by=None
+) -> WriteOffDocument:
+    """Write off a scanned quantity without exposing lot internals.
 
     Allocation is FIFO across canonical available lots.  The final write goes
     through ``complete_write_off`` so StockMovement, cost snapshots and locks
@@ -103,6 +111,12 @@ def quick_write_off(*, part, scanned_code, reason, business_author, by=None) -> 
         raise WriteOffError("Укажите причину списания.")
     if not business_author:
         raise WriteOffError("Укажите автора списания.")
+    try:
+        quantity = Decimal(str(quantity))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise WriteOffError("Укажите корректное количество списания.") from exc
+    if quantity <= 0:
+        raise WriteOffError("Количество списания должно быть больше нуля.")
     code = (scanned_code or "").strip()
     item = (
         PartItem.objects.select_for_update()
@@ -122,6 +136,8 @@ def quick_write_off(*, part, scanned_code, reason, business_author, by=None) -> 
         status=WriteOffDocument.Status.DRAFT,
     )
     if part.tracking_mode == part.TrackingMode.SERIAL:
+        if quantity != Decimal("1"):
+            raise WriteOffError("Поштучную деталь можно списать только в количестве 1.")
         if item is None:
             raise WriteOffError("Отсканируйте серийный номер экземпляра.")
         add_part_item_to_write_off(doc, item, by=by)
@@ -131,13 +147,17 @@ def quick_write_off(*, part, scanned_code, reason, business_author, by=None) -> 
             .filter(part_type=part, status=StockLot.Status.AVAILABLE, quantity__gt=0)
             .order_by("created_at", "pk")
         )
+        remaining = quantity
         for lot in lots:
             available = lot.quantity - active_reserved_for_lot(lot)
             if available > 0:
-                add_stock_lot_to_write_off(doc, lot, min(available, Decimal("1")), by=by)
-                break
-        else:
-            raise WriteOffError(f"Доступно только {available_quantity(part)} шт.")
+                taken = min(available, remaining)
+                add_stock_lot_to_write_off(doc, lot, taken, by=by)
+                remaining -= taken
+                if remaining == 0:
+                    break
+        if remaining > 0:
+            raise WriteOffError(f"Доступно только {quantity - remaining} шт.")
     return complete_write_off(doc, by=by)
 
 
@@ -233,7 +253,17 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
             line.part_item = item
             _freeze_write_off_line_cost(line)
             line.written_off_at = now
-            line.save(update_fields=["unit_cost_rub", "total_cost_rub", "written_off_at"])
+            line.source_status = item.status
+            line.source_location = item.current_location
+            line.save(
+                update_fields=[
+                    "unit_cost_rub",
+                    "total_cost_rub",
+                    "written_off_at",
+                    "source_status",
+                    "source_location",
+                ]
+            )
             write_off_part_item(
                 item, by=by, document_id=doc.pk, comment=f"Списание {doc.number}"
             )
@@ -250,7 +280,17 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
             line.stock_lot = lot
             _freeze_write_off_line_cost(line)
             line.written_off_at = now
-            line.save(update_fields=["unit_cost_rub", "total_cost_rub", "written_off_at"])
+            line.source_status = lot.status
+            line.source_location = lot.location
+            line.save(
+                update_fields=[
+                    "unit_cost_rub",
+                    "total_cost_rub",
+                    "written_off_at",
+                    "source_status",
+                    "source_location",
+                ]
+            )
             write_off_stock_lot_quantity(
                 lot, line.quantity, by=by, document_id=doc.pk,
                 comment=f"Списание {doc.number}",
@@ -265,12 +305,48 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
 
 @transaction.atomic
 def cancel_write_off(doc, *, by=None) -> WriteOffDocument:
-    """Отменить черновик документа (склад не затрагивали — отменять можно только draft)."""
+    """Cancel a draft or compensate one completed write-off exactly once."""
     doc = WriteOffDocument.objects.select_for_update().get(pk=doc.pk)
     if doc.status == WriteOffDocument.Status.CANCELED:
         return doc
-    if doc.status != WriteOffDocument.Status.DRAFT:
-        raise WriteOffError("Отменить можно только черновик (проведённое списание неизменяемо).")
+    if doc.status == WriteOffDocument.Status.COMPLETED:
+        lines = list(
+            doc.lines.select_for_update().select_related(
+                "part_item", "stock_lot", "source_location"
+            )
+        )
+        if not lines or any(
+            not line.source_status or not line.source_location_id for line in lines
+        ):
+            raise WriteOffError(
+                "У этого исторического списания нет снимка исходного остатка; отмена недоступна."
+            )
+        try:
+            for line in lines:
+                comment = f"Отмена списания {doc.number}"
+                if line.part_item_id:
+                    restore_written_off_part_item(
+                        line.part_item,
+                        line.source_location,
+                        restock_status=line.source_status,
+                        by=by,
+                        document_id=doc.pk,
+                        comment=comment,
+                    )
+                else:
+                    restore_written_off_stock_lot_quantity(
+                        line.stock_lot,
+                        line.quantity,
+                        line.source_location,
+                        restock_status=line.source_status,
+                        by=by,
+                        document_id=doc.pk,
+                        comment=comment,
+                    )
+        except InventoryError as exc:
+            raise WriteOffError(str(exc)) from exc
+    elif doc.status != WriteOffDocument.Status.DRAFT:
+        raise WriteOffError("Документ нельзя отменить.")
     doc.status = WriteOffDocument.Status.CANCELED
     doc.canceled_at = timezone.now()
     doc.save(update_fields=["status", "canceled_at", "updated_at"])

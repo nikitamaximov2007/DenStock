@@ -180,6 +180,8 @@ class StockMovement(models.Model):
         RETURN_LOT = "return_lot", "Возврат лота на склад"
         WRITE_OFF_ITEM = "write_off_item", "Списание экземпляра"
         WRITE_OFF_LOT = "write_off_lot", "Списание лота"
+        WRITE_OFF_CANCEL_ITEM = "writeoff_cancel_item", "Отмена списания экземпляра"
+        WRITE_OFF_CANCEL_LOT = "writeoff_cancel_lot", "Отмена списания лота"
 
     movement_type = models.CharField(
         "Тип движения", max_length=20, choices=MovementType.choices

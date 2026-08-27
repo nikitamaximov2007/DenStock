@@ -244,6 +244,15 @@ def test_overview_page_explains_client_total(client, make_user, data):
     assert "Итого с клиента" in html
 
 
+def test_overview_page_offers_customer_creation_even_without_report_rows(client, make_user, data):
+    _login(client, make_user)
+
+    html = client.get(reverse("reports_clients_overview")).content.decode()
+
+    assert "Создать клиента" in html
+    assert reverse("customer_create") in html
+
+
 def test_timeline_page_shows_parts_not_documents(client, make_user, data):
     """Карточка клиента отвечает на вопрос «что получил клиент», а не «какие были документы».
 

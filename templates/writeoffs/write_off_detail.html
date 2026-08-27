@@ -98,12 +98,6 @@
         {% csrf_token %}
         <button type="submit" class="btn btn--primary">Провести (списать)</button>
       </form>
-      <form method="post"
-            action="{% url 'write_off_cancel' doc.pk %}"
-            class="inline-form">
-        {% csrf_token %}
-        <button type="submit">Отменить документ</button>
-      </form>
     </div>
     <h2>Добавить позицию</h2>
     <form method="post"
@@ -126,5 +120,13 @@
       замораживает себестоимость потерь. Это не продажа, не возврат и не
       инвентаризация. Зарезервированное списать нельзя: сначала снимите бронь.
     </p>
+  {% endif %}
+  {% if can_manage and is_cancellable %}
+    <form method="post"
+          action="{% url 'write_off_cancel' doc.pk %}"
+          class="inline-form">
+      {% csrf_token %}
+      <button type="submit">Отменить документ</button>
+    </form>
   {% endif %}
 {% endblock %}

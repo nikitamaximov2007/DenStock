@@ -1288,6 +1288,73 @@ def write_off_stock_lot_quantity(
     )
 
 
+@transaction.atomic
+def restore_written_off_part_item(
+    item, to_location, *, restock_status, by=None, document_id=None, comment=""
+) -> PartItem:
+    """Compensate one completed write-off while retaining its original cell/status."""
+    if restock_status not in (PartItem.Status.AVAILABLE, PartItem.Status.QUARANTINE):
+        raise InventoryError("Недопустимое исходное состояние отменяемого списания.")
+    if to_location is None or not to_location.can_hold_stock():
+        raise InventoryError("Исходная ячейка списания больше недоступна для остатка.")
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    if item.status != PartItem.Status.WRITTEN_OFF:
+        raise InventoryError("Экземпляр уже изменён после списания; отмена недоступна.")
+    item.status = restock_status
+    item.current_location = to_location
+    item.save(update_fields=["status", "current_location", "updated_at"])
+    _record_movement(
+        item,
+        StockMovement.MovementType.WRITE_OFF_CANCEL_ITEM,
+        Decimal("1"),
+        from_location=None,
+        to_location=to_location,
+        by=by,
+        comment=comment,
+        document_type="write_off_cancel",
+        document_id=document_id,
+    )
+    _refresh_balance(item.batch_line, to_location)
+    set_preferred_part_location(item.part_type, to_location, by=by)
+    return item
+
+
+@transaction.atomic
+def restore_written_off_stock_lot_quantity(
+    lot, quantity, to_location, *, restock_status, by=None, document_id=None, comment=""
+) -> StockLot:
+    """Compensate a completed write-off into the exact original lot and cell."""
+    quantity = Decimal(quantity)
+    if quantity <= 0:
+        raise InventoryError("Количество отмены списания должно быть больше нуля.")
+    if restock_status not in (StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE):
+        raise InventoryError("Недопустимое исходное состояние отменяемого списания.")
+    if to_location is None or not to_location.can_hold_stock():
+        raise InventoryError("Исходная ячейка списания больше недоступна для остатка.")
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if lot.location_id != to_location.pk:
+        raise InventoryError("Исходный лот больше не находится в исходной ячейке.")
+    if lot.status not in (StockLot.Status.WRITTEN_OFF, restock_status):
+        raise InventoryError("Лот уже изменён после списания; отмена недоступна.")
+    lot.quantity = lot.quantity + quantity
+    lot.status = restock_status
+    lot.save(update_fields=["quantity", "status", "updated_at"])
+    _record_movement(
+        lot,
+        StockMovement.MovementType.WRITE_OFF_CANCEL_LOT,
+        quantity,
+        from_location=None,
+        to_location=to_location,
+        by=by,
+        comment=comment,
+        document_type="write_off_cancel",
+        document_id=document_id,
+    )
+    _refresh_balance(lot.batch_line, to_location)
+    set_preferred_part_location(lot.part_type, to_location, by=by)
+    return lot
+
+
 # --- Слой 18: возврат на склад (физическое обратное поступление) --------------
 #
 # Инверс расхода Слоёв 16/17: деталь возвращается на полку (PartItem снова
