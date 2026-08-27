@@ -85,7 +85,7 @@ def test_retail_usd_column_is_gone(client, catalog, make_user):
 def test_customer_rub_price_stays_on_screen(client, catalog, make_user):
     _login(client, make_user)
     html = _search(client)
-    assert "Цена клиента (₽)" in html
+    assert "Цена (₽)" in html  # единый операторский словарь
 
 
 def test_customer_rub_value_is_the_right_number(client, catalog, make_user):

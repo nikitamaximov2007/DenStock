@@ -173,7 +173,7 @@ class ManualPartForm(forms.Form):
         ),
     )
     price = CommaDecimalField(
-        label="Рекомендуемая цена, ₽",
+        label="Цена, ₽",
         required=False,
         max_digits=12,
         decimal_places=2,
