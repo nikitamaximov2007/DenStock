@@ -1,4 +1,5 @@
 """Batch scanner receiving of exact warehouse, BRP, and Polaris identities."""
+
 from decimal import Decimal
 
 import pytest
@@ -54,7 +55,9 @@ def admin(make_user):
 def _stock(part, location, qty, sup, admin):
     batch = Batch.objects.create(supplier=sup, shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
-        batch=batch, part_type=part, quantity=Decimal(str(qty)),
+        batch=batch,
+        part_type=part,
+        quantity=Decimal(str(qty)),
         unit_cost_currency=Decimal("100"),
     )
     batch.status = Batch.Status.ACCEPTED
@@ -77,8 +80,10 @@ def data(db, admin):
     )
     # Деталь с заменой: 420931285 (OEM) / 420931284 (ANALOG) — проверяем identity.
     brp = BrpCatalogPart.objects.create(
-        material_no="420931285", part_desc="OIL SEAL",
-        retail_price_usd=Decimal("10"), replacement_no_1="420931284",
+        material_no="420931285",
+        part_desc="OIL SEAL",
+        retail_price_usd=Decimal("10"),
+        replacement_no_1="420931284",
     )
     part = promote_to_warehouse(brp, by=admin)  # recommended_price 10*105*1.4 = 1470
     lot4 = _stock(part, loc4, 3, sup, admin)  # деталь лежит в C04
@@ -281,9 +286,7 @@ def test_quantity_must_be_positive_integer(client, make_user, data):
 def test_multiple_cells_require_explicit_choice(client, make_user, data):
     _stock(data["part"], data["loc3"], 2, data["sup"], data["admin"])
     _login(client, make_user, superuser=True, name="boss")
-    response = client.post(
-        URL, {"action": "scan", "code": "420931285"}, follow=True
-    )
+    response = client.post(URL, {"action": "scan", "code": "420931285"}, follow=True)
     line = _single_line(client)
     html = response.content.decode()
     assert line["location_id"] is None
@@ -305,7 +308,7 @@ def test_assign_choice_places_line_in_correct_group(client, make_user, data):
         {"action": "queue_assign", "line_id": line["id"], "location_id": data["loc3"].pk},
     )
     assert _single_line(client)["location_id"] == data["loc3"].pk
-    assert "Ячейка <span class=\"code-pill\">S04-L03-D01-C03" in client.get(URL).content.decode()
+    assert 'Ячейка <span class="code-pill">S04-L03-D01-C03' in client.get(URL).content.decode()
 
 
 def test_change_cell_can_select_another_active_cell_and_updates_preference_after_post(
@@ -443,9 +446,7 @@ def test_posting_one_location_leaves_other_group(client, make_user, data):
     lot3.refresh_from_db()
     assert data["lot4"].quantity == Decimal("4")
     assert lot3.quantity == Decimal("1")
-    assert {line["location_id"] for line in _queue(client)["lines"].values()} == {
-        data["loc3"].pk
-    }
+    assert {line["location_id"] for line in _queue(client)["lines"].values()} == {data["loc3"].pk}
 
 
 # --- New catalog identities ---------------------------------------------------------
@@ -680,7 +681,7 @@ def test_actions_overview_and_history_show_new_balance(client, make_user, data):
     client.post(URL, _group_payload(client, data["loc4"]))
     actions_html = client.get(reverse("actions_scan") + "?q=420931285").content.decode()
     receiving_html = client.get(URL).content.decode()
-    assert "Доступно всего: 4" in actions_html
+    assert "Доступно: 4" in actions_html
     assert "Добавление найденных деталей" in receiving_html
     assert "420931285" in receiving_html
     assert "S04-L03-D01-C04" in receiving_html
