@@ -381,7 +381,9 @@ def test_period_report_keeps_each_sale_under_its_own_number(env):
     ).order_by("created_at", "pk").first()
     StockMovement.objects.filter(pk=moved.pk).update(created_at=yesterday)
 
-    rows = historical_customs_rows(date_from=timezone.now().date())
+    # Начало окна - сегодняшняя дата пользователя, а не дата по UTC: ночью
+    # они расходятся, и вчерашняя продажа возвращалась в отчёт.
+    rows = historical_customs_rows(date_from=timezone.localdate())
     assert [row["number"] for row in rows] == ["WH-200"]
     assert rows[0]["quantity"] == Decimal("3")
 

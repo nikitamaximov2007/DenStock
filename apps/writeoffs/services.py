@@ -310,8 +310,12 @@ def cancel_write_off(doc, *, by=None) -> WriteOffDocument:
     if doc.status == WriteOffDocument.Status.CANCELED:
         return doc
     if doc.status == WriteOffDocument.Status.COMPLETED:
+        # Блокируются сами строки, а не то, что подтянуто к ним по ссылке.
+        # Экземпляр, лот и ячейка у строки необязательны, поэтому запрос
+        # уходит с внешним соединением, а PostgreSQL отказывается брать
+        # блокировку на его пустую сторону - на SQLite такого не видно.
         lines = list(
-            doc.lines.select_for_update().select_related(
+            doc.lines.select_for_update(of=("self",)).select_related(
                 "part_item", "stock_lot", "source_location"
             )
         )

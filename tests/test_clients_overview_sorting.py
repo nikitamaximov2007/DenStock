@@ -174,7 +174,10 @@ def test_customer_card_dates_are_not_used(data):
     from apps.customers.models import Customer
 
     customer = Customer.objects.create(name="Иванов")
-    assert customer.created_at.date() == timezone.localdate()
+    # Отметка времени хранится в UTC, а «сегодня» у пользователя московское.
+    # Между 21:00 и полуночью по UTC это разные дни, и сравнение дат напрямую
+    # разваливало проверку каждую ночь.
+    assert timezone.localtime(customer.created_at).date() == timezone.localdate()
     moment = _sale(data, "Иванов", days_ago=20)
     row = _rows()[0]
     assert row["last_event"] == moment
