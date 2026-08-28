@@ -54,12 +54,13 @@
               <th>Артикул</th>
               <th>Ячейка</th>
               <th class="num--qty">Количество</th>
-              {% if panel.is_sale %}
-                <th class="num--money">Сумма</th>
-              {% else %}
-                <th class="num--money">Цена клиенту</th>
-                <th class="num--money">Сумма</th>
-              {% endif %}
+              {% comment %}
+                Цена за единицу называется «Цена» во всех операторских экранах:
+                в поиске, на карточке детали и здесь. «Сумма» - это итог строки,
+                и переименовывать его в цену нельзя.
+              {% endcomment %}
+              <th class="num--money">Цена</th>
+              <th class="num--money">Сумма</th>
               <th></th>
             </tr>
           </thead>
@@ -99,29 +100,25 @@
                              step="0.01"
                              size="6"
                              value="{{ item.row.unit_price|default_if_none:'' }}"
-                             aria-label="Цена клиенту">
+                             aria-label="Цена">
                     {% endif %}
                     <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
                   </form>
                 </td>
-                {% if panel.is_sale %}
-                  <td class="num--money">{% if item.row.total_price %}{{ item.row.total_price|money_int }} ₽{% endif %}</td>
-                {% else %}
-                  <td class="num--money">
-                    {% if item.row.unit_price is not None %}
-                      {{ item.row.unit_price|money_int }} ₽
-                    {% else %}
-                      <span class="muted">Не указана</span>
-                    {% endif %}
-                  </td>
-                  <td class="num--money">
-                    {% if item.row.total_price is not None %}
-                      {{ item.row.total_price|money_int }} ₽
-                    {% else %}
-                      <span class="muted">Не указана</span>
-                    {% endif %}
-                  </td>
-                {% endif %}
+                <td class="num--money">
+                  {% if item.row.unit_price is not None %}
+                    {{ item.row.unit_price|money_int }} ₽
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
+                <td class="num--money">
+                  {% if item.row.total_price is not None %}
+                    {{ item.row.total_price|money_int }} ₽
+                  {% else %}
+                    <span class="muted">—</span>
+                  {% endif %}
+                </td>
                 <td>
                   <form method="post"
                         action="{% url 'actions_cart_update' %}"

@@ -37,7 +37,7 @@ class RepairOrderForm(CustomerSelectionMixin):
 class AddRepairItemForm(forms.Form):
     code = forms.CharField(label="Экземпляр (внутр. номер / штрихкод / серийник)", max_length=100)
     customer_unit_price_rub = forms.DecimalField(
-        label="Цена клиенту (₽)",
+        label="Цена (₽)",
         max_digits=12,
         decimal_places=2,
         required=False,
@@ -51,7 +51,7 @@ class AddRepairLotForm(forms.Form):
         label="Количество", max_digits=12, decimal_places=3, min_value=0.001
     )
     customer_unit_price_rub = forms.DecimalField(
-        label="Цена клиенту (₽)",
+        label="Цена (₽)",
         max_digits=12,
         decimal_places=2,
         required=False,

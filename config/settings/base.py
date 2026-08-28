@@ -60,6 +60,8 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
+    # Первым: номер запроса нужен всему, что может упасть ниже по цепочке.
+    "apps.core.observability.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -264,3 +266,51 @@ LOGIN_REDIRECT_URL = "dashboard"
 LOGOUT_REDIRECT_URL = "login"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Диагностика ошибок ------------------------------------------------------
+# Django по умолчанию отдаёт traceback только на почту администраторам, а
+# консольный обработчик выключает при DEBUG=False. В бою ни того, ни другого
+# нет, и падение у оператора не оставляло следа. Пишем в поток ошибок
+# контейнера: его подбирает Docker, а рядом в docker-compose.yml задана
+# ротация, чтобы журнал не съел диск.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {
+        "request_context": {"()": "apps.core.observability.RequestContextFilter"},
+    },
+    "formatters": {
+        "operational": {
+            "()": "apps.core.observability.RedactingFormatter",
+            "format": (
+                "%(asctime)s %(levelname)s %(name)s "
+                "request=%(request_id)s %(method)s %(path)s user=%(user)s "
+                "pid=%(process)d thread=%(threadName)s %(message)s"
+            ),
+            "datefmt": "%Y-%m-%dT%H:%M:%S%z",
+        },
+    },
+    "handlers": {
+        "operational": {
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr",
+            "level": "ERROR",
+            "formatter": "operational",
+            "filters": ["request_context"],
+        },
+    },
+    "loggers": {
+        # propagate=False, иначе та же ошибка уйдёт ещё и в обработчики Django
+        # по умолчанию и удвоится в журнале.
+        "django.request": {
+            "handlers": ["operational"], "level": "ERROR", "propagate": False
+        },
+        "django.server": {
+            "handlers": ["operational"], "level": "ERROR", "propagate": False
+        },
+        "django.security": {
+            "handlers": ["operational"], "level": "ERROR", "propagate": False
+        },
+        "apps": {"handlers": ["operational"], "level": "ERROR", "propagate": False},
+    },
+}

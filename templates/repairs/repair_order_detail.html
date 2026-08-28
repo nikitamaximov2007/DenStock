@@ -60,7 +60,7 @@
         <th>Название детали</th>
         <th>Артикул</th>
         <th>Кол-во</th>
-        <th>Цена клиенту (₽)</th>
+        <th>Цена (₽)</th>
         <th>Сумма деталей (₽)</th>
         {% if show_costs %}
           <th>Себестоимость за ед. (₽)</th>
@@ -88,7 +88,7 @@
                        min="0"
                        step="0.01"
                        value="{{ line.customer_unit_price_rub|default_if_none:'' }}"
-                       aria-label="Цена клиенту">
+                       aria-label="Цена">
                 <button type="submit">Сохранить</button>
               </form>
             {% elif line.customer_display_unit_price_rub is not None %}

@@ -13,6 +13,11 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   web:
     build:
@@ -34,6 +39,11 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   proxy:
     image: caddy:2
@@ -50,6 +60,11 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   pgdata:
