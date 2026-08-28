@@ -480,26 +480,16 @@ def cancel_warehouse_action(action: WarehouseAction, *, by=None, reason="") -> W
     if sale.status == Sale.Status.VOIDED:
         raise ActionError("Связанная продажа уже сторнирована.")
 
-    for line in sale.lines.select_related("stock_lot__location", "batch_line").all():
-        if line.stock_lot_id is None:
-            continue  # поштучные экземпляры сканером не продаются
-        # Возврат идёт в ячейку СВОЕЙ строки: в мультипозиционной продаже
-        # детали могли уйти из разных ячеек.
-        return_stock_lot_quantity(
-            line.batch_line,
-            line.stock_lot.location,
-            line.quantity,
-            unit_cost_rub=line.unit_cost_rub,
-            restock_status=StockLot.Status.AVAILABLE,
-            by=by,
-            document_id=sale.pk,
-            comment=f"Отмена продажи {sale.number}: {reason}"[:255],
-        )
+    # Report and action entry points must use the same service: it restores
+    # serial items too and subtracts already completed customer returns.
+    from apps.sales.services import cancel_sale
 
-    now = timezone.now()
+    cancel_sale(sale, by=by, reason=reason, author=str(by or "Система"))
+    # Keep the historical action endpoint's public document status compatible.
+    # Both CANCELED and VOIDED are excluded from commercial reports.
     sale.status = Sale.Status.VOIDED
-    sale.canceled_at = now
-    sale.save(update_fields=["status", "canceled_at", "updated_at"])
+    sale.save(update_fields=["status", "updated_at"])
+    now = timezone.now()
 
     # Мультипозиционная продажа — это один документ и несколько записей
     # журнала. Сторно документа отменяет их все: иначе в отчёте остались бы

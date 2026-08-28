@@ -154,6 +154,12 @@ class Sale(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     canceled_at = models.DateTimeField("Закрыта (когда)", null=True, blank=True)
+    canceled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто отменил",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    cancellation_reason = models.CharField("Причина отмены", max_length=255, blank=True)
+    cancellation_author = models.CharField("Автор отмены", max_length=255, blank=True)
     revenue_total = models.DecimalField(
         "Выручка (₽)", max_digits=14, decimal_places=2, default=0
     )

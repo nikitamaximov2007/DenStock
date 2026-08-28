@@ -7,6 +7,9 @@
     {% if can_return and order.status == "completed" %}
       · <a href="{% url 'return_create' %}?source=repair&id={{ order.pk }}">Оформить возврат</a>
     {% endif %}
+    {% if can_manage and order.status == "completed" %}
+      · <a href="{% url 'repair_order_cancel_confirm' order.pk %}">Отменить заказ</a>
+    {% endif %}
   </p>
   <table class="table">
     <tbody>
@@ -53,6 +56,9 @@
       </tr>
     </tbody>
   </table>
+  {% if order.status == "canceled" %}
+    <p class="notice">Отменён: {{ order.cancellation_reason|default:"·" }}. Автор: {{ order.cancellation_author|default:"·" }}.</p>
+  {% endif %}
   <h2>Выданные детали</h2>
   <table class="table">
     <thead>
@@ -164,12 +170,7 @@
         {% csrf_token %}
         <button type="submit" class="btn btn--primary">Провести (выдать в ремонт)</button>
       </form>
-      <form method="post"
-            action="{% url 'repair_order_cancel' order.pk %}"
-            class="inline-form">
-        {% csrf_token %}
-        <button type="submit">Отменить заказ</button>
-      </form>
+      <a class="btn" href="{% url 'repair_order_cancel_confirm' order.pk %}">Отменить заказ</a>
     </div>
     <h2>Добавить позицию</h2>
     <form method="post"

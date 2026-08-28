@@ -70,6 +70,12 @@ class RepairOrder(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     completed_at = models.DateTimeField("Проведён (когда)", null=True, blank=True)
     canceled_at = models.DateTimeField("Отменён (когда)", null=True, blank=True)
+    canceled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто отменил",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    cancellation_reason = models.CharField("Причина отмены", max_length=255, blank=True)
+    cancellation_author = models.CharField("Автор отмены", max_length=255, blank=True)
 
     class Meta:
         verbose_name = "Ремонтный заказ"

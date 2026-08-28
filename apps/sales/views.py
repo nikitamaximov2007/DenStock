@@ -24,6 +24,7 @@ from .forms import (
     AddLotForm,
     AddSaleItemForm,
     AddSaleLotForm,
+    SaleCancellationForm,
     ReservationForm,
     SaleForm,
 )
@@ -37,6 +38,7 @@ from .services import (
     add_stock_lot_to_reservation,
     add_stock_lot_to_sale,
     cancel_reservation,
+    cancel_sale,
     complete_sale,
     create_reservation,
     create_sale,
@@ -290,6 +292,7 @@ def sale_detail(request, pk):
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
             "add_lot_form": AddSaleLotForm(),
+            "can_cancel": request.user.can_manage_sales,
         },
     )
 
@@ -389,6 +392,33 @@ def sale_complete(request, pk):
         messages.error(request, str(exc))
     else:
         messages.success(request, f"Продажа {sale.number} проведена.")
+    return redirect("sale_detail", pk=pk)
+
+
+@login_required
+def sale_cancel_confirm(request, pk):
+    _require_sales(request)
+    sale = get_object_or_404(Sale, pk=pk)
+    if sale.status != Sale.Status.COMPLETED:
+        messages.error(request, "Отменить можно только проведённую продажу.")
+        return redirect("sale_detail", pk=pk)
+    return render(request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": SaleCancellationForm()})
+
+
+@login_required
+@require_POST
+def sale_cancel(request, pk):
+    _require_sales(request)
+    sale = get_object_or_404(Sale, pk=pk)
+    form = SaleCancellationForm(request.POST)
+    if not form.is_valid():
+        return render(request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": form}, status=400)
+    try:
+        cancel_sale(sale, by=request.user, reason=form.cleaned_data["reason"], author=form.cleaned_data["author"])
+    except SaleError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"Продажа {sale.number} отменена.")
     return redirect("sale_detail", pk=pk)
 
 
