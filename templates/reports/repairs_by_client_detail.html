@@ -56,7 +56,9 @@
                 <span class="muted">Не зафиксировано</span>
               {% endif %}
             </td>
-            {% if show_costs %}<td class="num--money">{{ line.net_cost_rub|money_int }}</td>{% endif %}
+            {% if show_costs %}
+              <td class="num--money">{{ line.net_cost_rub|money_int }}</td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>

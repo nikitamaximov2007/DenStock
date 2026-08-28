@@ -31,7 +31,8 @@
             <td class="num">{{ row.repair_count }}</td>
             <td class="num">{{ row.unique_parts }}</td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
-            <td class="num--money">{{ row.repair_customer_amount|money_int }}
+            <td class="num--money">
+              {{ row.repair_customer_amount|money_int }}
               {% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}
             </td>
             {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}

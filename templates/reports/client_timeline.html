@@ -27,10 +27,12 @@
     <tbody>
       <tr>
         <td class="num--money">{{ client_summary.sales|money_int }}</td>
-        <td class="num--money">{{ client_summary.repairs|money_int }}
+        <td class="num--money">
+          {{ client_summary.repairs|money_int }}
           {% if client_summary.unknown %}<span class="muted">*</span>{% endif %}
         </td>
-        <td class="num--money">{{ client_summary.total|money_int }}
+        <td class="num--money">
+          {{ client_summary.total|money_int }}
           {% if client_summary.unknown %}<span class="muted">*</span>{% endif %}
         </td>
       </tr>
