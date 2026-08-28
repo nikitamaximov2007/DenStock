@@ -1227,7 +1227,7 @@ def _number_snapshots(movements) -> dict[int, str]:
     return snapshots
 
 
-def _net_part_consumption(movements, versions, snapshots, default_number):
+def _net_part_consumption_entries(movements, versions, snapshots, default_number):
     """Свести журнал детали, списав возврат на ту выдачу, которую он отменяет.
 
     Внешнего ключа с возврата на отменяемое движение в журнале нет, поэтому
@@ -1241,15 +1241,16 @@ def _net_part_consumption(movements, versions, snapshots, default_number):
     движение, поэтому отменённая продажа гасится своей же выдачей и в
     таможенный расход не попадает.
     """
-    outstanding: list[list] = []  # [версия, остаток, происхождение, номер]
+    outstanding: list[dict] = []
     for movement in movements:
         if movement.movement_type in _CUSTOMS_OUTBOUND_TYPES:
-            outstanding.append([
-                _version_at(versions, movement.created_at),
-                movement.quantity,
-                _movement_source(movement),
-                snapshots.get(movement.pk) or default_number,
-            ])
+            outstanding.append({
+                "movement": movement,
+                "version": _version_at(versions, movement.created_at),
+                "quantity": movement.quantity,
+                "source": _movement_source(movement),
+                "number": snapshots.get(movement.pk) or default_number,
+            })
             continue
         remaining = movement.quantity
         source = _movement_source(movement)
@@ -1259,17 +1260,25 @@ def _net_part_consumption(movements, versions, snapshots, default_number):
             for entry in reversed(outstanding):
                 if remaining <= 0:
                     break
-                if exact_only and entry[2] != source:
+                if exact_only and entry["source"] != source:
                     continue
-                taken = min(entry[1], remaining)
-                entry[1] -= taken
+                taken = min(entry["quantity"], remaining)
+                entry["quantity"] -= taken
                 remaining -= taken
             if remaining <= 0:
                 break
         # Остаток возврата без выдачи в окне (выдача была раньше периода) не
         # уходит в минус: отрицательного расхода на таможне не бывает.
+    return [entry for entry in outstanding if entry["quantity"] > 0]
+
+
+def _net_part_consumption(movements, versions, snapshots, default_number):
+    """Свести остаточные движения к строкам XLSX без потери количества."""
     totals: dict[tuple, Decimal] = {}
-    for version, quantity, _source, number in outstanding:
+    for entry in _net_part_consumption_entries(movements, versions, snapshots, default_number):
+        version = entry["version"]
+        quantity = entry["quantity"]
+        number = entry["number"]
         if quantity <= 0:
             continue
         key = (version.pk if version is not None else None, number)
@@ -1374,8 +1383,100 @@ def historical_customs_rows(
                 customs=customs_by_part.get(part_id),
             )
             row["number"] = number
+            row["source_key"] = (part_id, version_pk, number)
             rows.append(row)
     return sorted(rows, key=lambda row: (row["number"], row["version_number"] or 0))
+
+
+def customs_export_reconciliation(
+    *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+) -> dict:
+    """Read-only сверка источника расхода и строк таможенной выгрузки.
+
+    Источник - неизменяемый ``StockMovement``. Каждое непогашенное выбытие
+    получает ключ строки XLSX: ``part, customs version, exact number``. Тогда
+    агрегирование не скрывает движение: оно либо представлено готовой строкой,
+    либо явно блокирует экспорт из-за неполных исторических данных.
+    """
+    filters = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "action_type": action_type,
+        "q": q,
+        "part_number": part_number,
+        "location_code": location_code,
+    }
+    movements = _customs_movements(**filters)
+    if not movements:
+        return {"eligible": [], "exported": [], "blocked": [], "silent": [], "duplicates": []}
+
+    part_ids = {movement.part_type_id for movement in movements}
+    versions_by_part = _customs_versions_by_part(part_ids)
+    parts = {
+        part.pk: part
+        for part in PartType.objects.filter(pk__in=part_ids).prefetch_related("numbers")
+    }
+    snapshots = _number_snapshots(movements)
+    records = []
+    for part_id in part_ids:
+        part_movements = [m for m in movements if m.part_type_id == part_id]
+        for entry in _net_part_consumption_entries(
+            part_movements,
+            versions_by_part.get(part_id, []),
+            snapshots,
+            part_exact_number(parts[part_id], default=""),
+        ):
+            movement = entry["movement"]
+            version = entry["version"]
+            records.append({
+                "movement_id": movement.pk,
+                "document_type": movement.document_type,
+                "document_id": movement.document_id,
+                "operation": {
+                    StockMovement.MovementType.SALE_ITEM: "sale",
+                    StockMovement.MovementType.SALE_LOT: "sale",
+                    StockMovement.MovementType.ISSUE_ITEM: "repair",
+                    StockMovement.MovementType.ISSUE_LOT: "repair",
+                    StockMovement.MovementType.WRITE_OFF_ITEM: "write_off",
+                    StockMovement.MovementType.WRITE_OFF_LOT: "write_off",
+                }[movement.movement_type],
+                "part_id": part_id,
+                "number": entry["number"],
+                "quantity": entry["quantity"],
+                "source": entry["source"],
+                "created_at": movement.created_at,
+                "source_key": (
+                    part_id,
+                    version.pk if version is not None else None,
+                    entry["number"],
+                ),
+            })
+
+    rows_by_key = {row["source_key"]: row for row in historical_customs_rows(**filters)}
+    exported, blocked, silent = [], [], []
+    for record in records:
+        row = rows_by_key.get(record["source_key"])
+        if row is None:
+            silent.append(record)
+        elif row["customs_ready"]:
+            exported.append(record)
+        else:
+            blocked.append({**record, "missing_reasons": row["customs_missing_reasons"]})
+
+    seen_movement_ids = set()
+    duplicates = []
+    for record in records:
+        movement_id = record["movement_id"]
+        if movement_id in seen_movement_ids:
+            duplicates.append(movement_id)
+        seen_movement_ids.add(movement_id)
+    return {
+        "eligible": records,
+        "exported": exported,
+        "blocked": blocked,
+        "silent": silent,
+        "duplicates": duplicates,
+    }
 
 
 def _center_data_row(sheet, row: int) -> None:

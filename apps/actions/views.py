@@ -653,15 +653,14 @@ def actions_export(request):
 
     filters = _report_filters(request)
     rows = historical_customs_rows(**filters)
-    # Позиция без единой сохранённой версии — это деталь, по которой
-    # таможенных данных не вводили вовсе. Достроить их неоткуда: каталог для
-    # таможни не источник. Отдельные незаполненные поля экспорт не блокируют,
-    # они остаются пустыми, как и раньше.
-    missing = [row for row in rows if not row["customs_entered"]]
+    # Неполная историческая карточка не должна превратить экспорт в частично
+    # заполненный XLSX. Предпросмотр уже показывает точные причины; скачивание
+    # разрешается только когда каждая строка готова к декларации.
+    missing = [row for row in rows if not row["customs_ready"]]
     if missing:
         messages.error(
             request,
-            f"Нельзя сформировать Excel: у {len(missing)} деталей не заведены таможенные данные.",
+            f"Нельзя сформировать Excel: у {len(missing)} строк не заполнены таможенные данные.",
         )
         return redirect(f"{reverse('actions_report')}?{urlencode(request.GET)}")
     buffer = export_customs_xlsx(rows=rows)

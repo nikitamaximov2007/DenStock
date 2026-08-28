@@ -29,6 +29,7 @@ from apps.accounts import roles
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
     customs_data_version_for,
+    customs_export_reconciliation,
     export_customs_xlsx,
     historical_customs_rows,
     parse_customs_usd,
@@ -44,6 +45,7 @@ from apps.inventory.services import (
 )
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
+from apps.repairs.services import cancel_repair_order
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 
@@ -718,7 +720,74 @@ def test_export_refuses_when_nothing_was_ever_entered(client, env, make_user):
     _login(client, make_user)
     resp = client.get(reverse("actions_export"))
     assert resp.status_code == 302
-    assert "не заведены таможенные данные" in client.get(resp.url).content.decode()
+    assert "не заполнены таможенные данные" in client.get(resp.url).content.decode()
+
+
+def test_export_blocks_incomplete_historical_customs_data(client, env, make_user):
+    """Ни одна неполная строка не может тихо попасть в готовый XLSX."""
+    part = _part(env, number="219800345")
+    _receive(env, part, quantity="10")
+    _card(part, customs_unit_price_usd=None)
+    _sell(env, part, quantity="2", number="219800345")
+
+    _login(client, make_user)
+    response = client.get(reverse("actions_export"))
+    assert response.status_code == 302
+    html = client.get(response.url).content.decode()
+    assert "не заполнены таможенные данные" in html
+
+
+def test_reconciliation_accounts_for_sale_repair_and_explicit_missing_data(env):
+    """eligible = exported + explicitly blocked; none may disappear silently."""
+    exported = _part(env, number="SALE-001", name="ПРОДАЖА")
+    blocked = _part(env, number="REPAIR-001", name="РЕМОНТ")
+    _receive(env, exported, quantity="10")
+    _receive(env, blocked, quantity="10")
+    _card(exported)
+    _card(blocked, customs_unit_price_usd=None)
+
+    _sell(env, exported, quantity="2", number="SALE-001")
+    perform_action(
+        part=blocked, location=env["loc"], action_type="repair", quantity="3",
+        customer_comment="Без карточки клиента", scanned_number="REPAIR-001", by=env["admin"],
+    )
+
+    result = customs_export_reconciliation()
+    assert sum(row["quantity"] for row in result["eligible"]) == Decimal("5")
+    assert sum(row["quantity"] for row in result["exported"]) == Decimal("2")
+    assert sum(row["quantity"] for row in result["blocked"]) == Decimal("3")
+    assert {row["operation"] for row in result["eligible"]} == {"sale", "repair"}
+    assert result["silent"] == []
+    assert result["duplicates"] == []
+    assert {
+        row["movement_id"] for row in result["eligible"]
+    } == {
+        row["movement_id"] for row in result["exported"] + result["blocked"]
+    }
+
+
+def test_reconciliation_nets_returns_and_cancellation_without_losing_source(env):
+    part = _part(env, number="219800345")
+    lot = _receive(env, part, quantity="20")
+    _card(part)
+    sale = _sell(env, part, quantity="5", number="219800345")
+    repair = perform_action(
+        part=part, location=env["loc"], action_type="repair", quantity="4",
+        customer_comment="Клиент", scanned_number="219800345", by=env["admin"],
+    )
+    return_stock_lot_quantity(
+        lot.batch_line, env["loc"], Decimal("2"), unit_cost_rub=lot.landed_unit_cost_rub,
+        restock_status=StockLot.Status.AVAILABLE, by=env["admin"], document_id=sale.sale_id,
+        comment="Частичный возврат продажи",
+    )
+    cancel_repair_order(repair.repair_order, by=env["admin"], reason="Ошибка", author="Админ")
+
+    result = customs_export_reconciliation()
+    assert sum(row["quantity"] for row in result["eligible"]) == Decimal("3")
+    assert sum(row["quantity"] for row in result["exported"]) == Decimal("3")
+    assert {row["operation"] for row in result["eligible"]} == {"sale"}
+    assert result["blocked"] == []
+    assert result["silent"] == []
 
 
 def test_viewer_cannot_export_customs_xlsx(client, env, make_user):

@@ -169,7 +169,10 @@ def _card(part, **overrides):
         "customs_name_en": "BELT DRIVE",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
+        "gross_weight_kg": Decimal("0.350"),
+        "net_weight_kg": Decimal("0.300"),
         "customs_unit_price_usd": Decimal("7"),
+        "application_area": PartCustomsInfo.ApplicationArea.SNOWMOBILE,
     }
     values.update(overrides)
     return PartCustomsInfo.objects.create(part_type=part, **values)
@@ -441,16 +444,13 @@ def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     assert resp.status_code == 302
     assert resp.url.startswith(reverse("actions_report"))
     html = client.get(resp.url).content.decode()
-    assert "не заведены таможенные данные" in html
+    assert "не заполнены таможенные данные" in html
 
-    # Заведённая, но неполная карточка выгрузку не блокирует: пустое поле
-    # так и остаётся пустым.
+    # Частично заведённая карточка тоже не даёт частичный успешный экспорт.
     _card(part, customs_unit_price_usd=None)
     resp = client.get(reverse("actions_export"))
-    assert resp.status_code == 200
-    sheet = _sheet(resp.content)
-    assert sheet[f"K{DATA_ROW}"].value is None  # цена пустая, не выдумана
-    assert sheet[f"G{DATA_ROW}"].value is None and sheet[f"H{DATA_ROW}"].value is None
+    assert resp.status_code == 302
+    assert "не заполнены таможенные данные" in client.get(resp.url).content.decode()
 
 
 def test_decimal_quantity_written_as_number(client, make_user, env):
@@ -692,15 +692,20 @@ def test_wholesale_ignores_rate_and_markup(client, make_user, env):
     assert _price(sheet) == Decimal("28.15")  # чистый USD, без курса и наценки
 
 
-def test_unentered_customs_price_leaves_cell_empty(client, make_user, env):
-    """Незаполненная таможенная цена остаётся пустой ячейкой, а не нулём."""
+def test_unentered_customs_price_blocks_export_without_inventing_zero(client, make_user, env):
+    """Незаполненная таможенная цена - явный blocker, не ноль в XLSX."""
     part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15",
                    customs=False)
     _card(part, customs_unit_price_usd=None)
     _sell(env, part, number="219800345")
     _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert _price(sheet) is None  # ни каталожной цены, ни выдуманного нуля
+    response = client.get(reverse("actions_export"))
+    assert response.status_code == 302
+    from apps.actions.services import historical_customs_rows
+
+    rows = historical_customs_rows()
+    assert len(rows) == 1
+    assert rows[0]["usd_price"] is None
 
 
 # --- Область применения (§6-§7) --------------------------------------------------------
@@ -715,11 +720,19 @@ def _compat(part, make_name, vehicle_type_name, model_name="MODEL"):
     PartCompatibility.objects.create(part=part, vehicle_model=model)
 
 
-def _application_for(client, make_user, env, part, number):
+def _application_for(client, make_user, env, part, number, *, clear_manual=True):
+    # Здесь проверяется источник значения, не обход экспортного блокера: при
+    # незаполненной области применения XLSX формироваться не должен.
+    if clear_manual:
+        card = PartCustomsInfo.objects.get(part_type=part)
+        card.application_area = ""
+        card.save(update_fields=["application_area", "updated_at"])
     _sell(env, part, number=number)
-    _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
-    return sheet[f"M{DATA_ROW}"].value
+    from apps.actions.services import historical_customs_rows
+
+    rows = [row for row in historical_customs_rows() if row["number"] == number]
+    assert len(rows) == 1
+    return rows[0]["application_area"] or None
 
 
 def _customs(part, **overrides):
@@ -803,7 +816,9 @@ def test_manual_application_wins_over_catalog(client, make_user, env):
     part, _ = _brp(env, material="219800345", customs=False)
     _compat(part, "Ski-Doo", "Снегоход", "SUMMIT")
     _customs(part, application_area="Катер / лодка")
-    assert _application_for(client, make_user, env, part, "219800345") == "КАТЕР / ЛОДКА"
+    assert _application_for(
+        client, make_user, env, part, "219800345", clear_manual=False
+    ) == "КАТЕР / ЛОДКА"
 
 
 def test_no_moto_zapchasti_in_exported_rows(client, make_user, env):
