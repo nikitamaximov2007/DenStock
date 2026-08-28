@@ -55,7 +55,13 @@
                 <td><a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a></td>
                 <td>{{ row.exact_number|default:"·" }}</td>
                 <td class="muted">{{ row.manufacturer|default:"·" }}</td>
-                <td class="num--money">{% if row.price is not None %}{{ row.price|money_int }}{% else %}не указана{% endif %}</td>
+                <td class="num--money">
+                  {% if row.price is not None %}
+                    {{ row.price|money_int }}
+                  {% else %}
+                    не указана
+                  {% endif %}
+                </td>
                 <td class="num--qty">
                   {% if row.available %}
                     <strong>{{ row.available|quantity_int }}</strong>

@@ -27,12 +27,18 @@
     <tbody>
       <tr>
         <td class="num--money">{{ client_summary.sales|money_int }}</td>
-        <td class="num--money">{{ client_summary.repairs|money_int }}{% if client_summary.unknown %}<span class="muted">*</span>{% endif %}</td>
-        <td class="num--money">{{ client_summary.total|money_int }}{% if client_summary.unknown %}<span class="muted">*</span>{% endif %}</td>
+        <td class="num--money">{{ client_summary.repairs|money_int }}
+          {% if client_summary.unknown %}<span class="muted">*</span>{% endif %}
+        </td>
+        <td class="num--money">{{ client_summary.total|money_int }}
+          {% if client_summary.unknown %}<span class="muted">*</span>{% endif %}
+        </td>
       </tr>
     </tbody>
   </table>
-  {% if client_summary.unknown %}<p class="muted">* У части старых ремонтов цена деталей не была зафиксирована.</p>{% endif %}
+  {% if client_summary.unknown %}
+    <p class="muted">* У части старых ремонтов цена деталей не была зафиксирована.</p>
+  {% endif %}
   {% if page_obj.object_list %}
     <table class="table">
       <thead>
@@ -62,11 +68,19 @@
             </td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
             <td class="num--money">
-              {% if row.amount is not None %}{{ row.amount|money_int }}{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+              {% if row.amount is not None %}
+                {{ row.amount|money_int }}
+              {% else %}
+                <span class="muted">Не зафиксировано</span>
+              {% endif %}
             </td>
             {% if show_costs %}
               <td class="num--money">
-                {% if row.cost is not None %}{{ row.cost|money_int }}{% else %}<span class="muted">·</span>{% endif %}
+                {% if row.cost is not None %}
+                  {{ row.cost|money_int }}
+                {% else %}
+                  <span class="muted">·</span>
+                {% endif %}
               </td>
             {% endif %}
             <td>{{ row.kind_label }}</td>
