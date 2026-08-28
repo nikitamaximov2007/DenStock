@@ -66,7 +66,22 @@
               {% else %}
                 <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
               {% endif %}
-              {% if not row.linked %}<span class="muted">&#32;· без карточки</span>{% endif %}
+              {% comment %}
+                Ссылка на карточку у связанных и путь её завести у остальных:
+                иначе исторические документы так и остаются безымянными, а
+                связать их автоматически по одному имени нельзя.
+              {% endcomment %}
+              {% if row.linked %}
+                <div class="muted">
+                  Карточка есть ·
+                  <a href="{% url 'customer_detail' row.customer_id %}">Открыть карточку</a>
+                </div>
+              {% else %}
+                <div class="muted">
+                  Без карточки ·
+                  <a href="{% url 'legacy_customer_link' %}?legacy_name={{ row.report_customer|urlencode }}&amp;next={{ request.get_full_path|urlencode }}">Создать карточку</a>
+                </div>
+              {% endif %}
             </td>
             <td class="num">{{ row.sale_count }}</td>
             <td class="num--money">{{ row.revenue|money_int }}</td>

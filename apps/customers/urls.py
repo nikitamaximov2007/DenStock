@@ -5,6 +5,11 @@ from . import views
 urlpatterns = [
     path("customers/", views.customer_list, name="customer_list"),
     path("customers/new/", views.customer_create, name="customer_create"),
+    path(
+        "customers/legacy-link/",
+        views.legacy_customer_link,
+        name="legacy_customer_link",
+    ),
     path("customers/<int:pk>/", views.customer_detail, name="customer_detail"),
     path("customers/<int:pk>/edit/", views.customer_edit, name="customer_edit"),
 ]

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Карточка для «{{ legacy_name }}» · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Карточка клиента для исторической записи</h1>
+    <div class="page-actions">
+      <a class="btn btn--secondary"
+         href="{% if next %}{{ next }}{% else %}{% url 'reports_clients_overview' %}{% endif %}">Назад к отчёту</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <p>
+        Исходная запись: <strong>{{ legacy_name }}</strong>
+      </p>
+      <p class="muted">
+        Будет привязано документов: продаж {{ summary.sales }}, ремонтов {{ summary.repairs }}.
+        Имена, телефоны и суммы в самих документах не меняются: у них появится
+        только ссылка на карточку.
+      </p>
+    </div>
+  </div>
+  {% comment %}
+    Имя и телефон подставлены из самой исторической строки и являются
+    подсказкой. Оператор правит их до сохранения: связывать по распознанному
+    телефону автоматически нельзя.
+  {% endcomment %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Новая карточка</h2>
+    </div>
+    <div class="card__body">
+      {% if suggestion.phone %}
+        <p class="muted">Из записи распознан телефон {{ suggestion.phone }}. Проверьте его.</p>
+      {% else %}
+        <p class="muted">Телефона в записи нет. Его можно оставить пустым.</p>
+      {% endif %}
+      <form method="post" class="form">
+        {% csrf_token %}
+        <input type="hidden" name="legacy_name" value="{{ legacy_name }}">
+        <input type="hidden" name="next" value="{{ next }}">
+        {{ form.as_p }}
+        <button type="submit" class="btn btn--primary">Создать и привязать</button>
+      </form>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Привязать к существующей</h2>
+    </div>
+    <div class="card__body">
+      <p class="muted">
+        Если карточка этого клиента уже заведена, найдите её по имени или
+        телефону и выберите. Автоматически ничего не подбирается: тёзки и общие
+        номера встречаются.
+      </p>
+      <form method="get" class="search-form">
+        <input type="hidden" name="legacy_name" value="{{ legacy_name }}">
+        <input type="hidden" name="next" value="{{ next }}">
+        <input name="q"
+               type="text"
+               value="{{ q }}"
+               placeholder="Имя или телефон"
+               autocomplete="off">
+        <button type="submit" class="btn btn--secondary">Найти</button>
+      </form>
+      {% if q %}
+        {% if candidates %}
+          <table class="table table--compact">
+            <thead>
+              <tr>
+                <th>Имя</th>
+                <th>Телефон</th>
+                <th class="table__actions"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for candidate in candidates %}
+                <tr>
+                  <td>{{ candidate.name }}</td>
+                  <td>{{ candidate.phone|default:"·" }}</td>
+                  <td class="table__actions">
+                    <form method="post" class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="legacy_name" value="{{ legacy_name }}">
+                      <input type="hidden" name="next" value="{{ next }}">
+                      <input type="hidden" name="existing_customer" value="{{ candidate.pk }}">
+                      <button type="submit" class="btn btn--small btn--secondary">Привязать</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted">По запросу «{{ q }}» карточек не найдено.</p>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

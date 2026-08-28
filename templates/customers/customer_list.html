@@ -26,7 +26,6 @@
         <tr>
           <th>Имя</th>
           <th>Телефон</th>
-          <th>Комментарий</th>
         </tr>
       </thead>
       <tbody>
@@ -35,8 +34,11 @@
             <td>
               <a href="{% url 'customer_detail' customer.pk %}">{{ customer.name }}</a>
             </td>
+            {% comment %}
+              Описание клиента - заметка для карточки, а не для списка: в общем
+              перечне и в выборе клиента её видеть незачем, а иногда и не нужно.
+            {% endcomment %}
             <td>{{ customer.phone|default:"·" }}</td>
-            <td>{{ customer.comment|truncatechars:60|default:"·" }}</td>
           </tr>
         {% endfor %}
       </tbody>

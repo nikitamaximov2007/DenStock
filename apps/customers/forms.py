@@ -9,10 +9,16 @@ class CustomerForm(forms.ModelForm):
     class Meta:
         model = Customer
         fields = ["name", "phone", "comment"]
+        # Заметка о клиенте у оператора называется описанием и живёт в
+        # существующем поле comment: заводить рядом второе поле того же смысла
+        # незачем. Видно оно только в карточке и её правке.
+        labels = {"comment": "Описание клиента"}
         widgets = {
             "name": forms.TextInput(attrs={"placeholder": "Иванов Иван", "autofocus": True}),
             "phone": forms.TextInput(attrs={"placeholder": "+7 912 123-45-67"}),
-            "comment": forms.Textarea(attrs={"rows": 3}),
+            "comment": forms.Textarea(
+                attrs={"rows": 3, "placeholder": "Чем занимается, какая техника, особенности"}
+            ),
         }
 
     def clean_name(self):

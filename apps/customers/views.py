@@ -17,6 +17,7 @@ from apps.repairs.models import RepairOrder
 from apps.sales.models import Reservation, Sale
 
 from .forms import CustomerForm
+from .legacy_linking import legacy_group_summary, link_legacy_group, suggest_identity
 from .models import Customer
 from .services import search_customers
 
@@ -108,6 +109,71 @@ def customer_create(request):
         },
     )
 
+
+@login_required
+def legacy_customer_link(request):
+    """Завести карточку для исторической группы документов или выбрать готовую.
+
+    Группа задана только своим историческим именем: список документов приходит
+    не из браузера, а пересобирается на сервере при сохранении. Имя и телефон
+    подсказываются из самой строки, но это подсказка - правит оператор.
+    """
+    _require_edit(request)
+    legacy_name = (request.POST.get("legacy_name") or request.GET.get("legacy_name") or "").strip()
+    if not legacy_name:
+        messages.error(request, "Не указана историческая запись клиента.")
+        return redirect("reports_clients_overview")
+    summary = legacy_group_summary(legacy_name)
+    if not summary["sales"] and not summary["repairs"]:
+        messages.error(
+            request, f"Документов без карточки с записью «{legacy_name}» не найдено."
+        )
+        return redirect("reports_clients_overview")
+    suggestion = suggest_identity(legacy_name)
+    back = request.POST.get("next") or request.GET.get("next") or ""
+
+    if request.method == "POST":
+        existing_id = (request.POST.get("existing_customer") or "").strip()
+        if existing_id:
+            customer = Customer.objects.filter(pk=existing_id).first()
+            if customer is None:
+                messages.error(request, "Выбранная карточка не найдена.")
+                return redirect(request.get_full_path())
+            result = link_legacy_group(legacy_name=legacy_name, customer=customer, by=request.user)
+            messages.success(
+                request,
+                f"Документы записи «{legacy_name}» привязаны к карточке {customer.name}: "
+                f"продаж {result['sales_linked']}, ремонтов {result['repairs_linked']}.",
+            )
+            return redirect(back or "reports_clients_overview")
+        form = CustomerForm(request.POST)
+        if form.is_valid():
+            customer = form.save()
+            result = link_legacy_group(legacy_name=legacy_name, customer=customer, by=request.user)
+            messages.success(
+                request,
+                f"Карточка {customer.name} создана, документы записи «{legacy_name}» "
+                f"привязаны: продаж {result['sales_linked']}, "
+                f"ремонтов {result['repairs_linked']}.",
+            )
+            return redirect(back or "reports_clients_overview")
+    else:
+        form = CustomerForm(initial={"name": suggestion["name"], "phone": suggestion["phone"]})
+
+    query = (request.GET.get("q") or "").strip()
+    return render(
+        request,
+        "customers/legacy_customer_link.html",
+        {
+            "form": form,
+            "legacy_name": legacy_name,
+            "summary": summary,
+            "suggestion": suggestion,
+            "next": back,
+            "q": query,
+            "candidates": search_customers(query)[:20] if query else [],
+        },
+    )
 
 @login_required
 def customer_edit(request, pk):
