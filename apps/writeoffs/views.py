@@ -27,6 +27,7 @@ from .services import (
     WriteOffError,
     add_part_item_to_write_off,
     add_stock_lot_to_write_off,
+    available_quantities_by_location,
     available_quantity,
     cancel_write_off,
     complete_write_off,
@@ -159,6 +160,7 @@ def write_off_quick(request):
                     reason=request.POST.get("reason"),
                     business_author=request.POST.get("business_author"),
                     quantity=request.POST.get("quantity", "1"),
+                    location_id=request.POST.get("location_id") or None,
                     by=request.user,
                 )
             except WriteOffError as exc:
@@ -170,6 +172,11 @@ def write_off_quick(request):
                     f"Причина: {doc.comment}. Автор: {doc.business_author}.",
                 )
                 return redirect("write_off_detail", pk=doc.pk)
+    locations = (
+        available_quantities_by_location(part)
+        if part and part.tracking_mode == part.TrackingMode.BULK
+        else []
+    )
     return render(
         request,
         "writeoffs/write_off_quick.html",
@@ -178,6 +185,7 @@ def write_off_quick(request):
             "part": part,
             "lookup": lookup.candidate if part else None,
             "available": available_quantity(part) if part else None,
+            "locations": locations,
             "not_found": bool(q and part is None),
         },
     )

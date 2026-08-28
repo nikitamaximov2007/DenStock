@@ -33,6 +33,24 @@
     {% if part %}
       <p><span class="code-pill">{{ lookup.exact_number }}</span> <strong>{{ part.name }}</strong></p>
       <p><strong>Доступно: {{ available|quantity_int }}</strong></p>
+      {% if locations|length > 1 %}
+        <p>
+          <label for="quick-write-off-location">Ячейка</label>
+          <br>
+          <select id="quick-write-off-location" name="location_id" required>
+            <option value="">Выберите ячейку</option>
+            {% for row in locations %}
+              <option value="{{ row.location.pk }}"
+                      {% if request.POST.location_id == row.location.pk|stringformat:"s" %}selected{% endif %}>{{ row.location.code }} - доступно {{ row.available|quantity_int }}</option>
+            {% endfor %}
+          </select>
+        </p>
+      {% elif locations %}
+        <input type="hidden"
+               name="location_id"
+               value="{{ locations.0.location.pk }}">
+        <p>Ячейка: <strong>{{ locations.0.location.code }}</strong></p>
+      {% endif %}
     {% elif not_found %}
       {% include "partials/_status_block.html" with kind="warning" text="Деталь не найдена в остатках склада." %}
     {% endif %}

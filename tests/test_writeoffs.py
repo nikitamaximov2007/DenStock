@@ -6,6 +6,7 @@
 Физику делают inventory.write_off_*, документ ведёт apps/writeoffs; view ledger
 напрямую не пишет.
 """
+import re
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -41,6 +42,7 @@ from apps.writeoffs.services import (
     WriteOffError,
     add_part_item_to_write_off,
     add_stock_lot_to_write_off,
+    available_quantities_by_location,
     available_quantity,
     cancel_write_off,
     complete_write_off,
@@ -293,6 +295,214 @@ def test_quick_write_off_allocates_requested_bulk_quantity_across_fifo_lots(data
     assert data["lot"].quantity == Decimal("0")
     assert second.quantity == Decimal("2")
     assert StockMovement.objects.filter(document_id=doc.pk, document_type="write_off").count() == 2
+
+
+def test_quick_write_off_uses_only_the_selected_location_and_cancel_restores_it(data):
+    second_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, second_location, Decimal("6"))
+    receive_stock_lot(second, by=data["admin"])
+
+    assert available_quantities_by_location(data["lot"].part_type) == [
+        {"location": data["loc"], "available": Decimal("5")},
+        {"location": second_location, "available": Decimal("6")},
+    ]
+
+    doc = quick_write_off(
+        part=data["lot"].part_type,
+        scanned_code="BOLT-ARTICLE",
+        reason="Брак",
+        business_author="Иван",
+        quantity="1",
+        location_id=data["loc"].pk,
+        by=data["admin"],
+    )
+
+    data["lot"].refresh_from_db()
+    second.refresh_from_db()
+    assert data["lot"].quantity == Decimal("4")
+    assert second.quantity == Decimal("6")
+    assert doc.lines.get().source_location_id == data["loc"].pk
+
+    cancel_write_off(doc, by=data["admin"])
+    cancel_write_off(doc, by=data["admin"])
+    data["lot"].refresh_from_db()
+    second.refresh_from_db()
+    assert data["lot"].quantity == Decimal("5")
+    assert second.quantity == Decimal("6")
+
+
+def test_quick_write_off_requires_a_location_when_multiple_are_available(data):
+    second_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, second_location, Decimal("6"))
+    receive_stock_lot(second, by=data["admin"])
+
+    with pytest.raises(WriteOffError, match="Выберите ячейку"):
+        quick_write_off(
+            part=data["lot"].part_type,
+            scanned_code="BOLT-ARTICLE",
+            reason="Брак",
+            business_author="Иван",
+            quantity="1",
+            by=data["admin"],
+        )
+
+    assert WriteOffDocument.objects.count() == 0
+    data["lot"].refresh_from_db()
+    second.refresh_from_db()
+    assert data["lot"].quantity == Decimal("5")
+    assert second.quantity == Decimal("6")
+
+
+def test_quick_write_off_never_falls_back_to_another_location(data):
+    second_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, second_location, Decimal("6"))
+    receive_stock_lot(second, by=data["admin"])
+
+    with pytest.raises(WriteOffError, match="Доступно только 5"):
+        quick_write_off(
+            part=data["lot"].part_type,
+            scanned_code="BOLT-ARTICLE",
+            reason="Брак",
+            business_author="Иван",
+            quantity="6",
+            location_id=data["loc"].pk,
+            by=data["admin"],
+        )
+
+    data["lot"].refresh_from_db()
+    second.refresh_from_db()
+    assert data["lot"].quantity == Decimal("5")
+    assert second.quantity == Decimal("6")
+
+
+def test_quick_write_off_uses_fifo_only_inside_the_selected_location(data):
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second_in_location = create_stock_lot(second_line, data["loc"], Decimal("3"))
+    receive_stock_lot(second_in_location, by=data["admin"])
+    other_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    other_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="300",
+    )
+    other = create_stock_lot(other_line, other_location, Decimal("6"))
+    receive_stock_lot(other, by=data["admin"])
+
+    doc = quick_write_off(
+        part=data["lot"].part_type,
+        scanned_code="BOLT-ARTICLE",
+        reason="Брак",
+        business_author="Иван",
+        quantity="6",
+        location_id=data["loc"].pk,
+        by=data["admin"],
+    )
+
+    assert set(doc.lines.values_list("stock_lot_id", flat=True)) == {
+        data["lot"].pk,
+        second_in_location.pk,
+    }
+    data["lot"].refresh_from_db()
+    second_in_location.refresh_from_db()
+    other.refresh_from_db()
+    assert data["lot"].quantity == Decimal("0")
+    assert second_in_location.quantity == Decimal("2")
+    assert other.quantity == Decimal("6")
+
+
+def test_available_locations_exclude_reserved_and_quarantine_stock(data):
+    second_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, second_location, Decimal("6"))
+    receive_stock_lot(second, by=data["admin"])
+    reservation = create_reservation(customer_name="Бронь", by=data["admin"])
+    add_stock_lot_to_reservation(reservation, data["lot"], Decimal("4"), by=data["admin"])
+    activate_reservation(reservation, by=data["admin"])
+
+    assert available_quantities_by_location(data["lot"].part_type) == [
+        {"location": data["loc"], "available": Decimal("1")},
+        {"location": second_location, "available": Decimal("6")},
+    ]
+
+
+def test_quick_write_off_page_lists_available_locations_without_lot_details(client, data):
+    second_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+        unit_cost="200",
+    )
+    second = create_stock_lot(second_line, second_location, Decimal("6"))
+    receive_stock_lot(second, by=data["admin"])
+    PartNumber.objects.create(
+        part=data["lot"].part_type,
+        value="QA-MULTI-LOCATION-WRITEOFF",
+        kind=PartNumber.Kind.OEM,
+    )
+    client.force_login(data["admin"])
+
+    response = client.get(f"{reverse('write_off_quick')}?q=QA-MULTI-LOCATION-WRITEOFF")
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'name="location_id"' in body
+    assert "A-01 - доступно 5" in body
+    assert "B-01 - доступно 6" in body
+    # Выбирается ячейка, а не лот: в значениях selector стоят номера ячеек.
+    # Поиск голой подстроки с pk лота здесь не годится - та же цифра попадается
+    # в токене формы и в соседних числах страницы.
+    offered = set(re.findall(r'<option value="(\d+)"', body))
+    assert offered == {str(data["lot"].location_id), str(second_location.pk)}
+    assert str(second.pk) not in offered
 
 
 def test_quick_write_off_rejects_insufficient_quantity_without_partial_document(data):
