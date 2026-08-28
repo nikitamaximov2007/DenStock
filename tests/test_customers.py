@@ -17,6 +17,7 @@ from decimal import Decimal
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
+from django.core.management import call_command
 from django.urls import reverse
 
 from apps.core.phones import normalize_phone
@@ -28,6 +29,62 @@ from apps.sales.models import Reservation, Sale
 from apps.sales.services import create_reservation, create_sale
 
 PASSWORD = "parol-12345"
+
+
+def _legacy_sale(name, phone=""):
+    return Sale.objects.create(
+        status=Sale.Status.COMPLETED, customer_name=name, customer_phone=phone
+    )
+
+
+def _legacy_repair(name, phone=""):
+    return RepairOrder.objects.create(
+        status=RepairOrder.Status.COMPLETED, customer_name=name, customer_phone=phone
+    )
+
+
+def test_explicit_legacy_backfill_links_only_safe_identity(db):
+    sale_one = _legacy_sale("Петр", "8 912 070-70-78")
+    sale_two = _legacy_sale("Петр", "+7 912 070 70 78")
+    repair = _legacy_repair("Петр", "89120707078")
+    snapshots = [(item.customer_name, item.customer_phone) for item in (sale_one, sale_two, repair)]
+
+    call_command("backfill_legacy_customers")
+    assert Customer.objects.count() == 0  # dry-run by default
+    call_command("backfill_legacy_customers", "--apply")
+
+    customer = Customer.objects.get()
+    sale_one.refresh_from_db()
+    sale_two.refresh_from_db()
+    repair.refresh_from_db()
+    assert {sale_one.customer_id, sale_two.customer_id, repair.customer_id} == {customer.pk}
+    assert [
+        (item.customer_name, item.customer_phone) for item in (sale_one, sale_two, repair)
+    ] == snapshots
+    call_command("backfill_legacy_customers", "--apply")
+    assert Customer.objects.count() == 1
+
+
+def test_legacy_backfill_reuses_only_exact_existing_customer(db):
+    customer = Customer.objects.create(name="Петр", phone="+7 912 070-70-78")
+    sale = _legacy_sale("Петр", "89120707078")
+    call_command("backfill_legacy_customers", "--apply")
+    sale.refresh_from_db()
+    assert Customer.objects.count() == 1
+    assert sale.customer_id == customer.pk
+
+
+@pytest.mark.parametrize(
+    "documents",
+    [(("Иван Петров", "89120000001"), ("Иван Петров", "89120000002")),
+     (("Иван Петров", "89120000001"), ("Петр Иванов", "89120000001")),
+     (("Иванов Сергей", ""),)],
+)
+def test_legacy_backfill_keeps_ambiguous_identities_unlinked(db, documents):
+    created = [_legacy_sale(name, phone) for name, phone in documents]
+    call_command("backfill_legacy_customers", "--apply")
+    assert Customer.objects.count() == 0
+    assert all(Sale.objects.get(pk=item.pk).customer_id is None for item in created)
 
 
 @pytest.fixture
