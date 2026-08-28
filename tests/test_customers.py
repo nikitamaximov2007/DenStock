@@ -12,16 +12,20 @@
 * никакой автоматической привязки истории не происходит.
 """
 
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from decimal import Decimal
 
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
 from django.core.management import call_command
+from django.db import close_old_connections, connection
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.core.phones import normalize_phone
-from apps.customers.models import Customer
+from apps.customers.models import Customer, CustomerPeriodPaymentAcknowledgement
 from apps.customers.services import customer_snapshot, search_customers
 from apps.repairs.models import RepairOrder
 from apps.repairs.services import create_repair_order
@@ -76,15 +80,90 @@ def test_legacy_backfill_reuses_only_exact_existing_customer(db):
 
 @pytest.mark.parametrize(
     "documents",
-    [(("Иван Петров", "89120000001"), ("Иван Петров", "89120000002")),
-     (("Иван Петров", "89120000001"), ("Петр Иванов", "89120000001")),
-     (("Иванов Сергей", ""),)],
+    [
+        (("Иван Петров", "89120000001"), ("Иван Петров", "89120000002")),
+        (("Иван Петров", "89120000001"), ("Петр Иванов", "89120000001")),
+        (("Иванов Сергей", ""),),
+    ],
 )
 def test_legacy_backfill_keeps_ambiguous_identities_unlinked(db, documents):
     created = [_legacy_sale(name, phone) for name, phone in documents]
     call_command("backfill_legacy_customers", "--apply")
     assert Customer.objects.count() == 0
     assert all(Sale.objects.get(pk=item.pk).customer_id is None for item in created)
+
+
+def test_legacy_backfill_plan_reports_identity_coverage(db):
+    from apps.customers.legacy_backfill import plan_legacy_customer_backfill
+
+    _legacy_sale("Полный", "89120000001")
+    _legacy_sale("Только имя")
+    _legacy_repair("", "89120000002")
+    _legacy_repair("", "")
+
+    plan = plan_legacy_customer_backfill()
+    assert plan["completed_legacy_sales"] == 2
+    assert plan["completed_legacy_repairs"] == 2
+    assert plan["name_phone_documents"] == 1
+    assert plan["name_only_documents"] == 1
+    assert plan["phone_only_documents"] == 1
+    assert plan["missing_identity_documents"] == 1
+    assert plan["new_customers_proposed"] == 1
+    assert plan["sales_proposed"] == 1
+    assert plan["repairs_proposed"] == 0
+
+
+def test_legacy_backfill_preserves_active_payment_acknowledgement(db):
+    customer = Customer.objects.create(name="Петр", phone="+7 912 070-70-78")
+    sale = _legacy_sale("Петр", "89120707078")
+    sale.sold_at = timezone.now()
+    sale.save(update_fields=["sold_at"])
+    CustomerPeriodPaymentAcknowledgement.objects.create(
+        customer=customer,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 12, 31),
+        amount_rub=Decimal("0"),
+        billable_fingerprint="0" * 64,
+        document_count=0,
+    )
+
+    call_command("backfill_legacy_customers", "--apply")
+
+    sale.refresh_from_db()
+    assert sale.customer_id is None
+
+
+@pytest.mark.postgresql
+@pytest.mark.django_db(transaction=True)
+def test_postgresql_legacy_backfill_serializes_concurrent_apply():
+    if connection.vendor != "postgresql":
+        pytest.skip("Run against PostgreSQL with DENSTOCK_TEST_DATABASE_URL")
+
+    from apps.customers.legacy_backfill import apply_legacy_customer_backfill
+
+    sale = _legacy_sale("Параллельный клиент", "89120000003")
+
+    def apply_in_separate_connection():
+        close_old_connections()
+        try:
+            return apply_legacy_customer_backfill()
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result(timeout=20)
+            for future in (
+                pool.submit(apply_in_separate_connection),
+                pool.submit(apply_in_separate_connection),
+            )
+        ]
+
+    sale.refresh_from_db()
+    assert Customer.objects.filter(name="Параллельный клиент").count() == 1
+    assert sale.customer_id is not None
+    assert sum(result["created"] for result in results) == 1
+    assert sum(result["sales_linked"] for result in results) == 1
 
 
 @pytest.fixture

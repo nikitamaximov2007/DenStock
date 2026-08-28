@@ -25,8 +25,26 @@ class Command(BaseCommand):
         mode = "APPLY" if options["apply"] else "DRY RUN"
         self.stdout.write(f"РЕЖИМ: {mode}")
         self.stdout.write(f"Документов просмотрено: {result['documents_scanned']}")
+        self.stdout.write(
+            "Completed legacy: "
+            f"sales {result['completed_legacy_sales']}; "
+            f"repairs {result['completed_legacy_repairs']}"
+        )
         self.stdout.write(f"Legacy identities: {result['legacy_identities']}")
+        self.stdout.write(
+            "Документы по identity: "
+            f"имя+телефон {result['name_phone_documents']}; "
+            f"только имя {result['name_only_documents']}; "
+            f"только телефон {result['phone_only_documents']}; "
+            f"без identity {result['missing_identity_documents']}"
+        )
         self.stdout.write(f"Безопасных групп: {len(result['planned'])}")
+        self.stdout.write(
+            "Предложено: "
+            f"новых карточек {result['new_customers_proposed']}; "
+            f"существующих карточек {result['existing_customers_reused']}; "
+            f"продаж {result['sales_proposed']}; ремонтов {result['repairs_proposed']}"
+        )
         self.stdout.write(f"Пропущено документов: {result['skipped_documents']}")
         self.stdout.write(f"Неоднозначных групп: {sum(result['ambiguous'].values())}")
         for reason, count in sorted(result["ambiguous"].items()):
