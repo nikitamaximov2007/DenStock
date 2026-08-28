@@ -36,7 +36,6 @@ from apps.inventory.presentation import (
     part_exact_number,
     with_part_identity,
 )
-from apps.inventory.services import return_stock_lot_quantity
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.services import find_polaris_price_source
 from apps.procurement.models import money

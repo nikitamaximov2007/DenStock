@@ -22,7 +22,10 @@ from apps.catalog.models import PartType
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import (
-    issue_part_item, issue_stock_lot, return_part_item, return_stock_lot_quantity,
+    issue_part_item,
+    issue_stock_lot,
+    return_part_item,
+    return_stock_lot_quantity,
 )
 from apps.procurement.models import money
 from apps.sales.services import active_reserved_for_lot, is_part_item_reserved
