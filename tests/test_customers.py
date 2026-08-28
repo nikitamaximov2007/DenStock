@@ -134,8 +134,15 @@ def test_legacy_backfill_preserves_active_payment_acknowledgement(db):
 
 
 @pytest.mark.postgresql
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_postgresql_legacy_backfill_serializes_concurrent_apply():
+    """Два одновременных apply не должны создать двух одинаковых клиентов.
+
+    Транзакционный тест чистит таблицы целиком, поэтому нужен
+    serialized_rollback: без него пропадают счётчики номеров, засеянные
+    миграцией, и проверка падает на создании продажи, так и не дойдя до
+    самой блокировки.
+    """
     if connection.vendor != "postgresql":
         pytest.skip("Run against PostgreSQL with DENSTOCK_TEST_DATABASE_URL")
 
