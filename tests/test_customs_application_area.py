@@ -217,8 +217,14 @@ def test_legacy_moto_zapchasti_not_exported(client, make_user, env):
     _customs(part, application_area="МОТО ЗАПЧАСТИ")
     _sell(env, part, number="219800345")
     _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert sheet[f"M{DATA_ROW}"].value is None  # не «МОТО ЗАПЧАСТИ», а пусто
+
+    # Легаси-значение не является областью применения, поэтому строка к
+    # декларации не готова: файл не выдаётся вовсе, а не выдаётся с пустой
+    # ячейкой. Так «МОТО ЗАПЧАСТИ» точно никуда не уедет.
+    resp = client.get(reverse("actions_export"), follow=True)
+    assert resp["Content-Type"].startswith("text/html")
+    assert "Нельзя сформировать Excel" in resp.content.decode()
+    assert "МОТО ЗАПЧАСТИ" not in resp.content.decode()
 
 
 # --- 7-8. GET не создаёт PartCustomsInfo --------------------------------------------------
@@ -239,8 +245,11 @@ def test_export_get_does_not_create_customs_row(client, make_user, env):
     _sell(env, part, number="219800345")
     before = PartCustomsInfo.objects.count()
     _login(client, make_user)
+
+    # Карточки нет, поэтому выгрузка отказывает - и всё равно ничего не создаёт:
+    # таможенные данные заводит человек, а не открытие ссылки.
     resp = client.get(reverse("actions_export"))
-    assert resp.status_code == 200
+    assert resp.status_code == 302
     assert PartCustomsInfo.objects.count() == before
 
 
@@ -473,16 +482,14 @@ def test_full_workbook_stays_valid_with_mixed_sources(client, make_user, env):
     _sell(env, manual, number="111000001")
 
     via_compat, _ = _brp(env, material="222000002", customs=False)
-    _card(via_compat)  # применимость придёт из совместимости
+    # Веса и цена заполнены, применимость намеренно пуста: её подхватит
+    # совместимость, и строка всё равно готова к декларации.
+    _customs(via_compat, application_area="")
     _compat(via_compat, "Sea-Doo", "Гидроцикл", "GTX")
     _sell(env, via_compat, number="222000002")
 
-    empty, _ = _brp(env, material="333000003", customs=False)
-    _card(empty)  # карточка заведена, применимость не заполнена
-    _sell(env, empty, number="333000003")
-
     pol, _ = _polaris(env, number="3610075", customs=False)
-    _card(pol, manufacturer="POLARIS")
+    _customs(pol, manufacturer="POLARIS", application_area=ApplicationArea.WATERCRAFT)
     _sell(env, pol, number="3610075")
 
     _login(client, make_user)
@@ -490,7 +497,7 @@ def test_full_workbook_stays_valid_with_mixed_sources(client, make_user, env):
     assert resp.status_code == 200
     workbook = openpyxl.load_workbook(BytesIO(resp.content))  # без предупреждений о повреждении
     sheet = workbook[SHEET]
-    values = [sheet[f"M{DATA_ROW + i}"].value for i in range(4)]
+    values = [sheet[f"M{DATA_ROW + i}"].value for i in range(3)]
     assert "АВТОМОБИЛЬ" in values
     assert "ГИДРОЦИКЛ" in values
-    assert values.count(None) == 2  # пустая совместимость + Polaris без применимости
+    assert None not in values  # готовая выгрузка пустых применимостей не содержит

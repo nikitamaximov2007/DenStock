@@ -650,6 +650,11 @@ def test_customs_export_unchanged(client, make_user, env):
     PartCustomsInfo.objects.create(
         part_type=part, customs_name_ru="РЕМЕНЬ", customs_name_en="BELT DRIVE",
         manufacturer="BRP", country_of_origin="CANADA",
+        # Готовая к декларации карточка: неполная выгрузку не даёт вовсе, а
+        # проверяется здесь личность детали, а не полнота данных.
+        application_area=PartCustomsInfo.ApplicationArea.SNOWMOBILE,
+        gross_weight_kg=Decimal("0.35"), net_weight_kg=Decimal("0.30"),
+        customs_unit_price_usd=Decimal("7"),
     )
     perform_action(
         part=part, location=env["loc"], action_type="sale", quantity="1",
