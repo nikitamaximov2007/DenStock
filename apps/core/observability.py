@@ -18,9 +18,9 @@ import uuid
 from contextvars import ContextVar
 
 _request_id: ContextVar[str] = ContextVar("denstock_request_id", default="-")
-_request_method: ContextVar[str] = ContextVar("denstock_request_method", default="-")
-_request_path: ContextVar[str] = ContextVar("denstock_request_path", default="-")
-_request_user: ContextVar[str] = ContextVar("denstock_request_user", default="-")
+_current_request: ContextVar[object | None] = ContextVar(
+    "denstock_current_request", default=None
+)
 
 REQUEST_ID_HEADER = "X-Request-ID"
 REDACTED = "[скрыто]"
@@ -74,20 +74,18 @@ class RequestIdMiddleware:
     def __call__(self, request):
         request_id = str(uuid.uuid4())
         request.request_id = request_id
-        variables = (_request_id, _request_method, _request_path, _request_user)
-        tokens = (
-            _request_id.set(request_id),
-            _request_method.set(request.method or "-"),
-            _request_path.set(request.path or "-"),
-            _request_user.set(_describe_user(request)),
-        )
+        # В переменную кладётся сам запрос, а не готовая строка: этот слой стоит
+        # первым, до аутентификации, и снятый здесь пользователь всегда был бы
+        # анонимным. Кто это, спрашиваем в момент записи в журнал.
+        id_token = _request_id.set(request_id)
+        request_token = _current_request.set(request)
         try:
             response = self.get_response(request)
             response[REQUEST_ID_HEADER] = request_id
             return response
         finally:
-            for variable, token in zip(variables, tokens, strict=True):
-                variable.reset(token)
+            _current_request.reset(request_token)
+            _request_id.reset(id_token)
 
 
 class RequestContextFilter(logging.Filter):
@@ -95,17 +93,12 @@ class RequestContextFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = getattr(record, "request_id", None) or _request_id.get()
-        record.method = _request_method.get()
-        record.path = _request_path.get()
-        record.user = _request_user.get()
-        request = getattr(record, "request", None)
-        if request is not None:
-            # django.request отдаёт запись вместе с самим запросом: для неё это
-            # источник точнее контекста, который мог уже смениться.
-            record.method = getattr(request, "method", None) or record.method
-            record.path = getattr(request, "path", None) or record.path
-            if record.user in ("-", "anonymous"):
-                record.user = _describe_user(request)
+        # django.request отдаёт запись вместе с самим запросом; для остальных
+        # логгеров берём тот, что обрабатывается сейчас.
+        request = getattr(record, "request", None) or _current_request.get()
+        record.method = getattr(request, "method", None) or "-"
+        record.path = getattr(request, "path", None) or "-"
+        record.user = _describe_user(request) if request is not None else "-"
         return True
 
 

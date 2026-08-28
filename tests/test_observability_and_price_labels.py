@@ -50,10 +50,37 @@ def fine(request):
     return HttpResponse("ok")
 
 
+def complain(request):
+    """Ошибка уровня приложения, пойманная кодом: 500 нет, запись есть."""
+    logging.getLogger("apps.proverka").error("не получилось провести операцию")
+    return HttpResponse("сообщили")
+
+
 urlpatterns = [
     path("boom/", boom, name="boom"),
     path("fine/", fine, name="fine"),
+    path("complain/", complain, name="complain"),
 ]
+
+
+@pytest.fixture
+def captured_app_errors():
+    """То же, но для логгера самого приложения."""
+    logger = logging.getLogger("apps")
+    configured = next(
+        (h for h in logger.handlers if isinstance(h.formatter, RedactingFormatter)), None
+    )
+    assert configured is not None, "боевой обработчик apps не настроен"
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(configured.formatter)
+    handler.setLevel(logging.ERROR)
+    handler.addFilter(RequestContextFilter())
+    logger.addHandler(handler)
+    try:
+        yield stream
+    finally:
+        logger.removeHandler(handler)
 
 
 @pytest.fixture
@@ -139,6 +166,28 @@ def test_secrets_never_reach_the_log(client, captured_errors):
     assert "tok3n" not in written
     assert "password" in written  # имя поля остаётся, значение убрано
     assert "[скрыто]" in written
+
+
+@override_settings(ROOT_URLCONF=__name__)
+def test_an_application_error_knows_who_was_signed_in(
+    client, captured_app_errors, db, django_user_model
+):
+    """Ошибка приложения пишется после аутентификации и обязана знать логин.
+
+    Слой номера запроса стоит первым, до аутентификации, поэтому пользователя
+    нельзя снимать в нём: там ещё никого нет.
+    """
+    user = django_user_model.objects.create_user(username="operator", password=PASSWORD)
+    client.force_login(user)
+
+    response = client.get("/complain/")
+
+    assert response.status_code == 200  # это не падение, а разобранная ошибка
+    written = captured_app_errors.getvalue()
+    assert "apps.proverka" in written
+    assert f"user={user.pk}:operator" in written
+    assert "GET /complain/" in written
+    assert response[REQUEST_ID_HEADER] in written
 
 
 def test_redaction_keeps_the_field_names():
