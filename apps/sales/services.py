@@ -646,7 +646,11 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
     ).exists():
         raise SaleError("Сначала закройте черновик возврата из этой продажи.")
 
-    lines = list(sale.lines.select_for_update().select_related(
+    # Блокируются сами строки документа, а не то, что подтянуто к ним по
+    # ссылке: экземпляр, лот и ячейка у строки необязательны, поэтому
+    # запрос уходит с внешним соединением, а PostgreSQL отказывается
+    # брать блокировку на его пустую сторону. На SQLite этого не видно.
+    lines = list(sale.lines.select_for_update(of=("self",)).select_related(
         "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
     ))
     returned = dict(
