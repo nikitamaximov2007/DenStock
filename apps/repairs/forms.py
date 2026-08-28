@@ -34,6 +34,23 @@ class RepairOrderForm(CustomerSelectionMixin):
         )
 
 
+class RepairCancellationForm(forms.Form):
+    reason = forms.CharField(label="Причина отмены", max_length=255)
+    author = forms.CharField(label="Кто отменяет", max_length=255)
+
+    def clean_reason(self):
+        value = (self.cleaned_data["reason"] or "").strip()
+        if not value:
+            raise forms.ValidationError("Укажите причину отмены.")
+        return value
+
+    def clean_author(self):
+        value = (self.cleaned_data["author"] or "").strip()
+        if not value:
+            raise forms.ValidationError("Укажите, кто отменяет документ.")
+        return value
+
+
 class AddRepairItemForm(forms.Form):
     code = forms.CharField(label="Экземпляр (внутр. номер / штрихкод / серийник)", max_length=100)
     customer_unit_price_rub = forms.DecimalField(

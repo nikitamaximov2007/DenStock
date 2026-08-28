@@ -175,6 +175,24 @@ def test_issue_creates_movement_issue_item(data):
     assert mv.document_id == order.pk
 
 
+def test_cancel_completed_repair_restores_item_and_keeps_cost(data):
+    order = create_repair_order(customer_name="Иван", by=data["admin"])
+    add_part_item_to_repair_order(order, data["item"], by=data["admin"])
+    complete_repair_order(order, by=data["admin"])
+    cancel_repair_order(order, by=data["admin"], reason="Ошибка", author="Иван")
+
+    order.refresh_from_db()
+    data["item"].refresh_from_db()
+    assert order.status == RepairOrder.Status.CANCELED
+    assert order.cost_total == Decimal("120.00")
+    assert order.cancellation_author == "Иван"
+    assert data["item"].status == PartItem.Status.AVAILABLE
+    assert StockMovement.objects.filter(
+        movement_type=StockMovement.MovementType.RETURN_ITEM, document_id=order.pk
+    ).exists()
+    assert cancel_repair_order(order, by=data["admin"], reason="другое", author="Иван").pk == order.pk
+
+
 def test_repair_line_freezes_cost(data):
     order = create_repair_order(customer_name="Иван", by=data["admin"])
     add_part_item_to_repair_order(order, data["item"], by=data["admin"])

@@ -21,7 +21,7 @@ from apps.inventory.presentation import (
     with_part_identity,
 )
 
-from .forms import AddRepairItemForm, AddRepairLotForm, RepairOrderForm
+from .forms import AddRepairItemForm, AddRepairLotForm, RepairCancellationForm, RepairOrderForm
 from .models import RepairIssueLine, RepairOrder
 from .services import (
     RepairError,
@@ -274,9 +274,25 @@ def repair_order_cancel(request, pk):
     _require_repairs(request)
     order = get_object_or_404(RepairOrder, pk=pk)
     try:
-        cancel_repair_order(order, by=request.user)
+        cancel_repair_order(
+            order, by=request.user, reason=request.POST.get("reason", ""),
+            author=request.POST.get("author", ""),
+        )
     except RepairError as exc:
         messages.error(request, str(exc))
     else:
         messages.success(request, f"Заказ {order.number} отменён.")
     return redirect("repair_order_detail", pk=pk)
+
+
+@login_required
+def repair_order_cancel_confirm(request, pk):
+    _require_repairs(request)
+    order = get_object_or_404(RepairOrder, pk=pk)
+    if order.status not in (RepairOrder.Status.DRAFT, RepairOrder.Status.COMPLETED):
+        messages.error(request, "Этот заказ уже отменён.")
+        return redirect("repair_order_detail", pk=pk)
+    return render(
+        request, "repairs/repair_order_cancel_confirm.html",
+        {"order": order, "form": RepairCancellationForm()},
+    )

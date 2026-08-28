@@ -7,6 +7,9 @@
     {% if can_return and sale.status == "completed" %}
       · <a href="{% url 'return_create' %}?source=sale&id={{ sale.pk }}">Оформить возврат</a>
     {% endif %}
+    {% if can_cancel and sale.status == "completed" %}
+      · <a href="{% url 'sale_cancel_confirm' sale.pk %}">Отменить продажу</a>
+    {% endif %}
   </p>
   <table class="table">
     <tbody>
@@ -46,6 +49,9 @@
       </tr>
     </tbody>
   </table>
+  {% if sale.status == "canceled" or sale.status == "voided" %}
+    <p class="notice">Отменена: {{ sale.cancellation_reason|default:"·" }}. Автор: {{ sale.cancellation_author|default:"·" }}.</p>
+  {% endif %}
   <h2>Позиции</h2>
   <table class="table">
     <thead>
