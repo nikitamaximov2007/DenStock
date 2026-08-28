@@ -29,7 +29,10 @@
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
           <th class="num--money">Сумма (₽)</th>
-          {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
+          {% if show_costs %}
+            <th class="num--money">Себестоимость (₽)</th>
+          {% endif %}
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -48,11 +51,25 @@
             </td>
             <td class="num--qty">{{ line.net_quantity|quantity_int }}</td>
             <td class="num--money">
-              {% if line.customer_amount_rub is not None %}{{ line.customer_amount_rub|money_int }}{% else %}<span class="muted">Не зафиксировано</span>{% endif %}
+              {% if line.customer_amount_rub is not None %}
+                {{ line.customer_amount_rub|money_int }}
+              {% else %}
+                <span class="muted">Не зафиксировано</span>
+              {% endif %}
             </td>
             {% if show_costs %}
               <td class="num--money">{{ line.net_cost_rub|money_int }}</td>
             {% endif %}
+            <td class="table__actions">
+              {% if line.net_quantity > 0 %}
+                {% if can_cancel_lines %}
+                  <a class="btn btn--small btn--secondary"
+                     href="{% url 'repair_line_cancel' line.pk %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                {% endif %}
+              {% else %}
+                <span class="pill pill--muted">Отменено</span>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>
