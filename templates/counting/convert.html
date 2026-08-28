@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Завершение пересчёта {{ session.full_address }} · DenisStock{% endblock %}
 {% block content %}
+  {% if cell.changed %}
+    <div class="notice notice--warning">
+      После начала этой инвентаризации остатки в ячейке менялись: движений
+      {{ cell.changes_count }}. Посчитано {{ counters.total_quantity|quantity_int }},
+      сейчас в ячейке по складу {{ cell.quantity|quantity_int }}. Провести такой
+      подсчёт нельзя: он прибавился бы к новому остатку. Пересчитайте ячейку заново.
+    </div>
+  {% endif %}
   <div class="page-header">
     <h1 class="page-title">Завершение пересчёта</h1>
     <div class="page-actions">

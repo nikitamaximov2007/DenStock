@@ -36,6 +36,7 @@ from apps.receipts.services import add_line, create_receipt, post_receipt
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import ValuationSettings
 
+from .cell_state import movements_touching_cell
 from .models import InventoryCountingLine, InventoryCountingSession, InventoryScanEvent
 
 INTAKE_SUPPLIER_NAME = "Стартовый ввод"
@@ -776,6 +777,20 @@ def post_session(session: InventoryCountingSession, *, by=None) -> Receipt:
         raise CountingError("Эта сессия уже проведена: повторное проведение удвоило бы остаток.")
     if session.status == InventoryCountingSession.Status.CANCELLED:
         raise CountingError("Сессия отменена.")
+    # Пересчёт - первичный ввод: проведение ПРИБАВЛЯЕТ посчитанное к остатку.
+    # Если после начала сессии ячейку успели тронуть - приняли, переместили,
+    # списали - подсчёт относится к прежнему содержимому, и прибавлять его к
+    # новому остатку нельзя: получится двойной учёт. Какие именно детали
+    # оператор успел посчитать до прихода, никто не знает, поэтому здесь
+    # честнее остановиться и попросить пересчитать, чем угадывать.
+    changes = movements_touching_cell(session.storage_location, session.created_at).count()
+    if changes:
+        raise CountingError(
+            f"После начала этой инвентаризации остатки в ячейке {session.full_address} "
+            f"менялись ({changes} движ.). Подсчёт относится к прежнему содержимому: "
+            "проведение прибавило бы его к новому остатку. Отмените сессию и "
+            "пересчитайте ячейку заново."
+        )
     receipt = session.converted_receipt
     if receipt is None:
         receipt = convert_to_receipt(session, by=by)

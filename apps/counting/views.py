@@ -24,6 +24,7 @@ from apps.core.templatetags.number_format import quantity_int
 from apps.polaris.services import find_polaris_by_number
 from apps.warehouse.services import StorageLocationCreateError
 
+from .cell_state import cell_state
 from .forms import CountingStartForm
 from .models import InventoryCountingLine, InventoryCountingSession
 from .services import (
@@ -208,12 +209,23 @@ def counting_detail(request, pk):
     lines = session.lines.select_related(
         "warehouse_part", "brp_catalog_part", "polaris_catalog_part"
     )
+    # Ячейку спрашиваем у склада, а не у строк сессии: после начала пересчёта
+    # в неё могли принять или из неё списать, и экран обязан это показывать.
+    cell = cell_state(session.storage_location, since=session.created_at)
+    # Построчно: сколько этой же детали лежит в ячейке сейчас. Складывать с
+    # посчитанным нельзя, это соседний факт, поэтому он и стоит отдельной
+    # колонкой рядом.
+    lines = list(lines)
+    for line in lines:
+        line.current_in_cell = cell["by_part"].get(line.warehouse_part_id)
     return render(
         request,
         "counting/detail.html",
         {
             "session": session,
             "lines": lines,
+            "cell": cell,
+            "show_costs": request.user.can_view_purchase_cost,
             "counters": session.counters(),
             "breakdown": get_session_value_breakdown(
                 session, sort=request.GET.get("value_sort", DEFAULT_VALUE_SORT)
@@ -383,6 +395,10 @@ def counting_convert(request, pk):
             "lines": lines,
             "counters": session.counters(),
             "unknown_count": unknown_count,
+            # Проведение прибавляет посчитанное к остатку. Если ячейку успели
+            # тронуть, оно будет остановлено - и узнать об этом лучше здесь,
+            # до нажатия кнопки.
+            "cell": cell_state(session.storage_location, since=session.created_at),
         },
     )
 

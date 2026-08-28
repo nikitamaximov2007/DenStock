@@ -678,8 +678,12 @@ def test_detail_page_shows_totals_without_warehouse_tile(client, make_user, refs
         reverse("counting_line_qty", args=[line.pk]), {"quantity": "13"}, follow=True
     )
     html = resp.content.decode()
-    assert "Итоговое количество" in html  # Layer 34: переименовано
-    assert "Стоимость ячейки" in html
+    # Подписи говорят, чей это факт: «Стоимость ячейки» обещала содержимое
+    # ячейки, а показывала оценку подсчёта, и на этом оператор обжигался.
+    assert "Посчитано в инвентаризации" in html
+    assert "Стоимость посчитанного" in html
+    assert "Сейчас в ячейке" in html
+    assert "Стоимость ячейки" not in html
     assert "152 880" in html  # 13 * 11760: итог обновился после правки
     assert "13" in html
     # «Найдено в складе» убрано из сводки, источник в таблице строк остался.

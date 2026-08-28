@@ -56,6 +56,15 @@
       </p>
     </div>
   {% endif %}
+  {% if cell.changed %}
+    <div class="notice notice--warning">
+      После начала этой инвентаризации остатки в ячейке менялись: движений
+      {{ cell.changes_count }}. Посчитано в инвентаризации
+      {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
+      {{ cell.quantity|quantity_int }}. Подсчёт относится к прежнему
+      содержимому, поэтому провести его нельзя: пересчитайте ячейку заново.
+    </div>
+  {% endif %}
   <section class="tiles dashboard-section" aria-label="Итоги пересчёта">
     <div class="tile">
       <div class="tile__label">Событий сканирования</div>
@@ -65,15 +74,32 @@
       <div class="tile__label">Уникальных номеров</div>
       <div class="tile__value">{{ counters.unique }}</div>
     </div>
+    {% comment %}
+      Два разных факта, и путать их нельзя. Слева то, что оператор посчитал в
+      этой инвентаризации; справа то, что лежит в ячейке по складу прямо
+      сейчас. Раньше на экране было только первое, а подпись обещала второе.
+    {% endcomment %}
     <div class="tile">
-      <div class="tile__label">Итоговое количество</div>
+      <div class="tile__label">Посчитано в инвентаризации</div>
       <div class="tile__value">{{ counters.total_quantity|quantity_int }}</div>
     </div>
     <a class="tile tile--link" href="#value-breakdown">
-      <div class="tile__label">Стоимость ячейки</div>
+      <div class="tile__label">Стоимость посчитанного</div>
       <div class="tile__value">{{ counters.total_value|money_int }} ₽</div>
       <div class="tile__hint">Нажмите для расчёта</div>
     </a>
+    <div class="tile">
+      <div class="tile__label">Сейчас в ячейке</div>
+      <div class="tile__value">{{ cell.quantity|quantity_int }}</div>
+      <div class="tile__hint">по складу, позиций: {{ cell.positions }}</div>
+    </div>
+    {% if show_costs %}
+      <div class="tile">
+        <div class="tile__label">Себестоимость в ячейке</div>
+        <div class="tile__value">{{ cell.warehouse_cost|money_int }} ₽</div>
+        <div class="tile__hint">складская, не цена клиента</div>
+      </div>
+    {% endif %}
     <div class="tile">
       <div class="tile__label">Найдено в BRP</div>
       <div class="tile__value">{{ counters.brp }}</div>
@@ -159,10 +185,13 @@
           <th>Номер</th>
           <th>Название</th>
           <th>Источник</th>
-          <th class="num--qty">Количество</th>
+          <th class="num--qty">Посчитано</th>
+          <th class="num--qty">Сейчас в ячейке</th>
           <th class="num--money">Цена (₽)</th>
           <th>Статус</th>
-          {% if is_draft %}<th></th>{% endif %}
+          {% if is_draft %}
+            <th></th>
+          {% endif %}
         </tr>
       </thead>
       <tbody>
@@ -206,6 +235,13 @@
                 </form>
               {% else %}
                 {{ line.quantity_counted|quantity_int }}
+              {% endif %}
+            </td>
+            <td class="num--qty">
+              {% if line.current_in_cell is not None %}
+                {{ line.current_in_cell|quantity_int }}
+              {% else %}
+                <span class="muted">·</span>
               {% endif %}
             </td>
             <td class="num--money">
