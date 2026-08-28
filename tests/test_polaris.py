@@ -265,7 +265,8 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
     from apps.actions.models import PartCustomsInfo
 
     polaris = PolarisCatalogPart.objects.create(
-        part_number="420931285", part_name="OIL SEAL", retail_price_usd=Decimal("24.49")
+        part_number="420931285", part_name="OIL SEAL", retail_price_usd=Decimal("24.49"),
+        wholesale_price_usd=Decimal("18"),  # сканер не продаёт деталь без цены
     )
     part = promote_to_warehouse(polaris, by=admin)
     PartCustomsInfo.objects.create(
