@@ -57,13 +57,26 @@
     </div>
   {% endif %}
   {% if cell.changed %}
-    <div class="notice notice--warning">
-      После начала этой инвентаризации остатки в ячейке менялись: движений
-      {{ cell.changes_count }}. Посчитано в инвентаризации
-      {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
-      {{ cell.quantity|quantity_int }}. Подсчёт относится к прежнему
-      содержимому, поэтому провести его нельзя: пересчитайте ячейку заново.
-    </div>
+    {% if session.status == "posted" %}
+      {% comment %}
+        Проведённую сессию звать на пересчёт незачем: она закрыта. Здесь важно
+        только то, что ячейка с тех пор жила своей жизнью.
+      {% endcomment %}
+      <div class="notice notice--info">
+        Это завершённая инвентаризация. С момента её начала остатки в ячейке
+        менялись: движений {{ cell.changes_count }}. Тогда было посчитано
+        {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
+        {{ cell.quantity|quantity_int }}.
+      </div>
+    {% else %}
+      <div class="notice notice--warning">
+        После начала этой инвентаризации остатки в ячейке менялись: движений
+        {{ cell.changes_count }}. Посчитано в инвентаризации
+        {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
+        {{ cell.quantity|quantity_int }}. Подсчёт относится к прежнему
+        содержимому, поэтому провести его нельзя: пересчитайте ячейку заново.
+      </div>
+    {% endif %}
   {% endif %}
   <section class="tiles dashboard-section" aria-label="Итоги пересчёта">
     <div class="tile">

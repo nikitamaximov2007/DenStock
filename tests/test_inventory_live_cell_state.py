@@ -339,3 +339,20 @@ def test_movements_are_counted_only_after_the_session_started(env):
     _receive(env, part, "23")
 
     assert movements_touching_cell(env["cell"], session.created_at).count() >= 1
+
+
+def test_a_finished_session_is_not_told_to_recount(client, env):
+    """Проведённую инвентаризацию звать на пересчёт незачем: она закрыта."""
+    part = _part(env)
+    session = _count(env, part, "3")
+    post_session(session, by=env["admin"])
+    _receive(env, part, "23")
+    client.force_login(env["admin"])
+
+    body = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
+
+    assert "Это завершённая инвентаризация" in body
+    assert "пересчитайте ячейку заново" not in body
+    assert "Сейчас в ячейке" in body  # текущее состояние всё равно показано
+    session.refresh_from_db()
+    assert session.status == InventoryCountingSession.Status.POSTED
