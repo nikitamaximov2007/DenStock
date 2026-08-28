@@ -24,8 +24,8 @@ from .forms import (
     AddLotForm,
     AddSaleItemForm,
     AddSaleLotForm,
-    SaleCancellationForm,
     ReservationForm,
+    SaleCancellationForm,
     SaleForm,
 )
 from .models import Reservation, ReservationLine, Sale, SaleLine
@@ -402,7 +402,9 @@ def sale_cancel_confirm(request, pk):
     if sale.status != Sale.Status.COMPLETED:
         messages.error(request, "Отменить можно только проведённую продажу.")
         return redirect("sale_detail", pk=pk)
-    return render(request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": SaleCancellationForm()})
+    return render(
+        request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": SaleCancellationForm()}
+    )
 
 
 @login_required
@@ -412,9 +414,14 @@ def sale_cancel(request, pk):
     sale = get_object_or_404(Sale, pk=pk)
     form = SaleCancellationForm(request.POST)
     if not form.is_valid():
-        return render(request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": form}, status=400)
+        return render(
+            request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": form}, status=400
+        )
     try:
-        cancel_sale(sale, by=request.user, reason=form.cleaned_data["reason"], author=form.cleaned_data["author"])
+        cancel_sale(
+            sale, by=request.user, reason=form.cleaned_data["reason"],
+            author=form.cleaned_data["author"],
+        )
     except SaleError as exc:
         messages.error(request, str(exc))
     else:

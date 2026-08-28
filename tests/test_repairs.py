@@ -190,7 +190,9 @@ def test_cancel_completed_repair_restores_item_and_keeps_cost(data):
     assert StockMovement.objects.filter(
         movement_type=StockMovement.MovementType.RETURN_ITEM, document_id=order.pk
     ).exists()
-    assert cancel_repair_order(order, by=data["admin"], reason="другое", author="Иван").pk == order.pk
+    assert cancel_repair_order(
+        order, by=data["admin"], reason="другое", author="Иван"
+    ).pk == order.pk
 
 
 def test_repair_line_freezes_cost(data):
