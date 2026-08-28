@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 
 from apps.customers.forms import CustomerSelectionMixin
@@ -95,3 +97,43 @@ class AddSaleLotForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["lot"].queryset = _available_lots()
+
+
+class SaleLineCancellationForm(forms.Form):
+    """Сколько отменить, почему и кто отменяет.
+
+    Верхняя граница считается сервером из остатка, доступного к сторнированию,
+    и не берётся из строки продажи: часть могла уже вернуться.
+    """
+
+    quantity = forms.DecimalField(
+        label="Количество отмены", max_digits=12, decimal_places=3, min_value=Decimal("0.001")
+    )
+    reason = forms.CharField(label="Причина", max_length=255)
+    author = forms.CharField(label="Кто отменяет", max_length=255)
+
+    def __init__(self, *args, remaining=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.remaining = remaining
+        if remaining is not None:
+            self.fields["quantity"].max_value = remaining
+            # Decimal печатает хвостовые нули, а в поле нужен «4», а не «4.000».
+            shown = format(Decimal(remaining).normalize(), "f")
+            self.fields["quantity"].widget.attrs.update(
+                {"min": "1", "max": shown, "step": "1"}
+            )
+            self.fields["quantity"].initial = 1
+
+    def clean_quantity(self):
+        quantity = self.cleaned_data["quantity"]
+        if self.remaining is not None and quantity > self.remaining:
+            raise forms.ValidationError(
+                f"Доступно к отмене {format(Decimal(self.remaining).normalize(), 'f')}."
+            )
+        return quantity
+
+    def clean_reason(self):
+        return (self.cleaned_data.get("reason") or "").strip()
+
+    def clean_author(self):
+        return (self.cleaned_data.get("author") or "").strip()

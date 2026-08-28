@@ -8,7 +8,7 @@
   - только активная бронь уменьшает доступность; пересчёт кэша `StockBalance`
     идёт через `inventory.recompute_balance_row` (inventory не импортирует sales).
 """
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.db.models import Q, Sum
@@ -618,6 +618,98 @@ def complete_sale(sale, *, by=None) -> Sale:
         "sold_by", "updated_at",
     ])
     return sale
+
+
+def sale_line_source_location(sale_line):
+    """Ячейка, из которой строка ушла со склада.
+
+    Отмена возвращает деталь ровно туда, откуда её взяли, а не в произвольную
+    текущую ячейку: иначе теряется происхождение остатка.
+    """
+    if sale_line.stock_lot_id and sale_line.stock_lot.location_id:
+        return sale_line.stock_lot.location
+    if sale_line.part_item_id:
+        return sale_line.part_item.current_location
+    return None
+
+
+def reversible_quantity(sale_line) -> Decimal:
+    """Сколько по строке ещё можно отменить.
+
+    Считается от проданного за вычетом уже вернувшегося: обычные возвраты и
+    прежние частичные отмены оформлены одним и тем же документом возврата,
+    поэтому дважды одна единица не вернётся.
+    """
+    from apps.returns.services import returnable_quantity
+
+    return returnable_quantity(sale_line)
+
+
+@transaction.atomic
+def cancel_sale_line_quantity(sale_line, quantity, *, reason="", author="", by=None):
+    """Отменить часть проданного по одной строке продажи.
+
+    Отдельного складского механизма здесь нет и быть не должно: сторнирование
+    идёт документом возврата, который уже умеет возвращать в исходный лот,
+    морозить себестоимость, проверять «не больше проданного» под блокировкой и
+    писать канонические движения RETURN_*. Сам документ продажи не меняется:
+    его количества и цены остаются снимком, а сколько из него отменено,
+    считается по возвратам.
+    """
+    from apps.returns.models import StockReturn, StockReturnLine
+    from apps.returns.services import (
+        ReturnError,
+        add_sale_line_return,
+        complete_return,
+        create_return,
+    )
+
+    reason = (reason or "").strip()
+    author = (author or "").strip()
+    if not reason:
+        raise SaleError("Укажите причину отмены.")
+    if not author:
+        raise SaleError("Укажите, кто отменяет.")
+    sale_line = (
+        SaleLine.objects.select_for_update(of=("self",))
+        .select_related("sale", "stock_lot__location", "part_item__current_location", "part_type")
+        .get(pk=sale_line.pk)
+    )
+    sale = Sale.objects.select_for_update().get(pk=sale_line.sale_id)
+    if sale.status != Sale.Status.COMPLETED:
+        raise SaleError("Отменить позицию можно только в проведённой продаже.")
+    try:
+        quantity = Decimal(str(quantity))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise SaleError("Некорректное количество.") from exc
+    if quantity <= 0:
+        raise SaleError("Количество должно быть больше нуля.")
+    if StockReturn.objects.filter(
+        source_type=StockReturn.SourceType.SALE, source_id=sale.pk,
+        status=StockReturn.Status.DRAFT,
+    ).exists():
+        raise SaleError("Сначала закройте черновик возврата из этой продажи.")
+
+    location = sale_line_source_location(sale_line)
+    if location is None:
+        raise SaleError("У позиции не сохранена исходная ячейка: отмените продажу целиком.")
+
+    document = create_return(
+        source=sale,
+        reason=f"Отмена позиции: {reason}"[:255],
+        comment=f"Автор: {author}"[:255],
+        by=by,
+    )
+    try:
+        add_sale_line_return(
+            document, sale_line, quantity,
+            to_location=location, restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+            by=by,
+        )
+        document = complete_return(document, by=by)
+    except ReturnError as exc:
+        raise SaleError(str(exc)) from exc
+    return document
 
 
 @transaction.atomic

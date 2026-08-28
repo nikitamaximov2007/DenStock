@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Отмена позиции {{ line.sale.number }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Отмена проданной позиции</h1>
+    <div class="page-actions">
+      <a class="btn btn--secondary"
+         href="{% if next %}{{ next }}{% else %}{% url 'reports_clients_overview' %}{% endif %}">Назад</a>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Продажа</th>
+            <td>
+              <a href="{% url 'sale_detail' line.sale_id %}">{{ line.sale.number }}</a>
+              от {{ line.sale.sold_at|ru_dt }}
+            </td>
+          </tr>
+          <tr>
+            <th>Деталь</th>
+            <td>{{ line.part_type.name }}</td>
+          </tr>
+          <tr>
+            <th>Продано</th>
+            <td>{{ line.quantity|quantity_int }}</td>
+          </tr>
+          <tr>
+            <th>Доступно к отмене</th>
+            <td>{{ remaining|quantity_int }}</td>
+          </tr>
+          <tr>
+            <th>Цена за единицу</th>
+            <td>{{ line.unit_price|money_int }} ₽</td>
+          </tr>
+        </tbody>
+      </table>
+      {% comment %}
+        Отменённая единица вернётся в тот же лот и ту же ячейку, откуда ушла.
+        Сам документ продажи не переписывается: сколько из него отменено,
+        считается по возвратам.
+      {% endcomment %}
+      <p class="muted">
+        Отменённое вернётся в исходную ячейку. Документ продажи и его цены
+        остаются без изменений: отмена оформляется возвратом на склад.
+      </p>
+      <form method="post" class="form">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ next }}">
+        {{ form.as_p }}
+        <button type="submit" class="btn btn--primary">Отменить позицию</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

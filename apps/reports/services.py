@@ -439,6 +439,38 @@ def get_customer_part_operations(
     )
 
 
+def attach_line_reversals(lines):
+    """Проставить строкам, сколько из них вернулось и сколько ещё действует.
+
+    Продажа остаётся неизменной: её количество это снимок. Действующее
+    количество считается вычитанием канонических возвратов, поэтому историю
+    по-прежнему можно доказать - продано столько, отменено столько, осталось
+    столько.
+    """
+    from apps.returns.models import StockReturn, StockReturnLine
+
+    lines = list(lines)
+    if not lines:
+        return lines
+    returned = {
+        row["source_sale_line_id"]: row["quantity"]
+        for row in (
+            StockReturnLine.objects.filter(
+                stock_return__status=StockReturn.Status.COMPLETED,
+                source_sale_line_id__in=[line.pk for line in lines],
+            )
+            .values("source_sale_line_id")
+            .annotate(quantity=Sum("quantity"))
+        )
+    }
+    for line in lines:
+        line.reversed_quantity = returned.get(line.pk) or DEC0
+        line.effective_quantity = line.quantity - line.reversed_quantity
+        line.reversible_quantity = line.effective_quantity
+        line.effective_total = money(line.unit_price * line.effective_quantity)
+    return lines
+
+
 def attach_line_part_identity(lines):
     """Проставить артикул строкам документов одним запросом на страницу.
 

@@ -21,6 +21,7 @@
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
           {% if show_money %}<th class="num--money">Сумма (₽)</th>{% endif %}
+          <th class="table__actions"></th>
         </tr>
       </thead>
       <tbody>
@@ -37,8 +38,28 @@
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td class="num--qty">{{ line.quantity|quantity_int }}</td>
-            {% if show_money %}<td class="num--money">{{ line.total_price|money_int }}</td>{% endif %}
+            {% comment %}
+              Показываем действующее количество: если единицу отменили, писать
+              прежние четыре нельзя. Сколько было продано и сколько отменено,
+              видно рядом, поэтому история остаётся доказуемой.
+            {% endcomment %}
+            <td class="num--qty">
+              {{ line.effective_quantity|quantity_int }}
+              {% if line.reversed_quantity %}
+                <div class="muted">продано {{ line.quantity|quantity_int }}, отменено {{ line.reversed_quantity|quantity_int }}</div>
+              {% endif %}
+            </td>
+            {% if show_money %}<td class="num--money">{{ line.effective_total|money_int }}</td>{% endif %}
+            <td class="table__actions">
+              {% if line.reversible_quantity > 0 %}
+                {% if can_cancel_lines %}
+                  <a class="btn btn--small btn--secondary"
+                     href="{% url 'sale_line_cancel' line.pk %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                {% endif %}
+              {% else %}
+                <span class="pill pill--muted">Отменено</span>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>

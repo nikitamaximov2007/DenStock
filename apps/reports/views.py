@@ -27,6 +27,7 @@ from .services import (
     CLIENTS_SORTS,
     attach_customer_part_identity,
     attach_line_part_identity,
+    attach_line_reversals,
     get_client_part_history,
     get_clients_sales_and_repairs,
     get_customer_part_operations,
@@ -212,10 +213,19 @@ def sales_by_client_detail(request):
         ),
     )
     page_obj.object_list = attach_line_part_identity(page_obj.object_list)
+    # Сколько из каждой строки уже вернулось: обычным возвратом или отменой.
+    # Одним запросом на страницу, иначе плоская история клиента дала бы запрос
+    # на строку.
+    attach_line_reversals(page_obj.object_list)
     return render(
         request,
         "reports/sales_by_client_detail.html",
         {
+            # Отмена позиции возвращает товар на склад, поэтому её видит тот,
+            # кому разрешён возврат: то же правило, что у отмены документа.
+            "can_cancel_lines": (
+                request.user.can_manage_sales and request.user.can_manage_returns
+            ),
             "customer_name": _customer_title(customer_name, missing, customer_id),
             "customer_value": customer_name,
             "customer_qs": _customer_query(customer_name, missing, customer_id),

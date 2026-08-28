@@ -37,6 +37,11 @@ urlpatterns = [
     path("sales/<int:pk>/add-lot/", views.sale_add_lot, name="sale_add_lot"),
     path("sales/<int:pk>/complete/", views.sale_complete, name="sale_complete"),
     path("sales/<int:pk>/cancel/", views.sale_cancel, name="sale_cancel"),
+    path(
+        "sale-lines/<int:pk>/cancel/",
+        views.sale_line_cancel,
+        name="sale_line_cancel",
+    ),
     path("sales/<int:pk>/cancel/confirm/", views.sale_cancel_confirm, name="sale_cancel_confirm"),
     path("sales/lines/<int:pk>/remove/", views.sale_remove_line, name="sale_remove_line"),
 ]

@@ -27,6 +27,7 @@ from .forms import (
     ReservationForm,
     SaleCancellationForm,
     SaleForm,
+    SaleLineCancellationForm,
 )
 from .models import Reservation, ReservationLine, Sale, SaleLine
 from .services import (
@@ -39,12 +40,14 @@ from .services import (
     add_stock_lot_to_sale,
     cancel_reservation,
     cancel_sale,
+    cancel_sale_line_quantity,
     complete_sale,
     create_reservation,
     create_sale,
     create_sale_from_reservation,
     remove_reservation_line,
     remove_sale_line,
+    reversible_quantity,
 )
 
 
@@ -439,6 +442,53 @@ def sale_cancel(request, pk):
     else:
         messages.success(request, f"Продажа {sale.number} отменена.")
     return redirect("sale_detail", pk=pk)
+
+
+@login_required
+def sale_line_cancel(request, pk):
+    """Отменить часть проданного по одной строке прямо из отчёта.
+
+    Открывать карточку продажи для этого не нужно: оператор видит строку в
+    отчёте по клиенту и отменяет ровно её. Количество, причина и автор
+    спрашиваются здесь, поэтому одним кликом ничего не сторнируется.
+    """
+    _require_reversal(request)
+    line = get_object_or_404(
+        SaleLine.objects.select_related("sale", "part_type"), pk=pk
+    )
+    remaining = reversible_quantity(line)
+    back = request.POST.get("next") or request.GET.get("next") or ""
+    if line.sale.status != Sale.Status.COMPLETED or remaining <= 0:
+        messages.error(request, "Эта позиция уже полностью отменена или возвращена.")
+        return redirect(back or "reports_clients_overview")
+
+    if request.method == "POST":
+        form = SaleLineCancellationForm(request.POST, remaining=remaining)
+        if form.is_valid():
+            try:
+                cancel_sale_line_quantity(
+                    line,
+                    form.cleaned_data["quantity"],
+                    reason=form.cleaned_data["reason"],
+                    author=form.cleaned_data["author"],
+                    by=request.user,
+                )
+            except SaleError as exc:
+                messages.error(request, str(exc))
+            else:
+                quantity_shown = format(form.cleaned_data["quantity"].normalize(), "f")
+                messages.success(
+                    request,
+                    f"Отменено {quantity_shown} из позиции {line.part_type.name}.",
+                )
+                return redirect(back or "reports_clients_overview")
+    else:
+        form = SaleLineCancellationForm(remaining=remaining)
+    return render(
+        request,
+        "sales/sale_line_cancel_confirm.html",
+        {"line": line, "remaining": remaining, "form": form, "next": back},
+    )
 
 
 @login_required
