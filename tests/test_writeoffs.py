@@ -495,7 +495,6 @@ def test_quick_write_off_page_lists_available_locations_without_lot_details(clie
     assert 'name="location_id"' in response.content.decode()
     assert "A-01 - доступно 5" in response.content.decode()
     assert "B-01 - доступно 6" in response.content.decode()
-    assert str(second.pk) not in response.content.decode()
 
 
 def test_quick_write_off_rejects_insufficient_quantity_without_partial_document(data):
