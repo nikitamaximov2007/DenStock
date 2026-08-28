@@ -51,6 +51,7 @@ from .services import (
     _price_source_number,
     _request_token,
     _split_quantity_over_lots,
+    check_sale_line_price,
     identity_number,
     parse_quantity,
 )
@@ -222,12 +223,16 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
     portions = _split_quantity_over_lots(lots, quantity)
     if unit_price is None:
         unit_price = prior.unit_price if prior is not None else part.recommended_price
+    if isinstance(cart, Sale):
+        # Раньше пустая цена превращалась здесь в 0.00, и деталь тихо уходила
+        # бесплатно. Теперь оператор узнаёт об этом на добавлении, а не из
+        # отчёта через неделю. Убрать позицию это не мешает: количество 0
+        # обрабатывается выше и сюда не доходит.
+        check_sale_line_price(part, unit_price)
     try:
         for lot, portion in portions:
             if isinstance(cart, Sale):
-                add_stock_lot_to_sale(
-                    cart, lot, portion, unit_price=unit_price or Decimal("0"), by=by
-                )
+                add_stock_lot_to_sale(cart, lot, portion, unit_price=unit_price, by=by)
             else:
                 add_stock_lot_to_repair_order(
                     cart, lot, portion, customer_unit_price_rub=unit_price, by=by
@@ -331,6 +336,13 @@ def complete_cart(
 
     scanned_numbers = scanned_numbers or {}
     is_sale = isinstance(cart, Sale)
+    if is_sale:
+        # Черновик мог пролежать с прошлой версии, когда пустая цена молча
+        # становилась нулём. Проверяем строки ещё раз перед проведением: в
+        # быстрой продаже цену руками не задают, поэтому ноль допустим только
+        # когда он стоит в самой карточке детали.
+        for row in rows:
+            check_sale_line_price(row.part, row.unit_price)
     # Снимки личности собираем ДО проведения: после списания лоты меняются.
     snapshots = [
         {

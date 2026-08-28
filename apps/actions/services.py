@@ -92,6 +92,36 @@ class ActionError(Exception):
     """Действие со склада невозможно (валидация/доступность)."""
 
 
+# --- Цена продажи ------------------------------------------------------------
+# Незаполненная цена и цена «ноль» - разные вещи. Раньше отсутствие цены
+# молча превращалось в 0.00, и деталь уходила с прилавка бесплатно, а в отчёте
+# продажа выглядела законной. Ноль остаётся допустимым только там, где его
+# действительно проставили в карточке детали.
+
+SALE_PRICE_NOT_SET = (
+    "«{name}»: цена не задана. Укажите цену в карточке детали перед продажей."
+)
+SALE_PRICE_STALE_ZERO = (
+    "«{name}»: строка добавлена, когда цена ещё не была задана, и осталась "
+    "нулевой. Уберите её и добавьте деталь заново."
+)
+
+
+def check_sale_line_price(part, unit_price) -> None:
+    """Не дать провести продажу по цене, которой никто не назначал.
+
+    В быстрых действиях цену продажи руками не вводят: она приходит из карточки
+    детали. Значит ноль в строке имеет право быть только тогда, когда в карточке
+    стоит именно ноль. Ремонта это правило не касается: там цена клиента
+    необязательна по своей природе и показывается прочерком.
+    """
+    canonical = part.recommended_price
+    if unit_price is None or (unit_price == 0 and canonical is None):
+        raise ActionError(SALE_PRICE_NOT_SET.format(name=part.name))
+    if unit_price == 0 and canonical != 0:
+        raise ActionError(SALE_PRICE_STALE_ZERO.format(name=part.name))
+
+
 # --- Поиск детали и остатков по скану ----------------------------------------------
 
 
@@ -308,10 +338,15 @@ def _perform_action_atomic(
     )
     portions = _split_quantity_over_lots(lots, quantity)
 
-    unit_price = part.recommended_price or Decimal("0")
+    # Цена нужна и продаже, и записи журнала. Для продажи пустая цена - повод
+    # остановиться, а не подставить ноль; резерв и ремонт живут по своим
+    # правилам, и их запись в журнале остаётся прежней.
+    unit_price = part.recommended_price
+    journal_price = unit_price if unit_price is not None else Decimal("0")
     sale = reservation = repair_order = None
     try:
         if action_type == WarehouseAction.Type.SALE:
+            check_sale_line_price(part, unit_price)
             sale = create_sale(customer_name=customer_comment, comment="Сканер действий", by=by)
             for lot, portion in portions:
                 add_stock_lot_to_sale(sale, lot, portion, unit_price=unit_price, by=by)
@@ -348,8 +383,8 @@ def _perform_action_atomic(
         location=location,
         location_code=location.code,
         quantity=quantity,
-        unit_price_rub=unit_price,
-        total_price_rub=money(unit_price * quantity),
+        unit_price_rub=journal_price,
+        total_price_rub=money(journal_price * quantity),
         price_source_number=_price_source_number(part),
         customer_comment=customer_comment,
         sale=sale,

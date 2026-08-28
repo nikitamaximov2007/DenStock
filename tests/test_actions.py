@@ -586,7 +586,8 @@ def variant_part(db, data):
     """
     brp = BrpCatalogPart.objects.create(
         material_no="420931285", part_desc="RIGHT PANEL",
-        retail_price_usd=Decimal("12.50"), replacement_no_1="420931284",
+        retail_price_usd=Decimal("12.50"), wholesale_price_usd=Decimal("10"),
+        replacement_no_1="420931284",
     )
     part = promote_to_warehouse(brp, by=data["admin"])
     _stock(part, data["loc2"], 5, data["sup"], data["admin"])
@@ -779,7 +780,8 @@ def legacy_replacement_part(db, data):
     """Карточка, где primary 420931284, но старое действие надо исправить на 420931285."""
     brp = BrpCatalogPart.objects.create(
         material_no="420931284", part_desc="OIL SEAL",
-        retail_price_usd=Decimal("24.49"), replacement_no_1="420931285",
+        retail_price_usd=Decimal("24.49"), wholesale_price_usd=Decimal("18"),
+        replacement_no_1="420931285",
     )
     part = promote_to_warehouse(brp, by=data["admin"])
     _stock(part, data["loc2"], 5, data["sup"], data["admin"])

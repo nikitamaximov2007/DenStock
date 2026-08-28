@@ -314,21 +314,22 @@ def test_a_part_without_a_price_shows_a_dash_not_a_zero(client, env):
     assert "0 ₽" not in body
 
 
-def test_a_sale_line_records_zero_when_the_part_has_no_price(client, env):
-    """Разница продажи и ремонта, зафиксированная сознательно.
+def test_a_sale_refuses_a_part_without_a_price(client, env):
+    """Продажа и ремонт расходятся, и теперь в правильную сторону.
 
-    У строки продажи цена обязательна на уровне модели, поэтому деталь без
-    канонической цены попадает в черновик с нулём, и оператор видит «0 ₽», а
-    не прочерк. У ремонта цена необязательна, там остаётся прочерк. Сделать
-    продажу такой же нельзя без миграции и решения о том, продаётся ли вообще
-    деталь без цены, поэтому поведение здесь закреплено, а не подправлено
-    отображением.
+    Раньше деталь без канонической цены попадала в черновик продажи с нулём:
+    цена строки обязательна на уровне модели, и пустое поле молча становилось
+    0.00. Теперь такая деталь в продажу не проходит вовсе. У ремонта цена по
+    своей природе необязательна, там по-прежнему прочерк. Подробности правила
+    и его границы - в test_zero_price_sale_guard.py.
     """
+    from apps.actions.services import ActionError
+
     part = _part(env, name="БЕЗ ЦЕНЫ ПРОДАЖА", article="BEZ-CENY-2", price=None)
     _stock(env, part)
     client.force_login(env["admin"])
-    cart = _draft(client, env, part, "sale")
-    assert cart_rows(cart)[0].unit_price == Decimal("0.00")
+    with pytest.raises(ActionError):
+        _draft(client, env, part, "sale")
 
 
 def test_the_same_price_appears_in_search_and_on_the_card(client, env):

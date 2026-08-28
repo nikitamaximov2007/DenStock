@@ -153,6 +153,7 @@ def data(db, admin):
 
     bulk = PartType.objects.create(
         name="Болт-Возврат", category=cat, unit=unit, tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("300"),  # сканер не продаёт деталь без цены
     )
     bline = _finalized_line(sup, bulk, admin, qty="10")  # landed_unit 104
     lot = create_stock_lot(bline, loc, Decimal("10"))
