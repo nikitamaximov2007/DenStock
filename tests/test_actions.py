@@ -144,6 +144,11 @@ def _card(part, **overrides):
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
         "customs_unit_price_usd": Decimal("20"),
+        # Область применения и веса обязательны: без них строка не готова к
+        # декларации, и выгрузка целиком не выдаётся.
+        "application_area": PartCustomsInfo.ApplicationArea.SNOWMOBILE,
+        "gross_weight_kg": Decimal("0.350"),
+        "net_weight_kg": Decimal("0.300"),
     }
     values.update(overrides)
     return PartCustomsInfo.objects.create(part_type=part, **values)
@@ -512,7 +517,7 @@ def test_export_xlsx_structure(client, make_user, data):
 
     _card(data["roller"])
     _card(data["single"], customs_name_ru="ДЕТАЛЬ СКЛАДСКАЯ",
-          customs_name_en="WAREHOUSE PART", customs_unit_price_usd=None)
+          customs_name_en="WAREHOUSE PART")
     perform_action(part=data["roller"], location=data["loc2"], action_type="sale",
                    quantity="2", customer_comment="Иванов", by=data["admin"])
     perform_action(part=data["single"], location=data["loc1"], action_type="repair",
@@ -536,15 +541,15 @@ def test_export_xlsx_structure(client, make_user, data):
     assert sheet["D10"].value == "ROLLER PULLEY"
     assert sheet["E10"].value == "BRP"
     assert sheet["F10"].value == "CANADA"  # всегда латиницей
-    assert sheet["G10"].value is None and sheet["H10"].value is None  # весов нет: пусто
+    assert Decimal(str(sheet["G10"].value)) == Decimal("0.350")  # вес из карточки
+    assert Decimal(str(sheet["H10"].value)) == Decimal("0.300")
     assert sheet["I10"].value == "=J10*G10"
     assert Decimal(str(sheet["J10"].value)) == Decimal("2")
     assert Decimal(str(sheet["K10"].value)) == Decimal("20")  # введено пользователем
     assert sheet["L10"].value == "=K10*J10"
-    assert sheet["M10"].value is None  # применимость не задана — не выдумываем
-    # Вторая строка: цена не введена - ячейка пустая, а не выдуманный ноль.
+    assert sheet["M10"].value  # применимость введена оператором
     assert str(sheet["B11"].value) == "700100"
-    assert sheet["K11"].value is None
+    assert Decimal(str(sheet["K11"].value)) == Decimal("20")
 
 
 def test_report_page_shows_warnings_and_export_button(client, make_user, data):
@@ -556,9 +561,18 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
     assert "Экспорт в Excel для таможни" not in html
     assert "Сначала заведите таможенные данные" in html
 
-    _card(data["single"], gross_weight_kg=None)
+    # Неполная карточка выгрузку не разрешает: причина названа, кнопки нет.
+    card = _card(data["single"], gross_weight_kg=None)
     html = client.get(reverse("actions_report")).content.decode()
-    assert "Экспорт в Excel для таможни" in html
+    assert "Экспорт в Excel для таможни" not in html
+    assert "нет веса брутто" in html
+
+    # Правка карточки сегодня не достраивает вчерашнюю декларацию: расход
+    # уже прошёл по той версии данных, какая действовала в его момент.
+    card.gross_weight_kg = Decimal("0.350")
+    card.save()
+    html = client.get(reverse("actions_report")).content.decode()
+    assert "Экспорт в Excel для таможни" not in html
     assert "нет веса брутто" in html
     assert "Таможенные данные" in html
     assert "Иванов" in html  # клиент/комментарий виден в отчёте

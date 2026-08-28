@@ -15,6 +15,14 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from apps.actions.customs_provenance import (
+    ARTICLE_MISSING,
+    ARTICLE_PROVEN,
+    RETURN_AMBIGUOUS,
+    RETURN_EXACT,
+    article_snapshots,
+    return_attributions,
+)
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
     PartNumber,
@@ -1181,99 +1189,84 @@ def _movement_source(movement) -> tuple[str, int | None]:
     return ("item", movement.part_item_id)
 
 
-def _number_snapshots(movements) -> dict[int, str]:
-    """Снимок номера, под которым деталь реально ушла со склада.
+def _net_part_consumption_entries(movements, versions, articles, returns):
+    """Свести журнал детали, погасив возврат ровно тем выбытием, которое он отменяет.
 
-    Номер фиксируется журналом действий в момент операции: у одной детали
-    может быть несколько точных номеров, и продажа по WH-100 не имеет права
-    превратиться в строку по WH-200. В самом складском журнале снимка нет,
-    поэтому количество движений разбирается по количествам действий той же
-    детали в хронологическом порядке - ровно так их создаёт perform_action,
-    одной транзакцией. Одно действие может лечь на несколько лотов, поэтому
-    считается именно количество, а не число записей.
+    Возврат уменьшает только своё выбытие: строка возврата хранит ссылку на
+    конкретную строку продажи или выдачи, а отмена документа помечена самим
+    документом. LIFO здесь нет и быть не может - одна деталь из одного лота
+    могла уйти и в продажу, и в ремонт с разными таможенными профилями, и
+    догадка приписала бы расход не тому.
 
-    Движению без действия (продажа из другого экрана, ремонт, списание)
-    снимок не достаётся, и номер берётся из личности детали.
+    Возврат, происхождение которого доказать нечем, НИЧЕГО не гасит и остаётся
+    отдельной записью: пусть строка явно блокирует выгрузку, чем тихо уменьшит
+    чужой расход.
 
-    Разбор идёт по ВСЕЙ истории детали, а не по выбранному периоду: иначе
-    отчёт за февраль начал бы разбирать очередь с январского действия и выдал
-    бы февральской продаже чужой номер.
+    Артикул берётся только из доказанного снимка. Выбытие без снимка тоже
+    остаётся записью, но с пометкой «происхождение не доказано».
     """
-    part_ids = {movement.part_type_id for movement in movements}
-    queues: dict[int, list[list]] = {}
-    actions = WarehouseAction.objects.filter(part_type_id__in=part_ids).order_by(
-        "created_at", "pk"
-    ).values_list("part_type_id", "quantity", "part_number")
-    for part_id, quantity, number in actions:
-        if not number or number == NO_EXACT_NUMBER:
-            continue
-        queues.setdefault(part_id, []).append([quantity, number])
-    history = StockMovement.objects.filter(
-        part_type_id__in=part_ids, movement_type__in=_CUSTOMS_OUTBOUND_TYPES
-    ).order_by("created_at", "pk").values_list("pk", "part_type_id", "quantity")
-    snapshots = {}
-    for movement_pk, part_id, quantity in history:
-        queue = queues.get(part_id)
-        if not queue:
-            continue
-        snapshots[movement_pk] = queue[0][1]
-        remaining = quantity
-        while remaining > 0 and queue:
-            taken = min(queue[0][0], remaining)
-            queue[0][0] -= taken
-            remaining -= taken
-            if queue[0][0] <= 0:
-                queue.pop(0)
-    return snapshots
-
-
-def _net_part_consumption(movements, versions, snapshots, default_number):
-    """Свести журнал детали, списав возврат на ту выдачу, которую он отменяет.
-
-    Внешнего ключа с возврата на отменяемое движение в журнале нет, поэтому
-    родословная восстанавливается: товар вернулся из последней незакрытой
-    выдачи того же лота или экземпляра, и только затем из любой другой
-    незакрытой выдачи этой детали. Списать возврат на версию, действующую в
-    день ВОЗВРАТА, значило бы придумать расход по профилю, под которым товар
-    склад никогда не покидал.
-
-    Отмена действия проходит здесь же: она заводит компенсирующее возвратное
-    движение, поэтому отменённая продажа гасится своей же выдачей и в
-    таможенный расход не попадает.
-    """
-    outstanding: list[list] = []  # [версия, остаток, происхождение, номер]
+    outstanding: list[dict] = []
+    unresolved_returns: list[dict] = []
     for movement in movements:
         if movement.movement_type in _CUSTOMS_OUTBOUND_TYPES:
-            outstanding.append([
-                _version_at(versions, movement.created_at),
-                movement.quantity,
-                _movement_source(movement),
-                snapshots.get(movement.pk) or default_number,
-            ])
+            article = articles.get(movement.pk) or {}
+            outstanding.append({
+                "movement": movement,
+                "version": _version_at(versions, movement.created_at),
+                "quantity": movement.quantity,
+                "source": _movement_source(movement),
+                "document": (movement.document_type or "", movement.document_id),
+                "number": article.get("number") or "",
+                "article_status": article.get("status") or ARTICLE_MISSING,
+            })
+            continue
+        attribution = returns.get(movement.pk) or {}
+        if attribution.get("status") != RETURN_EXACT:
+            unresolved_returns.append({"movement": movement, "quantity": movement.quantity})
             continue
         remaining = movement.quantity
-        source = _movement_source(movement)
-        # Сначала точное совпадение по лоту/экземпляру, затем любая выдача той
-        # же детали: возврат не может уменьшить расход чужой детали.
-        for exact_only in (True, False):
-            for entry in reversed(outstanding):
-                if remaining <= 0:
-                    break
-                if exact_only and entry[2] != source:
-                    continue
-                taken = min(entry[1], remaining)
-                entry[1] -= taken
-                remaining -= taken
+        for entry in outstanding:
             if remaining <= 0:
                 break
+            if entry["document"] != attribution["source"]:
+                continue
+            taken = min(entry["quantity"], remaining)
+            entry["quantity"] -= taken
+            remaining -= taken
         # Остаток возврата без выдачи в окне (выдача была раньше периода) не
         # уходит в минус: отрицательного расхода на таможне не бывает.
+    entries = [entry for entry in outstanding if entry["quantity"] > 0]
+    for pending in unresolved_returns:
+        entries.append({
+            "movement": pending["movement"],
+            "version": None,
+            "quantity": pending["quantity"],
+            "source": _movement_source(pending["movement"]),
+            "document": (
+                pending["movement"].document_type or "", pending["movement"].document_id
+            ),
+            "number": "",
+            "article_status": ARTICLE_MISSING,
+            "return_status": RETURN_AMBIGUOUS,
+        })
+    return entries
+
+
+def _net_part_consumption(movements, versions, articles, returns):
+    """Итоги по ключу «версия + артикул» для готовых строк выгрузки.
+
+    Записи без доказанного происхождения в итог не попадают: они не строка
+    выгрузки, а причина её заблокировать.
+    """
     totals: dict[tuple, Decimal] = {}
-    for version, quantity, _source, number in outstanding:
-        if quantity <= 0:
+    for entry in _net_part_consumption_entries(movements, versions, articles, returns):
+        if entry.get("return_status") == RETURN_AMBIGUOUS:
             continue
-        key = (version.pk if version is not None else None, number)
-        totals[key] = totals.get(key, Decimal("0")) + quantity
+        if entry["article_status"] != ARTICLE_PROVEN:
+            continue
+        version = entry["version"]
+        key = (version.pk if version is not None else None, entry["number"])
+        totals[key] = totals.get(key, Decimal("0")) + entry["quantity"]
     return totals
 
 
@@ -1355,7 +1348,8 @@ def historical_customs_rows(
         info.part_type_id: info
         for info in PartCustomsInfo.objects.filter(part_type_id__in=part_ids)
     }
-    snapshots = _number_snapshots(movements)
+    articles = article_snapshots(movements)
+    returns = return_attributions(movements)
     by_part: dict[int, list] = {}
     for movement in movements:
         by_part.setdefault(movement.part_type_id, []).append(movement)
@@ -1365,17 +1359,119 @@ def historical_customs_rows(
         part = parts[part_id]
         versions = versions_by_part.get(part_id, [])
         by_version = {version.pk: version for version in versions}
-        consumption = _net_part_consumption(
-            part_movements, versions, snapshots, part_exact_number(part, default="")
-        )
+        consumption = _net_part_consumption(part_movements, versions, articles, returns)
         for (version_pk, number), quantity in consumption.items():
             row = _customs_row_from_version(
                 part, by_version.get(version_pk), quantity,
                 customs=customs_by_part.get(part_id),
             )
             row["number"] = number
+            row["source_key"] = (part_id, version_pk, number)
             rows.append(row)
     return sorted(rows, key=lambda row: (row["number"], row["version_number"] or 0))
+
+
+def customs_export_reconciliation(
+    *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+) -> dict:
+    """Read-only сверка источника расхода и строк таможенной выгрузки.
+
+    Источник - неизменяемый ``StockMovement``. Каждое непогашенное выбытие
+    получает ключ строки XLSX: ``part, customs version, exact number``. Тогда
+    агрегирование не скрывает движение: оно либо представлено готовой строкой,
+    либо явно блокирует экспорт из-за неполных исторических данных.
+    """
+    filters = {
+        "date_from": date_from,
+        "date_to": date_to,
+        "action_type": action_type,
+        "q": q,
+        "part_number": part_number,
+        "location_code": location_code,
+    }
+    movements = _customs_movements(**filters)
+    if not movements:
+        return {
+            "eligible": [], "exported": [], "blocked": [],
+            "provenance_missing": [], "return_ambiguous": [],
+            "silent": [], "duplicates": [],
+        }
+
+    part_ids = {movement.part_type_id for movement in movements}
+    versions_by_part = _customs_versions_by_part(part_ids)
+    articles = article_snapshots(movements)
+    returns = return_attributions(movements)
+    records = []
+    for part_id in part_ids:
+        part_movements = [m for m in movements if m.part_type_id == part_id]
+        for entry in _net_part_consumption_entries(
+            part_movements, versions_by_part.get(part_id, []), articles, returns
+        ):
+            movement = entry["movement"]
+            version = entry["version"]
+            records.append({
+                "movement_id": movement.pk,
+                "document_type": movement.document_type,
+                "document_id": movement.document_id,
+                "operation": {
+                    StockMovement.MovementType.SALE_ITEM: "sale",
+                    StockMovement.MovementType.SALE_LOT: "sale",
+                    StockMovement.MovementType.ISSUE_ITEM: "repair",
+                    StockMovement.MovementType.ISSUE_LOT: "repair",
+                    StockMovement.MovementType.WRITE_OFF_ITEM: "write_off",
+                    StockMovement.MovementType.WRITE_OFF_LOT: "write_off",
+                }.get(movement.movement_type, "return"),
+                "part_id": part_id,
+                "number": entry["number"],
+                "quantity": entry["quantity"],
+                "source": entry["source"],
+                "created_at": movement.created_at,
+                "article_status": entry["article_status"],
+                "return_status": entry.get("return_status", RETURN_EXACT),
+                "source_key": (
+                    part_id,
+                    version.pk if version is not None else None,
+                    entry["number"],
+                ),
+            })
+
+    rows_by_key = {row["source_key"]: row for row in historical_customs_rows(**filters)}
+    exported, blocked, silent = [], [], []
+    provenance_missing, return_ambiguous = [], []
+    for record in records:
+        # Порядок проверок - от недоказуемого к недостающему. Строка без
+        # доказанного происхождения не может стать строкой выгрузки ни при
+        # каких таможенных данных, поэтому спрашивать про них уже незачем.
+        if record["return_status"] != RETURN_EXACT:
+            return_ambiguous.append(record)
+            continue
+        if record["article_status"] != ARTICLE_PROVEN:
+            provenance_missing.append(record)
+            continue
+        row = rows_by_key.get(record["source_key"])
+        if row is None:
+            silent.append(record)
+        elif row["customs_ready"]:
+            exported.append(record)
+        else:
+            blocked.append({**record, "missing_reasons": row["customs_missing_reasons"]})
+
+    seen_movement_ids = set()
+    duplicates = []
+    for record in records:
+        movement_id = record["movement_id"]
+        if movement_id in seen_movement_ids:
+            duplicates.append(movement_id)
+        seen_movement_ids.add(movement_id)
+    return {
+        "eligible": records,
+        "exported": exported,
+        "blocked": blocked,
+        "provenance_missing": provenance_missing,
+        "return_ambiguous": return_ambiguous,
+        "silent": silent,
+        "duplicates": duplicates,
+    }
 
 
 def _center_data_row(sheet, row: int) -> None:

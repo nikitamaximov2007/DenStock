@@ -761,15 +761,15 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
         if line.part_item_id:
             return_part_item(
                 line.part_item, line.part_item.current_location,
-                restock_status=PartItem.Status.AVAILABLE, by=by, document_id=sale.pk,
-                comment=comment,
+                restock_status=PartItem.Status.AVAILABLE, by=by,
+                document_type="sale", document_id=sale.pk, comment=comment,
             )
         else:
             return_stock_lot_quantity(
                 line.batch_line, line.stock_lot.location, outstanding,
                 unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
-                restock_status=StockLot.Status.AVAILABLE, by=by, document_id=sale.pk,
-                comment=comment,
+                restock_status=StockLot.Status.AVAILABLE, by=by,
+                document_type="sale", document_id=sale.pk, comment=comment,
             )
     sale.status = Sale.Status.CANCELED
     sale.canceled_at = timezone.now()

@@ -49,6 +49,7 @@ from .services import (
     ActionError,
     actions_report,
     cancel_warehouse_action,
+    customs_export_reconciliation,
     get_or_create_customs,
     historical_customs_rows,
     parse_customs_usd,
@@ -653,15 +654,24 @@ def actions_export(request):
 
     filters = _report_filters(request)
     rows = historical_customs_rows(**filters)
-    # Позиция без единой сохранённой версии — это деталь, по которой
-    # таможенных данных не вводили вовсе. Достроить их неоткуда: каталог для
-    # таможни не источник. Отдельные незаполненные поля экспорт не блокируют,
-    # они остаются пустыми, как и раньше.
-    missing = [row for row in rows if not row["customs_entered"]]
-    if missing:
+    # Проверять готовность по строкам недостаточно: движение, происхождение
+    # которого не доказано, строки не даёт вовсе и молча выпало бы из проверки.
+    # Поэтому решение принимает сверка по журналу движений - она видит каждое
+    # выбытие и относит его ровно к одной из четырёх категорий.
+    reconciliation = customs_export_reconciliation(**filters)
+    problems = [
+        (reconciliation["return_ambiguous"], "возврат нельзя отнести к выбытию"),
+        (reconciliation["provenance_missing"], "не доказан артикул на момент выбытия"),
+        (reconciliation["blocked"], "не заполнены таможенные данные"),
+        (reconciliation["silent"], "строка не попала в выгрузку"),
+    ]
+    reasons = [
+        f"{label}: {len(records)}" for records, label in problems if records
+    ]
+    if reasons:
         messages.error(
             request,
-            f"Нельзя сформировать Excel: у {len(missing)} деталей не заведены таможенные данные.",
+            "Нельзя сформировать Excel, пока не закрыто: " + "; ".join(reasons) + ".",
         )
         return redirect(f"{reverse('actions_report')}?{urlencode(request.GET)}")
     buffer = export_customs_xlsx(rows=rows)

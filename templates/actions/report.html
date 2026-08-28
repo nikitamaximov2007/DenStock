@@ -6,7 +6,7 @@
     <h1 class="page-title">Отчёт действий со склада</h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
-      {% if export_rows and not customs_absent_count %}
+      {% if export_rows and not customs_missing_count %}
         <a class="btn btn--small btn--primary"
            data-full-navigation
            href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
@@ -23,8 +23,8 @@
   {% if customs_missing_count %}
     <p class="pill pill--warning pill--block">
       У {{ customs_missing_count }} позиций таможенные данные заполнены не
-      полностью. Незаполненные ячейки останутся в Excel пустыми: выдумывать
-      их значения нельзя.
+      полностью. Экспорт заблокирован, пока не будут заполнены все поля:
+      выдумывать их значения нельзя.
     </p>
   {% endif %}
   <form method="get" class="filter-toolbar">

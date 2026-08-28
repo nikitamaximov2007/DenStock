@@ -1368,7 +1368,7 @@ _RESTOCK_STATUSES = (PartItem.Status.AVAILABLE, PartItem.Status.QUARANTINE)
 
 @transaction.atomic
 def return_part_item(item, to_location, *, restock_status, by=None,
-                     document_id=None, comment="") -> PartItem:
+                     document_id=None, document_type="stock_return", comment="") -> PartItem:
     """Вернуть экземпляр на склад: sold/installed → restock_status (available/
     quarantine), движение RETURN_ITEM. `current_location` ставится в ячейку возврата.
     """
@@ -1385,7 +1385,7 @@ def return_part_item(item, to_location, *, restock_status, by=None,
     _record_movement(
         item, StockMovement.MovementType.RETURN_ITEM, Decimal("1"),
         from_location=None, to_location=to_location, by=by,
-        comment=comment, document_type="stock_return", document_id=document_id,
+        comment=comment, document_type=document_type, document_id=document_id,
     )
     _refresh_balance(item.batch_line, to_location)
     set_preferred_part_location(item.part_type, to_location, by=by)
@@ -1395,7 +1395,7 @@ def return_part_item(item, to_location, *, restock_status, by=None,
 @transaction.atomic
 def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_rub,
                               restock_status, stock_lot=None, by=None, document_id=None,
-                              comment="") -> StockLot:
+                              document_type="stock_return", comment="") -> StockLot:
     """Вернуть количество в лот ячейки `to_location` по правилу «найти/оживить/
     создать» под UniqueConstraint(batch_line, location):
 
@@ -1447,7 +1447,7 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
     _record_movement(
         lot, StockMovement.MovementType.RETURN_LOT, quantity,
         from_location=None, to_location=to_location, by=by,
-        comment=comment, document_type="stock_return", document_id=document_id,
+        comment=comment, document_type=document_type, document_id=document_id,
     )
     _refresh_balance(batch_line, to_location)
     set_preferred_part_location(batch_line.part_type, to_location, by=by)
