@@ -95,15 +95,35 @@ def available_quantity(part) -> Decimal:
     return bulk + serial
 
 
+def available_quantities_by_location(part):
+    """Canonical available bulk stock grouped by source cell."""
+    lots = list(
+        StockLot.objects.filter(part_type=part, status=StockLot.Status.AVAILABLE, quantity__gt=0)
+        .select_related("location")
+        .order_by("location__code", "created_at", "pk")
+    )
+    reserved = active_reserved_for_lots(lots)
+    result = {}
+    for lot in lots:
+        available = lot.quantity - reserved.get(lot.pk, Decimal("0"))
+        if available > 0:
+            result[lot.location_id] = result.get(
+                lot.location_id,
+                {"location": lot.location, "available": Decimal("0")},
+            )
+            result[lot.location_id]["available"] += available
+    return list(result.values())
+
+
 @transaction.atomic
 def quick_write_off(
-    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), by=None
+    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), location_id=None, by=None
 ) -> WriteOffDocument:
     """Write off a scanned quantity without exposing lot internals.
 
-    Allocation is FIFO across canonical available lots.  The final write goes
-    through ``complete_write_off`` so StockMovement, cost snapshots and locks
-    retain exactly the normal document semantics.
+    Allocation is FIFO across canonical available lots in one selected source
+    cell. The final write goes through ``complete_write_off`` so StockMovement,
+    cost snapshots and locks retain exactly the normal document semantics.
     """
     reason = (reason or "").strip()
     business_author = (business_author or "").strip()
@@ -142,9 +162,19 @@ def quick_write_off(
             raise WriteOffError("Отсканируйте серийный номер экземпляра.")
         add_part_item_to_write_off(doc, item, by=by)
     else:
+        locations = available_quantities_by_location(part)
+        if location_id is None:
+            if len(locations) > 1:
+                raise WriteOffError("Выберите ячейку списания.")
+            if locations:
+                location_id = locations[0]["location"].pk
+        elif not any(str(row["location"].pk) == str(location_id) for row in locations):
+            raise WriteOffError("В выбранной ячейке нет доступного остатка.")
+
         lots = list(
             StockLot.objects.select_for_update()
             .filter(part_type=part, status=StockLot.Status.AVAILABLE, quantity__gt=0)
+            .filter(**({"location_id": location_id} if location_id else {}))
             .order_by("created_at", "pk")
         )
         remaining = quantity
