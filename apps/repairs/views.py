@@ -11,6 +11,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from apps.inventory.models import PartItem
@@ -21,13 +22,20 @@ from apps.inventory.presentation import (
     with_part_identity,
 )
 
-from .forms import AddRepairItemForm, AddRepairLotForm, RepairCancellationForm, RepairOrderForm
+from .forms import (
+    AddRepairItemForm,
+    AddRepairLotForm,
+    RepairCancellationForm,
+    RepairLineCancellationForm,
+    RepairOrderForm,
+)
 from .models import RepairIssueLine, RepairOrder
 from .services import (
     RepairError,
     add_part_item_to_repair_order,
     add_stock_lot_to_repair_order,
     calculate_repair_customer_amount,
+    cancel_repair_line_quantity,
     cancel_repair_order,
     complete_repair_order,
     create_repair_order,
@@ -35,6 +43,7 @@ from .services import (
     repair_customer_line_amounts,
     repair_customer_line_prices,
     repair_returned_quantities,
+    reversible_quantity,
     set_repair_line_customer_price,
 )
 
@@ -42,6 +51,22 @@ from .services import (
 def _require_repairs(request) -> None:
     if not request.user.can_manage_repairs:
         raise PermissionDenied
+
+
+def _require_line_reversal(request) -> None:
+    """Та же пара прав, что у отмены проведённого ремонтного заказа."""
+    _require_repairs(request)
+    if not request.user.can_manage_returns:
+        raise PermissionDenied
+
+
+def _report_return_path(request) -> str:
+    candidate = request.POST.get("next") or request.GET.get("next") or ""
+    if url_has_allowed_host_and_scheme(
+        candidate, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return candidate
+    return ""
 
 
 def _resolve_item(code: str):
@@ -302,4 +327,46 @@ def repair_order_cancel_confirm(request, pk):
     return render(
         request, "repairs/repair_order_cancel_confirm.html",
         {"order": order, "form": RepairCancellationForm()},
+    )
+
+
+@login_required
+def repair_line_cancel(request, pk):
+    """Отменить часть выданной позиции прямо из клиентского отчёта."""
+    _require_line_reversal(request)
+    line = get_object_or_404(
+        RepairIssueLine.objects.select_related("repair_order", "part_type"), pk=pk
+    )
+    remaining = reversible_quantity(line)
+    back = _report_return_path(request)
+    if line.repair_order.status != RepairOrder.Status.COMPLETED or remaining <= 0:
+        messages.error(request, "Эта позиция уже полностью отменена или возвращена.")
+        return redirect(back or "reports_clients_overview")
+
+    if request.method == "POST":
+        form = RepairLineCancellationForm(request.POST, remaining=remaining)
+        if form.is_valid():
+            try:
+                cancel_repair_line_quantity(
+                    line,
+                    form.cleaned_data["quantity"],
+                    reason=form.cleaned_data["reason"],
+                    author=form.cleaned_data["author"],
+                    by=request.user,
+                )
+            except RepairError as exc:
+                messages.error(request, str(exc))
+            else:
+                quantity_shown = format(form.cleaned_data["quantity"].normalize(), "f")
+                messages.success(
+                    request,
+                    f"Отменено {quantity_shown} из позиции ремонта {line.part_type.name}.",
+                )
+                return redirect(back or "reports_clients_overview")
+    else:
+        form = RepairLineCancellationForm(remaining=remaining)
+    return render(
+        request,
+        "repairs/repair_line_cancel_confirm.html",
+        {"line": line, "remaining": remaining, "form": form, "next": back},
     )

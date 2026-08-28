@@ -347,6 +347,90 @@ def calculate_repair_costs(order: RepairOrder) -> Decimal:
     return money(total)
 
 
+def reversible_quantity(repair_line: RepairIssueLine) -> Decimal:
+    """Сколько из конкретной строки выдачи ещё можно отменить.
+
+    Обычный возврат, отмена строки из отчёта и частичная отмена до отмены
+    заказа используют один ``StockReturnLine``. Поэтому вычитаются все уже
+    проведённые возвраты, а одна и та же единица не может вернуться дважды.
+    """
+    from apps.returns.services import returnable_quantity
+
+    return returnable_quantity(repair_line)
+
+
+@transaction.atomic
+def cancel_repair_line_quantity(repair_line, quantity, *, reason="", author="", by=None):
+    """Вернуть часть точной проведённой строки ремонта из отчёта.
+
+    Это не отдельная складская ветка: создаётся и сразу проводится штатный
+    возврат из ремонта. Он сохраняет источник ``RepairIssueLine``, исходный
+    лот/экземпляр и ячейку, а отчёты пересчитывают действующие количество,
+    цену клиента и себестоимость по проведённым строкам возврата.
+    """
+    from apps.returns.models import StockReturn, StockReturnLine
+    from apps.returns.services import (
+        ReturnError,
+        add_repair_line_return,
+        complete_return,
+        create_return,
+        source_location_for_repair_line,
+    )
+
+    reason = (reason or "").strip()
+    author = (author or "").strip()
+    if not reason:
+        raise RepairError("Укажите причину отмены.")
+    if not author:
+        raise RepairError("Укажите, кто отменяет.")
+    try:
+        quantity = Decimal(str(quantity))
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        raise RepairError("Некорректное количество.") from exc
+    if quantity <= 0:
+        raise RepairError("Количество должно быть больше нуля.")
+
+    # Keep the lock order consistent with full repair cancellation: first the
+    # document, then its exact issue line. PostgreSQL therefore serializes a
+    # line reversal against a simultaneous document cancellation.
+    order = RepairOrder.objects.select_for_update().get(pk=repair_line.repair_order_id)
+    repair_line = (
+        RepairIssueLine.objects.select_for_update(of=("self",))
+        .select_related("part_item__current_location", "stock_lot__location", "part_type")
+        .get(pk=repair_line.pk, repair_order=order)
+    )
+    if order.status != RepairOrder.Status.COMPLETED:
+        raise RepairError("Отменить позицию можно только в проведённом ремонтном заказе.")
+    if repair_line.part_item_id and quantity != Decimal("1"):
+        raise RepairError("Серийный экземпляр можно отменить только целиком.")
+    if StockReturn.objects.filter(
+        source_type=StockReturn.SourceType.REPAIR_ORDER,
+        source_id=order.pk,
+        status=StockReturn.Status.DRAFT,
+    ).exists():
+        raise RepairError("Сначала закройте черновик возврата из этого заказа.")
+
+    try:
+        location = source_location_for_repair_line(repair_line)
+        document = create_return(
+            source=order,
+            reason=f"Отмена позиции ремонта: {reason}"[:255],
+            comment=f"Автор: {author}"[:255],
+            by=by,
+        )
+        add_repair_line_return(
+            document,
+            repair_line,
+            quantity,
+            to_location=location,
+            restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+            by=by,
+        )
+        return complete_return(document, by=by)
+    except ReturnError as exc:
+        raise RepairError(str(exc)) from exc
+
+
 def repair_returned_quantities(lines):
     """Completed return quantities keyed by issued repair line."""
     from apps.returns.models import StockReturnLine

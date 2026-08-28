@@ -445,6 +445,9 @@ def repairs_by_client_detail(request):
             "show_money": True,
             "show_costs": request.user.can_view_purchase_cost,
             "missing_customer": missing,
+            "can_cancel_lines": (
+                request.user.can_manage_repairs and request.user.can_manage_returns
+            ),
         },
     )
 

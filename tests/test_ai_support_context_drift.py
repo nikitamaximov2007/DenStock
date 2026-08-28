@@ -45,6 +45,7 @@ NEW_QUESTIONS = (
     # Найдено этой же проверкой: признак был записан формой слова «списан»,
     # а не основой, и вопрос уходил в приёмку.
     ("Как списать сломанную деталь?", "returns-repairs-writeoffs"),
+    ("Как отменить одну ошибочную деталь из ремонта?", "returns-repairs-writeoffs"),
 )
 
 
@@ -120,6 +121,13 @@ def test_the_knowledge_names_both_columns_as_the_screen_does():
     body = text_of("reports.md")
     assert "Сумма (₽)" in body
     assert "Себестоимость (₽)" in body
+
+
+def test_the_knowledge_explains_partial_repair_line_cancellation():
+    body = " ".join(text_of("returns-repairs-writeoffs.md").split())
+    assert "\u0420\u0435\u043c\u043e\u043d\u0442\u044b" in body
+    assert "\u041e\u0442\u043c\u0435\u043d\u0438\u0442\u044c" in body
+    assert "\u0438\u0441\u0445\u043e\u0434\u043d\u044b\u0439" in body
 
 
 def test_the_knowledge_mentions_that_the_amounts_are_historical():

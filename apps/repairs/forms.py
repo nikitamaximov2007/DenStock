@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django import forms
 
 from apps.catalog.models import VehicleType
@@ -48,6 +50,47 @@ class RepairCancellationForm(forms.Form):
         value = (self.cleaned_data["author"] or "").strip()
         if not value:
             raise forms.ValidationError("Укажите, кто отменяет документ.")
+        return value
+
+
+class RepairLineCancellationForm(forms.Form):
+    """Количество из конкретной строки ремонта и её аудит отмены."""
+
+    quantity = forms.DecimalField(
+        label="Количество отмены", max_digits=12, decimal_places=3, min_value=Decimal("0.001")
+    )
+    reason = forms.CharField(label="Причина", max_length=255)
+    author = forms.CharField(label="Кто отменяет", max_length=255)
+
+    def __init__(self, *args, remaining=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.remaining = remaining
+        if remaining is not None:
+            self.fields["quantity"].max_value = remaining
+            shown = format(Decimal(remaining).normalize(), "f")
+            self.fields["quantity"].widget.attrs.update(
+                {"min": "1", "max": shown, "step": "1"}
+            )
+            self.fields["quantity"].initial = 1
+
+    def clean_quantity(self):
+        quantity = self.cleaned_data["quantity"]
+        if self.remaining is not None and quantity > self.remaining:
+            raise forms.ValidationError(
+                f"Доступно к отмене {format(Decimal(self.remaining).normalize(), 'f')}."
+            )
+        return quantity
+
+    def clean_reason(self):
+        value = (self.cleaned_data.get("reason") or "").strip()
+        if not value:
+            raise forms.ValidationError("Укажите причину отмены.")
+        return value
+
+    def clean_author(self):
+        value = (self.cleaned_data.get("author") or "").strip()
+        if not value:
+            raise forms.ValidationError("Укажите, кто отменяет.")
         return value
 
 
