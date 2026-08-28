@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Version-aware offsite backup retention.  Host-level companion to backup_offsite.sh.
+set -euo pipefail
+
+# Set these in /etc/denstock/backup-retention.env, never in Git.
+RETENTION_REMOTE="${DENSTOCK_BACKUP_REMOTE:-}"
+SOFT_LIMIT_BYTES="${DENSTOCK_BACKUP_SOFT_LIMIT_BYTES:-838860800}"
+HARD_LIMIT_BYTES="${DENSTOCK_BACKUP_HARD_LIMIT_BYTES:-1073741824}"
+DRY_RUN=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    -h|--help) echo "usage: denstock-backup-capped [--dry-run]"; exit 0 ;;
+    *) echo "Unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+log() { printf '[denstock-backup-capped] %s\n' "$*"; }
+run() { if [ "$DRY_RUN" = 1 ]; then log "DRY-RUN: $*"; else "$@"; fi; }
+
+require() {
+  [ -n "$RETENTION_REMOTE" ] || { echo 'DENSTOCK_BACKUP_REMOTE is required' >&2; exit 2; }
+  command -v rclone >/dev/null || { echo 'rclone is required' >&2; exit 2; }
+}
+
+# A backup run is YYYY-MM-DD_HH-MM-SS/.  Retain all last 24h, one per of the
+# preceding six calendar days, then one per ISO week. The newest run is always kept.
+keep_run() {
+  local run="$1" now epoch age day week
+  now="$(date +%s)"; epoch="$(date -d "${run/_/ }" +%s 2>/dev/null || echo 0)"
+  [ "$epoch" -gt 0 ] || return 0
+  age=$((now - epoch))
+  [ "$age" -le 86400 ] && return 0
+  day="$(date -d "${run/_/ }" +%F)"; week="$(date -d "${run/_/ }" +%G-W%V)"
+  if [ "$age" -le 604800 ]; then
+    [ "${kept_days[$day]:-}" = 1 ] && return 1
+    kept_days[$day]=1; return 0
+  fi
+  [ "${kept_weeks[$week]:-}" = 1 ] && return 1
+  kept_weeks[$week]=1
+}
+
+remote_size() {
+  rclone size "$RETENTION_REMOTE" --s3-versions --json | sed -n 's/.*"bytes"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1
+}
+
+require
+mapfile -t runs < <(rclone lsf "$RETENTION_REMOTE" --dirs-only | sed 's:/$::' | sort -r)
+[ "${#runs[@]}" -gt 0 ] || { log 'No backup runs found.'; exit 0; }
+declare -A kept_days=() kept_weeks=()
+newest="${runs[0]}"
+for run_id in "${runs[@]}"; do
+  [ "$run_id" = "$newest" ] && continue
+  if ! keep_run "$run_id"; then
+    run rclone purge "${RETENTION_REMOTE%/}/$run_id" --s3-versions
+  fi
+done
+
+# Purging a versioned S3 prefix can leave non-current versions billed. Cleanup is
+# intentional and version-aware; a failure must stop before any upload is allowed.
+run rclone cleanup "$RETENTION_REMOTE" --s3-versions
+bytes="$(remote_size)"
+[ -n "$bytes" ] || { echo 'Unable to determine version-aware remote size.' >&2; exit 1; }
+if [ "$bytes" -gt "$HARD_LIMIT_BYTES" ]; then
+  echo "Backup size $bytes exceeds hard limit $HARD_LIMIT_BYTES; stop uploads." >&2; exit 1
+fi
+if [ "$bytes" -gt "$SOFT_LIMIT_BYTES" ]; then
+  echo "Backup size $bytes exceeds soft limit $SOFT_LIMIT_BYTES; retention needs attention." >&2; exit 1
+fi
+log "Retention complete; version-aware size: $bytes bytes."
