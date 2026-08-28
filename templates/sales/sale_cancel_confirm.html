@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Отмена продажи {{ sale.number }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Отменить продажу {{ sale.number }}</h1>
+  <p>Клиент: {{ sale.customer_name }}. Склад будет компенсирован по исходным строкам.</p>
+  <form method="post" action="{% url 'sale_cancel' sale.pk %}" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Подтвердить отмену</button>
+    <a href="{% url 'sale_detail' sale.pk %}">Назад</a>
+  </form>
+{% endblock %}

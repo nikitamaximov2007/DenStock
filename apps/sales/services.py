@@ -19,6 +19,8 @@ from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import (
     ensure_location_operation_allowed,
     recompute_balance_row,
+    return_part_item,
+    return_stock_lot_quantity,
     sell_part_item,
     sell_stock_lot,
 )
@@ -614,5 +616,72 @@ def complete_sale(sale, *, by=None) -> Sale:
     sale.save(update_fields=[
         "revenue_total", "cost_total", "profit_total", "status", "sold_at",
         "sold_by", "updated_at",
+    ])
+    return sale
+
+
+@transaction.atomic
+def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
+    """Cancel a completed sale with canonical compensating inventory movements.
+
+    The original sale, its prices and cost snapshots remain immutable.  Only
+    quantity not already returned by a completed customer return is restored,
+    and every restoration goes through the standard RETURN_* inventory API.
+    """
+    from apps.returns.models import StockReturn, StockReturnLine
+
+    reason = (reason or "").strip()
+    author = (author or "").strip()
+    if not reason:
+        raise SaleError("Укажите причину отмены.")
+    if not author:
+        raise SaleError("Укажите, кто отменяет документ.")
+    sale = Sale.objects.select_for_update().get(pk=sale.pk)
+    if sale.status in (Sale.Status.CANCELED, Sale.Status.VOIDED):
+        return sale
+    if sale.status != Sale.Status.COMPLETED:
+        raise SaleError("Отменить можно только проведённую продажу.")
+    if StockReturn.objects.filter(
+        source_type=StockReturn.SourceType.SALE, source_id=sale.pk, status=StockReturn.Status.DRAFT
+    ).exists():
+        raise SaleError("Сначала закройте черновик возврата из этой продажи.")
+
+    lines = list(sale.lines.select_for_update().select_related(
+        "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
+    ))
+    returned = dict(
+        StockReturnLine.objects.filter(
+            stock_return__status=StockReturn.Status.COMPLETED,
+            source_sale_line_id__in=[line.pk for line in lines],
+        ).values("source_sale_line_id").annotate(quantity=Sum("quantity")).values_list(
+            "source_sale_line_id", "quantity"
+        )
+    )
+    for line in lines:
+        outstanding = line.quantity - (returned.get(line.pk) or Decimal("0"))
+        if outstanding <= 0:
+            continue
+        comment = f"Отмена продажи {sale.number}: {reason}"[:255]
+        if line.part_item_id:
+            return_part_item(
+                line.part_item, line.part_item.current_location,
+                restock_status=PartItem.Status.AVAILABLE, by=by, document_id=sale.pk,
+                comment=comment,
+            )
+        else:
+            return_stock_lot_quantity(
+                line.batch_line, line.stock_lot.location, outstanding,
+                unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
+                restock_status=StockLot.Status.AVAILABLE, by=by, document_id=sale.pk,
+                comment=comment,
+            )
+    sale.status = Sale.Status.CANCELED
+    sale.canceled_at = timezone.now()
+    sale.canceled_by = by
+    sale.cancellation_reason = reason
+    sale.cancellation_author = author
+    sale.save(update_fields=[
+        "status", "canceled_at", "canceled_by", "cancellation_reason", "cancellation_author",
+        "updated_at",
     ])
     return sale

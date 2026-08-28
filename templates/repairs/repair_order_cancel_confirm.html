@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Отмена ремонта {{ order.number }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Отменить ремонтный заказ {{ order.number }}</h1>
+  <p>Клиент: {{ order.customer_name }}. Склад будет компенсирован по исходным строкам.</p>
+  <form method="post"
+        action="{% url 'repair_order_cancel' order.pk %}"
+        class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit" class="btn btn--primary">Подтвердить отмену</button>
+    <a href="{% url 'repair_order_detail' order.pk %}">Назад</a>
+  </form>
+{% endblock %}

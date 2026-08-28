@@ -21,7 +21,12 @@ from django.utils import timezone
 from apps.catalog.models import PartType
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
-from apps.inventory.services import issue_part_item, issue_stock_lot
+from apps.inventory.services import (
+    issue_part_item,
+    issue_stock_lot,
+    return_part_item,
+    return_stock_lot_quantity,
+)
 from apps.procurement.models import money
 from apps.sales.services import active_reserved_for_lot, is_part_item_reserved
 
@@ -252,16 +257,68 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
 
 
 @transaction.atomic
-def cancel_repair_order(order, *, by=None) -> RepairOrder:
-    """Отменить черновик заказа (склад не затрагивали — отменять можно только draft)."""
+def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
+    """Cancel a draft or a completed repair without rewriting its history."""
+    from apps.returns.models import StockReturn, StockReturnLine
+
+    reason = (reason or "").strip()
+    author = (author or "").strip()
     order = RepairOrder.objects.select_for_update().get(pk=order.pk)
     if order.status == RepairOrder.Status.CANCELED:
         return order
-    if order.status != RepairOrder.Status.DRAFT:
-        raise RepairError("Отменить можно только черновик (проведённый заказ неизменяем).")
+    if order.status not in (RepairOrder.Status.DRAFT, RepairOrder.Status.COMPLETED):
+        raise RepairError("Отменить можно только черновик или проведённый заказ.")
+    if order.status == RepairOrder.Status.COMPLETED:
+        if not reason:
+            raise RepairError("Укажите причину отмены.")
+        if not author:
+            raise RepairError("Укажите, кто отменяет документ.")
+        if StockReturn.objects.filter(
+            source_type=StockReturn.SourceType.REPAIR_ORDER, source_id=order.pk,
+            status=StockReturn.Status.DRAFT,
+        ).exists():
+            raise RepairError("Сначала закройте черновик возврата из этого заказа.")
+        lines = list(order.lines.select_for_update().select_related(
+            "part_item__current_location", "stock_lot__location", "batch_line"
+        ))
+        returned = dict(
+            StockReturnLine.objects.filter(
+                stock_return__status=StockReturn.Status.COMPLETED,
+                source_repair_line_id__in=[line.pk for line in lines],
+            ).values("source_repair_line_id").annotate(quantity=Sum("quantity")).values_list(
+                "source_repair_line_id", "quantity"
+            )
+        )
+        for line in lines:
+            outstanding = line.quantity - (returned.get(line.pk) or Decimal("0"))
+            if outstanding <= 0:
+                continue
+            comment = f"Отмена ремонта {order.number}: {reason}"[:255]
+            if line.part_item_id:
+                return_part_item(
+                    line.part_item, line.part_item.current_location,
+                    restock_status=PartItem.Status.AVAILABLE, by=by, document_id=order.pk,
+                    comment=comment,
+                )
+    # Existing draft cancellation remains a safe no-stock operation. The new
+    # confirmation screen supplies its audit fields, while old integrations
+    # retain backward compatibility.
+            else:
+                return_stock_lot_quantity(
+                    line.batch_line, line.stock_lot.location, outstanding,
+                    unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
+                    restock_status=StockLot.Status.AVAILABLE, by=by, document_id=order.pk,
+                    comment=comment,
+                )
     order.status = RepairOrder.Status.CANCELED
     order.canceled_at = timezone.now()
-    order.save(update_fields=["status", "canceled_at", "updated_at"])
+    order.canceled_by = by
+    order.cancellation_reason = reason
+    order.cancellation_author = author
+    order.save(update_fields=[
+        "status", "canceled_at", "canceled_by", "cancellation_reason", "cancellation_author",
+        "updated_at",
+    ])
     return order
 
 

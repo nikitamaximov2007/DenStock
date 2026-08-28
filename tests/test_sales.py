@@ -31,6 +31,7 @@ from apps.sales.services import (
     add_part_item_to_sale,
     add_stock_lot_to_reservation,
     add_stock_lot_to_sale,
+    cancel_sale,
     complete_sale,
     create_reservation,
     create_sale,
@@ -168,6 +169,25 @@ def test_sale_creates_movement_sale_item(data):
     assert mv.quantity == Decimal("1")
     assert mv.document_type == "sale"
     assert mv.document_id == sale.pk
+
+
+def test_cancel_completed_sale_restores_item_and_keeps_snapshots(data):
+    sale = create_sale(customer_name="Иван", by=data["admin"])
+    add_part_item_to_sale(sale, data["item"], unit_price=Decimal("500"), by=data["admin"])
+    complete_sale(sale, by=data["admin"])
+    cancel_sale(sale, by=data["admin"], reason="Ошибка", author="Иван")
+
+    sale.refresh_from_db()
+    data["item"].refresh_from_db()
+    assert sale.status == Sale.Status.CANCELED
+    assert sale.cancellation_reason == "Ошибка"
+    assert sale.cancellation_author == "Иван"
+    assert sale.revenue_total == Decimal("500.00")
+    assert data["item"].status == PartItem.Status.AVAILABLE
+    assert StockMovement.objects.filter(
+        movement_type=StockMovement.MovementType.RETURN_ITEM, document_id=sale.pk
+    ).exists()
+    assert cancel_sale(sale, by=data["admin"], reason="другое", author="Иван").pk == sale.pk
 
 
 def test_saleline_freezes_cost_and_profit(data):
