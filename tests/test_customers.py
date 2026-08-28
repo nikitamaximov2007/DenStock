@@ -630,3 +630,65 @@ def test_phone_is_not_shown_to_roles_without_access(client, make_user, db):
         resp = client.get(url)
         assert resp.status_code == 403
         assert "+7 912 123-45-67" not in resp.content.decode()
+
+
+# --- После наполнения справочника историческими клиентами --------------------------
+
+
+def test_a_backfilled_customer_is_findable_in_quick_actions(db):
+    """Оператор должен находить исторического клиента, а не только тестовую карточку."""
+    _legacy_sale("Саликов Рим Васильевич", "+7 912 070-70-78")
+    _legacy_repair("Саликов Рим Васильевич", "89120707078")
+    call_command("backfill_legacy_customers", "--apply")
+    customer = Customer.objects.get()
+
+    by_name = search_customers("Саликов")
+    by_phone = search_customers("9120707078")
+
+    assert [found.pk for found in by_name] == [customer.pk]
+    assert [found.pk for found in by_phone] == [customer.pk]
+
+
+@pytest.mark.parametrize("kind", ["sale", "repair"])
+def test_the_quick_action_screen_is_given_the_backfilled_customer(client, db, make_user, kind):
+    """Экран быстрых действий получает историческую карточку для выбора.
+
+    Сам список рисуется в панели черновика, поэтому здесь проверяется то, что
+    от наполнения справочника и зависит: карточка доехала до экрана.
+    """
+    _legacy_sale("Саликов Рим Васильевич", "+7 912 070-70-78")
+    call_command("backfill_legacy_customers", "--apply")
+    customer = Customer.objects.get()
+    make_user("hozyain", is_superuser=True)
+    client.login(username="hozyain", password=PASSWORD)
+
+    response = client.get(reverse("actions_scan"), {"kind": kind})
+
+    assert response.status_code == 200
+    offered = {found.pk for found in response.context["customers"]}
+    assert customer.pk in offered
+
+
+def test_a_duplicate_customer_name_is_left_alone(db):
+    """Две карточки с одним именем и телефоном - не наш случай, руки прочь."""
+    Customer.objects.create(name="Петр", phone="+7 912 070-70-78")
+    Customer.objects.create(name="Петр", phone="89120707078")
+    sale = _legacy_sale("Петр", "+79120707078")
+
+    call_command("backfill_legacy_customers", "--apply")
+
+    sale.refresh_from_db()
+    assert sale.customer_id is None
+    assert Customer.objects.count() == 2  # ничего не создано и не слито
+
+
+def test_a_document_without_a_phone_is_not_guessed(db):
+    sale = _legacy_sale("Саликов Рим Васильевич", "")
+    other = _legacy_sale("", "+7 912 070-70-78")
+
+    call_command("backfill_legacy_customers", "--apply")
+
+    sale.refresh_from_db()
+    other.refresh_from_db()
+    assert (sale.customer_id, other.customer_id) == (None, None)
+    assert Customer.objects.count() == 0

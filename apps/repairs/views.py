@@ -273,6 +273,11 @@ def repair_order_complete(request, pk):
 def repair_order_cancel(request, pk):
     _require_repairs(request)
     order = get_object_or_404(RepairOrder, pk=pk)
+    # У проведённого заказа отмена возвращает выданные детали на склад, а это
+    # складское действие: продавцу возврат не выдан именно затем, чтобы выдачу
+    # нельзя было отменить в обход. Черновик склада не касается.
+    if order.status == RepairOrder.Status.COMPLETED and not request.user.can_manage_returns:
+        raise PermissionDenied
     try:
         cancel_repair_order(
             order, by=request.user, reason=request.POST.get("reason", ""),
@@ -289,6 +294,8 @@ def repair_order_cancel(request, pk):
 def repair_order_cancel_confirm(request, pk):
     _require_repairs(request)
     order = get_object_or_404(RepairOrder, pk=pk)
+    if order.status == RepairOrder.Status.COMPLETED and not request.user.can_manage_returns:
+        raise PermissionDenied
     if order.status not in (RepairOrder.Status.DRAFT, RepairOrder.Status.COMPLETED):
         messages.error(request, "Этот заказ уже отменён.")
         return redirect("repair_order_detail", pk=pk)

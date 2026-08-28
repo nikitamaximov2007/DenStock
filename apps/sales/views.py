@@ -58,6 +58,18 @@ def _require_sales(request) -> None:
         raise PermissionDenied
 
 
+def _require_reversal(request) -> None:
+    """Отмена проведённой продажи возвращает товар на склад.
+
+    Возврат на склад продавцу намеренно не выдан - ровно затем, чтобы продажу
+    нельзя было отменить тихо (см. роли: MANAGE_RETURNS у продавца нет). Без
+    этой проверки отмена стала бы обходным путём к тому же складскому эффекту.
+    """
+    _require_sales(request)
+    if not request.user.can_manage_returns:
+        raise PermissionDenied
+
+
 def _resolve_item(code: str):
     """Найти PartItem по внутр. номеру/штрихкоду/серийнику (недоверенный ввод)."""
     code = (code or "").strip()
@@ -292,7 +304,7 @@ def sale_detail(request, pk):
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
             "add_lot_form": AddSaleLotForm(),
-            "can_cancel": request.user.can_manage_sales,
+            "can_cancel": request.user.can_manage_sales and request.user.can_manage_returns,
         },
     )
 
@@ -397,7 +409,7 @@ def sale_complete(request, pk):
 
 @login_required
 def sale_cancel_confirm(request, pk):
-    _require_sales(request)
+    _require_reversal(request)
     sale = get_object_or_404(Sale, pk=pk)
     if sale.status != Sale.Status.COMPLETED:
         messages.error(request, "Отменить можно только проведённую продажу.")
@@ -410,7 +422,7 @@ def sale_cancel_confirm(request, pk):
 @login_required
 @require_POST
 def sale_cancel(request, pk):
-    _require_sales(request)
+    _require_reversal(request)
     sale = get_object_or_404(Sale, pk=pk)
     form = SaleCancellationForm(request.POST)
     if not form.is_valid():

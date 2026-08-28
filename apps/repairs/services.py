@@ -268,6 +268,9 @@ def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
         return order
     if order.status not in (RepairOrder.Status.DRAFT, RepairOrder.Status.COMPLETED):
         raise RepairError("Отменить можно только черновик или проведённый заказ.")
+    # Отмена черновика склада не касалась и не касается: там просто нечего
+    # возвращать. Причину и автора спрашиваем только у проведённого заказа,
+    # чтобы старые вызовы отмены черновика продолжали работать как раньше.
     if order.status == RepairOrder.Status.COMPLETED:
         if not reason:
             raise RepairError("Укажите причину отмены.")
@@ -300,9 +303,6 @@ def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
                     restock_status=PartItem.Status.AVAILABLE, by=by, document_id=order.pk,
                     comment=comment,
                 )
-    # Existing draft cancellation remains a safe no-stock operation. The new
-    # confirmation screen supplies its audit fields, while old integrations
-    # retain backward compatibility.
             else:
                 return_stock_lot_quantity(
                     line.batch_line, line.stock_lot.location, outstanding,
