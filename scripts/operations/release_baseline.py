@@ -24,8 +24,8 @@ from apps.actions.models import WarehouseAction
 from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import PartType
 from apps.catalog_import.models import CatalogImportBatch
-from apps.customers.models import Customer
-from apps.inventory.models import StockLot
+from apps.customers.models import Customer, CustomerPeriodPaymentAcknowledgement
+from apps.inventory.models import StockLot, StockMovement
 from apps.operations.models import DeploymentState, OfflineSession
 from apps.repairs.models import RepairOrder
 from apps.sales.models import Reservation, Sale
@@ -135,6 +135,14 @@ def main():
     )
     _line("reservations_total", Reservation.objects.count())
     _line("customers_total", Customer.objects.count())
+    # Журнал движений и подтверждения оплаты: выпуск кода не имеет права
+    # менять ни то, ни другое, поэтому оба числа сверяются до и после.
+    _line("stock_movements_total", StockMovement.objects.count())
+    _line("payment_acknowledgements_total", CustomerPeriodPaymentAcknowledgement.objects.count())
+    _line(
+        "payment_acknowledgements_active",
+        CustomerPeriodPaymentAcknowledgement.objects.filter(revoked_at__isnull=True).count(),
+    )
 
     print("# end of baseline")
 
