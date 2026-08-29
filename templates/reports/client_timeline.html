@@ -10,7 +10,13 @@
     </div>
   </div>
   {% include "reports/_sales_period_filter.html" %}
-  <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
+  <p class="page-subtitle">
+    {% if period.all_time %}
+      Период: за всё время.
+    {% else %}
+      Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    {% endif %}
+  </p>
   <p class="muted">
     Что и когда получал клиент. Величины историчные: они зафиксированы при
     проведении документа и не меняются при обновлении каталога.
@@ -49,9 +55,10 @@
           <th>Деталь</th>
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
+          <th class="num--money">Цена (₽)</th>
           <th class="num--money">Сумма (₽)</th>
-          {% if show_costs %}<th class="num--money">Себестоимость (₽)</th>{% endif %}
           <th>Тип</th>
+          <th class="table__actions"></th>
         </tr>
       </thead>
       <tbody>
@@ -68,7 +75,27 @@
                 <span class="muted">не указан</span>
               {% endif %}
             </td>
-            <td class="num--qty">{{ row.quantity|quantity_int }}</td>
+            {% comment %}
+              Действующее количество: отменённая единица перестала быть выданной
+              клиенту. Сколько было выдано и сколько отменено, видно рядом,
+              поэтому история остаётся доказуемой.
+            {% endcomment %}
+            <td class="num--qty">
+              {{ row.quantity|quantity_int }}
+              {% if row.reversed_quantity %}
+                <div class="muted">выдано {{ row.issued_quantity|quantity_int }}, отменено {{ row.reversed_quantity|quantity_int }}</div>
+              {% endif %}
+            </td>
+            <td class="num--money">
+              {% if row.unit_price is not None %}
+                {{ row.unit_price|money_int }}
+                {% if row.price_source == "current_fallback" %}
+                  <div class="muted">текущая цена</div>
+                {% endif %}
+              {% else %}
+                <span class="muted">Не зафиксирована</span>
+              {% endif %}
+            </td>
             <td class="num--money">
               {% if row.amount is not None %}
                 {{ row.amount|money_int }}
@@ -76,16 +103,20 @@
                 <span class="muted">Не зафиксировано</span>
               {% endif %}
             </td>
-            {% if show_costs %}
-              <td class="num--money">
-                {% if row.cost is not None %}
-                  {{ row.cost|money_int }}
-                {% else %}
-                  <span class="muted">·</span>
-                {% endif %}
-              </td>
-            {% endif %}
             <td>{{ row.kind_label }}</td>
+            <td class="table__actions">
+              {% if row.reversible_quantity > 0 %}
+                {% if row.kind == "sale" and can_cancel_sale_lines %}
+                  <a class="btn btn--small btn--danger"
+                     href="{% url 'sale_line_cancel' row.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                {% elif row.kind == "repair" and can_cancel_repair_lines %}
+                  <a class="btn btn--small btn--danger"
+                     href="{% url 'repair_line_cancel' row.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                {% endif %}
+              {% else %}
+                <span class="pill pill--muted">Отменено</span>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>

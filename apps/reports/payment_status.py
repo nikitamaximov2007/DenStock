@@ -18,7 +18,7 @@ from apps.repairs.services import repair_customer_line_prices, repair_returned_q
 from apps.returns.models import StockReturn, StockReturnLine
 from apps.sales.models import Sale, SaleLine
 
-from .services import DEC0, _bounds
+from .services import DEC0, period_range
 
 
 def _decimal(value) -> str:
@@ -45,12 +45,11 @@ def customer_payment_states(*, customer_ids, period) -> dict[int, dict]:
     customer_ids = list({customer_id for customer_id in customer_ids if customer_id})
     if not customer_ids:
         return {}
-    start, end = _bounds(period)
     sale_lines = list(
         SaleLine.objects.filter(
             sale__customer_id__in=customer_ids,
             sale__status=Sale.Status.COMPLETED,
-            sale__sold_at__range=(start, end),
+            **period_range("sale__sold_at", period),
         )
         .select_related("sale")
         .only("id", "sale_id", "quantity", "unit_price", "total_price", "sale__customer_id")
@@ -60,7 +59,7 @@ def customer_payment_states(*, customer_ids, period) -> dict[int, dict]:
         RepairIssueLine.objects.filter(
             repair_order__customer_id__in=customer_ids,
             repair_order__status=RepairOrder.Status.COMPLETED,
-            repair_order__completed_at__range=(start, end),
+            **period_range("repair_order__completed_at", period),
         )
         .select_related("repair_order")
         .only(
@@ -128,6 +127,10 @@ def customer_payment_states(*, customer_ids, period) -> dict[int, dict]:
             "fingerprint": sha256(payload.encode("ascii")).hexdigest(),
             "document_count": len({(fact[0], fact[1]) for fact in facts}),
             "acknowledgeable": not state["unknown"],
+            # Подтверждение оплаты живёт в границах периода: у «всего времени»
+            # их нет, и подтверждать нечего - следующая же продажа сделала бы
+            # такое подтверждение неверным.
+            "period_bound": not period.all_time,
         }
     return result
 
@@ -144,6 +147,11 @@ def payment_statuses_for_rows(*, rows, period) -> dict[int, dict]:
     customer_ids = [row["customer_id"] for row in rows if row.get("linked")]
     states = customer_payment_states(customer_ids=customer_ids, period=period)
     active = {}
+    if period.all_time:
+        return {
+            customer_id: {**state, "acknowledgement": None, "paid": False}
+            for customer_id, state in states.items()
+        }
     acknowledgements = (
         CustomerPeriodPaymentAcknowledgement.objects.filter(
             customer_id__in=customer_ids,

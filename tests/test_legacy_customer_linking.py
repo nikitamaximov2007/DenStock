@@ -203,8 +203,11 @@ def test_the_report_offers_a_card_for_an_unlinked_group(boss, stock):
 
     assert "Без карточки" in body
     assert "Создать карточку" in body
-    assert "Карточка есть" in body
-    assert "Открыть карточку" in body
+    # У связанного клиента карточка открывается по самому имени, поэтому
+    # отдельной ссылки «Открыть карточку» в строке больше нет.
+    assert "карточка есть" in body
+    assert "Открыть карточку" not in body
+    assert reverse("customer_detail", args=[Customer.objects.get(name="Иванов").pk]) in body
     assert reverse("legacy_customer_link") in body
 
 

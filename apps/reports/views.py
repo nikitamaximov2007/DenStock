@@ -22,6 +22,7 @@ from apps.catalog.models import PartType
 from . import exporters
 from .payment_status import payment_statuses_for_rows
 from .services import (
+    ALL_TIME,
     CLIENTS_SORT_DATE,
     CLIENTS_SORT_DOCUMENTS,
     CLIENTS_SORTS,
@@ -47,7 +48,14 @@ from .services import (
 )
 from .statistics import STATS_PRESETS, get_statistics, resolve_stats_period
 
-_PRESETS = [("today", "Сегодня"), ("7", "7 дней"), ("30", "30 дней"), ("month", "Месяц")]
+# «30 дней» убраны как лишний почти-месяц; «За всё время» показывает всю
+# историю без нижней границы, а не с выдуманной начальной даты.
+_PRESETS = [
+    ("today", "Сегодня"),
+    ("7", "7 дней"),
+    ("month", "Месяц"),
+    (ALL_TIME, "За всё время"),
+]
 _CLIENT_REPORT_PAGE_SIZE = 50
 
 
@@ -67,6 +75,13 @@ def _can_manage_payment_acknowledgements(request) -> bool:
 
 
 def _period_query(period) -> str:
+    """Период как параметры адреса: возврат на страницу сохраняет выбор.
+
+    У «всего времени» дат нет, поэтому в адрес идёт сам пресет: иначе переход
+    в историю и обратно молча вернул бы оператора в месячное окно.
+    """
+    if period.all_time:
+        return urlencode({"preset": ALL_TIME})
     return urlencode(
         {
             "date_from": period.date_from.isoformat(),
@@ -143,7 +158,7 @@ def reports_dashboard(request):
     _require_reports(request)
     period = resolve_period(request.GET)
     report = get_dashboard_report(period)
-    period_qs = f"date_from={period.date_from:%Y-%m-%d}&date_to={period.date_to:%Y-%m-%d}"
+    period_qs = _period_query(period)
     return render(
         request,
         "reports/dashboard.html",
@@ -313,6 +328,11 @@ def client_period_payment_status(request):
     if not _can_manage_payment_acknowledgements(request):
         raise PermissionDenied
     period = resolve_period(request.POST)
+    if period.all_time:
+        # Подтверждение привязано к границам периода. У «всего времени» их нет,
+        # и запись подтверждения была бы неверна с первой же новой продажи.
+        messages.error(request, "Подтвердить оплату можно только за конкретный период.")
+        return redirect(f"{reverse('reports_clients_overview')}?{_period_query(period)}")
     try:
         customer_id = int(request.POST.get("customer_id") or "")
     except ValueError as exc:
@@ -368,6 +388,14 @@ def client_timeline(request):
             "is_paginated": is_paginated,
             "show_money": True,
             "show_costs": request.user.can_view_purchase_cost,
+            # Отмена строки возвращает деталь на склад, поэтому её видит тот,
+            # кому разрешён возврат: то же правило, что у отмены документа.
+            "can_cancel_sale_lines": (
+                request.user.can_manage_sales and request.user.can_manage_returns
+            ),
+            "can_cancel_repair_lines": (
+                request.user.can_manage_repairs and request.user.can_manage_returns
+            ),
             "client_summary": {
                 "sales": sales_total,
                 "repairs": repair_total,

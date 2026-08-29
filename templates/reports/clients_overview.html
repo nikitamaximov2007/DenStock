@@ -10,7 +10,11 @@
   </div>
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">
-    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    {% if period.all_time %}
+      Период: за всё время.
+    {% else %}
+      Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    {% endif %}
     Только проведённые документы по моменту проведения.
   </p>
   <p class="muted">
@@ -60,25 +64,22 @@
         {% for row in page_obj.object_list %}
           <tr>
             <td>
-              {% if row.linked %}
-                <a href="{% url 'customer_detail' row.customer_id %}">{{ row.display_name }}</a>
-                <span class="muted">· <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">история</a></span>
-              {% else %}
-                <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
-              {% endif %}
               {% comment %}
-                Ссылка на карточку у связанных и путь её завести у остальных:
-                иначе исторические документы так и остаются безымянными, а
-                связать их автоматически по одному имени нельзя.
+                Имя связанного клиента само ведёт в карточку, поэтому отдельной
+                ссылки «Открыть карточку» здесь нет: две ссылки в одно и то же
+                место только замедляют чтение строки. У документов без карточки
+                остаётся путь её завести - связать их по одному имени нельзя.
               {% endcomment %}
               {% if row.linked %}
-                <div class="muted">
-                  Карточка есть ·
-                  <a href="{% url 'customer_detail' row.customer_id %}">Открыть карточку</a>
+                <a href="{% url 'customer_detail' row.customer_id %}">{{ row.display_name }}</a>
+                <div class="row-meta">
+                  <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">История</a>
+                  <span class="muted">карточка есть</span>
                 </div>
               {% else %}
-                <div class="muted">
-                  Без карточки ·
+                <a href="{% url 'reports_client_timeline' %}?{{ period_qs }}&amp;{{ row.customer_qs }}">{{ row.display_name }}</a>
+                <div class="row-meta">
+                  <span class="muted">Без карточки</span>
                   <a href="{% url 'legacy_customer_link' %}?legacy_name={{ row.report_customer|urlencode }}&amp;next={{ request.get_full_path|urlencode }}">Создать карточку</a>
                 </div>
               {% endif %}
@@ -97,7 +98,14 @@
             {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
             <td>
               {% if row.linked %}
-                {% if row.payment_status.acknowledgeable %}
+                {% if not row.payment_status.period_bound %}
+                  {% comment %}
+                    Подтверждение оплаты привязано к границам периода. У «всего
+                    времени» их нет: такая отметка устарела бы с первой же
+                    новой продажей, поэтому здесь её не предлагаем.
+                  {% endcomment %}
+                  <span class="muted">Выберите период</span>
+                {% elif row.payment_status.acknowledgeable %}
                   {% if can_manage_payment_acknowledgements %}
                     <form method="post"
                           action="{% url 'reports_client_period_payment_status' %}"

@@ -18,6 +18,7 @@
         {% endfor %}
       </div>
     </div>
+    {% if period.all_time %}<input type="hidden" name="preset" value="all">{% endif %}
     <label>
       С
       <input type="date"
@@ -31,7 +32,11 @@
     <button type="submit" class="btn btn--secondary">Показать</button>
   </form>
   <p class="page-subtitle">
-    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}
+    {% if period.all_time %}
+      Период: за всё время
+    {% else %}
+      Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}
+    {% endif %}
     (по моменту проведения; только проведённые документы).
   </p>
   <div class="page-header reports-section">

@@ -314,9 +314,9 @@ def test_storekeeper_sees_reports_without_money(make_user, client, data):
 
 
 def test_period_validation_defaults(data):
-    # Некорректные даты → дефолт (пресет «30»), страница не падает.
+    # Некорректные даты → дефолт (текущий месяц), страница не падает.
     p = resolve_period({"date_from": "не-дата", "date_to": ""})
-    assert p.preset == "30"
+    assert p.preset == "month"
     assert p.date_from <= p.date_to
     # from > to → нормализуется.
     p2 = resolve_period({"date_from": "2026-06-30", "date_to": "2026-06-01"})

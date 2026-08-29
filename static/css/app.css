@@ -385,6 +385,11 @@ th.num, td.num, .table th.num, .table td.num,
    тем же приёмом, каким широкие таблицы уже ведут себя на узких экранах. */
 .table--wide, .customs-readiness { display: block; overflow-x: auto; }
 .table__actions { white-space: nowrap; text-align: right; }
+/* Вторая строка ячейки клиента: ссылка на историю и состояние карточки. Это
+   два разных сообщения, поэтому они разделены промежутком, а не точкой -
+   слитная фраза «История карточка есть» читалась как одна и сбивала. */
+.row-meta { display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 4px 16px; margin-top: 4px; font-size: 13px; }
 
 /* --- Поиск / сканер: классы уже используются в шаблонах, но не имели CSS --- */
 .search-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
