@@ -3,6 +3,12 @@
   {% if missing_customer %}<input type="hidden" name="missing" value="1">{% endif %}
   {% if active_sort %}<input type="hidden" name="sort" value="{{ active_sort }}">{% endif %}
   {% if active_direction %}<input type="hidden" name="direction" value="{{ active_direction }}">{% endif %}
+  {% comment %}
+    В режиме «за всё время» полей с датами нет. Пресет несётся скрытым полем,
+    иначе кнопка «Показать» с пустыми датами молча возвращала бы в месяц.
+    Заполненные даты сильнее пресета, поэтому ручной выбор всё равно работает.
+  {% endcomment %}
+  {% if period.all_time %}<input type="hidden" name="preset" value="all">{% endif %}
   <div class="filter-field">
     <span class="filter-label">Быстрый период</span>
     <div class="segmented">

@@ -34,12 +34,18 @@ def _quantity(value) -> str:
 
 
 def _d(value) -> str:
+    """Дата для CSV. У «всего времени» границы нет, и пустая клетка честнее
+    выдуманного числа."""
+    if value is None:
+        return ""
     return f"{value:%Y-%m-%d}"
 
 
 def export_filename(slug: str, period=None) -> str:
     """ASCII-имя файла: denstock-<отчёт>-<даты>.csv."""
     if period is not None:
+        if period.all_time:
+            return f"denstock-{slug}-all-time.csv"
         return f"denstock-{slug}-{_d(period.date_from)}-{_d(period.date_to)}.csv"
     return f"denstock-{slug}-{_d(timezone.localdate())}.csv"
 

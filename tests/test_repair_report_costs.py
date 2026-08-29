@@ -218,6 +218,12 @@ def test_the_sale_amount_is_unchanged(data):
 
 
 def test_the_combined_report_shows_the_two_values_in_separate_columns(client, data, admin):
+    """Цена единицы и сумма строки - разные величины и разные колонки.
+
+    Складская себестоимость с этого экрана убрана: оператору здесь нужна цена
+    для клиента, а не то, во сколько деталь обошлась складу. В самих строках
+    себестоимость осталась, см. соседние проверки данных.
+    """
     _login(client, admin)
     customer = Customer.objects.create(name="Иванов")
     _sale(data, customer=customer, items=(("belt", 1),))
@@ -226,8 +232,9 @@ def test_the_combined_report_shows_the_two_values_in_separate_columns(client, da
     body = client.get(
         reverse("reports_client_timeline"), {"customer_id": customer.pk}
     ).content.decode()
+    assert "Цена (₽)" in body
     assert "Сумма (₽)" in body
-    assert "Себестоимость (₽)" in body
+    assert "Себестоимость" not in body
     assert "стоимость детали для клиента" in body
 
 

@@ -21,6 +21,7 @@ from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.repairs.services import (
     repair_customer_amounts,
     repair_customer_line_amounts,
+    repair_customer_line_prices,
     repair_returned_quantities,
 )
 from apps.returns.models import StockReturn
@@ -35,11 +36,20 @@ DEC0 = Decimal("0")
 # --- Период ------------------------------------------------------------------
 
 
+ALL_TIME = "all"
+
+
 @dataclass
 class Period:
-    date_from: date
-    date_to: date
-    preset: str  # "today"/"7"/"30"/"month"/"" (ручной)
+    """Окно отчёта. У «всего времени» границ нет, а не выдуманная дата."""
+
+    date_from: date | None
+    date_to: date | None
+    preset: str  # "today"/"7"/"30"/"month"/"all"/"" (ручной)
+
+    @property
+    def all_time(self) -> bool:
+        return self.date_from is None or self.date_to is None
 
 
 def _parse_date(value):
@@ -50,31 +60,56 @@ def _parse_date(value):
 
 
 def resolve_period(get) -> Period:
-    """Разобрать период из query (?preset= или ?date_from=&date_to=). Любой
-    некорректный ввод → дефолт «последние 30 дней»; from>to нормализуем."""
+    """Разобрать период из query (?date_from=&date_to= или ?preset=).
+
+    Явно названные даты сильнее быстрого пресета: оператор, выбравший
+    конкретные числа, получает именно их, даже если в адресе остался пресет.
+    Любой некорректный ввод даёт дефолт «текущий месяц»; from>to нормализуем.
+    """
     today = timezone.localdate()
+    df, dt = _parse_date(get.get("date_from")), _parse_date(get.get("date_to"))
+    if df and dt:
+        if df > dt:
+            df, dt = dt, df
+        return Period(df, dt, "")
     preset = (get.get("preset") or "").strip()
     if preset == "today":
         return Period(today, today, "today")
     if preset == "7":
         return Period(today - timedelta(days=6), today, "7")
     if preset == "30":
+        # Кнопки «30 дней» больше нет, но прежние ссылки и закладки работают.
         return Period(today - timedelta(days=29), today, "30")
     if preset == "month":
         return Period(today.replace(day=1), today, "month")
-    df, dt = _parse_date(get.get("date_from")), _parse_date(get.get("date_to"))
-    if df and dt:
-        if df > dt:
-            df, dt = dt, df
-        return Period(df, dt, "")
-    return Period(today - timedelta(days=29), today, "30")  # дефолт
+    if preset == ALL_TIME:
+        return Period(None, None, ALL_TIME)
+    return Period(today.replace(day=1), today, "month")  # дефолт
 
 
 def _bounds(period: Period):
-    """Границы периода как aware-datetime [from 00:00, to 23:59:59.999999]."""
+    """Границы периода как aware-datetime [from 00:00, to 23:59:59.999999].
+
+    У «всего времени» обеих границ нет: запрос идёт без ограничения по дате.
+    Считать здесь искусственную нижнюю дату нельзя - она молча отрезала бы
+    документы старше выдумки.
+    """
+    if period.all_time:
+        return None, None
     start = timezone.make_aware(datetime.combine(period.date_from, time.min))
     end = timezone.make_aware(datetime.combine(period.date_to, time.max))
     return start, end
+
+
+def period_range(field: str, period: Period) -> dict:
+    """Ограничение запроса периодом как аргументы ``filter``.
+
+    За всё время ограничения нет вовсе: пустой словарь оставляет запрос без
+    границ по дате.
+    """
+    if period.all_time:
+        return {}
+    return {f"{field}__range": _bounds(period)}
 
 
 # --- Структуры отчётов -------------------------------------------------------
@@ -176,8 +211,9 @@ class DashboardReport:
 
 
 def get_sales_report(period: Period) -> SalesReport:
-    start, end = _bounds(period)
-    sales = Sale.objects.filter(status=Sale.Status.COMPLETED, sold_at__range=(start, end))
+    sales = Sale.objects.filter(
+        status=Sale.Status.COMPLETED, **period_range("sold_at", period)
+    )
     agg = sales.aggregate(
         count=Count("id"),
         revenue=Sum("revenue_total"),
@@ -304,10 +340,9 @@ def _document_customer_filter(prefix: str, *, customer_id, customer_name: str, m
 
 def _completed_sale_lines(period: Period):
     """Frozen completed sale lines for customer reports."""
-    start, end = _bounds(period)
     return SaleLine.objects.filter(
         sale__status=Sale.Status.COMPLETED,
-        sale__sold_at__range=(start, end),
+        **period_range("sale__sold_at", period),
     )
 
 
@@ -490,10 +525,9 @@ def attach_line_part_identity(lines):
 
 def _completed_repair_lines(period: Period):
     """Строки проведённых ремонтов за период: снимки себестоимости заморожены."""
-    start, end = _bounds(period)
     return RepairIssueLine.objects.filter(
         repair_order__status=RepairOrder.Status.COMPLETED,
-        repair_order__completed_at__range=(start, end),
+        **period_range("repair_order__completed_at", period),
     )
 
 
@@ -523,7 +557,7 @@ def get_repairs_by_customer(period: Period) -> list[dict]:
     orders = list(
         RepairOrder.objects.filter(
             status=RepairOrder.Status.COMPLETED,
-            completed_at__range=_bounds(period),
+            **period_range("completed_at", period),
         ).only("id", "customer_id", "customer_name")
     )
     amounts = repair_customer_amounts(orders)
@@ -749,13 +783,24 @@ def get_client_part_history(
     Отвечает на вопрос «что мы давали этому клиенту и когда». Документ здесь не
     показывается: он лишний уровень между вопросом и ответом.
 
-    У продажи и ремонта есть историческая сумма для клиента. Для ремонта она
-    покрывает только детали, а себестоимость остаётся отдельным складским
-    показателем. Неизвестная цена старой строки остаётся ``None``.
+    Количество и сумма показываются действующие: отменённая единица перестаёт
+    быть выданной клиенту. Сам документ при этом не переписывается - его
+    снимок остаётся, а отменённое считается по каноническим возвратам, поэтому
+    историю по-прежнему можно доказать: выдано столько, отменено столько.
+
+    «Цена» это историческая цена единицы для клиента. У продажи она заморожена
+    в строке. У ремонта берётся её снимок, а у старых строк без снимка -
+    текущая цена выбранной детали: это уже принятое поведение, и такая цена
+    помечена как текущая, а не выдаётся за исторический снимок.
+
+    Себестоимость остаётся в строке результата: она нужна складским отчётам.
+    На клиентский экран она не выводится.
     """
-    sale_lines = attach_line_part_identity(
-        get_customer_part_operations(
-            period, customer_name=customer_name, missing=missing, customer_id=customer_id
+    sale_lines = attach_line_reversals(
+        attach_line_part_identity(
+            get_customer_part_operations(
+                period, customer_name=customer_name, missing=missing, customer_id=customer_id
+            )
         )
     )
     repair_lines = attach_line_part_identity(
@@ -764,38 +809,55 @@ def get_client_part_history(
         )
     )
     repair_amounts = repair_customer_line_amounts(repair_lines)
+    repair_prices = repair_customer_line_prices(repair_lines)
     repair_returns = repair_returned_quantities(repair_lines)
 
     rows = [
         {
             "kind": "sale",
             "kind_label": "Продажа",
+            # Точная строка документа: отмена из истории обязана знать, что
+            # именно отменяет, а не искать источник по артикулу и дате.
+            "line_id": line.pk,
             "at": line.sale.sold_at,
             "part_type_id": line.part_type_id,
             "part_name": line.part_type.name,
             "exact_number": line.exact_number,
-            "quantity": line.quantity,
-            "amount": line.total_price,
+            "quantity": line.effective_quantity,
+            "issued_quantity": line.quantity,
+            "reversed_quantity": line.reversed_quantity,
+            "reversible_quantity": line.reversible_quantity,
+            "unit_price": line.unit_price,
+            "price_source": "historical",
+            "amount": line.effective_total,
             "cost": None,
         }
         for line in sale_lines
     ]
     for line in repair_lines:
-        net_quantity = max(line.quantity - (repair_returns.get(line.pk) or DEC0), DEC0)
+        returned = repair_returns.get(line.pk) or DEC0
+        net_quantity = max(line.quantity - returned, DEC0)
+        price = repair_prices[line.pk]
         rows.append(
             {
-            "kind": "repair",
-            "kind_label": "Ремонт",
-            "at": line.repair_order.completed_at,
-            "part_type_id": line.part_type_id,
-            "part_name": line.part_type.name,
-            "exact_number": line.exact_number,
-            "quantity": net_quantity,
-            "amount": repair_amounts[line.pk],
-            # Заморожено при проведении заказа и не пересчитывается по
-            # сегодняшнему каталогу: это историческая себестоимость выдачи.
-            "cost": money(line.unit_cost_rub * net_quantity),
-        }
+                "kind": "repair",
+                "kind_label": "Ремонт",
+                "line_id": line.pk,
+                "at": line.repair_order.completed_at,
+                "part_type_id": line.part_type_id,
+                "part_name": line.part_type.name,
+                "exact_number": line.exact_number,
+                "quantity": net_quantity,
+                "issued_quantity": line.quantity,
+                "reversed_quantity": returned,
+                "reversible_quantity": net_quantity,
+                "unit_price": price.unit_price_rub,
+                "price_source": price.source,
+                "amount": repair_amounts[line.pk],
+                # Заморожено при проведении заказа и не пересчитывается по
+                # сегодняшнему каталогу: это историческая себестоимость выдачи.
+                "cost": money(line.unit_cost_rub * net_quantity),
+            }
         )
     # Новые сверху. Вторичный ключ по названию делает порядок устойчивым, когда
     # несколько строк проведены одним документом в одну и ту же секунду.
@@ -820,7 +882,6 @@ def get_client_timeline(
     У продажи это выручка, у ремонта - историческая сумма деталей для клиента.
     Себестоимость ремонта остаётся отдельной величиной.
     """
-    start, end = _bounds(period)
     # Карточка выбрана - берём её документы по связи. Карточки нет - только
     # документы без связи с тем же историческим именем.
     if customer_id:
@@ -832,7 +893,7 @@ def get_client_timeline(
         }
 
     sales = (
-        Sale.objects.filter(status=Sale.Status.COMPLETED, sold_at__range=(start, end))
+        Sale.objects.filter(status=Sale.Status.COMPLETED, **period_range("sold_at", period))
         .annotate(report_customer=Trim("customer_name"))
         .filter(**document_filter)
         .annotate(line_quantity=Sum("lines__quantity"))
@@ -840,7 +901,7 @@ def get_client_timeline(
     )
     repairs = (
         RepairOrder.objects.filter(
-            status=RepairOrder.Status.COMPLETED, completed_at__range=(start, end)
+            status=RepairOrder.Status.COMPLETED, **period_range("completed_at", period)
         )
         .annotate(report_customer=Trim("customer_name"))
         .filter(**document_filter)
@@ -887,9 +948,8 @@ def get_client_timeline(
 
 
 def get_repairs_report(period: Period) -> RepairReport:
-    start, end = _bounds(period)
     orders = RepairOrder.objects.filter(
-        status=RepairOrder.Status.COMPLETED, completed_at__range=(start, end)
+        status=RepairOrder.Status.COMPLETED, **period_range("completed_at", period)
     )
     agg = orders.aggregate(count=Count("id"), cost=Sum("cost_total"))
     top = (
@@ -909,13 +969,12 @@ def get_repairs_report(period: Period) -> RepairReport:
 
 
 def get_returns_report(period: Period) -> ReturnsReport:
-    start, end = _bounds(period)
     rets = StockReturn.objects.filter(
-        status=StockReturn.Status.COMPLETED, completed_at__range=(start, end)
+        status=StockReturn.Status.COMPLETED, **period_range("completed_at", period)
     )
     agg = rets.aggregate(count=Count("id"), cost=Sum("cost_total"))
     qty = StockReturn.objects.filter(
-        status=StockReturn.Status.COMPLETED, completed_at__range=(start, end)
+        status=StockReturn.Status.COMPLETED, **period_range("completed_at", period)
     ).aggregate(q=Sum("lines__quantity"))["q"]
     return ReturnsReport(
         count=agg["count"] or 0,
@@ -928,9 +987,8 @@ def get_returns_report(period: Period) -> ReturnsReport:
 
 
 def get_writeoffs_report(period: Period) -> WriteoffReport:
-    start, end = _bounds(period)
     docs = WriteOffDocument.objects.filter(
-        status=WriteOffDocument.Status.COMPLETED, completed_at__range=(start, end)
+        status=WriteOffDocument.Status.COMPLETED, **period_range("completed_at", period)
     )
     agg = docs.aggregate(count=Count("id"), cost=Sum("cost_total"))
     by_reason = (
@@ -960,14 +1018,13 @@ def get_writeoffs_report(period: Period) -> WriteoffReport:
 
 
 def get_stocktaking_report(period: Period) -> AdjustmentsReport:
-    start, end = _bounds(period)
     count = InventoryCountDocument.objects.filter(
-        status=InventoryCountDocument.Status.COMPLETED, completed_at__range=(start, end)
+        status=InventoryCountDocument.Status.COMPLETED, **period_range("completed_at", period)
     ).count()
     lines = InventoryCountLine.objects.filter(
         count_document__status=InventoryCountDocument.Status.COMPLETED,
-        count_document__completed_at__range=(start, end),
         adjustment__isnull=False,
+        **period_range("count_document__completed_at", period),
     )
     ain = lines.filter(adjustment__movement_type=StockMovement.MovementType.ADJUST_IN).aggregate(
         qty=Sum("adjustment__quantity"), cost=Sum("adjustment__total_cost_rub")

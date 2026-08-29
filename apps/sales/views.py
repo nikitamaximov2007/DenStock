@@ -9,6 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from apps.inventory.models import PartItem
@@ -16,6 +17,7 @@ from apps.inventory.presentation import (
     attach_document_composition,
     attach_part_identity,
     lines_with_identity_prefetch,
+    part_exact_number,
     with_part_identity,
 )
 
@@ -59,6 +61,21 @@ def _require_manage(request) -> None:
 def _require_sales(request) -> None:
     if not request.user.can_manage_sales:
         raise PermissionDenied
+
+
+def _report_return_path(request) -> str:
+    """Куда вернуть оператора после отмены: только адрес внутри этого сайта.
+
+    Отмена вызывается из отчётов и из истории клиента, и возврат обязан
+    сохранить ровно ту страницу с её периодом. Чужой адрес сюда не попадает:
+    иначе ссылка на отмену стала бы переходником на внешний сайт.
+    """
+    candidate = request.POST.get("next") or request.GET.get("next") or ""
+    if url_has_allowed_host_and_scheme(
+        candidate, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return candidate
+    return ""
 
 
 def _require_reversal(request) -> None:
@@ -457,7 +474,7 @@ def sale_line_cancel(request, pk):
         SaleLine.objects.select_related("sale", "part_type"), pk=pk
     )
     remaining = reversible_quantity(line)
-    back = request.POST.get("next") or request.GET.get("next") or ""
+    back = _report_return_path(request)
     if line.sale.status != Sale.Status.COMPLETED or remaining <= 0:
         messages.error(request, "Эта позиция уже полностью отменена или возвращена.")
         return redirect(back or "reports_clients_overview")
@@ -487,7 +504,15 @@ def sale_line_cancel(request, pk):
     return render(
         request,
         "sales/sale_line_cancel_confirm.html",
-        {"line": line, "remaining": remaining, "form": form, "next": back},
+        {
+            "line": line,
+            # Артикул отвечает на вопрос «та ли это деталь»: по одному названию
+            # оператор подтверждать отмену не должен.
+            "article": part_exact_number(line.part_type, default="Не указан"),
+            "remaining": remaining,
+            "form": form,
+            "next": back,
+        },
     )
 
 

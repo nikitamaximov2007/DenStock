@@ -4,7 +4,7 @@
   <h1 class="page-title">Продажи по клиентам</h1>
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">
-    Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.
+    {% if period.all_time %}Период: за всё время.{% else %}Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.{% endif %}
     Только проведённые продажи по моменту проведения.
   </p>
   {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}

@@ -10,7 +10,7 @@
     </div>
   </div>
   {% include "reports/_sales_period_filter.html" %}
-  <p class="page-subtitle">Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.</p>
+  <p class="page-subtitle">{% if period.all_time %}Период: за всё время.{% else %}Период: {{ period.date_from|ru_date }} · {{ period.date_to|ru_date }}.{% endif %}</p>
   {% if not show_money %}<p class="muted">Финансовые показатели скрыты для вашей роли.</p>{% endif %}
   {% if page_obj.object_list %}
     <table class="table">
