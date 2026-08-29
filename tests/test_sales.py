@@ -321,25 +321,34 @@ def test_storekeeper_cannot_create_sale(make_user, client, data):
     assert client.post(reverse("sale_create"), {"customer_name": "X"}).status_code == 403
 
 
-def test_cost_profit_hidden_without_capability(make_user, client, data):
-    sale = create_sale(customer_name="Иван", by=data["admin"])
-    add_part_item_to_sale(sale, data["item"], unit_price=Decimal("500"), by=data["admin"])
-    complete_sale(sale, by=data["admin"])
-    make_user("prodavec", role=roles.SELLER)
-    client.login(username="prodavec", password=PASSWORD)
-    html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
-    assert "Выручка" in html          # выручку продавец видит
-    assert "Прибыль" not in html      # прибыль/себестоимость — нет
-
-
-def test_cost_profit_visible_for_manager(make_user, client, data):
+def test_sale_detail_keeps_customer_money_and_hides_internal_columns_for_all_roles(
+    make_user, client, data
+):
     sale = create_sale(customer_name="Иван", by=data["admin"])
     add_part_item_to_sale(sale, data["item"], unit_price=Decimal("500"), by=data["admin"])
     complete_sale(sale, by=data["admin"])
     make_user("boss", role=roles.MANAGER)
     client.login(username="boss", password=PASSWORD)
     html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
-    assert "Прибыль" in html
+    assert "Выручка" in html
+    assert "Цена (₽)" in html
+    assert "Сумма (₽)" in html
+    assert "Себестоимость" not in html
+    assert "Прибыль" not in html
+    assert "Источник остатка" not in html
+
+
+def test_sale_detail_keeps_full_sale_cancellation_but_hides_return_entry(make_user, client, data):
+    sale = create_sale(customer_name="Иван", by=data["admin"])
+    add_part_item_to_sale(sale, data["item"], unit_price=Decimal("500"), by=data["admin"])
+    complete_sale(sale, by=data["admin"])
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
+    assert "Отменить продажу" in html
+    assert "Оформить возврат" not in html
+    # The Return subsystem remains a protected, functional route.
+    assert client.get(reverse("return_create") + f"?source=sale&id={sale.pk}").status_code == 200
 
 
 # --- Архитектура: view не пишет ledger ---------------------------------------

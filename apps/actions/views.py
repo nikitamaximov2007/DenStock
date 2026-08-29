@@ -344,6 +344,19 @@ def _cart_panels(request) -> list:
         if not rows:
             continue
         identities = identity_for_part_ids([row.part.pk for row in rows])
+        # Черновик сканера не резервирует товар. Показываем тот же текущий
+        # доступный остаток ячейки, который перепроверит проведение, а не
+        # вычитаем количество черновика прямо в интерфейсе.
+        availability_by_part_location = {}
+        parts_by_id = {row.part.pk: row.part for row in rows}
+        for part_id, part in parts_by_id.items():
+            overview = stock_overview(part)
+            availability_by_part_location.update(
+                {
+                    (part_id, location_row["location"].pk): location_row["available"]
+                    for location_row in overview["locations"]
+                }
+            )
         q = (request.GET.get("q") or "").strip()
         clear_url = reverse("actions_cart_clear", args=[kind])
         panels.append(
@@ -357,6 +370,9 @@ def _cart_panels(request) -> list:
                     {
                         "row": row,
                         "identity": identities.get(row.part.pk),
+                        "available": availability_by_part_location.get(
+                            (row.part.pk, row.location.pk), 0
+                        ),
                     }
                     for row in rows
                 ],

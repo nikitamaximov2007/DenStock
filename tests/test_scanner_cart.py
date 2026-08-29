@@ -34,7 +34,8 @@ from apps.actions.cart import (
     set_row_quantity,
 )
 from apps.actions.models import WarehouseAction
-from apps.actions.services import ActionError, cancel_warehouse_action
+from apps.actions.services import ActionError, cancel_warehouse_action, perform_action
+from apps.actions.views import CART_SESSION_KEYS
 from apps.catalog.models import Category, PartBarcode, PartNumber, PartType, Unit
 from apps.customers.models import Customer
 from apps.inventory.models import StockLot, StockMovement
@@ -170,6 +171,52 @@ def test_repeated_scan_of_same_part_increments_one_row(data):
     assert len(rows) == 1
     assert rows[0].quantity == Decimal("3")
     assert rows[0].part == data["bolt"]
+
+
+def test_cart_shows_selected_and_current_location_availability_for_every_row(
+    client, make_user, data
+):
+    """Draft rows show availability without pretending the draft is a reservation."""
+    _login(client, make_user)
+    sale_cart = open_cart(KIND_SALE, by=data["admin"])
+    add_scan(sale_cart, data["bolt"], data["loc1"], quantity=Decimal("1"), by=data["admin"])
+    add_scan(sale_cart, data["bolt"], data["loc1"], quantity=Decimal("1"), by=data["admin"])
+    add_scan(sale_cart, data["ring"], data["loc1"], by=data["admin"])
+    repair_cart = open_cart(KIND_REPAIR, by=data["admin"])
+    add_scan(repair_cart, data["bolt"], data["loc2"], by=data["admin"])
+    session = client.session
+    session[CART_SESSION_KEYS[KIND_SALE]] = sale_cart.pk
+    session[CART_SESSION_KEYS[KIND_REPAIR]] = repair_cart.pk
+    session.save()
+
+    body = client.get(reverse("actions_scan")).content.decode()
+
+    # Same source scanned twice is 2 selected from the original 10 available,
+    # not misleadingly displayed as 2 / 8.
+    assert 'value="2"' in body
+    assert "/ 10" in body
+    assert "/ 4" in body
+    assert "/ 3" in body
+
+
+def test_cart_row_availability_reflects_reservations_for_the_selected_cell(client, make_user, data):
+    _login(client, make_user)
+    cart = open_cart(KIND_SALE, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+    perform_action(
+        part=data["bolt"],
+        location=data["loc1"],
+        action_type="reserve",
+        quantity="3",
+        customer_comment="Резерв",
+        by=data["admin"],
+    )
+    session = client.session
+    session[CART_SESSION_KEYS[KIND_SALE]] = cart.pk
+    session.save()
+
+    body = client.get(reverse("actions_scan")).content.decode()
+    assert "/ 7" in body
 
 
 def test_different_parts_are_separate_rows(data):

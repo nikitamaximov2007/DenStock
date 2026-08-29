@@ -81,7 +81,7 @@
                 <td class="num--qty">
                   <form method="post"
                         action="{% url 'actions_cart_update' %}"
-                        class="inline-form">
+                        class="inline-form cart-quantity-form">
                     {% csrf_token %}
                     <input type="hidden" name="kind" value="{{ panel.kind }}">
                     <input type="hidden" name="operation" value="set">
@@ -93,6 +93,8 @@
                            size="4"
                            value="{{ item.row.quantity|quantity_int }}"
                            aria-label="Количество">
+                    <span class="cart-quantity-form__available"
+                          aria-label="Доступно в выбранной ячейке">/ {{ item.available|quantity_int }}</span>
                     {% if not panel.is_sale %}
                       <input name="unit_price"
                              type="number"
