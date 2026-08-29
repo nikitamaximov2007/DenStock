@@ -24,6 +24,7 @@ from django.urls import reverse
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse as promote_brp
 from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.inventory.models import StockMovement
 from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.polaris.models import PolarisCatalogPart
@@ -438,14 +439,21 @@ def test_sale_detail_shows_name_and_number_separately(client, make_user, env):
     assert "<th>Что</th>" not in html
 
 
-def test_sale_detail_lot_is_secondary_not_identity(client, make_user, env):
+def test_sale_detail_lot_is_not_identity_at_all(client, make_user, env):
+    """Идентичность строки продажи это артикул, а лот здесь больше не показан.
+
+    Колонка «Источник остатка» с номером лота ушла с карточки продажи: она
+    отвечала на складской вопрос на клиентском документе. Сам лот из истории
+    не пропал - он остаётся в движениях и в складских экранах.
+    """
     part, lot = _brp(env, material="219800345", desc="BELT DRIVE")
     sale = _sold(env, [(lot, 1)])
     _login(client, make_user)
     html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
-    assert "Источник остатка" in html
-    assert f"лот #{lot.pk}" in html  # вторично, в колонке источника
     assert '<span class="code-pill">219800345</span>' in html  # артикул основной
+    assert "Источник остатка" not in html
+    assert f"лот #{lot.pk}" not in html
+    assert StockMovement.objects.filter(stock_lot=lot).exists(), "лот исчез из движений"
 
 
 def test_cancelled_sale_renders_composition(client, make_user, env):
