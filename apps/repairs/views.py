@@ -19,6 +19,7 @@ from apps.inventory.presentation import (
     attach_document_composition,
     attach_part_identity,
     lines_with_identity_prefetch,
+    part_exact_number,
     with_part_identity,
 )
 
@@ -368,5 +369,11 @@ def repair_line_cancel(request, pk):
     return render(
         request,
         "repairs/repair_line_cancel_confirm.html",
-        {"line": line, "remaining": remaining, "form": form, "next": back},
+        {
+            "line": line,
+            "article": part_exact_number(line.part_type, default="Не указан"),
+            "remaining": remaining,
+            "form": form,
+            "next": back,
+        },
     )

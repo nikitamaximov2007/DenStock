@@ -21,6 +21,10 @@
             <td>{{ line.part_type.name }}</td>
           </tr>
           <tr>
+            <th>Артикул</th>
+            <td><span class="code-pill">{{ article }}</span></td>
+          </tr>
+          <tr>
             <th>Выдано</th>
             <td>{{ line.quantity|quantity_int }}</td>
           </tr>

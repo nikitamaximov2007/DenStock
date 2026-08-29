@@ -9,7 +9,7 @@ from django.db import close_old_connections, connection
 from django.urls import reverse
 
 from apps.accounts import roles
-from apps.catalog.models import Category, PartType, Unit
+from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.customers.models import Customer
 from apps.inventory.models import PartItem, StockMovement
 from apps.inventory.services import (
@@ -84,6 +84,7 @@ def env(db, admin):
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=Decimal("900"),
     )
+    PartNumber.objects.create(part=part, value="REPAIR-001", is_primary=True)
     cheap = create_stock_lot(
         _batch_line(supplier, part, admin, quantity="10", unit_cost="600"),
         first,
@@ -291,6 +292,7 @@ def test_report_button_confirm_screen_and_redirect_keep_filters(client, env):
     assert 'name="reason"' in confirm_body
     assert 'name="author"' in confirm_body
     assert 'max="4"' in confirm_body
+    assert "REPAIR-001" in confirm_body
 
     response = client.post(
         reverse("repair_line_cancel", args=[line.pk]),
