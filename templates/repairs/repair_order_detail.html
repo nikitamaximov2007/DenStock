@@ -4,15 +4,12 @@
   <h1 class="page-title">Ремонтный заказ {{ order.number }}</h1>
   <p>
     <a href="{% url 'repair_order_list' %}">← К ремонтным заказам</a>
-    {% if can_return and order.status == "completed" %}
-      · <a href="{% url 'return_create' %}?source=repair&id={{ order.pk }}">Оформить возврат</a>
-    {% endif %}
     {% comment %}
       Отмена проведённого заказа возвращает детали на склад, поэтому её видит
       тот, кому разрешён возврат. Отмена черновика склада не касается.
     {% endcomment %}
     {% if can_manage and can_return and order.status == "completed" %}
-      · <a href="{% url 'repair_order_cancel_confirm' order.pk %}">Отменить заказ</a>
+      · <a href="{% url 'repair_order_cancel_confirm' order.pk %}">Отменить ремонт</a>
     {% endif %}
   </p>
   <table class="table">

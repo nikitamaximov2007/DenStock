@@ -4,9 +4,6 @@
   <h1 class="page-title">Продажа {{ sale.number }}</h1>
   <p>
     <a href="{% url 'sale_list' %}">← К продажам</a>
-    {% if can_return and sale.status == "completed" %}
-      · <a href="{% url 'return_create' %}?source=sale&id={{ sale.pk }}">Оформить возврат</a>
-    {% endif %}
     {% if can_cancel and sale.status == "completed" %}
       · <a href="{% url 'sale_cancel_confirm' sale.pk %}">Отменить продажу</a>
     {% endif %}
@@ -61,11 +58,6 @@
         <th>Кол-во</th>
         <th>Цена (₽)</th>
         <th>Сумма (₽)</th>
-        {% if show_costs %}
-          <th>Себестоимость (₽)</th>
-          <th>Прибыль (₽)</th>
-        {% endif %}
-        <th>Источник остатка</th>
         {% if can_sell and is_draft %}
           <th></th>
         {% endif %}
@@ -83,11 +75,6 @@
             {% endif %}
           </td>
           <td>{{ line.total_price|money_int }}</td>
-          {% if show_costs %}
-            <td>{{ line.total_cost_rub|money_int }}</td>
-            <td>{{ line.profit_rub|money_int }}</td>
-          {% endif %}
-          <td>{% include "partials/_line_source.html" %}</td>
           {% if can_sell and is_draft %}
             <td>
               <form method="post"
@@ -101,7 +88,7 @@
         </tr>
       {% empty %}
         <tr>
-          <td colspan="9" class="muted">Позиций нет.</td>
+          <td colspan="6" class="muted">Позиций нет.</td>
         </tr>
       {% endfor %}
     </tbody>
@@ -112,16 +99,6 @@
         <th>Выручка</th>
         <td>{{ sale.revenue_total|money_int }} ₽</td>
       </tr>
-      {% if show_costs %}
-        <tr>
-          <th>Себестоимость</th>
-          <td>{{ sale.cost_total|money_int }} ₽</td>
-        </tr>
-        <tr>
-          <th>Прибыль</th>
-          <td>{{ sale.profit_total|money_int }} ₽</td>
-        </tr>
-      {% endif %}
     </tbody>
   </table>
   {% if can_sell and is_draft %}

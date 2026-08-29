@@ -519,6 +519,8 @@ th.num, td.num, .table th.num, .table td.num,
   background: var(--surface); box-shadow: 0 8px 24px rgba(17, 24, 39, .14); }
 .move-destination__option { padding: 9px 10px; overflow-wrap: anywhere;
   border-radius: 4px; cursor: pointer; }
+.cart-quantity-form { display: inline-flex; align-items: center; gap: 6px; margin-left: 0; white-space: nowrap; }
+.cart-quantity-form__available { color: var(--muted); font-variant-numeric: tabular-nums; }
 .move-destination__option:hover, .move-destination__option.is-active {
   background: var(--info-bg); color: var(--accent); }
 .move-destination__status { min-height: 20px; margin: 6px 0 0; font-size: 13px; }

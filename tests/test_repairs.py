@@ -364,6 +364,19 @@ def test_cost_visible_for_manager(make_user, client, data):
     assert "Себестоимость" in html
 
 
+def test_repair_detail_keeps_document_cancellation_and_hides_return_entry(make_user, client, data):
+    order = create_repair_order(customer_name="Иван", by=data["admin"])
+    add_part_item_to_repair_order(order, data["item"], by=data["admin"])
+    complete_repair_order(order, by=data["admin"])
+    make_user("boss-return", role=roles.MANAGER)
+    client.login(username="boss-return", password=PASSWORD)
+
+    html = client.get(reverse("repair_order_detail", args=[order.pk])).content.decode()
+    assert "Отменить ремонт" in html
+    assert "Оформить возврат" not in html
+    assert client.get(reverse("return_create") + f"?source=repair&id={order.pk}").status_code == 200
+
+
 # --- Архитектура: view не пишет ledger ---------------------------------------
 
 
