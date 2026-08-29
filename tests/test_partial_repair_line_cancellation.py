@@ -192,6 +192,33 @@ def test_ordinary_returns_partial_cancellations_and_full_cancel_do_not_double_re
     assert StockMovement.objects.count() == movements
 
 
+def test_multiple_partial_cancellations_walk_one_line_down_without_duplicate_movements(env):
+    order = _repair(env, quantity="4")
+    line = order.lines.get()
+
+    for quantity, reason, remaining in (
+        ("1", "Первая", "3"),
+        ("2", "Вторая", "1"),
+        ("1", "Третья", "0"),
+    ):
+        cancel_repair_line_quantity(
+            line, quantity, reason=reason, author="И.", by=env["admin"]
+        )
+        assert reversible_quantity(line) == Decimal(remaining)
+
+    env["cheap"].refresh_from_db()
+    assert env["cheap"].quantity == Decimal("10")
+    assert StockReturnLine.objects.filter(source_repair_line=line).count() == 3
+    assert StockMovement.objects.filter(
+        movement_type=StockMovement.MovementType.RETURN_LOT
+    ).count() == 3
+    with pytest.raises(RepairError):
+        cancel_repair_line_quantity(line, 1, reason="Повтор", author="И.", by=env["admin"])
+    assert StockMovement.objects.filter(
+        movement_type=StockMovement.MovementType.RETURN_LOT
+    ).count() == 3
+
+
 def test_reversal_is_exact_for_two_lines_from_different_lots(env):
     order = create_repair_order(customer_name="Иванов", by=env["admin"])
     first_line = add_stock_lot_to_repair_order(
