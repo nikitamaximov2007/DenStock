@@ -31,7 +31,10 @@
             <td class="num">{{ row.repair_count }}</td>
             <td class="num">{{ row.unique_parts }}</td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
-            <td class="num--money">{{ row.repair_customer_amount|money_int }}{% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}</td>
+            <td class="num--money">
+              {{ row.repair_customer_amount|money_int }}
+              {% if row.repair_customer_amount_unknown %}<span class="muted">*</span>{% endif %}
+            </td>
             {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
             <td>{{ row.last_repair|ru_dt }}</td>
           </tr>
@@ -41,6 +44,8 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="chart" title="Ремонтов за период нет" text="Измените период, чтобы увидеть проведённые ремонтные заказы по клиентам." compact=1 %}
   {% endif %}
-  {% if page_obj.object_list %}<p class="muted">* У части старых ремонтов цена деталей не была зафиксирована.</p>{% endif %}
+  {% if page_obj.object_list %}
+    <p class="muted">* У части старых ремонтов цена деталей не была зафиксирована.</p>
+  {% endif %}
   {% include "partials/_pagination.html" %}
 {% endblock %}
