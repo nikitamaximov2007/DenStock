@@ -158,6 +158,15 @@ def repair_order_detail(request, pk):
             "lines": lines,
             "can_manage": request.user.can_manage_repairs,
             "can_return": request.user.can_manage_returns,
+            # Ссылка на возврат с выбором ячейки и состояния показывается
+            # только там, где возврат действительно возможен: право есть,
+            # заказ проведён и хоть что-то ещё не вернулось. Остаток по строкам
+            # уже посчитан выше, поэтому лишнего запроса здесь нет.
+            "can_open_special_return": (
+                request.user.can_manage_returns
+                and order.status == RepairOrder.Status.COMPLETED
+                and any(line.net_quantity > 0 for line in lines)
+            ),
             "is_draft": is_draft,
             "show_costs": request.user.can_view_purchase_cost,
             "customer_amount": calculate_repair_customer_amount(order)

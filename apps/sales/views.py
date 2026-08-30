@@ -63,6 +63,20 @@ def _require_sales(request) -> None:
         raise PermissionDenied
 
 
+def _special_return_available(user, sale, lines) -> bool:
+    """Можно ли сейчас оформить возврат с выбором ячейки и состояния.
+
+    Условия ровно те же, что проверяет сам возврат: право на возвраты,
+    проведённая продажа и остаток, который ещё не вернулся. Ничего нового
+    здесь не решается - это только вопрос, показывать ли ссылку.
+    """
+    from apps.returns.services import returnable_quantities
+
+    if not user.can_manage_returns or sale.status != Sale.Status.COMPLETED or not lines:
+        return False
+    return any(value > 0 for value in returnable_quantities(lines).values())
+
+
 def _report_return_path(request) -> str:
     """Куда вернуть оператора после отмены: только адрес внутри этого сайта.
 
@@ -320,6 +334,11 @@ def sale_detail(request, pk):
             "lines": lines,
             "can_sell": request.user.can_manage_sales,
             "can_return": request.user.can_manage_returns,
+            # Ссылка на возврат с выбором ячейки и состояния показывается
+            # только тогда, когда возврат действительно возможен: право есть,
+            # продажа проведена и хоть что-то ещё не вернулось. Иначе оператор
+            # получил бы ссылку, которая упирается в отказ.
+            "can_open_special_return": _special_return_available(request.user, sale, lines),
             "is_draft": is_draft,
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
