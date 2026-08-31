@@ -75,14 +75,13 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Все детали",
             "Остатки",
             "Ячейки",
-            "Поступление",
+            "Приёмка сканером",
             "Перемещение",
             "Инвентаризация",
             "Быстрые действия",
             "Клиенты",
             "История",
         ],
-        "repairs": ["Ремонты", "Возвраты из ремонта"],
         "reports": [
             "Сводка",
             "Продажи и ремонты",
@@ -93,8 +92,8 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
         ],
         "settings": ["Импорт каталога", "Цены", "Пользователи", "Бэкапы"],
     }
-    assert html.count('data-nav-group-toggle') == 4
-    assert html.count('aria-expanded="true"') >= 4
+    assert html.count('data-nav-group-toggle') == 3
+    assert html.count('aria-expanded="true"') >= 3
 
 
 @pytest.mark.parametrize(
@@ -106,14 +105,13 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                 "warehouse": [
                     "Остатки",
                     "Ячейки",
-                    "Поступление",
+                    "Приёмка сканером",
                     "Перемещение",
                     "Инвентаризация",
                     "Быстрые действия",
                     "Клиенты",
                     "История",
                 ],
-                "repairs": ["Ремонты", "Возвраты из ремонта"],
                 "reports": [
                     "Сводка",
                     "Продажи и ремонты",
@@ -132,7 +130,6 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                 # добраться до него мышью было нельзя. В разделе «Склад» роль видит
                 # только эту вкладку, остальные ограничены своими возможностями.
                 "warehouse": ["Быстрые действия", "Клиенты"],
-                "repairs": ["Ремонты"],
                 "reports": ["Складские действия / Таможня"],
             },
         ),
@@ -229,7 +226,7 @@ def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
     [
         ("balance_list", "Остатки"),
         ("warehouse_index", "Ячейки"),
-        ("receipt_list", "Поступление"),
+        ("scanner_receiving", "Приёмка сканером"),
         ("scanner_move", "Перемещение"),
         ("counting_list", "Инвентаризация"),
         ("actions_scan", "Быстрые действия"),
@@ -387,7 +384,6 @@ def test_navigation_context_has_constant_role_query_count(
     assert len(context["nav_items"]) == 3
     assert [group["key"] for group in context["nav_groups"]] == [
         "warehouse",
-        "repairs",
         "reports",
         "settings",
     ]
@@ -422,3 +418,32 @@ def test_active_sidebar_group_is_server_rendered_open(client, make_nav_user):
     assert 'class="nav__group is-active" data-nav-group="warehouse"' in sidebar
     assert 'data-nav-active="true"' in sidebar
     assert 'href="/scanner/move/" aria-current="page"' in sidebar
+
+
+def test_scanner_receiving_is_the_active_sidebar_entry_and_receipt_routes_remain_available(
+    client,
+    make_nav_user,
+):
+    _login(client, make_nav_user("scanner-sidebar", role=roles.STOREKEEPER))
+    html = _html(client, "scanner_receiving")
+    sidebar = " ".join(_sidebar(html).split())
+
+    assert "Поступление" not in _sidebar_labels(html)
+    assert "Приёмка сканером" in _sidebar_groups(html)["warehouse"]
+    assert f'href="{reverse("scanner_receiving")}" aria-current="page"' in sidebar
+    assert client.get(reverse("receipt_list")).status_code == 200
+    assert client.get(reverse("receipt_create")).status_code == 200
+
+
+def test_repairs_are_removed_from_sidebar_without_removing_repair_or_return_routes(
+    client,
+    make_nav_user,
+):
+    _login(client, make_nav_user("repair-routes", superuser=True))
+    html = _html(client, "dashboard")
+
+    assert "repairs" not in _sidebar_groups(html)
+    assert "Ремонты" not in _sidebar_labels(html)
+    assert "Возвраты из ремонта" not in _sidebar_labels(html)
+    assert client.get(reverse("repair_order_list")).status_code == 200
+    assert client.get(f"{reverse('return_list')}?source=repair").status_code == 200
