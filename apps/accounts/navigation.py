@@ -294,11 +294,11 @@ def _warehouse_tabs(user, path):
     if user.can_manage_inventory or user.can_manage_batches:
         tabs.append(
             _tab(
-                "Поступление",
-                reverse("receipt_list"),
+                "Приёмка сканером",
+                reverse("scanner_receiving"),
                 sidebar_key="receiving",
                 icon="inbox",
-                active=path.startswith(("/receipts/", "/batches/", "/scanner/receiving/")),
+                active=path.startswith("/scanner/receiving/"),
             )
         )
     if user.can_manage_inventory:
@@ -610,11 +610,6 @@ def _local_tabs(request, section, user):
 
 def _sidebar_groups(request, section, user):
     path = request.path
-    source = (
-        getattr(request, "navigation_source", "")
-        or request.GET.get("source")
-        or request.GET.get("section")
-    )
     candidates = [
         (
             _group(
@@ -626,13 +621,6 @@ def _sidebar_groups(request, section, user):
             )
             if _can_open_warehouse(user)
             else None
-        ),
-        _group(
-            "repairs",
-            "Ремонты",
-            "wrench",
-            _repairs_tabs(user, path, source),
-            active=section == "repairs",
         ),
         _group(
             "reports",
