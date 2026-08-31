@@ -153,6 +153,7 @@ def _customs(part, **overrides):
     """
     values = {
         "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_ru_confirmed": True,
         "customs_name_en": "BELT DRIVE",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
@@ -173,6 +174,7 @@ def _card(part, **overrides):
     """
     values = {
         "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_ru_confirmed": True,
         "customs_name_en": "BELT DRIVE",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
@@ -371,10 +373,12 @@ def test_only_net_filled_is_not_ready(client, make_user, env):
 
 
 def test_both_weights_and_application_area_is_ready(client, make_user, env):
+    """Ручная часть договора целиком: веса, область применения и название."""
     part, _ = _brp(env, material="219800345", customs=False)
     PartCustomsInfo.objects.create(
         part_type=part, application_area=ApplicationArea.SNOWMOBILE,
         gross_weight_kg=Decimal("0.5"), net_weight_kg=Decimal("0.4"),
+        customs_name_ru="РЕМЕНЬ ПРИВОДНОЙ", customs_name_ru_confirmed=True,
     )
     row = part_export_data(part)
     assert row["customs_ready"] is True
@@ -648,8 +652,6 @@ def test_quick_save_writes_manual_note_without_url(client, make_user, env):
     assert customs.weight_source_note == MANUAL_WEIGHT_NOTE
     assert customs.weight_source_url == ""  # фиктивная ссылка не выдумана
     assert part_export_data(part)["weight_source"] == "manual"  # «Указано вручную»
-    html = client.get(reverse("actions_customs_edit", args=[part.pk])).content.decode()
-    assert "Указано вручную" in html
 
 
 def test_quick_save_preserves_real_source_note(client, make_user, env):
@@ -690,21 +692,24 @@ def test_detail_form_cannot_verify_incomplete_pair(client, make_user, env):
     assert customs.weight_verified is False  # неполную пару подтвердить нельзя
 
 
-def test_detail_form_explicit_unchecked_respected(client, make_user, env):
-    """Детальная форма — явный чекбокс: оба веса без отметки НЕ подтверждают.
+def test_detail_form_manual_pair_confirms_the_weight(client, make_user, env):
+    """Оба веса, введённые вручную в форме, и есть подтверждение веса.
 
-    Там есть поля источника (вес мог быть записан с непроверенной страницы),
-    поэтому решение остаётся за пользователем. Быстрый редактор без полей
-    источника — чисто ручной ввод, он подтверждает автоматически.
+    Полей источника в форме оператора больше нет: заполнять их руками Денис
+    не должен. Значит ручной ввод пары и есть решение о весе, и отдельного
+    чекбокса для него не требуется - он из формы убран.
     """
     part, _ = _brp(env, material="219800345")
     _login(client, make_user)
     client.post(
         reverse("actions_customs_edit", args=[part.pk]),
-        {"gross_weight_kg": "0.5", "net_weight_kg": "0.4"},  # чекбокс не отмечен
+        {"gross_weight_kg": "0.5", "net_weight_kg": "0.4"},
     )
     customs = PartCustomsInfo.objects.get(part_type=part)
-    assert customs.weight_verified is False
+    assert customs.weight_verified is True
+    assert customs.weight_source_note == MANUAL_WEIGHT_NOTE
+    html = client.get(reverse("actions_customs_edit", args=[part.pk])).content.decode()
+    assert 'name="weight_verified"' not in html, "чекбокс вернулся в форму оператора"
 
 
 def test_report_shows_verified_pill(client, make_user, env):

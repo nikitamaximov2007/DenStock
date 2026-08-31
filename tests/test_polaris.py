@@ -270,7 +270,8 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
     )
     part = promote_to_warehouse(polaris, by=admin)
     PartCustomsInfo.objects.create(
-        part_type=part, customs_name_ru="САЛЬНИК", customs_name_en="SEAL RING",
+        part_type=part, customs_name_ru="САЛЬНИК", customs_name_ru_confirmed=True,
+        customs_name_en="SEAL RING",
         manufacturer="POLARIS", country_of_origin="AUSTRIA",
     )
     location = StorageLocation.objects.create(

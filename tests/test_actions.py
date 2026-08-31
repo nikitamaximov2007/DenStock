@@ -140,6 +140,7 @@ def _card(part, **overrides):
     """
     values = {
         "customs_name_ru": "РОЛИК ШКИВ",
+        "customs_name_ru_confirmed": True,
         "customs_name_en": "ROLLER PULLEY",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
@@ -473,32 +474,32 @@ def test_customs_edit_saves_manual_data(client, make_user, data):
         reverse("actions_customs_edit", args=[data["roller"].pk]),
         {
             "customs_name_ru": "Ролик вариатора",
+            "customs_name_ru_confirmed": True,
             "gross_weight_kg": "0,25", "net_weight_kg": "0.2",
-            "weight_source_url": "https://example.com/spec",
-            "weight_source_note": "страница поставщика",
-            "weight_verified": "on",
             "application_area": "",  # не заполнено - легаси "МОТО ЗАПЧАСТИ" больше не выбор
         },
     )
     assert resp.status_code == 302
     customs = PartCustomsInfo.objects.get(part_type=data["roller"])
     assert customs.customs_name_ru == "Ролик вариатора"
+    assert customs.customs_name_ru_confirmed is True
     assert customs.customs_name_source == PartCustomsInfo.NameSource.MANUAL
     assert customs.gross_weight_kg == Decimal("0.25")
     assert customs.net_weight_kg == Decimal("0.2")
-    assert customs.weight_source_url == "https://example.com/spec"
+    # Ручной ввод пары весов через форму оператора и есть подтверждение:
+    # полей источника в ней больше нет.
     assert customs.weight_verified is True
     assert customs.application_area == ""
     # Ручное название уходит в экспорт в ВЕРХНЕМ регистре.
     row = part_export_data(data["roller"])
     assert row["name_ru"] == "РОЛИК ВАРИАТОРА"
-    # Что не введено, то и перечислено: выдумывать эти значения неоткуда.
-    assert row["warnings"] == [
-        "не заполнено английское название",
-        "нет таможенной цены в USD",
-        "не заполнена страна производства",
-        "не определена область применения",
-    ]
+    # Английское название, цена и страна больше не ручные: они приходят из
+    # каталога и нового правила по стране. Остаётся то, чего система про эту
+    # деталь действительно не знает.
+    assert row["name_en"] == "ROLLER PULLEY"  # описание позиции BRP
+    assert row["country"] == "КАНАДА"
+    assert row["usd_price"] is not None
+    assert row["warnings"] == ["не определена область применения"]
 
 
 def test_export_rows_group_by_part(data):

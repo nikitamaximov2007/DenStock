@@ -97,6 +97,7 @@ def _card(part, **overrides):
     """Таможенная карточка тем же путём, каким её заводит форма."""
     values = {
         "customs_name_ru": "БОЛТ", "customs_name_en": "BOLT", "manufacturer": "BRP",
+        "customs_name_ru_confirmed": True,
         "country_of_origin": "CANADA", "gross_weight_kg": Decimal("0.350"),
         "net_weight_kg": Decimal("0.300"), "customs_unit_price_usd": Decimal("12.50"),
         "application_area": ApplicationArea.SNOWMOBILE,

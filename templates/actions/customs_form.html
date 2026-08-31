@@ -6,18 +6,33 @@
     <h1 class="page-title">Таможенные данные детали</h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
-         href="{% url 'actions_report' %}">К отчёту действий</a>
+         href="{% if next %}{{ next }}{% else %}{% url 'actions_report' %}{% endif %}">К отчёту действий</a>
     </div>
   </div>
   <p class="page-subtitle">
     <span class="code-pill">{{ data.number }}</span> {{ part.name }}
-    · Название (EN): {{ data.name_en }}
   </p>
   <div class="card">
     <div class="card__body">
+      {% comment %}
+        Оператор заполняет только то, чего система о детали не знает: русское
+        таможенное название с подтверждением, два веса и область применения.
+        Английское название, производитель, страна и цена приходят из каталога
+        и связей карточки, поэтому редактируемых полей для них здесь нет.
+      {% endcomment %}
       <form method="post" class="form">
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="flow" value="{{ flow }}">
+        {% comment %}
+          Показанные значения нужны, чтобы подтверждение не переехало на
+          новый текст: если название изменили, а галочка просто осталась с
+          прошлого раза, сервер снимет подтверждение.
+        {% endcomment %}
+        <input type="hidden" name="customs_name_ru_shown" value="{{ name_ru_value }}">
+        {% if customs.customs_name_ru_confirmed %}
+          <input type="hidden" name="customs_name_ru_confirmed_shown" value="1">
+        {% endif %}
         <p>
           <label for="customs-name">Таможенное название (RU)</label>
           <br>
@@ -25,44 +40,23 @@
                  name="customs_name_ru"
                  type="text"
                  maxlength="255"
-                 value="{{ customs.customs_name_ru }}"
-                 placeholder="{{ auto_name }}"
+                 value="{{ name_ru_value }}"
                  style="min-width: 320px">
-        </p>
-        <p class="muted">
-          Если оставить пустым, в экспорт пойдёт автоперевод: «{{ auto_name }}».
-          Это таможенное название, не техническое: его можно упростить.
         </p>
         <p>
-          <label for="customs-name-en">Таможенное название (EN)</label>
-          <br>
-          <input id="customs-name-en"
-                 name="customs_name_en"
-                 type="text"
-                 maxlength="255"
-                 value="{{ customs.customs_name_en }}"
-                 style="min-width: 320px">
+          <label>
+            <input type="checkbox"
+                   name="customs_name_ru_confirmed"
+                   value="1"
+                   {% if customs.customs_name_ru_confirmed %}checked{% endif %}>
+            Название подтверждено
+          </label>
         </p>
-        <div class="form-grid form-grid--2">
-          <p>
-            <label for="customs-manufacturer">Производитель</label>
-            <br>
-            <input id="customs-manufacturer"
-                   name="manufacturer"
-                   type="text"
-                   maxlength="80"
-                   value="{{ customs.manufacturer }}">
-          </p>
-          <p>
-            <label for="customs-country">Страна производства</label>
-            <br>
-            <input id="customs-country"
-                   name="country_of_origin"
-                   type="text"
-                   maxlength="80"
-                   value="{{ customs.country_of_origin }}">
-          </p>
-        </div>
+        <p class="muted">
+          Название предложено системой по английскому описанию детали. Его
+          можно оставить или поправить, но в выгрузку оно пойдёт только после
+          вашего подтверждения.
+        </p>
         <div class="form-grid form-grid--2">
           <p>
             <label for="gross-weight">Вес брутто, кг/шт</label>
@@ -84,62 +78,6 @@
           </p>
         </div>
         <p>
-          <label for="customs-unit-price">Таможенная цена за единицу, USD</label>
-          <br>
-          <input id="customs-unit-price"
-                 name="customs_unit_price_usd"
-                 type="text"
-                 inputmode="decimal"
-                 value="{{ customs.customs_unit_price_usd|default_if_none:''|unlocalize }}">
-        </p>
-        <p class="muted">
-          Источник веса: {{ weight_source_label }}. Значение запоминается на
-          карточке детали и подставляется автоматически во всех следующих
-          таможенных экспортах этой же детали.
-        </p>
-        <p>
-          <label for="weight-url">Источник веса (URL)</label>
-          <br>
-          <input id="weight-url"
-                 name="weight_source_url"
-                 type="text"
-                 value="{{ customs.weight_source_url }}"
-                 style="min-width: 320px">
-        </p>
-        <p>
-          <label for="weight-note">Источник веса (примечание)</label>
-          <br>
-          <input id="weight-note"
-                 name="weight_source_note"
-                 type="text"
-                 maxlength="255"
-                 value="{{ customs.weight_source_note }}"
-                 style="min-width: 320px">
-        </p>
-        <p>
-          <label for="customs-source-reference">Источник / документ</label>
-          <br>
-          <input id="customs-source-reference"
-                 name="source_reference"
-                 type="text"
-                 maxlength="255"
-                 value="{{ customs.source_reference }}"
-                 style="min-width: 320px">
-        </p>
-        <p>
-          <label>
-            <input type="checkbox"
-                   name="weight_verified"
-                   {% if customs.weight_verified %}checked{% endif %}>
-            Вес проверен
-          </label>
-        </p>
-        <p class="muted">
-          Отметка сохраняется, только если заполнены оба веса. Быстрое
-          сохранение обоих весов из отчёта действий подтверждает вес
-          автоматически: ручной ввод сотрудником и есть подтверждение.
-        </p>
-        <p>
           <label for="application-area">Область применения</label>
           <br>
           <select id="application-area" name="application_area">
@@ -150,21 +88,57 @@
             {% endfor %}
           </select>
         </p>
-        <p class="muted">
-          Источник в текущем экспорте: {{ application_source_label }}.
-          Список категорий контролируемый: свободный текст и категория по
-          названию детали или производителю каталога не допускаются.
-        </p>
         <div class="form-actions">
           <button type="submit" class="btn btn--primary">Сохранить</button>
         </div>
       </form>
-      <p class="muted">
-        Веса заполняются только вручную или по проверенному источнику:
-        система никогда не выдумывает вес. Если веса нет, колонки G/H в
-        экспорте останутся пустыми. Производитель в экспорте: {{ data.manufacturer }},
-        страна производства в экспорте: {{ data.country|default:"пусто" }}.
-      </p>
+      <details class="customs-system-data">
+        <summary>Данные из системы</summary>
+        <table class="table table--compact">
+          <tbody>
+            <tr>
+              <th>Название EN</th>
+              <td>
+                {% if system.customs_name_en %}
+                  {{ system.customs_name_en }}
+                {% else %}
+                  <span class="muted">нет в каталоге</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <th>Производитель</th>
+              <td>
+                {% if system.manufacturer %}
+                  {{ system.manufacturer }}
+                {% else %}
+                  <span class="muted">не определён</span>
+                {% endif %}
+              </td>
+            </tr>
+            <tr>
+              <th>Страна производства</th>
+              <td>{{ system.country_of_origin }}</td>
+            </tr>
+            <tr>
+              <th>Цена USD</th>
+              <td>
+                {% if system.customs_unit_price_usd is not None %}
+                  {{ system.customs_unit_price_usd|unlocalize }}
+                {% else %}
+                  <span class="muted">нет оптовой цены в каталоге</span>
+                {% endif %}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted">
+          Эти значения оператор не вводит: они берутся из каталога поставщика и
+          связей карточки и записываются при сохранении. Чего нет в системе, то
+          не выдумывается - такая строка остаётся незаполненной и выгрузку не
+          проходит.
+        </p>
+      </details>
     </div>
   </div>
 {% endblock %}

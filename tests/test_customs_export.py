@@ -166,6 +166,7 @@ def _card(part, **overrides):
     """
     values = {
         "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_ru_confirmed": True,
         "customs_name_en": "BELT DRIVE",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
@@ -744,6 +745,7 @@ def _customs(part, **overrides):
     """
     values = {
         "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_ru_confirmed": True,
         "customs_name_en": "BELT DRIVE",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",

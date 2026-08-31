@@ -172,6 +172,14 @@ class PartCustomsInfo(models.Model):
         "Источник названия", max_length=20,
         choices=NameSource.choices, default=NameSource.AUTO,
     )
+    # Явное решение оператора, что русское название верно. Предложенный
+    # автоперевод сам по себе подтверждением не является: он лишь заготовка,
+    # и выпускать по нему декларацию нельзя. Косвенно вывести подтверждение
+    # не из чего - пустые поля источника про название ничего не говорят,
+    # поэтому состояние хранится отдельным полем.
+    customs_name_ru_confirmed = models.BooleanField(
+        "Русское название подтверждено", default=False
+    )
     manufacturer = models.CharField("Производитель", max_length=80, default="BRP")
     country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)
     gross_weight_kg = models.DecimalField(
@@ -226,6 +234,12 @@ class PartCustomsDataVersion(models.Model):
     version = models.PositiveIntegerField("Версия")
     effective_from = models.DateTimeField("Действует с", db_index=True)
     customs_name_ru = models.CharField("Таможенное название (RU)", max_length=255, blank=True)
+    # Снимок подтверждения на момент версии: готовность строки экспорта
+    # решается тем, что оператор подтвердил тогда, а не флагом карточки
+    # сегодня.
+    customs_name_ru_confirmed = models.BooleanField(
+        "Русское название подтверждено", default=False
+    )
     customs_name_en = models.CharField("Таможенное название (EN)", max_length=255, blank=True)
     manufacturer = models.CharField("Производитель", max_length=80, blank=True)
     country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)

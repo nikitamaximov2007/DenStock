@@ -656,7 +656,8 @@ def test_customs_export_unchanged(client, make_user, env):
     # Таможенные данные вводит человек: без заведённой карточки выгружать
     # нечего. Проверяется здесь именно личность детали, а не её содержимое.
     PartCustomsInfo.objects.create(
-        part_type=part, customs_name_ru="РЕМЕНЬ", customs_name_en="BELT DRIVE",
+        part_type=part, customs_name_ru="РЕМЕНЬ", customs_name_ru_confirmed=True,
+        customs_name_en="BELT DRIVE",
         manufacturer="BRP", country_of_origin="CANADA",
         # Готовая к декларации карточка: неполная выгрузку не даёт вовсе, а
         # проверяется здесь личность детали, а не полнота данных.

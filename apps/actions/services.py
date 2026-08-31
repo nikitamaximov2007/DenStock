@@ -693,7 +693,8 @@ def record_customs_data_version(
     идемпотентно, а настоящая правка становится новой исторической версией.
     """
     fields = (
-        "customs_name_ru", "customs_name_en", "manufacturer", "country_of_origin",
+        "customs_name_ru", "customs_name_ru_confirmed", "customs_name_en",
+        "manufacturer", "country_of_origin",
         "gross_weight_kg", "net_weight_kg", "customs_unit_price_usd",
         "application_area", "source_reference",
     )
@@ -720,6 +721,77 @@ def record_customs_data_version(
         created_by=by or customs.updated_by,
         **values,
     )
+
+
+# Страна производства в этом рабочем процессе одна: компания везёт запчасти
+# из Канады. Экспорт пишет строку страны как есть, поэтому каноническим
+# представлением является само русское слово - другого формата в системе нет
+# и заводить второй (Canada/CAN) нельзя.
+CUSTOMS_COUNTRY = "КАНАДА"
+
+
+def catalog_english_name(part: PartType) -> str:
+    """Английское название детали из каталога поставщика.
+
+    Источник ровно один и тот же, что уже показывает карточку: описание
+    позиции BRP (``BrpCatalogPart.part_desc``) или название позиции Polaris
+    (``PolarisCatalogPart.part_name``). Своего английского названия у складской
+    карточки нет, и придумывать его нельзя: без каталожного описания строка
+    остаётся без названия и блокирует выгрузку.
+    """
+    brp = _brp_part_for(part)
+    if brp is not None and brp.part_desc.strip():
+        return brp.part_desc.strip().upper()
+    polaris = _polaris_part_for(part)
+    if polaris is not None and polaris.part_name.strip():
+        return polaris.part_name.strip().upper()
+    return ""
+
+
+def catalog_customs_usd(part: PartType) -> Decimal | None:
+    """Таможенная стоимость единицы в USD из каталога поставщика.
+
+    Это оптовая (дилерская) колонка прайса: у BRP - ``wholesale_price_usd``
+    самой позиции либо связанной замены, у Polaris - та же колонка позиции
+    либо её superseded-связи. Розница, клиентская цена и складская
+    себестоимость сюда не подмешиваются: они отвечают на другие вопросы.
+    Нет оптовой цены - остаётся ``None``, и строка блокирует выгрузку.
+    """
+    brp = _brp_part_for(part)
+    if brp is not None:
+        return _brp_wholesale_usd(brp)
+    polaris = _polaris_part_for(part)
+    if polaris is not None:
+        return _polaris_wholesale_usd(polaris)
+    return None
+
+
+def system_customs_facts(part: PartType) -> dict:
+    """То, что DenisStock знает о детали сам. Оператор это не вводит.
+
+    Возвращаются ровно те значения, которые уйдут в карточку при сохранении:
+    английское название и цена из каталога поставщика, производитель по
+    канонической связи карточки, страна по новому правилу. Отсутствующее
+    остаётся пустым - выдумывать таможенные факты нельзя.
+    """
+    return {
+        "customs_name_en": catalog_english_name(part),
+        "manufacturer": manufacturer_display(part).strip().upper(),
+        "country_of_origin": CUSTOMS_COUNTRY,
+        "customs_unit_price_usd": catalog_customs_usd(part),
+    }
+
+
+def apply_system_customs_facts(customs: PartCustomsInfo) -> dict:
+    """Проставить карточке автоматические значения перед сохранением.
+
+    Записываются они именно в карточку, а не только в экспорт: историческая
+    версия снимает состояние карточки, и без записи снимок остался бы пустым.
+    """
+    facts = system_customs_facts(customs.part_type)
+    for field, value in facts.items():
+        setattr(customs, field, value)
+    return facts
 
 
 def _brp_part_for(part: PartType):
@@ -927,6 +999,8 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     warnings = []
     if not customs.customs_name_ru.strip():
         warnings.append("не заполнено русское название")
+    if not customs.customs_name_ru_confirmed:
+        warnings.append("русское название не подтверждено")
     if not english_name:
         warnings.append("не заполнено английское название")
     if customs.gross_weight_kg is None:
@@ -961,11 +1035,14 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         customs_missing_reasons.append("Не заполнен вес брутто")
     if customs.net_weight_kg is None:
         customs_missing_reasons.append("Не заполнен вес нетто")
+    if not customs.customs_name_ru_confirmed:
+        customs_missing_reasons.append("Русское название не подтверждено")
     return {
         "part": part,
         "customs": customs,
         "number": number,
         "name_ru": name_ru.upper(),
+        "name_ru_confirmed": customs.customs_name_ru_confirmed,
         "name_en": english_name.upper(),
         "manufacturer": manufacturer,
         "country": country,
@@ -1092,7 +1169,7 @@ def _customs_row_from_version(
     if version is None:
         values = {"name_ru": "", "name_en": "", "manufacturer": "", "country": "",
                   "gross_weight_kg": None, "net_weight_kg": None, "usd_price": None,
-                  "application_area": "", "source_reference": ""}
+                  "application_area": "", "source_reference": "", "name_ru_confirmed": False}
     else:
         application = (version.application_area or "").strip().upper()
         if application == LEGACY_APPLICATION:
@@ -1113,9 +1190,11 @@ def _customs_row_from_version(
             "usd_price": version.customs_unit_price_usd,
             "application_area": application,
             "source_reference": version.source_reference,
+            "name_ru_confirmed": version.customs_name_ru_confirmed,
         }
     missing = [label for key, label in (
         ("name_ru", "не заполнено русское название"),
+        ("name_ru_confirmed", "русское название не подтверждено"),
         ("name_en", "не заполнено английское название"),
         ("manufacturer", "не заполнен производитель"),
         ("country", "не заполнена страна производства"),

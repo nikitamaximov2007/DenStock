@@ -199,7 +199,7 @@
                     </td>
                     <td class="table__actions">
                       <a class="btn btn--small btn--secondary"
-                         href="{% url 'actions_customs_edit' row.part.pk %}?next={{ request.get_full_path|urlencode }}">Таможенные данные</a>
+                         href="{% url 'actions_customs_edit' row.part.pk %}?flow=customs&amp;next={{ request.get_full_path|urlencode }}">Таможенные данные</a>
                     </td>
                   </tr>
                 {% endif %}

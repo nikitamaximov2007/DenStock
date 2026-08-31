@@ -7,15 +7,16 @@
 
 import datetime
 import secrets
+from urllib.parse import quote, urlparse
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.http import HttpResponse, HttpResponseNotAllowed
+from django.http import HttpResponse, HttpResponseNotAllowed, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.http import urlencode
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 
 from apps.catalog.models import PartType
 from apps.core.part_lookup import MatchSource, resolve_part_lookup
@@ -52,7 +53,6 @@ from .services import (
     customs_export_reconciliation,
     get_or_create_customs,
     historical_customs_rows,
-    parse_customs_usd,
     parse_weight_kg,
     perform_action,
     stock_overview,
@@ -702,66 +702,175 @@ def actions_export(request):
     return response
 
 
+def _customs_return_path(request) -> str:
+    """Куда вернуть оператора: только адрес внутри этого сайта.
+
+    Форма таможенных данных открывается из отчёта и обязана вернуть туда же
+    с теми же фильтрами. Чужой адрес сюда не попадает: иначе ссылка на правку
+    стала бы переходником наружу.
+    """
+    candidate = request.POST.get("next") or request.GET.get("next") or ""
+    if candidate and url_has_allowed_host_and_scheme(
+        candidate, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return candidate
+    return ""
+
+
+def _customs_report_filters(next_url: str) -> dict | None:
+    """Фильтры таможенного отчёта, из которого пришёл оператор.
+
+    Последовательный обход обязан идти по тому же списку, что оператор видел
+    на экране, поэтому фильтры берутся из адреса возврата. Если адрес ведёт не
+    в отчёт действий, последовательности нет - возвращаем ``None``.
+    """
+    parsed = urlparse(next_url or "")
+    if parsed.path != reverse("actions_report"):
+        return None
+    query = QueryDict(parsed.query)
+    return {
+        "date_from": _parse_date(query.get("date_from", "")),
+        "date_to": _parse_date(query.get("date_to", "")),
+        "action_type": query.get("action_type", ""),
+        "q": (query.get("q") or "").strip(),
+        "part_number": (query.get("part_number") or "").strip(),
+        "location_code": (query.get("location_code") or "").strip(),
+    }
+
+
+def _next_unresolved_customs_part(filters: dict, *, after_part_id: int) -> int | None:
+    """Следующая деталь того же отчёта, которой ещё нужны таможенные данные.
+
+    Порядок ровно тот же, что на экране: строки отчёта уже отсортированы по
+    артикулу и версии. Сначала ищем незаполненную строку ПОСЛЕ текущей, потом
+    возвращаемся к началу списка - так обход не застревает и не пропускает
+    строки, стоящие выше по списку.
+    """
+    rows = historical_customs_rows(**filters)
+    unresolved = []
+    seen = set()
+    for row in rows:
+        part_id = row["part"].pk
+        if row["customs_ready"] or part_id in seen:
+            continue
+        seen.add(part_id)
+        unresolved.append(part_id)
+    if not unresolved:
+        return None
+    order = [row["part"].pk for row in rows]
+    try:
+        position = order.index(after_part_id)
+    except ValueError:
+        return unresolved[0]
+    later = [pk for pk in order[position + 1 :] if pk in set(unresolved)]
+    if later:
+        return later[0]
+    earlier = [pk for pk in unresolved if pk != after_part_id]
+    return earlier[0] if earlier else None
+
+
 @login_required
 def actions_customs_edit(request, part_id):
-    """Таможенные данные детали: RU-название, веса (только ручные), источник."""
+    """Таможенные данные детали: оператор вводит только то, чего система не знает.
+
+    Ручных полей пять: русское название, его подтверждение, два веса и область
+    применения. Английское название, производитель, страна и таможенная цена
+    приходят из системы и записываются в карточку при сохранении - иначе
+    историческая версия сняла бы пустоту.
+    """
     _require_access(request)
     part = get_object_or_404(PartType, pk=part_id)
     customs = get_or_create_customs(part)
+    from .services import (
+        MANUAL_WEIGHT_NOTE,
+        apply_system_customs_facts,
+        auto_customs_name_ru,
+        part_export_data,
+        system_customs_facts,
+    )
+
+    back = _customs_return_path(request)
+    sequential = (request.POST.get("flow") or request.GET.get("flow") or "") == "customs"
     if request.method == "POST":
         name_ru = (request.POST.get("customs_name_ru") or "").strip()
-        customs.customs_name_ru = name_ru
-        customs.customs_name_en = (request.POST.get("customs_name_en") or "").strip()
-        customs.manufacturer = (request.POST.get("manufacturer") or "").strip().upper()
-        customs.country_of_origin = (request.POST.get("country_of_origin") or "").strip().upper()
-        customs.source_reference = (request.POST.get("source_reference") or "").strip()
-        customs.customs_name_source = (
-            customs.NameSource.MANUAL if name_ru else customs.NameSource.AUTO
-        )
+        shown_name = (request.POST.get("customs_name_ru_shown") or "").strip()
+        was_confirmed = bool(request.POST.get("customs_name_ru_confirmed_shown"))
+        confirmed = bool(request.POST.get("customs_name_ru_confirmed"))
+        # Старое подтверждение не должно переехать на новый текст. Если имя
+        # изменили, а галочка просто осталась стоять с прошлого раза, это не
+        # решение оператора о новом названии: подтверждение снимается. Правка
+        # вместе со свежей галочкой - решение, и она остаётся.
+        name_changed = name_ru != shown_name
+        if name_changed and was_confirmed:
+            confirmed = False
         try:
             gross = parse_weight_kg(request.POST.get("gross_weight_kg"))
             net = parse_weight_kg(request.POST.get("net_weight_kg"))
-            customs_price = parse_customs_usd(request.POST.get("customs_unit_price_usd"))
             validate_weight_pair(gross, net)
         except ValueError as exc:
             messages.error(request, str(exc))
-            return redirect("actions_customs_edit", part_id=part.pk)
-        customs.gross_weight_kg = gross
-        customs.net_weight_kg = net
-        customs.customs_unit_price_usd = customs_price
-        customs.weight_source_url = (request.POST.get("weight_source_url") or "").strip()
-        customs.weight_source_note = (request.POST.get("weight_source_note") or "").strip()
-        # Чекбокс — явное решение пользователя (здесь есть поля источника:
-        # вес мог быть записан с непроверенной страницы). Guard единый с
-        # быстрым редактором: неполную пару весов подтвердить нельзя.
-        customs.weight_verified = (
-            bool(request.POST.get("weight_verified")) and gross is not None and net is not None
-        )
+            return redirect(request.get_full_path())
         application_area = (request.POST.get("application_area") or "").strip().upper()
         if application_area and application_area not in PartCustomsInfo.ApplicationArea.values:
             messages.error(request, "Недопустимая область применения.")
-            return redirect("actions_customs_edit", part_id=part.pk)
-        customs.application_area = application_area  # "" = не заполнено, не легаси-хардкод
+            return redirect(request.get_full_path())
+
+        customs.customs_name_ru = name_ru
+        customs.customs_name_ru_confirmed = bool(name_ru) and confirmed
+        customs.customs_name_source = (
+            customs.NameSource.MANUAL if name_ru else customs.NameSource.AUTO
+        )
+        customs.gross_weight_kg = gross
+        customs.net_weight_kg = net
+        customs.application_area = application_area  # "" = не заполнено
+        # Ручной ввод обоих весов через эту форму и есть подтверждение веса:
+        # полей источника здесь больше нет. Настоящий внешний источник, если
+        # он был записан раньше, не затирается.
+        customs.weight_verified = gross is not None and net is not None
+        if (
+            customs.weight_verified
+            and not customs.weight_source_url.strip()
+            and not customs.weight_source_note.strip()
+        ):
+            customs.weight_source_note = MANUAL_WEIGHT_NOTE
+        apply_system_customs_facts(customs)
         customs.updated_by = request.user
         customs.save()
-        messages.success(request, "Таможенные данные сохранены.")
-        next_url = request.POST.get("next") or reverse("actions_report")
-        return redirect(next_url)
-    from .services import auto_customs_name_ru, part_export_data
+
+        if name_changed and was_confirmed and not confirmed:
+            messages.warning(
+                request,
+                "Название изменено, подтверждение снято. Проверьте его и подтвердите заново.",
+            )
+        else:
+            messages.success(request, "Таможенные данные сохранены.")
+        filters = _customs_report_filters(back) if sequential else None
+        if filters is not None:
+            following = _next_unresolved_customs_part(filters, after_part_id=part.pk)
+            if following is not None:
+                url = reverse("actions_customs_edit", args=[following])
+                return redirect(f"{url}?flow=customs&next={quote(back)}")
+            messages.success(request, "Таможенные данные заполнены по всем позициям отчёта.")
+        return redirect(back or reverse("actions_report"))
 
     data = part_export_data(part)
+    system = system_customs_facts(part)
+    suggested = auto_customs_name_ru(system["customs_name_en"] or data["name_en"])
     return render(
         request,
         "actions/customs_form.html",
         {
             "part": part,
             "customs": customs,
-            "auto_name": auto_customs_name_ru(data["name_en"]),
+            # В поле сразу стоит предложенное название: оператору остаётся
+            # согласиться или поправить, а не переписывать с нуля.
+            "name_ru_value": customs.customs_name_ru or suggested,
+            "suggested_name": suggested,
             "data": data,
+            "system": system,
             "application_choices": PartCustomsInfo.ApplicationArea.choices,
-            "application_source_label": APPLICATION_SOURCE_LABELS[data["application_source"]],
-            "weight_source_label": WEIGHT_SOURCE_LABELS[data["weight_source"]],
-            "next": request.GET.get("next", ""),
+            "next": back,
+            "flow": "customs" if sequential else "",
         },
     )
 

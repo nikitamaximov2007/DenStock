@@ -385,6 +385,11 @@ th.num, td.num, .table th.num, .table td.num,
    тем же приёмом, каким широкие таблицы уже ведут себя на узких экранах. */
 .table--wide, .customs-readiness { display: block; overflow-x: auto; }
 .table__actions { white-space: nowrap; text-align: right; }
+/* Блок «Данные из системы» на форме таможенных данных: он справочный, поэтому
+   свёрнут и не спорит с полями, которые оператор действительно заполняет. */
+.customs-system-data { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 12px; }
+.customs-system-data > summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.customs-system-data > summary:hover { color: var(--text); }
 /* Вторая строка ячейки клиента: ссылка на историю и состояние карточки. Это
    два разных сообщения, поэтому они разделены промежутком, а не точкой -
    слитная фраза «История карточка есть» читалась как одна и сбивала. */

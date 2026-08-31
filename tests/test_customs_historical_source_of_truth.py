@@ -121,6 +121,7 @@ def _receive(env, part, quantity="10", unit_cost="100", location=None):
 def _card(part, **overrides):
     values = {
         "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",
+        "customs_name_ru_confirmed": True,
         "customs_name_en": "BELT DRIVE",
         "manufacturer": "BRP",
         "country_of_origin": "CANADA",
