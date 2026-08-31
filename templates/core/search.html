@@ -232,7 +232,7 @@
                 <th>Ячейка</th>
                 <th>Партия</th>
                 <th>Серийный</th>
-                {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+                {% if show_costs %}<th>Стоимость (₽)</th>{% endif %}
               </tr>
             </thead>
             <tbody>
@@ -251,7 +251,12 @@
                   </td>
                   <td>{{ it.batch.number }}</td>
                   <td>{{ it.serial_number|default:"·" }}</td>
-                  {% if show_costs %}<td>{{ it.landed_cost_rub|money_int }}</td>{% endif %}
+                  {% if show_costs %}
+                    <td>
+                      <span{% if it.cost_label_hint %} title="{{ it.cost_label_hint }}"{% endif %}>{{ it.cost_label }}</span>:
+                      {{ it.landed_cost_rub|money_int }}
+                    </td>
+                  {% endif %}
                 </tr>
               {% endfor %}
             </tbody>
@@ -266,7 +271,7 @@
                 <th>Статус</th>
                 <th>Ячейка</th>
                 <th>Партия</th>
-                {% if show_costs %}<th>Себестоимость (₽)</th>{% endif %}
+                {% if show_costs %}<th>Стоимость (₽)</th>{% endif %}
               </tr>
             </thead>
             <tbody>
@@ -279,7 +284,12 @@
                   <td>{{ lot.get_status_display }}</td>
                   <td>{{ lot.location.code }}</td>
                   <td>{{ lot.batch.number }}</td>
-                  {% if show_costs %}<td>{{ lot.landed_unit_cost_rub|money_int }}</td>{% endif %}
+                  {% if show_costs %}
+                    <td>
+                      <span{% if lot.cost_label_hint %} title="{{ lot.cost_label_hint }}"{% endif %}>{{ lot.cost_label }}</span>:
+                      {{ lot.landed_unit_cost_rub|money_int }}
+                    </td>
+                  {% endif %}
                 </tr>
               {% endfor %}
             </tbody>

@@ -25,6 +25,7 @@ from apps.catalog.models import (
 )
 from apps.core.part_lookup import resolve_part_lookup
 from apps.core.search import search_parts
+from apps.counting.models import InventoryCountingLine, InventoryCountingSession
 from apps.inventory.models import StockBalance, StockMovement
 from apps.inventory.services import (
     create_part_items,
@@ -34,6 +35,8 @@ from apps.inventory.services import (
 )
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
+from apps.receipts.models import Receipt, ReceiptLine
+from apps.receipts.services import post_receipt
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 
@@ -233,8 +236,136 @@ def test_cost_visible_for_manager(make_user, client, data):
     make_user("boss", role=roles.MANAGER)
     client.login(username="boss", password=PASSWORD)
     html = client.get(reverse("part_search"), {"q": "Насос-Поиск"}).content.decode()
-    assert "Себестоимость" in html
+    assert "Стоимость партии" in html
     assert "120" in html
+
+
+def _post_receipt_lot(data, *, part, unit_cost, by, counting_price=None):
+    """Create a posted receipt whose source is normal or initial counting."""
+    supplier, _ = Supplier.objects.get_or_create(name="Поставщик теста")
+    receipt = Receipt.objects.create(supplier=supplier)
+    ReceiptLine.objects.create(
+        receipt=receipt,
+        part_type=part,
+        quantity=Decimal("1"),
+        unit_cost_rub=Decimal(unit_cost),
+        location=data["loc"],
+    )
+    if counting_price is not None:
+        session = InventoryCountingSession.objects.create(
+            storage_location=data["loc"],
+            full_address=data["loc"].code,
+            status=InventoryCountingSession.Status.POSTED,
+            converted_receipt=receipt,
+        )
+        InventoryCountingLine.objects.create(
+            session=session,
+            scanned_value="INITIAL-PRICE",
+            normalized_value="INITIALPRICE",
+            warehouse_part=part,
+            source=InventoryCountingLine.Source.WAREHOUSE,
+            quantity_counted=Decimal("1"),
+            final_customer_price_rub=Decimal(counting_price),
+        )
+    post_receipt(receipt, by=by)
+    return receipt.lines.get().batch_line.lots.get()
+
+
+def test_search_marks_counting_receipt_lot_as_old_price(make_user, client, data, admin):
+    data["bulk_cache"].recommended_price = Decimal("14919")
+    data["bulk_cache"].save(update_fields=["recommended_price"])
+    _post_receipt_lot(
+        data,
+        part=data["bulk_cache"],
+        unit_cost="14919",
+        by=admin,
+        counting_price="14919",
+    )
+    make_user("counting-manager", role=roles.MANAGER)
+    client.login(username="counting-manager", password=PASSWORD)
+
+    response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
+    html = response.content.decode()
+    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+
+    assert "Старая цена" in html
+    assert "14 919" in html
+    assert "Цена, зафиксированная при первоначальном вводе склада" in html
+    assert any(lot.cost_label == "Старая цена" for lot in shown_lots)
+    assert data["bulk_cache"].recommended_price == Decimal("14919")
+
+
+def test_search_keeps_purchase_cost_label_for_normal_receipt(make_user, client, data, admin):
+    lot = _post_receipt_lot(data, part=data["bulk_cache"], unit_cost="14919", by=admin)
+    make_user("receipt-manager", role=roles.MANAGER)
+    client.login(username="receipt-manager", password=PASSWORD)
+
+    response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
+    html = response.content.decode()
+    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+
+    assert lot.landed_unit_cost_rub == Decimal("14919.00")
+    assert next(shown for shown in shown_lots if shown.pk == lot.pk).cost_label == "Себестоимость"
+    assert "Себестоимость</span>:" in html
+    assert "Старая цена</span>:" not in html
+
+
+def test_search_uses_receipt_provenance_not_price_match(make_user, client, data, admin):
+    data["bulk_cache"].recommended_price = Decimal("14919")
+    data["bulk_cache"].save(update_fields=["recommended_price"])
+    lot = _post_receipt_lot(data, part=data["bulk_cache"], unit_cost="14919", by=admin)
+    make_user("price-match-manager", role=roles.MANAGER)
+    client.login(username="price-match-manager", password=PASSWORD)
+
+    response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
+    html = response.content.decode()
+    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+
+    assert lot.landed_unit_cost_rub == Decimal("14919.00")
+    assert next(shown for shown in shown_lots if shown.pk == lot.pk).cost_label == "Себестоимость"
+    assert "Себестоимость</span>:" in html
+    assert "Старая цена</span>:" not in html
+
+
+def test_search_labels_mixed_lot_provenance_independently(make_user, client, data, admin):
+    old_price_lot = _post_receipt_lot(
+        data,
+        part=data["bulk_cache"],
+        unit_cost="14919",
+        by=admin,
+        counting_price="14919",
+    )
+    purchase_lot = _post_receipt_lot(data, part=data["bulk_cache"], unit_cost="1000", by=admin)
+    make_user("mixed-manager", role=roles.MANAGER)
+    client.login(username="mixed-manager", password=PASSWORD)
+
+    response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
+    html = response.content.decode()
+    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+
+    assert old_price_lot.landed_unit_cost_rub == Decimal("14919.00")
+    assert purchase_lot.landed_unit_cost_rub == Decimal("1000.00")
+    assert next(shown for shown in shown_lots if shown.pk == old_price_lot.pk).cost_label == "Старая цена"
+    assert next(shown for shown in shown_lots if shown.pk == purchase_lot.pk).cost_label == "Себестоимость"
+    assert "Старая цена</span>:" in html
+    assert "Себестоимость</span>:" in html
+
+
+def test_search_hides_old_price_provenance_without_cost_permission(make_user, client, data, admin):
+    _post_receipt_lot(
+        data,
+        part=data["bulk_cache"],
+        unit_cost="14919",
+        by=admin,
+        counting_price="14919",
+    )
+    make_user("counting-storekeeper", role=roles.STOREKEEPER)
+    client.login(username="counting-storekeeper", password=PASSWORD)
+
+    html = client.get(reverse("part_search"), {"q": "Болт-Кэш"}).content.decode()
+
+    assert "Старая цена" not in html
+    assert "14 919" not in html
 
 
 def test_search_actions_open_canonical_quick_routes(make_user, client, data):

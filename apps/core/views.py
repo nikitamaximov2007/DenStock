@@ -46,6 +46,7 @@ from apps.inventory.services import (
     receive_stock_lot,
 )
 from apps.polaris.models import PolarisCatalogPart
+from apps.receipts.models import ReceiptLine
 from apps.reports.services import (
     get_low_stock_report,
     get_sales_report,
@@ -317,6 +318,7 @@ def search_page(request: HttpRequest) -> HttpResponse:
                 row.items = items_by_part.get(row.part.pk, [])
             else:
                 row.lots = lots_by_part.get(row.part.pk, [])
+        _attach_search_cost_labels(items_by_part, lots_by_part)
     # Catalog hints are reference data, not stock. If the same number exists in
     # several catalogs, show every catalog hit instead of silently choosing one.
     brp_hits = []
@@ -364,6 +366,47 @@ def search_page(request: HttpRequest) -> HttpResponse:
         "not_found_message": part_not_found_message(q),
     }
     return render(request, "core/search.html", ctx)
+
+
+def _attach_search_cost_labels(
+    items_by_part: dict[int, list], lots_by_part: dict[int, list]
+) -> None:
+    """Mark displayed historical values by their documented receipt provenance.
+
+    A receipt created from an inventory-counting session records the customer
+    value from the initial count, not a supplier purchase cost.  Other posted
+    receipt lines remain documented purchase-cost provenance.  Records without
+    a receipt-line relation are deliberately described without claiming either.
+    """
+    records = [
+        *[item for items in items_by_part.values() for item in items],
+        *[lot for lots in lots_by_part.values() for lot in lots],
+    ]
+    batch_line_ids = {record.batch_line_id for record in records}
+    if not batch_line_ids:
+        return
+
+    counting_batch_line_ids = set(
+        ReceiptLine.objects.filter(
+            batch_line_id__in=batch_line_ids,
+            receipt__counting_session__isnull=False,
+        ).values_list("batch_line_id", flat=True)
+    )
+    receipt_batch_line_ids = set(
+        ReceiptLine.objects.filter(batch_line_id__in=batch_line_ids).values_list(
+            "batch_line_id", flat=True
+        )
+    )
+    for record in records:
+        if record.batch_line_id in counting_batch_line_ids:
+            record.cost_label = "Старая цена"
+            record.cost_label_hint = "Цена, зафиксированная при первоначальном вводе склада"
+        elif record.batch_line_id in receipt_batch_line_ids:
+            record.cost_label = "Себестоимость"
+            record.cost_label_hint = ""
+        else:
+            record.cost_label = "Стоимость партии"
+            record.cost_label_hint = "Происхождение суммы не подтверждено документом поступления"
 
 
 # --- Слой 12: приёмка и размещение через сканер ------------------------------
