@@ -29,7 +29,9 @@
           новый текст: если название изменили, а галочка просто осталась с
           прошлого раза, сервер снимет подтверждение.
         {% endcomment %}
-        <input type="hidden" name="customs_name_ru_shown" value="{{ name_ru_value }}">
+        <input type="hidden"
+               name="customs_name_ru_shown"
+               value="{{ name_ru_value }}">
         {% if customs.customs_name_ru_confirmed %}
           <input type="hidden" name="customs_name_ru_confirmed_shown" value="1">
         {% endif %}
