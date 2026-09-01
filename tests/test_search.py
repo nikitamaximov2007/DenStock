@@ -136,6 +136,11 @@ def _row(rows, part):
     return next(r for r in rows if r.part.pk == part.pk)
 
 
+def _cost_label(shown_lots, lot):
+    """Метка происхождения суммы у конкретного показанного лота."""
+    return next(shown for shown in shown_lots if shown.pk == lot.pk).cost_label
+
+
 # --- Сопоставление запроса ---------------------------------------------------
 
 
@@ -286,7 +291,7 @@ def test_search_marks_counting_receipt_lot_as_old_price(make_user, client, data,
 
     response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
     html = response.content.decode()
-    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+    shown_lots = _row(response.context["rows"], data["bulk_cache"]).lots
 
     assert "Старая цена" in html
     assert "14 919" in html
@@ -302,10 +307,10 @@ def test_search_keeps_purchase_cost_label_for_normal_receipt(make_user, client, 
 
     response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
     html = response.content.decode()
-    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+    shown_lots = _row(response.context["rows"], data["bulk_cache"]).lots
 
     assert lot.landed_unit_cost_rub == Decimal("14919.00")
-    assert next(shown for shown in shown_lots if shown.pk == lot.pk).cost_label == "Себестоимость"
+    assert _cost_label(shown_lots, lot) == "Себестоимость"
     assert "Себестоимость</span>:" in html
     assert "Старая цена</span>:" not in html
 
@@ -319,10 +324,10 @@ def test_search_uses_receipt_provenance_not_price_match(make_user, client, data,
 
     response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
     html = response.content.decode()
-    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+    shown_lots = _row(response.context["rows"], data["bulk_cache"]).lots
 
     assert lot.landed_unit_cost_rub == Decimal("14919.00")
-    assert next(shown for shown in shown_lots if shown.pk == lot.pk).cost_label == "Себестоимость"
+    assert _cost_label(shown_lots, lot) == "Себестоимость"
     assert "Себестоимость</span>:" in html
     assert "Старая цена</span>:" not in html
 
@@ -341,12 +346,12 @@ def test_search_labels_mixed_lot_provenance_independently(make_user, client, dat
 
     response = client.get(reverse("part_search"), {"q": "Болт-Кэш"})
     html = response.content.decode()
-    shown_lots = next(row.lots for row in response.context["rows"] if row.part.pk == data["bulk_cache"].pk)
+    shown_lots = _row(response.context["rows"], data["bulk_cache"]).lots
 
     assert old_price_lot.landed_unit_cost_rub == Decimal("14919.00")
     assert purchase_lot.landed_unit_cost_rub == Decimal("1000.00")
-    assert next(shown for shown in shown_lots if shown.pk == old_price_lot.pk).cost_label == "Старая цена"
-    assert next(shown for shown in shown_lots if shown.pk == purchase_lot.pk).cost_label == "Себестоимость"
+    assert _cost_label(shown_lots, old_price_lot) == "Старая цена"
+    assert _cost_label(shown_lots, purchase_lot) == "Себестоимость"
     assert "Старая цена</span>:" in html
     assert "Себестоимость</span>:" in html
 
