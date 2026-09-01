@@ -80,6 +80,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Инвентаризация",
             "Быстрые действия",
             "Клиенты",
+            "Ремонты",
             "История",
         ],
         "reports": [
@@ -110,6 +111,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Инвентаризация",
                     "Быстрые действия",
                     "Клиенты",
+                    "Ремонты",
                     "История",
                 ],
                 "reports": [
@@ -129,7 +131,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                 # отчёт по тем же действиям показывался: экран существовал, а
                 # добраться до него мышью было нельзя. В разделе «Склад» роль видит
                 # только эту вкладку, остальные ограничены своими возможностями.
-                "warehouse": ["Быстрые действия", "Клиенты"],
+                "warehouse": ["Быстрые действия", "Клиенты", "Ремонты"],
                 "reports": ["Складские действия / Таможня"],
             },
         ),
@@ -435,15 +437,39 @@ def test_scanner_receiving_is_the_active_sidebar_entry_and_receipt_routes_remain
     assert client.get(reverse("receipt_create")).status_code == 200
 
 
-def test_repairs_are_removed_from_sidebar_without_removing_repair_or_return_routes(
+def test_repairs_section_is_gone_but_repairs_keep_one_entry_inside_the_warehouse_group(
     client,
     make_nav_user,
 ):
+    """Раздела «Ремонты» в меню нет, но сами ремонты остаются в одном клике.
+
+    Убрать раздел целиком значило бы оставить список ремонтов доступным только
+    по прямому адресу, а это для сотрудника то же самое, что его отсутствие
+    (см. tests/test_navigation_acceptance.py). Поэтому вместо раздела остаётся
+    ровно один пункт внутри «Склада», рядом с «Клиентами».
+    """
     _login(client, make_nav_user("repair-routes", superuser=True))
     html = _html(client, "dashboard")
+    groups = _sidebar_groups(html)
 
-    assert "repairs" not in _sidebar_groups(html)
-    assert "Ремонты" not in _sidebar_labels(html)
+    # Отдельной секции нет, отдельного пункта возвратов из ремонта тоже.
+    assert "repairs" not in groups
     assert "Возвраты из ремонта" not in _sidebar_labels(html)
+
+    # Ровно один пункт «Ремонты», и он внутри «Склада».
+    assert _sidebar_labels(html).count("Ремонты") == 1
+    assert "Ремонты" in groups["warehouse"]
+    assert f'href="{reverse("repair_order_list")}"' in _sidebar(html)
+
+    # Маршруты ремонта и возвратов из ремонта остались на месте.
     assert client.get(reverse("repair_order_list")).status_code == 200
     assert client.get(f"{reverse('return_list')}?source=repair").status_code == 200
+
+
+def test_repairs_sidebar_entry_is_active_on_a_repair_page(client, make_nav_user):
+    _login(client, make_nav_user("repair-active", superuser=True))
+    html = _html(client, "repair_order_list")
+    sidebar = " ".join(_sidebar(html).split())
+
+    assert f'href="{reverse("repair_order_list")}" aria-current="page"' in sidebar
+    assert 'data-nav-group="warehouse"' in sidebar

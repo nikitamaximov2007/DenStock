@@ -347,6 +347,22 @@ def _warehouse_tabs(user, path):
                 active=path.startswith("/sales/customers/"),
             )
         )
+    # Отдельного раздела «Ремонты» в меню больше нет, но сами ремонты остаются
+    # ежедневной работой кладовщика, мастера, руководителя и администратора.
+    # Один пункт здесь заменяет целый раздел: до этой группы доходят все роли,
+    # у которых есть право на ремонт, потому что она же открывает им «Клиентов»
+    # и «Быстрые действия». Без него ремонты остались бы доступны только по
+    # прямому адресу, а это для сотрудника то же самое, что их отсутствие.
+    if user.can_manage_repairs:
+        tabs.append(
+            _tab(
+                "Ремонты",
+                reverse("repair_order_list"),
+                sidebar_key="repairs",
+                icon="wrench",
+                active=path.startswith("/repairs/"),
+            )
+        )
     if user.can_manage_inventory or user.is_viewer:
         tabs.append(
             _tab(
@@ -617,7 +633,10 @@ def _sidebar_groups(request, section, user):
                 "Склад",
                 "warehouse",
                 _warehouse_tabs(user, path),
-                active=section in {"warehouse", "catalog"},
+                # «Ремонты» переехали в эту группу, поэтому страница ремонта
+                # тоже делает её активной: иначе пункт не подсвечивался бы
+                # никогда, а группа гасит подсветку своих пунктов сама.
+                active=section in {"warehouse", "catalog", "repairs"},
             )
             if _can_open_warehouse(user)
             else None
