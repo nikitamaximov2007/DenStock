@@ -348,11 +348,32 @@ def write_disposable_env(repo: Path, run_id: str) -> tuple[str, str]:
     return database, f"denstock-dr-{suffix}"
 
 
+def write_dr_compose_override(repo: Path) -> Path:
+    """Prevent the normal web entrypoint from migrating before DR restore.
+
+    The signed database owns its migration ledger.  Starting the regular
+    entrypoint against an empty database first would create schema objects and
+    make a subsequent restore collide with them.  This disposable override
+    starts gunicorn directly; migration state is compared explicitly after the
+    restore instead.
+    """
+    override = repo / "docker-compose.dr-drill.yml"
+    override.write_text(
+        "services:\n"
+        "  web:\n"
+        "    entrypoint: []\n"
+        "    command: [\"gunicorn\", \"config.wsgi:application\", \"--bind\", \"0.0.0.0:8000\", \"--workers\", \"3\", \"--timeout\", \"240\"]\n",
+        encoding="utf-8",
+    )
+    return override
+
+
 def restore_isolated_application(
     repo: Path, backup_dir: Path, candidate: Candidate
 ) -> dict[str, Any]:
     """Restore only into a new Docker Compose project with no DB port exposure."""
     database, project = write_disposable_env(repo, candidate.backup_id)
+    override = write_dr_compose_override(repo)
     repo_backup = repo / "backups" / candidate.backup_id
     repo_backup.mkdir(parents=True, exist_ok=True)
     for name in (
@@ -361,7 +382,16 @@ def restore_isolated_application(
         candidate.manifest["media_filename"],
     ):
         shutil.copy2(backup_dir / name, repo_backup / name)
-    compose = ["docker", "compose", "-p", project]
+    compose = [
+        "docker",
+        "compose",
+        "-p",
+        project,
+        "-f",
+        "docker-compose.yml",
+        "-f",
+        override.name,
+    ]
     run_checked([*compose, "up", "-d", "--build", "db", "web"], cwd=repo)
     run_checked(
         [
