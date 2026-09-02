@@ -471,13 +471,13 @@ def restore_isolated_application(
             "manage.py",
             "shell",
             "-c",
-            "from apps.parts.models import Part; "
-            "from apps.receipts.models import StockLot, Receipt; "
+            "from apps.inventory.models import PartItem, StockLot; "
+            "from apps.receipts.models import Receipt; "
             "from apps.customers.models import Customer; "
-            "from apps.repairs.models import Repair; "
-            "print({'parts': Part.objects.count(), 'lots': StockLot.objects.count(), "
+            "from apps.repairs.models import RepairOrder; "
+            "print({'parts': PartItem.objects.count(), 'lots': StockLot.objects.count(), "
             "'customers': Customer.objects.count(), 'receipts': Receipt.objects.count(), "
-            "'repairs': Repair.objects.count()})",
+            "'repairs': RepairOrder.objects.count()})",
         ],
         cwd=repo,
     )
