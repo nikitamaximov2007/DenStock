@@ -31,6 +31,10 @@ Store these outside the laptop, VPS, Git repository, and normal backup bucket:
 | VPS-provider recovery | Create a replacement server and recover IP access | Keep account recovery and billing contacts outside the VPS. |
 | Domain/DNS recovery, if a managed domain is introduced | Move traffic to the replacement server | Keep registrar and DNS account recovery separately. |
 
+The DR reader identity for Object Storage must have only `ListBucket` and
+`GetObject` equivalents for the backup bucket and prefix. It must not have
+create, overwrite, delete, lifecycle, retention, bucket-policy, or IAM rights.
+
 The current recovery kit must contain `production-signing-key.enc`, the public
 key fingerprint, and instructions only. It must never contain plaintext private
 keys, `.env`, database passwords, rclone configuration, or production dumps.
@@ -55,6 +59,20 @@ keys, `.env`, database passwords, rclone configuration, or production dumps.
 Public visibility is not a recovery control. Changing repository visibility,
 branch protection, or deleting branches requires a separate approved GitHub
 maintenance task.
+
+## Account recovery checklist
+
+Before declaring the kit independent, confirm without recording secret values:
+
+- GitHub: recovery codes, verified second factor, and repository access.
+- Yandex Object Storage: a separate read-only DR identity can list and download
+  the backup bucket, and account recovery is stored outside the VPS.
+- VPS provider: owner account, recovery contact, billing recovery, and access
+  to create a new VPS.
+- Password manager: emergency access and the signing-key passphrase location.
+- AI Support: either its separate account and launcher configuration are
+  recoverable, or the documented plan is to restore the core service with AI
+  disabled.
 
 ## Obtain and verify the latest signed backup
 
