@@ -341,7 +341,16 @@ def restore_isolated_application(
     compose = ["docker", "compose", "-p", project]
     run_checked([*compose, "up", "-d", "--build", "db", "web"], cwd=repo)
     run_checked(
-        [*compose, "exec", "-T", "web", "python", "manage.py", "verify_backup", candidate.backup_id],
+        [
+            *compose,
+            "exec",
+            "-T",
+            "web",
+            "python",
+            "manage.py",
+            "verify_backup",
+            candidate.backup_id,
+        ],
         cwd=repo,
     )
     db_dump = f"/app/backups/{candidate.backup_id}/{candidate.manifest['database_dump_filename']}"
