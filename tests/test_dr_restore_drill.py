@@ -9,6 +9,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -173,3 +174,32 @@ def test_hash_mismatch_is_detectable(tmp_path):
     payload = tmp_path / "payload"
     payload.write_bytes(b"unexpected")
     assert dr.sha256_file(payload) != dr.hashlib.sha256(b"expected").hexdigest()
+
+
+def test_s3_listing_uses_sigv4_sorted_query_and_empty_root_prefix(monkeypatch):
+    captured = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/" />'
+
+    def fake_urlopen(request, timeout):
+        captured.append(request.full_url)
+        return Response()
+
+    monkeypatch.setattr(dr.urllib.request, "urlopen", fake_urlopen)
+    store = dr.S3ReadOnlyStore("https://storage.yandexcloud.net", "bucket", "access", "secret", "ru-central1")
+    assert store.list_prefixes("") == []
+    query = urlsplit(captured[0]).query
+    assert query == "delimiter=%2F&list-type=2&prefix="
+    assert dict(parse_qsl(query, keep_blank_values=True)) == {
+        "delimiter": "/",
+        "list-type": "2",
+        "prefix": "",
+    }

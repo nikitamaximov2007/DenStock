@@ -244,10 +244,30 @@ class S3ReadOnlyStore:
         with urllib.request.urlopen(request, timeout=60) as response:
             return response.read()
 
+    @staticmethod
+    def _canonical_query(parameters: dict[str, str]) -> str:
+        """Encode and sort a query exactly as required by AWS SigV4.
+
+        The byte sequence signed here must be the byte sequence sent on the
+        wire.  In particular, ``urlencode`` preserves insertion order whereas
+        SigV4 requires encoded parameters sorted lexicographically.
+        """
+        encoded = [
+            (
+                urllib.parse.quote(str(name), safe="-_.~"),
+                urllib.parse.quote(str(value), safe="-_.~"),
+            )
+            for name, value in parameters.items()
+        ]
+        return "&".join(f"{name}={value}" for name, value in sorted(encoded))
+
     def list_prefixes(self, prefix: str) -> list[str]:
         # Backups are flat run directories, therefore one read-only object listing is enough.
-        query = urllib.parse.urlencode(
-            {"list-type": "2", "prefix": prefix.rstrip("/") + "/", "delimiter": "/"}
+        normalized_prefix = prefix.rstrip("/")
+        if normalized_prefix:
+            normalized_prefix += "/"
+        query = self._canonical_query(
+            {"list-type": "2", "prefix": normalized_prefix, "delimiter": "/"}
         )
         from xml.etree import ElementTree
 
@@ -255,7 +275,7 @@ class S3ReadOnlyStore:
         return [node.findtext("{*}Prefix") or "" for node in root.findall("{*}CommonPrefixes")]
 
     def list_objects(self, prefix: str) -> list[str]:
-        query = urllib.parse.urlencode({"list-type": "2", "prefix": prefix})
+        query = self._canonical_query({"list-type": "2", "prefix": prefix})
         from xml.etree import ElementTree
 
         root = ElementTree.fromstring(self._request("GET", query=query))
