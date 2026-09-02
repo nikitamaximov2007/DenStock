@@ -309,7 +309,10 @@ def fresh_clone(repo_url: str, commit: str, destination: Path) -> None:
 
 def run_checked(command: list[str], *, cwd: Path) -> str:
     """Run a local disposable-Docker command without including secrets in argv."""
-    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    except OSError as exc:
+        raise DrillError(f"Local DR command could not start ({command[0]}): {exc}") from exc
     if result.returncode:
         raise DrillError(f"Local DR command failed ({command[-1]}): {result.stderr.strip()}")
     return result.stdout.strip()

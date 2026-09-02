@@ -203,3 +203,12 @@ def test_s3_listing_uses_sigv4_sorted_query_and_empty_root_prefix(monkeypatch):
         "list-type": "2",
         "prefix": "",
     }
+
+
+def test_local_command_start_failure_is_reported_as_drill_error(tmp_path, monkeypatch):
+    def missing_command(*args, **kwargs):
+        raise FileNotFoundError("docker is unavailable")
+
+    monkeypatch.setattr(dr.subprocess, "run", missing_command)
+    with pytest.raises(dr.DrillError, match="could not start"):
+        dr.run_checked(["docker", "compose", "ps"], cwd=tmp_path)
