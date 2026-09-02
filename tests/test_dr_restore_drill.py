@@ -212,3 +212,10 @@ def test_local_command_start_failure_is_reported_as_drill_error(tmp_path, monkey
     monkeypatch.setattr(dr.subprocess, "run", missing_command)
     with pytest.raises(dr.DrillError, match="could not start"):
         dr.run_checked(["docker", "compose", "ps"], cwd=tmp_path)
+
+
+def test_dr_compose_override_bypasses_entrypoint_migrations(tmp_path):
+    override = dr.write_dr_compose_override(tmp_path)
+    content = override.read_text(encoding="utf-8")
+    assert "entrypoint: []" in content
+    assert '"gunicorn"' in content
