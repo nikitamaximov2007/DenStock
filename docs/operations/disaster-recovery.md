@@ -97,6 +97,95 @@ Before declaring the kit independent, confirm without recording secret values:
 
 Never use the production private signing key merely to verify a backup.
 
+## One-credential offsite drill
+
+The repository includes `scripts/operations/dr_restore_drill.py`. It uses the
+S3 API directly and implements only `LIST`, `GET`, and `HEAD`-equivalent read
+requests. It has no upload, overwrite, delete, sync, or move code path.
+
+On a new recovery machine, place the independently stored public key at a
+trusted path and expose the **read-only** Object Storage credential only for
+the current shell. Do not put either value in Git, `.env`, a command line, or a
+terminal transcript:
+
+```bash
+export DENSTOCK_DR_S3_ACCESS_KEY='...'
+export DENSTOCK_DR_S3_SECRET_KEY='...'
+python scripts/operations/dr_restore_drill.py \
+  --bucket denstock-backups-nikita \
+  --endpoint https://storage.yandexcloud.net \
+  --work-dir /srv/denstock-dr-drill \
+  --public-key /secure/kit/production-ed25519.pub
+```
+
+The preflight lists candidate runs newest first, downloads only each
+`manifest.json`, verifies its Ed25519 signature and pinned public-key
+fingerprint, requires production source metadata and all payload names, and
+skips an incomplete or invalid newer run. Only after selecting a verified run
+does `--execute` download `db.dump` and `media.tar.gz`, verify their SHA-256
+hashes, and fresh-clone/check out the manifest's exact commit. It never falls
+back to `main`.
+
+`--execute` is intentionally required for any local write. Its work directory
+must be empty or already contain the `.denstock-dr-drill` marker; paths that
+resemble `/opt/denstock` and known production hosts are refused. Inspect the
+generated `dr-report.json` before starting the documented isolated Docker
+restore below. Keep the directory only with `--keep-workdir` when collecting
+incident evidence.
+
+### Create the read-only Yandex identity
+
+An account owner must create this identity; the drill operator must not reuse
+the production uploader credential.
+
+1. In Yandex Cloud Console, create a dedicated service account named for DR
+   reading, not for backup writing.
+2. Give it the narrowest Object Storage role that permits listing the
+   `denstock-backups-nikita` bucket and reading its objects. If the Console
+   cannot scope that role to one bucket, document that platform limitation and
+   grant no permissions outside Object Storage read access.
+3. Create a static access key for that service account. Store its access key
+   and secret only in the password manager or recovery environment; never in
+   the recovery kit, repository, `.env`, or chat.
+4. Do not grant editor/admin, upload, delete, lifecycle, retention, bucket
+   policy, IAM, or key-management permissions. A non-destructive proof is the
+   successful drill listing/download; do not test forbidden permissions by
+   attempting a PUT or DELETE.
+5. On the recovery host, set the two environment variables shown above for one
+   shell and run the preflight first. Run again with `--execute` only after the
+   report selects a verified production backup.
+
+### Isolated Docker restore after `--execute`
+
+With `--execute`, the driver downloads only the selected payload, verifies its
+hashes, fresh-clones the signed commit, creates a new throwaway `.env`, and
+starts only `db` and `web` in a Compose project beginning `denstock-dr-`. The
+database is named `denstock_dr_<run-id>`, has no published PostgreSQL port,
+and optional AI/proxy services are not started. It restores DB and media using
+the existing management commands, runs `showmigrations`, `check`, `/healthz`,
+and aggregate read-only counts, then writes `dr-report.json`.
+
+The following is the equivalent canonical sequence for incident diagnosis or
+when a Docker error needs to be repeated manually:
+
+```bash
+docker compose -p denstock-dr-<run-id> up -d --build db web
+docker compose -p denstock-dr-<run-id> exec web \
+  python manage.py restore_db /app/backups/<run-id>/db.dump --yes
+docker compose -p denstock-dr-<run-id> exec web \
+  python manage.py restore_media /app/backups/<run-id>/media.tar.gz --yes
+docker compose -p denstock-dr-<run-id> exec web python manage.py showmigrations
+docker compose -p denstock-dr-<run-id> exec web python manage.py check
+docker compose -p denstock-dr-<run-id> exec web python manage.py ops_check
+```
+
+Do not run migrations automatically: compare `showmigrations` with the signed
+manifest first. Then use read-only HTTP GETs for `/healthz/`, login, search,
+reports, receipts, repairs, and Customs. Record only aggregate counts for
+parts, lots, customers, receipts, and repairs. No login that updates
+`last_login`, no business documents, and no production service is part of a
+drill.
+
 ## Provision a new VPS
 
 1. Create a new Ubuntu 24.04 VPS with Docker Engine, Docker Compose, Git, and
