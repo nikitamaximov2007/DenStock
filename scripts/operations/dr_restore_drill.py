@@ -318,7 +318,7 @@ def run_checked(command: list[str], *, cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def write_disposable_env(repo: Path, run_id: str) -> tuple[str, str]:
+def write_disposable_env(repo: Path, run_id: str, app_commit: str) -> tuple[str, str]:
     """Create a throwaway compose environment inside the fresh disposable clone."""
     suffix = re.sub(r"[^a-z0-9]", "", run_id.lower())[:12]
     database = f"denstock_dr_{suffix}"
@@ -337,7 +337,7 @@ def write_disposable_env(repo: Path, run_id: str) -> tuple[str, str]:
         "DENSTOCK_MODE": "production",
         "DENSTOCK_PRODUCTION_DB_HOSTS": "db",
         "DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS": "emergency-db",
-        "DENSTOCK_APP_COMMIT": "",
+        "DENSTOCK_APP_COMMIT": app_commit,
         "AI_SUPPORT_ENABLED": "false",
         "AI_SUPPORT_PROVIDER": "disabled",
         "AI_SUPPORT_CODEX_LAUNCH_MODE": "disabled",
@@ -372,7 +372,9 @@ def restore_isolated_application(
     repo: Path, backup_dir: Path, candidate: Candidate
 ) -> dict[str, Any]:
     """Restore only into a new Docker Compose project with no DB port exposure."""
-    database, project = write_disposable_env(repo, candidate.backup_id)
+    database, project = write_disposable_env(
+        repo, candidate.backup_id, candidate.manifest["app_commit"]
+    )
     override = write_dr_compose_override(repo)
     repo_backup = repo / "backups" / candidate.backup_id
     repo_backup.mkdir(parents=True, exist_ok=True)

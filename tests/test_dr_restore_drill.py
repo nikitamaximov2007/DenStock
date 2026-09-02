@@ -219,3 +219,8 @@ def test_dr_compose_override_bypasses_entrypoint_migrations(tmp_path):
     content = override.read_text(encoding="utf-8")
     assert "entrypoint: []" in content
     assert '"gunicorn"' in content
+
+
+def test_disposable_env_sets_the_signed_application_commit(tmp_path):
+    dr.write_disposable_env(tmp_path, "2026-09-02_03-00-47", "a" * 40)
+    assert f"DENSTOCK_APP_COMMIT={'a' * 40}" in (tmp_path / ".env").read_text(encoding="utf-8")
