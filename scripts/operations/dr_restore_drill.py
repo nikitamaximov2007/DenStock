@@ -363,6 +363,30 @@ def restore_isolated_application(
         [*compose, "exec", "-T", "web", "python", "manage.py", "restore_media", media, "--yes"],
         cwd=repo,
     )
+    applied_json = run_checked(
+        [
+            *compose,
+            "exec",
+            "-T",
+            "web",
+            "python",
+            "manage.py",
+            "shell",
+            "-c",
+            "from django.db.migrations.recorder import MigrationRecorder; import json; "
+            "print(json.dumps(sorted([list(row) for row in "
+            "MigrationRecorder.Migration.objects.values_list('app', 'name')])))",
+        ],
+        cwd=repo,
+    )
+    try:
+        applied = json.loads(applied_json.splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise DrillError("Could not read restored migration state.") from exc
+    if applied != sorted(candidate.manifest["migration_state"]):
+        raise DrillError(
+            "Restored migration state differs from signed manifest; no migrate was run."
+        )
     migration_state = run_checked(
         [*compose, "exec", "-T", "web", "python", "manage.py", "showmigrations"], cwd=repo
     )
@@ -408,6 +432,7 @@ def restore_isolated_application(
         "database_restore_status": "PASS",
         "media_restore_status": "PASS",
         "migration_state": migration_state,
+        "migration_state_matches_manifest": "PASS",
         "health_status": "PASS",
         "smoke_counts": counts,
         "docker_db_port_published": "NO",
