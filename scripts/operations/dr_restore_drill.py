@@ -574,7 +574,7 @@ def main(argv: list[str] | None = None) -> int:
         write_report(args.work_dir, report)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
-    except DrillError as exc:
+    except (DrillError, OSError) as exc:
         report["error"] = str(exc)
         if args.work_dir.exists() and (args.work_dir / ".denstock-dr-drill").is_file():
             write_report(args.work_dir, report)
