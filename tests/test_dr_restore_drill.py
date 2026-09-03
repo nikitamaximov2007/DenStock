@@ -194,7 +194,9 @@ def test_s3_listing_uses_sigv4_sorted_query_and_empty_root_prefix(monkeypatch):
         return Response()
 
     monkeypatch.setattr(dr.urllib.request, "urlopen", fake_urlopen)
-    store = dr.S3ReadOnlyStore("https://storage.yandexcloud.net", "bucket", "access", "secret", "ru-central1")
+    store = dr.S3ReadOnlyStore(
+        "https://storage.yandexcloud.net", "bucket", "access", "secret", "ru-central1"
+    )
     assert store.list_prefixes("") == []
     query = urlsplit(captured[0]).query
     assert query == "delimiter=%2F&list-type=2&prefix="
