@@ -362,7 +362,8 @@ def write_dr_compose_override(repo: Path) -> Path:
         "services:\n"
         "  web:\n"
         "    entrypoint: []\n"
-        '    command: ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "240"]\n',
+        '    command: ["gunicorn", "config.wsgi:application", "--bind",\n'
+        '      "0.0.0.0:8000", "--workers", "3", "--timeout", "240"]\n',
         encoding="utf-8",
     )
     return override
