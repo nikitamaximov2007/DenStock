@@ -47,9 +47,12 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\bootstrap-new-machine.ps1
 ```
 
-The script checks Git and Python, creates `.venv`, installs the project with
-development tools, generates `.env` only when absent, applies local SQLite
-migrations, and runs Django checks. It never elevates privileges or modifies
+The script checks Git and Python, creates `.venv`, installs the pinned
+development dependencies from `requirements/dev.txt` and then the project
+itself, generates `.env` only when absent, applies local SQLite migrations,
+and runs Django checks. The pins matter: release qualification runs on those
+exact versions, and a floating `djlint` reports formatting differences that
+the qualified version does not. It never elevates privileges or modifies
 Windows security policy persistently.
 
 ## Safe local configuration

@@ -87,8 +87,12 @@ if (-not (Test-Path -LiteralPath $envFile)) {
 }
 
 if (-not $SkipInstall) {
+    # Ставим закреплённые версии, а не диапазоны из pyproject: именно на них
+    # проходит квалификация выпуска. С плавающими версиями новый ноутбук
+    # получает другой djlint и видит расхождения там, где их нет.
     & $venvPython -m pip install --upgrade pip
-    & $venvPython -m pip install -e ".[dev]"
+    & $venvPython -m pip install --requirement (Join-Path $ProjectRoot "requirements\dev.txt")
+    & $venvPython -m pip install --no-deps -e $ProjectRoot
 }
 if (-not $SkipMigrate) {
     & $venvPython manage.py migrate --noinput
