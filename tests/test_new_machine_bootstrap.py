@@ -18,6 +18,7 @@ def test_bootstrap_script_generates_development_only_configuration():
     assert "DENSTOCK_MODE=development" in content
     assert "DATABASE_URL" not in content
     assert "token_urlsafe(48)" in content
+    assert "UTF8Encoding($false)" in content
 
 
 def test_bootstrap_script_refuses_unsafe_and_missing_prerequisites():

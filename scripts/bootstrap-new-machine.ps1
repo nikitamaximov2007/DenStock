@@ -66,7 +66,7 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 $envFile = Join-Path $ProjectRoot ".env"
 if (-not (Test-Path -LiteralPath $envFile)) {
     $secret = & $venvPython -c "import secrets; print(secrets.token_urlsafe(48))"
-    @(
+    $localConfiguration = @(
         "DJANGO_SETTINGS_MODULE=config.settings.dev"
         "DJANGO_SECRET_KEY=$secret"
         "DJANGO_DEBUG=true"
@@ -76,7 +76,12 @@ if (-not (Test-Path -LiteralPath $envFile)) {
         "AI_SUPPORT_ENABLED=false"
         "AI_SUPPORT_PROVIDER=disabled"
         "AI_SUPPORT_CODEX_LAUNCH_MODE=disabled"
-    ) | Set-Content -LiteralPath $envFile -Encoding utf8
+    )
+    [System.IO.File]::WriteAllLines(
+        $envFile,
+        $localConfiguration,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
 } else {
     Write-Host ".env already exists; preserving it without reading or changing it."
 }
