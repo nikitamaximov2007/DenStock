@@ -16,6 +16,11 @@ dependencies, and operation documentation.
 Production `.env`, database dumps, media, Yandex credentials, SSH keys,
 signing private keys, real customer data, and backups.
 
+Docker definitions include `docker-compose.signing.yml`, the overlay that mounts
+the production signing directory. The overlay is tracked because it holds no key
+material. The directory it mounts, `/etc/denstock/manifest-signing`, is a
+production runtime asset and stays outside Git. Development needs neither.
+
 ## Required software
 
 Development requires Git and Python 3.12 or later. Docker Desktop is optional

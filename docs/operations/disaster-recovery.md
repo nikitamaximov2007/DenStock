@@ -230,6 +230,41 @@ material out of Git, backups, logs, chat, and workstations. Verify its public
 fingerprint before use. After recovery, create a fresh signed backup. Plan a
 separate, approved key rotation if the old host compromise is suspected.
 
+## Signing compose overlay
+
+The mount that exposes the signing directory to the `web` service is tracked as
+`docker-compose.signing.yml`. It holds no key material: it is a comment block
+and one read-only bind mount of `/etc/denstock/manifest-signing`. Rebuilding it
+by hand on a replacement host is therefore unnecessary, and forgetting it is no
+longer possible.
+
+What stays outside Git is the directory it mounts. On the replacement host
+create `/etc/denstock/manifest-signing`, place the recovered key material in it,
+and keep it readable only by root and the container group. The paths and key id
+themselves come from `.env`:
+
+```
+DENSTOCK_MANIFEST_SIGNING_KEY_PATH=/etc/denstock/manifest-signing/production-ed25519.key
+DENSTOCK_MANIFEST_PUBLIC_KEY_PATH=/etc/denstock/manifest-signing/production-ed25519.pub
+DENSTOCK_MANIFEST_SIGNING_KEY_ID=production-1
+```
+
+The overlay only takes effect when `.env` lists it, because Docker Compose reads
+`COMPOSE_FILE` from there:
+
+```
+COMPOSE_FILE=docker-compose.yml:deploy/ai-support/docker-compose.external.yml:docker-compose.signing.yml
+```
+
+Drop the AI Support entry if that service is not being recovered. Without the
+signing entry the container starts and serves, but backups are produced without
+a signature, so check `COMPOSE_FILE` before treating a new host as finished.
+
+On a host that already carries an untracked copy of this file, git refuses to
+check out a commit that would overwrite it. The tracked copy is byte-identical
+to the one production ran on 2026-09-02, so on that host the untracked file can
+simply be removed once and restored by the checkout.
+
 ## Verify production
 
 Before routing users to the new VPS, confirm:
