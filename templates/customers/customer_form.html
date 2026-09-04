@@ -49,4 +49,31 @@
       </form>
     </div>
   </div>
+  {% if not customer %}
+    <script>
+      (() => {
+        const phone = document.getElementById("{{ form.phone.id_for_label }}");
+        const prefix = "+7 9";
+        if (!phone) return;
+
+        phone.addEventListener("focus", () => {
+          if (phone.value !== "") return;
+          phone.value = prefix;
+          phone.setSelectionRange(prefix.length, prefix.length);
+        });
+
+        phone.addEventListener("paste", (event) => {
+          const pasted = event.clipboardData?.getData("text")?.trim() || "";
+          if (phone.value === prefix && pasted.replace(/\D/g, "").length >= 10) {
+            event.preventDefault();
+            phone.value = pasted;
+          }
+        });
+
+        phone.addEventListener("blur", () => {
+          if (phone.value === prefix) phone.value = "";
+        });
+      })();
+    </script>
+  {% endif %}
 {% endblock %}

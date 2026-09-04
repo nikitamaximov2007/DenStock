@@ -25,6 +25,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.core.phones import normalize_phone
+from apps.customers.forms import CustomerForm
 from apps.customers.models import Customer, CustomerPeriodPaymentAcknowledgement
 from apps.customers.services import customer_snapshot, search_customers
 from apps.repairs.models import RepairOrder
@@ -217,6 +218,21 @@ def test_two_customers_may_share_a_phone(db):
     assert first.phone_normalized == second.phone_normalized
 
 
+@pytest.mark.parametrize("phone", ["+7 912 123-45-67", "8 912 123 45 67", "89121234567"])
+def test_customer_form_keeps_supported_phone_formats(db, phone):
+    form = CustomerForm({"name": "Иванов", "phone": phone, "comment": ""})
+    assert form.is_valid(), form.errors
+    customer = form.save()
+    assert customer.phone == phone
+    assert customer.phone_normalized == "79121234567"
+
+
+def test_customer_form_keeps_phone_optional(db):
+    form = CustomerForm({"name": "Иванов", "phone": "", "comment": ""})
+    assert form.is_valid(), form.errors
+    assert form.save().phone == ""
+
+
 def test_two_customers_may_share_a_name(db):
     """Тёзки: одинаковое имя не делает клиентов одним человеком."""
     first = Customer.objects.create(name="Иван Иванов")
@@ -400,6 +416,17 @@ def test_customer_can_be_created_and_edited_through_ui(client, make_user, db):
     assert customer.name == "Иванов Иван"
     assert customer.phone == ""
     assert customer.phone_normalized == ""
+
+
+def test_new_customer_phone_prefix_enhancement_is_create_only(client, make_user, db):
+    _login(client, make_user)
+    create_html = client.get(reverse("customer_create")).content.decode()
+    assert 'const prefix = "+7 9"' in create_html
+    assert "phone.setSelectionRange(prefix.length, prefix.length)" in create_html
+    assert "phone.value === prefix" in create_html
+    customer = Customer.objects.create(name="Иванов")
+    edit_html = client.get(reverse("customer_edit", args=[customer.pk])).content.decode()
+    assert 'const prefix = "+7 9"' not in edit_html
 
 
 def test_customer_create_returns_to_local_operator_flow_with_selected_card(client, make_user, db):
