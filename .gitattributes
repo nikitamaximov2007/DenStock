@@ -30,3 +30,8 @@ deploy/ai-support/tmpfiles.d/*.conf text eol=lf
 #
 # Если когда-нибудь захочется добавить сюда общее правило вида "* text=auto",
 # сначала проверьте, что метка UTF-8 у всех .ps1 осталась на месте.
+
+# Резервное копирование: файлы читает и исполняет Linux на production.
+deploy/backup/bin/denstock-backup-capped text eol=lf
+deploy/backup/systemd/*.service text eol=lf
+deploy/backup/systemd/*.timer text eol=lf

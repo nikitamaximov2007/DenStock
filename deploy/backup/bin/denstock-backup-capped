@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="/opt/denstock"
+LOCK_FILE="/run/lock/denstock-backup.lock"
+
+cd "$PROJECT_ROOT"
+
+exec 9>"$LOCK_FILE"
+
+if ! flock -n 9; then
+    echo "[denstock-backup] Другой процесс резервного копирования уже запущен"
+    exit 75
+fi
+
+log() {
+    echo "[$(date -Is)] [denstock-backup] $*"
+}
+
+BACKUP_KEEP_LAST=14
+BACKUP_OFFSITE_ENABLED=false
+BACKUP_OFFSITE_METHOD=rclone
+BACKUP_OFFSITE_TARGET=""
+BACKUP_STATUS_FILE="backups/offsite_status.json"
+BACKUP_WEB_SERVICE="web"
+
+# 800 МиБ. Жёсткий лимит бакета отдельно установлен на 0,9 ГБ (921,6 МБ).
+# Считается ВЕСЬ объём бакета, включая неактуальные версии, поэтому
+# remote_size_bytes спрашивает размер с --s3-versions: без этого мягкий лимит
+# не видит места, занятого уже удалёнными объектами.
+BACKUP_REMOTE_SOFT_LIMIT_BYTES=838860800
+
+if [ -f .env.backup ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . ./.env.backup
+    set +a
+fi
+
+STATUS_FILE="${BACKUP_STATUS_FILE:-backups/offsite_status.json}"
+RUN_ID=""
+RUN_PATH=""
+
+mkdir -p "$(dirname "$STATUS_FILE")"
+
+write_status() {
+    local status="$1"
+    local message="$2"
+    local uploaded_run="${3:-}"
+    local exit_code="${4:-0}"
+
+    STATUS_FILE_VALUE="$STATUS_FILE" \
+    RUN_ID_VALUE="$RUN_ID" \
+    RUN_PATH_VALUE="$RUN_PATH" \
+    OFFSITE_ENABLED_VALUE="$BACKUP_OFFSITE_ENABLED" \
+    METHOD_VALUE="$BACKUP_OFFSITE_METHOD" \
+    TARGET_VALUE="$BACKUP_OFFSITE_TARGET" \
+    STATUS_VALUE="$status" \
+    MESSAGE_VALUE="$message" \
+    UPLOADED_RUN_VALUE="$uploaded_run" \
+    EXIT_CODE_VALUE="$exit_code" \
+    python3 - <<'PY'
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(os.environ["STATUS_FILE_VALUE"])
+
+payload = {
+    "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "local_backup_run": os.environ["RUN_ID_VALUE"],
+    "local_backup_path": os.environ["RUN_PATH_VALUE"],
+    "offsite_enabled": os.environ["OFFSITE_ENABLED_VALUE"].lower() == "true",
+    "method": os.environ["METHOD_VALUE"],
+    "target": os.environ["TARGET_VALUE"],
+    "status": os.environ["STATUS_VALUE"],
+    "message": os.environ["MESSAGE_VALUE"],
+    "uploaded_run": os.environ["UPLOADED_RUN_VALUE"],
+    "exit_code": int(os.environ["EXIT_CODE_VALUE"]),
+}
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(
+    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+json_bytes() {
+    python3 -c '
+import json
+import sys
+print(int(json.load(sys.stdin).get("bytes", 0)))
+'
+}
+
+remote_size_bytes() {
+    # --s3-versions обязателен: у бакета включено версионирование, и удалённые
+    # объекты продолжают занимать место неактуальными версиями. Без этого флага
+    # скрипт видел 810 МиБ там, где бакет держал 926 МиБ, и упирался в предел.
+    rclone size --s3-versions "$BACKUP_OFFSITE_TARGET" --json |
+        json_bytes
+}
+
+purge_run_with_versions() {
+    # rclone purge на версионированном бакете только ставит delete-marker:
+    # место не освобождается. Место освобождает cleanup-hidden, который удаляет
+    # неактуальные версии, то есть ровно то, что уже помечено удалённым.
+    local run="$1"
+    rclone purge "${BACKUP_OFFSITE_TARGET}/${run}" || return 1
+    rclone backend cleanup-hidden "$BACKUP_OFFSITE_TARGET" || return 1
+}
+
+remote_runs() {
+    rclone lsf "$BACKUP_OFFSITE_TARGET" --dirs-only --max-depth 1 |
+        sed 's#/$##' |
+        grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$' |
+        LC_ALL=C sort
+}
+
+runs_to_expire() {
+    # Правило хранения: всё моложе суток; по одной самой свежей за каждый из
+    # предыдущих шести дней; по одной самой свежей за каждую более раннюю
+    # неделю. Печатает поколения, которые правилу не нужны.
+    remote_runs | python3 -c '
+import sys
+from datetime import datetime, timedelta, timezone
+
+now = datetime.now(timezone.utc)
+runs = []
+for line in sys.stdin:
+    run = line.strip()
+    if not run:
+        continue
+    started = datetime.strptime(run, "%Y-%m-%d_%H-%M-%S").replace(tzinfo=timezone.utc)
+    runs.append((started, run))
+runs.sort(reverse=True)
+
+keep = {run for started, run in runs if now - started <= timedelta(hours=24)}
+for day_back in range(1, 7):
+    day = (now - timedelta(days=day_back)).date()
+    same_day = [r for r in runs if r[0].date() == day]
+    if same_day:
+        keep.add(same_day[0][1])
+seen_weeks = set()
+for started, run in runs:
+    if now - started <= timedelta(days=7):
+        continue
+    week = started.isocalendar()[:2]
+    if week not in seen_weeks:
+        seen_weeks.add(week)
+        keep.add(run)
+
+for _, run in reversed(runs):
+    if run not in keep:
+        print(run)
+'
+}
+
+local_run_size_bytes() {
+    find "$RUN_PATH" -type f -printf '%s\n' |
+        awk '{total += $1} END {print total + 0}'
+}
+
+fail() {
+    local message="$1"
+    local code="${2:-1}"
+
+    write_status "failed" "$message" "" "$code"
+    log "ОШИБКА: $message"
+    exit "$code"
+}
+
+log "Создаю локальный automatic-бэкап, keep-last=${BACKUP_KEEP_LAST}"
+
+docker compose exec -T "$BACKUP_WEB_SERVICE" \
+    python manage.py backup_all \
+        --trigger automatic \
+        --keep-last "$BACKUP_KEEP_LAST"
+
+RUN_PATH="$(
+    find backups \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        -printf '%f\n' |
+    LC_ALL=C sort |
+    tail -1
+)"
+
+if [ -z "$RUN_PATH" ]; then
+    fail "Не найден созданный локальный бэкап"
+fi
+
+RUN_ID="$RUN_PATH"
+RUN_PATH="backups/$RUN_ID"
+
+test -f "$RUN_PATH/manifest.json" ||
+    fail "В бэкапе $RUN_ID отсутствует manifest.json"
+
+log "Создан локальный бэкап $RUN_ID"
+
+if [ "$BACKUP_OFFSITE_ENABLED" != "true" ]; then
+    write_status \
+        "not_configured" \
+        "Offsite отключён" \
+        "" \
+        0
+
+    log "Offsite отключён"
+    exit 0
+fi
+
+[ "$BACKUP_OFFSITE_METHOD" = "rclone" ] ||
+    fail "Неподдерживаемый метод $BACKUP_OFFSITE_METHOD"
+
+[ -n "$BACKUP_OFFSITE_TARGET" ] ||
+    fail "BACKUP_OFFSITE_TARGET не задан"
+
+command -v rclone >/dev/null 2>&1 ||
+    fail "rclone не установлен"
+
+RUN_BYTES="$(local_run_size_bytes)"
+SOFT_LIMIT="$BACKUP_REMOTE_SOFT_LIMIT_BYTES"
+
+log "Размер новой копии: $RUN_BYTES байт"
+log "Мягкий лимит Object Storage: $SOFT_LIMIT байт"
+
+if [ "$RUN_BYTES" -gt "$SOFT_LIMIT" ]; then
+    fail "Один бэкап размером $RUN_BYTES байт превышает мягкий лимит $SOFT_LIMIT"
+fi
+
+DELETED_RUNS=""
+
+# Сначала убираем поколения, которые правилу хранения не нужны по возрасту.
+# Раньше прополка запускалась только при нехватке места, и бакет тихо
+# заполнялся до отказа.
+for EXPIRED_RUN in $(runs_to_expire); do
+    log "Правило хранения: удаляю $EXPIRED_RUN"
+    if purge_run_with_versions "$EXPIRED_RUN"; then
+        if [ -z "$DELETED_RUNS" ]; then
+            DELETED_RUNS="$EXPIRED_RUN"
+        else
+            DELETED_RUNS="${DELETED_RUNS},${EXPIRED_RUN}"
+        fi
+    fi
+done
+
+REMOTE_BYTES="$(remote_size_bytes)"
+
+log "Текущий размер Object Storage: $REMOTE_BYTES байт"
+
+while [ $((REMOTE_BYTES + RUN_BYTES)) -gt "$SOFT_LIMIT" ]; do
+    mapfile -t REMOTE_RUNS < <(
+        rclone lsf \
+            "$BACKUP_OFFSITE_TARGET" \
+            --dirs-only \
+            --max-depth 1 |
+        sed 's#/$##' |
+        grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$' |
+        LC_ALL=C sort
+    )
+
+    if [ "${#REMOTE_RUNS[@]}" -le 1 ]; then
+        fail \
+            "Недостаточно места: последняя успешная удалённая копия будет сохранена, загрузка отменена"
+    fi
+
+    OLDEST_RUN="${REMOTE_RUNS[0]}"
+    BEFORE_DELETE="$REMOTE_BYTES"
+
+    log "Удаляю самый старый удалённый бэкап: $OLDEST_RUN"
+
+    purge_run_with_versions "$OLDEST_RUN"
+
+    REMOTE_BYTES="$(remote_size_bytes)"
+
+    if [ "$REMOTE_BYTES" -ge "$BEFORE_DELETE" ]; then
+        fail \
+            "Размер хранилища не уменьшился после удаления $OLDEST_RUN; проверь версионирование бакета"
+    fi
+
+    if [ -z "$DELETED_RUNS" ]; then
+        DELETED_RUNS="$OLDEST_RUN"
+    else
+        DELETED_RUNS="${DELETED_RUNS},${OLDEST_RUN}"
+    fi
+
+    log "Новый размер Object Storage: $REMOTE_BYTES байт"
+done
+
+DEST="${BACKUP_OFFSITE_TARGET}/${RUN_ID}"
+
+log "Загружаю $RUN_ID в $DEST"
+
+if ! rclone copy "$RUN_PATH" "$DEST"; then
+    fail "rclone copy завершился с ошибкой"
+fi
+
+LOCAL_COUNT="$(
+    find "$RUN_PATH" -type f |
+        wc -l
+)"
+
+REMOTE_RESULT="$(
+    rclone size "$DEST" --json
+)"
+
+REMOTE_RUN_BYTES="$(
+    printf '%s' "$REMOTE_RESULT" |
+        json_bytes
+)"
+
+REMOTE_COUNT="$(
+    printf '%s' "$REMOTE_RESULT" |
+        python3 -c '
+import json
+import sys
+print(int(json.load(sys.stdin).get("count", 0)))
+'
+)"
+
+if [ "$REMOTE_RUN_BYTES" -ne "$RUN_BYTES" ]; then
+    fail \
+        "Размер загруженной копии не совпал: local=$RUN_BYTES remote=$REMOTE_RUN_BYTES"
+fi
+
+if [ "$REMOTE_COUNT" -ne "$LOCAL_COUNT" ]; then
+    fail \
+        "Количество файлов не совпало: local=$LOCAL_COUNT remote=$REMOTE_COUNT"
+fi
+
+FINAL_REMOTE_BYTES="$(remote_size_bytes)"
+
+if [ "$FINAL_REMOTE_BYTES" -gt "$SOFT_LIMIT" ]; then
+    fail \
+        "После загрузки размер $FINAL_REMOTE_BYTES превысил мягкий лимит $SOFT_LIMIT"
+fi
+
+MESSAGE="Отправлено в offsite; размер хранилища ${FINAL_REMOTE_BYTES} байт"
+
+if [ -n "$DELETED_RUNS" ]; then
+    MESSAGE="${MESSAGE}; удалены старые копии: ${DELETED_RUNS}"
+fi
+
+write_status \
+    "ok" \
+    "$MESSAGE" \
+    "$RUN_ID" \
+    0
+
+log "Offsite OK"
+log "Итоговый размер Object Storage: $FINAL_REMOTE_BYTES байт"

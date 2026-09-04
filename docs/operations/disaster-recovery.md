@@ -265,6 +265,30 @@ check out a commit that would overwrite it. The tracked copy is byte-identical
 to the one production ran on 2026-09-02, so on that host the untracked file can
 simply be removed once and restored by the checkout.
 
+## Restore the nightly backup
+
+A replacement host is not finished when it serves the warehouse: it also has to
+resume producing signed offsite copies, otherwise the next disaster has nothing
+to recover from. The script and both systemd units are tracked under
+`deploy/backup/`, captured byte for byte from the running server, and
+`deploy/backup/README.md` carries the install commands, the ownership and modes,
+and the verification steps.
+
+Install them only after `/opt/denstock` is deployed and the containers are up.
+Enable the timer only after `/opt/denstock/.env.backup` exists and the rclone
+remote is configured; the unit carries `ConditionPathExists` for that file, so
+without it systemd silently skips the run instead of failing loudly.
+
+Enabling the timer does not take a backup. The first one happens at 03:00
+Moscow time. On a fresh host, run the first backup deliberately with
+`systemctl start denstock-backup.service` while someone is watching the result,
+then confirm `backups/offsite_status.json` and `verify_backup`.
+
+What stays external here is the configuration, not the mechanism:
+`/opt/denstock/.env.backup` (variable names are in `.env.backup.example`), the
+rclone configuration holding the Object Storage keys, and the backups
+themselves.
+
 ## Verify production
 
 Before routing users to the new VPS, confirm:

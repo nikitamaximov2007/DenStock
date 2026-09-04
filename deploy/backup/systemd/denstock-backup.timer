@@ -1,0 +1,12 @@
+[Unit]
+Description=Run DenisStock backup every day at 03:00 Moscow time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 Europe/Moscow
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=0
+Unit=denstock-backup.service
+
+[Install]
+WantedBy=timers.target

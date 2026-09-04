@@ -1,0 +1,20 @@
+[Unit]
+Description=DenisStock local and Yandex Object Storage backup
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+ConditionPathExists=/opt/denstock/.env.backup
+ConditionPathExists=/usr/local/sbin/denstock-backup-capped
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/denstock
+Environment=HOME=/root
+ExecStart=/usr/local/sbin/denstock-backup-capped
+StandardOutput=append:/var/log/denstock-backup.log
+StandardError=append:/var/log/denstock-backup.log
+
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
