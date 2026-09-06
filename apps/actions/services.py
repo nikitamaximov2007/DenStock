@@ -77,6 +77,9 @@ TEMPLATE_DATA_COLUMNS = "ABCDEFGHIJKLM"
 # данные. Перед заполнением товарный диапазон очищается по значениям.
 TEMPLATE_DATA_END_ROW = 149  # 150-я строка шаблона — служебная (merged F150:H150)
 
+SALES_REPAIRS_PROVENANCE = "sales_repairs"
+ORDERED_PROVENANCE = "ordered"
+
 # openpyxl запрещает управляющие символы; текст, начинающийся с этих символов,
 # Excel исполняет как формулу (formula injection).
 _EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -1447,6 +1450,7 @@ def _customs_rows_from_lines(lines) -> list[dict]:
             customs=customs_by_part.get(part_id), number=number,
         )
         row["number"] = number
+        row["provenance"] = SALES_REPAIRS_PROVENANCE
         row["source_key"] = key
         rows.append(row)
     # Артикул у нескольких строк может быть пустым (историческое происхождение
@@ -1475,11 +1479,27 @@ def historical_customs_rows(
     утверждённым правилом компании. Остальные незаполненные поля остаются
     пустыми, но саму операцию из выгрузки не вычёркивают.
     """
-    return _customs_rows_from_lines(
+    filters = {
+        "date_from": date_from, "date_to": date_to, "action_type": action_type,
+        "q": q, "part_number": part_number, "location_code": location_code,
+    }
+    sales_rows = _customs_rows_from_lines(
         [line for line in canonical_customs_lines(
             date_from=date_from, date_to=date_to, action_type=action_type, q=q,
             part_number=part_number, location_code=location_code,
         ) if not line.get("is_analog")]
+    )
+    return sales_rows + ordered_customs_rows(**filters)
+
+
+def ordered_customs_rows(**filters) -> list[dict]:
+    from apps.ordered_parts.customs import ordered_parts_customs_rows
+
+    if filters.get("action_type") or filters.get("location_code"):
+        return []
+    return ordered_parts_customs_rows(
+        date_from=filters.get("date_from"), date_to=filters.get("date_to"),
+        q=filters.get("q", ""), part_number=filters.get("part_number", ""),
     )
 
 
@@ -1631,6 +1651,18 @@ def _center_data_row(sheet, row: int) -> None:
     sheet.row_dimensions[row].height = 30 if len(text) > 34 else None
 
 
+ORDERED_ARTICLE_FILL_RGB = "FFC6EFCE"
+
+
+def _mark_ordered_article(sheet, row: int) -> None:
+    from openpyxl.styles import PatternFill
+
+    sheet[f"B{row}"].fill = PatternFill(
+        fill_type="solid", start_color=ORDERED_ARTICLE_FILL_RGB,
+        end_color=ORDERED_ARTICLE_FILL_RGB,
+    )
+
+
 def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
     """Заполнить копию шаблона «Форма для заказа» отфильтрованными действиями.
 
@@ -1714,6 +1746,8 @@ def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
         sheet[f"L{r}"] = f"=K{r}*J{r}"
         sheet[f"M{r}"] = excel_safe_text(row["application_area"])
         _center_data_row(sheet, r)  # включая последнюю строку
+        if row.get("provenance") == ORDERED_PROVENANCE:
+            _mark_ordered_article(sheet, r)
 
     # Итог по весу брутто. Диапазон начинается там же, где в самом шаблоне
     # (строка 7), иначе после раздвижки суммировалась бы часть строк.

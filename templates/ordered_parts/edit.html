@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+  </div>
+  <p>
+    <a href="{% url 'ordered_part_list' %}">← К запчастям на заказ</a>
+  </p>
+  {% if error %}<p class="pill pill--warning pill--block">{{ error }}</p>{% endif %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Заказанная деталь</h2>
+    </div>
+    <div class="card__body">
+      <table class="table">
+        <tbody>
+          <tr>
+            <th>Артикул</th>
+            <td>{{ order.article|default:"·" }}</td>
+          </tr>
+          <tr>
+            <th>Название</th>
+            <td>{{ order.part_name|default:order.part_type.name }}</td>
+          </tr>
+          <tr>
+            <th>Производитель</th>
+            <td>{{ order.manufacturer_name|default:"·" }}</td>
+          </tr>
+          <tr>
+            <th>Оформлен</th>
+            <td>{{ order.created_at|ru_dt }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        Деталь заказа не меняется: заказ оформлен именно на неё. Ошиблись
+        деталью: оформите новый заказ.
+      </p>
+    </div>
+  </div>
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
+    <label>
+      Клиент: поиск по имени или телефону
+      <input name="customer_q"
+             type="search"
+             value="{{ customer_q }}"
+             autocomplete="off">
+    </label>
+    <button type="submit" class="btn btn--small btn--secondary">Найти клиента</button>
+  </form>
+  <form method="post" class="form">
+    {% csrf_token %}
+    <input type="hidden" name="customer_q" value="{{ customer_q }}">
+    <p>
+      <label for="id_customer_id">Клиент</label>
+      <select name="customer_id" id="id_customer_id" required>
+        {% for customer in customers %}
+          <option value="{{ customer.pk }}"
+                  {% if customer.pk == order.customer_id %}selected{% endif %}>
+            {{ customer.name }}{% if customer.phone %} · {{ customer.phone }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </p>
+    <p>
+      <label for="id_prepayment">Предоплата (₽)</label>
+      <input type="number"
+             name="prepayment"
+             id="id_prepayment"
+             step="0.01"
+             min="0"
+             value="{{ order.prepayment_rub }}">
+    </p>
+    <button type="submit" class="btn btn--primary">Сохранить</button>
+  </form>
+{% endblock %}

@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">{{ title }}</h1>
+  </div>
+  <p>
+    <a href="{% url 'ordered_part_list' %}">← К запчастям на заказ</a>
+  </p>
+  {% if error %}<p class="pill pill--warning pill--block">{{ error }}</p>{% endif %}
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
+    <label>
+      Артикул запчасти
+      <input name="article"
+             type="search"
+             value="{{ article }}"
+             placeholder="219800345"
+             autocomplete="off"
+             autofocus>
+    </label>
+    {% if customer_q %}<input type="hidden" name="customer_q" value="{{ customer_q }}">{% endif %}
+    <button type="submit" class="btn btn--small btn--secondary">Найти деталь</button>
+  </form>
+  {% if options %}
+    <p class="muted">Уточните, какая именно деталь нужна:</p>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Артикул</th>
+          <th>Название</th>
+          <th>Производитель</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for option in options %}
+          <tr>
+            <td>{{ option.exact_number|default:"·" }}</td>
+            <td>{{ option.part.name }}</td>
+            <td>{{ option.manufacturer|default:"·" }}</td>
+            <td>
+              <a class="btn btn--small btn--secondary"
+                 href="?part_id={{ option.part.pk }}{% if customer_q %}&customer_q={{ customer_q }}{% endif %}">Выбрать</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+  {% if candidate %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Выбранная деталь</h2>
+      </div>
+      <div class="card__body">
+        <table class="table">
+          <tbody>
+            <tr>
+              <th>Артикул</th>
+              <td>{{ candidate.exact_number|default:"·" }}</td>
+            </tr>
+            <tr>
+              <th>Название</th>
+              <td>{{ candidate.part.name }}</td>
+            </tr>
+            <tr>
+              <th>Производитель</th>
+              <td>{{ candidate.manufacturer|default:"·" }}</td>
+            </tr>
+            <tr>
+              <th>Источник</th>
+              <td>{{ candidate.catalog_origin_label|default:"Каталог" }}</td>
+            </tr>
+            {% if candidate.client_price %}
+              <tr>
+                <th>Цена каталога</th>
+                <td>{{ candidate.client_price|money_int }} ₽</td>
+              </tr>
+            {% endif %}
+          </tbody>
+        </table>
+        <p class="muted">
+          Наличие на складе не требуется: деталь заказывают именно потому, что её нет.
+        </p>
+      </div>
+    </div>
+  {% endif %}
+  <form method="get" class="filter-toolbar filter-toolbar--compact">
+    <label>
+      Клиент: поиск по имени или телефону
+      <input name="customer_q"
+             type="search"
+             value="{{ customer_q }}"
+             placeholder="Иванов или 8 912 123-45-67"
+             autocomplete="off">
+    </label>
+    {% if article %}<input type="hidden" name="article" value="{{ article }}">{% endif %}
+    <button type="submit" class="btn btn--small btn--secondary">Найти клиента</button>
+  </form>
+  <form method="post" class="form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create">
+    <input type="hidden" name="article" value="{{ article }}">
+    <input type="hidden" name="customer_q" value="{{ customer_q }}">
+    <p>
+      <label for="id_customer_id">Клиент</label>
+      <select name="customer_id" id="id_customer_id" required>
+        <option value="">Не выбран</option>
+        {% for customer in customers %}
+          <option value="{{ customer.pk }}"
+                  {% if customer.pk|stringformat:"s" == customer_id %}selected{% endif %}>
+            {{ customer.name }}{% if customer.phone %} · {{ customer.phone }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </p>
+    <p class="muted">
+      Клиента ещё нет?
+      <a href="{% url 'customer_create' %}?next={{ request.get_full_path|urlencode }}">Создать клиента</a>
+      и вернуться сюда.
+    </p>
+    <p>
+      <label for="id_prepayment">Предоплата (₽)</label>
+      <input type="number"
+             name="prepayment"
+             id="id_prepayment"
+             step="0.01"
+             min="0"
+             value="{{ prepayment }}"
+             placeholder="0.00">
+    </p>
+    <p class="muted">
+      Сколько клиент уже перевёл за эту деталь. Ноль допустим. На складскую
+      себестоимость и на таможенную стоимость предоплата не влияет.
+    </p>
+    <button type="submit" class="btn btn--primary" {% if not candidate %}disabled{% endif %}>
+      Оформить заказ
+    </button>
+  </form>
+{% endblock %}

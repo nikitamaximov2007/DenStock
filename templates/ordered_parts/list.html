@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Запчасти на заказ · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Запчасти на заказ</h1>
+    <div class="page-actions">
+      <a class="btn btn--primary" href="{% url 'ordered_part_create' %}">Новая запчасть на заказ</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Оригинальные детали, заказанные клиентом под предоплату. Склада они пока не
+    касаются: остаток появится только после закупки и приёмки. Одна строка это
+    одна заказанная единица.
+  </p>
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Артикул</th>
+          <th>Название</th>
+          <th>Производитель</th>
+          <th>Клиент</th>
+          <th class="num--money">Предоплата (₽)</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in page_obj.object_list %}
+          <tr>
+            <td>{{ order.created_at|ru_date }}</td>
+            <td>{{ order.article|default:"·" }}</td>
+            <td>{{ order.part_name|default:order.part_type.name }}</td>
+            <td>{{ order.manufacturer_name|default:"·" }}</td>
+            <td>
+              <a href="{% url 'customer_detail' order.customer_id %}">{{ order.customer.name }}</a>
+            </td>
+            <td class="num--money">{{ order.prepayment_rub|money_int }}</td>
+            <td>
+              <a class="btn btn--small btn--secondary"
+                 href="{% url 'ordered_part_edit' order.pk %}">Исправить</a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="box" title="Заказов пока нет" text="Оформите заказ, когда клиент попросит привезти оригинальную деталь под предоплату." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}
