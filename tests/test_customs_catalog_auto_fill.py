@@ -53,7 +53,7 @@ def test_brp_article_lookup_fills_fields_without_link(part_factory):
     assert row["name_en"] == "DRIVE BELT"
     assert row["name_ru"] == "ПРИВОДНОЙ РЕМЕНЬ"
     assert row["manufacturer"] == "BRP"
-    assert row["country"] == "КАНАДА"
+    assert row["country"] == "CANADA"
     assert row["usd_price"] == Decimal("19.63")
     assert row["gross_weight_kg"] is None and row["net_weight_kg"] is None
     assert row["application_area"] == ""  # утверждённое ручное поле
@@ -127,7 +127,7 @@ def test_xlsx_shows_catalog_fill_and_approved_blanks(part_factory):
     assert sheet["C10"].value == "ПРИВОДНОЙ РЕМЕНЬ"
     assert sheet["D10"].value == "DRIVE BELT"
     assert sheet["E10"].value == "BRP"
-    assert sheet["F10"].value == "КАНАДА"
+    assert sheet["F10"].value == "CANADA"
     assert sheet["J10"].value == 2
     assert sheet["K10"].value == 19.63
     assert sheet["B11"].value == "SM-09374"

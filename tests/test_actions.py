@@ -497,7 +497,7 @@ def test_customs_edit_saves_manual_data(client, make_user, data):
     # каталога и нового правила по стране. Остаётся то, чего система про эту
     # деталь действительно не знает.
     assert row["name_en"] == "ROLLER PULLEY"  # описание позиции BRP
-    assert row["country"] == "КАНАДА"
+    assert row["country"] == "CANADA"
     assert row["usd_price"] is not None
     assert row["warnings"] == ["не определена область применения"]
 

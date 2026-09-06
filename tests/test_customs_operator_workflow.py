@@ -238,8 +238,8 @@ def test_the_country_is_canada_without_the_operator(client, env, admin):
 
     _save(client, part, **_complete())
 
-    assert PartCustomsInfo.objects.get(part_type=part).country_of_origin == "КАНАДА"
-    assert system_customs_facts(part)["country_of_origin"] == "КАНАДА"
+    assert PartCustomsInfo.objects.get(part_type=part).country_of_origin == "CANADA"
+    assert system_customs_facts(part)["country_of_origin"] == "CANADA"
 
 
 def test_the_english_name_comes_from_the_supplier_catalogue(env, admin):

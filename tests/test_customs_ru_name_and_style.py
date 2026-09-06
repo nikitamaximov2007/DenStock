@@ -32,7 +32,7 @@ def test_phrase_first_ru_translation(source, expected):
 def test_customs_data_cells_use_one_font_and_nonshrinking_alignment():
     rows = [{
         "number": "A", "name_ru": auto_customs_name_ru("OIL HOSE 1500MM LONG"),
-        "name_en": "OIL HOSE 1500MM LONG", "manufacturer": "BRP", "country": "КАНАДА",
+        "name_en": "OIL HOSE 1500MM LONG", "manufacturer": "BRP", "country": "CANADA",
         "gross_weight_kg": None, "net_weight_kg": None, "quantity": 1,
         "usd_price": 10, "application_area": "",
     }]
@@ -49,7 +49,7 @@ def test_customs_data_cells_use_one_font_and_nonshrinking_alignment():
 def test_weight_columns_use_two_decimals_and_keep_blank_weights():
     rows = [{
         "number": "A", "name_ru": "ПОДШИПНИК", "name_en": "BEARING",
-        "manufacturer": "BRP", "country": "КАНАДА", "gross_weight_kg": None,
+        "manufacturer": "BRP", "country": "CANADA", "gross_weight_kg": None,
         "net_weight_kg": None, "quantity": 2, "usd_price": 3, "application_area": "",
     }]
     sheet = openpyxl.load_workbook(export_customs_xlsx(rows=rows)).active

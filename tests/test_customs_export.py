@@ -449,7 +449,7 @@ def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     assert sheet[f"D{DATA_ROW}"].value == "BELT DRIVE"
     assert sheet[f"E{DATA_ROW}"].value == "BRP"
     # Утверждённое правило компании: BRP без явной страны получает КАНАДА.
-    assert sheet[f"F{DATA_ROW}"].value == "КАНАДА"
+    assert sheet[f"F{DATA_ROW}"].value == "CANADA"
     # Оптовой цены нет (wholesale=0) - ячейка пуста, ноль не выдумывается.
     # Веса и область применения - утверждённые ручные поля.
     for column in "GHKM":

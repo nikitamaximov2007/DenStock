@@ -36,7 +36,7 @@ def part_factory():
     return create
 
 
-@pytest.mark.parametrize("brand,expected", [("BRP", "КАНАДА"), (" brp ", "КАНАДА"),
+@pytest.mark.parametrize("brand,expected", [("BRP", "CANADA"), (" brp ", "CANADA"),
                                            ("POLARIS", ""), ("SPI", ""), (None, "")])
 def test_only_identified_brp_gets_country(part_factory, brand, expected):
     part = part_factory(brand)
@@ -66,7 +66,7 @@ def test_catalog_link_proves_brp_without_manufacturer(part_factory):
         part=part, brp_part=BrpCatalogPart.objects.create(material_no="BRP-TEST"),
         usd_rate_used=Decimal("90"), markup_percent_used=Decimal("40"),
     )
-    assert resolve_customs_country(part) == "КАНАДА"
+    assert resolve_customs_country(part) == "CANADA"
 
 
 @pytest.mark.parametrize("catalog", ["polaris", "aftermarket"])
@@ -97,7 +97,7 @@ def test_xlsx_brp_fallback_preserves_empty_weights_and_explicit_snapshot(part_fa
         _customs_row_from_version(brp, version, Decimal("4")),
     ]
     sheet = openpyxl.load_workbook(export_customs_xlsx(rows=rows)).active
-    assert [sheet[f"F{r}"].value for r in range(10, 13)] == ["КАНАДА", None, "AUSTRIA"]
+    assert [sheet[f"F{r}"].value for r in range(10, 13)] == ["CANADA", None, "AUSTRIA"]
     assert [sheet[f"J{r}"].value for r in range(10, 13)] == [2, 3, 4]
     assert all(sheet[f"{col}{r}"].value is None for col in "GH" for r in range(10, 13))
     version.refresh_from_db()

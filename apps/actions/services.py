@@ -802,7 +802,7 @@ def record_customs_data_version(
 
 # Утверждённый business fallback только для BRP без явно сохранённой страны.
 # Это правило компании, а не вывод о стране из каталога или названия бренда.
-CUSTOMS_COUNTRY = "КАНАДА"
+CUSTOMS_COUNTRY = "CANADA"
 
 
 def resolve_customs_country(part: PartType, explicit_country: str = "", number: str = "") -> str:
