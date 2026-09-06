@@ -187,6 +187,8 @@ def _section_key(request):
         return "search"
     if path.startswith(("/parts/", "/brp/", "/polaris/")):
         return "catalog"
+    if path.startswith("/ordered-parts/"):
+        return "warehouse"
     if path.startswith("/sales/"):
         return "sales"
     if path.startswith("/repairs/"):
@@ -361,6 +363,19 @@ def _warehouse_tabs(user, path):
                 sidebar_key="repairs",
                 icon="wrench",
                 active=path.startswith("/repairs/"),
+            )
+        )
+    # Заказ детали клиенту это продажная работа, поэтому право то же, что у
+    # продаж. Складского остатка у заказа нет, но живёт он рядом с «Клиентами»:
+    # оператор приходит сюда из того же разговора с клиентом.
+    if user.can_manage_sales:
+        tabs.append(
+            _tab(
+                "Запчасти на заказ",
+                reverse("ordered_part_list"),
+                sidebar_key="ordered-parts",
+                icon="box",
+                active=path.startswith("/ordered-parts/"),
             )
         )
     if user.can_manage_inventory or user.is_viewer:

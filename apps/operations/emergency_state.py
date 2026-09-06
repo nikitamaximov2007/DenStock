@@ -35,6 +35,9 @@ BUSINESS_APP_LABELS = frozenset(
         "customers",
         "counting",
         "inventory",
+        # Заказ клиента с предоплатой это бизнес-обязательство, а не служебная
+        # запись: заморозка и отпечаток бизнес-состояния обязаны его видеть.
+        "ordered_parts",
         "polaris",
         "procurement",
         "receipts",
