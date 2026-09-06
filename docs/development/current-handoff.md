@@ -1,60 +1,41 @@
 # Current handoff
 
-Task: customs catalog-backed auto-fill hotfix. Status: BLOCKED on three
-product decisions (tracking, SPI country, application area). BRP country
-fallback is implemented, tested and committed.
-Branch: hotfix/customs-auto-fill-non-weight-fields. HEAD: 86419f5.
-Runtime base/main/origin/main/live: 34a813bef1c03c6c22c480e87b9ad0261ead7251,
-reverified over SSH 2026-09-06 (production HEAD matches, all containers up).
+Task: customs catalog-backed auto-fill hotfix. Status: COMPLETE, ready for
+deploy. All three former blockers were resolved by the product owner on
+2026-09-06: tracking, SPI country (SM-01357/SM-09374) and application area
+are approved manual fields; the employee fills them in Excel.
+Branch: hotfix/customs-auto-fill-non-weight-fields.
 Worktree: /Users/maxinik/Developer/DenStock-customs-hotfix.
 
-## Done in this takeover (Kimi, after Codex)
+## What shipped in this branch
 
-- Preserved Codex's uncommitted BRP=КАНАДА fallback as commit 86419f5
-  (services.py, new tests/test_customs_brp_country_fallback.py, three docs).
-  No changes were discarded; nothing was force-pushed.
-- 13 new fallback tests pass; ruff, djlint, manage.py check,
-  makemigrations --check, pip check, git diff --check all clean.
-  tests/test_clients_overview_sorting.py::test_date_is_the_last_customer_facing_document
-  fails identically on clean main 34a813b: pre-existing, unrelated.
-- Template semantics re-verified from
-  apps/actions/customs_template/supplier_order_template.xlsx:
-  row 7 marks B/C/D/E/J «ОБЯЗАТЕЛЬНО» but NOT column A. Since the first
-  exporter 2c43365 column A is written as None for manual entry.
-  Template's own example row uses M=СНЕГОХОД for a BRP part.
-- Live production read-only verification (SPI): Manufacturer SPI (id 19)
-  country='', zero manufacturers in the whole DB have a country.
-  AftermarketCatalogPart has no country field at all.
-  SM-01357 = dealer_cost_usd 203.26, SM-09374 = 127.21 (preserved).
-- Live production read-only verification (application): PartCompatibility
-  empty; VehicleMakes: Ski-Doo/Lynx/Yamaha=Снегоход, Can-Am=Квадроцикл,
-  Sea-Doo=Гидроцикл. No article-to-vehicle mapping exists.
+- 86419f5 BRP=КАНАДА country fallback (preserved Codex work).
+- bf49308 export test aligned with the approved fallback.
+- Catalog auto-fill for empty historical fields (this takeover):
+  EN name / manufacturer / USD resolve from the loaded supplier catalogs by
+  card link or exact normalized article (BRP -> Polaris -> aftermarket);
+  RU name derives from EN via the existing RU_WORDS dictionary; aftermarket
+  USD is dealer_cost_usd. Saved operator versions always win; versions are
+  never rewritten. Approved manual blanks stay blank: tracking, weights,
+  application area, country of non-BRP brands.
 
-## Exact blockers (product decisions needed, smallest list)
+## Qualification
 
-1. TRACKING (column A, 84/84 blank). No shipment/parcel entity exists
-   anywhere in the system; the template itself does not mark A mandatory.
-   Decision needed: (a) drop A from the auto-fill contract and keep it
-   manual, or (b) name a deterministic source. No tracking number may be
-   invented.
-2. SPI COUNTRY (2 rows: SM-01357, SM-09374). No country in any loaded
-   catalog, file, or manufacturer record; the approved КАНАДА rule covers
-   BRP only. Decision needed: explicit country value for these two SPI
-   aftermarket parts, or accept 2 blank F cells.
-3. APPLICATION AREA (column M, 84/84 blank). PartCompatibility is empty;
-   category is the catalog source group, not vehicle type. The template
-   example uses СНЕГОХОД; one SM row (SM-01357) has a literal SKI DOO
-   description hint. Decision needed: approve a universal business value
-   (e.g. СНЕГОХОД) or another deterministic rule.
+- Full pytest: green except pre-existing failures that reproduce identically
+  on clean 34a813b (test_clients_overview_sorting file, one partial repair
+  cancellation test, one ai_support renderer test) - unrelated, untouched.
+- ruff / djlint / manage.py check / makemigrations --check / git diff --check:
+  clean.
+- Snapshot gate: fresh production backup 2026-09-06_14-22-37 restored into
+  isolated local PostgreSQL 16. Candidate XLSX: 84 rows, 199.000 qty,
+  697122.00 RUB report match, all reconciliation deltas zero. Blank counts:
+  B/C/D/E/J/K = 0; F = 2 (SM-01357, SM-09374, approved); A/G/H/M = approved
+  manual. SM-01357 = 203.26 USD, SM-09374 = 127.21 USD preserved.
 
-Do NOT deploy until all three are decided by the user. After decisions:
-implement population, add regressions, run full gate, fresh production
-snapshot gate (all non-weight blanks = 0, all reconciliation deltas zero),
-then the signed PRE/deploy/live/POST workflow from the original task.
+## Deploy state
 
-Historical universe (34a813b) is load-bearing and untouched:
-117 canonical / 115 effective / 2 fully returned, 84 XLSX rows,
-199.000 qty, 697122.00 RUB, all deltas zero (customs_reconcile).
-Never return the movement-based exporter or the 201-unit bug.
-
-Evidence: /Users/maxinik/Developer/DenStock-customs-evidence-20260906.
+PRE backup: backups/2026-09-06_14-22-37 (business_generation 10414,
+business_sha256 fa6f5aa1...). Production was 34a813b at takeover.
+Historical universe contract: 117 canonical lines, 84 rows, 199.000,
+697122.00, deltas zero. Never return the movement-based exporter or the
+201-unit bug.

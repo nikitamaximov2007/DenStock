@@ -573,10 +573,11 @@ def test_repair_issue_is_customs_consumption(env):
     assert _row_for(historical_customs_rows(), "219800345")["quantity"] == Decimal("2")
 
 
-# --- 18-21. Никаких подстановок --------------------------------------------
+# --- 18-21. Подстановки только из подтверждённых источников ------------------
 
 
-def test_catalog_wholesale_price_never_substitutes(env):
+def test_unentered_price_comes_from_catalog_wholesale_not_retail(env):
+    """Невведённая таможенная цена - оптовая колонка прайса, не розница и не ноль."""
     from apps.brp.models import BrpCatalogPart
     from apps.brp.services import promote_to_warehouse
 
@@ -589,8 +590,7 @@ def test_catalog_wholesale_price_never_substitutes(env):
     _card(part, customs_unit_price_usd=None)
     _sell(env, part, quantity="1", number="219800345")
     row = _row_for(historical_customs_rows(), "219800345")
-    assert row["usd_price"] is None  # ни оптовой, ни розничной, ни нуля
-    assert "нет таможенной цены в USD" in row["warnings"]
+    assert row["usd_price"] == Decimal("28.15")  # оптовая, не розничная 35.99
 
 
 def test_country_is_not_hardcoded_to_canada(env):

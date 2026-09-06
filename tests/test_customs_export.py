@@ -440,14 +440,19 @@ def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     assert not PartCustomsInfo.objects.filter(part_type=part).exists()
     _login(client, make_user)
     resp = client.get(reverse("actions_export"))
-    # Данных нет вовсе, достроить их неоткуда - но операция реальна, и строка
-    # обязана уйти в Excel. Пустые ячейки сотрудник дозаполнит сам.
+    # Операция реальна, и строка обязана уйти в Excel. Подтверждённые каталожные
+    # факты заполняются автоматически, остальное сотрудник дозаполнит сам.
     assert resp.status_code == 200
     sheet = _sheet(resp.content)
     assert sheet[f"B{DATA_ROW}"].value == "777000111"
+    assert sheet[f"C{DATA_ROW}"].value == "РЕМЕНЬ ПРИВОД"  # словарь от EN описания
+    assert sheet[f"D{DATA_ROW}"].value == "BELT DRIVE"
+    assert sheet[f"E{DATA_ROW}"].value == "BRP"
     # Утверждённое правило компании: BRP без явной страны получает КАНАДА.
     assert sheet[f"F{DATA_ROW}"].value == "КАНАДА"
-    for column in "CDEGHKM":
+    # Оптовой цены нет (wholesale=0) - ячейка пуста, ноль не выдумывается.
+    # Веса и область применения - утверждённые ручные поля.
+    for column in "GHKM":
         assert sheet[f"{column}{DATA_ROW}"].value is None
 
     # Частично заведённая карточка тоже выгружается: пусто там, где не введено.
@@ -696,10 +701,10 @@ def test_wholesale_ignores_rate_and_markup(client, make_user, env):
     assert _price(sheet) == Decimal("28.15")  # чистый USD, без курса и наценки
 
 
-def test_unentered_customs_price_stays_blank_instead_of_inventing_zero(
+def test_unentered_customs_price_filled_from_catalog_not_invented(
     client, make_user, env
 ):
-    """Незаполненная таможенная цена - пустая ячейка, а не ноль и не отказ."""
+    """Цена без ввода оператора - из прайса BRP: не ноль и не отказ."""
     part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15",
                    customs=False)
     _card(part, customs_unit_price_usd=None)
@@ -707,12 +712,12 @@ def test_unentered_customs_price_stays_blank_instead_of_inventing_zero(
     _login(client, make_user)
     response = client.get(reverse("actions_export"))
     assert response.status_code == 200
-    assert _sheet(response.content)[f"K{DATA_ROW}"].value is None
+    assert _sheet(response.content)[f"K{DATA_ROW}"].value == 28.15
     from apps.actions.services import historical_customs_rows
 
     rows = historical_customs_rows()
     assert len(rows) == 1
-    assert rows[0]["usd_price"] is None
+    assert rows[0]["usd_price"] == Decimal("28.15")
 
 
 # --- Область применения (§6-§7) --------------------------------------------------------

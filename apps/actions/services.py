@@ -721,12 +721,14 @@ def record_customs_data_version(
 CUSTOMS_COUNTRY = "КАНАДА"
 
 
-def resolve_customs_country(part: PartType, explicit_country: str = "") -> str:
+def resolve_customs_country(part: PartType, explicit_country: str = "", number: str = "") -> str:
     """Сохранённая страна имеет приоритет; только BRP получает fallback.
 
     Не используем manufacturer_display: его значение по умолчанию не
-    доказывает принадлежность детали к BRP. Конкурирующая связь с другим
-    каталогом исключает fallback даже при устаревшей подписи BRP.
+    доказывает принадлежность детали к BRP. Принадлежность доказывают связь
+    BrpPartLink, подпись производителя BRP или exact-артикул в актуальном
+    прайсе BRP. Конкурирующая связь с другим каталогом исключает fallback
+    даже при устаревшей подписи BRP.
     """
     if country := (explicit_country or "").strip():
         return country.upper()
@@ -738,44 +740,73 @@ def resolve_customs_country(part: PartType, explicit_country: str = "") -> str:
     manufacturer = part.manufacturer.name.strip().upper() if part.manufacturer_id else ""
     if manufacturer and manufacturer != "BRP":
         return ""
-    if manufacturer == "BRP" or BrpPartLink.objects.filter(part=part).exists():
+    if (
+        manufacturer == "BRP"
+        or BrpPartLink.objects.filter(part=part).exists()
+        or _brp_catalog_for_number(number) is not None
+    ):
         return CUSTOMS_COUNTRY
     return ""
 
 
-def catalog_english_name(part: PartType) -> str:
+def catalog_english_name(part: PartType, number: str = "") -> str:
     """Английское название детали из каталога поставщика.
 
     Источник ровно один и тот же, что уже показывает карточку: описание
-    позиции BRP (``BrpCatalogPart.part_desc``) или название позиции Polaris
-    (``PolarisCatalogPart.part_name``). Своего английского названия у складской
-    карточки нет, и придумывать его нельзя: без каталожного описания строка
-    остаётся без названия и блокирует выгрузку.
+    позиции BRP (``BrpCatalogPart.part_desc``), название позиции Polaris
+    (``PolarisCatalogPart.part_name``) или описание aftermarket-позиции
+    (``AftermarketCatalogPart.source_description``). Связь карточки сильнее,
+    чем exact-совпадение артикула; без каталожного описания название
+    остаётся пустым - придумывать его нельзя.
     """
-    brp = _brp_part_for(part)
+    brp = _brp_part_for(part) or _brp_catalog_for_number(number)
     if brp is not None and brp.part_desc.strip():
         return brp.part_desc.strip().upper()
-    polaris = _polaris_part_for(part)
+    polaris = _polaris_part_for(part) or _polaris_catalog_for_number(number)
     if polaris is not None and polaris.part_name.strip():
         return polaris.part_name.strip().upper()
+    aftermarket = _aftermarket_part_for(part) or _aftermarket_catalog_for_number(number)
+    if aftermarket is not None and aftermarket.source_description.strip():
+        return aftermarket.source_description.strip().upper()
     return ""
 
 
-def catalog_customs_usd(part: PartType) -> Decimal | None:
+def catalog_manufacturer_name(part: PartType, number: str = "") -> str:
+    """Производитель по доказанной связи с каталогом поставщика.
+
+    Не путать с ``manufacturer_display``: подпись справочника карточки сама
+    по себе ничего не доказывает, поэтому используется только как часть
+    aftermarket-записи. Без связи с каталогом производитель остаётся пустым.
+    """
+    if _brp_part_for(part) is not None or _brp_catalog_for_number(number) is not None:
+        return "BRP"
+    if _polaris_part_for(part) is not None or _polaris_catalog_for_number(number) is not None:
+        return "POLARIS"
+    aftermarket = _aftermarket_part_for(part) or _aftermarket_catalog_for_number(number)
+    if aftermarket is not None and aftermarket.manufacturer_id:
+        return aftermarket.manufacturer.name.strip().upper()
+    return ""
+
+
+def catalog_customs_usd(part: PartType, number: str = "") -> Decimal | None:
     """Таможенная стоимость единицы в USD из каталога поставщика.
 
     Это оптовая (дилерская) колонка прайса: у BRP - ``wholesale_price_usd``
     самой позиции либо связанной замены, у Polaris - та же колонка позиции
-    либо её superseded-связи. Розница, клиентская цена и складская
-    себестоимость сюда не подмешиваются: они отвечают на другие вопросы.
-    Нет оптовой цены - остаётся ``None``, и строка блокирует выгрузку.
+    либо её superseded-связи, у aftermarket - ``dealer_cost_usd`` (та же
+    оптовая USD, см. aftermarket_catalog._customer_price_rub). Розница,
+    клиентская цена и складская себестоимость сюда не подмешиваются: они
+    отвечают на другие вопросы. Нет оптовой цены - остаётся ``None``.
     """
-    brp = _brp_part_for(part)
+    brp = _brp_part_for(part) or _brp_catalog_for_number(number)
     if brp is not None:
         return _brp_wholesale_usd(brp)
-    polaris = _polaris_part_for(part)
+    polaris = _polaris_part_for(part) or _polaris_catalog_for_number(number)
     if polaris is not None:
         return _polaris_wholesale_usd(polaris)
+    aftermarket = _aftermarket_part_for(part) or _aftermarket_catalog_for_number(number)
+    if aftermarket is not None and aftermarket.dealer_cost_usd and aftermarket.dealer_cost_usd > 0:
+        return aftermarket.dealer_cost_usd
     return None
 
 
@@ -783,15 +814,19 @@ def system_customs_facts(part: PartType) -> dict:
     """То, что DenisStock знает о детали сам. Оператор это не вводит.
 
     Возвращаются ровно те значения, которые уйдут в карточку при сохранении:
-    английское название и цена из каталога поставщика, производитель по
-    канонической связи карточки, страна по новому правилу. Отсутствующее
-    остаётся пустым - выдумывать таможенные факты нельзя.
+    английское название и цена из каталога поставщика (по связи карточки или
+    exact-артикулу), производитель по канонической связи карточки, страна по
+    новому правилу. Отсутствующее остаётся пустым - выдумывать таможенные
+    факты нельзя.
     """
+    number = part_exact_number(part, default="")
     return {
-        "customs_name_en": catalog_english_name(part),
+        "customs_name_en": catalog_english_name(part, number),
         "manufacturer": manufacturer_display(part).strip().upper(),
-        "country_of_origin": resolve_customs_country(part, read_customs(part).country_of_origin),
-        "customs_unit_price_usd": catalog_customs_usd(part),
+        "country_of_origin": resolve_customs_country(
+            part, read_customs(part).country_of_origin, number
+        ),
+        "customs_unit_price_usd": catalog_customs_usd(part, number),
     }
 
 
@@ -819,6 +854,34 @@ def _polaris_part_for(part: PartType):
         .first()
     )
     return link.polaris_part if link else None
+
+
+def _aftermarket_part_for(part: PartType):
+    return AftermarketCatalogPart.objects.filter(part=part).order_by("pk").first()
+
+
+def _brp_catalog_for_number(number: str):
+    """Exact-позиция актуального BRP прайса по каноническому артикулу строки."""
+    norm = normalize_number(number)
+    if not norm:
+        return None
+    return BrpCatalogPart.objects.filter(material_no_norm=norm, is_current=True).first()
+
+
+def _polaris_catalog_for_number(number: str):
+    norm = normalize_number(number)
+    if not norm:
+        return None
+    return PolarisCatalogPart.objects.filter(part_number_norm=norm).first()
+
+
+def _aftermarket_catalog_for_number(number: str):
+    norm = normalize_number(number)
+    if not norm:
+        return None
+    return AftermarketCatalogPart.objects.filter(
+        normalized_manufacturer_number=norm
+    ).order_by("pk").first()
 
 
 def _brp_wholesale_usd(brp) -> Decimal | None:
@@ -998,7 +1061,7 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     # wholesale nor a manufacturer default may masquerade as historical truth.
     usd_price = customs.customs_unit_price_usd
     manufacturer = customs.manufacturer.strip().upper()
-    country = resolve_customs_country(part, customs.country_of_origin)
+    country = resolve_customs_country(part, customs.country_of_origin, number)
     # Область применения: приоритет 1) ручное значение карточки, 2) автоопределение
     # по PartCompatibility, 3) пусто. Легаси-хардкод «МОТО ЗАПЧАСТИ» (старый
     # default модели) считается «не заполнено» и в форму не попадает никогда.
@@ -1149,14 +1212,18 @@ def build_export_rows(actions) -> list[dict]:
 
 
 def _customs_row_from_version(
-    part: PartType, version, quantity: Decimal, *, customs=None
+    part: PartType, version, quantity: Decimal, *, customs=None, number: str | None = None
 ) -> dict:
-    """Одна строка Excel из сохранённой версии с утверждённым BRP fallback.
+    """Одна строка Excel: сохранённая версия + подтверждённые каталожные факты.
 
-    Каталог сюда не заглядывает: ни оптовая цена прайса, ни производитель по
-    умолчанию не имеют права выдавать себя за исторический факт. Исключение:
-    пустая страна BRP заполняется правилом компании, без изменения версии.
+    Сохранённый ввод оператора имеет приоритет. Пустые поля заполняются из
+    загруженных каталогов поставщика (утверждённый контракт): страна BRP по
+    правилу компании, EN-название/производитель/USD - по exact-связи или
+    exact-артикулу, RU - словарём от EN. Сами версии не переписываются:
+    подстановка живёт только в строке выгрузки.
     """
+    if number is None:
+        number = part_exact_number(part, default="")
     if version is None:
         values = {"name_ru": "", "name_en": "", "manufacturer": "", "country": "",
                   "gross_weight_kg": None, "net_weight_kg": None, "usd_price": None,
@@ -1183,7 +1250,18 @@ def _customs_row_from_version(
             "source_reference": version.source_reference,
             "name_ru_confirmed": version.customs_name_ru_confirmed,
         }
-    values["country"] = resolve_customs_country(part, values["country"])
+    values["country"] = resolve_customs_country(part, values["country"], number)
+    # Каталог дополняет только то, чего оператор не сохранил. Поля без
+    # подтверждённого источника (трекинг, веса, область применения, страна
+    # не-BRP брендов) остаются пустыми - их дозаполняет сотрудник в Excel.
+    if not values["name_en"]:
+        values["name_en"] = catalog_english_name(part, number)
+    if not values["name_ru"] and values["name_en"]:
+        values["name_ru"] = auto_customs_name_ru(values["name_en"])
+    if not values["manufacturer"]:
+        values["manufacturer"] = catalog_manufacturer_name(part, number)
+    if values["usd_price"] is None:
+        values["usd_price"] = catalog_customs_usd(part, number)
     missing = [label for key, label in (
         ("name_ru", "не заполнено русское название"),
         ("name_ru_confirmed", "русское название не подтверждено"),
@@ -1198,7 +1276,7 @@ def _customs_row_from_version(
     return {
         "part": part,
         "customs": customs if customs is not None else read_customs(part),
-        "number": part_exact_number(part, default=""),
+        "number": number,
         "quantity": quantity,
         "version": version,
         "version_number": version.version if version is not None else None,
@@ -1281,7 +1359,8 @@ def _customs_rows_from_lines(lines) -> list[dict]:
     for key, quantity in totals.items():
         part_id, _version_pk, number = key
         row = _customs_row_from_version(
-            parts[part_id], versions[key], quantity, customs=customs_by_part.get(part_id)
+            parts[part_id], versions[key], quantity,
+            customs=customs_by_part.get(part_id), number=number,
         )
         row["number"] = number
         row["source_key"] = key

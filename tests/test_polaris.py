@@ -257,10 +257,11 @@ def test_actions_polaris_price_source_does_not_replace_identity(db, admin):
 
 
 def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
-    """Каталог Polaris таможенную форму не заполняет.
+    """Введённые данные сильнее каталога Polaris; пустые поля достраивает прайс.
 
-    Название, страна и стоимость - заявление декларанта. Раньше сюда
-    подставлялись имя из прайса и жёстко зашитая CANADA.
+    Название и страна - заявление декларанта и имеют приоритет. Невведённая
+    таможенная цена по утверждённому контракту берётся из оптовой колонки
+    прайса; розница и жёстко зашитая CANADA сюда не подставляются.
     """
     from apps.actions.models import PartCustomsInfo
 
@@ -295,7 +296,7 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
     assert sheet["D10"].value != "OIL SEAL"  # имя из прайса в декларацию не идёт
     assert sheet["E10"].value == "POLARIS"
     assert sheet["F10"].value == "AUSTRIA"  # прежнего хардкода CANADA больше нет
-    assert sheet["K10"].value is None  # цена не введена — розницу не подставляем
+    assert sheet["K10"].value == 18  # оптовая прайса по контракту, розница не подмешивается
     assert sheet["M10"].value is None  # применимость не задана — категорию не выдумываем
 
 
