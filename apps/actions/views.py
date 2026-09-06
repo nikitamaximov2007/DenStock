@@ -51,8 +51,8 @@ from .services import (
     actions_report,
     cancel_warehouse_action,
     get_or_create_customs,
-    historical_customs_rows,
     historical_analog_customs_rows,
+    historical_customs_rows,
     parse_weight_kg,
     perform_action,
     stock_overview,
@@ -716,7 +716,9 @@ def actions_analog_export(request):
         buffer.getvalue(),
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-    response["Content-Disposition"] = f'attachment; filename="customs_analogs_{date_from}_{date_to}.xlsx"'
+    response["Content-Disposition"] = (
+        f'attachment; filename="customs_analogs_{date_from}_{date_to}.xlsx"'
+    )
     return response
 
 

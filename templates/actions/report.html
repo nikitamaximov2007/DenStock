@@ -7,11 +7,11 @@
     <div class="page-actions">
       <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
       <a class="btn btn--small btn--primary"
-           data-full-navigation
-           href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
+         data-full-navigation
+         href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
       <a class="btn btn--small btn--secondary"
-           data-full-navigation
-           href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Таможенный экспорт аналогов</a>
+         data-full-navigation
+         href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Таможенный экспорт аналогов</a>
     </div>
   </div>
   <p class="page-subtitle">
