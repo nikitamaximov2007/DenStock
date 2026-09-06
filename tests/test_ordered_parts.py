@@ -448,19 +448,28 @@ def test_the_analog_gate_defers_to_the_customs_classifier_when_it_exists(env, mo
     import apps.ordered_parts.services as services
 
     part = _part(env, number="SM-01357", name="СТАТОР", brand="SPI")
+    assert not services.aftermarket_part_ids([part.pk])  # каталог о ней не знает
 
-    # Каталог аналогов про деталь не знает: базовое правило её пропускает.
-    assert services.is_analog_part(part) is False
-
-    # Появился канонический классификатор и назвал её аналогом.
+    # Классификатор назвал деталь аналогом: заказать её нельзя.
     monkeypatch.setattr(services, "_customs_analog_verdict", lambda _part: True)
     assert services.is_analog_part(part) is True
     with pytest.raises(OrderedPartError, match="каталогом аналогов"):
         resolve_ordered_article("SM-01357")
 
+    # Он же назвал её оригиналом: заказ проходит.
+    monkeypatch.setattr(services, "_customs_analog_verdict", lambda _part: False)
+    assert services.is_analog_part(part) is False
+    candidate, _ = resolve_ordered_article("SM-01357")
+    assert candidate.part.pk == part.pk
+
 
 def test_a_missing_customs_classifier_leaves_the_base_rule_alone(env, monkeypatch):
-    """Классификатора в сборке ещё нет: раздел работает по каталогу аналогов."""
+    """Классификатора в сборке ещё нет: раздел работает по каталогу аналогов.
+
+    Так выглядит текущая ветка до вливания таможенного разделения. Проверка не
+    зависит от того, есть классификатор в сборке или нет: его ответ подменяется
+    явно, иначе тест сломался бы ровно в момент интеграции.
+    """
     import apps.ordered_parts.services as services
 
     original = _part(env, number="219800345")
