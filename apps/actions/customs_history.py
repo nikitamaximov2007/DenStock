@@ -260,7 +260,9 @@ def canonical_customs_lines(
     versions_by_part = _versions_by_part(part_ids)
     parts = {
         part.pk: part
-        for part in PartType.objects.filter(pk__in=part_ids).prefetch_related("numbers")
+        for part in PartType.objects.filter(pk__in=part_ids)
+        .select_related("manufacturer")
+        .prefetch_related("numbers")
     }
     numbers = article_numbers_by_document(sale_ids, repair_ids)
 
@@ -277,8 +279,8 @@ def canonical_customs_lines(
             returned=sale_returned.get(line.pk) or DEC0, remaining=remaining,
             amount=money(line.unit_price * remaining), amount_known=True,
         )
-        record["is_analog"] = (
-            line.part_type_id in analog_part_ids and line.part_type_id not in original_part_ids
+        record["is_analog"] = _is_analog_part(
+            parts[line.part_type_id], analog_part_ids, original_part_ids
         )
         records.append(record)
     for line in repair_lines:
@@ -296,8 +298,8 @@ def canonical_customs_lines(
             returned=repair_returned.get(line.pk) or DEC0, remaining=remaining,
             amount=amounts[line.pk] if known else None, amount_known=known,
         )
-        record["is_analog"] = (
-            line.part_type_id in analog_part_ids and line.part_type_id not in original_part_ids
+        record["is_analog"] = _is_analog_part(
+            parts[line.part_type_id], analog_part_ids, original_part_ids
         )
         records.append(record)
     # Тип документа в ключе обязателен: у строки продажи и строки ремонта
@@ -309,6 +311,15 @@ def canonical_customs_lines(
         )
     )
     return records
+
+
+def _is_analog_part(part, analog_part_ids: set[int], original_part_ids: set[int]) -> bool:
+    """Classify only by explicit relation or the approved SPI identity rule."""
+    if part.pk in original_part_ids:
+        return False
+    if part.pk in analog_part_ids:
+        return True
+    return bool(part.manufacturer and part.manufacturer.name.strip().casefold() == "spi")
 
 
 def _repair_line_amounts(repair_lines):

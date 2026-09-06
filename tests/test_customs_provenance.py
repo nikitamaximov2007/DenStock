@@ -33,7 +33,7 @@ from apps.actions.services import (
     historical_customs_rows,
     perform_action,
 )
-from apps.catalog.models import Category, PartAnalog, PartNumber, PartType, Unit
+from apps.catalog.models import Category, Manufacturer, PartAnalog, PartNumber, PartType, Unit
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import (
     create_stock_lot,
@@ -515,3 +515,17 @@ def test_partanalog_direction_splits_original_and_analog_exports(env):
     analog_parts = {row["source_key"][0] for row in analog_rows}
     assert not normal_parts & analog_parts
     assert sum((row["quantity"] for row in normal + analog_rows), Decimal("0")) == Decimal("5")
+
+
+def test_spi_manufacturer_is_analog_only(env):
+    spi = Manufacturer.objects.create(name="SPI")
+    part = _part(env, name="SPI STATOR", number="SM-01357")
+    part.manufacturer = spi
+    part.save(update_fields=["manufacturer"])
+    _receive(env, part, quantity="1")
+    _sell(env, part, quantity="1", number="SM-01357")
+
+    assert historical_customs_rows() == []
+    rows = historical_analog_customs_rows()
+    assert len(rows) == 1
+    assert rows[0]["number"] == "SM-01357"
