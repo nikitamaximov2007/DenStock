@@ -1,42 +1,52 @@
 # Current handoff
 
-Task: Customs non-weight auto-fill hotfix. Status: TRUE BLOCKER at forensic gate.
-Classification: hotfix, no runtime edits.
-Branch: `hotfix/customs-auto-fill-non-weight-fields`.
-Base/current runtime: `34a813bef1c03c6c22c480e87b9ad0261ead7251`.
-Worktree: `/Users/maxinik/Developer/DenStock-customs-hotfix`.
+Task: customs catalog-backed auto-fill hotfix. Status: TRUE BLOCKER at full
+catalog-source gate. Previous audit accepted by user; new instruction allows
+ALL loaded catalogs and no longer limits source logic to 65bd691.
+Branch: hotfix/customs-auto-fill-non-weight-fields. Started from 47ed377.
+Runtime base/main/origin/main/live: 34a813bef1c03c6c22c480e87b9ad0261ead7251,
+independently reverified after git fetch and over SSH.
+Worktree: /Users/maxinik/Developer/DenStock-customs-hotfix.
 
-Independently verified actual origin/main and live production release.
-Live reconciliation: 117 source lines, 84 aggregate rows, 199.000 units,
-697122.00 RUB, all deltas and missing/duplicate line counts zero.
+Read [full catalog audit](../audits/customs-full-catalog-source-audit.md).
+It supersedes the earlier claim that the two SM articles lack usable USD:
+AftermarketCatalogPart supplies SM-01357=203.26 and SM-09374=127.21 USD.
+Applied source is batch #6 DEALER 2026 although source code says dealer_2023.
+Do not substitute older failed-upload prices or MSRP.
 
-Read [forensic report](../audits/customs-auto-fill-hotfix-blocker.md).
-Previous population `65bd691` replayed on the same 84 current canonical rows.
-Blockers: tracking 84 blanks (always manual), application 84 blanks
-(saved values empty and compatibility yields none), USD 2 blanks
-(SM-01357, SM-09374 lack BRP/Polaris links supported by previous exporter).
-Do not invent values, restore legacy defaults, or deploy an incomplete candidate.
+Completed: inventory of all actual DB/catalog/import models; exact and alias
+coverage for all 84 rows; all sheets/rows of five unique production catalog
+XLSX (six private copies plus two host legacy files); JSON presets; local test
+fixtures; source provenance and conflicts; repeated live reconciliation.
+Each DB audit used REPEATABLE READ READ ONLY.
+Coverage: B/C/D/E/K/L/J 84 resolvable; A/F 0; existing M resolver 0.
+M has one literal Ski-Doo description hint (SM-01357); remaining 83 no mapping.
+No same-priority exact/price-source conflicts on current 84 rows.
 
-Changed files: this handoff and forensic report only.
-No main reset, DB writes, migrations, runtime changes, or deployment.
-Production has pre-existing untracked docker-compose.signing.yml; untouched.
+Blockers: tracking has no shipment source for 84; country missing in catalog
+fields/raw files for 84; application mappings absent for 83 plus one possible
+literal Ski-Doo derivation. No fake tracking from SKU, no country from BRP brand,
+no arbitrary application from category BRP/Aftermarket.
 
-Local evidence: /tmp/denstock-customs-forensics/{current,previous}.xlsx and
-audit.json. Reproduction: /tmp/denstock-customs-audit-builder.py reads
-/tmp/denstock-customs-old-services.py (git show 65bd691:apps/actions/services.py),
-builds a READ ONLY repeatable-read Django script, executes it over SSH,
-and saves both XLSX locally. No production files are written by that script.
+Live reconciliation: 117 canonical/115 effective/2 fully returned, 84 rows,
+199.000 quantity, 697122.00 RUB, all deltas/missing/duplicates zero.
+No implementation, candidate build, tests, backup or deploy was performed:
+user explicitly prohibits deploy with ANY unresolved non-weight field.
+Only this handoff and the new audit document changed. Production, main,
+schema and business data remain unchanged. Runtime is NOT fixed.
 
-Completed commands: git status/branch/log, git fetch origin, git worktree add,
-SSH production git status/rev-parse and web DENSTOCK_APP_COMMIT,
-live customs_reconcile --json, Git-history population/template inspection,
-same-input XLSX replay and all-column blank/populated counts.
+Durable evidence: /Users/maxinik/Developer/DenStock-customs-evidence-20260906.
+Scripts run via ssh root@185.250.44.206 and docker compose exec -T web
+python manage.py shell; exact scripts and JSON results are in that directory.
+Source inventory script, raw-file scanner, per-row coverage, all file hashes
+and final customs_reconcile output are preserved. No source XLSX committed.
 
-Next: resolve the three documented data/contract blockers, port population only,
-preserve canonical universe and existing snapshots, implement blank-safe weight
-formula and UI warning, add requested regressions, update user/operations docs.
-Then pytest; ruff check .; djlint templates --check; python manage.py check;
-python manage.py makemigrations --check. Run fresh production snapshot gate.
-Only after PASS follow user's signed PRE backup/deploy/live checks/POST backup
-and final fast-forward workflow. No deploy command is currently authorized by
-the conditional gate because non-weight blanks remain.
+Next: obtain shipment/country source or explicit changed column/source contract;
+obtain deterministic application mapping. Then implement resolved catalog
+population, aftermarket dealer USD, field-conflict rejection, blank-safe weights
+without changing canonical universe. Add all requested regressions and update
+workflow docs. Required commands: pytest; ruff check .; djlint templates --check;
+python manage.py check; python manage.py makemigrations --check. Generate fresh
+production snapshot candidate, require every non-weight field populated and
+all reconciliation deltas zero. Only after PASS perform user's signed PRE,
+deploy, live reconciliation/XLSX, signed POST, business fingerprints and main FF.
