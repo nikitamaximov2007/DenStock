@@ -6,11 +6,12 @@
     <h1 class="page-title">Отчёт действий со склада</h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
-      {% if export_rows %}
-        <a class="btn btn--small btn--primary"
+      <a class="btn btn--small btn--primary"
            data-full-navigation
            href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
-      {% endif %}
+      <a class="btn btn--small btn--secondary"
+           data-full-navigation
+           href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Таможенный экспорт аналогов</a>
     </div>
   </div>
   <p class="page-subtitle">

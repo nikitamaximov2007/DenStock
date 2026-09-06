@@ -40,7 +40,7 @@ from apps.actions.customs_provenance import (
     article_numbers_by_document,
 )
 from apps.actions.models import PartCustomsDataVersion, WarehouseAction
-from apps.catalog.models import PartNumber, PartType
+from apps.catalog.models import PartAnalog, PartNumber, PartType
 from apps.core.part_lookup import normalize_number
 from apps.inventory.models import StockMovement
 from apps.procurement.models import money
@@ -264,36 +264,42 @@ def canonical_customs_lines(
     }
     numbers = article_numbers_by_document(sale_ids, repair_ids)
 
+    analog_part_ids = set(PartAnalog.objects.values_list("analog_id", flat=True))
+    original_part_ids = set(PartAnalog.objects.values_list("original_id", flat=True))
     records = []
     for line in sale_lines:
         remaining = max(line.quantity - (sale_returned.get(line.pk) or DEC0), DEC0)
-        records.append(
-            _record(
-                kind=SALE, document_id=line.sale_id, document_number=line.sale.number,
-                customer=line.sale.customer_name, line=line, parts=parts,
-                versions_by_part=versions_by_part, numbers=numbers,
-                occurred_at=line.sale.sold_at, issued=line.quantity,
-                returned=sale_returned.get(line.pk) or DEC0, remaining=remaining,
-                amount=money(line.unit_price * remaining), amount_known=True,
-            )
+        record = _record(
+            kind=SALE, document_id=line.sale_id, document_number=line.sale.number,
+            customer=line.sale.customer_name, line=line, parts=parts,
+            versions_by_part=versions_by_part, numbers=numbers,
+            occurred_at=line.sale.sold_at, issued=line.quantity,
+            returned=sale_returned.get(line.pk) or DEC0, remaining=remaining,
+            amount=money(line.unit_price * remaining), amount_known=True,
         )
+        record["is_analog"] = (
+            line.part_type_id in analog_part_ids and line.part_type_id not in original_part_ids
+        )
+        records.append(record)
     for line in repair_lines:
         remaining = max(line.quantity - (repair_returned.get(line.pk) or DEC0), DEC0)
         # Отчёт считает клиентскую сумму по заказу целиком: одна строка без
         # исторической цены делает неизвестной сумму всего заказа. Сверка
         # обязана трактовать это так же, иначе разойдётся на ровном месте.
         known = line.repair_order_id not in unpriced_orders
-        records.append(
-            _record(
-                kind=REPAIR, document_id=line.repair_order_id,
-                document_number=line.repair_order.number,
-                customer=line.repair_order.customer_name, line=line, parts=parts,
-                versions_by_part=versions_by_part, numbers=numbers,
-                occurred_at=line.repair_order.completed_at, issued=line.quantity,
-                returned=repair_returned.get(line.pk) or DEC0, remaining=remaining,
-                amount=amounts[line.pk] if known else None, amount_known=known,
-            )
+        record = _record(
+            kind=REPAIR, document_id=line.repair_order_id,
+            document_number=line.repair_order.number,
+            customer=line.repair_order.customer_name, line=line, parts=parts,
+            versions_by_part=versions_by_part, numbers=numbers,
+            occurred_at=line.repair_order.completed_at, issued=line.quantity,
+            returned=repair_returned.get(line.pk) or DEC0, remaining=remaining,
+            amount=amounts[line.pk] if known else None, amount_known=known,
         )
+        record["is_analog"] = (
+            line.part_type_id in analog_part_ids and line.part_type_id not in original_part_ids
+        )
+        records.append(record)
     # Тип документа в ключе обязателен: у строки продажи и строки ремонта
     # нумерация своя, и без него две разные строки с одним id встали бы в
     # произвольном порядке.

@@ -1476,10 +1476,22 @@ def historical_customs_rows(
     пустыми, но саму операцию из выгрузки не вычёркивают.
     """
     return _customs_rows_from_lines(
-        canonical_customs_lines(
+        [line for line in canonical_customs_lines(
             date_from=date_from, date_to=date_to, action_type=action_type, q=q,
             part_number=part_number, location_code=location_code,
-        )
+        ) if not line.get("is_analog")]
+    )
+
+
+def historical_analog_customs_rows(
+    *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+) -> list[dict]:
+    """Исторический таможенный расход только явно связанных аналогов."""
+    return _customs_rows_from_lines(
+        [line for line in canonical_customs_lines(
+            date_from=date_from, date_to=date_to, action_type=action_type, q=q,
+            part_number=part_number, location_code=location_code,
+        ) if line.get("is_analog")]
     )
 
 

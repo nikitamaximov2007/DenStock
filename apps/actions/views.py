@@ -52,6 +52,7 @@ from .services import (
     cancel_warehouse_action,
     get_or_create_customs,
     historical_customs_rows,
+    historical_analog_customs_rows,
     parse_weight_kg,
     perform_action,
     stock_overview,
@@ -584,6 +585,7 @@ def actions_report_view(request):
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
     export_rows = historical_customs_rows(**filters)
+    analog_export_rows = historical_analog_customs_rows(**filters)
     ready = [r for r in export_rows if not r["warnings"]]
     # Готовность к таможенному экспорту (Layer 33.1): область применения +
     # оба веса одной штуки. Цена и название сюда не входят - у них своя
@@ -608,6 +610,9 @@ def actions_report_view(request):
             "show_cancelled": show_cancelled,
             "types": WarehouseAction.Type.choices,
             "export_rows": export_rows,
+            "analog_export_rows": analog_export_rows,
+            "normal_export_count": len(export_rows),
+            "analog_export_count": len(analog_export_rows),
             "ready_count": len(ready),
             "warning_count": len(export_rows) - len(ready),
             "customs_ready_count": len(export_rows) - len(customs_missing),
@@ -691,6 +696,27 @@ def actions_export(request):
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+def actions_analog_export(request):
+    """Скачать форму для заказа только по явно связанным аналогам."""
+    _require_access(request)
+    if not request.user.can_view_purchase_cost:
+        raise PermissionDenied
+    from .services import export_customs_xlsx
+
+    filters = _report_filters(request)
+    rows = historical_analog_customs_rows(**filters)
+    buffer = export_customs_xlsx(rows=rows)
+    date_from = filters["date_from"] or datetime.date.today()
+    date_to = filters["date_to"] or datetime.date.today()
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="customs_analogs_{date_from}_{date_to}.xlsx"'
     return response
 
 
