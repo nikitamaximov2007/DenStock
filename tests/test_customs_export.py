@@ -445,7 +445,9 @@ def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     assert resp.status_code == 200
     sheet = _sheet(resp.content)
     assert sheet[f"B{DATA_ROW}"].value == "777000111"
-    for column in "CDEFGHKM":
+    # Утверждённое правило компании: BRP без явной страны получает КАНАДА.
+    assert sheet[f"F{DATA_ROW}"].value == "КАНАДА"
+    for column in "CDEGHKM":
         assert sheet[f"{column}{DATA_ROW}"].value is None
 
     # Частично заведённая карточка тоже выгружается: пусто там, где не введено.
