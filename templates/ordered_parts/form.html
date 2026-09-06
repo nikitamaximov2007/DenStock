@@ -79,9 +79,7 @@
             {% endif %}
           </tbody>
         </table>
-        <p class="muted">
-          Наличие на складе не требуется: деталь заказывают именно потому, что её нет.
-        </p>
+        <p class="muted">Наличие на складе не требуется: деталь заказывают именно потому, что её нет.</p>
       </div>
     </div>
   {% endif %}
@@ -133,8 +131,8 @@
       Сколько клиент уже перевёл за эту деталь. Ноль допустим. На складскую
       себестоимость и на таможенную стоимость предоплата не влияет.
     </p>
-    <button type="submit" class="btn btn--primary" {% if not candidate %}disabled{% endif %}>
-      Оформить заказ
-    </button>
+    <button type="submit"
+            class="btn btn--primary"
+            {% if not candidate %}disabled{% endif %}>Оформить заказ</button>
   </form>
 {% endblock %}
