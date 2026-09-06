@@ -29,10 +29,11 @@ from apps.actions.customs_provenance import (
 from apps.actions.models import PartCustomsInfo
 from apps.actions.services import (
     customs_export_reconciliation,
+    historical_analog_customs_rows,
     historical_customs_rows,
     perform_action,
 )
-from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.catalog.models import Category, PartAnalog, PartNumber, PartType, Unit
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import (
     create_stock_lot,
@@ -494,3 +495,23 @@ def test_the_preview_and_the_file_stand_on_the_same_rows(env):
     assert sum(record["quantity"] for record in result["lines"]) == rows[0]["quantity"]
     assert result["lines"][0]["number"] == rows[0]["number"]
     assert result["rows"] == rows
+
+
+def test_partanalog_direction_splits_original_and_analog_exports(env):
+    original = _part(env, name="ОРИГИНАЛ", number="ORIG-1")
+    analog = _part(env, name="АНАЛОГ", number="ALT-1")
+    PartAnalog.objects.create(original=original, analog=analog)
+    _receive(env, original, quantity="3")
+    _receive(env, analog, quantity="4")
+    _sell(env, original, quantity="2", number="ORIG-1")
+    _sell(env, analog, quantity="3", number="ALT-1")
+
+    normal = historical_customs_rows()
+    analog_rows = historical_analog_customs_rows()
+
+    assert {row["source_key"][0] for row in normal} == {original.pk}
+    assert {row["source_key"][0] for row in analog_rows} == {analog.pk}
+    normal_parts = {row["source_key"][0] for row in normal}
+    analog_parts = {row["source_key"][0] for row in analog_rows}
+    assert not normal_parts & analog_parts
+    assert sum((row["quantity"] for row in normal + analog_rows), Decimal("0")) == Decimal("5")
