@@ -558,14 +558,16 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
                    quantity="1", customer_comment="Иванов", by=data["admin"])
     _login(client, make_user, superuser=True, name="boss")
     html = client.get(reverse("actions_report")).content.decode()
-    # Данных ещё не вводили: выгружать нечего, и кнопки нет.
-    assert "Экспорт в Excel для таможни" not in html
-    assert "Сначала заведите таможенные данные" in html
+    # Таможенных данных ещё нет - кнопка всё равно на месте: сотрудник вправе
+    # скачать форму в любой момент и дозаполнить пустые ячейки в Excel.
+    assert "Экспорт в Excel для таможни" in html
+    assert "Экспорт доступен" in html
+    assert "Экспорт заблокирован" not in html
 
-    # Неполная карточка выгрузку не разрешает: причина названа, кнопки нет.
+    # Неполная карточка выгрузку не отменяет: причина названа, кнопка осталась.
     card = _card(data["single"], gross_weight_kg=None)
     html = client.get(reverse("actions_report")).content.decode()
-    assert "Экспорт в Excel для таможни" not in html
+    assert "Экспорт в Excel для таможни" in html
     assert "нет веса брутто" in html
 
     # Правка карточки сегодня не достраивает вчерашнюю декларацию: расход
@@ -573,7 +575,6 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
     card.gross_weight_kg = Decimal("0.350")
     card.save()
     html = client.get(reverse("actions_report")).content.decode()
-    assert "Экспорт в Excel для таможни" not in html
     assert "нет веса брутто" in html
     assert "Таможенные данные" in html
     assert "Иванов" in html  # клиент/комментарий виден в отчёте

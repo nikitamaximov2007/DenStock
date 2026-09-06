@@ -219,13 +219,15 @@ def test_legacy_moto_zapchasti_not_exported(client, make_user, env):
     _sell(env, part, number="219800345")
     _login(client, make_user)
 
-    # Легаси-значение не является областью применения, поэтому строка к
-    # декларации не готова: файл не выдаётся вовсе, а не выдаётся с пустой
-    # ячейкой. Так «МОТО ЗАПЧАСТИ» точно никуда не уедет.
-    resp = client.get(reverse("actions_export"), follow=True)
-    assert resp["Content-Type"].startswith("text/html")
-    assert "Нельзя сформировать Excel" in resp.content.decode()
-    assert "МОТО ЗАПЧАСТИ" not in resp.content.decode()
+    # Легаси-значение областью применения не является. Строка уходит в файл -
+    # операция реальна, - но ячейка области применения остаётся ПУСТОЙ.
+    # «МОТО ЗАПЧАСТИ» не уедет никуда именно поэтому, а не из-за отказа.
+    resp = client.get(reverse("actions_export"))
+    assert resp.status_code == 200
+    sheet = _sheet(resp.content)
+    assert sheet[f"B{DATA_ROW}"].value == "219800345"
+    assert sheet[f"M{DATA_ROW}"].value is None
+    assert b"\xd0\x9c\xd0\x9e\xd0\xa2\xd0\x9e" not in resp.content
 
 
 # --- 7-8. GET не создаёт PartCustomsInfo --------------------------------------------------
@@ -247,10 +249,10 @@ def test_export_get_does_not_create_customs_row(client, make_user, env):
     before = PartCustomsInfo.objects.count()
     _login(client, make_user)
 
-    # Карточки нет, поэтому выгрузка отказывает - и всё равно ничего не создаёт:
-    # таможенные данные заводит человек, а не открытие ссылки.
+    # Файл выдаётся с пустыми таможенными ячейками - и всё равно ничего не
+    # создаёт: таможенные данные заводит человек, а не открытие ссылки.
     resp = client.get(reverse("actions_export"))
-    assert resp.status_code == 302
+    assert resp.status_code == 200
     assert PartCustomsInfo.objects.count() == before
 
 

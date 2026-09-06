@@ -7,7 +7,11 @@
 такая догадка становится ложным фактом.
 
 Здесь закреплено обратное: снимок берётся из журнала действий и только оттуда,
-возврат гасит ровно свой документ, а всё недоказуемое явно блокирует выгрузку.
+а возврат гасит ровно свой документ.
+
+Недоказуемый артикул выгрузку больше не отменяет: сама операция реальна и
+обязана попасть в Excel, поэтому пустой остаётся ровно та ячейка, которую
+нечем заполнить. Выдумать номер по сегодняшней карточке по-прежнему нельзя.
 """
 from decimal import Decimal
 
@@ -139,6 +143,29 @@ def _returns():
     return list(StockMovement.objects.filter(movement_type__in=RETURN_TYPES).order_by("pk"))
 
 
+def _document_sale(env, lot, *, quantity="1", price="500", customer="Петров"):
+    """Продажа обычным документом - без сканера и, значит, без снимка артикула."""
+    from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
+
+    sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
+    add_stock_lot_to_sale(
+        sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
+    )
+    return complete_sale(sale, by=env["admin"])
+
+
+def _return_sale(env, action, quantity):
+    """Настоящий клиентский возврат по строке продажи."""
+    sale = action.sale
+    document = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        document, sale.lines.get(part_type=action.part_type), Decimal(quantity),
+        to_location=env["loc"], restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=env["admin"],
+    )
+    return complete_return(document, by=env["admin"])
+
+
 # --- A-D. Историческая личность детали ------------------------------------------
 
 
@@ -199,7 +226,28 @@ def test_an_alias_does_not_replace_the_number_the_goods_left_under(env):
 
 
 def test_an_outbound_without_a_snapshot_is_never_named_by_the_current_card(env):
-    """Списание снимка не хранит: строка не выгружается, а блокирует экспорт."""
+    """Продажа не сканером: строка уходит в Excel, но номер остаётся пустым.
+
+    Снимка артикула у такого документа нет, а сегодняшний номер карточки
+    историей не является. Раньше выбор был между выдумкой и потерей строки;
+    теперь операция сохраняется, а недоказанное поле остаётся пустым.
+    """
+    part = _part(env, number="219800345")
+    _card(part)
+    lot = _receive(env, part)
+    _document_sale(env, lot, quantity="2", price="500")
+
+    rows = historical_customs_rows()
+    assert len(rows) == 1
+    assert rows[0]["number"] == ""  # не «219800345» из сегодняшней карточки
+    assert rows[0]["quantity"] == Decimal("2")
+    result = customs_export_reconciliation()
+    assert len(result["article_unproven"]) == 1
+    assert result["silent"] == []
+
+
+def test_a_write_off_is_outside_the_customs_universe(env):
+    """Списание клиенту не уходило: в «Продажах и ремонтах» его нет, и здесь нет."""
     from apps.inventory.services import write_off_stock_lot_quantity
 
     part = _part(env, number="219800345")
@@ -210,9 +258,7 @@ def test_an_outbound_without_a_snapshot_is_never_named_by_the_current_card(env):
     resolved = article_snapshots(_outbound())
     assert [entry["status"] for entry in resolved.values()] == [ARTICLE_MISSING]
     assert historical_customs_rows() == []
-    result = customs_export_reconciliation()
-    assert len(result["provenance_missing"]) == 1
-    assert result["exported"] == []
+    assert customs_export_reconciliation()["lines"] == []
 
 
 def test_a_proven_snapshot_names_its_source(env):
@@ -239,32 +285,33 @@ def test_a_return_reduces_only_its_own_document(env):
     sale = _sell(env, part, quantity="2", number="219800345")
     _issue(env, part, quantity="2", number="219800345")
 
-    return_stock_lot_quantity(
-        StockLot.objects.first().batch_line, env["loc"], Decimal("1"),
-        unit_cost_rub=Decimal("100"), restock_status=StockLot.Status.AVAILABLE,
-        by=env["admin"], document_type="sale", document_id=sale.sale_id,
-        comment="Возврат продажи",
-    )
+    _return_sale(env, sale, "1")
 
     result = customs_export_reconciliation()
-    by_operation = {}
-    for record in result["eligible"]:
-        by_operation[record["operation"]] = by_operation.get(
-            record["operation"], Decimal("0")
-        ) + record["quantity"]
-    assert by_operation == {"sale": Decimal("1"), "repair": Decimal("2")}
-    assert result["return_ambiguous"] == []
+    by_kind = {}
+    for record in result["lines"]:
+        by_kind[record["kind"]] = by_kind.get(record["kind"], Decimal("0")) + (
+            record["quantity"]
+        )
+    assert by_kind == {"sale": Decimal("1"), "repair": Decimal("2")}
+    assert result["silent"] == []
 
 
-def test_a_return_without_a_provable_source_blocks_instead_of_guessing(env):
-    """Старое движение с чужой пометкой документа ничего не гасит."""
+def test_a_bare_compensating_movement_never_reduces_a_documented_sale(env):
+    """Движение без документа возврата не гасит продажу - ни здесь, ни в отчёте.
+
+    Так выглядят исторические движения отмены: тип документа не проставлен, а
+    номер - продажи. Доказать по нему нечего, и «Продажи и ремонты» его тоже не
+    видят: проведённая продажа остаётся проведённой на все 4. Трактовать такое
+    движение отдельным правилом ради Excel нельзя - итоги разошлись бы.
+    """
+    from apps.reports.services import Period, get_clients_sales_and_repairs
+
     part = _part(env, number="219800345")
     _receive(env, part)
     _card(part)
     sale = _sell(env, part, quantity="4", number="219800345")
 
-    # Так выглядят исторические движения отмены: тип документа «возврат», а
-    # номер - продажи. Доказать по нему нечего.
     return_stock_lot_quantity(
         StockLot.objects.first().batch_line, env["loc"], Decimal("1"),
         unit_cost_rub=Decimal("100"), restock_status=StockLot.Status.AVAILABLE,
@@ -272,12 +319,12 @@ def test_a_return_without_a_provable_source_blocks_instead_of_guessing(env):
     )
 
     attribution = next(iter(return_attributions(_returns()).values()))
-    assert attribution["status"] == RETURN_AMBIGUOUS
+    assert attribution["status"] == RETURN_AMBIGUOUS  # доказательства и правда нет
     result = customs_export_reconciliation()
-    assert len(result["return_ambiguous"]) == 1
-    assert sum(r["quantity"] for r in result["eligible"] if r["operation"] == "sale") == (
-        Decimal("4")
-    )  # выдача не уменьшена догадкой
+    assert sum(r["quantity"] for r in result["lines"]) == Decimal("4")
+    report = get_clients_sales_and_repairs(Period(None, None, "all"))
+    assert sum(row["sale_quantity"] for row in report) == Decimal("4")
+    assert result["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
 def test_two_sales_of_one_lot_keep_their_own_returns(env):
@@ -288,17 +335,12 @@ def test_two_sales_of_one_lot_keep_their_own_returns(env):
     first = _sell(env, part, quantity="2", number="219800345")
     _sell(env, part, quantity="3", number="219800345")
 
-    return_stock_lot_quantity(
-        StockLot.objects.first().batch_line, env["loc"], Decimal("1"),
-        unit_cost_rub=Decimal("100"), restock_status=StockLot.Status.AVAILABLE,
-        by=env["admin"], document_type="sale", document_id=first.sale_id,
-        comment="Возврат первой продажи",
-    )
+    _return_sale(env, first, "1")
 
     result = customs_export_reconciliation()
-    quantities = sorted(record["quantity"] for record in result["eligible"])
+    quantities = sorted(record["quantity"] for record in result["lines"])
     assert quantities == [Decimal("1"), Decimal("3")]
-    assert result["return_ambiguous"] == []
+    assert result["silent"] == []
 
 
 def test_a_completed_return_document_proves_its_source(env):
@@ -319,7 +361,7 @@ def test_a_completed_return_document_proves_its_source(env):
     assert attribution["status"] == RETURN_EXACT
     assert attribution["proof"] == "return_line"
     assert sum(
-        record["quantity"] for record in customs_export_reconciliation()["eligible"]
+        record["quantity"] for record in customs_export_reconciliation()["lines"]
     ) == Decimal("3")
 
 
@@ -339,9 +381,9 @@ def test_a_partial_line_cancellation_keeps_exact_provenance(env):
     )
 
     result = customs_export_reconciliation()
-    assert sum(record["quantity"] for record in result["eligible"]) == Decimal("3")
-    assert result["return_ambiguous"] == []
-    assert result["provenance_missing"] == []
+    assert sum(record["quantity"] for record in result["lines"]) == Decimal("3")
+    assert result["silent"] == []
+    assert result["article_unproven"] == []
 
 
 def test_a_whole_cancellation_after_a_partial_one_reconciles_all_four(env):
@@ -356,8 +398,9 @@ def test_a_whole_cancellation_after_a_partial_one_reconciles_all_four(env):
     cancel_sale(action.sale, by=env["admin"], reason="Остальное", author="Иванов И.")
 
     result = customs_export_reconciliation()
-    assert sum(record["quantity"] for record in result["eligible"]) == Decimal("0")
-    assert result["return_ambiguous"] == []
+    assert sum(record["quantity"] for record in result["lines"]) == Decimal("0")
+    assert historical_customs_rows() == []  # нулевой расход строки не образует
+    assert result["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
 def test_a_repair_cancellation_reconciles_its_own_issue(env):
@@ -372,66 +415,54 @@ def test_a_repair_cancellation_reconciles_its_own_issue(env):
     )
 
     result = customs_export_reconciliation()
-    assert sum(record["quantity"] for record in result["eligible"]) == Decimal("2")
-    assert {record["operation"] for record in result["eligible"]} == {"sale"}
-    assert result["return_ambiguous"] == []
+    assert sum(record["quantity"] for record in result["lines"]) == Decimal("2")
+    assert {record["kind"] for record in result["lines"]} == {"sale"}
+    assert result["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
 # --- Итоговый инвариант и выгрузка ---------------------------------------------------
 
 
-def test_every_eligible_quantity_lands_in_exactly_one_category(env):
-    """Пятой, молчаливой категории не существует."""
+def test_every_canonical_line_lands_in_the_export(env):
+    """Молчаливой категории не существует: строка либо в XLSX, либо её нет вовсе."""
     from apps.inventory.services import write_off_stock_lot_quantity
 
     part = _part(env, number="219800345")
     lot = _receive(env, part)
     _card(part)
-    sale = _sell(env, part, quantity="4", number="219800345")
+    _sell(env, part, quantity="4", number="219800345")
     write_off_stock_lot_quantity(lot, Decimal("2"), by=env["admin"], comment="Брак")
-    return_stock_lot_quantity(
-        lot.batch_line, env["loc"], Decimal("1"), unit_cost_rub=Decimal("100"),
-        restock_status=StockLot.Status.AVAILABLE, by=env["admin"],
-        document_id=sale.sale_id, comment="Историческая отмена",
-    )
     naked = _part(env, name="БЕЗ ДАННЫХ", number="777000777")
-    _receive(env, naked)
+    naked_lot = _receive(env, naked)
     _sell(env, naked, quantity="1", number="777000777")
+    _document_sale(env, naked_lot, quantity="2", price="300")
 
     result = customs_export_reconciliation()
-    counted = (
-        len(result["exported"]) + len(result["blocked"])
-        + len(result["provenance_missing"]) + len(result["return_ambiguous"])
-        + len(result["silent"])
-    )
-    assert counted == len(result["eligible"])
     assert result["silent"] == []
     assert result["duplicates"] == []
-    assert len(result["provenance_missing"]) == 1  # списание
-    assert len(result["return_ambiguous"]) == 1  # историческая отмена
-    assert len(result["blocked"]) == 1  # деталь без таможенной карточки
+    # 4 продажи + 1 продажа детали без карточки + 2 продажи документом.
+    assert result["totals"]["quantity"] == Decimal("7")
+    assert result["totals"]["row_quantity"] == Decimal("7")  # свёртка ничего не теряет
+    assert len(result["incomplete"]) == 2  # обе строки детали без карточки
+    assert len(result["article_unproven"]) == 1  # продажа документом
+    assert result["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
-def test_the_xlsx_is_refused_while_anything_is_unproven(client, env, admin):
+def test_the_xlsx_is_produced_even_when_the_article_is_unproven(client, env, admin):
     from django.urls import reverse
 
     part = _part(env, number="219800345")
-    _receive(env, part)
     _card(part)
-    sale = _sell(env, part, quantity="4", number="219800345")
-    return_stock_lot_quantity(
-        StockLot.objects.first().batch_line, env["loc"], Decimal("1"),
-        unit_cost_rub=Decimal("100"), restock_status=StockLot.Status.AVAILABLE,
-        by=env["admin"], document_id=sale.sale_id, comment="Историческая отмена",
-    )
+    lot = _receive(env, part)
+    _document_sale(env, lot, quantity="4", price="500")
     client.force_login(admin)
 
-    response = client.get(reverse("actions_export"), follow=True)
+    response = client.get(reverse("actions_export"))
 
-    body = response.content.decode()
-    assert "Нельзя сформировать Excel" in body
-    assert "возврат нельзя отнести к выбытию" in body
-    assert response["Content-Type"].startswith("text/html")  # файла не отдали
+    assert response.status_code == 200
+    assert response["Content-Type"].startswith(
+        "application/vnd.openxmlformats-officedocument"
+    )
 
 
 def test_the_xlsx_is_produced_when_everything_is_proven(client, env, admin):
@@ -459,6 +490,7 @@ def test_the_preview_and_the_file_stand_on_the_same_rows(env):
 
     rows = historical_customs_rows()
     result = customs_export_reconciliation()
-    assert len(result["exported"]) == 1
-    assert sum(record["quantity"] for record in result["exported"]) == rows[0]["quantity"]
-    assert result["exported"][0]["number"] == rows[0]["number"]
+    assert len(result["lines"]) == 1
+    assert sum(record["quantity"] for record in result["lines"]) == rows[0]["quantity"]
+    assert result["lines"][0]["number"] == rows[0]["number"]
+    assert result["rows"] == rows

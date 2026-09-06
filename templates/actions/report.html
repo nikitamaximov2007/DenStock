@@ -6,25 +6,31 @@
     <h1 class="page-title">Отчёт действий со склада</h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
-      {% if export_rows and not customs_missing_count %}
+      {% if export_rows %}
         <a class="btn btn--small btn--primary"
            data-full-navigation
            href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
-      {% elif export_rows %}
-        <span class="muted">Сначала заведите таможенные данные для всех позиций.</span>
       {% endif %}
     </div>
   </div>
   <p class="page-subtitle">
-    Продажи, резервы и выдачи в ремонт, проведённые со сканера действий.
-    Экспорт заполняет «Форму для заказа» по текущим фильтрам: действия
-    группируются по детали, количество суммируется.
+    В таблице ниже: продажи, резервы и выдачи в ремонт, проведённые со сканера
+    действий. Экспорт заполняет «Форму для заказа» по текущим фильтрам всей
+    историей продаж и ремонтов, а не только сканерной: строки группируются по
+    детали и версии таможенных данных, количество суммируется.
   </p>
   {% if customs_missing_count %}
     <p class="pill pill--warning pill--block">
       У {{ customs_missing_count }} позиций таможенные данные заполнены не
-      полностью. Экспорт заблокирован, пока не будут заполнены все поля:
-      выдумывать их значения нельзя.
+      полностью. Экспорт доступен, но незаполненные поля останутся пустыми и их
+      потребуется заполнить в Excel вручную: выдумывать значения нельзя.
+    </p>
+  {% endif %}
+  {% if article_unproven_count %}
+    <p class="pill pill--warning pill--block">
+      У {{ article_unproven_count }} позиций не сохранён артикул на момент
+      операции: деталь ушла документом, а не сканером. Такие строки выгружаются,
+      но колонка артикула в них останется пустой.
     </p>
   {% endif %}
   <form method="get" class="filter-toolbar">

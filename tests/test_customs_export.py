@@ -440,18 +440,19 @@ def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     assert not PartCustomsInfo.objects.filter(part_type=part).exists()
     _login(client, make_user)
     resp = client.get(reverse("actions_export"))
-    # Данных нет вовсе, достроить их неоткуда: внятный отказ, а не 500 и не
-    # выгрузка с выдуманными значениями.
-    assert resp.status_code == 302
-    assert resp.url.startswith(reverse("actions_report"))
-    html = client.get(resp.url).content.decode()
-    assert "не заполнены таможенные данные" in html
+    # Данных нет вовсе, достроить их неоткуда - но операция реальна, и строка
+    # обязана уйти в Excel. Пустые ячейки сотрудник дозаполнит сам.
+    assert resp.status_code == 200
+    sheet = _sheet(resp.content)
+    assert sheet[f"B{DATA_ROW}"].value == "777000111"
+    for column in "CDEFGHKM":
+        assert sheet[f"{column}{DATA_ROW}"].value is None
 
-    # Частично заведённая карточка тоже не даёт частичный успешный экспорт.
+    # Частично заведённая карточка тоже выгружается: пусто там, где не введено.
     _card(part, customs_unit_price_usd=None)
-    resp = client.get(reverse("actions_export"))
-    assert resp.status_code == 302
-    assert "не заполнены таможенные данные" in client.get(resp.url).content.decode()
+    sheet = _sheet(client.get(reverse("actions_export")).content)
+    assert sheet[f"K{DATA_ROW}"].value is None
+    assert sheet[f"C{DATA_ROW}"].value is not None  # русское название введено
 
 
 def test_decimal_quantity_written_as_number(client, make_user, env):
@@ -693,15 +694,18 @@ def test_wholesale_ignores_rate_and_markup(client, make_user, env):
     assert _price(sheet) == Decimal("28.15")  # чистый USD, без курса и наценки
 
 
-def test_unentered_customs_price_blocks_export_without_inventing_zero(client, make_user, env):
-    """Незаполненная таможенная цена - явный blocker, не ноль в XLSX."""
+def test_unentered_customs_price_stays_blank_instead_of_inventing_zero(
+    client, make_user, env
+):
+    """Незаполненная таможенная цена - пустая ячейка, а не ноль и не отказ."""
     part, _ = _brp(env, material="219800345", retail="35.99", wholesale="28.15",
                    customs=False)
     _card(part, customs_unit_price_usd=None)
     _sell(env, part, number="219800345")
     _login(client, make_user)
     response = client.get(reverse("actions_export"))
-    assert response.status_code == 302
+    assert response.status_code == 200
+    assert _sheet(response.content)[f"K{DATA_ROW}"].value is None
     from apps.actions.services import historical_customs_rows
 
     rows = historical_customs_rows()
@@ -722,8 +726,7 @@ def _compat(part, make_name, vehicle_type_name, model_name="MODEL"):
 
 
 def _application_for(client, make_user, env, part, number, *, clear_manual=True):
-    # Здесь проверяется источник значения, не обход экспортного блокера: при
-    # незаполненной области применения XLSX формироваться не должен.
+    # Здесь проверяется источник значения, а не сам факт выгрузки.
     if clear_manual:
         card = PartCustomsInfo.objects.get(part_type=part)
         card.application_area = ""
@@ -739,9 +742,9 @@ def _application_for(client, make_user, env, part, number, *, clear_manual=True)
 def _customs(part, **overrides):
     """Полностью заполненная таможенная карточка.
 
-    Таможенный экспорт берёт факты только из введённых пользователем данных,
-    поэтому неполная карточка Excel больше не даёт. Тесты, проверяющие саму
-    неполноту, создают PartCustomsInfo напрямую и этой обёрткой не пользуются.
+    Таможенный экспорт берёт факты только из введённых пользователем данных.
+    Неполная карточка выгрузку не отменяет - она оставляет свои ячейки
+    пустыми; тесты про саму неполноту создают PartCustomsInfo напрямую.
     """
     values = {
         "customs_name_ru": "РЕМЕНЬ ПРИВОДНОЙ",

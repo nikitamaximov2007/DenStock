@@ -50,7 +50,6 @@ from .services import (
     ActionError,
     actions_report,
     cancel_warehouse_action,
-    customs_export_reconciliation,
     get_or_create_customs,
     historical_customs_rows,
     parse_weight_kg,
@@ -595,6 +594,10 @@ def actions_report_view(request):
         )  # только для отображения: quantity меняется от экспорта к экспорту,
         # само значение никогда не сохраняется обратно в PartCustomsInfo.
     customs_missing = [r for r in export_rows if not r["customs_ready"]]
+    # Строк без доказанного артикула тоже видно: их таможенная ячейка «артикул»
+    # уйдёт в Excel пустой. Скрывать это нельзя - оператор должен знать, что
+    # именно ему предстоит дозаполнить руками.
+    article_unproven = [r for r in export_rows if not r["number"]]
     return render(
         request,
         "actions/report.html",
@@ -610,6 +613,7 @@ def actions_report_view(request):
             "customs_ready_count": len(export_rows) - len(customs_missing),
             "customs_missing_count": len(customs_missing),
             "customs_absent_count": sum(1 for r in export_rows if not r["customs_entered"]),
+            "article_unproven_count": len(article_unproven),
             "application_choices": PartCustomsInfo.ApplicationArea.choices,
             "export_query": request.GET.urlencode(),
             "current_path_query": request.get_full_path(),
@@ -657,8 +661,14 @@ def actions_cancel(request, pk):
 def actions_export(request):
     """Скачать «Форму для заказа» (xlsx) по текущим фильтрам отчёта.
 
-    Read-only: тот же набор действий, что показывает отчёт, и только активные
-    (отменённые в таможенный экспорт не попадают, как и в блоке готовности).
+    Read-only: канонические строки проведённых продаж и ремонтов с действующим
+    количеством - тот же набор, что показывают «Продажи и ремонты».
+
+    Неполные таможенные данные выгрузку НЕ блокируют. Это решение продукта:
+    сотрудник обязан иметь возможность скачать форму в любой момент, а
+    незаполненные поля дозаполняет прямо в Excel. Пустая ячейка честнее
+    выдуманного значения, а отсутствующая строка - хуже обеих.
+
     Файл содержит оптовую цену в USD, поэтому одного права на проведение
     складских действий недостаточно: нужно также право просмотра закупочной
     стоимости.
@@ -669,27 +679,9 @@ def actions_export(request):
     from .services import export_customs_xlsx
 
     filters = _report_filters(request)
+    # Пустая выборка не ошибка: оператор получает ту же форму без товарных
+    # строк и видит это сам. Отказ здесь только мешал бы.
     rows = historical_customs_rows(**filters)
-    # Проверять готовность по строкам недостаточно: движение, происхождение
-    # которого не доказано, строки не даёт вовсе и молча выпало бы из проверки.
-    # Поэтому решение принимает сверка по журналу движений - она видит каждое
-    # выбытие и относит его ровно к одной из четырёх категорий.
-    reconciliation = customs_export_reconciliation(**filters)
-    problems = [
-        (reconciliation["return_ambiguous"], "возврат нельзя отнести к выбытию"),
-        (reconciliation["provenance_missing"], "не доказан артикул на момент выбытия"),
-        (reconciliation["blocked"], "не заполнены таможенные данные"),
-        (reconciliation["silent"], "строка не попала в выгрузку"),
-    ]
-    reasons = [
-        f"{label}: {len(records)}" for records, label in problems if records
-    ]
-    if reasons:
-        messages.error(
-            request,
-            "Нельзя сформировать Excel, пока не закрыто: " + "; ".join(reasons) + ".",
-        )
-        return redirect(f"{reverse('actions_report')}?{urlencode(request.GET)}")
     buffer = export_customs_xlsx(rows=rows)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()

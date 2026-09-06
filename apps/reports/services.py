@@ -368,7 +368,7 @@ def get_sales_by_customer(period: Period) -> list[dict]:
             "id", "sale_id", "quantity", "unit_price", "sale__customer_id", "sale__customer_name"
         )
     )
-    returned = _sale_returned_quantities(sale_lines)
+    returned = sale_returned_quantities(sale_lines)
     totals: dict[tuple, Decimal] = {}
     quantities: dict[tuple, Decimal] = {}
     for line in sale_lines:
@@ -387,8 +387,13 @@ def get_sales_by_customer(period: Period) -> list[dict]:
     return rows
 
 
-def _sale_returned_quantities(lines):
-    """Completed return quantities keyed by completed sale line."""
+def sale_returned_quantities(lines):
+    """Completed return quantities keyed by completed sale line.
+
+    Публичная: тем же правилом гасит возвраты таможенная выгрузка, и второй
+    реализации у него быть не должно - иначе итоги двух отчётов разойдутся
+    молча.
+    """
     from apps.returns.models import StockReturnLine
 
     lines = list(lines)

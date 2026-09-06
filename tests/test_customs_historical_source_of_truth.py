@@ -10,9 +10,10 @@
 права подставиться вместо ввода пользователя. Незаполненное поле остаётся
 пустым: выдуманный ноль в таможенной декларации хуже пустой клетки.
 
-Источник строк - складской журнал (StockMovement), а не журнал действий:
-декларировать нужно всё, что физически покинуло склад, включая списания и
-выдачи в ремонт, проведённые не сканером.
+Источник строк - те же канонические строки документов, что и в отчёте
+«Продажи и ремонты»: строки проведённых продаж и проведённых ремонтов, кем бы
+они ни были оформлены - сканером или обычным документом. Списание клиенту не
+уходило, поэтому таможенной строкой не является.
 """
 import datetime
 import re
@@ -36,16 +37,16 @@ from apps.actions.services import (
     perform_action,
 )
 from apps.catalog.models import Category, PartNumber, PartType, Unit
-from apps.inventory.models import StockLot, StockMovement
+from apps.inventory.models import StockMovement
 from apps.inventory.services import (
     create_stock_lot,
     receive_stock_lot,
-    return_stock_lot_quantity,
     write_off_stock_lot_quantity,
 )
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.repairs.services import cancel_repair_order
+from apps.sales.models import Sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 
@@ -151,6 +152,29 @@ def _sell(env, part, *, quantity="1", number=""):
         part=part, location=env["loc"], action_type="sale", quantity=quantity,
         customer_comment="Иванов", scanned_number=number, by=env["admin"],
     )
+
+
+def _return(env, action, quantity, *, restock=None):
+    """Настоящий клиентский возврат по строке продажи - тот же путь, что в UI.
+
+    Раньше тесты возвращали товар прямо через inventory: голое движение без
+    документа возврата. Так возврат в системе не оформляется ни одним
+    сценарием, и ни «Продажи и ремонты», ни таможенная выгрузка его не видят -
+    обе считают по строкам документа возврата.
+    """
+    from apps.returns.models import StockReturnLine
+    from apps.returns.services import add_sale_line_return, complete_return, create_return
+
+    sale = action.sale
+    line = sale.lines.get(part_type=action.part_type)
+    document = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        document, line, Decimal(quantity),
+        to_location=line.stock_lot.location,
+        restock_status=restock or StockReturnLine.RestockStatus.AVAILABLE,
+        by=env["admin"],
+    )
+    return complete_return(document, by=env["admin"])
 
 
 def _row_for(rows, number, version=None):
@@ -378,12 +402,11 @@ def test_period_report_keeps_each_sale_under_its_own_number(env):
     assert numbers == ["WH-100", "WH-200"]
 
     # Отчёт со сдвинутым началом периода: первая продажа отодвинута в прошлое,
-    # в окно попадает только вторая - и она обязана остаться WH-200.
+    # в окно попадает только вторая - и она обязана остаться WH-200. Период
+    # считается по дате проведения документа: ровно так его считают «Продажи и
+    # ремонты», и второй даты у операции нет.
     yesterday = timezone.now() - datetime.timedelta(days=1)
-    moved = StockMovement.objects.filter(
-        part_type=part, movement_type=StockMovement.MovementType.SALE_LOT
-    ).order_by("created_at", "pk").first()
-    StockMovement.objects.filter(pk=moved.pk).update(created_at=yesterday)
+    Sale.objects.filter(pk=first.sale_id).update(sold_at=yesterday)
 
     # Начало окна - сегодняшняя дата пользователя, а не дата по UTC: ночью
     # они расходятся, и вчерашняя продажа возвращалась в отчёт.
@@ -398,16 +421,11 @@ def test_period_report_keeps_each_sale_under_its_own_number(env):
 def test_return_reduces_the_version_the_goods_left_under(env):
     """Возврат гасит свою выдачу, а не ту версию, что действует в день возврата."""
     part = _part(env, number="219800345")
-    lot = _receive(env, part, quantity="20")
+    _receive(env, part, quantity="20")
     card = _card(part, customs_unit_price_usd=Decimal("10"))
     action = _sell(env, part, quantity="5", number="219800345")
     _edit(card, customs_unit_price_usd=Decimal("20"))  # правка ПОСЛЕ продажи
-    return_stock_lot_quantity(
-        lot.batch_line, env["loc"], Decimal("2"),
-        unit_cost_rub=lot.landed_unit_cost_rub,
-        restock_status=StockLot.Status.AVAILABLE, by=env["admin"],
-        document_type="sale", document_id=action.sale_id, comment="Возврат",
-    )
+    _return(env, action, "2")
     rows = [r for r in historical_customs_rows() if r["number"] == "219800345"]
     assert len(rows) == 1  # фантомной строки по второй версии не появилось
     assert rows[0]["version_number"] == 1
@@ -416,29 +434,19 @@ def test_return_reduces_the_version_the_goods_left_under(env):
 
 def test_partial_return_leaves_the_remainder(env):
     part = _part(env, number="219800345")
-    lot = _receive(env, part, quantity="20")
+    _receive(env, part, quantity="20")
     _card(part)
     action = _sell(env, part, quantity="5", number="219800345")
-    return_stock_lot_quantity(
-        lot.batch_line, env["loc"], Decimal("2"),
-        unit_cost_rub=lot.landed_unit_cost_rub,
-        restock_status=StockLot.Status.AVAILABLE, by=env["admin"],
-        document_type="sale", document_id=action.sale_id, comment="Возврат",
-    )
+    _return(env, action, "2")
     assert _row_for(historical_customs_rows(), "219800345")["quantity"] == Decimal("3")
 
 
 def test_full_return_removes_the_row(env):
     part = _part(env, number="219800345")
-    lot = _receive(env, part, quantity="20")
+    _receive(env, part, quantity="20")
     _card(part)
     action = _sell(env, part, quantity="4", number="219800345")
-    return_stock_lot_quantity(
-        lot.batch_line, env["loc"], Decimal("4"),
-        unit_cost_rub=lot.landed_unit_cost_rub,
-        restock_status=StockLot.Status.AVAILABLE, by=env["admin"],
-        document_type="sale", document_id=action.sale_id, comment="Возврат",
-    )
+    _return(env, action, "4")
     assert [r for r in historical_customs_rows() if r["number"] == "219800345"] == []
 
 
@@ -448,15 +456,10 @@ def test_return_does_not_reduce_another_part(env):
     _card(kept)
     _card(given_back)
     _receive(env, kept, quantity="10")
-    lot = _receive(env, given_back, quantity="10")
+    _receive(env, given_back, quantity="10")
     _sell(env, kept, quantity="3", number="111000111")
     action = _sell(env, given_back, quantity="3", number="222000222")
-    return_stock_lot_quantity(
-        lot.batch_line, env["loc"], Decimal("3"),
-        unit_cost_rub=lot.landed_unit_cost_rub,
-        restock_status=StockLot.Status.AVAILABLE, by=env["admin"],
-        document_type="sale", document_id=action.sale_id, comment="Возврат",
-    )
+    _return(env, action, "3")
     rows = historical_customs_rows()
     assert _row_for(rows, "111000111")["quantity"] == Decimal("3")  # чужой расход цел
     assert [r for r in rows if r["number"] == "222000222"] == []
@@ -537,12 +540,14 @@ def test_stocktaking_adjustment_is_not_customs_consumption(env):
     assert historical_customs_rows() == []
 
 
-def test_a_write_off_is_consumption_without_a_provable_article(env):
-    """Списание уводит товар со склада, но номера на момент списания не хранит.
+def test_a_write_off_is_not_a_customs_row(env):
+    """Списание не продажа и не ремонт: клиенту эта деталь не уходила.
 
-    У списания нет журнала действий и нет снимка артикула в строке документа,
-    поэтому назвать номер можно было бы только сегодняшней карточкой. Это
-    запрещено: строка не выгружается, а явно блокирует экспорт.
+    В «Продажах и ремонтах» списания нет, поэтому нет его и в таможенной
+    выгрузке - иначе итоги двух отчётов не сошлись бы никогда. Строкой Excel
+    списание не было и раньше: его движение помечено документом ``write_off``,
+    снимка артикула у такого документа не бывает, и строка лишь намертво
+    блокировала экспорт.
     """
     from apps.actions.services import customs_export_reconciliation
 
@@ -553,10 +558,8 @@ def test_a_write_off_is_consumption_without_a_provable_article(env):
 
     assert historical_customs_rows() == []
     reconciliation = customs_export_reconciliation()
-    assert len(reconciliation["eligible"]) == 1
-    assert len(reconciliation["provenance_missing"]) == 1
-    assert reconciliation["provenance_missing"][0]["quantity"] == Decimal("2")
-    assert reconciliation["exported"] == []
+    assert reconciliation["lines"] == []
+    assert reconciliation["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
 def test_repair_issue_is_customs_consumption(env):
@@ -728,18 +731,23 @@ def test_excel_carries_the_same_version_the_preview_showed(client, env, make_use
     assert Decimal(str(sheet[f"K{DATA_ROW}"].value)) == Decimal("10")
 
 
-def test_export_refuses_when_nothing_was_ever_entered(client, env, make_user):
+def test_export_works_when_nothing_was_ever_entered(client, env, make_user):
+    """Таможенных данных нет вовсе - выгрузка всё равно выдаётся, с пустотами."""
     part = _part(env, number="219800345")
     _receive(env, part, quantity="10")
     _sell(env, part, quantity="1", number="219800345")
     _login(client, make_user)
     resp = client.get(reverse("actions_export"))
-    assert resp.status_code == 302
-    assert "не заполнены таможенные данные" in client.get(resp.url).content.decode()
+    assert resp.status_code == 200
+    sheet = openpyxl.load_workbook(BytesIO(resp.content))[SHEET]
+    assert sheet[f"B{DATA_ROW}"].value == "219800345"  # операция на месте
+    assert Decimal(str(sheet[f"J{DATA_ROW}"].value)) == Decimal("1")
+    for column in "CDEFGHKM":  # ни одного выдуманного значения
+        assert sheet[f"{column}{DATA_ROW}"].value is None
 
 
-def test_export_blocks_incomplete_historical_customs_data(client, env, make_user):
-    """Ни одна неполная строка не может тихо попасть в готовый XLSX."""
+def test_incomplete_customs_data_leaves_blanks_but_keeps_the_row(client, env, make_user):
+    """Неполная строка уходит в XLSX как есть: пустая ячейка вместо выдумки."""
     part = _part(env, number="219800345")
     _receive(env, part, quantity="10")
     _card(part, customs_unit_price_usd=None)
@@ -747,63 +755,63 @@ def test_export_blocks_incomplete_historical_customs_data(client, env, make_user
 
     _login(client, make_user)
     response = client.get(reverse("actions_export"))
-    assert response.status_code == 302
-    html = client.get(response.url).content.decode()
-    assert "не заполнены таможенные данные" in html
+    assert response.status_code == 200
+    sheet = openpyxl.load_workbook(BytesIO(response.content))[SHEET]
+    assert sheet[f"B{DATA_ROW}"].value == "219800345"
+    assert Decimal(str(sheet[f"J{DATA_ROW}"].value)) == Decimal("2")
+    assert sheet[f"K{DATA_ROW}"].value is None  # цены не было - ячейка пуста
+    assert sheet[f"C{DATA_ROW}"].value == "РЕМЕНЬ ПРИВОДНОЙ"  # введённое сохранено
+
+    # Отчёт при этом честно называет число неполных позиций.
+    html = client.get(reverse("actions_report")).content.decode()
+    assert "Экспорт доступен" in html
+    assert "Экспорт заблокирован" not in html
 
 
-def test_reconciliation_accounts_for_sale_repair_and_explicit_missing_data(env):
-    """eligible = exported + explicitly blocked; none may disappear silently."""
-    exported = _part(env, number="SALE-001", name="ПРОДАЖА")
-    blocked = _part(env, number="REPAIR-001", name="РЕМОНТ")
-    _receive(env, exported, quantity="10")
-    _receive(env, blocked, quantity="10")
-    _card(exported)
-    _card(blocked, customs_unit_price_usd=None)
+def test_reconciliation_keeps_sale_repair_and_incomplete_data_in_the_export(env):
+    """Каждая каноническая строка попадает в выгрузку; неполнота лишь помечена."""
+    complete = _part(env, number="SALE-001", name="ПРОДАЖА")
+    incomplete = _part(env, number="REPAIR-001", name="РЕМОНТ")
+    _receive(env, complete, quantity="10")
+    _receive(env, incomplete, quantity="10")
+    _card(complete)
+    _card(incomplete, customs_unit_price_usd=None)
 
-    _sell(env, exported, quantity="2", number="SALE-001")
+    _sell(env, complete, quantity="2", number="SALE-001")
     perform_action(
-        part=blocked, location=env["loc"], action_type="repair", quantity="3",
+        part=incomplete, location=env["loc"], action_type="repair", quantity="3",
         customer_comment="Без карточки клиента", scanned_number="REPAIR-001", by=env["admin"],
     )
 
     result = customs_export_reconciliation()
-    assert sum(row["quantity"] for row in result["eligible"]) == Decimal("5")
-    assert sum(row["quantity"] for row in result["exported"]) == Decimal("2")
-    assert sum(row["quantity"] for row in result["blocked"]) == Decimal("3")
-    assert {row["operation"] for row in result["eligible"]} == {"sale", "repair"}
+    assert sum(row["quantity"] for row in result["lines"]) == Decimal("5")
+    assert result["totals"]["quantity"] == Decimal("5")
+    assert result["totals"]["row_quantity"] == Decimal("5")  # свёртка ничего не теряет
+    assert {row["kind"] for row in result["lines"]} == {"sale", "repair"}
+    assert sum(row["quantity"] for row in result["incomplete"]) == Decimal("3")
     assert result["silent"] == []
     assert result["duplicates"] == []
-    assert {
-        row["movement_id"] for row in result["eligible"]
-    } == {
-        row["movement_id"] for row in result["exported"] + result["blocked"]
-    }
+    assert result["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
 def test_reconciliation_nets_returns_and_cancellation_without_losing_source(env):
     part = _part(env, number="219800345")
-    lot = _receive(env, part, quantity="20")
+    _receive(env, part, quantity="20")
     _card(part)
     sale = _sell(env, part, quantity="5", number="219800345")
     repair = perform_action(
         part=part, location=env["loc"], action_type="repair", quantity="4",
         customer_comment="Клиент", scanned_number="219800345", by=env["admin"],
     )
-    return_stock_lot_quantity(
-        lot.batch_line, env["loc"], Decimal("2"), unit_cost_rub=lot.landed_unit_cost_rub,
-        restock_status=StockLot.Status.AVAILABLE, by=env["admin"],
-        document_type="sale", document_id=sale.sale_id,
-        comment="Частичный возврат продажи",
-    )
+    _return(env, sale, "2")
     cancel_repair_order(repair.repair_order, by=env["admin"], reason="Ошибка", author="Админ")
 
     result = customs_export_reconciliation()
-    assert sum(row["quantity"] for row in result["eligible"]) == Decimal("3")
-    assert sum(row["quantity"] for row in result["exported"]) == Decimal("3")
-    assert {row["operation"] for row in result["eligible"]} == {"sale"}
-    assert result["blocked"] == []
+    assert sum(row["quantity"] for row in result["lines"]) == Decimal("3")
+    assert {row["kind"] for row in result["lines"]} == {"sale"}
+    assert result["incomplete"] == []
     assert result["silent"] == []
+    assert result["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
 
 
 def test_viewer_cannot_export_customs_xlsx(client, env, make_user):
