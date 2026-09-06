@@ -44,3 +44,17 @@ def test_customs_data_cells_use_one_font_and_nonshrinking_alignment():
     assert sheet["C10"].alignment.shrink_to_fit in (None, False)
     assert sheet["C10"].alignment.horizontal == "center"
     assert sheet["C10"].alignment.vertical == "center"
+
+
+def test_weight_columns_use_two_decimals_and_keep_blank_weights():
+    rows = [{
+        "number": "A", "name_ru": "ПОДШИПНИК", "name_en": "BEARING",
+        "manufacturer": "BRP", "country": "КАНАДА", "gross_weight_kg": None,
+        "net_weight_kg": None, "quantity": 2, "usd_price": 3, "application_area": "",
+    }]
+    sheet = openpyxl.load_workbook(export_customs_xlsx(rows=rows)).active
+    for column in "GHI":
+        assert sheet[f"{column}10"].number_format == "0.00"
+    assert sheet["G10"].value is None
+    assert sheet["H10"].value is None
+    assert sheet["I10"].value == "=J10*G10"

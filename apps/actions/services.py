@@ -1707,10 +1707,8 @@ def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
         sheet[f"G{r}"] = row["gross_weight_kg"]  # None = пусто: вес не выдумываем
         sheet[f"H{r}"] = row["net_weight_kg"]
         sheet[f"I{r}"] = f"=J{r}*G{r}"  # вес брутто сумма = брутто/шт * количество
-        # 3 знака после запятой: у мелкой детали (0.125 кг) 2 знака шаблона
-        # («0.00») визуально теряют точность, хотя само число не искажается.
         for column in "GHI":
-            sheet[f"{column}{r}"].number_format = "0.000"
+            sheet[f"{column}{r}"].number_format = "0.00"
         sheet[f"J{r}"] = row["quantity"]  # openpyxl пишет Decimal как число
         sheet[f"K{r}"] = row["usd_price"]  # оптовая цена прайса в USD
         sheet[f"L{r}"] = f"=K{r}*J{r}"
