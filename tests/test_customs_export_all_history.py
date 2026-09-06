@@ -28,7 +28,6 @@ from django.urls import reverse
 from apps.accounts import roles
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
-    SALES_REPAIRS_PROVENANCE,
     customs_export_reconciliation,
     historical_customs_rows,
     perform_action,
@@ -587,11 +586,8 @@ def test_no_canonical_line_disappears_silently(env, whole_history):
     result = customs_export_reconciliation()
     effective = [line for line in result["lines"] if line["quantity"] > 0]
 
-    # Ключ строки несёт происхождение: рядом в файле живут строки заказанных
-    # деталей, и без него две разные строки одного артикула слиплись бы.
     keys = {
         (
-            SALES_REPAIRS_PROVENANCE,
             line["part_id"],
             line["version"].pk if line["version"] is not None else None,
             line["number"],

@@ -143,6 +143,10 @@ def ordered_parts_customs_rows(**filters) -> list[dict]:
         )
         row["number"] = number
         row["provenance"] = PROVENANCE
+        # Ключ на один элемент длиннее, чем у продаж и ремонтов. Кортежи разной
+        # длины не равны никогда, поэтому строка заказа не может столкнуться со
+        # строкой расхода того же артикула, даже если совпадут все поля. Общий
+        # экспортёр при этом свой ключ не меняет: его правят параллельно.
         row["source_key"] = (PROVENANCE, *key)
         rows.append(row)
     return sorted(

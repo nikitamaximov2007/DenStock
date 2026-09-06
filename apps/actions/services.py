@@ -1372,8 +1372,10 @@ def _customs_rows_from_lines(lines) -> list[dict]:
         # Происхождение строки. У продаж и ремонтов оно одно на всех, но
         # называть его надо явно: рядом живут строки заказанных деталей, и
         # склеить их в одну было бы потерей факта, а не экономией строки.
+        # Сам ключ остаётся прежним: строки заказов носят ключ ДРУГОЙ длины и
+        # поэтому не столкнутся с этим ни при каком совпадении полей.
         row["provenance"] = SALES_REPAIRS_PROVENANCE
-        row["source_key"] = (SALES_REPAIRS_PROVENANCE, *key)
+        row["source_key"] = key
         rows.append(row)
     # Артикул у нескольких строк может быть пустым (историческое происхождение
     # не доказано). Тогда порядок задают название и деталь, иначе строки
@@ -1382,7 +1384,7 @@ def _customs_rows_from_lines(lines) -> list[dict]:
         rows,
         key=lambda row: (
             row["number"], row["name_ru"], row["name_en"],
-            row["source_key"][1], row["version_number"] or 0,
+            row["source_key"][0], row["version_number"] or 0,
         ),
     )
 
@@ -1482,8 +1484,7 @@ def customs_export_reconciliation(
     for line in effective:
         version = line["version"]
         key = (
-            SALES_REPAIRS_PROVENANCE, line["part_id"],
-            version.pk if version is not None else None, line["number"],
+            line["part_id"], version.pk if version is not None else None, line["number"]
         )
         row = rows_by_key.get(key)
         if row is None:
