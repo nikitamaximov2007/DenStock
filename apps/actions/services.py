@@ -77,6 +77,12 @@ TEMPLATE_DATA_COLUMNS = "ABCDEFGHIJKLM"
 # данные. Перед заполнением товарный диапазон очищается по значениям.
 TEMPLATE_DATA_END_ROW = 149  # 150-я строка шаблона — служебная (merged F150:H150)
 
+# Происхождение строки выгрузки. Обычный расход склада и заказанная клиентом
+# деталь попадают в один файл, но остаются разными строками: только так видно,
+# какая часть количества заказная.
+SALES_REPAIRS_PROVENANCE = "sales_repairs"
+ORDERED_PROVENANCE = "ordered"
+
 # openpyxl запрещает управляющие символы; текст, начинающийся с этих символов,
 # Excel исполняет как формулу (formula injection).
 _EXCEL_FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -1363,7 +1369,11 @@ def _customs_rows_from_lines(lines) -> list[dict]:
             customs=customs_by_part.get(part_id), number=number,
         )
         row["number"] = number
-        row["source_key"] = key
+        # Происхождение строки. У продаж и ремонтов оно одно на всех, но
+        # называть его надо явно: рядом живут строки заказанных деталей, и
+        # склеить их в одну было бы потерей факта, а не экономией строки.
+        row["provenance"] = SALES_REPAIRS_PROVENANCE
+        row["source_key"] = (SALES_REPAIRS_PROVENANCE, *key)
         rows.append(row)
     # Артикул у нескольких строк может быть пустым (историческое происхождение
     # не доказано). Тогда порядок задают название и деталь, иначе строки
@@ -1372,7 +1382,7 @@ def _customs_rows_from_lines(lines) -> list[dict]:
         rows,
         key=lambda row: (
             row["number"], row["name_ru"], row["name_en"],
-            row["source_key"][0], row["version_number"] or 0,
+            row["source_key"][1], row["version_number"] or 0,
         ),
     )
 
@@ -1391,11 +1401,33 @@ def historical_customs_rows(
     утверждённым правилом компании. Остальные незаполненные поля остаются
     пустыми, но саму операцию из выгрузки не вычёркивают.
     """
-    return _customs_rows_from_lines(
-        canonical_customs_lines(
-            date_from=date_from, date_to=date_to, action_type=action_type, q=q,
-            part_number=part_number, location_code=location_code,
-        )
+    filters = {
+        "date_from": date_from, "date_to": date_to, "action_type": action_type,
+        "q": q, "part_number": part_number, "location_code": location_code,
+    }
+    rows = _customs_rows_from_lines(canonical_customs_lines(**filters))
+    return rows + ordered_customs_rows(**filters)
+
+
+def ordered_customs_rows(**filters) -> list[dict]:
+    """Строки заказанных клиентом оригинальных деталей.
+
+    Источник живёт в своём приложении: раздел «Запчасти на заказ» появился
+    отдельно, и его запрос не имеет отношения к складским документам. Импорт
+    отложенный - иначе получилось бы кольцо, ведь тот модуль берёт факты
+    строки отсюда.
+
+    Складские фильтры заказу не применяются: у заказанной детали нет ни ячейки
+    списания, ни складского действия, поэтому под такой запрос она не подходит
+    вовсе - и это не то же самое, что «фильтр не применён».
+    """
+    from apps.ordered_parts.customs import ordered_parts_customs_rows
+
+    if filters.get("action_type") or filters.get("location_code"):
+        return []
+    return ordered_parts_customs_rows(
+        date_from=filters.get("date_from"), date_to=filters.get("date_to"),
+        q=filters.get("q", ""), part_number=filters.get("part_number", ""),
     )
 
 
@@ -1450,7 +1482,8 @@ def customs_export_reconciliation(
     for line in effective:
         version = line["version"]
         key = (
-            line["part_id"], version.pk if version is not None else None, line["number"]
+            SALES_REPAIRS_PROVENANCE, line["part_id"],
+            version.pk if version is not None else None, line["number"],
         )
         row = rows_by_key.get(key)
         if row is None:
@@ -1528,6 +1561,26 @@ def _center_data_row(sheet, row: int) -> None:
             horizontal="center", vertical="center", wrap_text=True
         )
     sheet.row_dimensions[row].height = None
+
+
+# Заливка ячейки артикула у заказанной клиентом детали. Красится ТОЛЬКО артикул
+# и только заливкой: шрифт, границы и формулы строки остаются шаблонными, иначе
+# пометка происхождения незаметно переоформила бы весь документ.
+ORDERED_ARTICLE_FILL_RGB = "FFC6EFCE"
+
+
+def _mark_ordered_article(sheet, row: int) -> None:
+    from openpyxl.cell.cell import MergedCell
+    from openpyxl.styles import PatternFill
+
+    cell = sheet[f"B{row}"]
+    if isinstance(cell, MergedCell):
+        return
+    cell.fill = PatternFill(
+        fill_type="solid",
+        start_color=ORDERED_ARTICLE_FILL_RGB,
+        end_color=ORDERED_ARTICLE_FILL_RGB,
+    )
 
 
 def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
@@ -1615,6 +1668,8 @@ def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
         sheet[f"L{r}"] = f"=K{r}*J{r}"
         sheet[f"M{r}"] = excel_safe_text(row["application_area"])
         _center_data_row(sheet, r)  # включая последнюю строку
+        if row.get("provenance") == ORDERED_PROVENANCE:
+            _mark_ordered_article(sheet, r)
 
     # Итог по весу брутто. Диапазон начинается там же, где в самом шаблоне
     # (строка 7), иначе после раздвижки суммировалась бы часть строк.
