@@ -443,7 +443,7 @@ def test_auto_customs_name_ru():
     assert auto_customs_name_ru("HEX. FLANGED SCREW M6 X 18") == (
         "ШЕСТИГРАННЫЙ ФЛАНЦЕВЫЙ ВИНТ M6 X 18"
     )
-    assert auto_customs_name_ru("ROLLER PULLEY") == "РОЛИК ШКИВ"
+    assert auto_customs_name_ru("ROLLER PULLEY") == "РОЛИК ШКИВА"
     assert auto_customs_name_ru("UNKNOWNWORD 42") == "UNKNOWNWORD 42"  # не выдумываем
 
 
@@ -538,7 +538,7 @@ def test_export_xlsx_structure(client, make_user, data):
     # Данные с 10-й строки, отсортированы по номеру: 417127016 после 700100? нет:
     # сортировка по номеру строки экспорта: "417127016" < "700100" лексикографически.
     assert str(sheet["B10"].value) == "417127016"
-    assert sheet["C10"].value == "РОЛИК ШКИВ"  # RU в верхнем регистре (автоперевод)
+    assert sheet["C10"].value == "РОЛИК ШКИВ"
     assert sheet["D10"].value == "ROLLER PULLEY"
     assert sheet["E10"].value == "BRP"
     assert sheet["F10"].value == "CANADA"  # всегда латиницей

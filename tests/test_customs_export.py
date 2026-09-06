@@ -445,7 +445,7 @@ def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     assert resp.status_code == 200
     sheet = _sheet(resp.content)
     assert sheet[f"B{DATA_ROW}"].value == "777000111"
-    assert sheet[f"C{DATA_ROW}"].value == "РЕМЕНЬ ПРИВОД"  # словарь от EN описания
+    assert sheet[f"C{DATA_ROW}"].value == "ПРИВОДНОЙ РЕМЕНЬ"
     assert sheet[f"D{DATA_ROW}"].value == "BELT DRIVE"
     assert sheet[f"E{DATA_ROW}"].value == "BRP"
     # Утверждённое правило компании: BRP без явной страны получает КАНАДА.

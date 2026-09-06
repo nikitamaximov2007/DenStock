@@ -51,7 +51,7 @@ def test_brp_article_lookup_fills_fields_without_link(part_factory):
     row = _customs_row_from_version(part, None, Decimal("2"), number="420931284")
     assert row["number"] == "420931284"
     assert row["name_en"] == "DRIVE BELT"
-    assert row["name_ru"] == "ПРИВОД РЕМЕНЬ"
+    assert row["name_ru"] == "ПРИВОДНОЙ РЕМЕНЬ"
     assert row["manufacturer"] == "BRP"
     assert row["country"] == "КАНАДА"
     assert row["usd_price"] == Decimal("19.63")
@@ -83,7 +83,7 @@ def test_aftermarket_fills_catalog_fields_but_country_stays_blank(part_factory):
     _aftermarket(part)
     row = _customs_row_from_version(part, None, Decimal("3"), number="SM-01357")
     assert row["name_en"] == "SPI STATOR SKI DOO"
-    assert row["name_ru"] == "SPI STATOR ЛЫЖА DOO"  # словарь переводит известные слова
+    assert row["name_ru"] == "SPI СТАТОР SKI-DOO"
     assert row["manufacturer"] == "SPI"
     assert row["usd_price"] == Decimal("203.26")
     # Страна SPI - утверждённое ручное поле: fallback КАНАДА только для BRP.
@@ -124,7 +124,7 @@ def test_xlsx_shows_catalog_fill_and_approved_blanks(part_factory):
     ]
     sheet = openpyxl.load_workbook(export_customs_xlsx(rows=rows)).active
     assert sheet["B10"].value == "420931284"
-    assert sheet["C10"].value == "ПРИВОД РЕМЕНЬ"
+    assert sheet["C10"].value == "ПРИВОДНОЙ РЕМЕНЬ"
     assert sheet["D10"].value == "DRIVE BELT"
     assert sheet["E10"].value == "BRP"
     assert sheet["F10"].value == "КАНАДА"

@@ -639,16 +639,100 @@ RU_WORDS = {
     "ROD": "ТЯГА", "LINK": "ТЯГА", "STUD": "ШПИЛЬКА", "RIVET": "ЗАКЛЁПКА",
     "HEX": "ШЕСТИГРАННЫЙ", "HEX.": "ШЕСТИГРАННЫЙ", "FLANGED": "ФЛАНЦЕВЫЙ",
     "OIL": "МАСЛО", "GRIP": "РУЧКА", "MOUNT": "ОПОРА", "SUPPORT": "ОПОРА",
+    "LENS": "ЛИНЗА", "ROTOR": "РОТОР", "PRESSURE": "ДАВЛЕНИЕ", "DISTANCE": "ДИСТАНЦИОННЫЙ",
+    "HOUSING": "КОРПУС", "NEEDLE": "ИГОЛЬЧАТЫЙ", "CIRCLIP": "СТОПОРНОЕ КОЛЬЦО",
+    "SOCKET": "ПАТРУБОК", "CAMSHAFT": "РАСПРЕДЕЛИТЕЛЬНЫЙ ВАЛ", "CUSHION": "ПОДУШКА",
+    "CYLINDER": "ЦИЛИНДР", "HEAD": "ГОЛОВКА", "AIR": "ВОЗДУШНЫЙ", "VIBRATION": "ВИБРАЦИЯ",
+    "FUEL": "ТОПЛИВНЫЙ", "LOWER": "НИЖНИЙ", "STOPPER": "ОГРАНИЧИТЕЛЬ", "SUSPENSION": "ПОДВЕСКА",
+    "WEAR": "ИЗНОСОСТОЙКИЙ", "STATOR": "СТАТОР", "CRANK": "КРИВОШИП", "WEB": "ЩЕКА",
 }
 
 
+RU_PHRASES = {
+    "PISTON ASS'Y WITH RINGS": "ПОРШЕНЬ В СБОРЕ С КОЛЬЦАМИ",
+    "PISTON ASS'Y": "ПОРШЕНЬ В СБОРЕ",
+    "BUSHING SUSPENSION ARM KIT": "КОМПЛЕКТ ВТУЛОК РЫЧАГА ПОДВЕСКИ",
+    "CYLINDER HEAD GASKET": "ПРОКЛАДКА ГОЛОВКИ ЦИЛИНДРА",
+    "OIL PRESSURE SWITCH": "ДАТЧИК ДАВЛЕНИЯ МАСЛА",
+    "OIL PUMP ROTOR": "РОТОР МАСЛЯНОГО НАСОСА",
+    "GASKET VALVE ROD HOUSING": "ПРОКЛАДКА КОРПУСА ШТОКА КЛАПАНА",
+    "HEX. DISTANCE SCREW": "ДИСТАНЦИОННЫЙ ШЕСТИГРАННЫЙ ВИНТ",
+    "NEEDLE BEARING": "ИГОЛЬЧАТЫЙ ПОДШИПНИК",
+    "BEARING NEEDLE": "ИГОЛЬЧАТЫЙ ПОДШИПНИК",
+    "PISTON CIRCLIP": "СТОПОРНОЕ КОЛЬЦО ПОРШНЯ",
+    "CARBURETOR SOCKET": "ПАТРУБОК КАРБЮРАТОРА",
+    "CAMSHAFT CHAIN": "ЦЕПЬ РАСПРЕДЕЛИТЕЛЬНОГО ВАЛА",
+    "PISTON PIN": "ПАЛЕЦ ПОРШНЯ",
+    "RUBBER RING": "РЕЗИНОВОЕ КОЛЬЦО",
+    "AIR FILTER": "ВОЗДУШНЫЙ ФИЛЬТР",
+    "FILTER FUEL": "ТОПЛИВНЫЙ ФИЛЬТР",
+    "DAMPER VIBRATION": "ВИБРОДЕМПФЕР",
+    "LOWER STOPPER": "НИЖНИЙ ОГРАНИЧИТЕЛЬ",
+    "WHEEL CAP": "КОЛПАК КОЛЕСА",
+    "RUBBER BOOT": "РЕЗИНОВЫЙ ПЫЛЬНИК",
+    "BALL JOINT": "ШАРОВАЯ ОПОРА",
+    "KIT SPRING SUPPORT": "КОМПЛЕКТ ОПОРЫ ПРУЖИНЫ",
+    "SPI STATOR SKI DOO": "SPI СТАТОР SKI-DOO",
+    "SPI PTO CRANK WEB": "SPI ЩЕКА КРИВОШИПА PTO",
+    "ROLLER PULLEY": "РОЛИК ШКИВА",
+    "OIL SEAL": "САЛЬНИК",
+    "HOUSING GASKET": "ПРОКЛАДКА КОРПУСА",
+    "WEAR RING": "ИЗНОСОСТОЙКОЕ КОЛЬЦО",
+    "MAINTENANCE CLUTCH KIT": "КОМПЛЕКТ ОБСЛУЖИВАНИЯ СЦЕПЛЕНИЯ",
+    "VALVE STEM SEAL": "МАСЛОСЪЁМНЫЙ КОЛПАЧОК КЛАПАНА",
+    "OIL PUMP COVER": "КРЫШКА МАСЛЯНОГО НАСОСА",
+    "OIL HOSE": "МАСЛЯНЫЙ ШЛАНГ",
+    "SPARK PLUG": "СВЕЧА ЗАЖИГАНИЯ",
+    "BALL BEARING": "ШАРИКОВЫЙ ПОДШИПНИК",
+    "O-RING": "УПЛОТНИТЕЛЬНОЕ КОЛЬЦО",
+    "ROLLER PULLER": "СЪЁМНИК РОЛИКА",
+    "PIN ROLLER": "ОСЬ РОЛИКА",
+    "SLIDER SHOE": "БАШМАК СКОЛЬЖЕНИЯ",
+    "BELT DRIVE": "ПРИВОДНОЙ РЕМЕНЬ",
+    "DRIVE BELT": "ПРИВОДНОЙ РЕМЕНЬ",
+    "BUSHING HALF": "ПОЛОВИНА ВТУЛКИ",
+    "HALF BUSHING": "ПОЛОВИНА ВТУЛКИ",
+    "PIN SPRING": "ПРУЖИННЫЙ ШТИФТ",
+    "OETIKER CLAMP": "ХОМУТ OETIKER",
+}
+
+
+def _normalize_customs_dimensions(text: str) -> str:
+    import re
+
+    text = re.sub(
+        r"(?i)(\d+(?:\.\d+)?)\s*MM\s*X\s*(\d+(?:\.\d+)?)\s*MM",
+        lambda m: f"{m.group(1).replace('.', ',')} × "
+        f"{m.group(2).replace('.', ',')} ММ",
+        text,
+    )
+    text = re.sub(r"(?i)(\d+(?:\.\d+)?)\s*MM\s*LONG",
+                  lambda m: f"ДЛИНОЙ {m.group(1).replace('.', ',')} ММ", text)
+    return text
+
+
 def auto_customs_name_ru(english_name: str) -> str:
-    """Простой пословный RU-перевод английского названия (верхний регистр)."""
-    words = (english_name or "").upper().split()
+    """Детерминированный phrase-first перевод каталожного названия.
+
+    Целые технические выражения заменяются до отдельных слов. Неизвестные
+    латинские токены сохраняются только как коды, бренды и размеры, поэтому
+    продуктовая сущность не остаётся англо-русской смесью.
+    """
+    import re
+
+    text = re.sub(r"[_]+", " ", (english_name or "").upper())
+    text = _normalize_customs_dimensions(text)
+    for phrase in sorted(RU_PHRASES, key=len, reverse=True):
+        text = re.sub(rf"(?<![A-ZА-Я]){re.escape(phrase)}(?![A-ZА-Я])", RU_PHRASES[phrase], text)
+    words = text.split()
     translated = []
     for word in words:
         translated.append(RU_WORDS.get(word) or RU_WORDS.get(word.strip(".,")) or word)
-    return " ".join(translated).strip()
+    result = " ".join(translated).strip()
+    result = re.sub(r"\s+", " ", result)
+    # Technical brand/model/code tokens are allowed; remaining ordinary
+    # English words are surfaced by the audit instead of hidden in an allowlist.
+    return result
 
 
 def _customs_defaults(part: PartType) -> dict:
@@ -1517,17 +1601,22 @@ def _center_data_row(sheet, row: int) -> None:
     строки шаблона с зафиксированной высотой (15/18) визуально «съезжают»
     относительно соседних.
     """
+    from copy import copy
+
     from openpyxl.cell.cell import MergedCell
     from openpyxl.styles import Alignment
 
+    canonical_font = copy(sheet["D10"].font)
     for column in TEMPLATE_DATA_COLUMNS:
         cell = sheet[f"{column}{row}"]
         if isinstance(cell, MergedCell):
             continue
+        cell.font = copy(canonical_font)
         cell.alignment = Alignment(
-            horizontal="center", vertical="center", wrap_text=True
+            horizontal="center", vertical="center", wrap_text=True, shrink_to_fit=False
         )
-    sheet.row_dimensions[row].height = None
+    text = str(sheet[f"C{row}"].value or "")
+    sheet.row_dimensions[row].height = 30 if len(text) > 34 else None
 
 
 def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
