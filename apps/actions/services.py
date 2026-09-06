@@ -24,6 +24,7 @@ from apps.catalog.models import (
     VehicleType,
     normalize_number,
 )
+from apps.catalog_import.models import AftermarketCatalogPart
 from apps.core.part_lookup import (
     MatchSource,
     clean_lookup_value,
@@ -75,8 +76,6 @@ TEMPLATE_DATA_COLUMNS = "ABCDEFGHIJKLM"
 # заранее заполнен BRP/CANADA/СНЕГОХОД и формулами: это заготовка, а не
 # данные. Перед заполнением товарный диапазон очищается по значениям.
 TEMPLATE_DATA_END_ROW = 149  # 150-я строка шаблона — служебная (merged F150:H150)
-# Страна производства для этого таможенного экспорта — всегда латиницей.
-CUSTOMS_COUNTRY = "CANADA"
 
 # openpyxl запрещает управляющие символы; текст, начинающийся с этих символов,
 # Excel исполняет как формулу (formula injection).
@@ -717,11 +716,31 @@ def record_customs_data_version(
     )
 
 
-# Страна производства в этом рабочем процессе одна: компания везёт запчасти
-# из Канады. Экспорт пишет строку страны как есть, поэтому каноническим
-# представлением является само русское слово - другого формата в системе нет
-# и заводить второй (Canada/CAN) нельзя.
+# Утверждённый business fallback только для BRP без явно сохранённой страны.
+# Это правило компании, а не вывод о стране из каталога или названия бренда.
 CUSTOMS_COUNTRY = "КАНАДА"
+
+
+def resolve_customs_country(part: PartType, explicit_country: str = "") -> str:
+    """Сохранённая страна имеет приоритет; только BRP получает fallback.
+
+    Не используем manufacturer_display: его значение по умолчанию не
+    доказывает принадлежность детали к BRP. Конкурирующая связь с другим
+    каталогом исключает fallback даже при устаревшей подписи BRP.
+    """
+    if country := (explicit_country or "").strip():
+        return country.upper()
+    if (
+        PolarisPartLink.objects.filter(part=part).exists()
+        or AftermarketCatalogPart.objects.filter(part=part).exists()
+    ):
+        return ""
+    manufacturer = part.manufacturer.name.strip().upper() if part.manufacturer_id else ""
+    if manufacturer and manufacturer != "BRP":
+        return ""
+    if manufacturer == "BRP" or BrpPartLink.objects.filter(part=part).exists():
+        return CUSTOMS_COUNTRY
+    return ""
 
 
 def catalog_english_name(part: PartType) -> str:
@@ -771,7 +790,7 @@ def system_customs_facts(part: PartType) -> dict:
     return {
         "customs_name_en": catalog_english_name(part),
         "manufacturer": manufacturer_display(part).strip().upper(),
-        "country_of_origin": CUSTOMS_COUNTRY,
+        "country_of_origin": resolve_customs_country(part, read_customs(part).country_of_origin),
         "customs_unit_price_usd": catalog_customs_usd(part),
     }
 
@@ -979,7 +998,7 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     # wholesale nor a manufacturer default may masquerade as historical truth.
     usd_price = customs.customs_unit_price_usd
     manufacturer = customs.manufacturer.strip().upper()
-    country = customs.country_of_origin.strip().upper()
+    country = resolve_customs_country(part, customs.country_of_origin)
     # Область применения: приоритет 1) ручное значение карточки, 2) автоопределение
     # по PartCompatibility, 3) пусто. Легаси-хардкод «МОТО ЗАПЧАСТИ» (старый
     # default модели) считается «не заполнено» и в форму не попадает никогда.
@@ -1132,11 +1151,11 @@ def build_export_rows(actions) -> list[dict]:
 def _customs_row_from_version(
     part: PartType, version, quantity: Decimal, *, customs=None
 ) -> dict:
-    """Одна строка Excel, факты которой взяты ТОЛЬКО из сохранённой версии.
+    """Одна строка Excel из сохранённой версии с утверждённым BRP fallback.
 
     Каталог сюда не заглядывает: ни оптовая цена прайса, ни производитель по
-    умолчанию не имеют права выдавать себя за исторический факт. Чего оператор
-    не вводил, того в строке нет: пустая ячейка, а не подстановка.
+    умолчанию не имеют права выдавать себя за исторический факт. Исключение:
+    пустая страна BRP заполняется правилом компании, без изменения версии.
     """
     if version is None:
         values = {"name_ru": "", "name_en": "", "manufacturer": "", "country": "",
@@ -1164,6 +1183,7 @@ def _customs_row_from_version(
             "source_reference": version.source_reference,
             "name_ru_confirmed": version.customs_name_ru_confirmed,
         }
+    values["country"] = resolve_customs_country(part, values["country"])
     missing = [label for key, label in (
         ("name_ru", "не заполнено русское название"),
         ("name_ru_confirmed", "русское название не подтверждено"),
@@ -1288,9 +1308,9 @@ def historical_customs_rows(
     количеством. Приёмки, перемещения, корректировки и списания сюда не входят:
     клиенту эти детали не уходили.
 
-    Строки несут только сохранённый ввод оператора, никогда не текущий каталог.
-    Незаполненное таможенное поле остаётся пустым, но саму операцию из выгрузки
-    не вычёркивает.
+    Сохранённая страна имеет приоритет; пустая страна BRP заполняется
+    утверждённым правилом компании. Остальные незаполненные поля остаются
+    пустыми, но саму операцию из выгрузки не вычёркивают.
     """
     return _customs_rows_from_lines(
         canonical_customs_lines(
