@@ -605,7 +605,71 @@ def test_the_management_command_reports_a_zero_delta(env, whole_history, capsys)
     output = capsys.readouterr().out
     assert "delta_quantity: 0" in output
     assert "delta_amount: 0.00" in output
+    assert "report_only_lines: 0" in output
+    assert "customs_only_lines: 0" in output
     assert "RECONCILED" in output
+
+
+def test_the_export_covers_exactly_the_report_lines_by_name(env, whole_history):
+    """Совпадения итогов мало: состав строк тоже обязан совпасть поимённо.
+
+    Две ошибки могут погасить друг друга в сумме. Поэтому набор строк выгрузки
+    сверяется с набором строк отчёта отдельным запросом, а не «по построению».
+    """
+    from apps.actions.management.commands.customs_reconcile import _report_line_keys
+
+    customs_keys = {
+        (line["kind"], line["line_id"])
+        for line in customs_export_reconciliation()["lines"]
+    }
+
+    assert customs_keys == _report_line_keys()
+
+
+def test_a_line_the_report_drops_is_dropped_by_the_export_too(env, whole_history):
+    """Отменённый документ уходит из обоих наборов разом, а не из одного."""
+    from apps.actions.management.commands.customs_reconcile import _report_line_keys
+
+    sale = whole_history["doc_sale"]
+    line_key = ("sale", sale.lines.first().pk)
+    assert line_key in _report_line_keys()
+
+    cancel_sale(sale, by=env["admin"], reason="Ошибка", author="И.")
+
+    customs_keys = {
+        (line["kind"], line["line_id"])
+        for line in customs_export_reconciliation()["lines"]
+    }
+    assert line_key not in _report_line_keys()
+    assert line_key not in customs_keys
+    assert customs_keys == _report_line_keys()
+
+
+def test_the_command_breaks_the_history_down_by_sales_and_repairs(
+    env, whole_history, capsys
+):
+    from django.core.management import call_command
+
+    call_command("customs_reconcile")
+
+    output = dict(
+        line.split(": ", 1) for line in capsys.readouterr().out.splitlines()
+        if ": " in line
+    )
+    assert int(output["sales_lines"]) + int(output["repair_lines"]) == int(
+        output["canonical_line_count"]
+    )
+    assert (
+        Decimal(output["sales_quantity"]) + Decimal(output["repair_quantity"])
+        == Decimal(output["export_quantity"])
+    )
+    assert (
+        Decimal(output["sales_amount"]) + Decimal(output["repair_amount"])
+        == Decimal(output["export_amount"])
+    )
+    assert int(output["sales_documents"]) >= 1
+    assert int(output["repair_documents"]) >= 1
+    assert int(output["blank_article_rows"]) >= 1
 
 
 # --- 16-18. Фильтры, права и сам файл ---------------------------------------
