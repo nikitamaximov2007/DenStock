@@ -434,3 +434,39 @@ def test_the_operator_can_fix_the_customer_and_the_prepayment(client, env, make_
     assert order.prepayment_rub == Decimal("999.99")
     # Деталь заказа правкой не подменяется.
     assert order.article == "219800345"
+
+
+def test_the_analog_gate_defers_to_the_customs_classifier_when_it_exists(env, monkeypatch):
+    """Второго контракта аналогов быть не должно.
+
+    Таможенную выгрузку делят на обычную и аналоговую в соседней ветке, и там
+    появляется свой канонический ответ. Если раздел заказов оставит собственное
+    правило, деталь можно будет заказать как оригинал, а её же продажа уйдёт в
+    аналоговую выгрузку. Поэтому раздел спрашивает канонический классификатор,
+    как только тот появляется в сборке.
+    """
+    import apps.ordered_parts.services as services
+
+    part = _part(env, number="SM-01357", name="СТАТОР", brand="SPI")
+
+    # Каталог аналогов про деталь не знает: базовое правило её пропускает.
+    assert services.is_analog_part(part) is False
+
+    # Появился канонический классификатор и назвал её аналогом.
+    monkeypatch.setattr(services, "_customs_analog_verdict", lambda _part: True)
+    assert services.is_analog_part(part) is True
+    with pytest.raises(OrderedPartError, match="каталогом аналогов"):
+        resolve_ordered_article("SM-01357")
+
+
+def test_a_missing_customs_classifier_leaves_the_base_rule_alone(env, monkeypatch):
+    """Классификатора в сборке ещё нет: раздел работает по каталогу аналогов."""
+    import apps.ordered_parts.services as services
+
+    original = _part(env, number="219800345")
+    analog = _analog_part(env, number="SM-09374")
+
+    monkeypatch.setattr(services, "_customs_analog_verdict", lambda _part: None)
+
+    assert services.is_analog_part(original) is False
+    assert services.is_analog_part(analog) is True

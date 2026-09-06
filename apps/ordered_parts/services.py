@@ -14,6 +14,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 
 from apps.catalog_import.origin import AFTERMARKET_CATALOG, aftermarket_part_ids
 from apps.core.part_lookup import (
@@ -36,18 +37,49 @@ class OrderedPartError(ValueError):
     """Заказ оформить нельзя: артикул, клиент или предоплата не проходят правило."""
 
 
-def is_aftermarket_part(part) -> bool:
-    """Заведена ли деталь каталогом аналогов.
+def _customs_analog_verdict(part):
+    """Что о детали думает классификатор таможенной выгрузки, если он уже есть.
 
-    Единственный канонический признак «аналога» в текущем DenisStock: запись в
-    `AftermarketCatalogPart`. Направленная связь `PartAnalog` сюда НЕ входит -
-    она означает «эта деталь подходит вместо той», и оригинал от неё аналогом
-    не становится.
-
-    ЕДИНСТВЕННАЯ точка этого решения во всём разделе. Когда таможенный экспорт
-    разделят на обычный и аналоговый, перецелить нужно только её.
+    Выгрузку сейчас делят на обычную и аналоговую в соседней ветке, и там
+    появляется свой канонический ответ на вопрос «это аналог?». Пока его в
+    сборке нет, функция возвращает None; как только он появится, раздел заказов
+    начнёт спрашивать именно его и второго контракта аналогов не возникнет.
     """
-    return bool(aftermarket_part_ids([part.pk]))
+    try:
+        from apps.actions.customs_history import _is_analog_part
+    except ImportError:
+        return None
+    from apps.catalog.models import PartAnalog
+
+    links = PartAnalog.objects.filter(Q(analog_id=part.pk) | Q(original_id=part.pk))
+    analog_ids = {pk for pk in links.values_list("analog_id", flat=True)}
+    original_ids = {pk for pk in links.values_list("original_id", flat=True)}
+    try:
+        return bool(_is_analog_part(part, analog_ids, original_ids))
+    except TypeError:
+        # Сигнатура у соседа изменилась: молча пропускать деталь нельзя,
+        # но и врать про её вид тоже. Пусть решает базовое правило.
+        return None
+
+
+def is_analog_part(part) -> bool:
+    """Аналог ли деталь. ЕДИНСТВЕННАЯ точка этого решения во всём разделе.
+
+    Правило намеренно строже каждого из источников по отдельности: деталь
+    считается аналогом, если так говорит каталог аналогов ИЛИ канонический
+    классификатор таможенной выгрузки. Ошибиться можно в две стороны, и цена у
+    них разная. Лишний отказ оператор видит сразу и обходит. Лишнее разрешение
+    тихо уводит заказанную деталь в обычную выгрузку, тогда как её же продажа
+    уходит в аналоговую, и расхождение всплывёт уже на таможне.
+    """
+    if aftermarket_part_ids([part.pk]):
+        return True
+    return bool(_customs_analog_verdict(part))
+
+
+# Прежнее имя: раздел спрашивает «аналог ли», а каталог аналогов лишь один из
+# ответов на этот вопрос.
+is_aftermarket_part = is_analog_part
 
 
 def resolve_ordered_article(raw):
