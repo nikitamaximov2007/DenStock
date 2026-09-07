@@ -378,6 +378,16 @@ def _warehouse_tabs(user, path):
                 active=path.startswith("/ordered-parts/"),
             )
         )
+    if user.can_view_purchase_cost:
+        tabs.append(
+            _tab(
+                "Таможенные заказы",
+                reverse("customs_orders_list"),
+                sidebar_key="customs-orders",
+                icon="file-text",
+                active=path.startswith("/customs-orders/"),
+            )
+        )
     if user.can_manage_inventory or user.is_viewer:
         tabs.append(
             _tab(

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Таможенные заказы · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Таможенные заказы</h1>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>№ заказа</th>
+        <th>Дата</th>
+        <th>Количество</th>
+        <th>Сумма, ₽</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for order in orders %}<tr><td><a href="{% url 'customs_order_detail' order.pk %}">№{{ order.number }}</a></td><td>{{ order.created_at|date:"d.m.Y H:i" }}</td><td>{{ order.total_quantity }}</td><td>{{ order.total_rub }}</td></tr>{% empty %}<tr><td colspan="4">Таможенных заказов пока нет.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Таможенный заказ №{{ order.number }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Таможенный заказ №{{ order.number }}</h1>
+  </div>
+  <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Курс USD/RUB: {{ order.fx_rate }} · Позиций: {{ order.total_quantity }} · Сумма: {{ order.total_rub }} ₽</p>
+  <table class="table table--wide">
+    <thead>
+      <tr>
+        <th>Артикул</th>
+        <th>Название</th>
+        <th>Производитель</th>
+        <th>Количество</th>
+        <th>USD</th>
+        <th>RUB</th>
+        <th>Источник</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in order.lines.all %}<tr><td>{{ line.article }}</td><td>{{ line.name_ru }}</td><td>{{ line.manufacturer }}</td><td>{{ line.quantity }}</td><td>{{ line.wholesale_usd }}</td><td>{{ line.rub_amount }}</td><td>{{ line.get_source_display }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+{% endblock %}
