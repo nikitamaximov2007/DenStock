@@ -21,7 +21,14 @@ class FrozenSnapshot(models.Model):
 
 
 class CustomsOrder(FrozenSnapshot):
-    number = models.PositiveIntegerField("Номер заказа", unique=True)
+    class OrderType(models.TextChoices):
+        ORIGINAL = "original", "Оригиналы"
+        ANALOG = "analog", "Аналоги"
+
+    order_type = models.CharField(
+        "Тип заказа", max_length=20, choices=OrderType.choices, default=OrderType.ORIGINAL
+    )
+    number = models.PositiveIntegerField("Номер заказа")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
@@ -37,6 +44,9 @@ class CustomsOrder(FrozenSnapshot):
     class Meta:
         ordering = ["-created_at", "-pk"]
         constraints = [
+            models.UniqueConstraint(
+                fields=["order_type", "number"], name="customs_order_unique_type_number"
+            ),
             models.CheckConstraint(
                 condition=models.Q(number__gt=0), name="customs_order_number_gt0"
             ),
@@ -46,7 +56,7 @@ class CustomsOrder(FrozenSnapshot):
         ]
 
     def __str__(self):
-        return f"Таможенный заказ №{self.number}"
+        return f"{self.get_order_type_display()} - заказ №{self.number}"
 
 
 class CustomsOrderLine(FrozenSnapshot):

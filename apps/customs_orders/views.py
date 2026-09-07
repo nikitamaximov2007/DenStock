@@ -17,6 +17,7 @@ from .services import (
     create_customs_order_from_boundary,
     current_fx_rate,
     eligible_customs_sources,
+    next_order_number,
     selection_payload,
 )
 
@@ -83,6 +84,11 @@ def _selection_previews(sources, rate):
 @require_http_methods(["GET", "POST"])
 def customs_order_selection(request):
     _require_customs_access(request)
+    order_type = request.POST.get("order_type") if request.method == "POST" else request.GET.get(
+        "order_type", CustomsOrder.OrderType.ORIGINAL
+    )
+    if order_type not in CustomsOrder.OrderType.values:
+        order_type = CustomsOrder.OrderType.ORIGINAL
     if request.method == "POST":
         try:
             kind, source_id = request.POST.get("boundary", "").split(":", 1)
@@ -94,18 +100,22 @@ def customs_order_selection(request):
             try:
                 order = create_customs_order_from_boundary(
                     number=number, boundary_source=boundary_source,
-                    selection_token=request.POST.get("selection_token", ""), by=request.user,
+                    selection_token=request.POST.get("selection_token", ""), order_type=order_type,
+                    by=request.user,
                 )
             except CustomsOrderError as exc:
                 messages.error(request, str(exc))
             else:
                 return redirect("customs_order_detail", pk=order.pk)
-    sources = eligible_customs_sources()
+    sources = eligible_customs_sources(order_type)
     rate = current_fx_rate()
     return render(request, "customs_orders/select.html", {
         "sources": sources,
-        "selection_token": selection_payload(sources),
+        "selection_token": selection_payload(sources, order_type=order_type),
         "selection_previews": _selection_previews(sources, rate),
         "fx_rate": rate,
+        "order_type": order_type,
+        "order_type_choices": CustomsOrder.OrderType.choices,
+        "next_order_number": next_order_number(order_type),
         "initialization_required": not CustomsOrder.objects.exists(),
     })

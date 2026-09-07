@@ -89,8 +89,12 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
     ))
 
 
-def eligible_customs_sources() -> list[dict]:
-    return customs_sources(unassigned_only=True)
+def eligible_customs_sources(order_type=CustomsOrder.OrderType.ORIGINAL) -> list[dict]:
+    """Unassigned source queue limited to one canonical classification."""
+    if order_type not in CustomsOrder.OrderType.values:
+        raise CustomsOrderError("Выберите тип таможенного заказа.")
+    analog = order_type == CustomsOrder.OrderType.ANALOG
+    return [row for row in customs_sources(unassigned_only=True) if row["is_analog"] == analog]
 
 
 def _signature(row):
@@ -99,17 +103,20 @@ def _signature(row):
     return [row["source"], row["source_id"], digest]
 
 
-def selection_payload(sources, *, rate=None):
+def selection_payload(sources, *, order_type=CustomsOrder.OrderType.ORIGINAL, rate=None):
     """Sign the exact displayed dataset; the browser sends only the boundary."""
     return signing.dumps({
         "rows": [_signature(row) for row in sources],
+        "order_type": order_type,
         "fx": str(current_fx_rate() if rate is None else rate),
     }, salt=TOKEN_SALT, compress=True)
 
 
-def _selection(token, boundary_source):
+def _selection(token, boundary_source, order_type):
     try:
         payload = signing.loads(token, salt=TOKEN_SALT, max_age=7200)
+        if payload["order_type"] != order_type:
+            raise ValueError
         markers = [(row[0], row[1]) for row in payload["rows"]]
         selected = payload["rows"][:markers.index(boundary_source) + 1]
         if not selected or len(set(markers)) != len(markers):
@@ -153,7 +160,7 @@ def _lock_sources(selected):
             raise CustomsOrderError(CHANGED)
 
 
-def _persist(number, selected, rate, by):
+def _persist(number, selected, rate, by, order_type):
     missing = sorted({row["number"] or "без артикула" for row in selected
                       if row["usd_price"] is None})
     if missing:
@@ -162,7 +169,7 @@ def _persist(number, selected, rate, by):
         raise CustomsOrderError("Оптовая цена должна быть больше нуля.")
     amounts = [line_rub(row, rate) for row in selected]
     order = CustomsOrder.objects.create(
-        number=number, created_by=by, fx_rate=rate,
+        number=number, order_type=order_type, created_by=by, fx_rate=rate,
         total_quantity=sum((row["quantity"] for row in selected), Decimal("0")),
         total_rub=sum(amounts, Decimal("0")),
     )
@@ -180,7 +187,14 @@ def _persist(number, selected, rate, by):
     return order
 
 
-def create_customs_order_from_boundary(*, number, boundary_source, selection_token, by=None):
+def create_customs_order_from_boundary(
+    *,
+    number,
+    boundary_source,
+    selection_token,
+    order_type=CustomsOrder.OrderType.ORIGINAL,
+    by=None,
+):
     try:
         number = int(number)
     except (ValueError, TypeError) as exc:
@@ -189,23 +203,25 @@ def create_customs_order_from_boundary(*, number, boundary_source, selection_tok
         raise CustomsOrderError(
             "Номер заказа должен быть положительным целым числом до 2147483647."
         )
-    expected, displayed_rate = _selection(selection_token, boundary_source)
+    if order_type not in CustomsOrder.OrderType.values:
+        raise CustomsOrderError("Выберите тип таможенного заказа.")
+    expected, displayed_rate = _selection(selection_token, boundary_source, order_type)
     try:
         with transaction.atomic():
             settings = ValuationSettings.objects.select_for_update(nowait=True).filter(pk=1).first()
             rate = Decimal(settings.current_usd_rate) if settings else current_fx_rate()
             if rate <= 0 or rate != displayed_rate:
                 raise CustomsOrderError("Курс изменился. Обновите список и повторите.")
-            if CustomsOrder.objects.filter(number=number).exists():
+            if CustomsOrder.objects.filter(order_type=order_type, number=number).exists():
                 raise CustomsOrderError("Заказ с таким номером уже существует.")
             _lock_sources(expected)
-            candidates = eligible_customs_sources()
+            candidates = eligible_customs_sources(order_type)
             selected = candidates[:len(expected)]
             if [_signature(row) for row in selected] != expected:
                 raise CustomsOrderError(CHANGED)
-            return _persist(number, selected, rate, by)
+            return _persist(number, selected, rate, by, order_type)
     except IntegrityError as exc:
-        if CustomsOrder.objects.filter(number=number).exists():
+        if CustomsOrder.objects.filter(order_type=order_type, number=number).exists():
             raise CustomsOrderError("Заказ с таким номером уже существует.") from exc
         raise CustomsOrderError(CHANGED) from exc
     except OperationalError as exc:
@@ -215,11 +231,20 @@ def create_customs_order_from_boundary(*, number, boundary_source, selection_tok
         raise
 
 
-def create_customs_order(*, number, lines, by=None, fx_rate=None):
+def create_customs_order(
+    *, number, lines, order_type=CustomsOrder.OrderType.ORIGINAL, by=None, fx_rate=None,
+):
     """Compatibility entry point, subject to the same canonical prefix validation."""
     if not lines:
         raise CustomsOrderError("Выберите хотя бы одну позицию.")
     return create_customs_order_from_boundary(
         number=number, boundary_source=(lines[-1]["source"], lines[-1]["source_id"]),
-        selection_token=selection_payload(lines, rate=fx_rate), by=by,
+        selection_token=selection_payload(lines, order_type=order_type, rate=fx_rate),
+        order_type=order_type, by=by,
     )
+
+
+def next_order_number(order_type):
+    """Original and analog business series advance independently."""
+    latest = CustomsOrder.objects.filter(order_type=order_type).order_by("-number").first()
+    return (latest.number if latest else 0) + 1

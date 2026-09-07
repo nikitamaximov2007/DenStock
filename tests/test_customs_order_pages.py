@@ -104,7 +104,7 @@ def test_selection_shows_a_visible_prefix_preview_and_bootstrap_warning(
     client, django_user_model, monkeypatch,
 ):
     rows = [_source(1), _source(2)]
-    monkeypatch.setattr("apps.customs_orders.views.eligible_customs_sources", lambda: rows)
+    monkeypatch.setattr("apps.customs_orders.views.eligible_customs_sources", lambda *_: rows)
     monkeypatch.setattr(
         "apps.customs_orders.views.current_fx_rate", lambda: Decimal("100.0000")
     )
