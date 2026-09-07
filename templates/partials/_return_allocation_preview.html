@@ -28,7 +28,7 @@
               <td class="num--qty">{{ allocation.quantity|quantity_int }}</td>
               <td>
                 {% if allocation.location %}
-                  <span class="code-pill">{{ allocation.location.code }}</span>
+                  <span class="code-pill">{{ allocation.location.short_code }}</span>
                 {% else %}
                   <span class="muted">Ячейка не определена</span>
                 {% endif %}

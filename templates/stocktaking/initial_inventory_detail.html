@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Инвентаризация {{ session.inventory_number|default:session.full_address }} · DenisStock{% endblock %}
+{% block title %}Инвентаризация {{ session.inventory_number|default:session.full_address|short_address }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Инвентаризация {{ session.inventory_number|default:"(первичный ввод)" }}</h1>
@@ -12,7 +12,7 @@
   </div>
   <p class="page-subtitle">
     <span class="pill pill--success">Проведена</span>
-    Первичный ввод ячейки <span class="code-pill">{{ session.full_address }}</span>
+    Первичный ввод ячейки <span class="code-pill">{{ session.full_address|short_address }}</span>
     · {{ session.posted_at|ru_dt }}
     {% if session.created_by %}· {{ session.created_by }}{% endif %}
   </p>
@@ -86,7 +86,7 @@
             <td>{{ row.name }}</td>
             <td>{{ row.source_label }}</td>
             <td>
-              <span class="code-pill">{{ session.full_address }}</span>
+              <span class="code-pill">{{ session.full_address|short_address }}</span>
             </td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
             <td class="num--money">

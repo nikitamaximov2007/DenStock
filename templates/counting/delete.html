@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Удалить черновик {{ session.full_address }} · DenisStock{% endblock %}
+{% block title %}Удалить черновик {{ session.full_address|short_address }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Удалить черновик инвентаризации ячейки</h1>
@@ -9,7 +9,7 @@
     </div>
   </div>
   <p class="page-subtitle">
-    Удалить черновик инвентаризации ячейки <span class="code-pill">{{ session.full_address }}</span>?
+    Удалить черновик инвентаризации ячейки <span class="code-pill">{{ session.full_address|short_address }}</span>?
   </p>
   <div class="card">
     <div class="card__body">
@@ -18,7 +18,7 @@
           <tr>
             <th>Адрес</th>
             <td>
-              <span class="code-pill">{{ session.full_address }}</span>
+              <span class="code-pill">{{ session.full_address|short_address }}</span>
             </td>
           </tr>
           <tr>

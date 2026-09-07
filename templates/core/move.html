@@ -43,12 +43,12 @@
           <td>
             {% if object_kind == "part_item" %}
               {% if object.current_location %}
-                {{ object.current_location.code }}
+                {{ object.current_location.short_code }}
               {% else %}
                 ·
               {% endif %}
             {% else %}
-              {{ object.location.code }}
+              {{ object.location.short_code }}
             {% endif %}
           </td>
         </tr>
@@ -76,7 +76,7 @@
         {% if location %}
           <tr>
             <th>Новая ячейка</th>
-            <td>{{ location.code }} · {{ location.name }}</td>
+            <td>{{ location.short_code }} · {{ location.name }}</td>
           </tr>
         {% endif %}
       </tbody>
@@ -240,7 +240,7 @@
             <td>{{ source.part_type.name }}</td>
             <td><span class="code-pill">{{ source.part_exact_number }}</span></td>
             <td>{{ source.part_manufacturer|default:"·" }}</td>
-            <td><span class="code-pill">{{ source.location.code }}</span></td>
+            <td><span class="code-pill">{{ source.location.short_code }}</span></td>
             <td>{{ source.state_label }}</td>
             <td class="num--qty">{{ source.physical|quantity_int }}</td>
             <td class="num--qty">{{ source.available|quantity_int }}</td>
@@ -293,7 +293,7 @@
             </td>
             <td>{{ lot.quantity|quantity_int }}</td>
             <td>{{ lot.batch.number }}</td>
-            <td>{{ lot.location.code }}</td>
+            <td>{{ lot.location.short_code }}</td>
             <td>
               <form method="post" class="inline-form">
                 {% csrf_token %}
@@ -331,9 +331,9 @@
           </td>
           <td class="num--qty">{{ m.quantity|quantity_int }}</td>
           <td>
-            {{ m.from_location_code }}
+            {{ m.from_location_code|short_address }}
             →
-            {{ m.to_location_code }}
+            {{ m.to_location_code|short_address }}
           </td>
           {% if show_costs %}<td class="num--money">{{ m.total_cost_rub|money_int }}</td>{% endif %}
         </tr>

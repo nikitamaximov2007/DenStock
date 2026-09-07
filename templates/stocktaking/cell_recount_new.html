@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% load number_format %}
-{% block title %}Пересчитать {{ location.code }} · DenisStock{% endblock %}
+{% block title %}Пересчитать {{ location.short_code }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <div>
       <h1 class="page-title">Пересчитать ячейку</h1>
-      <p class="page-subtitle"><span class="code-pill">{{ location.code }}</span> · {{ location.name }}</p>
+      <p class="page-subtitle"><span class="code-pill">{{ location.short_code }}</span> · {{ location.name }}</p>
     </div>
     <a class="btn btn--secondary"
        href="{% url 'location_detail' location.pk %}">Отмена</a>

@@ -59,12 +59,19 @@ class StorageLocation(models.Model):
         ordering = ["sort_order", "code"]
 
     def __str__(self) -> str:
-        return f"{self.code} — {self.name}"
+        return f"{self.short_code} — {self.name}"
 
     def save(self, *args, **kwargs):
         if not self.barcode and self.code:
             self.barcode = f"LOC:{self.code}"
         super().save(*args, **kwargs)
+
+    @property
+    def short_code(self) -> str:
+        """Адрес в операторском виде (1-1-1). Хранимый code при этом не меняется."""
+        from .addresses import short_address
+
+        return short_address(self.code)
 
     def clean(self) -> None:
         # Запрет циклов parent.

@@ -90,7 +90,7 @@
                   {% endif %}
                 </td>
                 <td>
-                  <span class="code-pill">{{ item.row.location.code }}</span>
+                  <span class="code-pill">{{ item.row.location.short_code }}</span>
                 </td>
                 <td class="num--qty">
                   <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
@@ -318,7 +318,7 @@
                                  value="{{ row.location.pk }}"
                                  {% if overview.locations|length == 1 %}checked{% endif %}
                                  required>
-                          <span class="code-pill">{{ row.location.code }}</span>
+                          <span class="code-pill">{{ row.location.short_code }}</span>
                         </label>
                       </td>
                       <td class="num--qty">{{ row.physical|quantity_int }}</td>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Пересчёт {{ session.storage_location.code }} · DenisStock{% endblock %}
+{% block title %}Пересчёт {{ session.storage_location.short_code }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Инвентаризация ячейки</h1>
@@ -9,7 +9,7 @@
     </div>
   </div>
   <p class="page-subtitle">
-    Адрес: <span class="code-pill">{{ session.storage_location.code }}</span>
+    Адрес: <span class="code-pill">{{ session.storage_location.short_code }}</span>
     {% if session.is_draft %}
       <span class="pill pill--info">{{ session.get_status_display }}</span>
     {% elif session.status == "posted" %}
@@ -310,7 +310,7 @@
       </div>
       <p class="muted">Стоимость считается как количество × цена клиента по каждой строке.</p>
       <p>
-        Ячейка: <span class="code-pill">{{ session.storage_location.code }}</span>
+        Ячейка: <span class="code-pill">{{ session.storage_location.short_code }}</span>
         · Всего позиций: {{ breakdown.positions_count }}
         · Всего деталей: {{ breakdown.total_quantity|quantity_int }}
         · Итоговая стоимость: {{ breakdown.total_value_rub|money_int }} ₽

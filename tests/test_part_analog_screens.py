@@ -116,7 +116,7 @@ def test_the_card_answers_whether_an_analog_is_on_the_shelf(shelf_scene):
     assert "Поршень XYZ" in body
     assert "XYZ" in body
     assert "4 500" in body.replace("&nbsp;", " ")
-    assert "S02-D03-C01" in body, "не видно, где именно лежит"
+    assert "2-3-1" in body, "не видно, где именно лежит"
 
 
 def test_the_card_of_the_analog_says_what_it_fits(shelf_scene):

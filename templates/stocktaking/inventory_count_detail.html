@@ -13,7 +13,7 @@
       </tr>
       <tr>
         <th>Ячейка</th>
-        <td>{{ doc.scope_location.code|default:"· (вся выборка)" }}</td>
+        <td>{{ doc.scope_location.short_code|default:"· (вся выборка)" }}</td>
       </tr>
       <tr>
         <th>Комментарий</th>
@@ -51,7 +51,7 @@
         <tr>
           {% include "partials/_line_part_cells.html" %}
           <td>
-            {{ line.location.code }}
+            {{ line.location.short_code }}
             <span class="muted">· лот #{{ line.stock_lot_id }}</span>
           </td>
           <td>{{ line.expected_quantity|quantity_int }}</td>

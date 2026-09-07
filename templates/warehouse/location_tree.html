@@ -31,7 +31,7 @@
         <tr>
           <td>
             <span style="padding-left: {{ row.indent }}px">
-              <a href="{% url 'location_detail' row.obj.pk %}">{{ row.obj.code }}</a>
+              <a href="{% url 'location_detail' row.obj.pk %}">{{ row.obj.short_code }}</a>
             </span>
           </td>
           <td>{{ row.obj.name }}</td>

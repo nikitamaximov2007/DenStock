@@ -102,10 +102,11 @@
           <tr>
             <td>
               <a href="{% url 'counting_detail' s.pk %}">
-                <span class="code-pill">{{ s.display_address }}</span>
+                <span class="code-pill">{{ s.display_address|short_address }}</span>
               </a>
               {% if s.display_address != s.full_address %}
-                <span class="muted" title="На момент пересчёта: {{ s.full_address }}">был: {{ s.full_address }}</span>
+                <span class="muted"
+                      title="На момент пересчёта: {{ s.full_address|short_address }}">был: {{ s.full_address|short_address }}</span>
               {% endif %}
             </td>
             <td>{{ s.comment|truncatechars:60|default:"·" }}</td>

@@ -38,7 +38,7 @@
             <tbody>
               {% for cell in cells %}
                 <tr>
-                  <td><span class="code-pill">{{ cell.location.code }}</span></td>
+                  <td><span class="code-pill">{{ cell.location.short_code }}</span></td>
                   <td>{{ cell.get_status_display }}</td>
                   <td>
                     {% if can_edit and cell.status != "completed" %}
@@ -70,7 +70,7 @@
             <label>
               Номер ячейки
               <select name="cell_number" required>
-                {% for cell in cells %}<option value="{{ cell.sequence }}">{{ cell.location.code }}</option>{% endfor %}
+                {% for cell in cells %}<option value="{{ cell.sequence }}">{{ cell.location.short_code }}</option>{% endfor %}
               </select>
             </label>
             <label>
@@ -105,7 +105,7 @@
               <tbody>
                 {% for line in lines %}
                   <tr>
-                    <td>{{ line.cell.location.code }}</td>
+                    <td>{{ line.cell.location.short_code }}</td>
                     <td>{{ line.part_number }}</td>
                     <td>
                       {% if can_edit %}

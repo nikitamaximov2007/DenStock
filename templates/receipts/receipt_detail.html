@@ -83,7 +83,7 @@
             <td class="num--money">{{ line.unit_cost_rub|money_int }}</td>
             <td class="num--money">{{ line.total_cost_rub|money_int }}</td>
             <td>
-              <span class="code-pill">{{ line.location.code }}</span>
+              <span class="code-pill">{{ line.location.short_code }}</span>
             </td>
             <td>{{ line.comment|default:"·" }}</td>
             {% if is_draft %}
@@ -196,7 +196,7 @@
                   <td>{{ item.get_status_display }}</td>
                   <td>
                     {% if item.current_location %}
-                      <span class="code-pill">{{ item.current_location.code }}</span>
+                      <span class="code-pill">{{ item.current_location.short_code }}</span>
                     {% else %}
                       ·
                     {% endif %}
@@ -233,7 +233,7 @@
                   <td class="num--qty">{{ lot.quantity|quantity_int }}</td>
                   <td>{{ lot.get_status_display }}</td>
                   <td>
-                    <span class="code-pill">{{ lot.location.code }}</span>
+                    <span class="code-pill">{{ lot.location.short_code }}</span>
                   </td>
                   <td>
                     <a class="muted" href="{% url 'lot_detail' lot.pk %}">#{{ lot.pk }}</a>

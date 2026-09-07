@@ -334,7 +334,7 @@ def _candidates(
                     MatchSource.REPLACEMENT,
                     MatchSource.SUPERSEDED,
                 },
-                locations=[row.location.code for row in locations],
+                locations=[row.location.short_code for row in locations],
                 location_rows=locations,
                 physical=physical,
                 available=sum((row.available for row in locations), DEC0),

@@ -79,7 +79,7 @@
               </td>
               <td>
                 {% for balance in row.balances %}
-                  <span class="code-pill">{{ balance.location.code }}</span>
+                  <span class="code-pill">{{ balance.location.short_code }}</span>
                   <span class="muted">x {{ balance.quantity_physical|quantity_int }}</span>
                 {% empty %}
                   ·

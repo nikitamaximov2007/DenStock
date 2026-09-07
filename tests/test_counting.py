@@ -545,9 +545,11 @@ def test_new_page_shows_address_legend(client, make_user, db):
     _login(client, make_user, superuser=True, name="boss")
     html = client.get(reverse("counting_new")).content.decode()
     assert "Легенда адреса склада" in html
-    assert "S - стеллаж (shelving unit)" in html
-    assert "D - выдвижной ящик (drawer)" in html
-    assert "C - ячейка внутри ящика (cell/compartment)" in html
+    assert "первое число - стеллаж (shelving unit)" in html
+    assert "второе - выдвижной ящик (drawer)" in html
+    assert "третье - ячейка внутри ящика (cell/compartment)" in html
+    assert "1-3-8" in html
+    # Старая буквенная форма названа как принимаемая при вводе, а не как формат.
     assert "S01-D03-C08" in html
     assert "L - уровень" not in html
 
@@ -1356,7 +1358,7 @@ def test_stocktaking_shows_initial_inventory_with_lines(client, make_user, refs,
     html = client.get(reverse("inventory_count_list")).content.decode()
     assert "Первичный ввод ячеек" in html
     assert session.inventory_number in html
-    assert "S01-D03-C08" in html
+    assert "1-3-8" in html
     assert "Итоговое количество" in html
     # Документ: строки заполнены автоматически, ручное количество на месте.
     html = client.get(reverse("initial_inventory_detail", args=[session.pk])).content.decode()
@@ -1521,7 +1523,7 @@ def test_delete_confirmation_page(client, make_user, refs, location, admin):
     record_scan(session, "219800345", by=admin)
     html = client.get(reverse("counting_delete", args=[session.pk])).content.decode()
     assert "Удалить черновик инвентаризации ячейки" in html
-    assert "S01-D03-C08" in html
+    assert "1-3-8" in html
     assert "Черновик" in html  # статус
     assert "Тестовая ячейка" in html  # описание
     assert "Остатки склада не изменятся" in html
@@ -1633,10 +1635,10 @@ def test_counting_list_uses_live_location_code_after_rename(client, make_user):
     session.refresh_from_db()
 
     assert detail.status_code == listed.status_code == 200
-    assert "S04-D02-C08" in detail.content.decode()
+    assert "4-2-8" in detail.content.decode()
     text = listed.content.decode()
-    assert "S04-D02-C08" in text
-    assert "На момент пересчёта: S04-D02-C07" in text
+    assert "4-2-8" in text
+    assert "На момент пересчёта: 4-2-7" in text
     assert session.full_address == "S04-D02-C07"
     assert session.storage_location_id == original_location_id
     assert historical_alias.pk == original_location_id

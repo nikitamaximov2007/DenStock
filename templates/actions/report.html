@@ -178,7 +178,7 @@
                 {{ a.quantity|quantity_int }}
               </td>
               <td>
-                <span class="code-pill">{{ a.location_code|default:a.location.code }}</span>
+                <span class="code-pill">{{ a.location_code|default:a.location.code|short_address }}</span>
               </td>
               <td class="num--money">{{ a.unit_price_rub|money_int }}</td>
               <td class="num--money">{{ a.total_price_rub|money_int }}</td>

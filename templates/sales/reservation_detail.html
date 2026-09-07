@@ -87,9 +87,9 @@
           <td>{{ line.quantity|quantity_int }}</td>
           <td>
             {% if line.part_item %}
-              {{ line.part_item.current_location.code|default:"·" }}
+              {{ line.part_item.current_location.short_code|default:"·" }}
             {% else %}
-              {{ line.stock_lot.location.code }}
+              {{ line.stock_lot.location.short_code }}
             {% endif %}
           </td>
           {% if show_costs %}

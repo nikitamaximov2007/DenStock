@@ -110,7 +110,7 @@ def _location_payload(candidate: PartLookupCandidate) -> list[dict]:
     return [
         {
             "id": row.location.pk,
-            "code": row.location.code,
+            "code": row.location.short_code,
             "physical": row.physical,
             "available": row.available,
             "reserved": row.reserved,

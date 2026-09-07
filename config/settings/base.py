@@ -95,6 +95,7 @@ TEMPLATES = [
             "builtins": [
                 "apps.core.templatetags.ru_dates",
                 "apps.core.templatetags.number_format",
+                "apps.core.templatetags.storage_address",
             ],
         },
     },

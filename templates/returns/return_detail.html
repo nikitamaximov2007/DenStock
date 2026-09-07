@@ -87,7 +87,7 @@
         <tr>
           {% include "partials/_line_part_cells.html" %}
           <td>{{ line.quantity|quantity_int }}</td>
-          <td>{{ line.to_location.code }}</td>
+          <td>{{ line.to_location.short_code }}</td>
           <td>
             {% if can_manage and is_draft %}
               <form method="post"
@@ -199,7 +199,7 @@
               {% include "partials/_line_part_cells.html" with line=row.line %}
               <td>
                 {% if row.source_location %}
-                  {{ row.source_location.code }}
+                  {{ row.source_location.short_code }}
                 {% else %}
                   Выбирается ниже
                 {% endif %}
@@ -224,11 +224,11 @@
                   {% endif %}
                   {% if row.source_location %}
                     <input type="hidden" name="to_location" value="{{ row.source_location.pk }}">
-                    <span class="code-pill">{{ row.source_location.code }}</span>
+                    <span class="code-pill">{{ row.source_location.short_code }}</span>
                   {% else %}
                     <select name="to_location" required>
                       <option value="">Ячейка…</option>
-                      {% for loc in locations %}<option value="{{ loc.pk }}">{{ loc.code }}</option>{% endfor %}
+                      {% for loc in locations %}<option value="{{ loc.pk }}">{{ loc.short_code }}</option>{% endfor %}
                     </select>
                   {% endif %}
                   <select name="restock_status">

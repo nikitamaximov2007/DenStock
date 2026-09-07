@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}{{ location.code }} · Склад · DenisStock{% endblock %}
+{% block title %}{{ location.short_code }} · Склад · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">{{ location.code }} · {{ location.name }}</h1>
+  <h1 class="page-title">{{ location.short_code }} · {{ location.name }}</h1>
   <p>
     <a href="{% url 'warehouse_index' %}">← К структуре склада</a>
     {% if can_manage %}
@@ -88,7 +88,7 @@
     <ul>
       {% for child in children %}
         <li>
-          <a href="{% url 'location_detail' child.pk %}">{{ child.code }} · {{ child.name }}</a>
+          <a href="{% url 'location_detail' child.pk %}">{{ child.short_code }} · {{ child.name }}</a>
         </li>
       {% endfor %}
     </ul>

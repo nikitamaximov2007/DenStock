@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% load number_format %}
-{% block title %}Удалить {{ location.code }} · DenisStock{% endblock %}
+{% block title %}Удалить {{ location.short_code }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <div>
-      <h1 class="page-title">Удалить ячейку {{ location.code }}</h1>
+      <h1 class="page-title">Удалить ячейку {{ location.short_code }}</h1>
       <p class="page-subtitle">Сначала проверьте остаток и исторические ссылки.</p>
     </div>
     <a class="btn btn--secondary"
@@ -54,7 +54,7 @@
   <div class="card danger-panel">
     <div class="card__body">
       <h2 class="card__title">Подтверждение</h2>
-      <p>Вы уверены, что хотите удалить ячейку <strong>{{ location.code }}</strong>?</p>
+      <p>Вы уверены, что хотите удалить ячейку <strong>{{ location.short_code }}</strong>?</p>
       {% if preview.has_stock %}
         <div class="alert alert--danger">Действие запрещено, пока в ячейке есть физический, доступный или зарезервированный остаток.</div>
       {% elif preview.active_lock %}
@@ -74,7 +74,7 @@
                  name="expected_code"
                  required
                  autocomplete="off"
-                 placeholder="{{ location.code }}">
+                 placeholder="{{ location.short_code }}">
           <input type="hidden"
                  name="action"
                  value="{% if preview.can_hard_delete %}delete{% else %}archive{% endif %}">

@@ -260,8 +260,8 @@ def test_sale_confirm_screen_shows_every_cell(client, make_user, data):
     sale = _sale_from(data, [(data["lot_a"], 2), (data["lot_b"], 1)])
     html = client.get(reverse("sale_cancel_confirm", args=[sale.pk])).content.decode()
     assert "Куда вернётся товар" in html
-    assert "S01-D01-C01" in html
-    assert "S02-D03-C01" in html
+    assert "1-1-1" in html
+    assert "2-3-1" in html
 
 
 def test_repair_confirm_screen_shows_every_cell(client, make_user, data):
@@ -269,8 +269,8 @@ def test_repair_confirm_screen_shows_every_cell(client, make_user, data):
     order = _repair_from(data, [(data["lot_a"], 2), (data["lot_b"], 1)])
     html = client.get(reverse("repair_order_cancel_confirm", args=[order.pk])).content.decode()
     assert "Куда вернётся товар" in html
-    assert "S01-D01-C01" in html
-    assert "S02-D03-C01" in html
+    assert "1-1-1" in html
+    assert "2-3-1" in html
 
 
 def test_confirm_screen_is_read_only(client, make_user, data):
@@ -315,4 +315,4 @@ def test_customer_card_cancellation_path_reaches_the_preview(client, make_user, 
     Sale.objects.filter(pk=sale.pk).update(customer=customer)
     html = client.get(reverse("sale_cancel_confirm", args=[sale.pk])).content.decode()
     assert "Куда вернётся товар" in html
-    assert "S01-D01-C01" in html
+    assert "1-1-1" in html

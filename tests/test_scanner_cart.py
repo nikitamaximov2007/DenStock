@@ -410,7 +410,7 @@ def test_scan_page_shows_cart_panel(client, make_user, data):
     assert "Корзина · Продажа" in html
     assert "Корзина · Выдача в ремонт" in html
     assert "700100" in html  # exact-артикул позиции
-    assert "S01-D03-C08" in html
+    assert "1-3-8" in html
     assert "Склад изменится только при проведении." in html
 
 

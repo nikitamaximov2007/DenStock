@@ -41,7 +41,7 @@
             <option value="">Выберите ячейку</option>
             {% for row in locations %}
               <option value="{{ row.location.pk }}"
-                      {% if request.POST.location_id == row.location.pk|stringformat:"s" %}selected{% endif %}>{{ row.location.code }} - доступно {{ row.available|quantity_int }}</option>
+                      {% if request.POST.location_id == row.location.pk|stringformat:"s" %}selected{% endif %}>{{ row.location.short_code }} - доступно {{ row.available|quantity_int }}</option>
             {% endfor %}
           </select>
         </p>
@@ -49,7 +49,7 @@
         <input type="hidden"
                name="location_id"
                value="{{ locations.0.location.pk }}">
-        <p>Ячейка: <strong>{{ locations.0.location.code }}</strong></p>
+        <p>Ячейка: <strong>{{ locations.0.location.short_code }}</strong></p>
       {% endif %}
     {% elif not_found %}
       {% include "partials/_status_block.html" with kind="warning" text="Деталь не найдена в остатках склада." %}

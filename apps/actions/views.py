@@ -28,6 +28,7 @@ from apps.customers.services import customers_by_recent_activity
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
+from apps.warehouse.addresses import short_address
 from apps.warehouse.models import StorageLocation
 
 from .cart import (
@@ -238,7 +239,7 @@ def actions_cart_scan(request):
         return redirect(back)
     _remember_scan(request, kind, row.key, q)
     messages.success(
-        request, f"Добавлено: {part.name}, {quantity_int(row.quantity)} шт, {location.code}."
+        request, f"Добавлено: {part.name}, {quantity_int(row.quantity)} шт, {location.short_code}."
     )
     return redirect(back)
 
@@ -292,7 +293,7 @@ def actions_perform(request):
     messages.success(
         request,
         f"Действие проведено: {action.get_action_type_display()} — {identity}, "
-        f"{qty} шт, {location.code}",
+        f"{qty} шт, {location.short_code}",
     )
     return redirect(back)
 
@@ -533,7 +534,7 @@ def actions_cart_add(request):
     messages.success(
         request,
         f"В корзину «{CART_TITLES[kind]}»: {part.name}, "
-        f"{quantity_int(row.quantity)} шт, {location.code}. Склад не изменён.",
+        f"{quantity_int(row.quantity)} шт, {location.short_code}. Склад не изменён.",
     )
     return redirect(back)
 
@@ -803,7 +804,7 @@ def actions_cancel(request, pk):
         messages.success(
             request,
             f"Продажа отменена, остаток {quantity_int(action.quantity)} шт "
-            f"возвращён в ячейку {action.location_code or action.location.code}.",
+            f"возвращён в ячейку {short_address(action.location_code or action.location.code)}.",
         )
         return redirect("actions_report")
     return render(

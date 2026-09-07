@@ -251,7 +251,7 @@ def _location_guidance(part_id: int | None) -> dict:
     if preference is not None:
         preferred = {
             "id": preference.location_id,
-            "code": preference.location.code,
+            "code": preference.location.short_code,
             "name": preference.location.name,
             "is_usable": preference.location.can_hold_stock(),
         }

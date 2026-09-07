@@ -27,7 +27,7 @@
       <option value="">Все места</option>
       {% for loc in locations %}
         <option value="{{ loc.pk }}"
-                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.code }}</option>
+                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.short_code }}</option>
       {% endfor %}
     </select>
     <button type="submit">Фильтр</button>
@@ -61,7 +61,7 @@
               {% endif %}
             </td>
             <td class="num--qty">{{ lot.quantity|quantity_int }}</td>
-            <td>{{ lot.location.code }}</td>
+            <td>{{ lot.location.short_code }}</td>
             <td>{{ lot.get_status_display }}</td>
             <td>{{ lot.batch.number }}</td>
             <td>

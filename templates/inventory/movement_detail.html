@@ -43,7 +43,7 @@
           {% if movement.from_location %}
             {{ movement.from_location_historical_code }}
             {% if movement.from_location_was_renamed %}
-              <span class="muted">(текущий адрес {{ movement.from_location.code }})</span>
+              <span class="muted">(текущий адрес {{ movement.from_location.short_code }})</span>
             {% endif %}
           {% else %}
             ·
@@ -56,7 +56,7 @@
           {% if movement.to_location %}
             {{ movement.to_location_historical_code }}
             {% if movement.to_location_was_renamed %}
-              <span class="muted">(текущий адрес {{ movement.to_location.code }})</span>
+              <span class="muted">(текущий адрес {{ movement.to_location.short_code }})</span>
             {% endif %}
           {% else %}
             ·

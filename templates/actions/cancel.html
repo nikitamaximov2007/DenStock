@@ -25,7 +25,7 @@
           <tr>
             <th>Ячейка</th>
             <td>
-              <span class="code-pill">{{ action.location_code|default:action.location.code }}</span>
+              <span class="code-pill">{{ action.location_code|default:action.location.code|short_address }}</span>
             </td>
           </tr>
           <tr>

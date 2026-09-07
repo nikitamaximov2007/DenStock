@@ -21,6 +21,10 @@ _V2_RE = re.compile(
     r"(?:-C(?P<cell>\d+))?$",
     re.IGNORECASE,
 )
+# Операторский формат адреса: 1-1-1 вместо S01-D01-C01. Это ТОЛЬКО представление
+# и ввод. Хранимый code, штрихкод, PK и любые исторические снимки остаются
+# прежними: адрес показывается иначе, но остаётся тем же самым местом.
+_SHORT_RE = re.compile(r"^(?P<rack>\d+)(?:-(?P<drawer>\d+))?(?:-(?P<cell>\d+))?$")
 _LEGACY_RE = re.compile(
     r"^(?:(?P<zone>[A-ZА-ЯЁ0-9]+)-)?"
     r"S(?P<rack>\d+)-L(?P<level>\d+)"
@@ -132,6 +136,59 @@ def compose_address(
         cell_no = _positive_number(cell_no, "Номер ячейки")
         parts.append(f"C{cell_no:02d}")
     return "-".join(parts)
+
+
+def short_address(code: str) -> str:
+    """Адрес в операторском виде: S01-D01-C01 -> 1-1-1, S02-D03-C01 -> 2-3-1.
+
+    Числа переносятся как есть, включая ноль: ячейка 0 существует на складе и
+    выдумывать вместо неё что-то другое нельзя.
+
+    Адрес, который не является canonical S-D-C (старый S-L, зона, K/X), не
+    переписывается: у него нет короткой формы, и показать его укороченным
+    значило бы показать другое место. Он остаётся в исходном виде.
+    """
+    code = (code or "").strip().upper()
+    match = _V2_RE.fullmatch(code)
+    if match is None:
+        return code
+    numbers = [match.group("rack"), match.group("drawer"), match.group("cell")]
+    return "-".join(str(int(number)) for number in numbers if number is not None)
+
+
+def parse_short_address(raw: str) -> StorageAddress:
+    """Разобрать операторский 1-1-1. Ноль допускается там же, где и в S-D-C."""
+    code = (raw or "").strip()
+    match = _SHORT_RE.fullmatch(code)
+    if match is None:
+        raise AddressError("Ожидается адрес вида 1, 1-2 или 1-2-5.")
+    rack = _positive_number(match.group("rack"), "Номер стеллажа")
+    drawer = _drawer_number(match.group("drawer")) if match.group("drawer") else None
+    cell = (
+        _positive_number(match.group("cell"), "Номер ячейки")
+        if match.group("cell")
+        else None
+    )
+    if cell is not None and drawer is None:
+        raise AddressError("Ячейка должна находиться внутри ящика.")
+    return StorageAddress(rack=rack, drawer=drawer, cell=cell)
+
+
+def normalize_address_input(raw: str) -> str:
+    """Привести введённое к хранимому code: 1-1-1 и S01-D01-C01 равнозначны.
+
+    Сотрудник вводит и сканирует короткую форму, а старые распечатки, ярлыки и
+    документы содержат длинную. Обе обязаны находить одно и то же место.
+    """
+    code = (raw or "").strip().upper()
+    if not code:
+        return code
+    if _V2_RE.fullmatch(code):
+        return code
+    try:
+        return parse_short_address(code).code
+    except AddressError:
+        return code  # legacy или мусор: разбираться дальше не наше дело
 
 
 def parse_address(raw: str) -> StorageAddress:

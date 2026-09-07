@@ -181,7 +181,7 @@ def test_destination_search_finds_v2_fragments_and_historical_alias(client, admi
         response = client.get(url, {"q": query})
         assert response.status_code == 200
         assert response.json()["results"][0]["id"] == cell.pk
-        assert response.json()["results"][0]["code"] == "S03-D02-C06"
+        assert response.json()["results"][0]["code"] == "3-2-6"  # операторский вид
 
 
 def test_address_migration_command_defaults_to_read_only_dry_run(db, tmp_path):

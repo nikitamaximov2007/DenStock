@@ -100,7 +100,7 @@ def test_search_answers_the_five_working_questions(stock, client, admin):
     assert NUMBER in body, "нет артикула"
     assert "Ремень вариатора" in body, "нет названия"
     assert "Доступно" in body, "нет остатка"
-    assert "S01-D01-C01" in body, "нет ячейки"
+    assert "1-1-1" in body, "нет ячейки"
     assert "12 400" in body or "12400" in body, "нет цены"
 
 
@@ -115,7 +115,7 @@ def test_search_does_not_repeat_the_cells_as_plain_text(stock, client, admin):
     assert "Ячейки:" not in body, "список ячеек снова дублирует таблицу"
     # Таблица ячеек осталась и отвечает на вопрос лучше: она показывает не
     # только где лежит, но и сколько лежит в каждой ячейке.
-    assert "S01-D01-C01" in body, "таблица ячеек исчезла вместе с дублем"
+    assert "1-1-1" in body, "таблица ячеек исчезла вместе с дублем"
     assert "Доступно" in body
 
 

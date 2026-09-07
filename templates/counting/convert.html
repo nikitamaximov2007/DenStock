@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Завершение пересчёта {{ session.full_address }} · DenisStock{% endblock %}
+{% block title %}Завершение пересчёта {{ session.full_address|short_address }} · DenisStock{% endblock %}
 {% block content %}
   {% if cell.changed %}
     <div class="notice notice--warning">
@@ -17,7 +17,7 @@
     </div>
   </div>
   <p class="page-subtitle">
-    Адрес: <span class="code-pill">{{ session.full_address }}</span>
+    Адрес: <span class="code-pill">{{ session.full_address|short_address }}</span>
     · Позиций: {{ counters.unique }} · Сканов: {{ counters.total_scans }}
   </p>
   {% include "partials/_status_block.html" with kind="warning" text="Режим: первичный ввод ячейки. Проведение ДОБАВИТ остаток по этому адресу. Не проводите одну и ту же ячейку дважды: остаток удвоится. Сверочный пересчёт (зафиксировать факт) появится отдельным слоем." %}
@@ -57,7 +57,7 @@
             </td>
             <td class="num--qty">{{ line.quantity_counted|quantity_int }}</td>
             <td>
-              <span class="code-pill">{{ session.full_address }}</span>
+              <span class="code-pill">{{ session.full_address|short_address }}</span>
             </td>
           </tr>
         {% endfor %}
@@ -113,7 +113,7 @@
         <p>
           Черновик документа первичного ввода создан. Проверьте позиции выше:
           проведение запишет остаток по адресу
-          <span class="code-pill">{{ session.full_address }}</span>
+          <span class="code-pill">{{ session.full_address|short_address }}</span>
           и создаст документ в разделе «Инвентаризация».
         </p>
         <form method="post" action="{% url 'counting_post' session.pk %}">
@@ -129,7 +129,7 @@
         <p class="status-card__title">Пересчёт завершён</p>
         <p class="status-card__meta">
           Создан документ инвентаризации {{ session.inventory_number }}.
-          Остаток записан по адресу {{ session.full_address }}.
+          Остаток записан по адресу {{ session.full_address|short_address }}.
           <a href="{% url 'initial_inventory_detail' session.pk %}">Открыть инвентаризацию</a>
         </p>
       </div>

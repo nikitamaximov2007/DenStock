@@ -165,7 +165,7 @@ def test_after_real_stock_arrives_the_part_is_in_the_warehouse(boss):
     assert "На складе" in body
     assert "Каталог аналогов" not in body
     assert "Доступно: <strong>4</strong>" in body
-    assert "S01-D03-C08" in body
+    assert "1-3-8" in body
 
     card = boss.get(reverse("part_detail", args=[part.pk])).content.decode()
     assert "На складе" in card
@@ -238,7 +238,7 @@ def test_posting_the_count_puts_the_part_in_the_warehouse(boss):
     assert "На складе" in body
     assert "Каталог аналогов" not in body
     assert "Доступно: <strong>2</strong>" in body
-    assert "S02-D01-C01" in body
+    assert "2-1-1" in body
 
 
 def test_the_scan_message_speaks_russian(boss):

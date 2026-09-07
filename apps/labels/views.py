@@ -48,6 +48,9 @@ def _item_ctx(item: PartItem) -> dict:
 def _location_ctx(loc: StorageLocation) -> dict:
     return {
         "code": loc.code,
+        # На полке сотрудник читает операторский адрес; штрихкод ниже остаётся
+        # хранимым кодом и продолжает сканироваться.
+        "short_code": loc.short_code,
         "barcode": loc.barcode,
         "full_path": loc.full_path,
         "level": loc.get_level_display(),

@@ -597,9 +597,16 @@ def actions_report(
             | Q(part_type__name__icontains=part_number)
         )
     if location_code:
-        qs = qs.filter(
-            Q(location_code__icontains=location_code) | Q(location__code__icontains=location_code)
-        )
+        # Фильтр принимает операторский 1-1-1 и хранимый S01-D01-C01: снимок
+        # адреса в журнале записан длинной формой, а сотрудник вводит короткую.
+        from apps.warehouse.addresses import normalize_address_input
+
+        location_match = Q()
+        for term in {location_code, normalize_address_input(location_code)}:
+            location_match |= (
+                Q(location_code__icontains=term) | Q(location__code__icontains=term)
+            )
+        qs = qs.filter(location_match)
     totals_qs = qs.exclude(status=WarehouseAction.Status.CANCELLED)
     totals = totals_qs.aggregate(quantity=Sum("quantity"), value=Sum("total_price_rub"))
     return qs, {

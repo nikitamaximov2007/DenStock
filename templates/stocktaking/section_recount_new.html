@@ -22,7 +22,7 @@
             <label for="drawer_id">Ящик</label>
             <select id="drawer_id" name="drawer_id" required>
               {% for drawer in drawers %}
-                <option value="{{ drawer.pk }}">{{ drawer.code }} · {{ drawer.name }}</option>
+                <option value="{{ drawer.pk }}">{{ drawer.short_code }} · {{ drawer.name }}</option>
               {% endfor %}
             </select>
           </div>

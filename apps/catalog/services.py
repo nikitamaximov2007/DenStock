@@ -519,7 +519,7 @@ def analog_rows(part: PartType, *, direction: str = "analogs") -> list[dict]:
             "manufacturer": manufacturer_display(item),
             "price": item.recommended_price,
             "available": sum((row.available for row in locations), zero),
-            "locations": [row.location.code for row in locations],
+            "locations": [row.location.short_code for row in locations],
             "note": link.note,
         })
     return rows

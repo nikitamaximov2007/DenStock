@@ -518,7 +518,7 @@ def _post_queue_group(request: HttpRequest) -> str:
     )
     messages.success(
         request,
-        f"Добавлено {quantity} деталей в ячейку {location.code}. "
+        f"Добавлено {quantity} деталей в ячейку {location.short_code}. "
         f"Новые остатки: {balances}.",
     )
     return ""
@@ -543,12 +543,12 @@ def _confirm_operation(request: HttpRequest, kind: str, obj, location) -> str:
             if obj.status == PartItem.Status.RECEIVING:
                 receive_part_item(obj, to_location=location, by=request.user)
                 messages.success(
-                    request, f"Экземпляр {obj.internal_number} принят в {location.code}."
+                    request, f"Экземпляр {obj.internal_number} принят в {location.short_code}."
                 )
             elif obj.status == PartItem.Status.AVAILABLE:
                 move_part_item(obj, location, by=request.user)
                 messages.success(
-                    request, f"Экземпляр {obj.internal_number} перемещён в {location.code}."
+                    request, f"Экземпляр {obj.internal_number} перемещён в {location.short_code}."
                 )
             else:
                 return "Экземпляр в недопустимом статусе для приёмки/перемещения."
@@ -556,14 +556,14 @@ def _confirm_operation(request: HttpRequest, kind: str, obj, location) -> str:
             if obj.status == StockLot.Status.RECEIVING:
                 if obj.location_id != location.pk:
                     return (
-                        f"Лот создан для ячейки {obj.location.code}; "
-                        f"отсканирована {location.code}."
+                        f"Лот создан для ячейки {obj.location.short_code}; "
+                        f"отсканирована {location.short_code}."
                     )
                 receive_stock_lot(obj, by=request.user)
-                messages.success(request, f"Лот #{obj.pk} принят в {location.code}.")
+                messages.success(request, f"Лот #{obj.pk} принят в {location.short_code}.")
             elif obj.status == StockLot.Status.AVAILABLE:
                 move_stock_lot(obj, location, by=request.user)
-                messages.success(request, f"Лот #{obj.pk} перемещён в {location.code}.")
+                messages.success(request, f"Лот #{obj.pk} перемещён в {location.short_code}.")
             else:
                 return "Лот в недопустимом статусе."
         else:
@@ -894,22 +894,24 @@ def scanner_move_locations(request: HttpRequest) -> JsonResponse:
     if exclude_id is not None:
         locations = locations.exclude(pk=exclude_id)
     if query:
+        # Поиск принимает и операторский 1-1-1, и хранимый S01-D01-C01.
+        from apps.warehouse.addresses import normalize_address_input
+
+        terms = {query, normalize_address_input(query)}
+        code_match = Q()
+        for term in terms:
+            code_match |= Q(code__icontains=term) | Q(barcode__icontains=term)
         alias_location_ids = StorageLocationAlias.objects.filter(
-            Q(code__icontains=query) | Q(barcode__icontains=query),
-            is_active=True,
+            code_match, is_active=True
         ).values("location_id")
-        locations = locations.filter(
-            Q(code__icontains=query)
-            | Q(barcode__icontains=query)
-            | Q(pk__in=alias_location_ids)
-        )
+        locations = locations.filter(code_match | Q(pk__in=alias_location_ids))
     rows = locations.order_by("code", "pk")[:50]
     return JsonResponse(
         {
             "results": [
                 {
                     "id": location.pk,
-                    "code": location.code,
+                    "code": location.short_code,
                     "barcode": location.barcode,
                     "name": location.name,
                 }
@@ -1166,7 +1168,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
                             "type": "part_item",
                             "id": item.pk,
                             "label": (
-                                f"{item.internal_number}, {item.current_location.code}, "
+                                f"{item.internal_number}, {item.current_location.short_code}, "
                                 f"{item.get_status_display()}"
                             ),
                             "disabled": item.is_reserved_for_move,
@@ -1229,7 +1231,7 @@ def scanner_move(request: HttpRequest) -> HttpResponse:
                                 "type": "part_item",
                                 "id": item.pk,
                                 "label": (
-                                    f"{item.internal_number}, {item.current_location.code}, "
+                                    f"{item.internal_number}, {item.current_location.short_code}, "
                                     f"{item.get_status_display()}"
                                 ),
                                 "disabled": item.is_reserved_for_move,

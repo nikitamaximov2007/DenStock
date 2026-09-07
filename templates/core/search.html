@@ -203,7 +203,7 @@
           <tbody>
             {% for cell in row.location_rows %}
               <tr>
-                <td><span class="code-pill">{{ cell.location.code }}</span></td>
+                <td><span class="code-pill">{{ cell.location.short_code }}</span></td>
                 <td class="num--qty">{{ cell.physical|quantity_int }}</td>
                 <td class="num--qty">{{ cell.available|quantity_int }}</td>
                 <td class="num--qty">{{ cell.reserved|quantity_int }}</td>
@@ -244,7 +244,7 @@
                   <td>{{ it.get_status_display }}</td>
                   <td>
                     {% if it.current_location %}
-                      {{ it.current_location.code }}
+                      {{ it.current_location.short_code }}
                     {% else %}
                       ·
                     {% endif %}
@@ -282,7 +282,7 @@
                   </td>
                   <td>{{ lot.quantity|quantity_int }}</td>
                   <td>{{ lot.get_status_display }}</td>
-                  <td>{{ lot.location.code }}</td>
+                  <td>{{ lot.location.short_code }}</td>
                   <td>{{ lot.batch.number }}</td>
                   {% if show_costs %}
                     <td>

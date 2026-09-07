@@ -53,13 +53,28 @@ Companion documents:
 
 ## Warehouse addresses
 
-- Default format: `S01-D03-C08` (no zones and no L). Letters: S = shelving
-  unit, D = drawer counted bottom-up, C = cell.
+- Stored format: `S01-D03-C08` (no zones and no L). Letters: S = shelving
+  unit, D = drawer counted bottom-up, C = cell. This is what
+  `StorageLocation.code` and the location barcode hold, and what every
+  historical snapshot keeps.
+- Operator format: `1-3-8` — the same address shown as three numbers. It is a
+  PRESENTATION and INPUT format only: it never becomes a stored code, never
+  creates a location, and never changes an identity. Zero is preserved
+  (`1-1-0`).
+- Show the operator format in every operator-facing surface: use
+  `StorageLocation.short_code` for live objects and the `short_address`
+  template filter for snapshot strings (`location_code`, `full_address`).
+  Identity-management fields that round-trip the stored code (rename, edit)
+  stay canonical on purpose.
+- Input, search and scanning must accept BOTH forms; they resolve to the same
+  location.
 - Do not use L, B, K, X, or zone prefixes for NEW addresses.
 - Legacy codes (with zones or K/X letters) must remain readable and
   searchable. Migrate them only through the explicit dry-run mapping command;
-  preserve `StorageLocation` IDs and historical aliases.
-- Single source of truth: `apps/warehouse/addresses.py` (`compose_address`).
+  preserve `StorageLocation` IDs and historical aliases. They have no short
+  form and are displayed unchanged.
+- Single source of truth: `apps/warehouse/addresses.py` (`compose_address`,
+  `short_address`, `normalize_address_input`).
 
 ## Before starting any task
 

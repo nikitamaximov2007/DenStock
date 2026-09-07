@@ -66,17 +66,25 @@ def resolve_storage_location(
     raw: str, *, allow_code: bool = True, allow_barcode: bool = True
 ) -> tuple[StorageLocation | None, bool]:
     """Точно разрешить canonical code/barcode или уникальный historical alias."""
+    from .addresses import normalize_address_input
+
     value = (raw or "").strip().upper()
     if not value:
         return None, False
+    # Сотрудник вводит и сканирует операторский адрес 1-1-1, а на старых
+    # ярлыках, в распечатках и документах стоит S01-D01-C01. Это один и тот же
+    # адрес, и находить он обязан одну и ту же ячейку. Ничего не создаётся:
+    # короткая форма лишь приводится к хранимому виду перед поиском.
+    values = {value, normalize_address_input(value)}
     canonical_filter = Q()
     alias_filter = Q()
-    if allow_code:
-        canonical_filter |= Q(code__iexact=value)
-        alias_filter |= Q(code__iexact=value)
-    if allow_barcode:
-        canonical_filter |= Q(barcode__iexact=value)
-        alias_filter |= Q(barcode__iexact=value)
+    for candidate in values:
+        if allow_code:
+            canonical_filter |= Q(code__iexact=candidate)
+            alias_filter |= Q(code__iexact=candidate)
+        if allow_barcode:
+            canonical_filter |= Q(barcode__iexact=candidate)
+            alias_filter |= Q(barcode__iexact=candidate)
     if not allow_code and not allow_barcode:
         return None, False
     canonical = list(StorageLocation.objects.filter(canonical_filter)[:2])
@@ -350,7 +358,12 @@ def remove_or_archive_storage_location(
             raise StorageLocationRemovalError(
                 "Через этот экран можно удалить или архивировать только ячейку."
             )
-        if expected_code.strip() != location.code:
+        # Подтверждение принимает и операторский 1-1-1, и хранимый S01-D01-C01:
+        # сотрудник видит на экране короткую форму и вводит именно её.
+        from .addresses import normalize_address_input
+
+        confirmed = normalize_address_input(expected_code)
+        if confirmed != location.code and expected_code.strip() != location.code:
             raise StorageLocationRemovalError(
                 "Для подтверждения введите точный код ячейки."
             )

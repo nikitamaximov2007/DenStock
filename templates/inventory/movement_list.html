@@ -32,7 +32,7 @@
       <option value="">Все места</option>
       {% for loc in locations %}
         <option value="{{ loc.pk }}"
-                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.code }}</option>
+                {% if f_location == loc.pk|stringformat:'s' %}selected{% endif %}>{{ loc.short_code }}</option>
       {% endfor %}
     </select>
     <button type="submit">Фильтр</button>
@@ -65,7 +65,7 @@
               {% if m.from_location %}
                 {{ m.from_location_historical_code }}
                 {% if m.from_location_was_renamed %}
-                  <span class="muted">(сейчас {{ m.from_location.code }})</span>
+                  <span class="muted">(сейчас {{ m.from_location.short_code }})</span>
                 {% endif %}
               {% else %}
                 ·
@@ -74,7 +74,7 @@
               {% if m.to_location %}
                 {{ m.to_location_historical_code }}
                 {% if m.to_location_was_renamed %}
-                  <span class="muted">(сейчас {{ m.to_location.code }})</span>
+                  <span class="muted">(сейчас {{ m.to_location.short_code }})</span>
                 {% endif %}
               {% else %}
                 ·
