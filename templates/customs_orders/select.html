@@ -4,18 +4,32 @@
   <div class="page-header">
     <h1 class="page-title">Отправить в заказ</h1>
     <a class="btn btn--small btn--secondary"
-       href="{% url 'actions_report' %}?unassigned=1">Вернуться в отчёт</a>
+       href="{% url 'actions_report' %}">Вернуться в отчёт</a>
   </div>
   {% include "customs_orders/_bootstrap_warning.html" %}
+  <form method="get" class="filter-toolbar">
+    <label for="customs-order-type">Тип заказа</label>
+    <select id="customs-order-type"
+            name="order_type"
+            onchange="this.form.submit()">
+      {% for value, label in order_type_choices %}
+        <option value="{{ value }}" {% if value == order_type %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <noscript>
+      <button type="submit" class="btn btn--small btn--secondary">Показать</button>
+    </noscript>
+  </form>
   <h2>Выберите крайнюю деталь в заказе</h2>
   <p class="page-subtitle">
-    Здесь вся история ещё не включённых в заказ продаж, ремонтов и запчастей на заказ.
-    Фильтры отчёта не ограничивают этот список. Выбранная строка и все строки выше неё войдут в заказ.
+    Здесь только ещё не включённые позиции выбранного типа. Выбранная строка и
+    все строки выше неё в этом типе войдут в заказ.
     Курс USD/RUB: {{ fx_rate }}.
   </p>
   {% if sources %}
     <form method="post" data-customs-selection>
       {% csrf_token %}
+      <input type="hidden" name="order_type" value="{{ order_type }}">
       <input type="hidden" name="selection_token" value="{{ selection_token }}">
       <div class="customs-selection-summary" aria-live="polite">
         <span>Выбрано строк: <strong data-prefix-count>0</strong></span>
@@ -71,6 +85,7 @@
                type="number"
                min="1"
                step="1"
+               value="{{ next_order_number }}"
                required>
         <div class="page-actions">
           <button class="btn btn--secondary" type="button" data-customs-dialog-cancel>Назад</button>

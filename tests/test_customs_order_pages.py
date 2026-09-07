@@ -3,6 +3,8 @@ from decimal import Decimal
 import pytest
 from django.urls import reverse
 
+from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
+
 pytestmark = pytest.mark.django_db
 
 
@@ -98,6 +100,66 @@ def test_general_exports_request_only_unassigned_sources(
     assert normal_response.status_code == 302
     assert analog_response.status_code == 302
     assert calls == [("normal", True), ("analog", True)]
+
+
+@pytest.mark.parametrize("preset", ("today", "week", "month", "all"))
+def test_customs_queue_uses_only_standard_date_presets(
+    client, django_user_model, monkeypatch, preset,
+):
+    calls = []
+
+    def sources(*, filters, unassigned_only):
+        calls.append(filters)
+        return []
+
+    monkeypatch.setattr("apps.actions.views.customs_sources", sources)
+    client.force_login(_user(django_user_model))
+
+    response = client.get(reverse("actions_report"), {"preset": preset})
+
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert calls
+    assert 'name="date_from"' not in html
+    assert 'name="date_to"' not in html
+    assert f'?preset={preset}' in html
+
+
+def test_customs_queue_defaults_to_all_time(client, django_user_model, monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        "apps.actions.views.customs_sources",
+        lambda *, filters, unassigned_only: seen.append(filters) or [],
+    )
+    client.force_login(_user(django_user_model))
+
+    response = client.get(reverse("actions_report"))
+
+    assert response.status_code == 200
+    assert seen[0]["date_from"] is None
+    assert seen[0]["date_to"] is None
+
+
+def test_customs_order_quantities_are_integral_and_usd_has_two_decimals(
+    client, django_user_model,
+):
+    order = CustomsOrder.objects.create(
+        number=125, order_type="original", fx_rate=Decimal("100"),
+        total_quantity=Decimal("2.000"), total_rub=Decimal("3926"),
+    )
+    CustomsOrderLine.objects.create(
+        order=order, source="sale", source_id=42, article="ARTICLE", quantity=Decimal("2.000"),
+        wholesale_usd=Decimal("19.6300"), rub_amount=Decimal("3926"),
+    )
+    client.force_login(_user(django_user_model))
+
+    list_html = client.get(reverse("customs_orders_list")).content.decode()
+    detail_html = client.get(reverse("customs_order_detail", args=[order.pk])).content.decode()
+
+    assert "2.000" not in list_html
+    assert "2.000" not in detail_html
+    assert "19.6300" not in detail_html
+    assert "19,63" in detail_html
 
 
 def test_selection_shows_a_visible_prefix_preview_and_bootstrap_warning(

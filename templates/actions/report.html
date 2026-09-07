@@ -41,16 +41,15 @@
     </p>
   {% endif %}
   <form method="get" class="filter-toolbar">
-    <label>
-      С
-      <input type="date"
-             name="date_from"
-             value="{{ filters.date_from|date:'Y-m-d' }}">
-    </label>
-    <label>
-      По
-      <input type="date" name="date_to" value="{{ filters.date_to|date:'Y-m-d' }}">
-    </label>
+    <div class="filter-field">
+      <span class="filter-label">Период</span>
+      <div class="segmented">
+        {% for value, label in customs_date_presets %}
+          <a href="?preset={{ value }}"
+             class="{% if customs_preset == value %}is-active{% endif %}">{{ label }}</a>
+        {% endfor %}
+      </div>
+    </div>
     <label>
       Тип
       <select name="action_type">

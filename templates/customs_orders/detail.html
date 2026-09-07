@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Таможенный заказ №{{ order.number }} · DenisStock{% endblock %}
+{% block title %}{{ order.get_order_type_display }} - заказ №{{ order.number }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Таможенный заказ №{{ order.number }}</h1>
+    <h1 class="page-title">{{ order.get_order_type_display }} - заказ №{{ order.number }}</h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
          href="{% url 'customs_orders_list' %}">Все заказы</a>
@@ -12,7 +12,7 @@
     </div>
   </div>
   <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Кто создал: {{ order.created_by|default:"·" }}</p>
-  <p>Курс USD/RUB: {{ order.fx_rate }} · Количество: {{ order.total_quantity }} · Сумма: {{ order.total_rub }} ₽</p>
+  <p>Курс USD/RUB: {{ order.fx_rate }} · Количество: {{ order.total_quantity|quantity_int }} · Сумма: {{ order.total_rub }} ₽</p>
   <p class="page-subtitle">Сохранённый состав заказа. Цена и курс зафиксированы при его создании.</p>
   <table class="table table--wide">
     <thead>
@@ -34,8 +34,8 @@
           <td>{{ line.name_ru }}</td>
           <td>{{ line.manufacturer }}</td>
           <td>{% if line.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
-          <td class="num--qty">{{ line.quantity }}</td>
-          <td class="num--money">{{ line.wholesale_usd }}</td>
+          <td class="num--qty">{{ line.quantity|quantity_int }}</td>
+          <td class="num--money">{{ line.wholesale_usd|floatformat:2 }}</td>
           <td class="num--money">{{ line.rub_amount }}</td>
           <td>{{ line.get_source_display }}</td>
         </tr>

@@ -10,7 +10,7 @@
   <table class="table">
     <thead>
       <tr>
-        <th>№ заказа</th>
+        <th>Тип и № заказа</th>
         <th>Дата</th>
         <th>Кто создал</th>
         <th class="num--qty">Количество</th>
@@ -20,10 +20,10 @@
     <tbody>
       {% for order in orders %}
         <tr>
-          <td><a href="{% url 'customs_order_detail' order.pk %}">Заказ №{{ order.number }}</a></td>
+          <td><a href="{% url 'customs_order_detail' order.pk %}">{{ order.get_order_type_display }} - заказ №{{ order.number }}</a></td>
           <td>{{ order.created_at|date:"d.m.Y H:i" }}</td>
           <td>{{ order.created_by|default:"·" }}</td>
-          <td class="num--qty">{{ order.total_quantity }}</td>
+          <td class="num--qty">{{ order.total_quantity|quantity_int }}</td>
           <td class="num--money">{{ order.total_rub }}</td>
         </tr>
       {% empty %}

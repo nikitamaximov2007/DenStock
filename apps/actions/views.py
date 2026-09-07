@@ -16,6 +16,7 @@ from django.db import transaction
 from django.http import HttpResponse, HttpResponseNotAllowed, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 
 from apps.catalog.models import PartType
@@ -566,11 +567,33 @@ def actions_cart_complete(request):
     return redirect(back)
 
 
+CUSTOMS_DATE_PRESETS = (
+    ("today", "Сегодня"),
+    ("week", "Неделя"),
+    ("month", "Месяц"),
+    ("all", "Всё время"),
+)
+
+
+def _customs_period(request):
+    """The shared quick-range semantics, with all history as the customs default."""
+    preset = request.GET.get("preset", "all")
+    today = timezone.localdate()
+    if preset == "today":
+        return preset, today, today
+    if preset == "week":
+        return preset, today - datetime.timedelta(days=6), today
+    if preset == "month":
+        return preset, today.replace(day=1), today
+    return "all", None, None
+
+
 def _report_filters(request) -> dict:
     """Фильтры отчёта из GET. Общий парсер для HTML-отчёта и Excel-экспорта."""
+    _preset, date_from, date_to = _customs_period(request)
     return {
-        "date_from": _parse_date(request.GET.get("date_from", "")),
-        "date_to": _parse_date(request.GET.get("date_to", "")),
+        "date_from": date_from,
+        "date_to": date_to,
         "action_type": request.GET.get("action_type", ""),
         "q": (request.GET.get("q") or "").strip(),
         "part_number": (request.GET.get("part_number") or "").strip(),
@@ -583,6 +606,7 @@ def actions_report_view(request):
     """Единый отчёт действий со склада + подготовка таможенного экспорта."""
     _require_access(request)
     show_cancelled = request.GET.get("cancelled") == "1"
+    customs_preset, _date_from, _date_to = _customs_period(request)
     filters = _report_filters(request)
     sources = []
     if request.user.can_view_purchase_cost:
@@ -617,6 +641,8 @@ def actions_report_view(request):
             "actions": actions,
             "totals": totals,
             "filters": filters,
+            "customs_preset": customs_preset,
+            "customs_date_presets": CUSTOMS_DATE_PRESETS,
             "show_cancelled": show_cancelled,
             "customs_sources": sources,
             "unassigned_only": False,
