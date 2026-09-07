@@ -16,6 +16,7 @@ import openpyxl
 import pytest
 from django.contrib.auth.models import Group
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts import roles
 from apps.actions.models import PartCustomsInfo, WarehouseAction
@@ -250,12 +251,20 @@ def test_headers_preserved_in_order(client, make_user, env):
     assert sheet["L10"].value == "=K10*J10"
 
 
+def _assert_nothing_to_export(resp):
+    """Пустая выборка это не файл без строк, а понятный отказ с объяснением.
+
+    Очередь таможни показывает только детали, ещё не включённые в заказ.
+    Пустой Excel на такую выборку выглядел бы как «выгрузили ноль позиций»,
+    хотя выгружать было нечего.
+    """
+    assert resp.status_code == 302
+    assert resp.url == reverse("actions_report")
+
+
 def test_empty_selection_does_not_500(client, make_user, env):
     _login(client, make_user)
-    resp = client.get(reverse("actions_export") + "?part_number=НЕТ-ТАКОГО")
-    assert resp.status_code == 200
-    sheet = _sheet(resp.content)
-    assert sheet[f"B{DATA_ROW}"].value is None  # пример шаблона очищен, данных нет
+    _assert_nothing_to_export(client.get(reverse("actions_export") + "?part_number=НЕТ-ТАКОГО"))
 
 
 # --- Exact identity --------------------------------------------------------------------
@@ -377,13 +386,23 @@ def test_cancelled_flag_does_not_leak_into_customs(client, make_user, env):
     assert Decimal(str(sheet[f"J{DATA_ROW}"].value)) == Decimal("3")
 
 
-def test_date_filter_applied(client, make_user, env):
+def test_period_preset_filters_the_export(client, make_user, env):
+    """Период задают пресеты, а не произвольные даты.
+
+    Свободные поля date_from/date_to из отчёта убраны: оператору оставлены
+    Сегодня / Неделя / Месяц / Всё время, и по умолчанию берётся вся история.
+    """
+    from apps.sales.models import Sale
+
     part, _ = _brp(env, material="219800345")
     _sell(env, part, number="219800345")
     _login(client, make_user)
-    tomorrow = datetime.date.today() + datetime.timedelta(days=1)
-    sheet = _sheet(client.get(reverse("actions_export") + f"?date_from={tomorrow}").content)
-    assert sheet[f"B{DATA_ROW}"].value is None  # всё отфильтровано
+    long_ago = timezone.now() - datetime.timedelta(days=400)
+    Sale.objects.update(sold_at=long_ago)
+
+    _assert_nothing_to_export(client.get(reverse("actions_export") + "?preset=today"))
+    sheet = _sheet(client.get(reverse("actions_export") + "?preset=all").content)
+    assert str(sheet[f"B{DATA_ROW}"].value) == "219800345"
 
 
 def test_type_filter_applied(client, make_user, env):
@@ -399,9 +418,8 @@ def test_type_filter_applied(client, make_user, env):
                    customer_comment="Петров", scanned_number="219800345", by=env["admin"])
     _login(client, make_user)
 
-    sheet = _sheet(client.get(reverse("actions_export") + "?action_type=reserve").content)
-    assert sheet[f"B{DATA_ROW}"].value is None  # по резерву строк нет
-    assert sheet[f"J{DATA_ROW}"].value is None
+    # По резерву строк нет вовсе, поэтому и выгружать нечего.
+    _assert_nothing_to_export(client.get(reverse("actions_export") + "?action_type=reserve"))
 
     sheet = _sheet(client.get(reverse("actions_export") + "?action_type=sale").content)
     assert str(sheet[f"B{DATA_ROW}"].value) == "219800345"
@@ -426,8 +444,7 @@ def test_location_filter_applied(client, make_user, env):
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export") + "?location_code=S04-L03-D01-C03").content)
     assert "219800345" in _b_column(sheet)
-    sheet = _sheet(client.get(reverse("actions_export") + "?location_code=НЕТ").content)
-    assert sheet[f"B{DATA_ROW}"].value is None
+    _assert_nothing_to_export(client.get(reverse("actions_export") + "?location_code=НЕТ"))
 
 
 # --- Неполные данные и Decimal ----------------------------------------------------------

@@ -838,8 +838,9 @@ def actions_export(request):
     from .services import export_customs_xlsx
 
     filters = _report_filters(request)
-    # Пустая выборка не ошибка: оператор получает ту же форму без товарных
-    # строк и видит это сам. Отказ здесь только мешал бы.
+    # Очередь таможни показывает только детали, ещё не включённые в заказ.
+    # Пустой файл на такую выборку читался бы как «выгрузили ноль позиций»,
+    # поэтому оператор получает объяснение, а не книгу без строк.
     rows = historical_customs_rows(**filters, unassigned_only=True)
     if not rows:
         messages.info(request, "Нет деталей, ещё не включённых в таможенный заказ.")
