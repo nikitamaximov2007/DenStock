@@ -203,3 +203,57 @@ def test_period_preset_link_keeps_the_other_filters(client, make_user, env):
     assert 'href="?preset=today"' not in toolbar, (
         "ссылка пресета отбрасывает остальные фильтры"
     )
+
+
+# --- 5. H3: период отчёта и канонический разбор периода DenisStock ------------------------
+
+
+def test_customs_period_uses_the_canonical_preset_vocabulary():
+    """§6: пресеты обязаны использовать уже существующую семантику дат.
+
+    apps.reports.services.resolve_period - канонический разбор: today / 7 / 30 /
+    month / all, и явные date_from+date_to сильнее пресета. Отчёт таможни завёл
+    второй, несовместимый словарь."""
+    from apps.actions.views import _customs_period
+    from apps.reports.services import resolve_period
+    from django.test import RequestFactory
+
+    def customs(**get):
+        return _customs_period(RequestFactory().get("/", get))[1:]
+
+    def canonical(**get):
+        period = resolve_period(get)
+        return (period.date_from, period.date_to)
+
+    # «7» - канонический ключ недели во всём DenisStock.
+    assert customs(preset="7") == canonical(preset="7"), (
+        "?preset=7 на таможенном отчёте молча означает «всё время»"
+    )
+    # Явные даты канонический разбор уважает, таможенный отчёт - нет.
+    assert customs(date_from="2026-01-01", date_to="2026-01-31") == canonical(
+        date_from="2026-01-01", date_to="2026-01-31"
+    ), "явные date_from/date_to на таможенном отчёте игнорируются"
+
+
+# --- 6. H6: последовательный обход не должен покидать очередь ----------------------------
+
+
+def test_sequential_walk_stays_inside_the_unassigned_queue(env):
+    """Обход «следующая незаполненная деталь» обязан идти по тому же списку,
+    что оператор видит на экране. Экран - очередь неотправленных позиций."""
+    from apps.actions.services import historical_customs_rows
+    from apps.actions.views import _customs_report_filters
+    from apps.customs_orders.services import create_customs_order, eligible_customs_sources
+    from django.urls import reverse as _reverse
+
+    _sold(env)
+    sources = eligible_customs_sources()
+    assert sources, "нужна хотя бы одна неотправленная позиция"
+    create_customs_order(number=125, lines=sources, by=env["admin"])
+    assert eligible_customs_sources() == [], "очередь должна опустеть"
+
+    filters = _customs_report_filters(_reverse("actions_report") + "?preset=today")
+    walked = historical_customs_rows(**filters)
+    assert walked == [], (
+        "обход предлагает детали, которых на экране очереди уже нет"
+    )
