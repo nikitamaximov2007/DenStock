@@ -1467,6 +1467,7 @@ def _customs_rows_from_lines(lines) -> list[dict]:
 
 def historical_customs_rows(
     *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+    unassigned_only=False,
 ) -> list[dict]:
     """Исторический таможенный расход по сохранённым профилям деталей.
 
@@ -1482,11 +1483,13 @@ def historical_customs_rows(
     filters = {
         "date_from": date_from, "date_to": date_to, "action_type": action_type,
         "q": q, "part_number": part_number, "location_code": location_code,
+        "unassigned_only": unassigned_only,
     }
     sales_rows = _customs_rows_from_lines(
         [line for line in canonical_customs_lines(
             date_from=date_from, date_to=date_to, action_type=action_type, q=q,
             part_number=part_number, location_code=location_code,
+            unassigned_only=unassigned_only,
         ) if not line.get("is_analog")]
     )
     return sales_rows + ordered_customs_rows(**filters)
@@ -1505,12 +1508,14 @@ def ordered_customs_rows(**filters) -> list[dict]:
 
 def historical_analog_customs_rows(
     *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+    unassigned_only=False,
 ) -> list[dict]:
     """Исторический таможенный расход только явно связанных аналогов."""
     return _customs_rows_from_lines(
         [line for line in canonical_customs_lines(
             date_from=date_from, date_to=date_to, action_type=action_type, q=q,
             part_number=part_number, location_code=location_code,
+            unassigned_only=unassigned_only,
         ) if line.get("is_analog")]
     )
 

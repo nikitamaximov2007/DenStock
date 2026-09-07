@@ -3,8 +3,6 @@ from decimal import Decimal
 import pytest
 from django.urls import reverse
 
-from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
-
 pytestmark = pytest.mark.django_db
 
 
@@ -34,19 +32,15 @@ def _source(source_id, membership=None):
     }
 
 
-def test_report_keeps_assigned_source_visible_with_its_exact_order_link(
+def test_report_is_an_unassigned_customs_queue(
     client, django_user_model, monkeypatch,
 ):
-    order = CustomsOrder.objects.create(number=125, fx_rate=Decimal("100"))
-    membership = CustomsOrderLine.objects.create(
-        order=order, source="sale", source_id=10, article="SAME-ARTICLE",
-        quantity=Decimal("1"), wholesale_usd=Decimal("10"), rub_amount=Decimal("100"),
-    )
     calls = []
 
     def sources(*, filters, unassigned_only):
         calls.append(unassigned_only)
-        return [_source(10, membership), _source(11)]
+        assert unassigned_only is True
+        return [_source(11)]
 
     monkeypatch.setattr("apps.actions.views.customs_sources", sources)
     client.force_login(_user(django_user_model))
@@ -55,15 +49,14 @@ def test_report_keeps_assigned_source_visible_with_its_exact_order_link(
 
     html = response.content.decode()
     assert response.status_code == 200
-    assert 'class="customs-source--assigned"' in html
     assert 'class="customs-source--unassigned"' in html
-    assert reverse("customs_order_detail", args=[order.pk]) in html
-    assert "Заказ №125" in html
-    assert html.count("SAME-ARTICLE") == 2
-    assert calls == [False]
+    assert 'customs-source--assigned' not in html
+    assert 'name="unassigned"' not in html
+    assert html.count("SAME-ARTICLE") == 1
+    assert calls == [True]
 
 
-def test_report_unassigned_filter_requests_the_canonical_unassigned_dataset(
+def test_report_always_requests_the_canonical_unassigned_dataset(
     client, django_user_model, monkeypatch,
 ):
     calls = []
@@ -75,11 +68,36 @@ def test_report_unassigned_filter_requests_the_canonical_unassigned_dataset(
     monkeypatch.setattr("apps.actions.views.customs_sources", sources)
     client.force_login(_user(django_user_model))
 
-    response = client.get(reverse("actions_report"), {"unassigned": "1"})
+    response = client.get(reverse("actions_report"))
 
     assert response.status_code == 200
     assert calls[0][1] is True
     assert 'class="customs-source--unassigned"' in response.content.decode()
+
+
+def test_general_exports_request_only_unassigned_sources(
+    client, django_user_model, monkeypatch,
+):
+    calls = []
+
+    def normal(**kwargs):
+        calls.append(("normal", kwargs["unassigned_only"]))
+        return []
+
+    def analog(**kwargs):
+        calls.append(("analog", kwargs["unassigned_only"]))
+        return []
+
+    monkeypatch.setattr("apps.actions.views.historical_customs_rows", normal)
+    monkeypatch.setattr("apps.actions.views.historical_analog_customs_rows", analog)
+    client.force_login(_user(django_user_model))
+
+    normal_response = client.get(reverse("actions_export"))
+    analog_response = client.get(reverse("actions_analog_export"))
+
+    assert normal_response.status_code == 302
+    assert analog_response.status_code == 302
+    assert calls == [("normal", True), ("analog", True)]
 
 
 def test_selection_shows_a_visible_prefix_preview_and_bootstrap_warning(

@@ -19,10 +19,9 @@
     </div>
   </div>
   <p class="page-subtitle">
-    В таблице ниже: продажи, резервы и выдачи в ремонт, проведённые со сканера
-    действий. Экспорт заполняет «Форму для заказа» по текущим фильтрам всей
-    историей продаж и ремонтов, а не только сканерной: строки группируются по
-    детали и версии таможенных данных, количество суммируется.
+    Очередь продаж, ремонтов и запчастей на заказ, которые ещё не вошли ни в
+    один таможенный заказ. Уже отправленные позиции доступны только в деталях
+    соответствующего таможенного заказа.
   </p>
   {% if user.can_view_purchase_cost %}
     {% include "customs_orders/_bootstrap_warning.html" %}
@@ -81,15 +80,6 @@
              {% if show_cancelled %}checked{% endif %}>
       Показать отменённые
     </label>
-    {% if user.can_view_purchase_cost %}
-      <label>
-        <input type="checkbox"
-               name="unassigned"
-               value="1"
-               {% if unassigned_only %}checked{% endif %}>
-        Ещё не в заказе
-      </label>
-    {% endif %}
     <button type="submit" class="btn btn--small btn--primary">Показать</button>
   </form>
   {% if user.can_view_purchase_cost %}
@@ -100,7 +90,7 @@
       <div class="card__body">
         <p>
           Продажи, ремонты и запчасти на заказ. Каждая строка относится к своей операции,
-          даже если артикулы совпадают. Серые строки уже включены в заказ.
+          даже если артикулы совпадают. В очереди остаются только ещё не отправленные строки.
         </p>
         <table class="table table--wide" data-customs-source-table>
           <thead>
@@ -112,12 +102,11 @@
               <th>Производитель</th>
               <th>Классификация</th>
               <th class="num--qty">Действующее количество</th>
-              <th>Таможенный заказ</th>
             </tr>
           </thead>
           <tbody>
             {% for row in customs_sources %}
-              <tr class="{% if row.membership %}customs-source--assigned{% else %}customs-source--unassigned{% endif %}"
+              <tr class="customs-source--unassigned"
                   data-source="{{ row.source }}:{{ row.source_id }}">
                 <td>{{ row.occurred_at|date:"d.m.Y H:i"|default:"Дата не указана" }}</td>
                 <td>{{ row.source_label }}</td>
@@ -126,17 +115,10 @@
                 <td>{{ row.manufacturer }}</td>
                 <td>{% if row.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
                 <td class="num--qty">{{ row.quantity }}</td>
-                <td>
-                  {% if row.membership %}
-                    <a href="{% url 'customs_order_detail' row.membership.order_id %}">Заказ №{{ row.membership.order.number }}</a>
-                  {% else %}
-                    Ещё не в заказе
-                  {% endif %}
-                </td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="8">Подходящих строк нет.</td>
+                <td colspan="7">Подходящих строк нет.</td>
               </tr>
             {% endfor %}
           </tbody>

@@ -584,17 +584,18 @@ def actions_report_view(request):
     _require_access(request)
     show_cancelled = request.GET.get("cancelled") == "1"
     filters = _report_filters(request)
-    unassigned_only = request.GET.get("unassigned") == "1"
     sources = []
     if request.user.can_view_purchase_cost:
-        sources = customs_sources(filters=filters, unassigned_only=unassigned_only)
+        # This page is the customs queue. Membership is excluded by the canonical
+        # query, never hidden in the browser after the source set was loaded.
+        sources = customs_sources(filters=filters, unassigned_only=True)
         labels = dict(CustomsOrderLine.Source.choices)
         for row in sources:
             row["source_label"] = labels[row["source"]]
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
-    export_rows = historical_customs_rows(**filters)
-    analog_export_rows = historical_analog_customs_rows(**filters)
+    export_rows = historical_customs_rows(**filters, unassigned_only=True)
+    analog_export_rows = historical_analog_customs_rows(**filters, unassigned_only=True)
     ready = [r for r in export_rows if not r["warnings"]]
     # Готовность к таможенному экспорту (Layer 33.1): область применения +
     # оба веса одной штуки. Цена и название сюда не входят - у них своя
@@ -618,7 +619,7 @@ def actions_report_view(request):
             "filters": filters,
             "show_cancelled": show_cancelled,
             "customs_sources": sources,
-            "unassigned_only": unassigned_only,
+            "unassigned_only": False,
             "initialization_required": not CustomsOrder.objects.exists(),
             "types": WarehouseAction.Type.choices,
             "export_rows": export_rows,
@@ -698,7 +699,10 @@ def actions_export(request):
     filters = _report_filters(request)
     # Пустая выборка не ошибка: оператор получает ту же форму без товарных
     # строк и видит это сам. Отказ здесь только мешал бы.
-    rows = historical_customs_rows(**filters)
+    rows = historical_customs_rows(**filters, unassigned_only=True)
+    if not rows:
+        messages.info(request, "Нет деталей, ещё не включённых в таможенный заказ.")
+        return redirect("actions_report")
     buffer = export_customs_xlsx(rows=rows)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()
@@ -720,7 +724,10 @@ def actions_analog_export(request):
     from .services import export_customs_xlsx
 
     filters = _report_filters(request)
-    rows = historical_analog_customs_rows(**filters)
+    rows = historical_analog_customs_rows(**filters, unassigned_only=True)
+    if not rows:
+        messages.info(request, "Нет деталей, ещё не включённых в таможенный заказ.")
+        return redirect("actions_report")
     buffer = export_customs_xlsx(rows=rows)
     date_from = filters["date_from"] or datetime.date.today()
     date_to = filters["date_to"] or datetime.date.today()
