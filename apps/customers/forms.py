@@ -1,6 +1,7 @@
 from django import forms
 
 from .models import Customer
+from .services import customers_by_recent_activity
 
 
 class CustomerForm(forms.ModelForm):
@@ -42,7 +43,9 @@ class CustomerSelectionMixin(forms.ModelForm):
             self.fields["customer"].required = False
             self.fields["customer"].label = "Клиент из справочника"
             self.fields["customer"].empty_label = "Не выбран (ввести вручную)"
-            self.fields["customer"].queryset = Customer.objects.all()
+            # Свежий клиент первым: продажу и ремонт почти всегда оформляют
+            # на того, кто уже приходил.
+            self.fields["customer"].queryset = customers_by_recent_activity(limit=None)
         if "customer_name" in self.fields:
             self.fields["customer_name"].required = False
 

@@ -24,6 +24,7 @@ from apps.catalog.models import PartType
 from apps.core.part_lookup import MatchSource, resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
 from apps.customers.models import Customer
+from apps.customers.services import customers_by_recent_activity
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
@@ -153,7 +154,7 @@ def actions_scan(request):
         "cart_panels": _cart_panels(request),
         "cart_token": secrets.token_urlsafe(32),
         "selected_action_kind": selected_action_kind,
-        "customers": Customer.objects.order_by("name", "pk")[:500],
+        "customers": customers_by_recent_activity(limit=500),
         "selected_customer_id": request.GET.get("customer_id", ""),
     }
     if q:
