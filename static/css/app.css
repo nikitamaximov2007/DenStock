@@ -48,12 +48,10 @@ body.app {
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .topbar__menu { display: none; }
-.topbar__brand { display: inline-flex; align-items: center; gap: 10px;
-  text-decoration: none; color: var(--text); font-weight: 700; }
-.topbar__mark { display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 8px;
-  background: var(--accent); color: #fff; font-weight: 800; font-size: 16px; }
-.topbar__wordmark { font-size: 18px; letter-spacing: -0.01em; }
+.topbar__brand { display: inline-flex; align-items: center; flex: 0 1 auto;
+  min-width: 0; text-decoration: none; }
+.topbar__logo { display: block; width: auto; height: 44px; max-width: 100%;
+  object-fit: contain; }
 .topbar__spacer { flex: 1 1 auto; }
 .topbar__searchform { position: relative; flex: 1; max-width: 460px; }
 .topbar__searchicon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
@@ -446,7 +444,7 @@ th.num, td.num, .table th.num, .table td.num,
 
 @media (max-width: 560px) {
   .content { padding: 14px; }
-  .topbar__wordmark { display: none; }
+  .topbar__logo { height: 36px; }
   /* Сканер это главный ввод смены, и на телефоне он должен занимать строку
      целиком. Одной ширины для этого мало: поле стоит во flex-строке рядом с
      выбором действия и кнопкой, и она его сжимала вдвое. Базис в 100%
