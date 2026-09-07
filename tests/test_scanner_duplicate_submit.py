@@ -26,6 +26,7 @@ from apps.procurement.services import finalize_cost
 from apps.sales.models import Sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_cart_customs
 
 PASSWORD = "parol-12345"
 TOKEN = "scanner-double-tap-0001"
@@ -81,7 +82,9 @@ def test_sequential_resubmit_replays_instead_of_failing(data):
     cart = _cart_with_one_row(data)
     before = _available(data)
 
+    remember_cart_customs(cart)
     first = complete_cart(cart, customer_comment="Иванов", by=data["admin"], request_token=TOKEN)
+    remember_cart_customs(cart)
     second = complete_cart(cart, customer_comment="Иванов", by=data["admin"], request_token=TOKEN)
 
     assert [a.pk for a in first] == [a.pk for a in second]
@@ -95,8 +98,10 @@ def test_resubmit_without_token_is_refused_not_duplicated(data):
 
     cart = _cart_with_one_row(data)
     before = _available(data)
+    remember_cart_customs(cart)
     complete_cart(cart, customer_comment="Иванов", by=data["admin"])
     with pytest.raises(ActionError):
+        remember_cart_customs(cart)
         complete_cart(cart, customer_comment="Иванов", by=data["admin"])
     assert _available(data) == before - Decimal("3")
 

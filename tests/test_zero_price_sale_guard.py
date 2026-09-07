@@ -30,6 +30,7 @@ from apps.sales.models import Sale, SaleLine
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import get_or_create_location
+from tests.customs_support import remember_cart_customs
 
 PASSWORD = "parol-12345"
 
@@ -154,6 +155,7 @@ def test_an_explicit_zero_price_is_still_allowed(env):
 
     assert row.unit_price == Decimal("0")
     assert SaleLine.objects.count() == 1
+    remember_cart_customs(cart)
     complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
     cart.refresh_from_db()
     assert cart.status == Sale.Status.COMPLETED
@@ -195,6 +197,7 @@ def test_the_part_can_be_sold_once_the_price_is_filled_in(env):
     row = add_scan(cart, part, env["cell"], quantity=Decimal("1"), by=env["admin"])
     assert row.unit_price == Decimal("13100")
 
+    remember_cart_customs(cart)
     complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
     line = SaleLine.objects.get()
     assert line.unit_price == Decimal("13100")
@@ -223,6 +226,7 @@ def test_an_old_draft_with_an_invented_zero_cannot_be_completed(env):
     assert cart_rows(cart)[0].unit_price == Decimal("0")
 
     with pytest.raises(ActionError) as failure:
+        remember_cart_customs(cart)
         complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
 
     assert "цена не задана" in str(failure.value)
@@ -241,6 +245,7 @@ def test_an_old_zero_row_is_blocked_even_after_the_price_appears(env):
     part.save(update_fields=["recommended_price"])
 
     with pytest.raises(ActionError) as failure:
+        remember_cart_customs(cart)
         complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
 
     assert "Уберите её и добавьте деталь заново" in str(failure.value)
@@ -292,6 +297,7 @@ def test_a_part_without_a_price_still_goes_into_a_repair(env):
     row = add_scan(cart, part, env["cell"], quantity=Decimal("1"), by=env["admin"])
 
     assert row.unit_price is None
+    remember_cart_customs(cart)
     complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
     cart.refresh_from_db()
     assert cart.status == RepairOrder.Status.COMPLETED
@@ -319,6 +325,7 @@ def test_a_priced_sale_completes_through_the_screen(client, env):
     client.force_login(env["admin"])
     cart = _draft(client, env, "sale", part, quantity="2")
 
+    remember_cart_customs(cart)
     complete_cart(cart, customer=customer, by=env["admin"])
 
     cart.refresh_from_db()

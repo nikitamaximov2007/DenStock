@@ -1108,6 +1108,85 @@ def parse_weight_kg(raw) -> Decimal | None:
     return value
 
 
+def parse_weight_g(raw) -> Decimal | None:
+    """Actual per-unit weight entered by the operator in grams.
+
+    Storage remains the established Decimal kg representation: three decimal
+    places are exact whole-gram precision and avoid a destructive schema fork.
+    """
+    raw = (str(raw) if raw is not None else "").strip().replace(",", ".")
+    if not raw:
+        return None
+    try:
+        grams = Decimal(raw)
+    except InvalidOperation as exc:
+        raise ValueError("Вес должен быть целым числом в граммах.") from exc
+    if not grams.is_finite() or grams <= 0 or grams != grams.to_integral_value():
+        raise ValueError("Вес должен быть целым числом в граммах.")
+    kg = grams / Decimal("1000")
+    if kg >= _MAX_WEIGHT_KG:
+        raise ValueError("Вес слишком большой.")
+    return kg
+
+
+def weight_kg_as_grams(weight_kg: Decimal | None) -> int | None:
+    """Обратное преобразование для подстановки в операторскую форму (граммы)."""
+    if weight_kg is None:
+        return None
+    return int((Decimal(weight_kg) * 1000).to_integral_value())
+
+
+# Таможенный минимум строки выгрузки. Он НЕ является весом детали: запомненный
+# фактический вес остаётся тем, что ввёл сотрудник, и минимум применяется
+# только в момент формирования таможенной формы.
+CUSTOMS_MIN_EXPORT_WEIGHT_KG = Decimal("0.03")
+
+
+def customs_export_weight_kg(actual_weight_kg: Decimal | None) -> Decimal | None:
+    """Customs minimum applies at export only; remembered actual weight is unchanged."""
+    if actual_weight_kg is None:
+        return None
+    return max(Decimal(actual_weight_kg), CUSTOMS_MIN_EXPORT_WEIGHT_KG)
+
+
+# Список областей применения, который выбирает сотрудник в быстрых действиях.
+# Это операторский словарь: автоопределение по совместимости каталога
+# (resolve_customs_application) остаётся со своим собственным набором значений
+# и здесь не участвует.
+QUICK_ACTION_APPLICATION_AREAS = (
+    _ApplicationArea.WATERCRAFT,
+    _ApplicationArea.ATV,
+    _ApplicationArea.SNOWMOBILE,
+    _ApplicationArea.OUTBOARD_MOTOR,
+    _ApplicationArea.BOAT_CRAFT,
+)
+APPLICATION_UNSET_LABEL = "Не выбрано"
+
+
+def parse_application_area(raw) -> str:
+    """Область применения из операторской формы: только значение из списка."""
+    value = (str(raw) if raw is not None else "").strip().upper()
+    if not value:
+        return ""
+    if value not in {str(area) for area in QUICK_ACTION_APPLICATION_AREAS}:
+        raise ValueError("Выберите область применения из списка.")
+    return value
+
+
+def customs_metadata_gaps(
+    *, gross_weight_kg: Decimal | None, net_weight_kg: Decimal | None, application_area: str
+) -> list[str]:
+    """Чего не хватает строке, чтобы операция стала таможенным источником."""
+    gaps = []
+    if gross_weight_kg is None:
+        gaps.append("не заполнен вес брутто")
+    if net_weight_kg is None:
+        gaps.append("не заполнен вес нетто")
+    if not (application_area or "").strip():
+        gaps.append("не выбрана область применения")
+    return gaps
+
+
 def parse_customs_usd(raw) -> Decimal | None:
     """Явная таможенная стоимость единицы: подстановки цены каталога здесь нет."""
     raw = (str(raw) if raw is not None else "").strip().replace(",", ".")
@@ -1209,8 +1288,8 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "name_en": english_name.upper(),
         "manufacturer": manufacturer,
         "country": country,
-        "gross_weight_kg": customs.gross_weight_kg,
-        "net_weight_kg": customs.net_weight_kg,
+        "gross_weight_kg": customs_export_weight_kg(customs.gross_weight_kg),
+        "net_weight_kg": customs_export_weight_kg(customs.net_weight_kg),
         "usd_price": usd_price,
         "application_area": application_area,
         "application_source": application_source,
@@ -1330,8 +1409,8 @@ def _customs_row_from_version(
             "name_en": version.customs_name_en.strip().upper(),
             "manufacturer": version.manufacturer.strip().upper(),
             "country": version.country_of_origin.strip().upper(),
-            "gross_weight_kg": version.gross_weight_kg,
-            "net_weight_kg": version.net_weight_kg,
+            "gross_weight_kg": customs_export_weight_kg(version.gross_weight_kg),
+            "net_weight_kg": customs_export_weight_kg(version.net_weight_kg),
             "usd_price": version.customs_unit_price_usd,
             "application_area": application,
             "source_reference": version.source_reference,

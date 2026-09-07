@@ -46,6 +46,7 @@ from apps.repairs.models import RepairOrder
 from apps.sales.models import Sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -119,6 +120,7 @@ def data(db, admin):
         recommended_price=Decimal("250"),
     )
     PartNumber.objects.create(part=ring, value="700200", kind=PartNumber.Kind.OEM)
+    remember_customs(bolt, ring)
     return {
         "sup": sup,
         "cat": cat,
@@ -132,6 +134,8 @@ def data(db, admin):
         "ring_lot": _stock(ring, loc1, 4, sup, admin),
         "bolt_lot2": _stock(bolt, loc2, 3, sup, admin),
     }
+
+
 
 
 def _login(client, make_user, *, role=None, superuser=True, name="boss"):

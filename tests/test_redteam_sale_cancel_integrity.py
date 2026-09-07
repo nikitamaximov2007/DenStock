@@ -21,6 +21,7 @@ from apps.procurement.services import finalize_cost
 from apps.sales.models import Sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_cart_customs
 
 PASSWORD = "parol-12345"
 
@@ -109,6 +110,7 @@ def _hard_sale(data):
     add_scan(cart, data["bolt"], data["loc1"], quantity=Decimal("5"), by=data["admin"])
     add_scan(cart, data["bolt"], data["loc2"], quantity=Decimal("2"), by=data["admin"])
     add_scan(cart, data["ring"], data["loc2"], quantity=Decimal("3"), by=data["admin"])
+    remember_cart_customs(cart)
     return cart, complete_cart(cart, customer_comment="Иванов", by=data["admin"])
 
 

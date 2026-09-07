@@ -303,12 +303,18 @@ def test_decimal_used_without_float_errors(client, make_user, env):
 
 
 def test_tiny_weight_not_rounded_to_zero(client, make_user, env):
+    """Крошечный вес не теряется: он поднимается до таможенного минимума.
+
+    Ноль в декларации по-прежнему невозможен. Запомненный фактический вес
+    детали при этом остаётся ровно тем, что ввёл сотрудник.
+    """
     part, _ = _brp(env, material="219800345", customs=False)
     _customs(part, gross_weight_kg=Decimal("0.001"))
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
-    assert Decimal(str(sheet[f"G{DATA_ROW}"].value)) == Decimal("0.001")
+    assert Decimal(str(sheet[f"G{DATA_ROW}"].value)) == Decimal("0.03")
+    assert PartCustomsInfo.objects.get(part_type=part).gross_weight_kg == Decimal("0.001")
 
 
 def test_negative_weight_rejected():

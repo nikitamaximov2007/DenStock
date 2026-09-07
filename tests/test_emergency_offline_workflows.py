@@ -29,6 +29,7 @@ from apps.stocktaking.section_recount import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_cart_customs
 
 
 @pytest.mark.django_db
@@ -143,6 +144,7 @@ def test_scanner_cart_completes_only_while_offline_session_is_active(django_user
 
     active_cart = open_cart(KIND_SALE, by=user)
     add_scan(active_cart, part, location, by=user)
+    remember_cart_customs(active_cart)
     complete_cart(active_cart, customer_comment="Offline customer", by=user)
     lot.refresh_from_db()
     assert lot.quantity == Decimal("1")
@@ -152,6 +154,7 @@ def test_scanner_cart_completes_only_while_offline_session_is_active(django_user
     state.write_state = DeploymentState.WriteState.EMERGENCY_FROZEN
     state.save()
     with pytest.raises(BusinessWriteBlocked):
+        remember_cart_customs(frozen_cart)
         complete_cart(frozen_cart, customer_comment="Must stay frozen", by=user)
     lot.refresh_from_db()
     assert lot.quantity == Decimal("1")

@@ -53,6 +53,15 @@
               <th>Название</th>
               <th>Артикул</th>
               <th>Ячейка</th>
+              {% comment %}
+                Вес и область применения нужны таможенной форме, а знает их
+                только сотрудник, держащий деталь в руках. Поэтому они стоят
+                здесь, а не в отдельном редакторе: запомненное значение
+                подставляется, ввод нужен один раз на деталь.
+              {% endcomment %}
+              <th class="num--qty">Вес брутто, г</th>
+              <th class="num--qty">Вес нетто, г</th>
+              <th>Область применения</th>
               <th class="num--qty">Количество</th>
               {% comment %}
                 Цена за единицу называется «Цена» во всех операторских экранах:
@@ -79,7 +88,38 @@
                   <span class="code-pill">{{ item.row.location.code }}</span>
                 </td>
                 <td class="num--qty">
+                  <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
+                         name="gross_weight_g"
+                         type="text"
+                         inputmode="numeric"
+                         size="5"
+                         value="{{ item.customs.gross_weight_g|default_if_none:'' }}"
+                         aria-label="Вес брутто, г">
+                </td>
+                <td class="num--qty">
+                  <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
+                         name="net_weight_g"
+                         type="text"
+                         inputmode="numeric"
+                         size="5"
+                         value="{{ item.customs.net_weight_g|default_if_none:'' }}"
+                         aria-label="Вес нетто, г">
+                </td>
+                <td>
+                  <select form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
+                          name="application_area"
+                          aria-label="Область применения">
+                    <option value=""
+                            {% if not item.customs.application_area %}selected{% endif %}>{{ item.customs.application_unset_label }}</option>
+                    {% for value, label in item.customs.application_choices %}
+                      <option value="{{ value }}"
+                              {% if item.customs.application_area == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </td>
+                <td class="num--qty">
                   <form method="post"
+                        id="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
                         action="{% url 'actions_cart_update' %}"
                         class="inline-form cart-quantity-form">
                     {% csrf_token %}

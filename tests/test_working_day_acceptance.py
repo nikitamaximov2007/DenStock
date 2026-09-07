@@ -31,6 +31,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_cart_customs
 
 PASSWORD = "parol-12345"
 NUMBER_A = "700100"
@@ -95,6 +96,7 @@ def _available(part, location=None):
 def _cart(day, kind, part, quantity, customer_name):
     cart = open_cart(kind, by=day["admin"])
     add_scan(cart, part, day["shelf"], quantity=Decimal(str(quantity)), by=day["admin"])
+    remember_cart_customs(cart)
     return complete_cart(cart, customer_comment=customer_name, by=day["admin"])
 
 
@@ -187,6 +189,7 @@ def test_customer_card_collects_the_documents_of_the_day(client, day):
     customer = Customer.objects.create(name="Сидоров", phone="+7 912 000-00-00")
     cart = create_sale(customer=customer, by=day["admin"])
     add_scan(cart, day["part_b"], day["shelf"], quantity=Decimal("1"), by=day["admin"])
+    remember_cart_customs(cart)
     complete_cart(cart, customer_comment="Сидоров", by=day["admin"])
 
     client.login(username="boss", password=PASSWORD)

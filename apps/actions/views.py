@@ -7,6 +7,7 @@
 
 import datetime
 import secrets
+from decimal import Decimal
 from urllib.parse import quote, urlparse
 
 from django.contrib import messages
@@ -38,6 +39,7 @@ from .cart import (
     clear_cart,
     complete_cart,
     discard_cart,
+    effective_customs_metadata,
     load_cart,
     open_cart,
     parse_row_key,
@@ -46,20 +48,25 @@ from .cart import (
 )
 from .models import PartCustomsInfo, WarehouseAction
 from .services import (
+    APPLICATION_UNSET_LABEL,
     IDENTITY_MISMATCH_MESSAGE,
     MANUAL_WEIGHT_NOTE,
     MULTI_LOCATION_MESSAGE,
     NOT_FOUND_MESSAGE,
+    QUICK_ACTION_APPLICATION_AREAS,
     ActionError,
     actions_report,
     cancel_warehouse_action,
     get_or_create_customs,
     historical_analog_customs_rows,
     historical_customs_rows,
+    parse_application_area,
+    parse_weight_g,
     parse_weight_kg,
     perform_action,
     stock_overview,
     validate_weight_pair,
+    weight_kg_as_grams,
 )
 
 # Подписи источников для UI (см. part_export_data.application_source/weight_source).
@@ -95,6 +102,10 @@ CART_TITLES = {KIND_SALE: "Продажа", KIND_REPAIR: "Выдача в рем
 # остаться таким же точным, как при одиночном проведении. Первый скан позиции
 # и определяет номер: дальше это уже та же canonical деталь.
 CART_SCANS_SESSION_KEY = "actions_cart_scans"
+# Вес и область применения, введённые в строке корзины, но ещё не проведённые.
+# Канонические данные детали меняет ТОЛЬКО успешное проведение, поэтому до него
+# введённое живёт рядом с корзиной, а не в карточке.
+CART_CUSTOMS_SESSION_KEY = "actions_cart_customs"
 
 
 def _allowed_actions(user) -> list:
@@ -299,6 +310,7 @@ def _cart_for(request, kind: str, *, create=False):
 def _forget_cart(request, kind: str) -> None:
     request.session.pop(CART_SESSION_KEYS[kind], None)
     _drop_scans(request, kind)
+    _drop_customs_input(request, kind)
 
 
 def _scan_key(kind: str, row_key: str) -> str:
@@ -331,6 +343,83 @@ def _scans_for(request, kind: str) -> dict:
     prefix = f"{kind}:"
     scans = request.session.get(CART_SCANS_SESSION_KEY) or {}
     return {key[len(prefix) :]: value for key, value in scans.items() if key.startswith(prefix)}
+
+
+def _customs_key(kind: str, part_id) -> str:
+    return f"{kind}:{part_id}"
+
+
+def _remember_customs_input(request, kind: str, part_id, values: dict) -> None:
+    """Запомнить введённое в строке корзины до проведения (сессия, не БД)."""
+    pending = request.session.get(CART_CUSTOMS_SESSION_KEY) or {}
+    stored = dict(pending.get(_customs_key(kind, part_id)) or {})
+    for field, value in values.items():
+        stored[field] = str(value) if isinstance(value, Decimal) else value
+    pending[_customs_key(kind, part_id)] = stored
+    request.session[CART_CUSTOMS_SESSION_KEY] = pending
+
+
+def _drop_customs_input(request, kind: str, part_id=None) -> None:
+    pending = request.session.get(CART_CUSTOMS_SESSION_KEY) or {}
+    if part_id is None:
+        kept = {key: value for key, value in pending.items() if not key.startswith(f"{kind}:")}
+    else:
+        kept = {key: value for key, value in pending.items() if key != _customs_key(kind, part_id)}
+    if kept != pending:
+        request.session[CART_CUSTOMS_SESSION_KEY] = kept
+
+
+def _customs_input_for(request, kind: str) -> dict:
+    """Введённые значения корзины как {part_id: {поле: значение}} с Decimal."""
+    prefix = f"{kind}:"
+    pending = request.session.get(CART_CUSTOMS_SESSION_KEY) or {}
+    result = {}
+    for key, stored in pending.items():
+        if not key.startswith(prefix):
+            continue
+        try:
+            part_id = int(key[len(prefix) :])
+        except (TypeError, ValueError):
+            continue
+        values = {}
+        for field in ("gross_weight_kg", "net_weight_kg"):
+            if field in stored:
+                raw = stored[field]
+                values[field] = Decimal(raw) if raw is not None else None
+        if "application_area" in stored:
+            values["application_area"] = stored["application_area"]
+        result[part_id] = values
+    return result
+
+
+def _cart_customs_context(request, kind: str, part) -> dict:
+    """Что показать в строке корзины: введённое, иначе запомненное, иначе пусто."""
+    pending = _customs_input_for(request, kind).get(part.pk)
+    values = effective_customs_metadata(part, pending)
+    return {
+        "gross_weight_g": weight_kg_as_grams(values["gross_weight_kg"]),
+        "net_weight_g": weight_kg_as_grams(values["net_weight_kg"]),
+        "application_area": values["application_area"],
+        "application_choices": [
+            (str(area), area.label) for area in QUICK_ACTION_APPLICATION_AREAS
+        ],
+        "application_unset_label": APPLICATION_UNSET_LABEL,
+    }
+
+
+def _read_customs_input(request) -> dict | None:
+    """Разобрать вес/область из POST строки корзины. None - поля не присылали."""
+    fields = ("gross_weight_g", "net_weight_g", "application_area")
+    if not any(field in request.POST for field in fields):
+        return None
+    values = {}
+    if "gross_weight_g" in request.POST:
+        values["gross_weight_kg"] = parse_weight_g(request.POST.get("gross_weight_g"))
+    if "net_weight_g" in request.POST:
+        values["net_weight_kg"] = parse_weight_g(request.POST.get("net_weight_g"))
+    if "application_area" in request.POST:
+        values["application_area"] = parse_application_area(request.POST.get("application_area"))
+    return values
 
 
 def _cart_panels(request) -> list:
@@ -376,6 +465,7 @@ def _cart_panels(request) -> list:
                         "available": availability_by_part_location.get(
                             (row.part.pk, row.location.pk), 0
                         ),
+                        "customs": _cart_customs_context(request, kind, row.part),
                     }
                     for row in rows
                 ],
@@ -462,8 +552,16 @@ def actions_cart_update(request):
     if operation == "remove":
         remove_row(cart, part, location, by=request.user)
         _forget_scan(request, kind, row_key)
+        _drop_customs_input(request, kind, part.pk)
         messages.success(request, f"Позиция убрана из корзины: {part.name}.")
     elif operation == "set":
+        try:
+            customs_input = _read_customs_input(request)
+        except ValueError as exc:
+            messages.error(request, str(exc))
+            return redirect(back)
+        if customs_input is not None:
+            _remember_customs_input(request, kind, part.pk, customs_input)
         try:
             raw_unit_price = request.POST.get("unit_price")
             row = set_row_quantity(
@@ -479,6 +577,7 @@ def actions_cart_update(request):
             return redirect(back)
         if row is None:
             _forget_scan(request, kind, row_key)
+            _drop_customs_input(request, kind, part.pk)
             messages.success(request, f"Позиция убрана из корзины: {part.name}.")
         else:
             messages.success(
@@ -554,6 +653,7 @@ def actions_cart_complete(request):
             by=request.user,
             scanned_numbers=_scans_for(request, kind),
             request_token=request.POST.get("request_token"),
+            customs_metadata=_customs_input_for(request, kind),
         )
     except ActionError as exc:
         messages.error(request, str(exc))

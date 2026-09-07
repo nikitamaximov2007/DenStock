@@ -23,6 +23,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_cart_customs
 
 PASSWORD = "parol-12345"
 SMALL = 4
@@ -86,6 +87,7 @@ def _seed(django_user_model, customers):
             cart = open_cart(kind, by=admin)
             for part in parts[: (index % 3) + 1]:
                 add_scan(cart, part, location, quantity=Decimal("1"), by=admin)
+            remember_cart_customs(cart)
             complete_cart(cart, customer_comment=customer.name, by=admin)
     return admin
 

@@ -23,6 +23,7 @@ from apps.sales.models import Sale
 from apps.sales.services import create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_cart_customs
 
 PASSWORD = "parol-12345"
 OLD_NAME = "Иванов Иван"
@@ -76,6 +77,7 @@ def _complete(data, kind):
         else create_repair_order(customer=data["customer"], by=data["admin"])
     )
     add_scan(cart, data["part"], data["location"], quantity=Decimal("2"), by=data["admin"])
+    remember_cart_customs(cart)
     complete_cart(cart, customer_comment=OLD_NAME, by=data["admin"])
     cart.refresh_from_db()
     return cart

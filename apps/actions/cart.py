@@ -52,8 +52,12 @@ from .services import (
     _request_token,
     _split_quantity_over_lots,
     check_sale_line_price,
+    customs_metadata_gaps,
+    get_or_create_customs,
     identity_number,
     parse_quantity,
+    read_customs,
+    record_customs_data_version,
 )
 
 KIND_SALE = "sale"
@@ -67,6 +71,9 @@ CART_PLACEHOLDER_NAME = "Черновик сканера"
 CART_COMMENT = "Сканер действий"
 
 EMPTY_CART_MESSAGE = "Корзина пуста: отсканируйте хотя бы одну деталь."
+
+# «Сотрудник это поле не трогал» отличается от «сотрудник очистил поле».
+_KEEP = object()
 
 
 @dataclass(frozen=True)
@@ -274,6 +281,66 @@ def discard_cart(cart, *, by=None) -> None:
     cart.delete()
 
 
+def effective_customs_metadata(part, pending=None) -> dict:
+    """Что именно уйдёт в таможенную карточку детали при проведении.
+
+    Введённое сейчас значение важнее запомненного: сотрудник видит его в
+    строке корзины. Если он ничего не менял, остаётся запомненное значение
+    карточки. Ничего не выдумываем: отсутствующее остаётся None/"".
+    """
+    remembered = read_customs(part)  # read-only, карточку не заводит
+    pending = pending or {}
+    gross = pending.get("gross_weight_kg", _KEEP)
+    net = pending.get("net_weight_kg", _KEEP)
+    application = pending.get("application_area", _KEEP)
+    return {
+        "gross_weight_kg": remembered.gross_weight_kg if gross is _KEEP else gross,
+        "net_weight_kg": remembered.net_weight_kg if net is _KEEP else net,
+        "application_area": (
+            remembered.application_area if application is _KEEP else application
+        ),
+    }
+
+
+def customs_metadata_errors(rows, metadata=None) -> list[str]:
+    """Построчные причины, по которым продажу/ремонт проводить нельзя.
+
+    Продажа и выдача в ремонт - единственные таможенные источники (см.
+    apps.actions.customs_history). Резерв и возврат из ремонта сюда не
+    приходят и этой проверкой не блокируются.
+    """
+    metadata = metadata or {}
+    errors = []
+    for row in rows:
+        values = effective_customs_metadata(row.part, metadata.get(row.part.pk))
+        gaps = customs_metadata_gaps(**values)
+        if gaps:
+            errors.append(f"{row.part.name}: {', '.join(gaps)}.")
+    return errors
+
+
+def remember_customs_metadata(rows, metadata=None, *, by=None) -> None:
+    """Запомнить введённые значения в карточке детали ПОСЛЕ проведения.
+
+    Пишем только то, что действительно отличается от запомненного, и заводим
+    неизменяемую версию тем же каноническим сервисом, что и ручной редактор.
+    """
+    metadata = metadata or {}
+    for part in {row.part.pk: row.part for row in rows}.values():
+        values = effective_customs_metadata(part, metadata.get(part.pk))
+        customs = get_or_create_customs(part)
+        changed = [
+            field for field, value in values.items() if getattr(customs, field) != value
+        ]
+        if not changed:
+            continue
+        for field in changed:
+            setattr(customs, field, values[field])
+        customs.updated_by = by
+        customs.save(update_fields=[*changed, "updated_by", "updated_at"])
+        record_customs_data_version(customs, by=by)
+
+
 def _existing_actions_for_token(token):
     if not token:
         return None
@@ -291,7 +358,8 @@ def _existing_actions_for_token(token):
 
 @transaction.atomic
 def complete_cart(
-    cart, *, customer_comment="", customer=None, by=None, scanned_numbers=None, request_token=None
+    cart, *, customer_comment="", customer=None, by=None, scanned_numbers=None,
+    request_token=None, customs_metadata=None,
 ) -> list[WarehouseAction]:
     """Провести корзину одним документом и записать действия в журнал.
 
@@ -333,6 +401,20 @@ def complete_cart(
     rows = cart_rows(cart)
     if not rows:
         raise ActionError(EMPTY_CART_MESSAGE)
+    # Проведённая продажа и выдача в ремонт становятся таможенным источником,
+    # поэтому вес и область применения обязаны быть известны ДО списания.
+    # Проверяем до любой мутации: отказ не должен менять склад.
+    metadata_errors = customs_metadata_errors(rows, customs_metadata)
+    if metadata_errors:
+        raise ActionError(
+            "Для таможенной формы не хватает данных. " + " ".join(metadata_errors)
+        )
+    # Версия таможенных данных привязана к моменту движения: строка выгрузки
+    # читает ту версию, которая действовала, когда деталь ушла клиенту. Поэтому
+    # запомнить введённое нужно ДО проведения, иначе новая версия окажется
+    # позже продажи и к ней не применится. Провалившееся проведение ничего не
+    # запомнит: вся функция выполняется в одной транзакции.
+    remember_customs_metadata(rows, customs_metadata, by=by)
 
     scanned_numbers = scanned_numbers or {}
     is_sale = isinstance(cart, Sale)
