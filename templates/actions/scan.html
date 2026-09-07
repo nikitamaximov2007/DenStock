@@ -14,7 +14,12 @@
           class="search-form">
       {% csrf_token %}
       <label for="scan-kind" class="visually-hidden">Действие</label>
-      <select id="scan-kind" name="kind">
+      <select id="scan-kind" name="kind" required>
+        {% comment %}
+          Действие не выбрано заранее намеренно: подставленная «Продажа»
+          означала, что один скан по невнимательности списывал товар.
+        {% endcomment %}
+        <option value="" {% if not selected_action_kind %}selected{% endif %}>Не выбрано</option>
         {% for value, label in allowed_actions %}
           <option value="{{ value }}"
                   {% if value == selected_action_kind %}selected{% endif %}>{{ label }}</option>

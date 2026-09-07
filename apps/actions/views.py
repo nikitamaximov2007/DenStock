@@ -84,6 +84,10 @@ WEIGHT_SOURCE_LABELS = {
 # Сентинел «поле не передано в POST» — отличаем от «передано пустым» (сброс).
 _UNSET = object()
 
+# Действие выбирает сотрудник, а не форма за него. Пустое значение - это
+# «ещё не выбрано», и любая операция с ним отклоняется на сервере.
+ACTION_REQUIRED_MESSAGE = "Выберите действие"
+
 ACTION_PERMISSIONS = {
     WarehouseAction.Type.SALE: "can_manage_sales",
     WarehouseAction.Type.RESERVE: "can_manage_reservations",
@@ -134,9 +138,12 @@ def actions_scan(request):
     _require_access(request)
     q = (request.GET.get("q") or "").strip()
     allowed_actions = _allowed_actions(request.user)
-    selected_action_kind = request.GET.get("kind") or allowed_actions[0][0]
+    # Раньше здесь стояло первое доступное действие, и «Продажа» оказывалась
+    # выбранной сама собой: один скан по невнимательности списывал товар.
+    # Теперь действие остаётся невыбранным, пока сотрудник не выберет его.
+    selected_action_kind = request.GET.get("kind", "")
     if selected_action_kind not in {value for value, _label in allowed_actions}:
-        selected_action_kind = allowed_actions[0][0]
+        selected_action_kind = ""
     ctx = {
         "q": q,
         "searched": bool(q),
@@ -190,6 +197,9 @@ def actions_cart_scan(request):
         return redirect("actions_scan")
     q = (request.POST.get("q") or "").strip()
     kind_value = request.POST.get("kind", "")
+    if not kind_value:
+        messages.error(request, ACTION_REQUIRED_MESSAGE)
+        return redirect(reverse("actions_scan") + f"?{urlencode({'q': q})}")
     permission = ACTION_PERMISSIONS.get(kind_value)
     if permission is None or not getattr(request.user, permission, False):
         raise PermissionDenied
@@ -249,6 +259,9 @@ def actions_perform(request):
         return redirect(back)
     location = get_object_or_404(StorageLocation, pk=location_id)
     action_type = request.POST.get("action_type", "")
+    if not action_type:
+        messages.error(request, ACTION_REQUIRED_MESSAGE)
+        return redirect(back)
     permission = ACTION_PERMISSIONS.get(action_type)
     if permission is None or not getattr(request.user, permission):
         raise PermissionDenied
@@ -285,6 +298,8 @@ def actions_perform(request):
 
 def _check_cart_kind(request, kind: str) -> str:
     """Корзина есть только у продажи и ремонта; резерв проводится сразу."""
+    if not kind:
+        raise ActionError(ACTION_REQUIRED_MESSAGE)
     if kind not in CART_KINDS:
         raise ActionError("Корзина доступна для продажи и выдачи в ремонт.")
     permission = ACTION_PERMISSIONS.get(kind)
