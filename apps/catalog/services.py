@@ -99,10 +99,11 @@ class LinkedPriceRefreshPlan:
     """
 
     parts_to_update: dict[int, object] = field(default_factory=dict)
+    links_to_relabel: list = field(default_factory=list)
     calculated_links: int = 0
     unchanged: int = 0
     skipped_without_wholesale: int = 0
-    skipped_manual: int = 0
+    manual_overridden: int = 0
     brp_links: int = 0
     polaris_links: int = 0
     aftermarket_links: int = 0
@@ -127,11 +128,13 @@ def plan_linked_part_price_refresh(
 
     plan = LinkedPriceRefreshPlan()
     if "brp" in selected_catalogs:
-        brp_links = BrpPartLink.objects.select_related("brp_part", "part")
-        plan.skipped_manual += brp_links.filter(
-            price_source=BrpPartLink.PriceSource.MANUAL
-        ).count()
-        for link in brp_links.filter(price_source=BrpPartLink.PriceSource.CALCULATED):
+        # Ручная цена НЕ является постоянным замком. Она решает, сколько
+        # деталь стоит сегодня, а не навсегда: следующий удачный прайс
+        # поставщика её заменяет. Иначе карточка с однажды вписанной ценой
+        # навсегда выпадала бы из переоценки и тихо продавалась по цене
+        # позапрошлого года. Исторические документы при этом не трогаются -
+        # там своя замороженная цена.
+        for link in BrpPartLink.objects.select_related("brp_part", "part"):
             plan.brp_links += 1
             if not link.brp_part.is_current:
                 if link.part.recommended_price is not None:
@@ -150,13 +153,15 @@ def plan_linked_part_price_refresh(
                 continue
             link.part.recommended_price = recommended
             plan.parts_to_update[link.part_id] = link.part
+            if link.price_source == BrpPartLink.PriceSource.MANUAL:
+                # Цена больше не ручная, и источник обязан говорить правду:
+                # отчёты решают по нему, пересчитывать цену или брать сохранённую.
+                link.price_source = BrpPartLink.PriceSource.CALCULATED
+                plan.links_to_relabel.append(link)
+                plan.manual_overridden += 1
 
     if "polaris" in selected_catalogs:
-        polaris_links = PolarisPartLink.objects.select_related("polaris_part", "part")
-        plan.skipped_manual += polaris_links.filter(
-            price_source=PolarisPartLink.PriceSource.MANUAL
-        ).count()
-        for link in polaris_links.filter(price_source=PolarisPartLink.PriceSource.CALCULATED):
+        for link in PolarisPartLink.objects.select_related("polaris_part", "part"):
             plan.polaris_links += 1
             price = _polaris_link_price(link, usd_rate, polaris_markup)
             if price is None or price <= 0:
@@ -169,6 +174,10 @@ def plan_linked_part_price_refresh(
                 continue
             link.part.recommended_price = recommended
             plan.parts_to_update[link.part_id] = link.part
+            if link.price_source == PolarisPartLink.PriceSource.MANUAL:
+                link.price_source = PolarisPartLink.PriceSource.CALCULATED
+                plan.links_to_relabel.append(link)
+                plan.manual_overridden += 1
 
     if "aftermarket" in selected_catalogs:
         _plan_aftermarket_prices(plan, usd_rate=usd_rate, markup=brp_markup)
@@ -240,7 +249,17 @@ def refresh_linked_part_prices(
         PartType.objects.bulk_update(
             list(plan.parts_to_update.values()), ["recommended_price"], batch_size=1000
         )
+    _relabel_overridden_links(plan.links_to_relabel)
     return plan.updated
+
+
+def _relabel_overridden_links(links) -> None:
+    """Пометить источником каталога связи, у которых ручная цена перекрыта."""
+    by_model: dict[type, list] = {}
+    for link in links:
+        by_model.setdefault(type(link), []).append(link)
+    for model, rows in by_model.items():
+        model.objects.bulk_update(rows, ["price_source"], batch_size=1000)
 
 
 @transaction.atomic

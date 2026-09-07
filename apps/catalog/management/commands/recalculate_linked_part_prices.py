@@ -52,7 +52,7 @@ class Command(BaseCommand):
         write(f"Расчётных BRP-связей: {plan.brp_links}")
         write(f"Расчётных Polaris-связей: {plan.polaris_links}")
         write(f"Карточек каталога аналогов: {plan.aftermarket_links}")
-        write(f"Ручных цен пропущено: {plan.skipped_manual}")
+        write(f"Ручных цен перекрыто прайсом: {plan.manual_overridden}")
         write(f"Без оптовой цены, текущая цена сохранена: {plan.skipped_without_wholesale}")
         write(f"Без изменения: {plan.unchanged}")
         write(f"К изменению рекомендованных цен: {plan.updated}")

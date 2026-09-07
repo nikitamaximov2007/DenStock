@@ -241,6 +241,13 @@ enhancement: прямой URL, обновление страницы и рабо
   apply обновляют drawer и все child cells с сохранением их IDs и stock history.
 
 Функции домена «Операции»:
+- Ручная текущая цена (BrpPartLink/PolarisPartLink price_source=MANUAL) НЕ
+  является постоянным override: refresh_linked_part_prices пересчитывает и её,
+  а источник связи переводится в CALCULATED, поскольку цена больше не ручная.
+  Вписанное значение остаётся в manual_customer_price_rub для аудита.
+  Отсутствующая или неположительная оптовая цена текущую цену не переписывает.
+  Курс и наценка берутся из ValuationSettings/BrpPricingSettings. Исторические
+  снимки (SaleLine, RepairIssueLine, CustomsOrderLine) не меняются никогда.
 - Складской адрес показывается в операторском виде 1-3-8 (стеллаж-ящик-ячейка).
   Это ТОЛЬКО представление и ввод: StorageLocation.code, barcode, PK, привязки
   лотов и деталей, остатки и исторические снимки адреса не менялись. Источник
