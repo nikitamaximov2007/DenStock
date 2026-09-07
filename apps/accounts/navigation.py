@@ -378,7 +378,9 @@ def _warehouse_tabs(user, path):
                 active=path.startswith("/ordered-parts/"),
             )
         )
-    if user.can_view_purchase_cost:
+    if user.can_view_purchase_cost and (
+        user.can_manage_sales or user.can_manage_reservations or user.can_manage_repairs
+    ):
         tabs.append(
             _tab(
                 "Таможенные заказы",

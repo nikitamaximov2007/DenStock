@@ -103,6 +103,12 @@ docker compose restart web
 
 ## F. Бэкапы
 
+Для выпуска, который добавляет бизнес-таблицы, до и после деплоя используйте
+канонический серверный wrapper резервного копирования без переопределения
+retention. Проверьте manifest, его подпись `ed25519`, key id `production-1`,
+app commit и offsite upload. Новое business-приложение должно входить в
+`BUSINESS_APP_LABELS`, иначе fingerprint и write-freeze не увидят его данные.
+
 - **Ручной экспорт** из UI: `/operations/backups/` → «Экспорт бэкапа» (manifest `type=manual`).
 - **Автоматический**: `scripts/operations/backup_offsite.sh` (`type=automatic`) — см.
   [scheduled-offsite-backups.md](scheduled-offsite-backups.md).

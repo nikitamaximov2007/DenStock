@@ -1,32 +1,88 @@
 {% extends "base.html" %}
 {% block title %}Отправить в таможенный заказ · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Отправить в заказ</h1>
-  {% if initialization_required %}<p class="pill pill--warning">История таможенных заказов ещё не инициализирована. Сначала сформируйте существующий заказ №125, выбрав его крайнюю деталь.</p>{% endif %}
-  <p>Выберите крайнюю деталь в заказе. Система включит все свободные позиции от начала списка до неё.</p>
-  <form method="post">
-    {% csrf_token %}
-    <label>
-      Номер заказа
-      <input name="number" type="number" min="1" required>
-    </label>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Дата</th>
-          <th>Артикул</th>
-          <th>Название</th>
-          <th>Количество</th>
-          <th>Крайняя</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in sources %}<tr><td>{{ row.occurred_at|date:"d.m.Y H:i" }}</td><td>{{ row.number }}</td><td>{{ row.name_ru }}</td><td>{{ row.quantity }}</td><td><input type="radio"
-       name="boundary"
-       value="{{ row.source }}:{{ row.source_id }}"
-       required></td></tr>{% empty %}<tr><td colspan="5">Свободных позиций нет.</td></tr>{% endfor %}
-      </tbody>
-    </table>
-    <button class="btn btn--primary" type="submit">ОК</button>
-  </form>
+  <div class="page-header">
+    <h1 class="page-title">Отправить в заказ</h1>
+    <a class="btn btn--small btn--secondary"
+       href="{% url 'actions_report' %}?unassigned=1">Вернуться в отчёт</a>
+  </div>
+  {% include "customs_orders/_bootstrap_warning.html" %}
+  <h2>Выберите крайнюю деталь в заказе</h2>
+  <p class="page-subtitle">
+    Здесь вся история ещё не включённых в заказ продаж, ремонтов и запчастей на заказ.
+    Фильтры отчёта не ограничивают этот список. Выбранная строка и все строки выше неё войдут в заказ.
+    Курс USD/RUB: {{ fx_rate }}.
+  </p>
+  {% if sources %}
+    <form method="post" data-customs-selection>
+      {% csrf_token %}
+      <input type="hidden" name="selection_token" value="{{ selection_token }}">
+      <div class="customs-selection-summary" aria-live="polite">
+        <span>Выбрано строк: <strong data-prefix-count>0</strong></span>
+        <span>Количество: <strong data-prefix-quantity>0.000</strong></span>
+        <span>Сумма: <strong data-prefix-amount>0.00</strong> ₽</span>
+        <button class="btn btn--primary" type="button" data-customs-confirm disabled>Продолжить</button>
+      </div>
+      <table class="table table--wide customs-selection-table">
+        <thead>
+          <tr>
+            <th>Выбрано</th>
+            <th>Дата</th>
+            <th>Источник</th>
+            <th>Артикул</th>
+            <th>Название</th>
+            <th>Классификация</th>
+            <th class="num--qty">Количество</th>
+            <th class="num--money">Оптовая цена, USD</th>
+            <th>Крайняя</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in sources %}
+            <tr data-customs-boundary-row
+                data-source="{{ row.source }}:{{ row.source_id }}">
+              <td><span data-prefix-check aria-label="Не выбрано">○</span></td>
+              <td>{{ row.occurred_at|date:"d.m.Y H:i"|default:"Дата не указана" }}</td>
+              <td>{{ row.source_label }}</td>
+              <td><span class="code-pill">{{ row.number }}</span></td>
+              <td>{{ row.name_ru }}</td>
+              <td>{% if row.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
+              <td class="num--qty">{{ row.quantity }}</td>
+              <td class="num--money">{{ row.usd_price|default_if_none:"Не заполнено" }}</td>
+              <td>
+                <input type="radio"
+                       name="boundary"
+                       value="{{ row.source }}:{{ row.source_id }}"
+                       aria-label="Крайняя деталь: {{ row.number }}, {{ row.source_label }}, строка {{ row.source_id }}"
+                       required>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <dialog class="customs-order-dialog"
+              data-customs-number-dialog
+              aria-labelledby="customs-number-title">
+        <h2 id="customs-number-title">Введите номер заказа</h2>
+        <p>Выбранный состав и текущий курс будут сохранены в заказе.</p>
+        <label for="customs-order-number">Номер заказа</label>
+        <input id="customs-order-number"
+               name="number"
+               type="number"
+               min="1"
+               step="1"
+               required>
+        <div class="page-actions">
+          <button class="btn btn--secondary" type="button" data-customs-dialog-cancel>Назад</button>
+          <button class="btn btn--primary" type="submit">ОК</button>
+        </div>
+      </dialog>
+    </form>
+    {{ selection_previews|json_script:"customs-selection-previews" }}
+    <noscript>
+      <p class="pill pill--warning">Для выбора состава заказа включите JavaScript в браузере.</p>
+    </noscript>
+  {% else %}
+    <p>Свободных позиций нет. Все действующие строки уже включены в таможенные заказы.</p>
+  {% endif %}
 {% endblock %}

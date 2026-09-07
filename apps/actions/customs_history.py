@@ -79,9 +79,19 @@ def _part_ids_for_number(part_number: str) -> list[int]:
     )
 
 
-def _sale_lines(*, date_from, date_to, part_number):
+def _without_customs_order(lines, source):
+    # Membership is a source identity, never an article/date/display-row match.
+    # Exclude in SQL before loading the canonical source dataset.
+    from apps.customs_orders.models import CustomsOrderLine
+
+    return lines.exclude(pk__in=CustomsOrderLine.objects.filter(source=source).values("source_id"))
+
+
+def _sale_lines(*, date_from, date_to, part_number, unassigned_only=False):
     """Строки проведённых продаж - тот же набор, что у «Продаж и ремонтов»."""
     lines = SaleLine.objects.filter(sale__status=Sale.Status.COMPLETED)
+    if unassigned_only:
+        lines = _without_customs_order(lines, SALE)
     if date_from:
         lines = lines.filter(sale__sold_at__date__gte=date_from)
     if date_to:
@@ -94,11 +104,13 @@ def _sale_lines(*, date_from, date_to, part_number):
     return lines.select_related("sale", "part_type").order_by("sale__sold_at", "pk")
 
 
-def _repair_lines(*, date_from, date_to, part_number):
+def _repair_lines(*, date_from, date_to, part_number, unassigned_only=False):
     """Строки проведённых ремонтов - тот же набор, что у «Продаж и ремонтов»."""
     lines = RepairIssueLine.objects.filter(
         repair_order__status=RepairOrder.Status.COMPLETED
     )
+    if unassigned_only:
+        lines = _without_customs_order(lines, REPAIR)
     if date_from:
         lines = lines.filter(repair_order__completed_at__date__gte=date_from)
     if date_to:
@@ -206,6 +218,7 @@ def version_at(versions: list, at):
 
 def canonical_customs_lines(
     *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
+    unassigned_only=False,
 ) -> list[dict]:
     """Канонические товарные строки, ушедшие клиенту, с таможенным профилем.
 
@@ -217,7 +230,10 @@ def canonical_customs_lines(
     kinds = _ACTION_TYPE_KINDS.get(action_type, (SALE, REPAIR)) if action_type else (SALE, REPAIR)
     if not kinds:
         return []
-    window = {"date_from": date_from, "date_to": date_to, "part_number": part_number}
+    window = {
+        "date_from": date_from, "date_to": date_to, "part_number": part_number,
+        "unassigned_only": unassigned_only,
+    }
     sale_lines = list(_sale_lines(**window)) if SALE in kinds else []
     repair_lines = list(_repair_lines(**window)) if REPAIR in kinds else []
     if q:

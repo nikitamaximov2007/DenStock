@@ -22,6 +22,8 @@ from apps.catalog.models import PartType
 from apps.core.part_lookup import MatchSource, resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
 from apps.customers.models import Customer
+from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
+from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
 from apps.warehouse.models import StorageLocation
 
@@ -582,6 +584,13 @@ def actions_report_view(request):
     _require_access(request)
     show_cancelled = request.GET.get("cancelled") == "1"
     filters = _report_filters(request)
+    unassigned_only = request.GET.get("unassigned") == "1"
+    sources = []
+    if request.user.can_view_purchase_cost:
+        sources = customs_sources(filters=filters, unassigned_only=unassigned_only)
+        labels = dict(CustomsOrderLine.Source.choices)
+        for row in sources:
+            row["source_label"] = labels[row["source"]]
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
     export_rows = historical_customs_rows(**filters)
@@ -608,6 +617,9 @@ def actions_report_view(request):
             "totals": totals,
             "filters": filters,
             "show_cancelled": show_cancelled,
+            "customs_sources": sources,
+            "unassigned_only": unassigned_only,
+            "initialization_required": not CustomsOrder.objects.exists(),
             "types": WarehouseAction.Type.choices,
             "export_rows": export_rows,
             "analog_export_rows": analog_export_rows,

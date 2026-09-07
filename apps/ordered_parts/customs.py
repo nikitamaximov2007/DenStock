@@ -38,7 +38,7 @@ def _part_ids_for_number(part_number: str) -> list[int]:
 
 
 def ordered_parts_for_customs(
-    *, date_from=None, date_to=None, q="", part_number="", **_ignored,
+    *, date_from=None, date_to=None, q="", part_number="", unassigned_only=False, **_ignored,
 ):
     """Заказы, попадающие под фильтры отчёта. Read-only.
 
@@ -47,6 +47,12 @@ def ordered_parts_for_customs(
     пустой список тоже нельзя - заказ существует независимо от склада.
     """
     orders = OrderedPart.objects.select_related("customer", "part_type")
+    if unassigned_only:
+        from apps.customs_orders.models import CustomsOrderLine
+
+        orders = orders.exclude(pk__in=CustomsOrderLine.objects.filter(
+            source="ordered"
+        ).values("source_id"))
     if date_from:
         orders = orders.filter(created_at__date__gte=date_from)
     if date_to:

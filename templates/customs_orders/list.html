@@ -1,18 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Таможенные заказы · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Таможенные заказы</h1>
+  <div class="page-header">
+    <h1 class="page-title">Таможенные заказы</h1>
+    <a class="btn btn--primary" href="{% url 'customs_order_selection' %}">Отправить в заказ</a>
+  </div>
+  {% include "customs_orders/_bootstrap_warning.html" %}
+  <p class="page-subtitle">Состав, курс и стоимость сохраняются при создании заказа.</p>
   <table class="table">
     <thead>
       <tr>
         <th>№ заказа</th>
         <th>Дата</th>
-        <th>Количество</th>
-        <th>Сумма, ₽</th>
+        <th>Кто создал</th>
+        <th class="num--qty">Количество</th>
+        <th class="num--money">Сумма, ₽</th>
       </tr>
     </thead>
     <tbody>
-      {% for order in orders %}<tr><td><a href="{% url 'customs_order_detail' order.pk %}">№{{ order.number }}</a></td><td>{{ order.created_at|date:"d.m.Y H:i" }}</td><td>{{ order.total_quantity }}</td><td>{{ order.total_rub }}</td></tr>{% empty %}<tr><td colspan="4">Таможенных заказов пока нет.</td></tr>{% endfor %}
+      {% for order in orders %}
+        <tr>
+          <td><a href="{% url 'customs_order_detail' order.pk %}">Заказ №{{ order.number }}</a></td>
+          <td>{{ order.created_at|date:"d.m.Y H:i" }}</td>
+          <td>{{ order.created_by|default:"·" }}</td>
+          <td class="num--qty">{{ order.total_quantity }}</td>
+          <td class="num--money">{{ order.total_rub }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="5">Таможенных заказов пока нет.</td>
+        </tr>
+      {% endfor %}
     </tbody>
   </table>
 {% endblock %}

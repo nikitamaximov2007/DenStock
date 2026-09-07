@@ -1,45 +1,42 @@
 # Current handoff
 
-Task: customs catalog-backed auto-fill plus RU-name/style hotfix. Status:
-RU content/style gate PASS; deployment remains blocked by approved manual
-tracking/application fields and SPI country rows.
-Branch: hotfix/customs-auto-fill-non-weight-fields.
-Worktree: /Users/maxinik/Developer/DenStock-customs-hotfix.
+Task: Customs Orders full integration and production release.
 
-## What shipped in this branch
+Branch: `codex/customs-orders-release`, based on `feature/customs-orders`
+candidate `5a749d3`; live is `e5e9bc7` and its actual `origin/main` base is
+`c517b6cc9e8fd7b9f52b313ecc2a8eec304a523f` (already an ancestor of this branch).
 
-- 86419f5 BRP=КАНАДА country fallback (preserved Codex work).
-- bf49308 export test aligned with the approved fallback.
-- Catalog auto-fill for empty historical fields (this takeover):
-  EN name / manufacturer / USD resolve from the loaded supplier catalogs by
-  card link or exact normalized article (BRP -> Polaris -> aftermarket);
-  RU name derives from EN via the phrase-first deterministic translator; aftermarket
-  USD is dealer_cost_usd. Saved operator versions always win; versions are
-  never rewritten. Approved manual blanks stay blank: tracking, weights,
-  application area, country of non-BRP brands.
+Completed engineering work:
 
-## Qualification
+- Persistent immutable `CustomsOrder` and `CustomsOrderLine` snapshots with
+  DB constraints, unique `(source, source_id)` membership and frozen export
+  fields.
+- Server-side canonical unassigned filter, deterministic boundary order,
+  signed displayed selection, atomic revalidation and fail-closed USD/FX
+  checks.
+- Report membership UI, gray assigned rows, exact order links, bootstrap
+  warning and selection preview/modal.
+- Frozen two-sheet XLSX and business fingerprint/write-freeze coverage.
 
-- Full pytest: green except pre-existing failures that reproduce identically
-  on clean 34a813b (test_clients_overview_sorting file, one partial repair
-  cancellation test, one ai_support renderer test) - unrelated, untouched.
-- ruff / djlint / manage.py check / makemigrations --check / git diff --check:
-  clean.
-- Snapshot gate: fresh production backup 2026-09-06_14-22-37 restored into
-  isolated local PostgreSQL 16. Candidate XLSX: 84 rows, 199.000 qty,
- 697122.00 RUB report match, all reconciliation deltas zero. Blank counts:
-  B/C/D/E/J/K = 0; F = 2 (SM-01357, SM-09374, approved); A/G/H/M = approved
-  manual. SM-01357 = 203.26 USD, SM-09374 = 127.21 USD preserved.
+Validation completed before snapshot:
 
-- RU candidate audit: 84/84 C cells populated; untranslated product words = 0,
-  underscore identifiers = 0, mixed RU/EN garbage = 0 under the explicit
-  brand/model/code allowlist. All C data cells use one Arial 12pt wrapped
-  non-shrinking style; long rows use height 30 without reducing font size.
+- Targeted Customs, XLSX, ordered-parts, UI and navigation tests pass.
+- Static checks pass: ruff, djlint, Django check, migration check, pip check
+  and diff check.
+- Full suite: 4174 passed, 116 skipped, 11 failed. Ten failures reproduce on
+  clean `origin/main`: eight `test_clients_overview_sorting`, one partial
+  repair cancellation, one macOS root-owned ai-support renderer expectation.
+  The remaining navigation expectation was updated for the new approved
+  sidebar item and now passes.
 
-## Deploy state
+Remaining release steps:
 
-PRE backup: backups/2026-09-06_14-22-37 (business_generation 10414,
-business_sha256 fa6f5aa1...). Production was 34a813b at takeover.
-Historical universe contract: 117 canonical lines, 84 rows, 199.000,
-697122.00, deltas zero. Never return the movement-based exporter or the
-201-unit bug.
+1. Review, commit and push the candidate.
+2. Take a fresh verified production pg_dump and restore into isolated PG16.
+3. Run migration and synthetic #125/#126 acceptance on the snapshot only,
+   including fingerprint invariants and XLSX verification.
+4. If successful, make signed PRE backup, merge/fast-forward main, deploy,
+   run live read-only acceptance, signed POST backup and compare fingerprints.
+
+Never create a test or bootstrap order in production. Production should stay
+with zero CustomsOrder rows until the employee creates the real #125.

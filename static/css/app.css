@@ -824,3 +824,18 @@ form.toolbar input:focus, form.toolbar select:focus {
   .movement-table th:nth-child(7), .movement-table td:nth-child(7),
   .movement-table th:nth-child(8), .movement-table td:nth-child(8) { display: none; }
 }
+
+/* A customs membership remains readable and distinct from disabled controls. */
+.table tbody tr.customs-source--assigned,
+.table tbody tr.customs-source--assigned:hover { background: #f1f3f5; color: var(--text); }
+.table tbody tr.customs-source--unassigned { background: #fff; }
+.customs-selection-table tbody tr { cursor: pointer; }
+.table tbody tr.customs-source--selected,
+.table tbody tr.customs-source--selected:hover { background: #e6f2ec; }
+.customs-selection-summary { display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+  position: sticky; top: 0; z-index: 2; padding: 16px; background: #fff;
+  border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; }
+.customs-order-dialog { border: 1px solid var(--border); border-radius: 12px; padding: 24px;
+  width: min(460px, calc(100vw - 32px)); color: var(--text); }
+.customs-order-dialog::backdrop { background: rgba(16, 24, 40, 0.44); }
+.customs-order-dialog .page-actions { margin-top: 20px; justify-content: flex-end; }

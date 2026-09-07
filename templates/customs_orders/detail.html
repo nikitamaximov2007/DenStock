@@ -3,23 +3,43 @@
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Таможенный заказ №{{ order.number }}</h1>
-    <a class="btn btn--small btn--primary" href="?export=1">Экспорт в Excel</a>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'customs_orders_list' %}">Все заказы</a>
+      <a class="btn btn--small btn--primary"
+         data-full-navigation
+         href="?export=1">Экспорт в Excel</a>
+    </div>
   </div>
-  <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Курс USD/RUB: {{ order.fx_rate }} · Позиций: {{ order.total_quantity }} · Сумма: {{ order.total_rub }} ₽</p>
+  <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Кто создал: {{ order.created_by|default:"·" }}</p>
+  <p>Курс USD/RUB: {{ order.fx_rate }} · Количество: {{ order.total_quantity }} · Сумма: {{ order.total_rub }} ₽</p>
+  <p class="page-subtitle">Сохранённый состав заказа. Цена и курс зафиксированы при его создании.</p>
   <table class="table table--wide">
     <thead>
       <tr>
         <th>Артикул</th>
         <th>Название</th>
         <th>Производитель</th>
-        <th>Количество</th>
-        <th>USD</th>
-        <th>RUB</th>
+        <th>Классификация</th>
+        <th class="num--qty">Количество</th>
+        <th class="num--money">Оптовая цена, USD</th>
+        <th class="num--money">Сумма, ₽</th>
         <th>Источник</th>
       </tr>
     </thead>
     <tbody>
-      {% for line in order.lines.all %}<tr><td>{{ line.article }}</td><td>{{ line.name_ru }}</td><td>{{ line.manufacturer }}</td><td>{{ line.quantity }}</td><td>{{ line.wholesale_usd }}</td><td>{{ line.rub_amount }}</td><td>{{ line.get_source_display }}</td></tr>{% endfor %}
+      {% for line in order.lines.all %}
+        <tr data-source="{{ line.source }}:{{ line.source_id }}">
+          <td><span class="code-pill">{{ line.article }}</span></td>
+          <td>{{ line.name_ru }}</td>
+          <td>{{ line.manufacturer }}</td>
+          <td>{% if line.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
+          <td class="num--qty">{{ line.quantity }}</td>
+          <td class="num--money">{{ line.wholesale_usd }}</td>
+          <td class="num--money">{{ line.rub_amount }}</td>
+          <td>{{ line.get_source_display }}</td>
+        </tr>
+      {% endfor %}
     </tbody>
   </table>
 {% endblock %}

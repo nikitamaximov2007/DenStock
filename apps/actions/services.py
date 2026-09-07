@@ -1663,7 +1663,7 @@ def _mark_ordered_article(sheet, row: int) -> None:
     )
 
 
-def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
+def export_customs_xlsx(actions=None, *, rows=None, sheet_rows=None) -> BytesIO:
     """Заполнить копию шаблона «Форма для заказа» отфильтрованными действиями.
 
     Шаблон: лист «Лист1», строки 1-9 (инструкции/шапка) сохраняются. Товарный
@@ -1677,9 +1677,13 @@ def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
     санитайзер. Пустые веса и отсутствующая оптовая цена остаются пустыми:
     ничего не выдумывается.
     """
+    from copy import deepcopy
+
     import openpyxl
 
-    if rows is None:
+    if sheet_rows is not None and (rows is not None or actions is not None):
+        raise ValueError("Передайте строки одного листа или именованные листы.")
+    if sheet_rows is None and rows is None:
         rows = build_export_rows(actions or [])
     if not TEMPLATE_PATH.exists():  # явная причина вместо голого FileNotFoundError
         raise ActionError(
@@ -1687,7 +1691,47 @@ def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
             "Он должен поставляться вместе с приложением."
         )
     workbook = openpyxl.load_workbook(str(TEMPLATE_PATH))
-    sheet = workbook[TEMPLATE_SHEET]
+    template = workbook[TEMPLATE_SHEET]
+    if sheet_rows is None:
+        sheets = [(template, rows)]
+    else:
+        sheet_rows = list(sheet_rows)
+        if not sheet_rows:
+            raise ValueError("Для выгрузки нужен хотя бы один лист.")
+        sheets = []
+        # Копируем чистый шаблон до заполнения любого листа. copy_worksheet
+        # сохраняет ячейки, стили, объединения и размеры, но не изображения
+        # и настройки печати/просмотра: переносим их отдельно.
+        for title, data in sheet_rows[1:]:
+            sheet = workbook.copy_worksheet(template)
+            sheet.title = title
+            sheet.print_area = template.print_area
+            sheet.print_title_rows = template.print_title_rows
+            sheet.print_title_cols = template.print_title_cols
+            for attribute in (
+                "views", "HeaderFooter", "auto_filter", "data_validations",
+                "conditional_formatting", "row_breaks", "col_breaks", "protection",
+            ):
+                setattr(sheet, attribute, deepcopy(getattr(template, attribute)))
+            for picture in template._images:
+                sheet.add_image(deepcopy(picture))
+            for chart in template._charts:
+                sheet.add_chart(deepcopy(chart))
+            sheets.append((sheet, data))
+        template.title = sheet_rows[0][0]
+        sheets.insert(0, (template, sheet_rows[0][1]))
+
+    for sheet, data in sheets:
+        _fill_customs_sheet(sheet, data)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _fill_customs_sheet(sheet, rows) -> None:
+    """Единый формат данных для обычного экспорта и сохранённых заказов."""
 
     # Раздвинуть шаблон ПЕРЕД строкой итога: ни одна историческая строка не
     # имеет права затереть итог или пропасть за пределами исходных 140 строк.
@@ -1752,8 +1796,3 @@ def export_customs_xlsx(actions=None, *, rows=None) -> BytesIO:
     # Итог по весу брутто. Диапазон начинается там же, где в самом шаблоне
     # (строка 7), иначе после раздвижки суммировалась бы часть строк.
     sheet[f"I{data_end_row + 1}"] = f"=SUM(I7:I{data_end_row})"
-
-    buffer = BytesIO()
-    workbook.save(buffer)
-    buffer.seek(0)
-    return buffer

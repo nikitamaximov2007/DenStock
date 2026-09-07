@@ -1,54 +1,49 @@
+"""Read-only order pages and the signed boundary selection workflow."""
+from decimal import ROUND_HALF_UP, Decimal
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.http import require_http_methods, require_safe
 
-from .models import CustomsOrder
+from apps.actions.views import _require_access
+
+from .export import export_customs_order_xlsx
+from .models import CustomsOrder, CustomsOrderLine
 from .services import (
     CustomsOrderError,
     create_customs_order_from_boundary,
+    current_fx_rate,
     eligible_customs_sources,
+    selection_payload,
 )
 
 
+def _require_customs_access(request):
+    _require_access(request)
+    if not request.user.can_view_purchase_cost:
+        raise PermissionDenied
+
+
 @login_required
+@require_safe
 def customs_orders_list(request):
-    if not request.user.can_view_purchase_cost:
-        raise PermissionDenied
-    return render(request, "customs_orders/list.html", {"orders": CustomsOrder.objects.all()})
+    _require_customs_access(request)
+    return render(request, "customs_orders/list.html", {
+        "orders": CustomsOrder.objects.select_related("created_by"),
+        "initialization_required": not CustomsOrder.objects.exists(),
+    })
 
 
 @login_required
+@require_safe
 def customs_order_detail(request, pk):
-    if not request.user.can_view_purchase_cost:
-        raise PermissionDenied
+    _require_customs_access(request)
     order = get_object_or_404(CustomsOrder.objects.prefetch_related("lines"), pk=pk)
     if request.GET.get("export") == "1":
-        import openpyxl
-
-        from apps.actions.services import export_customs_xlsx
-
-        def rows(lines):
-            return [{
-                "number": line.article, "name_ru": line.name_ru, "name_en": line.name_en,
-                "manufacturer": line.manufacturer, "country": "", "gross_weight_kg": None,
-                "net_weight_kg": None, "quantity": line.quantity, "usd_price": line.wholesale_usd,
-                "application_area": "",
-                "provenance": "ordered" if line.is_ordered else "sales_repairs",
-            } for line in lines]
-        originals = [line for line in order.lines.all() if not line.is_analog]
-        analogs = [line for line in order.lines.all() if line.is_analog]
-        source = openpyxl.load_workbook(export_customs_xlsx(rows=rows(originals)))
-        analog_book = openpyxl.load_workbook(export_customs_xlsx(rows=rows(analogs)))
-        source.active.title = "Оригиналы"
-        target = source.create_sheet("Аналоги")
-        for row in analog_book.active.iter_rows():
-            for cell in row:
-                target.cell(cell.row, cell.column, cell.value)
-        import io
-        output = io.BytesIO()
-        source.save(output)
+        output = export_customs_order_xlsx(order)
         response = HttpResponse(
             output.getvalue(),
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -60,23 +55,57 @@ def customs_order_detail(request, pk):
     return render(request, "customs_orders/detail.html", {"order": order})
 
 
-@login_required
-def customs_order_selection(request):
-    if not request.user.can_view_purchase_cost:
-        raise PermissionDenied
-    sources = eligible_customs_sources()
-    if request.method == "POST":
-        raw = request.POST.get("boundary", "")
-        try:
-            kind, source_id = raw.split(":", 1)
-            order = create_customs_order_from_boundary(
-                number=int(request.POST.get("number", "0")),
-                boundary_source=(kind, int(source_id)), by=request.user,
-            )
-        except (ValueError, CustomsOrderError) as exc:
-            messages.error(request, str(exc))
+def _selection_previews(sources, rate):
+    """Exact display totals; the service independently recalculates on finalization."""
+    quantity = Decimal("0")
+    amount = Decimal("0")
+    complete = True
+    previews = []
+    labels = dict(CustomsOrderLine.Source.choices)
+    for index, row in enumerate(sources, start=1):
+        row["source_label"] = labels[row["source"]]
+        quantity += row["quantity"]
+        if row["usd_price"] is None:
+            complete = False
         else:
-            return redirect("customs_order_detail", pk=order.pk)
+            amount += (row["usd_price"] * row["quantity"] * rate).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP,
+            )
+        previews.append({
+            "count": index,
+            "quantity": format(quantity, ".3f"),
+            "amount": format(amount, ".2f") if complete else None,
+        })
+    return previews
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def customs_order_selection(request):
+    _require_customs_access(request)
+    if request.method == "POST":
+        try:
+            kind, source_id = request.POST.get("boundary", "").split(":", 1)
+            number = int(request.POST.get("number", ""))
+            boundary_source = (kind, int(source_id))
+        except (ValueError, TypeError):
+            messages.error(request, "Выберите крайнюю деталь и введите положительный номер заказа.")
+        else:
+            try:
+                order = create_customs_order_from_boundary(
+                    number=number, boundary_source=boundary_source,
+                    selection_token=request.POST.get("selection_token", ""), by=request.user,
+                )
+            except CustomsOrderError as exc:
+                messages.error(request, str(exc))
+            else:
+                return redirect("customs_order_detail", pk=order.pk)
+    sources = eligible_customs_sources()
+    rate = current_fx_rate()
     return render(request, "customs_orders/select.html", {
-        "sources": sources, "initialization_required": not CustomsOrder.objects.exists(),
+        "sources": sources,
+        "selection_token": selection_payload(sources),
+        "selection_previews": _selection_previews(sources, rate),
+        "fx_rate": rate,
+        "initialization_required": not CustomsOrder.objects.exists(),
     })
