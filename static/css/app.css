@@ -50,8 +50,18 @@ body.app {
 .topbar__menu { display: none; }
 .topbar__brand { display: inline-flex; align-items: center; flex: 0 1 auto;
   min-width: 0; text-decoration: none; }
+@media (min-width: 901px) {
+  .topbar__brand { position: absolute; top: 6px; left: 16px;
+    width: calc(var(--sidebar-w) - 32px); }
+  .topbar__brand .topbar__logo { width: 100%; height: auto; }
+  .sidebar .nav__list--primary { padding-top: 48px; }
+  body:has(.emergency-banner) .topbar__brand { position: static; width: auto; }
+  body:has(.emergency-banner) .topbar__logo { width: auto; height: 44px; }
+}
 .topbar__logo { display: block; width: auto; height: 44px; max-width: 100%;
   object-fit: contain; }
+.sidebar .sidebar__brand { display: none; }
+.sidebar__brand img { display: block; width: 100%; height: 80px; object-fit: contain; }
 .topbar__spacer { flex: 1 1 auto; }
 .topbar__searchform { position: relative; flex: 1; max-width: 460px; }
 .topbar__searchicon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
@@ -421,6 +431,8 @@ th.num, td.num, .table th.num, .table td.num,
    Открытие — pure-CSS через #nav-toggle:checked (работает и без JS). */
 @media (max-width: 900px) {
   .topbar { gap: 10px; }
+  .sidebar .sidebar__brand { display: flex; padding: 0; margin-bottom: 4px;
+    background: transparent; }
   .topbar__menu { display: inline-flex; align-items: center; justify-content: center;
     width: 40px; height: 40px; margin-left: -6px; border-radius: 8px;
     color: var(--text); cursor: pointer; }

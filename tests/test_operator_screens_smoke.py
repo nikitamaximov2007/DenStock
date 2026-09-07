@@ -151,7 +151,7 @@ def addresses(warehouse):
 
 
 def test_the_menu_leads_somewhere(addresses):
-    assert "/" in addresses
+    assert "/" not in addresses  # Home is now the logo link, outside nav_items.
     assert any(url.startswith("/reports/") for url in addresses)
     assert any(url.startswith("/parts/") for url in addresses)
 

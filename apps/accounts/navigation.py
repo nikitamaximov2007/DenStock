@@ -215,7 +215,6 @@ def _section_key(request):
 
 def _primary_items(active_key, user):
     items = [
-        _item("home", "Главная", reverse("dashboard"), "home", active=active_key == "home"),
         _item(
             "search",
             "Поиск",

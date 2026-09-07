@@ -69,7 +69,7 @@ def _html(client, name, *, query=""):
 def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
     _login(client, make_nav_user("admin", superuser=True))
     html = _html(client, "dashboard")
-    assert _primary_labels(html) == ["Главная", "Поиск", "ИИ-поддержка"]
+    assert _primary_labels(html) == ["Поиск", "ИИ-поддержка"]
     assert _sidebar_groups(html) == {
         "warehouse": [
             "Все детали",
@@ -144,7 +144,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
 def test_sidebar_is_capability_aware(client, make_nav_user, role, expected):
     _login(client, make_nav_user(f"user-{role}", role=role))
     html = _html(client, "dashboard")
-    assert _primary_labels(html) == ["Главная", "Поиск", "ИИ-поддержка"]
+    assert _primary_labels(html) == ["Поиск", "ИИ-поддержка"]
     assert _sidebar_groups(html) == expected
 
 
@@ -161,7 +161,7 @@ def test_seller_and_master_share_current_combined_role_menu(client, make_nav_use
 def test_plain_user_has_no_empty_or_administrative_sections(client, make_nav_user):
     _login(client, make_nav_user("plain"))
     html = _html(client, "dashboard")
-    assert _primary_labels(html) == ["Главная", "Поиск"]
+    assert _primary_labels(html) == ["Поиск"]
     assert _sidebar_groups(html) == {}
     assert "Настройки" not in html
     assert "data-nav-group=" not in html
@@ -387,7 +387,7 @@ def test_navigation_context_has_constant_role_query_count(
     request.resolver_match = None
     with django_assert_num_queries(1):
         context = navigation(request)
-    assert len(context["nav_items"]) == 3
+    assert len(context["nav_items"]) == 2
     assert [group["key"] for group in context["nav_groups"]] == [
         "warehouse",
         "reports",
@@ -477,3 +477,15 @@ def test_repairs_sidebar_entry_is_active_on_a_repair_page(client, make_nav_user)
 
     assert f'href="{reverse("repair_order_list")}" aria-current="page"' in sidebar
     assert 'data-nav-group="warehouse"' in sidebar
+
+
+def test_logo_replaces_home_link(client, make_nav_user):
+    _login(client, make_nav_user("logo-admin", superuser=True))
+    html = _html(client, "dashboard")
+    assert 'href="#i-home"' not in _sidebar(html)
+    assert "Главная" not in _sidebar_labels(html)
+    assert re.search(
+        r'<a class="topbar__brand"[^>]*href="' + re.escape(reverse("dashboard"))
+        + r'"[^>]*data-home-link[^>]*>\s*<img[^>]*alt="PRO-STOR"',
+        html, re.DOTALL,
+    )
