@@ -101,12 +101,12 @@ def test_plain_user_is_forbidden_and_has_no_sidebar_entry(client, make_support_u
     assert "ИИ-поддержка" not in client.get(reverse("dashboard")).content.decode()
 
 
-def test_sidebar_support_is_third_primary_item(client, support_user):
+def test_sidebar_support_follows_search(client, support_user):
     login(client, support_user)
     html = client.get(reverse("dashboard")).content.decode()
     primary = html.split('class="nav__list nav__list--primary"', 1)[1].split("</ul>", 1)[0]
-    assert [primary.index(label) for label in ("Главная", "Поиск", "ИИ-поддержка")] == sorted(
-        primary.index(label) for label in ("Главная", "Поиск", "ИИ-поддержка")
+    assert [primary.index(label) for label in ("Поиск", "ИИ-поддержка")] == sorted(
+        primary.index(label) for label in ("Поиск", "ИИ-поддержка")
     )
 
 

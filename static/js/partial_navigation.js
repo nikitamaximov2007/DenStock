@@ -116,6 +116,14 @@
     content.replaceChildren.apply(content, Array.from(incomingContent.childNodes));
     document.title = title.textContent;
     updateActiveNavigation(incomingSidebar);
+    if (homeLink) {
+      var incomingHome = parsed.querySelector("[data-home-link]");
+      if (incomingHome && incomingHome.hasAttribute("aria-current")) {
+        homeLink.setAttribute("aria-current", "page");
+      } else {
+        homeLink.removeAttribute("aria-current");
+      }
+    }
     if (push) {
       window.history.pushState({ denstockPartial: true }, "", url);
     }
@@ -182,6 +190,13 @@
       event.preventDefault();
       saveSidebarScroll();
       navigate(link.href, true);
+    });
+    var homeLink = document.querySelector("[data-home-link]");
+    if (homeLink) homeLink.addEventListener("click", function (event) {
+      if (!shouldHandle(event, homeLink)) return;
+      event.preventDefault();
+      saveSidebarScroll();
+      navigate(homeLink.href, true);
     });
     content.addEventListener("click", function (event) {
       var link = event.target.closest("a[data-partial-link]");

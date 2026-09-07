@@ -50,8 +50,19 @@ body.app {
 .topbar__menu { display: none; }
 .topbar__brand { display: inline-flex; align-items: center; flex: 0 1 auto;
   min-width: 0; text-decoration: none; }
+@media (min-width: 901px) {
+  /* The desktop brand belongs to the sidebar, so the topbar divider starts
+     at the content area and never crosses behind the logo. */
+  .topbar__brand { display: none; }
+}
 .topbar__logo { display: block; width: auto; height: 44px; max-width: 100%;
   object-fit: contain; }
+.sidebar .sidebar__brand { display: flex; align-items: center; justify-content: center;
+  height: 96px; margin: -10px -10px 4px; padding: 12px 16px;
+  border-radius: 0; background: var(--panel); }
+.sidebar__brand img { display: block; width: 100%; max-width: 188px; height: auto;
+  object-fit: contain; }
+.sidebar__brand:hover { background: #fafbfc; }
 .topbar__spacer { flex: 1 1 auto; }
 .topbar__searchform { position: relative; flex: 1; max-width: 460px; }
 .topbar__searchicon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
@@ -421,6 +432,9 @@ th.num, td.num, .table th.num, .table td.num,
    Открытие — pure-CSS через #nav-toggle:checked (работает и без JS). */
 @media (max-width: 900px) {
   .topbar { gap: 10px; }
+  .sidebar .sidebar__brand { height: 80px; margin: -16px -10px 4px; padding: 12px 16px;
+    background: var(--panel); }
+  .sidebar__brand img { max-width: 140px; }
   .topbar__menu { display: inline-flex; align-items: center; justify-content: center;
     width: 40px; height: 40px; margin-left: -6px; border-radius: 8px;
     color: var(--text); cursor: pointer; }

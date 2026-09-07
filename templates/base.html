@@ -21,7 +21,11 @@
             <use href="#i-menu"></use>
           </svg>
         </label>
-        <a class="topbar__brand" href="{% url 'dashboard' %}">
+        <a class="topbar__brand"
+           href="{% url 'dashboard' %}"
+           aria-label="PRO-STOR: Главная"
+           data-home-link
+           {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
           <img class="topbar__logo"
                src="{% static 'img/pro-stor-logo.svg' %}"
                alt="PRO-STOR"
@@ -72,6 +76,15 @@
              id="app-sidebar"
              aria-label="Разделы"
              data-partial-navigation>
+          <a class="sidebar__brand nav__link"
+             href="{% url 'dashboard' %}"
+             aria-label="PRO-STOR: Главная"
+             {% if request.resolver_match.url_name == "dashboard" %}aria-current="page"{% endif %}>
+            <img src="{% static 'img/pro-stor-logo.svg' %}"
+                 alt="PRO-STOR"
+                 width="390"
+                 height="156">
+          </a>
           <ul class="nav__list nav__list--primary">
             {% for item in nav_items %}
               <li>
