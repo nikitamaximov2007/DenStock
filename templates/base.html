@@ -22,8 +22,11 @@
           </svg>
         </label>
         <a class="topbar__brand" href="{% url 'dashboard' %}">
-          <span class="topbar__mark" aria-hidden="true">D</span>
-          <span class="topbar__wordmark">DenisStock</span>
+          <img class="topbar__logo"
+               src="{% static 'img/pro-stor-logo.svg' %}"
+               alt="PRO-STOR"
+               width="390"
+               height="156">
         </a>
         <div class="topbar__spacer"></div>
         <div class="topbar__user">
