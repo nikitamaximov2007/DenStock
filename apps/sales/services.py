@@ -713,6 +713,22 @@ def cancel_sale_line_quantity(sale_line, quantity, *, reason="", author="", by=N
 
 
 @transaction.atomic
+def sale_cancellation_returns(sale) -> list:
+    """Предпросмотр: куда физически вернётся каждая строка продажи при отмене.
+
+    Read-only. Считает ровно то же и тем же кодом, что и сама отмена.
+    """
+    from apps.returns.services import cancellation_allocations, completed_returned_quantities
+
+    if sale.status != Sale.Status.COMPLETED:
+        return []
+    lines = list(sale.lines.select_related(
+        "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
+    ))
+    returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
+    return cancellation_allocations(lines, returned)
+
+
 def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
     """Cancel a completed sale with canonical compensating inventory movements.
 
@@ -720,7 +736,7 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
     quantity not already returned by a completed customer return is restored,
     and every restoration goes through the standard RETURN_* inventory API.
     """
-    from apps.returns.models import StockReturn, StockReturnLine
+    from apps.returns.models import StockReturn
 
     reason = (reason or "").strip()
     author = (author or "").strip()
@@ -742,31 +758,29 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
     # ссылке: экземпляр, лот и ячейка у строки необязательны, поэтому
     # запрос уходит с внешним соединением, а PostgreSQL отказывается
     # брать блокировку на его пустую сторону. На SQLite этого не видно.
+    from apps.returns.services import (
+        cancellation_allocations,
+        completed_returned_quantities,
+    )
+
     lines = list(sale.lines.select_for_update(of=("self",)).select_related(
         "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
     ))
-    returned = dict(
-        StockReturnLine.objects.filter(
-            stock_return__status=StockReturn.Status.COMPLETED,
-            source_sale_line_id__in=[line.pk for line in lines],
-        ).values("source_sale_line_id").annotate(quantity=Sum("quantity")).values_list(
-            "source_sale_line_id", "quantity"
-        )
-    )
-    for line in lines:
-        outstanding = line.quantity - (returned.get(line.pk) or Decimal("0"))
-        if outstanding <= 0:
-            continue
+    returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
+    # Тот же расчёт, что показал экран подтверждения: расхождение между
+    # обещанной и фактической ячейкой невозможно по построению.
+    for allocation in cancellation_allocations(lines, returned):
+        line = allocation.line
         comment = f"Отмена продажи {sale.number}: {reason}"[:255]
-        if line.part_item_id:
+        if allocation.is_unit_item:
             return_part_item(
-                line.part_item, line.part_item.current_location,
+                line.part_item, allocation.location,
                 restock_status=PartItem.Status.AVAILABLE, by=by,
                 document_type="sale", document_id=sale.pk, comment=comment,
             )
         else:
             return_stock_lot_quantity(
-                line.batch_line, line.stock_lot.location, outstanding,
+                line.batch_line, allocation.location, allocation.quantity,
                 unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
                 restock_status=StockLot.Status.AVAILABLE, by=by,
                 document_type="sale", document_id=sale.pk, comment=comment,

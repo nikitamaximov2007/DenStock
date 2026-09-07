@@ -41,6 +41,7 @@ from .services import (
     complete_repair_order,
     create_repair_order,
     remove_repair_line,
+    repair_cancellation_returns,
     repair_customer_line_amounts,
     repair_customer_line_prices,
     repair_returned_quantities,
@@ -336,7 +337,11 @@ def repair_order_cancel_confirm(request, pk):
         return redirect("repair_order_detail", pk=pk)
     return render(
         request, "repairs/repair_order_cancel_confirm.html",
-        {"order": order, "form": RepairCancellationForm()},
+        {
+            "order": order,
+            "form": RepairCancellationForm(),
+            "return_allocations": repair_cancellation_returns(order),
+        },
     )
 
 

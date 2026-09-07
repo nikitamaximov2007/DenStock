@@ -257,9 +257,22 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
 
 
 @transaction.atomic
+def repair_cancellation_returns(order) -> list:
+    """Предпросмотр: куда физически вернётся каждая строка ремонта при отмене."""
+    from apps.returns.services import cancellation_allocations, completed_returned_quantities
+
+    if order.status != RepairOrder.Status.COMPLETED:
+        return []
+    lines = list(order.lines.select_related(
+        "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
+    ))
+    returned = completed_returned_quantities(lines, source_field="source_repair_line_id")
+    return cancellation_allocations(lines, returned)
+
+
 def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
     """Cancel a draft or a completed repair without rewriting its history."""
-    from apps.returns.models import StockReturn, StockReturnLine
+    from apps.returns.models import StockReturn
 
     reason = (reason or "").strip()
     author = (author or "").strip()
@@ -285,31 +298,28 @@ def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
         # ссылке: экземпляр, лот и ячейка у строки необязательны, поэтому
         # запрос уходит с внешним соединением, а PostgreSQL отказывается
         # брать блокировку на его пустую сторону. На SQLite этого не видно.
-        lines = list(order.lines.select_for_update(of=("self",)).select_related(
-            "part_item__current_location", "stock_lot__location", "batch_line"
-        ))
-        returned = dict(
-            StockReturnLine.objects.filter(
-                stock_return__status=StockReturn.Status.COMPLETED,
-                source_repair_line_id__in=[line.pk for line in lines],
-            ).values("source_repair_line_id").annotate(quantity=Sum("quantity")).values_list(
-                "source_repair_line_id", "quantity"
-            )
+        from apps.returns.services import (
+            cancellation_allocations,
+            completed_returned_quantities,
         )
-        for line in lines:
-            outstanding = line.quantity - (returned.get(line.pk) or Decimal("0"))
-            if outstanding <= 0:
-                continue
+
+        lines = list(order.lines.select_for_update(of=("self",)).select_related(
+            "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
+        ))
+        returned = completed_returned_quantities(lines, source_field="source_repair_line_id")
+        # Тот же расчёт, что показал экран подтверждения.
+        for allocation in cancellation_allocations(lines, returned):
+            line = allocation.line
             comment = f"Отмена ремонта {order.number}: {reason}"[:255]
-            if line.part_item_id:
+            if allocation.is_unit_item:
                 return_part_item(
-                    line.part_item, line.part_item.current_location,
+                    line.part_item, allocation.location,
                     restock_status=PartItem.Status.AVAILABLE, by=by,
                     document_type="repair_order", document_id=order.pk, comment=comment,
                 )
             else:
                 return_stock_lot_quantity(
-                    line.batch_line, line.stock_lot.location, outstanding,
+                    line.batch_line, allocation.location, allocation.quantity,
                     unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
                     restock_status=StockLot.Status.AVAILABLE, by=by,
                     document_type="repair_order", document_id=order.pk, comment=comment,

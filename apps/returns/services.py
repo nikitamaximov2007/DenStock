@@ -9,6 +9,7 @@
 Это возврат НА СКЛАД, а не возврат ДЕНЕГ: итоги `Sale`/`RepairOrder` и их статус
 `completed` не меняются (финансовое сторно — будущий слой).
 """
+from dataclasses import dataclass
 from decimal import Decimal
 
 from django.db import transaction
@@ -35,6 +36,68 @@ from .models import StockReturn, StockReturnLine
 
 class ReturnError(Exception):
     """Невозможно выполнить операцию с возвратом."""
+
+
+# --- Размещение возврата при отмене документа -------------------------------
+
+
+@dataclass(frozen=True)
+class ReturnAllocation:
+    """Одна физическая порция возврата: сколько и в какую ячейку."""
+
+    line: object
+    part: object
+    location: object
+    quantity: Decimal
+    is_unit_item: bool
+
+
+def completed_returned_quantities(lines, *, source_field: str) -> dict[int, Decimal]:
+    """Сколько по каждой строке уже вернули ЗАВЕРШЁННЫЕ возвраты."""
+    return dict(
+        StockReturnLine.objects.filter(
+            stock_return__status=StockReturn.Status.COMPLETED,
+            **{f"{source_field}__in": [line.pk for line in lines]},
+        )
+        .values(source_field)
+        .annotate(quantity=Sum("quantity"))
+        .values_list(source_field, "quantity")
+    )
+
+
+def cancellation_allocations(lines, returned_by_line) -> list[ReturnAllocation]:
+    """Куда физически вернётся каждая строка документа при отмене.
+
+    Ячейку задаёт САМА строка документа: экземпляр возвращается туда, где он
+    числится сейчас, а количественная строка - в ячейку своего лота. Текущая
+    ячейка карточки детали здесь не участвует вовсе: деталь могла переехать
+    после продажи, а вернуть её нужно туда, откуда взял её этот документ.
+
+    Одна и та же функция обслуживает и предпросмотр, и саму отмену. Иначе
+    экран показывал бы одну ячейку, а товар уезжал в другую, и разойтись они
+    могли бы незаметно.
+    """
+    allocations = []
+    for line in lines:
+        outstanding = line.quantity - (returned_by_line.get(line.pk) or Decimal("0"))
+        if outstanding <= 0:
+            continue  # строку уже вернули возвратом, отмене возвращать нечего
+        if line.part_item_id:
+            allocations.append(
+                ReturnAllocation(
+                    line=line, part=line.part_type,
+                    location=line.part_item.current_location,
+                    quantity=outstanding, is_unit_item=True,
+                )
+            )
+        else:
+            allocations.append(
+                ReturnAllocation(
+                    line=line, part=line.part_type, location=line.stock_lot.location,
+                    quantity=outstanding, is_unit_item=False,
+                )
+            )
+    return allocations
 
 
 # --- Источник возврата (полиморфизм SaleLine / RepairIssueLine) --------------

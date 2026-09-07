@@ -1,0 +1,48 @@
+{% comment %}
+  Куда физически вернётся товар при отмене документа.
+
+  Строки считает тот же код, что и сама отмена
+  (apps.returns.services.cancellation_allocations), поэтому показанное на
+  экране и произошедшее на складе совпадают по построению, а не по совпадению.
+  Ячейку задаёт строка документа, а не текущая ячейка карточки детали: деталь
+  могла переехать после продажи.
+{% endcomment %}
+<div class="card">
+  <div class="card__header">
+    <h2 class="card__title">Куда вернётся товар</h2>
+  </div>
+  <div class="card__body">
+    {% if return_allocations %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Деталь</th>
+            <th class="num--qty">Количество</th>
+            <th>Ячейка возврата</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for allocation in return_allocations %}
+            <tr>
+              <td>{{ allocation.part.name }}</td>
+              <td class="num--qty">{{ allocation.quantity|quantity_int }}</td>
+              <td>
+                {% if allocation.location %}
+                  <span class="code-pill">{{ allocation.location.code }}</span>
+                {% else %}
+                  <span class="muted">Ячейка не определена</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted">Возврат пройдёт ровно по этим строкам.</p>
+    {% else %}
+      <p class="muted">
+        Возвращать нечего: товар по этому документу уже вернули оформленными
+        возвратами.
+      </p>
+    {% endif %}
+  </div>
+</div>

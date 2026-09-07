@@ -50,6 +50,7 @@ from .services import (
     remove_reservation_line,
     remove_sale_line,
     reversible_quantity,
+    sale_cancellation_returns,
 )
 
 
@@ -454,7 +455,12 @@ def sale_cancel_confirm(request, pk):
         messages.error(request, "Отменить можно только проведённую продажу.")
         return redirect("sale_detail", pk=pk)
     return render(
-        request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": SaleCancellationForm()}
+        request, "sales/sale_cancel_confirm.html",
+        {
+            "sale": sale,
+            "form": SaleCancellationForm(),
+            "return_allocations": sale_cancellation_returns(sale),
+        },
     )
 
 
@@ -466,7 +472,13 @@ def sale_cancel(request, pk):
     form = SaleCancellationForm(request.POST)
     if not form.is_valid():
         return render(
-            request, "sales/sale_cancel_confirm.html", {"sale": sale, "form": form}, status=400
+            request, "sales/sale_cancel_confirm.html",
+            {
+                "sale": sale,
+                "form": form,
+                "return_allocations": sale_cancellation_returns(sale),
+            },
+            status=400,
         )
     try:
         cancel_sale(
