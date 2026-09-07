@@ -3,6 +3,7 @@
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Таможенный заказ №{{ order.number }}</h1>
+    <a class="btn btn--small btn--primary" href="?export=1">Экспорт в Excel</a>
   </div>
   <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Курс USD/RUB: {{ order.fx_rate }} · Позиций: {{ order.total_quantity }} · Сумма: {{ order.total_rub }} ₽</p>
   <table class="table table--wide">

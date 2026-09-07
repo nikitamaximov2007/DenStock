@@ -28,8 +28,6 @@ def create_customs_order(*, number: int, lines: list[dict], by=None, fx_rate=Non
         total_qty = Decimal("0")
         total_rub = Decimal("0")
         for line in lines:
-            if line.get("is_analog"):
-                raise CustomsOrderError("Аналог нельзя включить в таможенный заказ.")
             usd = line.get("usd_price")
             if usd is None:
                 article = line.get("number") or "без артикула"
@@ -55,3 +53,42 @@ def create_customs_order(*, number: int, lines: list[dict], by=None, fx_rate=Non
         order.total_rub = total_rub
         order.save(update_fields=["total_quantity", "total_rub"])
         return order
+
+
+def eligible_customs_sources() -> list[dict]:
+    """Stable, line-level unassigned canonical customs dataset."""
+    from apps.actions.customs_history import _customs_rows_from_lines, canonical_customs_lines
+
+    lines = [line for line in canonical_customs_lines() if line["quantity"] > 0]
+    memberships = set(CustomsOrderLine.objects.values_list("source", "source_id"))
+    rows = _customs_rows_from_lines(lines)
+    by_key = {row["source_key"]: row for row in rows}
+    result = []
+    for line in lines:
+        source = "sale" if line["kind"] == "sale" else "repair"
+        marker = (source, line["line_id"])
+        if marker in memberships:
+            continue
+        version = line["version"]
+        key = (line["part_id"], version.pk if version is not None else None, line["number"])
+        row = by_key.get(key)
+        if row is None:
+            continue
+        result.append({
+            "source": source, "source_id": line["line_id"], "occurred_at": line["occurred_at"],
+            "number": line["number"], "quantity": line["quantity"],
+            "is_analog": bool(line.get("is_analog")),
+            "usd_price": row["usd_price"], "name_ru": row["name_ru"],
+            "name_en": row["name_en"], "manufacturer": row["manufacturer"],
+        })
+    return sorted(result, key=lambda x: (x["occurred_at"] or "", x["source"], x["source_id"]))
+
+
+@transaction.atomic
+def create_customs_order_from_boundary(*, number: int, boundary_source: tuple[str, int], by=None):
+    candidates = eligible_customs_sources()
+    markers = [(x["source"], x["source_id"]) for x in candidates]
+    if boundary_source not in markers:
+        raise CustomsOrderError("Состав изменился. Обновите список и повторите.")
+    selected = candidates[: markers.index(boundary_source) + 1]
+    return create_customs_order(number=number, lines=selected, by=by)

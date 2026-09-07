@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Отправить в таможенный заказ · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Отправить в заказ</h1>
+  {% if initialization_required %}<p class="pill pill--warning">История таможенных заказов ещё не инициализирована. Сначала сформируйте существующий заказ №125, выбрав его крайнюю деталь.</p>{% endif %}
+  <p>Выберите крайнюю деталь в заказе. Система включит все свободные позиции от начала списка до неё.</p>
+  <form method="post">
+    {% csrf_token %}
+    <label>
+      Номер заказа
+      <input name="number" type="number" min="1" required>
+    </label>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Артикул</th>
+          <th>Название</th>
+          <th>Количество</th>
+          <th>Крайняя</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in sources %}<tr><td>{{ row.occurred_at|date:"d.m.Y H:i" }}</td><td>{{ row.number }}</td><td>{{ row.name_ru }}</td><td>{{ row.quantity }}</td><td><input type="radio"
+       name="boundary"
+       value="{{ row.source }}:{{ row.source_id }}"
+       required></td></tr>{% empty %}<tr><td colspan="5">Свободных позиций нет.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <button class="btn btn--primary" type="submit">ОК</button>
+  </form>
+{% endblock %}

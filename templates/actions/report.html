@@ -11,7 +11,8 @@
          href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
       <a class="btn btn--small btn--secondary"
          data-full-navigation
-         href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Таможенный экспорт аналогов</a>
+           href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Таможенный экспорт аналогов</a>
+      <a class="btn btn--small btn--secondary" href="{% url 'customs_order_selection' %}">Отправить в заказ</a>
     </div>
   </div>
   <p class="page-subtitle">
