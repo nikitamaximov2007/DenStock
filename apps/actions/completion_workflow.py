@@ -1,5 +1,6 @@
 """Shared metadata step used before regular Sale and Repair completion."""
 from .services import (
+    QUICK_ACTION_APPLICATION_AREAS,
     get_or_create_customs,
     parse_application_area,
     parse_weight_g,
@@ -7,6 +8,10 @@ from .services import (
     validate_weight_pair,
     weight_kg_as_grams,
 )
+
+
+def _has_valid_application_area(value: str) -> bool:
+    return value in {str(area) for area in QUICK_ACTION_APPLICATION_AREAS}
 
 
 def missing_parts(parts):
@@ -21,7 +26,7 @@ def missing_parts(parts):
             valid_pair = gross is not None and net is not None
         except ValueError:
             valid_pair = False
-        if not valid_pair or not area:
+        if not valid_pair or not _has_valid_application_area(area):
             result.append({"part": part, "gross_weight_g": weight_kg_as_grams(gross),
                            "net_weight_g": weight_kg_as_grams(net), "application_area": area})
     return result

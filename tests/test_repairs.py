@@ -13,6 +13,7 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.actions.models import PartCustomsInfo
 from apps.catalog.models import Category, PartType, Unit, VehicleType
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
@@ -42,6 +43,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -104,6 +106,7 @@ def data(db, admin):
     bline = _finalized_line(sup, bulk, admin, qty="10")  # landed_unit 104
     lot = create_stock_lot(bline, loc, Decimal("5"))
     receive_stock_lot(lot, by=admin)  # available @ loc, qty 5
+    remember_customs(serial, bulk)
 
     return {
         "admin": admin, "serial": serial, "item": item, "item_receiving": item_receiving,
@@ -407,3 +410,27 @@ def test_untrusted_params_rechecked(make_user, client, data):
     )
     assert resp.status_code == 302
     assert not order.lines.exists()
+
+
+def test_regular_repair_collects_missing_customs_metadata_and_completes(client, make_user, data):
+    PartCustomsInfo.objects.filter(part_type=data["serial"]).delete()
+    order = create_repair_order(
+        customer_name="Иван", vehicle_type=data["vtype"], by=data["admin"]
+    )
+    add_part_item_to_repair_order(order, data["item"], by=data["admin"])
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+
+    response = client.post(reverse("repair_order_complete", args=[order.pk]))
+    assert response.status_code == 200
+    assert data["serial"].name in response.content.decode()
+
+    response = client.post(reverse("repair_order_complete", args=[order.pk]), {
+        "metadata_submit": "1", "part_id": str(data["serial"].pk),
+        f"gross_weight_g_{data['serial'].pk}": "250",
+        f"net_weight_g_{data['serial'].pk}": "200",
+        f"application_area_{data['serial'].pk}": "СНЕГОХОД",
+    })
+    assert response.status_code == 302
+    order.refresh_from_db()
+    assert order.status == RepairOrder.Status.COMPLETED

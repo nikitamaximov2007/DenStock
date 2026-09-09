@@ -1193,6 +1193,8 @@ def customs_metadata_gaps(
         gaps.append("не заполнен вес нетто")
     if not (application_area or "").strip():
         gaps.append("не выбрана область применения")
+    elif application_area not in {str(area) for area in QUICK_ACTION_APPLICATION_AREAS}:
+        gaps.append("выбрана недопустимая область применения")
     return gaps
 
 

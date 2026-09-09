@@ -12,6 +12,7 @@ from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
@@ -297,24 +298,45 @@ def repair_order_remove_line(request, pk):
 def repair_order_complete(request, pk):
     _require_repairs(request)
     order = get_object_or_404(RepairOrder, pk=pk)
-    lines = list(order.lines.select_related("part_type").all())
     from apps.actions.completion_workflow import missing_parts, save_completion_metadata
+
+    def metadata_context(*, entries, error=""):
+        return {
+            "entries": entries,
+            "application_choices": [
+                (value, label) for value, label in PartCustomsInfo.ApplicationArea.choices
+                if value in {"ГИДРОЦИКЛ", "КВАДРОЦИКЛ", "СНЕГОХОД", "ЛОДОЧНЫЙ МОТОР", "КАТЕР"}
+            ],
+            "back": reverse("repair_order_detail", args=[order.pk]),
+            "error": error,
+        }
+
+    lines = list(order.lines.select_related("part_type").all())
     missing = missing_parts([line.part_type for line in lines])
     if missing and not request.POST.get("metadata_submit"):
-        return render(request, "actions/completion_customs_metadata.html", {
-            "entries": missing, "application_choices": [
-                (value, label) for value, label in PartCustomsInfo.ApplicationArea.choices
-                if value in {"ГИДРОЦИКЛ", "КВАДРОЦИКЛ", "СНЕГОХОД", "ЛОДОЧНЫЙ МОТОР", "КАТЕР"}],
-            "back": request.path,
-        })
+        return render(
+            request, "actions/completion_customs_metadata.html", metadata_context(entries=missing)
+        )
     try:
         with transaction.atomic():
             if request.POST.get("metadata_submit"):
+                lines = list(order.lines.select_related("part_type").all())
                 save_completion_metadata(
                     request.POST, [line.part_type for line in lines], by=request.user
                 )
             complete_repair_order(order, by=request.user)
-    except (RepairError, ValueError) as exc:
+    except ValueError as exc:
+        entries = missing_parts([line.part_type for line in lines])
+        for entry in entries:
+            part_pk = entry["part"].pk
+            entry["gross_weight_g"] = request.POST.get(f"gross_weight_g_{part_pk}", "")
+            entry["net_weight_g"] = request.POST.get(f"net_weight_g_{part_pk}", "")
+            entry["application_area"] = request.POST.get(f"application_area_{part_pk}", "")
+        return render(
+            request, "actions/completion_customs_metadata.html",
+            metadata_context(entries=entries, error=str(exc)), status=400,
+        )
+    except RepairError as exc:
         messages.error(request, str(exc))
     else:
         messages.success(request, f"Заказ {order.number} проведён — детали выданы в ремонт.")

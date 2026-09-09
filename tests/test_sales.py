@@ -13,6 +13,7 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.actions.models import PartCustomsInfo
 from apps.catalog.models import Category, PartType, Unit
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
@@ -40,6 +41,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -102,6 +104,7 @@ def data(db, admin):
     bline = _finalized_line(sup, bulk, admin, qty="10")  # landed_unit 104
     lot = create_stock_lot(bline, loc, Decimal("5"))
     receive_stock_lot(lot, by=admin)  # available @ loc, qty 5
+    remember_customs(serial, bulk)
 
     return {
         "admin": admin, "serial": serial, "item": item, "item_receiving": item_receiving,
@@ -381,3 +384,45 @@ def test_untrusted_params_rechecked(make_user, client, data):
     )
     assert resp.status_code == 302
     assert not sale.lines.exists()
+
+
+def test_regular_sale_collects_only_missing_customs_metadata_and_completes(client, make_user, data):
+    """The ordinary sale screen uses the same metadata contract as Quick Actions."""
+    PartCustomsInfo.objects.filter(part_type=data["bulk"]).delete()
+    sale = create_sale(customer_name="Иван", by=data["admin"])
+    add_part_item_to_sale(sale, data["item"], unit_price=Decimal("500"), by=data["admin"])
+    add_stock_lot_to_sale(
+        sale, data["lot"], Decimal("1"), unit_price=Decimal("200"), by=data["admin"]
+    )
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+
+    response = client.post(reverse("sale_complete", args=[sale.pk]))
+    assert response.status_code == 200
+    assert data["bulk"].name in response.content.decode()
+    assert data["serial"].name not in response.content.decode()
+
+    response = client.post(reverse("sale_complete", args=[sale.pk]), {
+        "metadata_submit": "1", "part_id": str(data["bulk"].pk),
+        f"gross_weight_g_{data['bulk'].pk}": "29",
+        f"net_weight_g_{data['bulk'].pk}": "30",
+        f"application_area_{data['bulk'].pk}": "КАТЕР",
+    })
+    assert response.status_code == 400
+    sale.refresh_from_db()
+    data["item"].refresh_from_db()
+    assert sale.status == Sale.Status.DRAFT
+    assert data["item"].status == PartItem.Status.AVAILABLE
+
+    response = client.post(reverse("sale_complete", args=[sale.pk]), {
+        "metadata_submit": "1", "part_id": str(data["bulk"].pk),
+        f"gross_weight_g_{data['bulk'].pk}": "31",
+        f"net_weight_g_{data['bulk'].pk}": "30",
+        f"application_area_{data['bulk'].pk}": "КАТЕР",
+    })
+    assert response.status_code == 302
+    sale.refresh_from_db()
+    customs = PartCustomsInfo.objects.get(part_type=data["bulk"])
+    assert sale.status == Sale.Status.COMPLETED
+    assert customs.gross_weight_kg == Decimal("0.031")
+    assert customs.net_weight_kg == Decimal("0.030")
