@@ -489,3 +489,99 @@ def test_logo_replaces_home_link(client, make_nav_user):
         + r'"[^>]*data-home-link[^>]*>\s*<img[^>]*alt="PRO-STOR"',
         html, re.DOTALL,
     )
+
+
+# --- Оболочка приложения: сайдбар это колонка, а не блок под общей полосой ----------------
+
+
+def _shell_css():
+    return (settings.BASE_DIR / "static" / "css" / "app.css").read_text(encoding="utf-8")
+
+
+def _desktop_block(css):
+    """Правила десктопной раскладки (@media (min-width: 901px)) одним куском."""
+    blocks = []
+    for start in (m.end() for m in re.finditer(r"@media \(min-width: 901px\) \{", css)):
+        depth, i = 1, start
+        while depth and i < len(css):
+            depth += {"{": 1, "}": -1}.get(css[i], 0)
+            i += 1
+        blocks.append(css[start:i])
+    assert blocks, "нет десктопного блока раскладки"
+    return "\n".join(blocks)
+
+
+def test_the_brand_is_still_the_home_link(client, make_nav_user):
+    """Логотип остаётся ссылкой на Главную в обеих оболочках."""
+    _login(client, make_nav_user("shell-admin", superuser=True))
+    html = _html(client, "dashboard")
+    home = reverse("dashboard")
+    assert re.search(
+        r'<a class="sidebar__brand nav__link"[^>]*href="' + re.escape(home) + r'"',
+        html, re.DOTALL,
+    ), "в сайдбаре нет кликабельного логотипа"
+    assert re.search(
+        r'<a class="topbar__brand"[^>]*href="' + re.escape(home) + r'"[^>]*data-home-link',
+        html, re.DOTALL,
+    ), "в топбаре нет кликабельного логотипа для мобильной оболочки"
+
+
+def test_the_separate_home_menu_item_stays_absent(client, make_nav_user):
+    _login(client, make_nav_user("shell-admin-2", superuser=True))
+    html = _html(client, "dashboard")
+    assert "Главная" not in _sidebar_labels(html)
+    assert 'href="#i-home"' not in _sidebar(html)
+
+
+def test_the_sidebar_shell_carries_the_brand(client, make_nav_user):
+    """Бренд живёт внутри самого сайдбара, а не поверх него."""
+    _login(client, make_nav_user("shell-admin-3", superuser=True))
+    sidebar = _sidebar(_html(client, "dashboard"))
+    assert "sidebar__brand" in sidebar
+    assert sidebar.index("sidebar__brand") < sidebar.index("nav__list--primary"), (
+        "логотип должен стоять выше пунктов меню"
+    )
+
+
+def test_the_desktop_sidebar_owns_the_full_height_column():
+    """Сайдбар начинается от верха оболочки, а не под общей верхней полосой.
+
+    Проверяется структура правил, а не пиксели: раскладка задаётся тем, что
+    сайдбар закреплён на всю высоту от y=0, а топбар и контент сдвинуты на его
+    ширину. Раньше сайдбар начинался на высоте топбара, и полоса с
+    пользователем проходила над логотипом.
+    """
+    desktop = " ".join(_desktop_block(_shell_css()).split())
+    assert "position: fixed" in desktop and "top: 0" in desktop, (
+        "сайдбар больше не закреплён от верха окна"
+    )
+    assert "height: 100vh" in desktop, "сайдбар не занимает всю высоту окна"
+    assert "margin-left: var(--sidebar-w)" in desktop, (
+        "топбар и контент не сдвинуты вправо на ширину сайдбара"
+    )
+    for selector in (".topbar,", ".emergency-banner,", ".layout"):
+        assert selector in desktop, f"{selector} не участвует в сдвиге вправо"
+
+
+def test_the_desktop_shell_uses_no_visual_hacks():
+    """Раскладка чинится геометрией, а не наложением логотипа на топбар."""
+    desktop = " ".join(_desktop_block(_shell_css()).split())
+    assert "translateY" not in desktop, "сдвиг логотипа трансформацией"
+    assert "margin-top: -" not in desktop, "логотип поднят отрицательным отступом"
+    assert not re.search(r"z-index:\s*(9\d\d|\d{4,})", desktop), "оверлей с огромным z-index"
+    assert ".topbar__brand { position: absolute" not in desktop
+
+
+def test_the_mobile_drawer_is_left_untouched():
+    """Мобильная оболочка живёт в своём блоке и остаётся выезжающей панелью."""
+    css = " ".join(_shell_css().split())
+    mobile = css.split("@media (max-width: 900px)", 1)[1]
+    assert "transform: translateX(-100%)" in mobile, "панель перестала выезжать"
+    assert ".nav-toggle:checked ~ .layout .sidebar { transform: none; }" in mobile
+    assert "position: fixed" in mobile
+
+
+def test_the_sidebar_keeps_its_thin_scrollbar():
+    css = " ".join(_shell_css().split())
+    assert "scrollbar-width: thin" in css
+    assert ".sidebar::-webkit-scrollbar { width: 7px; }" in css
