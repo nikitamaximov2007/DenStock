@@ -202,11 +202,11 @@ def test_scanning_the_stored_format_still_finds_the_cell(client, make_user, env)
     assert [row["id"] for row in resp.json()["results"]] == [env["loc"].pk]
 
 
-def test_quick_actions_shows_the_operator_format(client, make_user, env):
+def test_quick_actions_hides_the_single_cell_choice(client, make_user, env):
     _login(client, make_user)
     body = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
-    assert "2-3-1" in body
-    assert "S02-D03-C01" not in body
+    assert "Ячейка списания" not in body
+    assert f'value="{env["loc"].pk}"' in body
 
 
 def test_quick_actions_still_completes_through_the_cell(client, make_user, env):

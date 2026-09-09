@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load l10n %}
 {% block title %}Действия со склада · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -64,8 +65,8 @@
                 здесь, а не в отдельном редакторе: запомненное значение
                 подставляется, ввод нужен один раз на деталь.
               {% endcomment %}
-              <th class="num--qty">Вес брутто, г</th>
-              <th class="num--qty">Вес нетто, г</th>
+              <th class="num--qty">Вес брутто, кг</th>
+              <th class="num--qty">Вес нетто, кг</th>
               <th>Область применения</th>
               <th class="num--qty">Количество</th>
               {% comment %}
@@ -94,21 +95,21 @@
                 </td>
                 <td class="num--qty">
                   <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
-                         name="gross_weight_g"
+                         name="gross_weight_kg"
                          type="text"
-                         inputmode="numeric"
+                         inputmode="decimal"
                          size="5"
-                         value="{{ item.customs.gross_weight_g|default_if_none:'' }}"
-                         aria-label="Вес брутто, г">
+                         value="{{ item.customs.gross_weight_kg|default_if_none:''|unlocalize }}"
+                         aria-label="Вес брутто, кг">
                 </td>
                 <td class="num--qty">
                   <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
-                         name="net_weight_g"
+                         name="net_weight_kg"
                          type="text"
-                         inputmode="numeric"
+                         inputmode="decimal"
                          size="5"
-                         value="{{ item.customs.net_weight_g|default_if_none:'' }}"
-                         aria-label="Вес нетто, г">
+                         value="{{ item.customs.net_weight_kg|default_if_none:''|unlocalize }}"
+                         aria-label="Вес нетто, кг">
                 </td>
                 <td>
                   <select form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
@@ -296,41 +297,46 @@
               <input type="hidden" name="action_type" value="{{ selected_action_kind }}">
               <input type="hidden" name="part_id" value="{{ overview.part.pk }}">
               <input type="hidden" name="q" value="{{ q }}">
-              {% if selected_action_kind == 'reserve' %}
+              {% if selected_action_kind == "reserve" %}
                 <input type="hidden" name="request_token" value="{{ request_token }}">
               {% endif %}
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th>Ячейка списания</th>
-                    <th class="num--qty">Физически</th>
-                    <th class="num--qty">Зарезервировано</th>
-                    <th class="num--qty">Доступно</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for row in overview.locations %}
+              {% if overview.locations|length > 1 %}
+                <table class="table">
+                  <thead>
                     <tr>
-                      <td>
-                        <label>
-                          <input type="radio"
-                                 name="location_id"
-                                 value="{{ row.location.pk }}"
-                                 {% if overview.locations|length == 1 %}checked{% endif %}
-                                 required>
-                          <span class="code-pill">{{ row.location.short_code }}</span>
-                        </label>
-                      </td>
-                      <td class="num--qty">{{ row.physical|quantity_int }}</td>
-                      <td class="num--qty">{{ row.reserved|quantity_int }}</td>
-                      <td class="num--qty">
-                        <strong>{{ row.available|quantity_int }}</strong>
-                      </td>
+                      <th>Ячейка списания</th>
+                      <th class="num--qty">Физически</th>
+                      <th class="num--qty">Зарезервировано</th>
+                      <th class="num--qty">Доступно</th>
                     </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-              {% if selected_action_kind == 'reserve' %}
+                  </thead>
+                  <tbody>
+                    {% for row in overview.locations %}
+                      <tr>
+                        <td>
+                          <label>
+                            <input type="radio"
+                                   name="location_id"
+                                   value="{{ row.location.pk }}"
+                                   required>
+                            <span class="code-pill">{{ row.location.short_code }}</span>
+                          </label>
+                        </td>
+                        <td class="num--qty">{{ row.physical|quantity_int }}</td>
+                        <td class="num--qty">{{ row.reserved|quantity_int }}</td>
+                        <td class="num--qty">
+                          <strong>{{ row.available|quantity_int }}</strong>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              {% else %}
+                <input type="hidden"
+                       name="location_id"
+                       value="{{ overview.locations.0.location.pk }}">
+              {% endif %}
+              {% if selected_action_kind == "reserve" %}
                 <p>
                   <label for="action-qty">Количество</label>
                   <br>
@@ -356,7 +362,7 @@
               {% endif %}
               <div class="form-actions">
                 <button type="submit" class="btn btn--primary">
-                  {% if selected_action_kind == 'reserve' %}
+                  {% if selected_action_kind == "reserve" %}
                     Создать резерв
                   {% else %}
                     Добавить выбранную ячейку
@@ -365,7 +371,7 @@
               </div>
             </form>
             <p class="muted">
-              {% if selected_action_kind == 'reserve' %}
+              {% if selected_action_kind == "reserve" %}
                 Резерв создаётся отдельно и удерживает доступность до отмены или
                 продажи из резерва. Сканирование до подтверждения остаток не меняет.
               {% else %}

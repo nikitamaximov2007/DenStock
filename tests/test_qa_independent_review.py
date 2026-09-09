@@ -123,7 +123,7 @@ def test_quick_action_rejects_net_heavier_than_gross(client, make_user, env):
     таможенном заказе, после чего карточку уже не сохранить."""
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="10", net_weight_g="500", application_area="КАТЕР")
+    _row(client, env, gross_weight_kg="0.010", net_weight_kg="0.500", application_area="КАТЕР")
     _complete(client)
     customs = PartCustomsInfo.objects.filter(part_type=env["part"]).first()
     assert customs is None or not (

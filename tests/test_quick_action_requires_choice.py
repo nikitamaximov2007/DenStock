@@ -11,8 +11,10 @@ import pytest
 from django.contrib.auth.models import Group
 from django.urls import reverse
 
+from apps.actions.cart import cart_rows
 from apps.actions.models import PartCustomsInfo, WarehouseAction
-from apps.actions.views import ACTION_REQUIRED_MESSAGE
+from apps.actions.services import perform_action, stock_overview
+from apps.actions.views import ACTION_REQUIRED_MESSAGE, _eligible_action_locations
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.customers.models import Customer
 from apps.inventory.models import StockMovement
@@ -208,3 +210,114 @@ def test_scanning_with_a_chosen_action_still_fills_the_cart(client, make_user, e
     client.post(reverse("actions_cart_scan"), {"kind": "sale", "q": "700100"}, follow=True)
     html = client.get(reverse("actions_scan")).content.decode()
     assert "Корзина · Продажа" in html
+
+
+# --- Выбор ячейки по доступному остатку -----------------------------------------------
+
+
+def test_one_eligible_cell_is_hidden_and_forged_location_is_ignored(client, make_user, env):
+    other = StorageLocation.objects.create(
+        name="Другая ячейка", code="S02-D03-C08", storage_allowed=True, is_active=True
+    )
+    _login(client, make_user)
+
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert "Ячейка списания" not in html
+    assert f'value="{env["loc"].pk}"' in html
+
+    response = client.post(
+        reverse("actions_cart_add"),
+        {
+            "part_id": env["part"].pk,
+            "location_id": other.pk,
+            "action_type": "sale",
+            "quantity": "1",
+            "q": "700100",
+        },
+        follow=True,
+    )
+    assert "В корзину «Продажа»" in response.content.decode()
+    cart = Sale.objects.get(status=Sale.Status.DRAFT)
+    assert cart_rows(cart)[0].location.pk == env["loc"].pk
+
+    client.post(
+        reverse("actions_perform"),
+        {
+            "part_id": env["part"].pk,
+            "location_id": other.pk,
+            "action_type": "sale",
+            "quantity": "1",
+            "customer_comment": "Клиент",
+            "q": "700100",
+        },
+    )
+    action = WarehouseAction.objects.get(action_type=WarehouseAction.Type.SALE)
+    assert action.location_id == env["loc"].pk
+
+
+def test_multiple_lots_in_one_cell_still_hide_location_choice(client, make_user, env):
+    _stock(env["part"], env["loc"], 3, env["sup"], env["admin"])
+    _login(client, make_user)
+
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert "Ячейка списания" not in html
+    eligible_ids = [row["location"].pk for row in _eligible_action_locations(env["part"])]
+    assert eligible_ids == [env["loc"].pk]
+
+
+def test_fully_reserved_cell_is_not_eligible_and_cannot_override_the_only_choice(
+    client, make_user, env
+):
+    reserved = StorageLocation.objects.create(
+        name="Зарезервированная ячейка", code="S02-D03-C08", storage_allowed=True, is_active=True
+    )
+    _stock(env["part"], reserved, 2, env["sup"], env["admin"])
+    perform_action(
+        part=env["part"],
+        location=reserved,
+        action_type=WarehouseAction.Type.RESERVE,
+        quantity="2",
+        customer_comment="Клиент",
+        by=env["admin"],
+    )
+    _login(client, make_user)
+
+    reserved_row = next(
+        row for row in stock_overview(env["part"])["locations"] if row["location"] == reserved
+    )
+    assert reserved_row["available"] == 0
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert "Ячейка списания" not in html
+    assert reserved.short_code not in html
+
+    client.post(
+        reverse("actions_cart_add"),
+        {
+            "part_id": env["part"].pk,
+            "location_id": reserved.pk,
+            "action_type": "sale",
+            "quantity": "1",
+            "q": "700100",
+        },
+    )
+    cart = Sale.objects.get(status=Sale.Status.DRAFT)
+    assert cart_rows(cart)[0].location.pk == env["loc"].pk
+
+
+def test_multiple_eligible_cells_require_an_explicit_choice(client, make_user, env):
+    other = StorageLocation.objects.create(
+        name="Вторая ячейка", code="S02-D03-C08", storage_allowed=True, is_active=True
+    )
+    _stock(env["part"], other, 1, env["sup"], env["admin"])
+    _login(client, make_user)
+
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert "Ячейка списания" in html
+    assert 'name="location_id"' in html
+
+    response = client.post(
+        reverse("actions_cart_add"),
+        {"part_id": env["part"].pk, "action_type": "sale", "quantity": "1", "q": "700100"},
+        follow=True,
+    )
+    assert "Выберите ячейку списания." in response.content.decode()

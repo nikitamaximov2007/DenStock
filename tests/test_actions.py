@@ -381,7 +381,8 @@ def test_scan_page_single_location_preselected(client, make_user, data):
     _login(client, make_user, superuser=True, name="boss")
     html = client.get(reverse("actions_scan") + "?q=700100").content.decode()
     assert "Болт одноместный" in html
-    assert 'checked' in html  # единственная ячейка выбрана сразу
+    assert "Ячейка списания" not in html  # единственная ячейка выбирается сервером
+    assert f'value="{data["loc1"].pk}"' in html
     assert "Деталь найдена в нескольких ячейках" not in html
     assert "Добавить выбранную ячейку" in html
     assert "В корзину" not in html

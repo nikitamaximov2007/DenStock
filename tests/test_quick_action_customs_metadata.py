@@ -1,9 +1,8 @@
 """Stage 4 — вес и область применения вводятся в быстрых действиях.
 
-Сотрудник держит деталь в руках и вводит вес в ГРАММАХ. Хранение остаётся
-каноническим: PartCustomsInfo.gross_weight_kg / net_weight_kg, Decimal(8,3),
-килограммы. Новых полей и переноса данных нет намеренно - три знака после
-запятой это ровно целые граммы.
+Сотрудник держит деталь в руках и вводит вес сразу в КИЛОГРАММАХ. Хранение
+остаётся каноническим: PartCustomsInfo.gross_weight_kg / net_weight_kg,
+Decimal(8,3). Новых полей и переноса данных нет.
 
 Таможенный минимум 0.03 кг применяется ТОЛЬКО в момент выгрузки. Запомненный
 фактический вес детали от него не меняется никогда.
@@ -24,10 +23,9 @@ from apps.actions.services import (
     ActionError,
     customs_export_weight_kg,
     parse_application_area,
-    parse_weight_g,
+    parse_weight_kg,
     part_export_data,
     perform_action,
-    weight_kg_as_grams,
 )
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.customers.models import Customer
@@ -133,49 +131,42 @@ def _complete(client, *, kind="sale", customer=None):
     }, follow=True)
 
 
-# --- Граммы -> килограммы: точный Decimal ------------------------------------------------
+# --- Килограммы: точный Decimal ----------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "grams,kg",
-    [("12", "0.012"), ("250", "0.250"), ("1000", "1.000"), ("30", "0.030"), ("1", "0.001")],
+    "raw,kg",
+    [("0.012", "0.012"), ("0.250", "0.250"), ("1.000", "1.000"), ("0,03", "0.03")],
 )
-def test_grams_convert_to_exact_decimal_kg(grams, kg):
-    assert parse_weight_g(grams) == Decimal(kg)
+def test_kg_input_is_exact_decimal(raw, kg):
+    assert parse_weight_kg(raw) == Decimal(kg)
 
 
-def test_grams_conversion_uses_no_float():
-    assert str(parse_weight_g("12")) == "0.012"
-    assert parse_weight_g("12") == Decimal("12") / Decimal("1000")
+def test_kg_input_uses_no_float():
+    assert str(parse_weight_kg("0.012")) == "0.012"
 
 
 def test_empty_weight_stays_unknown():
-    assert parse_weight_g("") is None
-    assert parse_weight_g(None) is None
+    assert parse_weight_kg("") is None
+    assert parse_weight_kg(None) is None
 
 
-@pytest.mark.parametrize("raw", ["0", "-5", "12.5", "abc"])
-def test_bad_grams_rejected(raw):
+@pytest.mark.parametrize("raw", ["0", "-5", "0.0001", "abc"])
+def test_bad_kg_rejected(raw):
     with pytest.raises(ValueError):
-        parse_weight_g(raw)
-
-
-def test_kg_shown_back_to_operator_in_grams():
-    assert weight_kg_as_grams(Decimal("0.012")) == 12
-    assert weight_kg_as_grams(Decimal("1.000")) == 1000
-    assert weight_kg_as_grams(None) is None
+        parse_weight_kg(raw)
 
 
 # --- Таможенный минимум только на выгрузке -----------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "grams,exported",
-    [("12", "0.03"), ("29", "0.03"), ("30", "0.03"), ("31", "0.031"),
-     ("250", "0.25"), ("1000", "1.00")],
+    "kg,exported",
+    [("0.012", "0.03"), ("0.029", "0.03"), ("0.030", "0.03"), ("0.031", "0.031"),
+     ("0.250", "0.25"), ("1.000", "1.00")],
 )
-def test_customs_minimum_applies_at_export(grams, exported):
-    assert customs_export_weight_kg(parse_weight_g(grams)) == Decimal(exported)
+def test_customs_minimum_applies_at_export(kg, exported):
+    assert customs_export_weight_kg(parse_weight_kg(kg)) == Decimal(exported)
 
 
 def test_customs_minimum_never_invents_a_weight():
@@ -234,14 +225,15 @@ def test_missing_application_is_not_invented():
 # --- Автоподстановка ---------------------------------------------------------------------
 
 
-def test_remembered_weights_are_prefilled_in_grams(client, make_user, env):
+def test_remembered_weights_are_prefilled_in_kg(client, make_user, env):
     _card(env["part"], gross_weight_kg=Decimal("0.250"), net_weight_kg=Decimal("0.200"))
     _login(client, make_user)
     _add(client, env)
     html = client.get(reverse("actions_scan")).content.decode()
-    assert 'name="gross_weight_g"' in html
-    assert 'value="250"' in html
-    assert 'value="200"' in html
+    assert 'name="gross_weight_kg"' in html
+    assert 'value="0.25"' in html or 'value="0.250"' in html
+    assert 'value="0.2"' in html or 'value="0.200"' in html
+    assert 'value="250"' not in html
 
 
 def test_remembered_application_is_preselected(client, make_user, env):
@@ -258,8 +250,8 @@ def test_unknown_metadata_stays_empty_not_invented(client, make_user, env):
     _login(client, make_user)
     _add(client, env)
     html = client.get(reverse("actions_scan")).content.decode()
-    assert 'name="gross_weight_g"\n                         type="text"' in html or (
-        'name="gross_weight_g"' in html
+    assert 'name="gross_weight_kg"\n                         type="text"' in html or (
+        'name="gross_weight_kg"' in html
     )
     assert "Не выбрано" in html
     assert not PartCustomsInfo.objects.filter(part_type=env["part"]).exists()
@@ -322,7 +314,13 @@ def test_reserve_is_not_blocked_by_missing_customs_metadata(env):
 def test_successful_sale_remembers_entered_values(client, make_user, env):
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="250", net_weight_g="200", application_area="КВАДРОЦИКЛ")
+    _row(
+        client,
+        env,
+        gross_weight_kg="0.250",
+        net_weight_kg="0.200",
+        application_area="КВАДРОЦИКЛ",
+    )
     _complete(client)
     customs = PartCustomsInfo.objects.get(part_type=env["part"])
     assert customs.gross_weight_kg == Decimal("0.250")
@@ -331,12 +329,45 @@ def test_successful_sale_remembers_entered_values(client, make_user, env):
     assert WarehouseAction.objects.count() == 1
 
 
+def test_successful_sale_remembers_comma_decimal_kg_without_export_floor(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _row(
+        client,
+        env,
+        gross_weight_kg="0,03",
+        net_weight_kg="0.012",
+        application_area="КАТЕР",
+    )
+    _complete(client)
+
+    customs = PartCustomsInfo.objects.get(part_type=env["part"])
+    assert customs.gross_weight_kg == Decimal("0.03")
+    assert customs.net_weight_kg == Decimal("0.012")
+
+
+def test_quick_action_rejects_net_weight_heavier_than_gross(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _row(
+        client,
+        env,
+        gross_weight_kg="0.012",
+        net_weight_kg="0.250",
+        application_area="КАТЕР",
+    )
+
+    response = client.get(reverse("actions_scan") + "?q=700100&kind=sale")
+    assert "Вес брутто не может быть меньше веса нетто." in response.content.decode()
+    assert not PartCustomsInfo.objects.filter(part_type=env["part"]).exists()
+
+
 def test_edited_weight_overrides_the_remembered_one(client, make_user, env):
     _card(env["part"], gross_weight_kg=Decimal("0.250"), net_weight_kg=Decimal("0.200"),
           application_area=Area.SNOWMOBILE)
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="12", net_weight_g="10", application_area="КАТЕР")
+    _row(client, env, gross_weight_kg="0.012", net_weight_kg="0.010", application_area="КАТЕР")
     _complete(client)
     customs = PartCustomsInfo.objects.get(part_type=env["part"])
     assert customs.gross_weight_kg == Decimal("0.012")
@@ -347,7 +378,7 @@ def test_edited_weight_overrides_the_remembered_one(client, make_user, env):
 def test_nothing_is_remembered_before_the_operation_succeeds(client, make_user, env):
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="250", net_weight_g="200", application_area="КАТЕР")
+    _row(client, env, gross_weight_kg="0.250", net_weight_kg="0.200", application_area="КАТЕР")
     assert not PartCustomsInfo.objects.filter(
         part_type=env["part"], gross_weight_kg=Decimal("0.250")
     ).exists()
@@ -356,7 +387,13 @@ def test_nothing_is_remembered_before_the_operation_succeeds(client, make_user, 
 def test_remembering_writes_an_immutable_version(client, make_user, env):
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="250", net_weight_g="200", application_area="СНЕГОХОД")
+    _row(
+        client,
+        env,
+        gross_weight_kg="0.250",
+        net_weight_kg="0.200",
+        application_area="СНЕГОХОД",
+    )
     _complete(client)
     version = env["part"].customs_data_versions.order_by("-version").first()
     assert version is not None
@@ -383,7 +420,13 @@ def test_legacy_null_weight_stays_null_when_operator_enters_nothing(env):
 def _completed_sale(client, make_user, env):
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="250", net_weight_g="200", application_area="СНЕГОХОД")
+    _row(
+        client,
+        env,
+        gross_weight_kg="0.250",
+        net_weight_kg="0.200",
+        application_area="СНЕГОХОД",
+    )
     _complete(client)
 
 
@@ -426,7 +469,13 @@ def test_customs_order_freezes_actual_small_weight_but_exports_the_minimum(
     _card(env["part"])
     _login(client, make_user)
     _add(client, env)
-    _row(client, env, gross_weight_g="12", net_weight_g="10", application_area="СНЕГОХОД")
+    _row(
+        client,
+        env,
+        gross_weight_kg="0.012",
+        net_weight_kg="0.010",
+        application_area="СНЕГОХОД",
+    )
     _complete(client)
     order = create_customs_order(
         number=125,

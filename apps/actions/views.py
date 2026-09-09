@@ -63,12 +63,10 @@ from .services import (
     historical_analog_customs_rows,
     historical_customs_rows,
     parse_application_area,
-    parse_weight_g,
     parse_weight_kg,
     perform_action,
     stock_overview,
     validate_weight_pair,
-    weight_kg_as_grams,
 )
 
 # Подписи источников для UI (см. part_export_data.application_source/weight_source).
@@ -134,6 +132,16 @@ def _parse_date(value):
         return None
 
 
+def _eligible_action_locations(part: PartType) -> list[dict]:
+    """Физические ячейки с доступным остатком для быстрых действий.
+
+    ``stock_overview`` остаётся единственным расчётом доступности: здесь
+    только отбрасываются его строки с нулевым остатком для выбора ячейки.
+    Несколько лотов одной ячейки уже объединены этим обзором в одну строку.
+    """
+    return [row for row in stock_overview(part)["locations"] if row["available"] > 0]
+
+
 @login_required
 def actions_scan(request):
     """Сканер действий: scan добавляет в draft, проведение отдельным submit."""
@@ -181,6 +189,8 @@ def actions_scan(request):
                 ctx["lookup_message"] = lookup.message
         part = selected_part or (lookup.candidate.part if lookup.found else None)
         overview = stock_overview(part) if part else None
+        if overview is not None:
+            overview = {**overview, "locations": _eligible_action_locations(part)}
         has_no_stock = overview and not overview["locations"] and not overview["unit_items"]
         unresolved_ambiguity = lookup.ambiguous and selected_part is None
         if not unresolved_ambiguity and (part is None or has_no_stock):
@@ -220,14 +230,14 @@ def actions_cart_scan(request):
         # сканировании.
         return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
     part = lookup.candidate.part
-    overview = stock_overview(part)
-    if not overview["locations"]:
+    locations = _eligible_action_locations(part)
+    if not locations:
         messages.error(request, NOT_FOUND_MESSAGE)
         return redirect(back)
-    if len(overview["locations"]) != 1:
+    if len(locations) != 1:
         messages.warning(request, MULTI_LOCATION_MESSAGE)
         return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
-    location = overview["locations"][0]["location"]
+    location = locations[0]["location"]
     cart = _cart_for(request, kind, create=True)
     try:
         row = add_scan(cart, part, location, by=request.user)
@@ -255,7 +265,10 @@ def actions_perform(request):
     back_params = {"q": q, "kind": action_kind}
     back = reverse("actions_scan") + f"?{urlencode(back_params)}"
     part = get_object_or_404(PartType, pk=request.POST.get("part_id"))
+    locations = _eligible_action_locations(part)
     location_id = request.POST.get("location_id")
+    if len(locations) == 1:
+        location_id = locations[0]["location"].pk
     if not location_id:
         messages.error(request, "Выберите ячейку списания.")
         return redirect(back)
@@ -414,8 +427,8 @@ def _cart_customs_context(request, kind: str, part) -> dict:
     pending = _customs_input_for(request, kind).get(part.pk)
     values = effective_customs_metadata(part, pending)
     return {
-        "gross_weight_g": weight_kg_as_grams(values["gross_weight_kg"]),
-        "net_weight_g": weight_kg_as_grams(values["net_weight_kg"]),
+        "gross_weight_kg": values["gross_weight_kg"],
+        "net_weight_kg": values["net_weight_kg"],
         "application_area": values["application_area"],
         "application_choices": [
             (str(area), area.label) for area in QUICK_ACTION_APPLICATION_AREAS
@@ -426,14 +439,14 @@ def _cart_customs_context(request, kind: str, part) -> dict:
 
 def _read_customs_input(request) -> dict | None:
     """Разобрать вес/область из POST строки корзины. None - поля не присылали."""
-    fields = ("gross_weight_g", "net_weight_g", "application_area")
+    fields = ("gross_weight_kg", "net_weight_kg", "application_area")
     if not any(field in request.POST for field in fields):
         return None
     values = {}
-    if "gross_weight_g" in request.POST:
-        values["gross_weight_kg"] = parse_weight_g(request.POST.get("gross_weight_g"))
-    if "net_weight_g" in request.POST:
-        values["net_weight_kg"] = parse_weight_g(request.POST.get("net_weight_g"))
+    if "gross_weight_kg" in request.POST:
+        values["gross_weight_kg"] = parse_weight_kg(request.POST.get("gross_weight_kg"))
+    if "net_weight_kg" in request.POST:
+        values["net_weight_kg"] = parse_weight_kg(request.POST.get("net_weight_kg"))
     if "application_area" in request.POST:
         values["application_area"] = parse_application_area(request.POST.get("application_area"))
     if "gross_weight_kg" in values and "net_weight_kg" in values:
@@ -515,7 +528,10 @@ def actions_cart_add(request):
         messages.error(request, str(exc))
         return redirect(back)
     part = get_object_or_404(PartType, pk=request.POST.get("part_id"))
+    locations = _eligible_action_locations(part)
     location_id = request.POST.get("location_id")
+    if len(locations) == 1:
+        location_id = locations[0]["location"].pk
     if not location_id:
         messages.error(request, "Выберите ячейку списания.")
         return redirect(back)
