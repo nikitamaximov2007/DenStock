@@ -22,6 +22,7 @@ from apps.returns.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 
 @pytest.fixture
@@ -40,6 +41,7 @@ def repair_data(db, django_user_model):
             tracking_mode=PartType.TrackingMode.BULK,
             recommended_price=Decimal(price) if price is not None else None,
         )
+        remember_customs(part)
         batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
         line = BatchLine.objects.create(
             batch=batch,
@@ -59,6 +61,7 @@ def repair_data(db, django_user_model):
 
 
 def _completed(user, lot, quantity, *, price=None):
+    remember_customs(lot.part_type)
     order = create_repair_order(customer_name="Клиент", by=user)
     add_stock_lot_to_repair_order(
         order, lot, Decimal(quantity), customer_unit_price_rub=price, by=user

@@ -75,6 +75,7 @@ from apps.writeoffs.services import (
     complete_write_off,
     create_write_off,
 )
+from tests.customs_support import remember_customs
 
 
 @pytest.fixture
@@ -492,6 +493,7 @@ def test_reservation_blocks_ready_and_location_lock_blocks_movement_receiving(ce
 
 
 def test_cell_lock_blocks_reservation_sale_writeoff_and_inventory(cell_data):
+    remember_customs(cell_data["part"])
     doc = create_cell_recount(location=cell_data["location"], by=cell_data["admin"])
     reservation = create_reservation(customer_name="Новый клиент", by=cell_data["admin"])
     with pytest.raises((ReservationError, InventoryError), match="заблокирована"):

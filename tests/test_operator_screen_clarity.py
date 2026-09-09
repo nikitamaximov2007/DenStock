@@ -29,6 +29,7 @@ from apps.repairs.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 NUMBER = "3211173"
@@ -152,6 +153,7 @@ def test_repair_list_names_the_cost_for_what_it_is(stock, client, admin):
     руководитель примет складскую себестоимость за выручку.
     """
     _login(client, admin)
+    remember_customs(stock["lot"].part_type)
     order = create_repair_order(customer=None, customer_name="Иванов", by=admin)
     add_stock_lot_to_repair_order(order, stock["lot"], Decimal("2"), by=admin)
     complete_repair_order(order, by=admin)
@@ -170,6 +172,7 @@ def test_the_repair_cost_field_itself_is_untouched(stock, admin):
     """Исправлена подпись, а не учёт: поле и его значение прежние."""
     from apps.repairs.models import RepairOrder
 
+    remember_customs(stock["lot"].part_type)
     order = create_repair_order(customer=None, customer_name="Иванов", by=admin)
     add_stock_lot_to_repair_order(order, stock["lot"], Decimal("2"), by=admin)
     order = complete_repair_order(order, by=admin)

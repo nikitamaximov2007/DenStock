@@ -44,6 +44,7 @@ from apps.reports.services import Period, get_clients_sales_and_repairs
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 SHEET = "Лист1"
@@ -107,11 +108,14 @@ def _receive(env, part, quantity="10", unit_cost="100"):
 
 def _sell(env, lot, quantity="2", price="500", customer="Петров"):
     """Продажа обычным документом: снимка артикула у неё нет."""
-    sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
-    add_stock_lot_to_sale(
-        sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
-    )
-    return complete_sale(sale, by=env["admin"])
+    # Историческая продажа: карточка дозаполняется только на время
+    # проведения, проверяемое происхождение строки от этого не меняется.
+    with legacy_customs_completion(lot.part_type):
+        sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
+        add_stock_lot_to_sale(
+            sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
+        )
+        return complete_sale(sale, by=env["admin"])
 
 
 def _scanner_sell(env, part, *, quantity="2", number="", customer="Петров"):
@@ -120,10 +124,13 @@ def _scanner_sell(env, part, *, quantity="2", number="", customer="Петров"
     Именно так столкновение артикулов и выглядит на производстве: обе строки
     названы одним номером, и только происхождение их различает.
     """
-    return perform_action(
-        part=part, location=env["loc"], action_type="sale", quantity=quantity,
-        customer_comment=customer, scanned_number=number or "", by=env["admin"],
-    )
+    # Историческая продажа: карточка дозаполняется только на время
+    # проведения, проверяемое происхождение строки от этого не меняется.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=env["loc"], action_type="sale", quantity=quantity,
+            customer_comment=customer, scanned_number=number or "", by=env["admin"],
+        )
 
 
 def _customer(name="Иванов Иван"):

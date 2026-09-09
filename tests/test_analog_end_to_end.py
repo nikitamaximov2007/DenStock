@@ -30,6 +30,7 @@ from apps.returns.services import add_sale_line_return, complete_return, create_
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 SAME = "420123456"
@@ -50,6 +51,7 @@ def scene(db, admin):
         name="Поршень XYZ", article=SAME, price=Decimal("4500"), manufacturer_name="XYZ"
     )
     link_analog(original=original, analog=analog, by=admin)
+    remember_customs(analog)
     shelf = StorageLocation.objects.create(
         name="Ячейка", code="S02-D03-C01", storage_allowed=True, is_active=True
     )

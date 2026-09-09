@@ -46,6 +46,7 @@ from apps.sales.models import Reservation, Sale
 from apps.sales.services import cancel_reservation
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 
@@ -557,8 +558,14 @@ def test_export_xlsx_structure(client, make_user, data):
 
 
 def test_report_page_shows_warnings_and_export_button(client, make_user, data):
-    perform_action(part=data["single"], location=data["loc1"], action_type="sale",
-                   quantity="1", customer_comment="Иванов", by=data["admin"])
+    # Расход по неполной карточке: веса брутто в версии на момент продажи нет.
+    # Провести такую продажу сегодня можно, только дозаполнив карточку на время
+    # проведения; сама историческая версия при этом остаётся неполной, и именно
+    # её читает отчёт.
+    card = _card(data["single"], gross_weight_kg=None)
+    with legacy_customs_completion(data["single"]):
+        perform_action(part=data["single"], location=data["loc1"], action_type="sale",
+                       quantity="1", customer_comment="Иванов", by=data["admin"])
     _login(client, make_user, superuser=True, name="boss")
     html = client.get(reverse("actions_report")).content.decode()
     # Новая продажа проводится только с полной карточкой, но сама ссылка
@@ -567,7 +574,6 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
     assert "Экспорт заблокирован" not in html
 
     # Неполная карточка выгрузку не отменяет: причина названа, кнопка осталась.
-    card = _card(data["single"], gross_weight_kg=None)
     html = client.get(reverse("actions_report")).content.decode()
     assert "Экспорт в Excel для таможни" in html
     assert "нет веса брутто" in html

@@ -30,6 +30,7 @@ from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import get_or_create_location
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 HEADERS = ["part_number", "part_name", "superseded_number", "ОПТОВАЯ", "РОЗНИЦА", "uom"]
@@ -211,6 +212,7 @@ def test_actions_sale_polaris_snapshots_exact_number_and_manufacturer(db, admin)
         superseded_number="420931284", wholesale_price_usd=Decimal("24.49"),
     )
     part = promote_to_warehouse(polaris, by=admin)
+    remember_customs(part)
     location = StorageLocation.objects.create(
         name="Ячейка", code="S04-L03-D01-C04", storage_allowed=True, is_active=True
     )
@@ -239,6 +241,7 @@ def test_actions_polaris_price_source_does_not_replace_identity(db, admin):
         superseded_number="250000059", wholesale_price_usd=Decimal("4.19"),
     )
     part = promote_to_warehouse(exact, by=admin, manual_price=Decimal("616"))
+    remember_customs(part)
     location = StorageLocation.objects.create(
         name="Ячейка", code="S01-L01-D01-C01", storage_allowed=True, is_active=True
     )
@@ -263,7 +266,7 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
     таможенная цена по утверждённому контракту берётся из оптовой колонки
     прайса; розница и жёстко зашитая CANADA сюда не подставляются.
     """
-    from apps.actions.models import PartCustomsInfo
+    from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 
     polaris = PolarisCatalogPart.objects.create(
         part_number="420931285", part_name="OIL SEAL", retail_price_usd=Decimal("24.49"),
@@ -279,6 +282,7 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
         name="Ячейка", code="S04-L03-D01-C04", storage_allowed=True, is_active=True
     )
     _stock(part, location, admin, qty="5")
+    remember_customs(part)
     perform_action(
         part=part,
         location=location,
@@ -288,6 +292,10 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
         scanned_number="420931285",
         by=admin,
     )
+    # Имитируем старую проведённую продажу до H1: историческая карточка могла
+    # не содержать применимость, а read-only экспорт обязан её пережить.
+    PartCustomsInfo.objects.filter(part_type=part).update(application_area="")
+    PartCustomsDataVersion.objects.filter(part_type=part).update(application_area="")
     sheet = openpyxl.load_workbook(
         export_customs_xlsx(rows=historical_customs_rows())
     )["Лист1"]

@@ -28,6 +28,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 EXACT = "512061507"
 RELATED_A = "512060448"
@@ -37,6 +38,7 @@ PASSWORD = "exact-action-pass"
 
 
 def _stock(*, part, location, supplier, quantity, by):
+    remember_customs(part)
     batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
         batch=batch,

@@ -49,6 +49,7 @@ from apps.repairs.services import cancel_repair_order
 from apps.sales.models import Sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 SHEET = "Лист1"
@@ -148,12 +149,13 @@ def _edit(card, **changes):
 
 
 def _sell(env, part, *, quantity="1", number=""):
-    return perform_action(
-        part=part, location=env["loc"], action_type="sale", quantity=quantity,
-        customer_comment="Иванов", scanned_number=number, by=env["admin"],
-    )
-
-
+    # Историческая продажа/выдача: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=env["loc"], action_type="sale", quantity=quantity,
+            customer_comment="Иванов", scanned_number=number, by=env["admin"],
+        )
 def _return(env, action, quantity, *, restock=None):
     """Настоящий клиентский возврат по строке продажи - тот же путь, что в UI.
 

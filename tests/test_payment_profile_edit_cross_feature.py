@@ -28,6 +28,7 @@ from apps.returns.services import add_sale_line_return, complete_return, create_
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -68,8 +69,10 @@ def stock(admin):
 
 def _sale(stock, customer, admin, quantity=1, price="500"):
     sale = create_sale(customer=customer, by=admin)
+    lot = stock["lot"]()
+    remember_customs(lot.part_type)
     add_stock_lot_to_sale(
-        sale, stock["lot"](), Decimal(str(quantity)), unit_price=Decimal(price), by=admin
+        sale, lot, Decimal(str(quantity)), unit_price=Decimal(price), by=admin
     )
     return complete_sale(sale, by=admin)
 

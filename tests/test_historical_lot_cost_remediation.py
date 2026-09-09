@@ -21,6 +21,7 @@ from apps.repairs.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 
 @pytest.fixture
@@ -61,6 +62,7 @@ def bad_lot(db, django_user_model):
     lot.landed_unit_cost_rub = Decimal("0")
     lot.save(update_fields=["landed_unit_cost_rub"])
     receive_stock_lot(lot, by=user)
+    remember_customs(lot.part_type)
     orders = []
     for quantity in ("2", "4"):
         order = create_repair_order(customer_name="Клиент", by=user)

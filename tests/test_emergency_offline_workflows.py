@@ -29,7 +29,7 @@ from apps.stocktaking.section_recount import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
-from tests.customs_support import remember_cart_customs
+from tests.customs_support import remember_cart_customs, remember_customs
 
 
 @pytest.mark.django_db
@@ -87,6 +87,7 @@ def test_core_warehouse_workflow_operates_on_active_offline_database(django_user
     reservation = activate_reservation(reservation, by=user)
     assert reservation.status == Reservation.Status.ACTIVE
     sale = create_sale_from_reservation(reservation, by=user)
+    remember_customs(lot.part_type)
     sale = complete_sale(sale, by=user)
     lot.refresh_from_db()
     assert sale.status == Sale.Status.COMPLETED

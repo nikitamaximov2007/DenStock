@@ -30,7 +30,7 @@ from apps.sales.models import Sale, SaleLine
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import get_or_create_location
-from tests.customs_support import remember_cart_customs
+from tests.customs_support import remember_cart_customs, remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -64,6 +64,7 @@ def _part(env, *, name="ПОРШЕНЬ", article="01.1395.100", price="13100"):
 
 
 def _stock(env, part, quantity="5", unit_cost="100"):
+    remember_customs(part)
     batch = Batch.objects.create(supplier=env["supplier"], shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
         batch=batch, part_type=part,

@@ -60,6 +60,7 @@ from apps.writeoffs.services import (
     complete_write_off,
     create_write_off,
 )
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -142,6 +143,7 @@ def _plain_part(env, *, name, numbers=(), qty=0):
 
 def _sold(env, positions):
     """Проведённая продажа: positions = [(lot, qty)]."""
+    remember_customs(*[lot.part_type for lot, _quantity in positions])
     sale = create_sale(customer_name="Иванов", by=env["admin"])
     for lot, qty in positions:
         add_stock_lot_to_sale(
@@ -504,6 +506,7 @@ def test_repair_shows_identity(client, make_user, env):
     part, lot = _brp(env, material="219800345", desc="BELT DRIVE")
     order = create_repair_order(customer_name="Клиент", by=env["admin"])
     add_stock_lot_to_repair_order(order, lot, Decimal("1"), by=env["admin"])
+    remember_customs(part)
     order = complete_repair_order(order, by=env["admin"])
     _login(client, make_user)
     _assert_identity_table(
@@ -681,6 +684,7 @@ def test_customs_export_unchanged(client, make_user, env):
 
 def test_scanner_success_message_contains_identity(client, make_user, env):
     part, _ = _brp(env, material="219800345", desc="BELT DRIVE")
+    remember_customs(part)
     _login(client, make_user)
     resp = client.post(
         reverse("actions_perform"),

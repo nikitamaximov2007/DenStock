@@ -35,6 +35,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 SHEET = "Лист1"
@@ -119,12 +120,13 @@ def _polaris(
 
 
 def _sell(env, part, *, qty="1", number="", comment="Иванов", location=None):
-    return perform_action(
-        part=part, location=location or env["loc"], action_type="sale",
-        quantity=qty, customer_comment=comment, scanned_number=number, by=env["admin"],
-    )
-
-
+    # Историческая продажа/выдача: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=location or env["loc"], action_type="sale",
+            quantity=qty, customer_comment=comment, scanned_number=number, by=env["admin"],
+        )
 def _login(client, make_user, *, superuser=True, name="boss"):
     make_user(name, is_superuser=superuser)
     client.login(username=name, password=PASSWORD)

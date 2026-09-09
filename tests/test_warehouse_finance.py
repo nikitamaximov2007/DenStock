@@ -38,6 +38,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation, ValuationSettings
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -71,6 +72,7 @@ def env(db, admin):
 
 
 def _stock(part, location, qty, sup, admin):
+    remember_customs(part)
     batch = Batch.objects.create(supplier=sup, shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
         batch=batch, part_type=part, quantity=Decimal(str(qty)),

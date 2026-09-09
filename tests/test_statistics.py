@@ -36,6 +36,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -220,6 +221,7 @@ def test_backdated_movements_become_stale_and_leave_activity(data):
 
 
 def test_completed_sale_appears_in_movers(data):
+    remember_customs(data["lot"].part_type)
     sale = create_sale(customer_name="Иван", by=data["admin"])
     add_stock_lot_to_sale(
         sale, data["lot"], Decimal("2"), unit_price=Decimal("300"), by=data["admin"]

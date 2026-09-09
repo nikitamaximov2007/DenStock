@@ -36,6 +36,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 AREA = PartCustomsInfo.ApplicationArea
@@ -109,16 +110,17 @@ def _plain_part(env, *, name="Деталь склада", number="700100"):
 
 
 def _sell(env, part, quantity="1"):
-    return perform_action(
-        part=part,
-        location=env["location"],
-        action_type="sale",
-        quantity=quantity,
-        customer_comment="Иванов",
-        by=env["admin"],
-    )
-
-
+    # Историческая продажа/выдача: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part,
+            location=env["location"],
+            action_type="sale",
+            quantity=quantity,
+            customer_comment="Иванов",
+            by=env["admin"],
+        )
 def _login(client, user):
     client.login(username=user.username, password=PASSWORD)
 

@@ -36,6 +36,7 @@ from apps.sales.models import Sale
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation, ValuationSettings
+from tests.customs_support import remember_customs
 
 MANUAL_PRICE = Decimal("138496")
 
@@ -82,6 +83,7 @@ def _refresh():
 
 
 def _stock(env, part, qty="4"):
+    remember_customs(part)
     batch = Batch.objects.create(supplier=env["supplier"], shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(
         batch=batch, part_type=part, quantity=Decimal(qty), unit_cost_currency=Decimal("1")

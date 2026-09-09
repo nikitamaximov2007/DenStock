@@ -27,6 +27,7 @@ from apps.procurement.services import finalize_cost
 from apps.sales.services import complete_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -60,6 +61,7 @@ def data(db, django_user_model):
 
 def _stale_cart_session(client, data):
     """Корзина в сессии, документ уже проведён другим путём."""
+    remember_customs(data["part"])
     cart = open_cart(KIND_SALE, by=data["admin"])
     add_scan(cart, data["part"], data["location"], quantity=Decimal("2"), by=data["admin"])
     session = client.session

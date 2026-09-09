@@ -37,6 +37,7 @@ from apps.repairs.services import (
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 ROOT = Path(__file__).resolve().parents[1]
 PASSWORD = "parol-12345"
@@ -49,6 +50,7 @@ DEVELOPER_WORDS = (
     "NoReverseMatch",
     "ValidationError",
 )
+
 TEMPLATE_LEFTOVERS = ("{#", "{%", "{{")
 
 
@@ -101,6 +103,7 @@ def warehouse(db, make_user):
         receive_stock_lot(lot, by=admin)
         lots[part.name] = lot
 
+    remember_customs(*[lot.part_type for lot in lots.values()])
     customer = Customer.objects.create(name="Иванов Пётр")
     sale = create_sale(customer=customer, customer_name="", by=admin)
     add_stock_lot_to_sale(

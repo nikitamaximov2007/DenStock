@@ -16,6 +16,7 @@ from apps.procurement.services import finalize_cost
 from apps.sales.models import SaleLine
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 
 @pytest.fixture
@@ -34,6 +35,7 @@ def wholesale_price_data(db, django_user_model):
         wholesale_price_usd=Decimal("10"),
     )
     part = promote_to_warehouse(brp, by=user)
+    remember_customs(part)
     supplier = Supplier.objects.create(name="Поставщик пересчёта цен")
     batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
     line = BatchLine.objects.create(

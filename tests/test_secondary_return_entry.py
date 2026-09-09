@@ -37,6 +37,7 @@ from apps.returns.services import (
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 # Подписи различаются потому, что различаются сами возможности: у продажи
@@ -95,6 +96,7 @@ def data(db, admin):
 
 
 def _sale(data, quantity=2, *, complete=True):
+    remember_customs(data["part"])
     sale = create_sale(customer_name="Иванов", by=data["admin"])
     add_stock_lot_to_sale(
         sale, data["lot"], Decimal(str(quantity)), unit_price=Decimal("500"), by=data["admin"]
@@ -105,6 +107,7 @@ def _sale(data, quantity=2, *, complete=True):
 
 
 def _repair(data, quantity=2, *, complete=True):
+    remember_customs(data["part"])
     order = create_repair_order(customer_name="Иванов", by=data["admin"])
     add_stock_lot_to_repair_order(
         order,

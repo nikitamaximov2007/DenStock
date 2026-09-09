@@ -59,6 +59,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 SHEET = "Лист1"
@@ -147,27 +148,33 @@ def _card(part, **overrides):
 
 
 def _scanner_sale(env, part, *, quantity="1", number="", customer="Иванов"):
-    return perform_action(
-        part=part, location=env["loc"], action_type="sale", quantity=quantity,
-        customer_comment=customer, scanned_number=number, by=env["admin"],
-    )
-
+    # Историческая операция: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=env["loc"], action_type="sale", quantity=quantity,
+            customer_comment=customer, scanned_number=number, by=env["admin"],
+        )
 
 def _scanner_repair(env, part, *, quantity="1", number="", customer="Кузнецов"):
-    return perform_action(
-        part=part, location=env["loc"], action_type="repair", quantity=quantity,
-        customer_comment=customer, scanned_number=number, by=env["admin"],
-    )
-
+    # Историческая операция: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=env["loc"], action_type="repair", quantity=quantity,
+            customer_comment=customer, scanned_number=number, by=env["admin"],
+        )
 
 def _document_sale(env, lot, *, quantity="1", price="500", customer="Петров"):
     """Продажа обычным документом: без сканера и, значит, без снимка артикула."""
-    sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
-    add_stock_lot_to_sale(
-        sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
-    )
-    return complete_sale(sale, by=env["admin"])
-
+    # Историческая операция: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(lot.part_type):
+        sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
+        add_stock_lot_to_sale(
+            sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
+        )
+        return complete_sale(sale, by=env["admin"])
 
 def _document_repair(env, lot, *, quantity="1", price="700", customer="Сидоров"):
     """Ремонт обычным документом. ``price=None`` - легаси-строка без снимка цены.
@@ -176,16 +183,18 @@ def _document_repair(env, lot, *, quantity="1", price="700", customer="Сидо�
     текущую цену каталога, а исторические строки писались до того, как поле
     вообще появилось.
     """
-    order = create_repair_order(customer_name=customer, by=env["admin"])
-    line = add_stock_lot_to_repair_order(
-        order, lot, Decimal(quantity),
-        customer_unit_price_rub=None if price is None else Decimal(price), by=env["admin"],
-    )
-    if price is None:
-        line.customer_unit_price_rub = None
-        line.save(update_fields=["customer_unit_price_rub"])
-    return complete_repair_order(order, by=env["admin"])
-
+    # Историческая операция: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(lot.part_type):
+        order = create_repair_order(customer_name=customer, by=env["admin"])
+        line = add_stock_lot_to_repair_order(
+            order, lot, Decimal(quantity),
+            customer_unit_price_rub=None if price is None else Decimal(price), by=env["admin"],
+        )
+        if price is None:
+            line.customer_unit_price_rub = None
+            line.save(update_fields=["customer_unit_price_rub"])
+        return complete_repair_order(order, by=env["admin"])
 
 def _return_sale(env, sale, quantity, *, restock=None, to_location=None):
     line = sale.lines.first()

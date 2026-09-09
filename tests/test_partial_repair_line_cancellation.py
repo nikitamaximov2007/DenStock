@@ -41,6 +41,7 @@ from apps.returns.models import StockReturnLine
 from apps.returns.services import add_repair_line_return, complete_return, create_return
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -85,6 +86,7 @@ def env(db, admin):
         recommended_price=Decimal("900"),
     )
     PartNumber.objects.create(part=part, value="REPAIR-001", is_primary=True)
+    remember_customs(part)
     cheap = create_stock_lot(
         _batch_line(supplier, part, admin, quantity="10", unit_cost="600"),
         first,
@@ -111,6 +113,7 @@ def env(db, admin):
 
 
 def _repair(env, *, quantity="4", customer=None, lot=None, customer_price="1000"):
+    remember_customs(env["part"])
     order = create_repair_order(customer_name="Иванов", customer=customer, by=env["admin"])
     add_stock_lot_to_repair_order(
         order,
@@ -261,6 +264,7 @@ def test_reason_author_and_serial_quantity_are_validated(env):
     receive_part_item(item, to_location=env["second"], by=env["admin"])
     serial_order = create_repair_order(customer_name="Петров", by=env["admin"])
     serial_line = add_part_item_to_repair_order(serial_order, item, by=env["admin"])
+    remember_customs(serial)
     complete_repair_order(serial_order, by=env["admin"])
     with pytest.raises(RepairError):
         cancel_repair_line_quantity(

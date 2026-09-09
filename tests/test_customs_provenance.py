@@ -48,6 +48,7 @@ from apps.returns.services import add_sale_line_return, complete_return, create_
 from apps.sales.services import cancel_sale, cancel_sale_line_quantity
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 ApplicationArea = PartCustomsInfo.ApplicationArea
@@ -119,19 +120,21 @@ def _card(part, **overrides):
 
 
 def _sell(env, part, *, quantity="5", number="219800345"):
-    return perform_action(
-        part=part, location=env["loc"], action_type="sale", quantity=quantity,
-        customer_comment="Иванов", scanned_number=number, by=env["admin"],
-    )
-
-
+    # Историческая продажа/выдача: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=env["loc"], action_type="sale", quantity=quantity,
+            customer_comment="Иванов", scanned_number=number, by=env["admin"],
+        )
 def _issue(env, part, *, quantity="4", number="219800345"):
-    return perform_action(
-        part=part, location=env["loc"], action_type="repair", quantity=quantity,
-        customer_comment="Сидоров", scanned_number=number, by=env["admin"],
-    )
-
-
+    # Историческая продажа/выдача: веса и применимости у неё может не быть.
+    # Карточка дозаполняется только на время проведения.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=env["loc"], action_type="repair", quantity=quantity,
+            customer_comment="Сидоров", scanned_number=number, by=env["admin"],
+        )
 def _outbound():
     from apps.actions.customs_provenance import OUTBOUND_TYPES
 
@@ -145,14 +148,17 @@ def _returns():
 
 
 def _document_sale(env, lot, *, quantity="1", price="500", customer="Петров"):
-    """Продажа обычным документом - без сканера и, значит, без снимка артикула."""
-    from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
+    # Историческая продажа обычным документом: карточка дозаполняется
+    # только на время проведения.
+    with legacy_customs_completion(lot.part_type):
+        """Продажа обычным документом - без сканера и, значит, без снимка артикула."""
+        from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 
-    sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
-    add_stock_lot_to_sale(
-        sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
-    )
-    return complete_sale(sale, by=env["admin"])
+        sale = create_sale(customer=None, customer_name=customer, by=env["admin"])
+        add_stock_lot_to_sale(
+            sale, lot, Decimal(quantity), unit_price=Decimal(price), by=env["admin"]
+        )
+        return complete_sale(sale, by=env["admin"])
 
 
 def _return_sale(env, action, quantity):

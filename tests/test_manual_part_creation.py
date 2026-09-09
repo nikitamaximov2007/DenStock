@@ -43,6 +43,7 @@ from apps.returns.services import add_sale_line_return, complete_return, create_
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 CREATE_URL = "part_create"
@@ -444,6 +445,7 @@ def test_the_new_part_goes_all_the_way_through_receipt_and_sale(boss, make_user,
     lot = create_stock_lot(line, location, Decimal("4"))
     receive_stock_lot(lot, by=admin)
 
+    remember_customs(lot.part_type)
     sale = create_sale(customer=None, customer_name="Иванов", by=admin)
     add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("4500"), by=admin)
     sale = complete_sale(sale, by=admin)
@@ -468,6 +470,7 @@ def test_the_new_part_goes_all_the_way_through_receipt_and_repair(boss, make_use
     lot = _receive(part, admin, quantity="4", unit_cost="1000")
 
     customer = Customer.objects.create(name="Иванов")
+    remember_customs(lot.part_type)
     order = create_repair_order(customer=customer, customer_name="", by=admin)
     add_stock_lot_to_repair_order(order, lot, Decimal("2"), by=admin)
     order = complete_repair_order(order, by=admin)
@@ -494,6 +497,7 @@ def test_a_returned_manual_part_comes_back_to_the_shelf(boss, make_user, db):
     admin = make_user("vozvrat-boss", is_superuser=True)
     lot = _receive(part, admin, quantity="5", unit_cost="1000")
 
+    remember_customs(lot.part_type)
     sale = create_sale(customer=None, customer_name="Иванов", by=admin)
     add_stock_lot_to_sale(sale, lot, Decimal("3"), unit_price=Decimal("4500"), by=admin)
     sale = complete_sale(sale, by=admin)
@@ -532,6 +536,7 @@ def test_changing_the_catalog_price_later_leaves_a_past_repair_alone(boss, make_
     lot = _receive(part, admin, quantity="4", unit_cost="1000")
 
     customer = Customer.objects.create(name="Иванов")
+    remember_customs(lot.part_type)
     order = create_repair_order(customer=customer, customer_name="", by=admin)
     add_stock_lot_to_repair_order(order, lot, Decimal("1"), by=admin)
     order = complete_repair_order(order, by=admin)

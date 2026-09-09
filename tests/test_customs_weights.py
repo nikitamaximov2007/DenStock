@@ -37,6 +37,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import legacy_customs_completion
 
 PASSWORD = "parol-12345"
 SHEET = "Лист1"
@@ -121,10 +122,14 @@ def _polaris(
 
 
 def _sell(env, part, *, qty="1", number="", comment="Иванов", location=None):
-    return perform_action(
-        part=part, location=location or env["loc"], action_type="sale",
-        quantity=qty, customer_comment=comment, scanned_number=number, by=env["admin"],
-    )
+    # Эти тесты проверяют выгрузку по исторической продаже, у которой веса и
+    # применимости может не быть вовсе. Карточка на время проведения
+    # дозаполняется и сразу возвращается в прежнее состояние.
+    with legacy_customs_completion(part):
+        return perform_action(
+            part=part, location=location or env["loc"], action_type="sale",
+            quantity=qty, customer_comment=comment, scanned_number=number, by=env["admin"],
+        )
 
 
 def _login(client, make_user, *, superuser=True, name="boss"):
@@ -309,7 +314,9 @@ def test_tiny_weight_not_rounded_to_zero(client, make_user, env):
     детали при этом остаётся ровно тем, что ввёл сотрудник.
     """
     part, _ = _brp(env, material="219800345", customs=False)
-    _customs(part, gross_weight_kg=Decimal("0.001"))
+    # Нетто не может быть тяжелее брутто: пара проверяется при проведении.
+    # Для этого теста важен сам крошечный вес, а не разница между ними.
+    _customs(part, gross_weight_kg=Decimal("0.001"), net_weight_kg=Decimal("0.001"))
     _sell(env, part, number="219800345")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
