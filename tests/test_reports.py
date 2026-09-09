@@ -63,6 +63,7 @@ from apps.writeoffs.services import (
     complete_write_off,
     create_write_off,
 )
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -133,6 +134,7 @@ def data(db, admin):
     receive_stock_lot(lot_wo, by=admin)
     lot_inv = create_stock_lot(_finalized_line(sup, bulk, admin, qty="10"), loc, Decimal("5"))
     receive_stock_lot(lot_inv, by=admin)
+    remember_customs(serial, bulk)
 
     # Продажа: item_a (500) + lot_sale × 2 (200) → выручка 900, себест. 328, прибыль 572.
     sale = create_sale(customer_name="Покупатель", by=admin)
