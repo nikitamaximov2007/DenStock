@@ -560,6 +560,11 @@ def complete_sale(sale, *, by=None) -> Sale:
     lines = list(sale.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise SaleError("Нельзя завершить пустую продажу.")
+    from apps.actions.services import ActionError, require_customs_metadata
+    try:
+        require_customs_metadata([line.part_type for line in lines])
+    except ActionError as exc:
+        raise SaleError(str(exc)) from exc
 
     own_reservation = None
     if sale.reservation_id:

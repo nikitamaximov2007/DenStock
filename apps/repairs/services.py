@@ -215,6 +215,11 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
     lines = list(order.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise RepairError("Нельзя провести пустой заказ.")
+    from apps.actions.services import ActionError, require_customs_metadata
+    try:
+        require_customs_metadata([line.part_type for line in lines])
+    except ActionError as exc:
+        raise RepairError(str(exc)) from exc
 
     now = timezone.now()
     for line in lines:

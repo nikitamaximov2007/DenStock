@@ -319,14 +319,7 @@ def _perform_action_atomic(
         raise ActionError("Укажите клиента или комментарий.")
     quantity = parse_quantity(quantity)
     if action_type in {WarehouseAction.Type.SALE, WarehouseAction.Type.REPAIR}:
-        customs = read_customs(part)
-        gaps = customs_metadata_gaps(
-            gross_weight_kg=customs.gross_weight_kg,
-            net_weight_kg=customs.net_weight_kg,
-            application_area=customs.application_area,
-        )
-        if gaps:
-            raise ActionError("Для таможенной формы не хватает данных: " + ", ".join(gaps) + ".")
+        require_customs_metadata([part])
     token = _request_token(request_token)
     if token:
         existing = WarehouseAction.objects.filter(request_token=token).first()
@@ -1201,6 +1194,27 @@ def customs_metadata_gaps(
     if not (application_area or "").strip():
         gaps.append("не выбрана область применения")
     return gaps
+
+
+def require_customs_metadata(parts) -> None:
+    """Fail closed before a new Sale/Repair can become a customs source."""
+    missing = []
+    for part in {part.pk: part for part in parts}.values():
+        customs = read_customs(part)
+        try:
+            validate_weight_pair(customs.gross_weight_kg, customs.net_weight_kg)
+        except ValueError as exc:
+            missing.append(f"{part.name}: {exc}")
+            continue
+        gaps = customs_metadata_gaps(
+            gross_weight_kg=customs.gross_weight_kg,
+            net_weight_kg=customs.net_weight_kg,
+            application_area=customs.application_area,
+        )
+        if gaps:
+            missing.append(f"{part.name}: {', '.join(gaps)}")
+    if missing:
+        raise ActionError("Для таможенной формы не хватает данных. " + ". ".join(missing))
 
 
 def parse_customs_usd(raw) -> Decimal | None:

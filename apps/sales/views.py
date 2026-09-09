@@ -7,11 +7,13 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
+from apps.actions.models import PartCustomsInfo
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
     attach_document_composition,
@@ -438,9 +440,24 @@ def sale_remove_line(request, pk):
 def sale_complete(request, pk):
     _require_sales(request)
     sale = get_object_or_404(Sale, pk=pk)
+    lines = list(sale.lines.select_related("part_type").all())
+    from apps.actions.completion_workflow import missing_parts, save_completion_metadata
+    missing = missing_parts([line.part_type for line in lines])
+    if missing and not request.POST.get("metadata_submit"):
+        return render(request, "actions/completion_customs_metadata.html", {
+            "entries": missing, "application_choices": [
+                (value, label) for value, label in PartCustomsInfo.ApplicationArea.choices
+                if value in {"ГИДРОЦИКЛ", "КВАДРОЦИКЛ", "СНЕГОХОД", "ЛОДОЧНЫЙ МОТОР", "КАТЕР"}],
+            "back": request.path,
+        })
     try:
-        complete_sale(sale, by=request.user)
-    except SaleError as exc:
+        with transaction.atomic():
+            if request.POST.get("metadata_submit"):
+                save_completion_metadata(
+                    request.POST, [line.part_type for line in lines], by=request.user
+                )
+            complete_sale(sale, by=request.user)
+    except (SaleError, ValueError) as exc:
         messages.error(request, str(exc))
     else:
         messages.success(request, f"Продажа {sale.number} проведена.")
