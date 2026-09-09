@@ -53,7 +53,7 @@
         <th>Место</th>
         <td>
           {% if item.current_location %}
-            {{ item.current_location.full_path }}
+            {{ item.current_location.short_code }}
           {% else %}
             ·
           {% endif %}

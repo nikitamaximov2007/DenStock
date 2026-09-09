@@ -112,6 +112,13 @@ def _login(client, moved):
     client.force_login(moved["boss"])
 
 
+def _card(body):
+    """Верхняя карточка страницы: всё до таблицы истории движений."""
+    marker = "Откуда"
+    assert marker in body, "на странице нет истории движений"
+    return body.split(marker, 1)[0]
+
+
 def _history(body):
     """Только таблица истории движений.
 
@@ -234,3 +241,76 @@ def test_a_renamed_cell_still_shows_both_addresses_in_short_form(client, moved):
     assert "2-1-9" in body, "текущий адрес не показан в коротком виде"
     assert TO_CODE not in body
     assert "S02-D01-C09" not in body
+
+
+# --- Поле «Место» на карточках лота и экземпляра ------------------------------------------
+
+
+def test_item_card_shows_the_operator_address(client, moved):
+    """Главное поле «где деталь» читается так же, как история под ним."""
+    _login(client, moved)
+    card = _card(client.get(reverse("item_detail", args=[moved["item"].pk])).content.decode())
+    assert TO_SHORT in card, "карточка экземпляра не показывает операторский адрес"
+    assert TO_CODE not in card, f"в карточке остался хранимый вид {TO_CODE}"
+
+
+def test_lot_card_shows_the_operator_address(client, moved):
+    _login(client, moved)
+    card = _card(client.get(reverse("lot_detail", args=[moved["lot"].pk])).content.decode())
+    assert TO_SHORT in card
+    assert TO_CODE not in card
+
+
+def test_the_card_drops_the_whole_stored_ancestor_chain(client, boss):
+    """У ячейки с родителями полный путь печатал адрес трижды: S02 / S02-D01 /
+    S02-D01-C04. Короткий код несёт те же стеллаж, ящик и ячейку одной строкой."""
+    from apps.warehouse.addresses import get_or_create_location
+
+    cell = get_or_create_location(TO_CODE)
+    assert cell.parent is not None, "ячейка без родителя не проверяет цепочку"
+    chain = cell.full_path
+    assert chain == "S02 / S02-D01 / S02-D01-C04"
+
+    part = PartType.objects.create(
+        name="Цепочка", category=Category.objects.create(name="Цепочка-кат"),
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
+    )
+    lot = create_stock_lot(_batch_line(part, boss, quantity=1), cell, Decimal("1"))
+    receive_stock_lot(lot, by=boss)
+
+    client.force_login(boss)
+    body = client.get(reverse("lot_detail", args=[lot.pk])).content.decode()
+    assert TO_SHORT in body
+    assert chain not in body, "полный путь по хранимым кодам всё ещё печатается"
+
+
+def test_a_legacy_cell_is_shown_unchanged_on_the_card(client, boss):
+    """Для S-L адреса короткой формы нет: показываем его как есть."""
+    legacy = _cell(LEGACY_CODE)
+    part = PartType.objects.create(
+        name="Легаси-карточка", category=Category.objects.create(name="Легаси-карточка-кат"),
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
+    )
+    lot = create_stock_lot(_batch_line(part, boss, quantity=1), legacy, Decimal("1"))
+    receive_stock_lot(lot, by=boss)
+
+    client.force_login(boss)
+    body = client.get(reverse("lot_detail", args=[lot.pk])).content.decode()
+    assert LEGACY_CODE in body, "старый адрес пропал или был искажён"
+
+
+def test_the_card_change_touches_no_stored_identity(client, moved):
+    """Показ короткой формы на карточке ничего не переписывает."""
+    _login(client, moved)
+    before = StorageLocation.objects.count()
+    client.get(reverse("item_detail", args=[moved["item"].pk]))
+    client.get(reverse("lot_detail", args=[moved["lot"].pk]))
+
+    target = StorageLocation.objects.get(pk=moved["target"].pk)
+    assert target.code == TO_CODE
+    assert target.barcode == f"LOC:{TO_CODE}"
+    assert target.full_path.endswith(TO_CODE), "свойство full_path не должно меняться"
+    assert StorageLocation.objects.count() == before
+    assert not StorageLocation.objects.filter(code=TO_SHORT).exists()
