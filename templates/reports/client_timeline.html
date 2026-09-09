@@ -8,6 +8,9 @@
         <a href="{% url 'reports_clients_overview' %}?{{ period_qs }}">← Все клиенты</a>
       </p>
     </div>
+    <a class="btn btn--secondary"
+       href="{% url 'reports_client_timeline_print' %}?{{ request.GET.urlencode }}"
+       target="_blank">Экспорт для печати</a>
   </div>
   {% include "reports/_sales_period_filter.html" %}
   <p class="page-subtitle">
@@ -53,6 +56,7 @@
         <tr>
           <th>Дата</th>
           <th>Деталь</th>
+          <th>Русское название</th>
           <th>Артикул</th>
           <th class="num--qty">Кол-во</th>
           <th class="num--money">Цена (₽)</th>
@@ -67,6 +71,24 @@
             <td>{{ row.at|ru_date }}</td>
             <td>
               <a href="{% url 'part_detail' row.part_type_id %}">{{ row.part_name }}</a>
+            </td>
+            <td>
+              <span>{{ row.russian_name|default:"Не указано" }}</span>
+              {% if can_edit_russian_name %}
+                <details>
+                  <summary class="link-muted">Изменить</summary>
+                  <form method="post"
+                        action="{% url 'reports_client_history_russian_name' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="part_id" value="{{ row.part_type_id }}">
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <input name="russian_name"
+                           value="{{ row.russian_name }}"
+                           aria-label="Русское название">
+                    <button class="btn btn--small" type="submit">Сохранить</button>
+                  </form>
+                </details>
+              {% endif %}
             </td>
             <td>
               {% if row.exact_number %}

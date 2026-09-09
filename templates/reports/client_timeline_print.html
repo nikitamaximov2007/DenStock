@@ -1,0 +1,34 @@
+{% load presentation %}
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <title>PRO-STOR · История клиента</title>
+    <style>
+    body { font: 12px Arial, sans-serif; color: #111; margin: 18mm; }
+    h1 { margin: 0 0 10px; } table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #777; padding: 6px; text-align: left; vertical-align: top; }
+    .num { text-align: right; } @media print { body { margin: 12mm; } tr { break-inside: avoid; } }
+    </style>
+  </head>
+  <body>
+    <h1>PRO-STOR · История клиента</h1>
+    <p><strong>Клиент:</strong> {{ customer_name }}</p>
+    <p><strong>Период:</strong> {% if period.all_time %}за всё время{% else %}{{ period.date_from|ru_date }} – {{ period.date_to|ru_date }}{% endif %}</p>
+    <p><strong>Итого с клиента:</strong> {{ total|money_int }} ₽</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Деталь</th>
+          <th>Русское название</th>
+          <th>Артикул</th>
+          <th>Кол-во</th>
+          <th>Цена (₽)</th>
+          <th>Сумма (₽)</th>
+          <th>Тип</th>
+        </tr>
+      </thead>
+      <tbody>{% for row in history %}<tr><td>{{ row.at|ru_date }}</td><td>{{ row.part_name }}</td><td>{{ row.russian_name|default:"Не указано" }}</td><td>{{ row.exact_number|default:"" }}</td><td class="num">{{ row.quantity|quantity_int }}</td><td class="num">{% if row.unit_price is not None %}{{ row.unit_price|money_int }}{% endif %}</td><td class="num">{% if row.amount is not None %}{{ row.amount|money_int }}{% endif %}</td><td>{{ row.kind_label }}</td></tr>{% endfor %}</tbody></table>
+  </body>
+</html>

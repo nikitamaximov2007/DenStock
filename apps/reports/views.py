@@ -12,6 +12,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -396,6 +397,9 @@ def client_timeline(request):
             "can_cancel_repair_lines": (
                 request.user.can_manage_repairs and request.user.can_manage_returns
             ),
+            "can_edit_russian_name": (
+                request.user.can_manage_sales or request.user.can_manage_repairs
+            ),
             "client_summary": {
                 "sales": sales_total,
                 "repairs": repair_total,
@@ -404,6 +408,54 @@ def client_timeline(request):
             },
         },
     )
+
+
+@login_required
+@require_POST
+def client_history_russian_name(request):
+    """Сохранить одно текущее русское имя карточки, не меняя документы."""
+    _require_reports(request)
+    if not (request.user.can_manage_sales or request.user.can_manage_repairs):
+        raise PermissionDenied
+    try:
+        part_id = int(request.POST.get("part_id") or "")
+    except ValueError as exc:
+        raise Http404("Деталь не указана.") from exc
+    name = (request.POST.get("russian_name") or "").strip()
+    if not name:
+        messages.error(request, "Русское название не может быть пустым.")
+        return redirect(request.POST.get("next") or reverse("reports_client_timeline"))
+    from apps.actions.services import get_or_create_customs, record_customs_data_version
+
+    with transaction.atomic():
+        part = get_object_or_404(PartType.objects.select_for_update(), pk=part_id)
+        customs = get_or_create_customs(part)
+        customs.customs_name_ru = name
+        customs.customs_name_ru_confirmed = True
+        customs.customs_name_source = customs.NameSource.MANUAL
+        customs.save(update_fields=[
+            "customs_name_ru", "customs_name_ru_confirmed", "customs_name_source", "updated_at"
+        ])
+        record_customs_data_version(customs, by=request.user)
+    messages.success(request, "Русское название детали сохранено.")
+    return redirect(request.POST.get("next") or reverse("reports_client_timeline"))
+
+
+@login_required
+def client_timeline_print(request):
+    """Печатная read-only версия той же клиентской истории."""
+    _require_reports(request)
+    period = resolve_period(request.GET)
+    customer_name, missing, customer_id = _customer_selection(request)
+    history = get_client_part_history(
+        period, customer_name=customer_name, missing=missing, customer_id=customer_id
+    )
+    history = [row for row in history if row["quantity"] > 0]
+    total = sum((row["amount"] or 0) for row in history)
+    return render(request, "reports/client_timeline_print.html", {
+        "customer_name": _customer_title(customer_name, missing, customer_id),
+        "period": period, "history": history, "total": total,
+    })
 
 
 @login_required

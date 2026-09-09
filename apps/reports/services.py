@@ -14,6 +14,8 @@ from django.db.models import Count, Max, Sum
 from django.db.models.functions import Trim
 from django.utils import timezone
 
+from apps.actions.models import PartCustomsInfo
+from apps.actions.services import auto_customs_name_ru
 from apps.inventory.models import StockBalance, StockMovement
 from apps.inventory.presentation import identity_for_part_ids
 from apps.procurement.models import money
@@ -864,6 +866,18 @@ def get_client_part_history(
                 "cost": money(line.unit_cost_rub * net_quantity),
             }
         )
+    # Русское имя является текущим общим свойством карточки, а не снимком
+    # строки продажи/ремонта. Один bulk lookup не допускает N+1 на истории.
+    part_ids = {row["part_type_id"] for row in rows}
+    russian_names = dict(
+        PartCustomsInfo.objects.filter(part_type_id__in=part_ids).values_list(
+            "part_type_id", "customs_name_ru"
+        )
+    )
+    for row in rows:
+        saved = (russian_names.get(row["part_type_id"]) or "").strip()
+        row["russian_name"] = saved or auto_customs_name_ru(row["part_name"])
+
     # Новые сверху. Вторичный ключ по названию делает порядок устойчивым, когда
     # несколько строк проведены одним документом в одну и ту же секунду.
     rows.sort(key=lambda row: (row["at"], row["part_name"]), reverse=True)
