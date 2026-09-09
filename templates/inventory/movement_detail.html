@@ -41,7 +41,7 @@
         <th>Откуда</th>
         <td>
           {% if movement.from_location %}
-            {{ movement.from_location_historical_code }}
+            {{ movement.from_location_historical_code|short_address }}
             {% if movement.from_location_was_renamed %}
               <span class="muted">(текущий адрес {{ movement.from_location.short_code }})</span>
             {% endif %}
@@ -54,7 +54,7 @@
         <th>Куда</th>
         <td>
           {% if movement.to_location %}
-            {{ movement.to_location_historical_code }}
+            {{ movement.to_location_historical_code|short_address }}
             {% if movement.to_location_was_renamed %}
               <span class="muted">(текущий адрес {{ movement.to_location.short_code }})</span>
             {% endif %}
