@@ -783,7 +783,8 @@ def _client_filter(customer_name: str, missing: bool) -> str:
 
 
 def get_client_part_history(
-    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None
+    period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None,
+    include_fully_reversed: bool = False,
 ) -> list[dict]:
     """Плоская история клиента: строка на каждую деталь, продажи и ремонты вместе.
 
@@ -794,6 +795,13 @@ def get_client_part_history(
     быть выданной клиенту. Сам документ при этом не переписывается - его
     снимок остаётся, а отменённое считается по каноническим возвратам, поэтому
     историю по-прежнему можно доказать: выдано столько, отменено столько.
+
+    Отменённая ЦЕЛИКОМ строка из обычной истории уходит. Ноль в колонке
+    «Кол-во» отвечал бы на вопрос «что мы давали клиенту» словом «ничего», и
+    строка, которой у клиента нет, занимала бы место наравне с настоящими.
+    Удалением это не является: SaleLine, документ и возвраты остаются на
+    месте, и внутренние экраны показывают их по-прежнему.
+    ``include_fully_reversed=True`` возвращает и такие строки - для аудита.
 
     «Цена» это историческая цена единицы для клиента. У продажи она заморожена
     в строке. У ремонта берётся её снимок, а у старых строк без снимка -
@@ -866,8 +874,12 @@ def get_client_part_history(
                 "cost": money(line.unit_cost_rub * net_quantity),
             }
         )
+    if not include_fully_reversed:
+        rows = [row for row in rows if row["quantity"] > 0]
+
     # Русское имя является текущим общим свойством карточки, а не снимком
-    # строки продажи/ремонта. Один bulk lookup не допускает N+1 на истории.
+    # строки продажи/ремонта. Один bulk lookup не допускает N+1 на истории;
+    # отброшенные строки в него уже не попадают.
     part_ids = {row["part_type_id"] for row in rows}
     russian_names = dict(
         PartCustomsInfo.objects.filter(part_type_id__in=part_ids).values_list(

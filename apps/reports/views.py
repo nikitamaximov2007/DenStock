@@ -450,7 +450,6 @@ def client_timeline_print(request):
     history = get_client_part_history(
         period, customer_name=customer_name, missing=missing, customer_id=customer_id
     )
-    history = [row for row in history if row["quantity"] > 0]
     total = sum((row["amount"] or 0) for row in history)
     return render(request, "reports/client_timeline_print.html", {
         "customer_name": _customer_title(customer_name, missing, customer_id),
