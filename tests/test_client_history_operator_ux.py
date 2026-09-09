@@ -583,7 +583,14 @@ def test_an_earlier_ordinary_return_lowers_the_upper_bound(client, data, admin):
     assert line.quantity == Decimal("4")
 
 
-def test_a_fully_reversed_row_offers_no_action(client, data, admin):
+def test_a_fully_reversed_row_leaves_the_ordinary_history(client, data, admin):
+    """Отменённая целиком строка уходит с экрана, но остаётся в базе.
+
+    Раньше она оставалась висеть с количеством 0 и подписью «Отменено».
+    Утверждённое правило другое: клиент этой детали не получил, значит в
+    ответе на вопрос «что мы ему давали» её быть не должно. Документ,
+    строка продажи и возвраты при этом никуда не деваются.
+    """
     _login(client, admin)
     customer = Customer.objects.create(name="Иванов")
     sale = _sale(data, customer=customer, items=(("bolt", 2),))
@@ -596,7 +603,11 @@ def test_a_fully_reversed_row_offers_no_action(client, data, admin):
     body = _history(client, customer).content.decode()
 
     assert reverse("sale_line_cancel", args=[line.pk]) not in body
-    assert "Отменено" in body
+    assert "Болт" not in body, "строка без действующего количества осталась на экране"
+
+    line.refresh_from_db()
+    assert line.quantity == Decimal("2"), "снимок продажи переписывать нельзя"
+    assert SaleLine.objects.filter(pk=line.pk).exists()
 
 
 def test_the_cancelled_unit_goes_back_to_its_own_lot_and_cell(data, admin):
