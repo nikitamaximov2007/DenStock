@@ -58,6 +58,7 @@ from .services import (
     parse_quantity,
     read_customs,
     record_customs_data_version,
+    validate_weight_pair,
 )
 
 KIND_SALE = "sale"
@@ -313,6 +314,11 @@ def customs_metadata_errors(rows, metadata=None) -> list[str]:
     errors = []
     for row in rows:
         values = effective_customs_metadata(row.part, metadata.get(row.part.pk))
+        try:
+            validate_weight_pair(values["gross_weight_kg"], values["net_weight_kg"])
+        except ValueError as exc:
+            errors.append(f"{row.part.name}: {exc}")
+            continue
         gaps = customs_metadata_gaps(**values)
         if gaps:
             errors.append(f"{row.part.name}: {', '.join(gaps)}.")
