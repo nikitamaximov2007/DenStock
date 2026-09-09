@@ -1469,8 +1469,9 @@ def _customs_row_from_version(
     # продолжает задавать исторические технические поля, но явно сохранённое
     # общее русское имя карточки всегда сильнее старой версии. Frozen
     # CustomsOrderLine сюда не попадает и остаётся неизменяемым.
-    current_name = read_customs(part).customs_name_ru.strip()
-    if current_name:
+    current_customs = read_customs(part)
+    current_name = current_customs.customs_name_ru.strip()
+    if current_name and current_customs.customs_name_ru_confirmed:
         values["name_ru"] = current_name.upper()
         values["name_ru_confirmed"] = True
     if not values["manufacturer"]:
