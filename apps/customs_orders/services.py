@@ -18,7 +18,8 @@ TOKEN_SALT = "customs-orders.selection.v1"
 _EPOCH = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 SNAPSHOT_FIELDS = (
     "number", "name_ru", "name_en", "manufacturer", "country", "gross_weight_kg",
-    "net_weight_kg", "application_area", "quantity", "usd_price", "is_analog",
+    "net_weight_kg", "actual_gross_weight_kg", "actual_net_weight_kg",
+    "application_area", "quantity", "usd_price", "is_analog",
     "provenance", "occurred_at",
 )
 
@@ -177,8 +178,10 @@ def _persist(number, selected, rate, by, order_type):
         CustomsOrderLine(
             order=order, source=row["source"], source_id=row["source_id"], article=row["number"],
             name_ru=row["name_ru"], name_en=row["name_en"], manufacturer=row["manufacturer"],
-            country=row["country"], gross_weight_kg=row["gross_weight_kg"],
-            net_weight_kg=row["net_weight_kg"], application_area=row["application_area"],
+            country=row["country"],
+            gross_weight_kg=row.get("actual_gross_weight_kg", row["gross_weight_kg"]),
+            net_weight_kg=row.get("actual_net_weight_kg", row["net_weight_kg"]),
+            application_area=row["application_area"],
             occurred_at=row["occurred_at"], quantity=row["quantity"],
             wholesale_usd=row["usd_price"],
             rub_amount=amount, is_analog=row["is_analog"], is_ordered=row["source"] == "ordered",

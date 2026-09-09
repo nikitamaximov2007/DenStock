@@ -1295,6 +1295,11 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
         "name_en": english_name.upper(),
         "manufacturer": manufacturer,
         "country": country,
+        # The row carries both the remembered fact and its customs-form
+        # representation.  CustomsOrderLine must freeze the former; the
+        # 30-gram minimum belongs solely to the workbook writer.
+        "actual_gross_weight_kg": customs.gross_weight_kg,
+        "actual_net_weight_kg": customs.net_weight_kg,
         "gross_weight_kg": customs_export_weight_kg(customs.gross_weight_kg),
         "net_weight_kg": customs_export_weight_kg(customs.net_weight_kg),
         "usd_price": usd_price,
@@ -1398,10 +1403,14 @@ def _customs_row_from_version(
     if number is None:
         number = part_exact_number(part, default="")
     if version is None:
+        actual_gross_weight_kg = None
+        actual_net_weight_kg = None
         values = {"name_ru": "", "name_en": "", "manufacturer": "", "country": "",
                   "gross_weight_kg": None, "net_weight_kg": None, "usd_price": None,
                   "application_area": "", "source_reference": "", "name_ru_confirmed": False}
     else:
+        actual_gross_weight_kg = version.gross_weight_kg
+        actual_net_weight_kg = version.net_weight_kg
         application = (version.application_area or "").strip().upper()
         if application == LEGACY_APPLICATION:
             application = ""  # легаси-хардкод считается «не заполнено»
@@ -1463,6 +1472,8 @@ def _customs_row_from_version(
         "customs_ready": not missing,
         "customs_missing_reasons": missing,
         "warnings": missing, **values,
+        "actual_gross_weight_kg": actual_gross_weight_kg,
+        "actual_net_weight_kg": actual_net_weight_kg,
     }
 
 
@@ -1871,8 +1882,11 @@ def _fill_customs_sheet(sheet, rows) -> None:
         sheet[f"D{r}"] = excel_safe_text(row["name_en"])
         sheet[f"E{r}"] = excel_safe_text(row["manufacturer"])
         sheet[f"F{r}"] = excel_safe_text(row["country"])
-        sheet[f"G{r}"] = row["gross_weight_kg"]  # None = пусто: вес не выдумываем
-        sheet[f"H{r}"] = row["net_weight_kg"]
+        # A frozen order contains the actual remembered kg values.  The
+        # customs minimum is deliberately applied here, at the export edge,
+        # so a 12 g part never becomes a fictitious 30 g part in storage.
+        sheet[f"G{r}"] = customs_export_weight_kg(row["gross_weight_kg"])
+        sheet[f"H{r}"] = customs_export_weight_kg(row["net_weight_kg"])
         sheet[f"I{r}"] = f"=J{r}*G{r}"  # вес брутто сумма = брутто/шт * количество
         for column in "GHI":
             sheet[f"{column}{r}"].number_format = "0.00"

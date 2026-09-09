@@ -31,6 +31,7 @@ from apps.actions.services import (
 )
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.customers.models import Customer
+from apps.customs_orders.export import export_customs_order_xlsx
 from apps.customs_orders.models import CustomsOrder
 from apps.customs_orders.services import create_customs_order, eligible_customs_sources
 from apps.inventory.services import create_stock_lot, receive_stock_lot
@@ -417,6 +418,32 @@ def test_later_part_edits_do_not_mutate_an_existing_order(client, make_user, env
     assert line.gross_weight_kg == Decimal("0.25")
     assert line.net_weight_kg == Decimal("0.20")
     assert line.application_area == "СНЕГОХОД"
+
+
+def test_customs_order_freezes_actual_small_weight_but_exports_the_minimum(
+    client, make_user, env
+):
+    _card(env["part"])
+    _login(client, make_user)
+    _add(client, env)
+    _row(client, env, gross_weight_g="12", net_weight_g="10", application_area="СНЕГОХОД")
+    _complete(client)
+    order = create_customs_order(
+        number=125,
+        lines=eligible_customs_sources(CustomsOrder.OrderType.ORIGINAL),
+        by=env["admin"],
+    )
+
+    line = order.lines.get()
+    assert line.gross_weight_kg == Decimal("0.012")
+    assert line.net_weight_kg == Decimal("0.010")
+
+    from openpyxl import load_workbook
+
+    sheet = load_workbook(export_customs_order_xlsx(order)).worksheets[0]
+    assert Decimal(str(sheet["G10"].value)) == Decimal("0.03")
+    assert Decimal(str(sheet["H10"].value)) == Decimal("0.03")
+    assert sheet["G10"].number_format == "0.00"
 
 
 def test_a_failed_completion_remembers_nothing(env):
