@@ -104,7 +104,15 @@ body.app {
 .sidebar { flex: 0 0 var(--sidebar-w); width: var(--sidebar-w);
   position: sticky; top: var(--topbar-h); height: calc(100vh - var(--topbar-h));
   overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line);
-  padding: 10px 10px 24px; }
+  padding: 10px 10px 24px;
+  /* Keep the navigation scrollbar available but out of the way of labels. */
+  scrollbar-width: thin;
+  scrollbar-color: #b8c1cd transparent; }
+.sidebar::-webkit-scrollbar { width: 7px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: #b8c1cd; border: 2px solid transparent;
+  border-radius: 999px; background-clip: padding-box; }
+.sidebar::-webkit-scrollbar-thumb:hover { background-color: #8f9cab; }
 .content { flex: 1 1 auto; min-width: 0; padding: 24px 28px; }
 .content:focus { outline: none; }
 .content--loading { opacity: .72; transition: opacity .12s ease; }
