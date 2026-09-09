@@ -122,6 +122,33 @@ body.app {
 .content--centered { min-height: 100vh; display: flex; align-items: center;
   justify-content: center; padding: 24px; }
 
+/* Десктоп: сайдбар это самостоятельная колонка во всю высоту окна, а не блок,
+   подвешенный под общей верхней полосой. Раньше топбар шёл во всю ширину, и
+   полоса с пользователем проходила НАД логотипом: сайдбар начинался на 56px
+   ниже, отчего бренд выглядел опущенным, а разделитель топбара пересекал
+   колонку меню.
+
+   Теперь сайдбар закреплён от y=0 до низа экрана, а топбар и контент сдвинуты
+   на его ширину. Это настоящие две колонки: топбар начинается справа от
+   сайдбара и над логотипом ничего не проходит. Отрицательных отступов у самого
+   логотипа, наложений и transform здесь нет - меняется геометрия оболочки.
+
+   Мобильная раскладка не затронута: там сайдбар остаётся выезжающей панелью и
+   живёт в собственном блоке для узких экранов ниже. */
+@media (min-width: 901px) {
+  .sidebar {
+    position: fixed; top: 0; left: 0; z-index: 45;
+    height: 100vh; padding-top: 0;
+  }
+  .topbar,
+  .emergency-banner,
+  .layout { margin-left: var(--sidebar-w); }
+  /* Аварийный баннер больше не опускает сайдбар: тот и так начинается сверху. */
+  .emergency-banner + .layout .sidebar { top: 0; height: 100vh; }
+  /* Логотип остаётся на месте, когда прокручивают длинное меню под ним. */
+  .sidebar .sidebar__brand { position: sticky; top: 0; z-index: 1; margin-top: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .content--loading { transition: none; }
   .content--loading::before { animation: none; }
