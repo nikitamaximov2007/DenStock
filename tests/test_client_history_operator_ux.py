@@ -21,6 +21,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.accounts import roles
+from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.customers.models import Customer
 from apps.inventory.models import StockMovement
@@ -156,6 +157,84 @@ def _history_url(customer, **params):
 
     query = urlencode({"customer_id": customer.pk, **params})
     return f"{reverse('reports_client_timeline')}?{query}"
+
+
+# --- Canonical Russian name and client print export -----------------------------------------
+
+
+def test_history_uses_one_current_russian_name_for_every_customer(client, data, admin):
+    first = Customer.objects.create(name="Первый")
+    second = Customer.objects.create(name="Второй")
+    _sale(data, customer=first)
+    _sale(data, customer=second)
+    card = PartCustomsInfo.objects.get(part_type=data["parts"]["bolt"])
+    card.customs_name_ru = "БОЛТ РУССКИЙ"
+    card.customs_name_ru_confirmed = True
+    card.save(update_fields=["customs_name_ru", "customs_name_ru_confirmed", "updated_at"])
+    _login(client, admin)
+    assert all(row["russian_name"] == "БОЛТ РУССКИЙ" for row in get_client_part_history(
+        resolve_period({"preset": "all"}), customer_id=first.pk
+    ))
+    assert "БОЛТ РУССКИЙ" in _history(client, second, preset="all").content.decode()
+
+
+def test_inline_edit_updates_only_canonical_name_and_versions(client, data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    sale = _sale(data, customer=customer)
+    line = sale.lines.get()
+    before_name = line.part_type.name
+    before_versions = PartCustomsDataVersion.objects.filter(part_type=data["parts"]["bolt"]).count()
+    _login(client, admin)
+    url = reverse("reports_client_history_russian_name")
+    response = client.post(url, {
+        "part_id": data["parts"]["bolt"].pk, "russian_name": "БОЛТ ДЛЯ КЛИЕНТА",
+        "next": _history_url(customer, preset="all"),
+    })
+    assert response.status_code == 302
+    card = PartCustomsInfo.objects.get(part_type=data["parts"]["bolt"])
+    assert card.customs_name_ru == "БОЛТ ДЛЯ КЛИЕНТА"
+    assert sale.lines.get().part_type.name == before_name
+    versions = PartCustomsDataVersion.objects.filter(part_type=card.part_type)
+    assert versions.count() == before_versions + 1
+    client.post(url, {"part_id": card.part_type_id, "russian_name": "БОЛТ ДЛЯ КЛИЕНТА"})
+    assert versions.count() == before_versions + 1
+
+
+def test_inline_edit_rejects_blank_and_requires_operator_right(client, data, admin, make_user):
+    customer = Customer.objects.create(name="Иванов")
+    _sale(data, customer=customer)
+    card = PartCustomsInfo.objects.get(part_type=data["parts"]["bolt"])
+    card.customs_name_ru = "НЕ СТИРАТЬ"
+    card.save(update_fields=["customs_name_ru", "updated_at"])
+    url = reverse("reports_client_history_russian_name")
+    viewer = make_user("viewer", role=roles.VIEWER)
+    _login(client, viewer)
+    assert client.post(url, {"part_id": card.part_type_id, "russian_name": "X"}).status_code == 403
+    _login(client, admin)
+    client.post(url, {"part_id": card.part_type_id, "russian_name": ""})
+    card.refresh_from_db()
+    assert card.customs_name_ru == "НЕ СТИРАТЬ"
+
+
+def test_print_export_preserves_filters_and_effective_client_rows(client, data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    sale = _sale(data, customer=customer, items=(("bolt", 4),))
+    returned = create_return(source=sale, by=admin)
+    add_sale_line_return(
+        returned, sale.lines.get(), Decimal("1"), to_location=data["location"],
+        restock_status=StockReturnLine.RestockStatus.AVAILABLE, by=admin,
+    )
+    complete_return(returned, by=admin)
+    _login(client, admin)
+    response = client.get(reverse("reports_client_timeline_print"), {
+        "customer_id": customer.pk, "preset": "all",
+    })
+    body = response.content.decode()
+    assert "Клиент:</strong> Иванов" in body
+    assert body.count("Итого с клиента") == 1
+    assert "Сумма продаж" not in body and "Детали в ремонтах" not in body
+    assert "Отменить" not in body and "Себестоимость" not in body
+    assert "Русское название" in body and ">3</td>" in body
 
 
 # --- A: строка клиента в отчёте --------------------------------------------------------------
