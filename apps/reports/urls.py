@@ -22,8 +22,16 @@ urlpatterns = [
         name="reports_client_period_payment_status",
     ),
     path("clients/timeline/", views.client_timeline, name="reports_client_timeline"),
-    path("clients/timeline/print/", views.client_timeline_print, name="reports_client_timeline_print"),
-    path("clients/timeline/russian-name/", views.client_history_russian_name, name="reports_client_history_russian_name"),
+    path(
+        "clients/timeline/print/",
+        views.client_timeline_print,
+        name="reports_client_timeline_print",
+    ),
+    path(
+        "clients/timeline/russian-name/",
+        views.client_history_russian_name,
+        name="reports_client_history_russian_name",
+    ),
     path("repairs-by-client/", views.repairs_by_client, name="reports_repairs_by_client"),
     path(
         "repairs-by-client/customer/",

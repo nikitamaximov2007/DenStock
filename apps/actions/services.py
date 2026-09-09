@@ -1465,6 +1465,14 @@ def _customs_row_from_version(
         values["name_en"] = catalog_english_name(part, number)
     if not values["name_ru"] and values["name_en"]:
         values["name_ru"] = auto_customs_name_ru(values["name_en"])
+    # Обычная таможенная выгрузка - текущая операторская форма. Снимок версии
+    # продолжает задавать исторические технические поля, но явно сохранённое
+    # общее русское имя карточки всегда сильнее старой версии. Frozen
+    # CustomsOrderLine сюда не попадает и остаётся неизменяемым.
+    current_name = read_customs(part).customs_name_ru.strip()
+    if current_name:
+        values["name_ru"] = current_name.upper()
+        values["name_ru_confirmed"] = True
     if not values["manufacturer"]:
         values["manufacturer"] = catalog_manufacturer_name(part, number)
     if values["usd_price"] is None:
