@@ -222,6 +222,7 @@ def _plan_aftermarket_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> Non
         plan.parts_to_update[entry.part_id] = entry.part
 
 
+@transaction.atomic
 def refresh_linked_part_prices(
     *,
     usd_rate: Decimal,

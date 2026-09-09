@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% load number_format %}
-{% block title %}Пересчёт {{ doc.section_code }} · DenisStock{% endblock %}
+{% load number_format storage_address %}
+{% block title %}Пересчёт {{ doc.section_code|short_address }} · DenisStock{% endblock %}
 {% block content %}
   <div class="cell-recount">
     <div class="page-header">
       <div>
-        <h1 class="page-title">Пересчёт ячейки {{ doc.section_code }}</h1>
+        <h1 class="page-title">Пересчёт ячейки {{ doc.section_code|short_address }}</h1>
         <p class="page-subtitle">{{ doc.get_status_display }} · документ #{{ doc.pk }}</p>
       </div>
       <div class="page-header__actions">

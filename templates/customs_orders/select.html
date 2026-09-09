@@ -61,7 +61,7 @@
               <td><span class="code-pill">{{ row.number }}</span></td>
               <td>{{ row.name_ru }}</td>
               <td>{% if row.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
-              <td class="num--qty">{{ row.quantity }}</td>
+              <td class="num--qty">{{ row.quantity|quantity_int }}</td>
               <td class="num--money">{{ row.usd_price|default_if_none:"Не заполнено" }}</td>
               <td>
                 <input type="radio"

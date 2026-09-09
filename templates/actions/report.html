@@ -41,11 +41,12 @@
     </p>
   {% endif %}
   <form method="get" class="filter-toolbar">
+    <input type="hidden" name="preset" value="{{ customs_preset }}">
     <div class="filter-field">
       <span class="filter-label">Период</span>
       <div class="segmented">
         {% for value, label in customs_date_presets %}
-          <a href="?preset={{ value }}"
+          <a href="?preset={{ value }}{% if preset_query %}&amp;{{ preset_query }}{% endif %}"
              class="{% if customs_preset == value %}is-active{% endif %}">{{ label }}</a>
         {% endfor %}
       </div>
@@ -113,7 +114,7 @@
                 <td>{{ row.name_ru }}</td>
                 <td>{{ row.manufacturer }}</td>
                 <td>{% if row.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
-                <td class="num--qty">{{ row.quantity }}</td>
+                <td class="num--qty">{{ row.quantity|quantity_int }}</td>
               </tr>
             {% empty %}
               <tr>

@@ -1,10 +1,11 @@
 {% extends "base.html" %}
+{% load storage_address %}
 {% block title %}Пересчёт участка #{{ doc.pk }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
     <div>
       <h1 class="page-title">Пересчёт участка #{{ doc.pk }}</h1>
-      <p class="page-subtitle"><span class="code-pill">{{ doc.section_code }}</span> · {{ doc.get_status_display }}</p>
+      <p class="page-subtitle"><span class="code-pill">{{ doc.section_code|short_address }}</span> · {{ doc.get_status_display }}</p>
     </div>
     <div class="page-header__actions">
       <a class="btn btn--secondary" href="{% url 'section_recount_list' %}">К списку</a>

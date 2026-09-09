@@ -17,7 +17,6 @@ from django.db import transaction
 from django.http import HttpResponse, HttpResponseNotAllowed, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 
 from apps.catalog.models import PartType
@@ -28,6 +27,7 @@ from apps.customers.services import customers_by_recent_activity
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
+from apps.reports.services import resolve_period
 from apps.warehouse.addresses import short_address
 from apps.warehouse.models import StorageLocation
 
@@ -436,6 +436,8 @@ def _read_customs_input(request) -> dict | None:
         values["net_weight_kg"] = parse_weight_g(request.POST.get("net_weight_g"))
     if "application_area" in request.POST:
         values["application_area"] = parse_application_area(request.POST.get("application_area"))
+    if "gross_weight_kg" in values and "net_weight_kg" in values:
+        validate_weight_pair(values["gross_weight_kg"], values["net_weight_kg"])
     return values
 
 
@@ -686,23 +688,19 @@ def actions_cart_complete(request):
 
 CUSTOMS_DATE_PRESETS = (
     ("today", "Сегодня"),
-    ("week", "Неделя"),
+    ("7", "Неделя"),
     ("month", "Месяц"),
     ("all", "Всё время"),
 )
 
 
 def _customs_period(request):
-    """The shared quick-range semantics, with all history as the customs default."""
-    preset = request.GET.get("preset", "all")
-    today = timezone.localdate()
-    if preset == "today":
-        return preset, today, today
-    if preset == "week":
-        return preset, today - datetime.timedelta(days=6), today
-    if preset == "month":
-        return preset, today.replace(day=1), today
-    return "all", None, None
+    """Use the report-wide date contract, with customs defaulting to all time."""
+    values = request.GET.copy()
+    if not values.get("preset") and not (values.get("date_from") and values.get("date_to")):
+        values["preset"] = "all"
+    period = resolve_period(values)
+    return period.preset, period.date_from, period.date_to
 
 
 def _report_filters(request) -> dict:
@@ -760,6 +758,9 @@ def actions_report_view(request):
             "filters": filters,
             "customs_preset": customs_preset,
             "customs_date_presets": CUSTOMS_DATE_PRESETS,
+            "preset_query": urlencode(
+                {key: value for key, value in request.GET.items() if key != "preset"}
+            ),
             "show_cancelled": show_cancelled,
             "customs_sources": sources,
             "unassigned_only": False,
@@ -911,13 +912,15 @@ def _customs_report_filters(next_url: str) -> dict | None:
     if parsed.path != reverse("actions_report"):
         return None
     query = QueryDict(parsed.query)
+    period = resolve_period(query)
     return {
-        "date_from": _parse_date(query.get("date_from", "")),
-        "date_to": _parse_date(query.get("date_to", "")),
+        "date_from": period.date_from,
+        "date_to": period.date_to,
         "action_type": query.get("action_type", ""),
         "q": (query.get("q") or "").strip(),
         "part_number": (query.get("part_number") or "").strip(),
         "location_code": (query.get("location_code") or "").strip(),
+        "unassigned_only": True,
     }
 
 
