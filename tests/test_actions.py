@@ -116,6 +116,8 @@ def data(db, admin):
     PartNumber.objects.create(part=single, value="700100", kind=PartNumber.Kind.OEM)
     PartBarcode.objects.create(part=single, value="BAR-700100")
     single_lot = _stock(single, loc1, 10, sup, admin)
+    _card(roller)
+    _card(single)
     return {
         "sup": sup, "cat": cat, "unit": unit, "loc1": loc1, "loc2": loc2,
         "brp": brp, "roller": roller, "lot1": lot1, "lot2": lot2,
@@ -152,7 +154,8 @@ def _card(part, **overrides):
         "net_weight_kg": Decimal("0.300"),
     }
     values.update(overrides)
-    return PartCustomsInfo.objects.create(part_type=part, **values)
+    card, _ = PartCustomsInfo.objects.update_or_create(part_type=part, defaults=values)
+    return card
 
 def test_resolve_part_by_number_and_barcode(data):
     assert resolve_part("417127016") == data["roller"]
@@ -558,10 +561,9 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
                    quantity="1", customer_comment="Иванов", by=data["admin"])
     _login(client, make_user, superuser=True, name="boss")
     html = client.get(reverse("actions_report")).content.decode()
-    # Таможенных данных ещё нет - кнопка всё равно на месте: сотрудник вправе
-    # скачать форму в любой момент и дозаполнить пустые ячейки в Excel.
+    # Новая продажа проводится только с полной карточкой, но сама ссылка
+    # экспорта остаётся доступной для уже созданных исторических документов.
     assert "Экспорт в Excel для таможни" in html
-    assert "Экспорт доступен" in html
     assert "Экспорт заблокирован" not in html
 
     # Неполная карточка выгрузку не отменяет: причина названа, кнопка осталась.
@@ -607,6 +609,7 @@ def variant_part(db, data):
     )
     part = promote_to_warehouse(brp, by=data["admin"])
     _stock(part, data["loc2"], 5, data["sup"], data["admin"])
+    _card(part)
     return part
 
 
@@ -672,6 +675,7 @@ def test_price_source_does_not_change_identity(db, data):
     )
     part = promote_to_warehouse(zero, by=data["admin"])
     _stock(part, data["loc1"], 3, data["sup"], data["admin"])
+    _card(part)
     action = perform_action(
         part=part, location=data["loc1"], action_type="sale", quantity="1",
         customer_comment="Клиент", scanned_number="250000059", by=data["admin"],
@@ -801,6 +805,7 @@ def legacy_replacement_part(db, data):
     )
     part = promote_to_warehouse(brp, by=data["admin"])
     _stock(part, data["loc2"], 5, data["sup"], data["admin"])
+    _card(part)
     return part
 
 

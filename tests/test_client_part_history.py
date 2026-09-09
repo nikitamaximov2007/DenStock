@@ -35,6 +35,7 @@ from apps.sales.models import Sale
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 UNIT_PRICE = Decimal("500")
@@ -98,6 +99,7 @@ def data(db, admin):
         PartNumber.objects.create(part=part, value=number, kind=PartNumber.Kind.OEM)
         parts[key] = part
         lots[key] = _lot(part, loc, 400, sup, admin)
+    remember_customs(*parts.values())
     return {"sup": sup, "loc": loc, "admin": admin, "parts": parts, "lots": lots}
 
 

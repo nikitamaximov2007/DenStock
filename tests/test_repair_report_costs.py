@@ -44,6 +44,7 @@ from apps.reports.services import get_client_part_history, resolve_period
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -107,6 +108,7 @@ def data(db, admin):
         PartNumber.objects.create(part=part, value=number, kind=PartNumber.Kind.OEM)
         parts[key] = part
         lots[key] = _lot(part, location, 100, supplier, admin, unit_cost=cost)
+    remember_customs(*parts.values())
     return {"admin": admin, "parts": parts, "lots": lots, "loc": location, "sup": supplier}
 
 
@@ -412,6 +414,7 @@ def test_a_serial_item_carries_its_own_frozen_cost(db, admin):
     line.refresh_from_db()
     item = create_part_items(line, 1, serial_number="SN-OTCHET-1")[0]
     receive_part_item(item, to_location=location, by=admin)
+    remember_customs(part)
 
     customer = Customer.objects.create(name="Иванов")
     order = create_repair_order(customer=customer, customer_name="", by=admin)
@@ -522,6 +525,7 @@ def test_a_part_that_cost_the_warehouse_nothing_shows_a_real_zero(data, admin):
         tracking_mode=PartType.TrackingMode.BULK,
     )
     lot = _lot(free, data["loc"], 10, data["sup"], admin, unit_cost="0")
+    remember_customs(free)
     order = create_repair_order(customer=customer, customer_name="", by=admin)
     add_stock_lot_to_repair_order(order, lot, Decimal("2"), by=admin)
     complete_repair_order(order, by=admin)

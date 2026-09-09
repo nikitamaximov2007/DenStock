@@ -43,6 +43,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -94,6 +95,7 @@ def env(db, admin):
     nuts = create_stock_lot(_line(supplier, other, admin, quantity="8", unit_cost="70"),
                             first_cell, Decimal("8"))
     receive_stock_lot(nuts, by=admin)
+    remember_customs(bulk, other)
     return {
         "admin": admin, "supplier": supplier, "category": category, "unit": unit,
         "first_cell": first_cell, "second_cell": second_cell,
@@ -102,6 +104,7 @@ def env(db, admin):
 
 
 def _sale(env, *, lots_and_quantities, price="500", customer=None):
+    remember_customs(*[lot.part_type for lot, _quantity in lots_and_quantities])
     sale = create_sale(customer_name="Иванов", customer_phone="+79990000001",
                        by=env["admin"], customer=customer)
     for lot, quantity in lots_and_quantities:
@@ -481,6 +484,7 @@ def test_a_serial_item_goes_back_to_the_cell_it_left(env):
     line = _line(env["supplier"], serial, env["admin"], quantity="1", unit_cost="400")
     item = create_part_items(line, 1, serial_number="SN-1")[0]
     receive_part_item(item, to_location=env["second_cell"], by=env["admin"])
+    remember_customs(serial)
     sale = create_sale(customer_name="Иванов", by=env["admin"])
     from apps.sales.services import add_part_item_to_sale
 

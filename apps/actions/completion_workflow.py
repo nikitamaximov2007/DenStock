@@ -1,4 +1,6 @@
 """Shared metadata step used before regular Sale and Repair completion."""
+from apps.inventory.presentation import part_exact_number
+
 from .services import (
     QUICK_ACTION_APPLICATION_AREAS,
     get_or_create_customs,
@@ -27,8 +29,13 @@ def missing_parts(parts):
         except ValueError:
             valid_pair = False
         if not valid_pair or not _has_valid_application_area(area):
-            result.append({"part": part, "gross_weight_g": weight_kg_as_grams(gross),
-                           "net_weight_g": weight_kg_as_grams(net), "application_area": area})
+            result.append({
+                "part": part,
+                "article": part_exact_number(part),
+                "gross_weight_g": weight_kg_as_grams(gross),
+                "net_weight_g": weight_kg_as_grams(net),
+                "application_area": area,
+            })
     return result
 
 

@@ -77,6 +77,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -165,6 +166,7 @@ def data(db, admin):
     sline = _finalized_line(sup, small, admin, qty="4")
     lot_small = create_stock_lot(sline, loc, Decimal("2"))
     receive_stock_lot(lot_small, by=admin)
+    remember_customs(serial, bulk, small)
 
     # Продажа: экземпляр item_a (1), 3 из lot, весь lot_small (2 → depleted).
     sale = create_sale(customer_name="Покупатель", by=admin)
@@ -674,6 +676,7 @@ def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
 
 
 def _repair_return_action_for_part(data, part):
+    remember_customs(part)
     batch_line = _finalized_line(data["sup"], part, data["admin"], qty="1")
     stock_lot = create_stock_lot(batch_line, data["loc"], Decimal("1"))
     receive_stock_lot(stock_lot, by=data["admin"])
