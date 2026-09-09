@@ -214,9 +214,10 @@ def test_customs_period_uses_the_canonical_preset_vocabulary():
     apps.reports.services.resolve_period - канонический разбор: today / 7 / 30 /
     month / all, и явные date_from+date_to сильнее пресета. Отчёт таможни завёл
     второй, несовместимый словарь."""
+    from django.test import RequestFactory
+
     from apps.actions.views import _customs_period
     from apps.reports.services import resolve_period
-    from django.test import RequestFactory
 
     def customs(**get):
         return _customs_period(RequestFactory().get("/", get))[1:]
@@ -241,10 +242,11 @@ def test_customs_period_uses_the_canonical_preset_vocabulary():
 def test_sequential_walk_stays_inside_the_unassigned_queue(env):
     """Обход «следующая незаполненная деталь» обязан идти по тому же списку,
     что оператор видит на экране. Экран - очередь неотправленных позиций."""
+    from django.urls import reverse as _reverse
+
     from apps.actions.services import historical_customs_rows
     from apps.actions.views import _customs_report_filters
     from apps.customs_orders.services import create_customs_order, eligible_customs_sources
-    from django.urls import reverse as _reverse
 
     _sold(env)
     sources = eligible_customs_sources()
