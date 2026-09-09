@@ -54,6 +54,7 @@ from .services import (
     remove_sale_line,
     reversible_quantity,
     sale_cancellation_returns,
+    sale_line_source_location,
 )
 
 
@@ -580,6 +581,10 @@ def sale_line_cancel(request, pk):
             # оператор подтверждать отмену не должен.
             "article": part_exact_number(line.part_type, default="Не указан"),
             "remaining": remaining,
+            # Ячейку возврата считает та же функция, которой пользуется само
+            # проведение (sale_line_source_location), поэтому обещанное экраном
+            # и произошедшее на складе совпадают по построению.
+            "return_location": sale_line_source_location(line),
             "form": form,
             "next": back,
         },

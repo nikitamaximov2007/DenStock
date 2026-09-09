@@ -126,6 +126,13 @@ class SaleLineCancellationForm(forms.Form):
 
     def clean_quantity(self):
         quantity = self.cleaned_data["quantity"]
+        # Поле обещает min=1 и step=1, и сервер обязан требовать то же самое:
+        # иначе прямой POST отменяет «полторы штуки», которых оператор выбрать
+        # не мог. Дробный остаток здесь не бывает: отменяют выданные штуки.
+        if quantity != quantity.to_integral_value():
+            raise forms.ValidationError("Количество отмены указывается целыми штуками.")
+        if quantity < 1:
+            raise forms.ValidationError("Количество отмены начинается с 1.")
         if self.remaining is not None and quantity > self.remaining:
             raise forms.ValidationError(
                 f"Доступно к отмене {format(Decimal(self.remaining).normalize(), 'f')}."

@@ -46,10 +46,26 @@
         Сам документ продажи не переписывается: сколько из него отменено,
         считается по возвратам.
       {% endcomment %}
-      <p class="muted">
-        Отменённое вернётся в исходную ячейку. Документ продажи и его цены
-        остаются без изменений: отмена оформляется возвратом на склад.
-      </p>
+      <div class="card">
+        <div class="card__header">
+          <h2 class="card__title">Куда вернётся товар</h2>
+        </div>
+        <div class="card__body">
+          {% if return_location %}
+            <p>
+              Выбранное количество вернётся в ячейку
+              <span class="code-pill">{{ return_location.short_code }}</span> —
+              туда, откуда позиция ушла со склада.
+            </p>
+          {% else %}
+            <p class="muted">У позиции не сохранена исходная ячейка: отмените продажу целиком.</p>
+          {% endif %}
+          <p class="muted">
+            Документ продажи и его цены остаются без изменений: отмена
+            оформляется возвратом на склад.
+          </p>
+        </div>
+      </div>
       <form method="post" class="form">
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ next }}">
