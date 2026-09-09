@@ -40,6 +40,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -94,6 +95,7 @@ def data(db, admin):
         tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
     )
     PartNumber.objects.create(part=bolt, value="700100", kind=PartNumber.Kind.OEM)
+    remember_customs(bolt)
     return {
         "sup": sup, "admin": admin, "cell_a": cell_a, "cell_b": cell_b, "bolt": bolt,
         "lot_a": _lot(bolt, cell_a, 2, sup, admin),

@@ -42,6 +42,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 PASSWORD = "parol-12345"
 
@@ -86,6 +87,7 @@ def env(db, admin):
     dear = create_stock_lot(_line(supplier, part, admin, quantity="10", unit_cost="250"),
                             second, Decimal("10"))
     receive_stock_lot(dear, by=admin)
+    remember_customs(part)
     return {
         "admin": admin, "supplier": supplier, "category": category, "unit": unit,
         "first": first, "second": second, "part": part, "cheap": cheap, "dear": dear,
@@ -270,6 +272,7 @@ def test_a_serial_line_goes_back_to_its_own_cell(env):
     line = _line(env["supplier"], serial, env["admin"], quantity="1", unit_cost="400")
     item = create_part_items(line, 1, serial_number="SN-1")[0]
     receive_part_item(item, to_location=env["second"], by=env["admin"])
+    remember_customs(serial)
     sale = create_sale(customer_name="Иванов", by=env["admin"])
     add_part_item_to_sale(sale, item, unit_price=Decimal("1200"), by=env["admin"])
     complete_sale(sale, by=env["admin"])
