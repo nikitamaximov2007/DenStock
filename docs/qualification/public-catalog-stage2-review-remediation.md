@@ -4,6 +4,11 @@ This record tracks qualification of `codex/public-catalog-stage2-review-fixes`
 against the independent review. It is evidence only: it neither deploys nor
 changes a production database.
 
+> The final PostgreSQL 16 qualification is in
+> [`public-catalog-stage2-pg16-final.md`](public-catalog-stage2-pg16-final.md).
+> It supersedes the planner and latency figures below, which stay only as
+> history of the invalid first corpus.
+
 ## Qualification history: invalid first corpus
 
 The first attempted corpus had the requested raw row counts, but it was not a

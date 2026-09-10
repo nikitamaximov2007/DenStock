@@ -52,6 +52,25 @@ caller has an outer transaction, the previous local value is restored before
 the nested block ends, so the setting cannot leak to later work on the same
 connection.
 
+Reading that previous value relies on tier order. `pg_trgm` registers the
+setting only when its library is loaded into the backend, so on a brand-new
+connection `current_setting('pg_trgm.word_similarity_threshold')` raises
+"unrecognized configuration parameter". The public entry point never hits
+this: the name-partial tier has the same four-character floor as the fuzzy
+tier, always runs first, and loads `pg_trgm` while planning against its GIN
+index. `_fuzzy_rows` is therefore not safe as a standalone entry point inside
+an outer transaction. Keep a trigram-planned tier ahead of it, or read the
+setting with `missing_ok`, when changing the tiers.
+`test_fresh_backend_fuzzy_search_in_autocommit_and_inside_atomic` pins this.
+
+Fuzzy cost grows with the number of names that genuinely resemble the typo.
+A GIN trigram index yields candidates but no order, so every candidate is
+scored, grouped and sorted before the cap applies. On the 125k qualification
+corpus a typo with 1 candidate took about 6 ms, with 12,500 about 41 ms and
+with 112,494 about 130 ms (English). Bounding that further, for example with
+a candidate cap or an ordered GiST index, would change result semantics and is
+a product decision rather than a tuning detail.
+
 Migration `catalog.0007_search_trigram` installs `pg_trgm` and creates GIN
 trigram indexes for normalized articles and the uppercase English name.
 Migration `actions.0014_confirmed_customs_name_ru_trigram` replaces the
