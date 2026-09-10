@@ -43,6 +43,7 @@ def validate_database_target(*, mode=None, database=None) -> None:
     prefix = _normalized(settings.DENSTOCK_EMERGENCY_DB_PREFIX)
     emergency_hosts = settings.DENSTOCK_EMERGENCY_ALLOWED_DB_HOSTS
     production_hosts = settings.DENSTOCK_PRODUCTION_DB_HOSTS
+    public_hosts = settings.DENSTOCK_PUBLIC_DATABASE_HOSTS
 
     if mode == "emergency-local":
         if "postgresql" not in _normalized(database.get("ENGINE")):
@@ -62,6 +63,13 @@ def validate_database_target(*, mode=None, database=None) -> None:
             raise EmergencySafetyError("Production points to an emergency local DB host.")
         if not _host_matches(host, production_hosts):
             raise EmergencySafetyError("Production DB host is not allowlisted.")
+    elif mode == "public-catalog":
+        if "postgresql" not in _normalized(database.get("ENGINE")):
+            raise EmergencySafetyError("Public catalog mode requires PostgreSQL.")
+        if _host_matches(host, emergency_hosts):
+            raise EmergencySafetyError("Public catalog points to an emergency local DB host.")
+        if not _host_matches(host, public_hosts):
+            raise EmergencySafetyError("Public catalog DB host is not allowlisted.")
     elif mode not in {"development", "test"}:
         raise EmergencySafetyError(f"Unknown DENSTOCK_MODE: {mode or '?'}")
 

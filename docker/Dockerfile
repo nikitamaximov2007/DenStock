@@ -59,7 +59,8 @@ RUN groupadd --gid "${DENSTOCK_WEB_GID}" denstock-web \
 # Миграции, сборка статики и создание администратора выполняются в entrypoint
 # при запуске, когда переменные окружения уже доступны.
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker/public-entrypoint.sh /public-entrypoint.sh
+RUN chmod +x /entrypoint.sh /public-entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]
