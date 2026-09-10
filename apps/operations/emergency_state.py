@@ -33,6 +33,9 @@ BUSINESS_APP_LABELS = frozenset(
         # резервы и ремонты. Без неё отпечаток бизнес-состояния был бы слепым
         # к изменениям клиентов на production во время автономной сессии.
         "customers",
+        # Public customer requests carry an operational commitment and must be
+        # protected and fingerprinted with the rest of the business state.
+        "customer_requests",
         # Сформированные таможенные заказы фиксируют историю включённых строк
         # и входят в тот же контур freeze/backup/failback, что продажи и ремонты.
         "customs_orders",
