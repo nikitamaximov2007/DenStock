@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Заявка клиента · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Заявка клиента</h1>
+    <div class="page-actions"><a class="btn btn--small btn--secondary"
+   href="{% url 'customer_request_list' %}">Все заявки</a></div>
+  </div>
+  <p>Статус: <strong>{{ customer_request.get_status_display }}</strong> · Создана: {{ customer_request.created_at|ru_dt }} · Обновлена: {{ customer_request.updated_at|ru_dt }}</p>
+  <p>{{ customer_request.customer_name }} · {{ customer_request.customer_phone }} · Предпочтительный канал: {{ customer_request.get_preferred_messenger_display }}</p>
+  {% if customer_request.comment %}<p>Комментарий: {{ customer_request.comment }}</p>{% endif %}
+  <p class="page-subtitle">Цена и доступность ниже показаны для ориентира. Заявка не фиксирует цену и не резервирует складской остаток.</p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Артикул</th>
+        <th>Деталь</th>
+        <th>Запрошено</th>
+        <th>Цена при заявке</th>
+        <th>Текущая цена</th>
+        <th>Доступно сейчас</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+        <tr>
+          <td>{{ line.article|default:"·" }}</td><td>{{ line.part_name }}{% if line.is_supply_inquiry %} · Запрос о поставке{% endif %}</td>
+          <td>{{ line.quantity_requested|quantity_int }} {{ line.unit_short_name }}</td>
+          <td>{% if line.price_seen is not None %}{{ line.price_seen|money_int }} ₽{% else %}Уточняется{% endif %}</td>
+          <td>{% if line.current_price is not None %}{{ line.current_price|money_int }} ₽{% else %}Уточняется{% endif %}</td>
+          <td>{{ line.current_available|quantity_int }} {{ line.unit_short_name }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if customer_request.status == "new" %}
+    <form method="post"
+          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="in_progress"><button class="btn btn--primary" type="submit">Взять в работу</button></form>
+    <form method="post"
+          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="canceled"><button class="btn btn--secondary" type="submit">Отменить</button></form>
+  {% elif customer_request.status == "in_progress" %}
+    <form method="post"
+          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="completed"><button class="btn btn--primary" type="submit">Отметить выполненной</button></form>
+    <form method="post"
+          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="canceled"><button class="btn btn--secondary" type="submit">Отменить</button></form>
+  {% endif %}
+  <h2>История статусов</h2>
+  {% if events %}<ul>{% for event in events %}<li>{{ event.changed_at|ru_dt }}: {{ event.get_from_status_display }} → {{ event.get_to_status_display }} · {{ event.changed_by|default:"Система" }}</li>{% endfor %}</ul>{% else %}<p>Статус ещё не менялся.</p>{% endif %}
+  <h2>Согласие и хранение</h2>
+  <p>Политика: {{ customer_request.privacy_policy_version }} · Согласие: {{ customer_request.personal_data_consent_version }} · Цель: {{ customer_request.consent_purpose }} · Принято: {{ customer_request.consent_accepted_at|ru_dt }}</p>
+  {% if customer_request.consent_withdrawn_at %}<p>Согласие отозвано: {{ customer_request.consent_withdrawn_at|ru_dt }}</p>{% endif %}
+{% endblock %}

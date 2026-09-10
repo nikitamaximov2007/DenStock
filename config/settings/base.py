@@ -49,6 +49,7 @@ LOCAL_APPS = [
     "apps.sales",
     "apps.repairs",
     "apps.ordered_parts",
+    "apps.customer_requests",
     "apps.customs_orders",
     "apps.returns",
     "apps.writeoffs",
@@ -195,6 +196,15 @@ AI_SUPPORT_RATE_LIMIT = env.int("AI_SUPPORT_RATE_LIMIT", default=5)
 AI_SUPPORT_DAILY_REQUEST_LIMIT = env.int("AI_SUPPORT_DAILY_REQUEST_LIMIT", default=50)
 AI_SUPPORT_DAILY_TOKEN_LIMIT = env.int("AI_SUPPORT_DAILY_TOKEN_LIMIT", default=100000)
 AI_SUPPORT_MAX_IMAGE_BYTES = env.int("AI_SUPPORT_MAX_IMAGE_BYTES", default=5 * 1024 * 1024)
+
+# Draft identifiers for public-request acceptance evidence. They deliberately
+# carry no legal wording: production values/text must be approved before launch.
+PUBLIC_REQUEST_PRIVACY_POLICY_VERSION = env(
+    "PUBLIC_REQUEST_PRIVACY_POLICY_VERSION", default="draft-legal-review-1"
+).strip()
+PUBLIC_REQUEST_PERSONAL_DATA_CONSENT_VERSION = env(
+    "PUBLIC_REQUEST_PERSONAL_DATA_CONSENT_VERSION", default="draft-legal-review-1"
+).strip()
 AI_SUPPORT_ATTACHMENT_RETENTION_DAYS = env.int(
     "AI_SUPPORT_ATTACHMENT_RETENTION_DAYS", default=30
 )

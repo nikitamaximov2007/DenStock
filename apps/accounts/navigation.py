@@ -42,7 +42,7 @@ class _NavAccess:
             setattr(self, attr, capability in self.capabilities)
 
 
-def _item(key, label, url, icon, *, active=False):
+def _item(key, label, url, icon, *, active=False, badge=None):
     return {
         "key": key,
         "label": label,
@@ -50,16 +50,18 @@ def _item(key, label, url, icon, *, active=False):
         "icon": icon,
         "stub": False,
         "active": active,
+        "badge": badge,
     }
 
 
-def _tab(label, url, *, active=False, sidebar_key="", icon=""):
+def _tab(label, url, *, active=False, sidebar_key="", icon="", badge=None):
     return {
         "label": label,
         "url": url,
         "active": active,
         "sidebar_key": sidebar_key,
         "icon": icon,
+        "badge": badge,
     }
 
 
@@ -368,6 +370,10 @@ def _warehouse_tabs(user, path):
     # продаж. Складского остатка у заказа нет, но живёт он рядом с «Клиентами»:
     # оператор приходит сюда из того же разговора с клиентом.
     if user.can_manage_sales:
+        # The badge deliberately counts only the actionable initial state, not
+        # every historical request.
+        from apps.customer_requests.models import CustomerRequest
+
         tabs.append(
             _tab(
                 "Запчасти на заказ",
@@ -375,6 +381,16 @@ def _warehouse_tabs(user, path):
                 sidebar_key="ordered-parts",
                 icon="box",
                 active=path.startswith("/ordered-parts/"),
+            )
+        )
+        tabs.append(
+            _tab(
+                "Заявки клиентов",
+                reverse("customer_request_list"),
+                sidebar_key="customer-requests",
+                icon="message",
+                badge=CustomerRequest.objects.filter(status=CustomerRequest.Status.NEW).count(),
+                active=path.startswith("/customer-requests/"),
             )
         )
     if user.can_view_purchase_cost and (

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Заявки клиентов · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Заявки клиентов</h1>
+  </div>
+  <p class="page-subtitle">Заявки из публичного каталога. Они не резервируют остатки и не являются оплатой или продажей.</p>
+  {% if page_obj.object_list %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Создана</th>
+          <th>Статус</th>
+          <th>Имя</th>
+          <th>Телефон</th>
+          <th>Мессенджер</th>
+          <th>Позиций</th>
+          <th>Обновлена</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for customer_request in page_obj.object_list %}
+          <tr>
+            <td><a href="{% url 'customer_request_detail' customer_request.pk %}">{{ customer_request.created_at|ru_dt }}</a></td>
+            <td>{{ customer_request.get_status_display }}</td>
+            <td>{{ customer_request.customer_name }}</td>
+            <td>{{ customer_request.customer_phone }}</td>
+            <td>{{ customer_request.get_preferred_messenger_display }}</td>
+            <td>{{ customer_request.line_count }}</td>
+            <td>{{ customer_request.updated_at|ru_dt }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    {% include "partials/_empty_state.html" with icon="message" title="Заявок пока нет" text="Новые заявки из публичного каталога появятся здесь." compact=1 %}
+  {% endif %}
+  {% include "partials/_pagination.html" %}
+{% endblock %}
