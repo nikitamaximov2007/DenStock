@@ -199,9 +199,8 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
     return None
 
 
-def _name_match_ids(raw: str, *, exact: bool, allow_confirmed_ru_name: bool) -> list[int]:
+def _name_match_ids(raw: str, *, lookup: str, allow_confirmed_ru_name: bool) -> list[int]:
     """Return cards by their English or explicitly confirmed Russian name."""
-    lookup = "iexact" if exact else "icontains"
     filters = Q(**{f"name__{lookup}": raw})
     if allow_confirmed_ru_name:
         filters |= Q(
@@ -215,6 +214,14 @@ def _name_match_ids(raw: str, *, exact: bool, allow_confirmed_ru_name: bool) -> 
         .values_list("pk", flat=True)
         .distinct()[:RESULT_LIMIT]
     )
+
+
+def _number_match_ids(norm: str, *, lookup: str, exact_numbers_only: bool) -> list[int]:
+    """Return cards by a partial canonical article tier without leaking aliases."""
+    numbers = PartNumber.objects.filter(**{f"normalized_value__{lookup}": norm})
+    if exact_numbers_only:
+        numbers = numbers.filter(kind__in=EXACT_NUMBER_KINDS)
+    return list(numbers.values_list("part_id", flat=True).distinct()[:RESULT_LIMIT])
 
 
 def _secondary_match(
@@ -243,28 +250,43 @@ def _secondary_match(
     if serial_ids:
         return serial_ids, MatchSource.SERIAL, raw
 
+    if allow_name:
+        # Exact names are stronger than every partial article match. An article
+        # such as PWHEELDISPLAY4 must not hide a card named WHEEL.
+        name_ids = _name_match_ids(
+            raw, lookup="iexact", allow_confirmed_ru_name=allow_confirmed_ru_name
+        )
+        if name_ids:
+            return name_ids, MatchSource.NAME, raw
+
     if allow_partial and norm:
-        partial_numbers = PartNumber.objects.filter(normalized_value__icontains=norm)
-        if partial_exact_numbers_only:
-            partial_numbers = partial_numbers.filter(kind__in=EXACT_NUMBER_KINDS)
-        partial_ids = list(
-            partial_numbers
-            .values_list("part_id", flat=True)
-            .distinct()[:RESULT_LIMIT]
+        prefix_ids = _number_match_ids(
+            norm,
+            lookup="istartswith",
+            exact_numbers_only=partial_exact_numbers_only,
+        )
+        if prefix_ids:
+            return prefix_ids, MatchSource.NUMBER_PARTIAL, raw
+
+    if allow_name:
+        name_ids = _name_match_ids(
+            raw, lookup="istartswith", allow_confirmed_ru_name=allow_confirmed_ru_name
+        )
+        if name_ids:
+            return name_ids, MatchSource.NAME, raw
+
+    if allow_partial and norm:
+        partial_ids = _number_match_ids(
+            norm,
+            lookup="icontains",
+            exact_numbers_only=partial_exact_numbers_only,
         )
         if partial_ids:
             return partial_ids, MatchSource.NUMBER_PARTIAL, raw
 
     if allow_name:
-        # Exact names are intentionally ahead of partial names, just as exact
-        # articles are ahead of partial articles in the operator flow.
         name_ids = _name_match_ids(
-            raw, exact=True, allow_confirmed_ru_name=allow_confirmed_ru_name
-        )
-        if name_ids:
-            return name_ids, MatchSource.NAME, raw
-        name_ids = _name_match_ids(
-            raw, exact=False, allow_confirmed_ru_name=allow_confirmed_ru_name
+            raw, lookup="icontains", allow_confirmed_ru_name=allow_confirmed_ru_name
         )
         if name_ids:
             return name_ids, MatchSource.NAME, raw
