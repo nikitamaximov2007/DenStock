@@ -129,7 +129,7 @@ def _repair(data, customer, *, qty=1, days_ago=0):
 
 def _rows(period=None, *, sort=CLIENTS_SORT_DATE, direction="desc"):
     return order_clients_rows(
-        get_clients_sales_and_repairs(period or resolve_period({})),
+        get_clients_sales_and_repairs(period or resolve_period({"preset": "all"})),
         sort=sort, direction=direction,
     )
 
@@ -171,6 +171,23 @@ def test_sale_wins_when_it_is_the_later_document(data):
     assert _rows()[0]["last_event"] == last
 
 
+def test_new_completed_sale_moves_the_customer_to_the_top(data):
+    _sale(data, "Первый", days_ago=2)
+    _sale(data, "Второй", days_ago=1)
+    assert _names(_rows()) == ["Второй", "Первый"]
+
+    _sale(data, "Первый", days_ago=0)
+    assert _names(_rows()) == ["Первый", "Второй"]
+
+
+def test_draft_documents_do_not_create_or_reorder_a_customer(data):
+    _sale(data, "Проведён", days_ago=1)
+    create_sale(customer_name="Черновик", by=data["admin"])
+    create_repair_order(customer_name="Черновик ремонта", by=data["admin"])
+
+    assert _names(_rows()) == ["Проведён"]
+
+
 def test_customer_card_dates_are_not_used(data):
     """Карточка клиента заведена сегодня, а документ был давно."""
     from apps.customers.models import Customer
@@ -203,8 +220,8 @@ def test_oldest_first(data):
     assert _names(_rows(direction="asc")) == ["Старый", "Средний", "Новый"]
 
 
-def test_default_order_is_untouched(data):
-    """Без запроса сортировки порядок прежний: по числу документов."""
+def test_documents_order_remains_available_explicitly(data):
+    """Прежний порядок по числу документов остаётся явной опцией."""
     _sale(data, "Один", days_ago=1)
     _sale(data, "Много", days_ago=20)
     _repair(data, "Много", days_ago=19)
@@ -332,36 +349,36 @@ def test_screen_orders_newest_and_oldest(client, data, make_user):
     _login(client, make_user)
     url = reverse("reports_clients_overview")
 
-    html = client.get(f"{url}?sort=date&direction=desc").content.decode()
+    html = client.get(f"{url}?{_wide_period_qs()}&sort=date&direction=desc").content.decode()
     assert html.index("Новый") < html.index("Старый")
     assert "сначала новые" in html
 
-    html = client.get(f"{url}?sort=date&direction=asc").content.decode()
+    html = client.get(f"{url}?{_wide_period_qs()}&sort=date&direction=asc").content.decode()
     assert html.index("Старый") < html.index("Новый")
     assert "сначала старые" in html
 
 
-def test_screen_default_order_needs_no_parameters(client, data, make_user):
+def test_screen_default_order_is_recent_first(client, data, make_user):
     _sale(data, "Один", days_ago=1)
-    _sale(data, "Много", days_ago=20)
-    _repair(data, "Много", days_ago=19)
+    _sale(data, "Много", days_ago=8)
+    _repair(data, "Много", days_ago=7)
     _login(client, make_user)
     html = client.get(reverse("reports_clients_overview")).content.decode()
-    assert html.index("Много") < html.index("Один")
-    assert "по числу документов" in html
+    assert html.index("Один") < html.index("Много")
+    assert "сначала новые" in html
 
 
 def test_broken_sort_parameters_fall_back_to_default(client, data, make_user):
     _sale(data, "Один", days_ago=1)
-    _sale(data, "Много", days_ago=20)
-    _repair(data, "Много", days_ago=19)
+    _sale(data, "Много", days_ago=8)
+    _repair(data, "Много", days_ago=7)
     _login(client, make_user)
     url = reverse("reports_clients_overview")
     for query in ("?sort=drop%20table&direction=desc", "?sort=date&direction=вбок",
                   "?sort=&direction="):
         html = client.get(url + query).content.decode()
-        assert html.index("Много") < html.index("Один"), query
-        assert "по числу документов" in html
+        assert html.index("Один") < html.index("Много"), query
+        assert "сначала новые" in html
 
 
 def test_period_form_carries_the_chosen_order(client, data, make_user):
@@ -381,10 +398,10 @@ def test_period_form_carries_the_chosen_order(client, data, make_user):
     assert 'name="direction" value="asc"' in html
     assert "preset=7&amp;sort=date&amp;direction=asc" in html
 
-    # Умолчание ничего лишнего в форму не добавляет.
+    # Default order is recent-first, so the form carries it through period changes.
     html = client.get(url).content.decode()
-    assert 'name="sort"' not in html
-    assert 'name="direction"' not in html
+    assert 'name="sort" value="date"' in html
+    assert 'name="direction" value="desc"' in html
 
 
 def test_period_change_keeps_the_order(client, data, make_user):
