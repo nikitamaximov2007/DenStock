@@ -44,6 +44,25 @@ exclusion, and exact-article ranking over a fuzzy-looking name. On PostgreSQL
 with `pg_trgm`, it additionally checks `bearng` and `проклатка` through the
 real fuzzy tier.
 
+On 2026-09-10 the corrected command was run on a fresh disposable PostgreSQL
+16.15 database, migrated from zero. It created exactly 125,000 `PartType`,
+125,000 canonical ARTICLE `PartNumber`, 125,000 populated English names,
+125,000 `PartCustomsInfo`, 112,500 confirmed RU rows, and 12,500 unconfirmed
+RU rows. The live service preflight returned the expected first hit and tier:
+
+| Probe | Returned | Tier |
+| --- | ---: | --- |
+| `420-892-388` | 1 | exact article |
+| `420892388` | 1 | normalized exact article |
+| `4208` | 24 | article prefix, target first |
+| `8923` | 23 | article substring, target first |
+| `QUALIFICATION EXACT EN NAME` | 1 | exact name |
+| `bearng` | 300 | name fuzzy, `BEARING` target included |
+| `УНИКАЛЬНОЕ ТОЧНОЕ РУ НАЗВАНИЕ` | 1 | exact name |
+| `проклатка` | 300 | name fuzzy, `ПРОКЛАДКА` target included |
+| `НЕПОДТВЕРЖДЕННАЯ ПРОКЛАДКА` | 0 | excluded |
+| `BERRNG-01` | 1 | exact article |
+
 ## Actual Search 2.0 data path
 
 | Tier | Persisted source and condition |
