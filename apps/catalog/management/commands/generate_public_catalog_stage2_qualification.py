@@ -12,7 +12,10 @@ SEED_ROWS = (
     ("Q-BLT-01", "DRIVE BELT", "РЕМЕНЬ"),
     ("Q-WHL-01", "WHEEL", "КОЛЕСО"),
     ("Q-GSK-01", "GASKET FIXTURE", "ПРОКЛАДКА"),
-    ("BEARNG-01", "ARTICLE RANKING FIXTURE", "РЕЙТИНГ ФИКСТУРЫ"),
+    ("BERRNG-01", "ARTICLE RANKING FIXTURE", "РЕЙТИНГ ФИКСТУРЫ"),
+    # These remain isolated exact-hit probes when the large corpus deliberately
+    # has many BEARING/ПРОКЛАДКА candidates for partial and fuzzy workloads.
+    ("Q-EN-EXACT-01", "QUALIFICATION EXACT EN NAME", "УНИКАЛЬНОЕ ТОЧНОЕ РУ НАЗВАНИЕ"),
 )
 UNCONFIRMED_SEED = ("Q-RU-UNC-01", "UNCONFIRMED FIXTURE", "ПРОКЛАДКА")
 

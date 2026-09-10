@@ -48,14 +48,17 @@ def test_miniature_qualification_corpus_exercises_canonical_search_paths(qualifi
     assert _first("8923").part_id == ids["420-892-388"]
     assert _first("BEARING").part_id == ids["Q-BRG-01"]
     assert _first("BEARING").match_type == "exact_name"
+    assert _first("QUALIFICATION EXACT EN NAME").part_id == ids["Q-EN-EXACT-01"]
+    assert _first("QUALIFICATION EXACT EN NAME").match_type == "exact_name"
     assert _first("ПРОКЛАДКА").part_id == ids["Q-GSK-01"]
     assert _first("ПРОКЛАДКА").match_type == "exact_name"
+    assert _first("УНИКАЛЬНОЕ ТОЧНОЕ РУ НАЗВАНИЕ").part_id == ids["Q-EN-EXACT-01"]
 
     # The duplicate text is on a separate unconfirmed row.  It is absent even
     # though the confirmed counterpart is returned for the same query.
     assert ids["Q-RU-UNC-01"] not in [hit.part_id for hit in search_part_ids("ПРОКЛАДКА")]
-    assert _first("BEARNG-01").part_id == ids["BEARNG-01"]
-    assert _first("BEARNG-01").match_type == "exact_article"
+    assert _first("BERRNG-01").part_id == ids["BERRNG-01"]
+    assert _first("BERRNG-01").match_type == "exact_article"
 
 
 @pytest.mark.postgresql
