@@ -100,7 +100,7 @@ def test_partial_article_still_works_without_a_stronger_match(search_refs):
 
 def test_confirmed_exact_russian_name_beats_article_substring(search_refs):
     category, unit = search_refs
-    substring = _part(category, unit, article="PKOLESODISPLAY4", name="DISPLAY")
+    substring = _part(category, unit, article="PКОЛЕСОDISPLAY4", name="DISPLAY")
     exact_russian_name = _part(category, unit, article="123456", name="WHEEL")
     PartCustomsInfo.objects.create(
         part_type=exact_russian_name,
