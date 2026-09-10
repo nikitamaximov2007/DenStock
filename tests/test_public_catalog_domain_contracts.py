@@ -18,6 +18,7 @@ from apps.brp.models import BrpCatalogPart, BrpPricingSettings
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.catalog.public_contracts import (
+    ZERO,
     CurrentCustomerPrice,
     PublicPartFacts,
     PublicUnit,
@@ -432,3 +433,54 @@ def test_public_part_facts_are_read_only_and_have_bounded_query_count(domain_env
 
     assert query_counts[1] <= query_counts[0] + 1, query_counts
     assert query_counts[2] <= query_counts[0] + 1, query_counts
+
+
+
+def test_public_part_facts_query_count_is_constant_with_real_stock(domain_env):
+    """Stage 1 hardening: the bounded-query guard must cover the stock branch.
+
+    The guard above builds parts WITHOUT stock, so ``live_stock_rows`` returns
+    early and never runs its reservation lookup or identity hydration. Real
+    public traffic is mostly parts WITH stock, which is exactly where any
+    future per-row work would appear.
+
+    Every batch here holds the same branch mix - a serial part, a partly
+    reserved bulk part, and plain bulk parts - so the only thing that changes
+    between batches is size. A serial part adds one fixed lookup (reserved
+    serial items); that is a branch, not per-part growth, so the mix is kept
+    identical rather than letting the largest batch be the only one with it.
+    """
+    serial_part = _part(
+        domain_env, name="Stocked serial part", tracking=PartType.TrackingMode.SERIAL
+    )
+    _serial_item(domain_env, serial_part, serial_number="HARDEN-1")
+    parts = [serial_part]
+    for index in range(49):
+        part = _part(domain_env, name=f"Stocked public part {index}")
+        PartNumber.objects.create(
+            part=part, value=f"STOCKED-{index:03d}",
+            kind=PartNumber.Kind.ARTICLE, is_primary=True,
+        )
+        _bulk_lot(domain_env, part, "3")
+        parts.append(part)
+    reserved = create_reservation(customer_name="Hardening", by=domain_env["user"])
+    add_stock_lot_to_reservation(
+        reserved, StockLot.objects.filter(part_type=parts[1]).get(), Decimal("1"),
+        by=domain_env["user"],
+    )
+    activate_reservation(reserved, by=domain_env["user"])
+
+    query_counts = []
+    for count in (2, 20, 50):
+        with CaptureQueriesContext(connection) as queries:
+            facts = build_public_part_facts([part.pk for part in parts[:count]])
+        assert len(facts) == count
+        assert all(fact.available_quantity >= ZERO for fact in facts)
+        _assert_read_only(queries)
+        query_counts.append(len(queries))
+
+    # Constant with stock: no per-part query appears as the batch grows.
+    assert query_counts[0] == query_counts[1] == query_counts[2], query_counts
+    # The stock branch really ran: reservations and identity hydration add
+    # queries on top of the five-query no-stock baseline.
+    assert query_counts[0] > 5, query_counts
