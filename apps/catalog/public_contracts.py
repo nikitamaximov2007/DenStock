@@ -9,6 +9,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 
 from apps.actions.models import PartCustomsInfo
 from apps.inventory.availability import available_totals
@@ -39,7 +40,7 @@ class PublicUnit:
 class PublicPartFacts:
     """The deliberately small public-safe projection of a warehouse part."""
 
-    part_id: int
+    public_id: UUID
     article: str
     english_name: str
     russian_name: str | None
@@ -92,7 +93,7 @@ def build_public_part_facts(part_ids: Iterable[int]) -> list[PublicPartFacts]:
 
     return [
         PublicPartFacts(
-            part_id=part.pk,
+            public_id=part.public_id,
             article=part_exact_number(part, default=""),
             english_name=part.name,
             russian_name=russian_names.get(part.pk),

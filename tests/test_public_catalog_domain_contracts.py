@@ -351,7 +351,7 @@ def test_public_part_facts_use_canonical_identity_confirmed_ru_name_and_unit(dom
     facts, hidden = build_public_part_facts([part.pk, unconfirmed.pk])
 
     assert facts == PublicPartFacts(
-        part_id=part.pk,
+        public_id=part.public_id,
         article="HOSE-001",
         english_name="Fuel hose",
         russian_name="Топливный шланг",
@@ -383,7 +383,7 @@ def test_public_part_facts_expose_no_internal_stock_or_commercial_fields(domain_
     facts = build_public_part_facts([part.pk])[0]
 
     assert {field.name for field in fields(PublicPartFacts)} == {
-        "part_id",
+        "public_id",
         "article",
         "english_name",
         "russian_name",

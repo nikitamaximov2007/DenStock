@@ -1,4 +1,5 @@
 import re
+import uuid
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -189,6 +190,10 @@ class PartType(Dictionary):
     min_stock_level = models.DecimalField(
         "Минимальный остаток", max_digits=12, decimal_places=3, default=0
     )
+    # Permanent external identity.  It is deliberately separate from the
+    # warehouse primary key, which remains an implementation detail.
+    public_id = models.UUIDField("Публичный ID", default=uuid.uuid4, unique=True, editable=False)
+    is_public = models.BooleanField("Показывать в публичном каталоге", default=True)
 
     class Meta:
         verbose_name = "Вид детали"
@@ -208,6 +213,12 @@ class PartType(Dictionary):
             raise ValidationError(
                 {"min_price": "Минимальная цена не может быть больше рекомендуемой."}
             )
+        if self.pk:
+            previous = (
+                type(self).objects.filter(pk=self.pk).values_list("public_id", flat=True).first()
+            )
+            if previous and previous != self.public_id:
+                raise ValidationError({"public_id": "Публичный ID нельзя изменять."})
 
     def can_change_tracking_mode(self) -> bool:
         """TODO (слои 9–12): запретить смену режима, если по детали уже есть
