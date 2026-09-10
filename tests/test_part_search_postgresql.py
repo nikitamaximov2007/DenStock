@@ -8,7 +8,7 @@ Index usage is proven from EXPLAIN output, not from the fact that an index
 exists: the planner is free to ignore an index, so only the plan is evidence.
 """
 import pytest
-from django.db import connection
+from django.db import connection, transaction
 from django.test.utils import CaptureQueriesContext
 
 from apps.catalog.search import (
@@ -183,6 +183,77 @@ def test_threshold_setting_does_not_leak_into_the_connection(cat):
         cursor.execute("SELECT current_setting('pg_trgm.word_similarity_threshold')")
         after = cursor.fetchone()[0]
     assert after == before
+
+
+def _threshold():
+    # ``missing_ok``: pg_trgm registers the setting only once its library is
+    # loaded into the backend, so a fresh connection may not know it yet.
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT current_setting('pg_trgm.word_similarity_threshold', true)")
+        return cursor.fetchone()[0]
+
+
+def _load_trgm():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT show_trgm('x')")
+
+
+def test_threshold_is_restored_after_atomic_and_nested_atomic(cat):
+    cat.part("BEARING DRIVE 12345")
+    _load_trgm()
+    baseline = _threshold()
+    with transaction.atomic():
+        assert search_part_ids("bearng")
+        assert _threshold() == baseline
+        with transaction.atomic():
+            assert search_part_ids("bearng")
+            assert _threshold() == baseline
+        assert _threshold() == baseline
+    assert _threshold() == baseline
+
+
+def test_threshold_is_not_left_behind_by_a_failing_fuzzy_query(cat, monkeypatch):
+    """An error inside the fuzzy block rolls its savepoint back, setting included."""
+    import apps.catalog.search as search
+
+    cat.part("BEARING DRIVE 12345")
+    _load_trgm()
+    baseline = _threshold()
+    monkeypatch.setattr(
+        search, "_FUZZY_SQL", "SELECT this_function_does_not_exist(%s, %s, %s, %s, %s)"
+    )
+    with transaction.atomic():
+        with pytest.raises(Exception):  # noqa: B017 - any database error will do
+            search.search_part_ids("bearng")
+        assert _threshold() == baseline
+    assert _threshold() == baseline
+
+
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_fresh_backend_fuzzy_search_in_autocommit_and_inside_atomic():
+    """A brand-new connection has not loaded pg_trgm; search must still work.
+
+    Inside an outer transaction the fuzzy block first reads the current
+    threshold so it can put it back. That read needs the setting to exist, and
+    on a fresh backend it exists only because the name tiers have already run
+    and loaded pg_trgm while planning against its GIN index. The name partial
+    tier has the same length floor as the fuzzy tier, so it always runs first;
+    this test pins that ordering, in autocommit and inside ``atomic``.
+    """
+    catalog = Catalog()
+    catalog.part("BEARING DRIVE 12345")
+    connection.close()
+    assert _threshold() is None  # really a fresh backend
+    assert search_part_ids("bearng")
+    _load_trgm()
+    baseline = _threshold()
+    assert search_part_ids("bearng") and _threshold() == baseline
+
+    connection.close()
+    with transaction.atomic():
+        assert search_part_ids("bearng")
+    _load_trgm()
+    assert _threshold() == baseline
 
 
 def test_fuzzy_search_writes_nothing(cat):

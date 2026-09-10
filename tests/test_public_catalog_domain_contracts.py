@@ -480,45 +480,59 @@ def _assert_stock_scaling(domain_env, *, tracking, reserved=False):
     ids=["bulk", "reserved-bulk", "serial"],
 )
 def test_public_part_facts_query_count_is_constant_for_each_stock_shape(
-    domain_env, tracking, reserved
+    domain_env, tracking, reserved, record_property
 ):
     """Stage 1 scaling is like-for-like: branch composition never changes by size."""
     counts = _assert_stock_scaling(domain_env, tracking=tracking, reserved=reserved)
+    # Recorded, not only asserted: qualification reports the measured numbers.
+    record_property("stage1_hydration_queries_1_20_50", counts)
     assert counts[0] > 5, counts
 
 
-@pytest.mark.parametrize("with_stock", [False, True], ids=["no-stock", "with-bulk-stock"])
-def test_public_catalog_search_hydration_end_to_end_matrix(domain_env, with_stock):
-    """Search, hydration and their total stay flat for 1/20/50 real results."""
-    parts = []
-    stem = "Matrix stocked" if with_stock else "Matrix empty"
-    for index in range(50):
-        part = _part(domain_env, name=f"{stem} {index:03d}")
-        PartNumber.objects.create(
-            part=part, value=f"MATRIX-{'S' if with_stock else 'E'}-{index:03d}",
-            kind=PartNumber.Kind.ARTICLE, is_primary=True,
-        )
-        if with_stock:
-            _bulk_lot(domain_env, part, "2")
-        parts.append(part)
+# One family of names per result size. The words share no trigram, so neither
+# the name tiers nor PostgreSQL typo tolerance can pull a neighbouring family
+# in: the search itself returns exactly 1, 20 and 50 parts, rather than the
+# same 50 cut down to size by pagination.
+E2E_FAMILIES = ((1, "Kestrel"), (20, "Wombat"), (50, "Jaguar"))
 
-    measurements = []
-    for count in (1, 20, 50):
-        # A unique prefix makes the search itself return exactly this workload.
-        query = f"{stem}"
+
+@pytest.mark.parametrize("with_stock", [False, True], ids=["no-stock", "with-bulk-stock"])
+def test_public_catalog_search_hydration_end_to_end_matrix(
+    domain_env, with_stock, record_property
+):
+    """Search, hydration and their total stay flat for 1/20/50 real results."""
+    for code, (size, family) in enumerate(E2E_FAMILIES, 1):
+        for index in range(size):
+            part = _part(domain_env, name=f"{family} {index:03d}")
+            PartNumber.objects.create(
+                part=part, value=f"E2E{code}-{index:03d}",
+                kind=PartNumber.Kind.ARTICLE, is_primary=True,
+            )
+            if with_stock:
+                _bulk_lot(domain_env, part, "2")
+
+    measurements = {}
+    for size, family in E2E_FAMILIES:
         with CaptureQueriesContext(connection) as search_queries:
-            hits = search_parts(query, page=1, page_size=count).hits
-        assert len(hits) == count
+            page = search_parts(family, page=1, page_size=50)
+        assert page.total == size, (family, page.total)
+        assert len(page.hits) == size
         with CaptureQueriesContext(connection) as hydration_queries:
-            facts = build_public_part_facts([hit.part_id for hit in hits])
-        assert len(facts) == count
+            facts = build_public_part_facts([hit.part_id for hit in page.hits])
+        assert len(facts) == size
+        # Hydration really went through canonical availability: stocked parts
+        # report their received quantity, empty ones report zero.
+        expected = Decimal("2") if with_stock else ZERO
+        assert all(fact.available_quantity == expected for fact in facts), facts[:2]
         _assert_read_only(search_queries)
         _assert_read_only(hydration_queries)
-        measurements.append((len(search_queries), len(hydration_queries)))
+        measurements[size] = {
+            "search": len(search_queries),
+            "hydrate": len(hydration_queries),
+            "total": len(search_queries) + len(hydration_queries),
+        }
 
-    search_counts = [search for search, _hydrate in measurements]
-    hydration_counts = [hydrate for _search, hydrate in measurements]
-    total_counts = [search + hydrate for search, hydrate in measurements]
-    assert search_counts[0] == search_counts[1] == search_counts[2], measurements
-    assert hydration_counts[0] == hydration_counts[1] == hydration_counts[2], measurements
-    assert total_counts[0] == total_counts[1] == total_counts[2], measurements
+    record_property("e2e_query_counts", measurements)
+    for kind in ("search", "hydrate", "total"):
+        values = [measurements[size][kind] for size, _family in E2E_FAMILIES]
+        assert values[0] == values[1] == values[2], (kind, measurements)
