@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import connection
 from django.db.models import Q
+from django.db.models.functions import Collate, Upper
 
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
@@ -199,16 +201,37 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
     return None
 
 
+def _confirmed_ru_name_ids(raw: str, *, lookup: str):
+    """Confirmed RU-name IDs, case-insensitive even in a C-locale PostgreSQL DB.
+
+    PostgreSQL's ``UPPER``/``LOWER`` use the database locale.  A cluster
+    created with locale ``C`` therefore leaves Cyrillic untouched, making
+    Django's ``__iexact``/``__icontains`` effectively case-sensitive.  The
+    stock PostgreSQL 16 image provides the Unicode ICU collation; apply it
+    only to this operator-facing trusted-name comparison.
+    """
+    names = PartType.objects.filter(customs_info__customs_name_ru_confirmed=True)
+    field = "customs_info__customs_name_ru"
+    if connection.vendor != "postgresql":
+        return names.filter(**{f"{field}__{lookup}": raw}).values("pk")
+
+    folded_lookup = {
+        "iexact": "_ru_name_folded",
+        "istartswith": "_ru_name_folded__startswith",
+        "icontains": "_ru_name_folded__contains",
+    }[lookup]
+    return (
+        names.annotate(_ru_name_folded=Upper(Collate(field, "und-x-icu")))
+        .filter(**{folded_lookup: raw.upper()})
+        .values("pk")
+    )
+
+
 def _name_match_ids(raw: str, *, lookup: str, allow_confirmed_ru_name: bool) -> list[int]:
     """Return cards by their English or explicitly confirmed Russian name."""
     filters = Q(**{f"name__{lookup}": raw})
     if allow_confirmed_ru_name:
-        filters |= Q(
-            **{
-                f"customs_info__customs_name_ru__{lookup}": raw,
-                "customs_info__customs_name_ru_confirmed": True,
-            }
-        )
+        filters |= Q(pk__in=_confirmed_ru_name_ids(raw, lookup=lookup))
     return list(
         PartType.objects.filter(filters)
         .values_list("pk", flat=True)
