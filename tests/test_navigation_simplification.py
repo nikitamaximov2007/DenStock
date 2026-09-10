@@ -517,9 +517,12 @@ def test_the_brand_is_still_the_home_link(client, make_nav_user):
     html = _html(client, "dashboard")
     home = reverse("dashboard")
     assert re.search(
-        r'<a class="sidebar__brand nav__link"[^>]*href="' + re.escape(home) + r'"',
+        r'<a class="sidebar__brand"[^>]*href="' + re.escape(home) + r'"',
         html, re.DOTALL,
     ), "в сайдбаре нет кликабельного логотипа"
+    assert 'class="sidebar__brand nav__link"' not in _sidebar(html), (
+        "логотип не должен получать active-стиль пунктов навигации"
+    )
     assert re.search(
         r'<a class="topbar__brand"[^>]*href="' + re.escape(home) + r'"[^>]*data-home-link',
         html, re.DOTALL,
