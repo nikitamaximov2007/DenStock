@@ -147,8 +147,30 @@ def write_off_quick(request):
     """The operator route: scan article, enter reason and business author, post."""
     _require_write_offs(request)
     q = (request.POST.get("q") if request.method == "POST" else request.GET.get("q") or "").strip()
-    lookup = resolve_part_lookup(q) if q else None
-    part = lookup.candidate.part if lookup and lookup.found and not lookup.ambiguous else None
+    lookup = (
+        resolve_part_lookup(
+            q,
+            allow_partial=True,
+            allow_name=True,
+            allow_confirmed_ru_name=True,
+            partial_exact_numbers_only=True,
+        )
+        if q
+        else None
+    )
+    selected_part_id = (
+        request.POST.get("part_id") if request.method == "POST" else request.GET.get("part_id")
+    )
+    selected_candidate = next(
+        (
+            candidate
+            for candidate in (lookup.candidates if lookup else [])
+            if str(candidate.part.pk) == str(selected_part_id)
+        ),
+        None,
+    )
+    candidate = selected_candidate or (lookup.candidate if lookup and lookup.found else None)
+    part = candidate.part if candidate else None
     if request.method == "POST":
         if part is None:
             messages.error(request, (lookup.message if lookup else "") or "Деталь не найдена.")
@@ -168,7 +190,7 @@ def write_off_quick(request):
             else:
                 messages.success(
                     request,
-                    f"Деталь {lookup.candidate.exact_number} списана. "
+                    f"Деталь {candidate.exact_number} списана. "
                     f"Причина: {doc.comment}. Автор: {doc.business_author}.",
                 )
                 return redirect("write_off_detail", pk=doc.pk)
@@ -183,10 +205,11 @@ def write_off_quick(request):
         {
             "q": q,
             "part": part,
-            "lookup": lookup.candidate if part else None,
+            "lookup": candidate,
             "available": available_quantity(part) if part else None,
             "locations": locations,
-            "not_found": bool(q and part is None),
+            "not_found": bool(q and part is None and not lookup.candidates),
+            "lookup_candidates": lookup.candidates if lookup and part is None else [],
         },
     )
 

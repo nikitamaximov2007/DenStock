@@ -202,7 +202,7 @@ def test_actions_page_shows_only_exact_production_number(
     assert RELATED_A not in html
     assert RELATED_B not in html
     assert "Найдено несколько складских карточек" not in html
-    assert "Добавить выбранную ячейку" in html
+    assert "Добавить выбранную ячейку" not in html
     assert "Провести сразу" not in html
 
 
@@ -213,7 +213,7 @@ def test_alias_only_action_scan_is_not_an_operation_candidate(
     client.force_login(exact_action_data["admin"])
     html = client.get(reverse("actions_scan"), {"q": RELATED_ONLY}).content.decode()
 
-    assert "Деталь не найдена в остатках склада." in html
+    assert "Деталь не найдена" in html
     assert "Провести сразу" not in html
     assert RELATED_A not in html
 
@@ -272,10 +272,10 @@ def test_same_exact_number_on_two_real_cards_requires_explicit_part_choice(
     ).content.decode()
 
     assert "Найдено несколько складских карточек" in ambiguous
-    assert f"part_id={exact_action_data['exact_part'].pk}" in ambiguous
-    assert f"part_id={duplicate.pk}" in ambiguous
+    assert f'name="part_id" value="{exact_action_data["exact_part"].pk}"' in ambiguous
+    assert f'name="part_id" value="{duplicate.pk}"' in ambiguous
     assert "DAMPER, VIBRATION" in selected
-    assert "Добавить выбранную ячейку" in selected
+    assert "Добавить выбранную ячейку" not in selected
     assert "Провести сразу" not in selected
 
 

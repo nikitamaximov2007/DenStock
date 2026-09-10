@@ -15,6 +15,7 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.actions.models import PartCustomsInfo
 from apps.catalog.models import Category, PartNumber, PartType, Unit
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
@@ -557,6 +558,40 @@ def test_quick_write_off_page_renders_for_an_unreserved_bulk_lot(client, data):
 
     assert response.status_code == 200
     assert "Доступно: 5" in response.content.decode()
+
+
+def test_quick_write_off_finds_a_part_by_confirmed_russian_name(client, data):
+    part = data["lot"].part_type
+    PartCustomsInfo.objects.create(
+        part_type=part,
+        customs_name_ru="СПИСАТЬ БОЛТ",
+        customs_name_ru_confirmed=True,
+    )
+    client.force_login(data["admin"])
+
+    response = client.get(reverse("write_off_quick"), {"q": "СПИСАТЬ БОЛТ"})
+
+    assert response.status_code == 200
+    assert part.name in response.content.decode()
+    assert "Доступно: 5" in response.content.decode()
+
+
+def test_quick_write_off_keeps_the_candidate_selected_from_multiple_matches(client, data):
+    part = data["lot"].part_type
+    PartNumber.objects.create(part=part, value="WO-SEARCH-1", kind=PartNumber.Kind.OEM)
+    PartType.objects.create(
+        name="Болт-Списание второй",
+        category=part.category,
+        unit=part.unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    client.force_login(data["admin"])
+
+    response = client.get(reverse("write_off_quick"), {"q": "Болт", "part_id": part.pk})
+
+    body = response.content.decode()
+    assert f'value="{part.pk}"' in body
+    assert "WO-SEARCH-1" in body
 
 
 def test_write_off_quarantine_stock_lot(data):

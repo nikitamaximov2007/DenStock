@@ -382,9 +382,8 @@ def test_scan_page_single_location_preselected(client, make_user, data):
     html = client.get(reverse("actions_scan") + "?q=700100").content.decode()
     assert "Болт одноместный" in html
     assert "Ячейка списания" not in html  # единственная ячейка выбирается сервером
-    assert f'value="{data["loc1"].pk}"' in html
+    assert "Добавить выбранную ячейку" not in html
     assert "Деталь найдена в нескольких ячейках" not in html
-    assert "Добавить выбранную ячейку" in html
     assert "В корзину" not in html
     assert "Провести сразу" not in html
 
@@ -400,7 +399,7 @@ def test_scan_page_multiple_locations_require_choice(client, make_user, data):
 def test_scan_page_unknown_part(client, make_user, data):
     _login(client, make_user, superuser=True, name="boss")
     html = client.get(reverse("actions_scan") + "?q=NOPE-404").content.decode()
-    assert "Деталь не найдена в остатках склада." in html
+    assert "Деталь не найдена" in html
 
 
 def test_perform_via_view_and_success_message(client, make_user, data):

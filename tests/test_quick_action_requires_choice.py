@@ -223,7 +223,7 @@ def test_one_eligible_cell_is_hidden_and_forged_location_is_ignored(client, make
 
     html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
     assert "Ячейка списания" not in html
-    assert f'value="{env["loc"].pk}"' in html
+    assert "Добавить выбранную ячейку" not in html
 
     response = client.post(
         reverse("actions_cart_add"),

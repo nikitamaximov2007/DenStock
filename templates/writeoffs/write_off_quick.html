@@ -16,7 +16,7 @@
              value="{{ request.POST.reason|default:'' }}">
     </p>
     <p>
-      <label for="quick-write-off-scan">Артикул / скан детали</label>
+      <label for="quick-write-off-scan">Артикул или название детали</label>
       <br>
       <input id="quick-write-off-scan"
              name="q"
@@ -31,6 +31,7 @@
              required>
     </p>
     {% if part %}
+      <input type="hidden" name="part_id" value="{{ part.pk }}">
       <p><span class="code-pill">{{ lookup.exact_number }}</span> <strong>{{ part.name }}</strong></p>
       <p><strong>Доступно: {{ available|quantity_int }}</strong></p>
       {% if locations|length > 1 %}
@@ -51,6 +52,17 @@
                value="{{ locations.0.location.pk }}">
         <p>Ячейка: <strong>{{ locations.0.location.short_code }}</strong></p>
       {% endif %}
+    {% elif lookup_candidates %}
+      <p>Найдено несколько деталей. Выберите нужную:</p>
+      <ul>
+        {% for candidate in lookup_candidates %}
+          <li>
+            <a href="?q={{ q|urlencode }}&amp;part_id={{ candidate.part.pk }}">
+              {{ candidate.part.name }} · {{ candidate.russian_name|default:"—" }} · {{ candidate.exact_number|default:"—" }} · {{ candidate.manufacturer }} · доступно {{ candidate.available|quantity_int }}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
     {% elif not_found %}
       {% include "partials/_status_block.html" with kind="warning" text="Деталь не найдена в остатках склада." %}
     {% endif %}
