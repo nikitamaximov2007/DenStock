@@ -66,6 +66,17 @@ def test_trigram_index_exists(db, index):
     assert "gin_trgm_ops" in row[0]
 
 
+def test_russian_trigram_index_is_partial_for_confirmed_names(db):
+    """The index population must not include unreviewed public text."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT indexdef FROM pg_indexes WHERE indexname = %s",
+            ["actions_partcustomsinfo_ru_upper_trgm"],
+        )
+        indexdef = cursor.fetchone()[0]
+    assert "WHERE customs_name_ru_confirmed" in indexdef
+
+
 # --- Typo tolerance ---------------------------------------------------------------------
 
 
@@ -103,6 +114,24 @@ def test_unconfirmed_russian_name_is_excluded_from_fuzzy(cat):
     cat.russian(part, "ПРОКЛАДКА ГОЛОВКИ", confirmed=False)
     assert _hit_for("проклатка", part) is None
     assert _hit_for("прокладка", part) is None
+
+
+def test_fuzzy_sql_constrains_russian_candidates_before_similarity(cat):
+    """Confirmation is a SQL predicate, not an after-the-fact Python filter."""
+    confirmed = cat.part("Confirmed gasket")
+    cat.russian(confirmed, "ПРОКЛАДКА ГОЛОВКИ")
+    unconfirmed = cat.part("Unconfirmed gasket")
+    cat.russian(unconfirmed, "ПРОКЛАДКА ГОЛОВКИ", confirmed=False)
+    with CaptureQueriesContext(connection) as cap:
+        hits = search_part_ids("проклатка")
+    fuzzy_sql = next(
+        query["sql"]
+        for query in cap.captured_queries
+        if "WORD_SIMILARITY(" in query["sql"].upper()
+    )
+    assert "CUSTOMS_NAME_RU_CONFIRMED" in fuzzy_sql.upper()
+    assert confirmed.pk in _ids(hits)
+    assert unconfirmed.pk not in _ids(hits)
 
 
 def test_fuzzy_name_never_outranks_an_exact_article(cat):

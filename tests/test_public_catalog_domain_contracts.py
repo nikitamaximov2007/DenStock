@@ -25,6 +25,7 @@ from apps.catalog.public_contracts import (
     build_public_part_facts,
     resolve_current_customer_price,
 )
+from apps.catalog.search import search_parts
 from apps.catalog.services import update_current_price_settings
 from apps.inventory.availability import available_totals
 from apps.inventory.models import PartItem, StockBalance, StockLot
@@ -436,51 +437,88 @@ def test_public_part_facts_are_read_only_and_have_bounded_query_count(domain_env
 
 
 
-def test_public_part_facts_query_count_is_constant_with_real_stock(domain_env):
-    """Stage 1 hardening: the bounded-query guard must cover the stock branch.
-
-    The guard above builds parts WITHOUT stock, so ``live_stock_rows`` returns
-    early and never runs its reservation lookup or identity hydration. Real
-    public traffic is mostly parts WITH stock, which is exactly where any
-    future per-row work would appear.
-
-    Every batch here holds the same branch mix - a serial part, a partly
-    reserved bulk part, and plain bulk parts - so the only thing that changes
-    between batches is size. A serial part adds one fixed lookup (reserved
-    serial items); that is a branch, not per-part growth, so the mix is kept
-    identical rather than letting the largest batch be the only one with it.
-    """
-    serial_part = _part(
-        domain_env, name="Stocked serial part", tracking=PartType.TrackingMode.SERIAL
-    )
-    _serial_item(domain_env, serial_part, serial_number="HARDEN-1")
-    parts = [serial_part]
-    for index in range(49):
-        part = _part(domain_env, name=f"Stocked public part {index}")
+def _assert_stock_scaling(domain_env, *, tracking, reserved=False):
+    """Exercise one canonical inventory shape at 1, 20 and 50 identities."""
+    parts = []
+    for index in range(50):
+        part = _part(domain_env, name=f"Stock scale {tracking} {index}", tracking=tracking)
         PartNumber.objects.create(
-            part=part, value=f"STOCKED-{index:03d}",
+            part=part, value=f"STOCK-SCALE-{tracking}-{index:03d}",
             kind=PartNumber.Kind.ARTICLE, is_primary=True,
         )
-        _bulk_lot(domain_env, part, "3")
+        if tracking == PartType.TrackingMode.SERIAL:
+            _serial_item(domain_env, part, serial_number=f"SCALE-{index:03d}")
+        else:
+            lot = _bulk_lot(domain_env, part, "3")
+            if reserved:
+                reservation = create_reservation(
+                    customer_name=f"Scale reservation {index}", by=domain_env["user"]
+                )
+                add_stock_lot_to_reservation(reservation, lot, Decimal("1"), by=domain_env["user"])
+                activate_reservation(reservation, by=domain_env["user"])
         parts.append(part)
-    reserved = create_reservation(customer_name="Hardening", by=domain_env["user"])
-    add_stock_lot_to_reservation(
-        reserved, StockLot.objects.filter(part_type=parts[1]).get(), Decimal("1"),
-        by=domain_env["user"],
-    )
-    activate_reservation(reserved, by=domain_env["user"])
 
     query_counts = []
-    for count in (2, 20, 50):
+    for count in (1, 20, 50):
         with CaptureQueriesContext(connection) as queries:
             facts = build_public_part_facts([part.pk for part in parts[:count]])
         assert len(facts) == count
         assert all(fact.available_quantity >= ZERO for fact in facts)
         _assert_read_only(queries)
         query_counts.append(len(queries))
-
-    # Constant with stock: no per-part query appears as the batch grows.
     assert query_counts[0] == query_counts[1] == query_counts[2], query_counts
-    # The stock branch really ran: reservations and identity hydration add
-    # queries on top of the five-query no-stock baseline.
-    assert query_counts[0] > 5, query_counts
+    return query_counts
+
+
+@pytest.mark.parametrize(
+    ("tracking", "reserved"),
+    [
+        (PartType.TrackingMode.BULK, False),
+        (PartType.TrackingMode.BULK, True),
+        (PartType.TrackingMode.SERIAL, False),
+    ],
+    ids=["bulk", "reserved-bulk", "serial"],
+)
+def test_public_part_facts_query_count_is_constant_for_each_stock_shape(
+    domain_env, tracking, reserved
+):
+    """Stage 1 scaling is like-for-like: branch composition never changes by size."""
+    counts = _assert_stock_scaling(domain_env, tracking=tracking, reserved=reserved)
+    assert counts[0] > 5, counts
+
+
+@pytest.mark.parametrize("with_stock", [False, True], ids=["no-stock", "with-bulk-stock"])
+def test_public_catalog_search_hydration_end_to_end_matrix(domain_env, with_stock):
+    """Search, hydration and their total stay flat for 1/20/50 real results."""
+    parts = []
+    stem = "Matrix stocked" if with_stock else "Matrix empty"
+    for index in range(50):
+        part = _part(domain_env, name=f"{stem} {index:03d}")
+        PartNumber.objects.create(
+            part=part, value=f"MATRIX-{'S' if with_stock else 'E'}-{index:03d}",
+            kind=PartNumber.Kind.ARTICLE, is_primary=True,
+        )
+        if with_stock:
+            _bulk_lot(domain_env, part, "2")
+        parts.append(part)
+
+    measurements = []
+    for count in (1, 20, 50):
+        # A unique prefix makes the search itself return exactly this workload.
+        query = f"{stem}"
+        with CaptureQueriesContext(connection) as search_queries:
+            hits = search_parts(query, page=1, page_size=count).hits
+        assert len(hits) == count
+        with CaptureQueriesContext(connection) as hydration_queries:
+            facts = build_public_part_facts([hit.part_id for hit in hits])
+        assert len(facts) == count
+        _assert_read_only(search_queries)
+        _assert_read_only(hydration_queries)
+        measurements.append((len(search_queries), len(hydration_queries)))
+
+    search_counts = [search for search, _hydrate in measurements]
+    hydration_counts = [hydrate for _search, hydrate in measurements]
+    total_counts = [search + hydrate for search, hydrate in measurements]
+    assert search_counts[0] == search_counts[1] == search_counts[2], measurements
+    assert hydration_counts[0] == hydration_counts[1] == hydration_counts[2], measurements
+    assert total_counts[0] == total_counts[1] == total_counts[2], measurements

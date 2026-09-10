@@ -54,7 +54,9 @@ connection.
 
 Migration `catalog.0007_search_trigram` installs `pg_trgm` and creates GIN
 trigram indexes for normalized articles and the uppercase English name.
-Migration `actions.0013_customs_name_ru_trigram` adds the corresponding
-uppercase Russian-name index. PostgreSQL qualification tests use `EXPLAIN`
-with sequential and ordinary index scans disabled, leaving bitmap scans to
-prove that the predicate-serving trigram index occurs in the actual plan.
+Migration `actions.0014_confirmed_customs_name_ru_trigram` replaces the
+Russian index with an uppercase partial GIN index whose predicate is
+`customs_name_ru_confirmed`. Therefore unconfirmed generated translations are
+not even in the fuzzy candidate index. PostgreSQL qualification uses ordinary
+planner settings and `EXPLAIN (ANALYZE, BUFFERS)`; a separate restricted-scan
+test remains only as an expression/index compatibility check.
