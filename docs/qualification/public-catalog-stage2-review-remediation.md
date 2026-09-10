@@ -1,10 +1,70 @@
 # Public Catalog Stage 2: remediation qualification
 
-This record qualifies `codex/public-catalog-stage2-review-fixes` against the
-independent review. It is evidence only: it neither deploys nor changes a
-production database.
+This record tracks qualification of `codex/public-catalog-stage2-review-fixes`
+against the independent review. It is evidence only: it neither deploys nor
+changes a production database.
 
-## Isolated PostgreSQL 16 dataset
+## Qualification history: invalid first corpus
+
+The first attempted corpus had the requested raw row counts, but it was not a
+valid Search 2.0 qualification corpus. The generator stored generated names
+with six-digit suffixes, for example `BEARING DRIVE 000001`, while the report
+called five-digit probes such as `BEARING DRIVE 00001` exact-name cases. They
+were not exact rows. Search correctly continued through its lower substring
+and fuzzy tiers, creating broad capped results rather than the named expected
+identity. Thus the evidence labelled "exact EN" and "exact RU" did not prove
+the actual path. This is a fixture/probe mismatch, not a demonstrated Search
+2.0 production defect.
+
+The old attempt remains recorded below for audit. Its planner and latency
+numbers must not be used as final qualification evidence.
+
+## Recovered fixture and preflight
+
+`generate_public_catalog_stage2_qualification` is a deliberately guarded
+management command. It requires `--confirm-isolated`, refuses any database
+that already has a `PartType`, and is intended only after migration of an
+isolated PostgreSQL 16 database. It creates explicit normal ORM seed rows for
+the deterministic probes, then uses bulk creation only for the large body.
+
+Bulk-created `PartNumber` rows explicitly set `normalized_value` with the
+same `catalog.normalize_number` used by `PartNumber.save`. `PartType` has no
+save-derived search fields. Every searchable body part has a canonical
+ARTICLE `PartNumber`, an active `PartType`, and a one-to-one
+`PartCustomsInfo`; confirmed and unconfirmed Russian rows use the real flag.
+There is no stock, deliberately proving that zero stock does not hide a
+searchable part.
+
+The miniature 20-row corpus is enforced by
+`tests/test_public_catalog_qualification_fixture.py` against the shared
+`search_part_ids` service before a large corpus is permitted as evidence. It
+checks exact and normalized `420-892-388`, article prefix and substring,
+isolated exact `BEARING`, confirmed `ПРОКЛАДКА`, unconfirmed duplicate
+exclusion, and exact-article ranking over a fuzzy-looking name. On PostgreSQL
+with `pg_trgm`, it additionally checks `bearng` and `проклатка` through the
+real fuzzy tier.
+
+## Actual Search 2.0 data path
+
+| Tier | Persisted source and condition |
+| --- | --- |
+| Exact article | `catalog_partnumber.normalized_value`, `kind IN (oem, article)`; Python splits raw `value` equality from normalized-only equality |
+| Normalized article | Same indexed `normalized_value` lookup and canonical `normalize_number` |
+| Article prefix | `normalized_value__startswith`, same canonical kinds |
+| Article substring | `normalized_value__contains`, same canonical kinds |
+| EN exact/prefix/substring | `catalog_parttype.name` through `iexact`/`istartswith`/`icontains` |
+| EN fuzzy | PostgreSQL raw SQL over `catalog_parttype.name`, `UPPER(name::text) <%` and `word_similarity` |
+| Confirmed RU exact/prefix/substring | `actions_partcustomsinfo.customs_name_ru` only where `customs_name_ru_confirmed=True` |
+| Confirmed RU fuzzy | PostgreSQL raw SQL over the same confirmed `PartCustomsInfo` predicate |
+
+`PartCustomsInfo.part_type` is a one-to-one relation. Search has no
+`is_active`, manufacturer, unit, public-visibility, stock, annotation, or
+hydration filter. It first returns bounded part IDs only. PostgreSQL uses GIN
+trigram indexes for normalized articles and upper-cased English names, plus
+the confirmed-only partial upper-cased Russian index. Exact `normalized_value`
+uses Django's ordinary B-tree index.
+
+## Archived invalid PostgreSQL 16 attempt (not acceptance evidence)
 
 The qualification ran against a newly created local PostgreSQL 16.15 database
 (`stage2qual`), migrated from zero to the final migration state. No production
