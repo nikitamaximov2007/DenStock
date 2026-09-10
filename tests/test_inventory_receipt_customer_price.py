@@ -63,7 +63,9 @@ def test_bulk_lot_keeps_customer_price_at_creation(domain_env):
     part.save(update_fields=["recommended_price"])
     lot.refresh_from_db()
     assert lot.receipt_customer_price_rub == Decimal("22000")
-    assert resolve_effective_inventory_customer_price(lot) == Decimal("22000")
+    assert resolve_effective_inventory_customer_price(
+        lot, part.recommended_price
+    ) == Decimal("22000")
 
 
 def test_current_price_can_exceed_receipt_floor(domain_env):
@@ -73,7 +75,9 @@ def test_current_price_can_exceed_receipt_floor(domain_env):
     part.recommended_price = Decimal("25000")
     part.save(update_fields=["recommended_price"])
     lot.refresh_from_db()
-    assert resolve_effective_inventory_customer_price(lot) == Decimal("25000")
+    assert resolve_effective_inventory_customer_price(
+        lot, part.recommended_price
+    ) == Decimal("25000")
 
 
 def test_unknown_snapshot_falls_back_to_current_price(domain_env):
@@ -82,4 +86,6 @@ def test_unknown_snapshot_falls_back_to_current_price(domain_env):
     lot = create_stock_lot(line, domain_env["loc1"], "1")
     lot.receipt_customer_price_rub = None
     lot.save(update_fields=["receipt_customer_price_rub"])
-    assert resolve_effective_inventory_customer_price(lot) == Decimal("18000")
+    assert resolve_effective_inventory_customer_price(
+        lot, part.recommended_price
+    ) == Decimal("18000")

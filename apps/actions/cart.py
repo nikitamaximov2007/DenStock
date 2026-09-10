@@ -245,7 +245,9 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
             if isinstance(cart, Sale):
                 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 
-                price = unit_price or resolve_effective_inventory_customer_price(lot)
+                price = unit_price or resolve_effective_inventory_customer_price(
+                    lot, part.recommended_price
+                )
                 check_sale_line_price(part, price)
                 add_stock_lot_to_sale(cart, lot, portion, unit_price=price, by=by)
             else:

@@ -508,7 +508,10 @@ def create_sale_from_reservation(reservation, *, by=None) -> Sale:
 
     for rline in rlines:
         source = rline.part_item if rline.part_item_id else rline.stock_lot
-        unit_price = resolve_effective_inventory_customer_price(source) or Decimal("0")
+        unit_price = (
+            resolve_effective_inventory_customer_price(source, rline.part_type.recommended_price)
+            or Decimal("0")
+        )
         if rline.part_item_id:
             SaleLine.objects.create(
                 sale=sale, part_type=rline.part_type, part_item=rline.part_item,

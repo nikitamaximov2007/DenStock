@@ -354,7 +354,7 @@ def _perform_action_atomic(
         if action_type == WarehouseAction.Type.SALE:
             sale = create_sale(customer_name=customer_comment, comment="Сканер действий", by=by)
             for lot, portion in portions:
-                unit_price = resolve_effective_inventory_customer_price(lot)
+                unit_price = resolve_effective_inventory_customer_price(lot, part.recommended_price)
                 check_sale_line_price(part, unit_price)
                 add_stock_lot_to_sale(sale, lot, portion, unit_price=unit_price, by=by)
             sale = complete_sale(sale, by=by)
