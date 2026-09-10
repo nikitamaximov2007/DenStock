@@ -80,6 +80,7 @@ services:
       - "443:443"
     environment:
       CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-:80}
+      CADDY_PUBLIC_CATALOG_HOST: ${CADDY_PUBLIC_CATALOG_HOST:-catalog.localhost}
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - media:/srv/media:ro            # Caddy отдаёт /media/* из этого тома (Слой 25)
