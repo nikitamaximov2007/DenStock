@@ -28,9 +28,8 @@ The runtime role is SELECT-only. Its exact required read graph is:
 | Table/model | Reason | Stage 3 grant |
 | --- | --- | --- |
 | `catalog_parttype`, `catalog_partnumber`, `catalog_unit`, `catalog_manufacturer` | Search identities and public facts | SELECT |
-| `brp_brppartlink`, `brp_brpcatalogpart`, `polaris_polarispartlink`, `polaris_polariscatalogpart` | Canonical source article selected by the established identity helper | SELECT |
 | `actions_partcustomsinfo` | confirmed Russian name only | SELECT |
-| `inventory_stocklot`, `inventory_partitem`, `procurement_batch`, `warehouse_storagelocation` | canonical physical availability; the existing read model joins batch and location before aggregating | SELECT |
+| `inventory_stocklot`, `inventory_partitem` | canonical physical availability | SELECT |
 | `sales_reservation`, `sales_reservationline` | subtract active reservations | SELECT |
 
 `resolve_current_customer_price` reads `PartType.recommended_price` and needs
