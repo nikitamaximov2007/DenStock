@@ -230,17 +230,24 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
     )
     portions = _split_quantity_over_lots(lots, quantity)
     if unit_price is None:
-        unit_price = prior.unit_price if prior is not None else part.recommended_price
+        # A row may split across lots. Each generated SaleLine receives the
+        # floor of the exact lot it consumes rather than a part-wide maximum.
+        unit_price = prior.unit_price if prior is not None else None
     if isinstance(cart, Sale):
         # Раньше пустая цена превращалась здесь в 0.00, и деталь тихо уходила
         # бесплатно. Теперь оператор узнаёт об этом на добавлении, а не из
         # отчёта через неделю. Убрать позицию это не мешает: количество 0
         # обрабатывается выше и сюда не доходит.
-        check_sale_line_price(part, unit_price)
+        if unit_price is not None:
+            check_sale_line_price(part, unit_price)
     try:
         for lot, portion in portions:
             if isinstance(cart, Sale):
-                add_stock_lot_to_sale(cart, lot, portion, unit_price=unit_price, by=by)
+                from apps.inventory.pricing import resolve_effective_inventory_customer_price
+
+                price = unit_price or resolve_effective_inventory_customer_price(lot)
+                check_sale_line_price(part, price)
+                add_stock_lot_to_sale(cart, lot, portion, unit_price=price, by=by)
             else:
                 add_stock_lot_to_repair_order(
                     cart, lot, portion, customer_unit_price_rub=unit_price, by=by

@@ -142,6 +142,7 @@ def create_part_items(
             batch_line=line,
             serial_number=serial,
             landed_cost_rub=line.landed_unit_cost_rub,
+            receipt_customer_price_rub=line.part_type.recommended_price,
             current_location=current_location,
             note=note,
         )
@@ -206,6 +207,7 @@ def create_stock_lot(line: BatchLine, location, quantity, *, note: str = "") -> 
         quantity=quantity,
         initial_quantity=quantity,
         landed_unit_cost_rub=line.landed_unit_cost_rub,
+        receipt_customer_price_rub=line.part_type.recommended_price,
         note=note,
     )
     lot.save()

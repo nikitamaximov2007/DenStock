@@ -346,14 +346,16 @@ def _perform_action_atomic(
     # Цена нужна и продаже, и записи журнала. Для продажи пустая цена - повод
     # остановиться, а не подставить ноль; резерв и ремонт живут по своим
     # правилам, и их запись в журнале остаётся прежней.
-    unit_price = part.recommended_price
-    journal_price = unit_price if unit_price is not None else Decimal("0")
+    from apps.inventory.pricing import resolve_effective_inventory_customer_price
+
+    journal_price = part.recommended_price if part.recommended_price is not None else Decimal("0")
     sale = reservation = repair_order = None
     try:
         if action_type == WarehouseAction.Type.SALE:
-            check_sale_line_price(part, unit_price)
             sale = create_sale(customer_name=customer_comment, comment="Сканер действий", by=by)
             for lot, portion in portions:
+                unit_price = resolve_effective_inventory_customer_price(lot)
+                check_sale_line_price(part, unit_price)
                 add_stock_lot_to_sale(sale, lot, portion, unit_price=unit_price, by=by)
             sale = complete_sale(sale, by=by)
         elif action_type == WarehouseAction.Type.RESERVE:

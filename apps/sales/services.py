@@ -504,8 +504,11 @@ def create_sale_from_reservation(reservation, *, by=None) -> Sale:
     if reservation.customer_id:
         sale.customer_id = reservation.customer_id
         sale.save(update_fields=["customer", "updated_at"])
+    from apps.inventory.pricing import resolve_effective_inventory_customer_price
+
     for rline in rlines:
-        unit_price = rline.part_type.recommended_price or Decimal("0")
+        source = rline.part_item if rline.part_item_id else rline.stock_lot
+        unit_price = resolve_effective_inventory_customer_price(source) or Decimal("0")
         if rline.part_item_id:
             SaleLine.objects.create(
                 sale=sale, part_type=rline.part_type, part_item=rline.part_item,
