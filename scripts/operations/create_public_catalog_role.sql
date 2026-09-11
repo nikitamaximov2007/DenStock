@@ -77,21 +77,29 @@ BEGIN
         role_name
     );
 
-    -- Photos: the role can see a row only while it is published. The owner
-    -- (internal runtime, migrations, backups) is unaffected; RLS applies to
-    -- other roles only.
+    -- Photos: the public role can see a row only while it is published, even
+    -- through direct SQL. A permissive policy keeps every other role (the
+    -- internal runtime, backups, migrations) seeing all rows whether or not
+    -- it owns the table; the restrictive policy narrows only the public role.
+    -- Table GRANTs still decide who may read the tables at all.
     EXECUTE 'ALTER TABLE catalog_publicpartphoto ENABLE ROW LEVEL SECURITY';
     EXECUTE 'ALTER TABLE catalog_publicpartphotorendition ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'DROP POLICY IF EXISTS public_catalog_all_rows ON catalog_publicpartphoto';
+    EXECUTE 'CREATE POLICY public_catalog_all_rows ON catalog_publicpartphoto '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+    EXECUTE 'DROP POLICY IF EXISTS public_catalog_all_rows ON catalog_publicpartphotorendition';
+    EXECUTE 'CREATE POLICY public_catalog_all_rows ON catalog_publicpartphotorendition '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
     EXECUTE 'DROP POLICY IF EXISTS public_catalog_published_photos ON catalog_publicpartphoto';
     EXECUTE format(
         'CREATE POLICY public_catalog_published_photos ON catalog_publicpartphoto '
-        'FOR SELECT TO %I USING (status = %L)',
+        'AS RESTRICTIVE FOR SELECT TO %I USING (status = %L)',
         role_name, 'published'
     );
     EXECUTE 'DROP POLICY IF EXISTS public_catalog_published_renditions ON catalog_publicpartphotorendition';
     EXECUTE format(
         'CREATE POLICY public_catalog_published_renditions ON catalog_publicpartphotorendition '
-        'FOR SELECT TO %I USING (EXISTS (SELECT 1 FROM catalog_publicpartphoto photo '
+        'AS RESTRICTIVE FOR SELECT TO %I USING (EXISTS (SELECT 1 FROM catalog_publicpartphoto photo '
         'WHERE photo.id = catalog_publicpartphotorendition.photo_id AND photo.status = %L))',
         role_name, 'published'
     );

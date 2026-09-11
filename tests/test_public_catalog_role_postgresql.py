@@ -123,6 +123,21 @@ def test_rejected_photos_are_invisible_to_the_role_even_by_direct_sql(restricted
     assert rendition_for(seeded["rejected"].public_id, "card") is None
 
 
+def test_other_roles_still_see_every_photo_row(restricted_role, seeded):
+    """RLS narrows only the public role; the internal runtime need not own the table."""
+    other = f"internal_probe_{uuid.uuid4().hex[:8]}"
+    with connection.cursor() as cursor:
+        cursor.execute(f'CREATE ROLE "{other}" NOLOGIN')
+        cursor.execute(f'GRANT SELECT ON catalog_publicpartphoto TO "{other}"')
+        cursor.execute(f'GRANT SELECT ON catalog_publicpartphotorendition TO "{other}"')
+    _as(other)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT count(DISTINCT status) FROM catalog_publicpartphoto")
+        statuses = cursor.fetchone()[0]
+    _reset()
+    assert statuses == 2
+
+
 @pytest.mark.parametrize(
     "sql",
     [
