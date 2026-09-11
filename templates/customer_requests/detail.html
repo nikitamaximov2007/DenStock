@@ -8,6 +8,20 @@
   </div>
   <p>Статус: <strong>{{ customer_request.get_status_display }}</strong> · Создана: {{ customer_request.created_at|ru_dt }} · Обновлена: {{ customer_request.updated_at|ru_dt }}</p>
   <p>{{ customer_request.customer_name }} · {{ customer_request.customer_phone }} · Предпочтительный канал: {{ customer_request.get_preferred_messenger_display }}</p>
+  <p>
+    Telegram:
+    {% if customer_request.messenger_contact %}связан {{ customer_request.messenger_contact.linked_at|ru_dt }}{% else %}не связан{% endif %}
+  </p>
+  {% if not customer_request.messenger_contact and customer_request.preferred_messenger == "telegram" %}
+    <form method="post"
+          action="{% url 'customer_request_telegram_link' customer_request.pk %}">
+      {% csrf_token %}
+      <button class="btn btn--secondary" type="submit">Создать ссылку Telegram</button>
+    </form>
+  {% endif %}
+  {% if telegram_start_link %}
+    <p>Отправьте клиенту эту одноразовую ссылку: <a href="{{ telegram_start_link }}" rel="noopener">Открыть Telegram</a></p>
+  {% endif %}
   {% if customer_request.comment %}<p>Комментарий: {{ customer_request.comment }}</p>{% endif %}
   <p class="page-subtitle">Цена и доступность ниже показаны для ориентира. Заявка не фиксирует цену и не резервирует складской остаток.</p>
   <table class="table">

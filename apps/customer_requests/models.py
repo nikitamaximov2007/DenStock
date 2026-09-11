@@ -163,3 +163,70 @@ class CustomerRequestStatusEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_from_status_display()} → {self.get_to_status_display()}"
+
+
+class CustomerRequestMessengerContact(models.Model):
+    """Minimal channel identity, recorded only after the user starts the bot."""
+
+    class Channel(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+
+    request = models.OneToOneField(
+        CustomerRequest,
+        verbose_name="Заявка",
+        on_delete=models.CASCADE,
+        related_name="messenger_contact",
+    )
+    channel = models.CharField("Канал", max_length=12, choices=Channel.choices)
+    remote_chat_id = models.CharField("Идентификатор чата", max_length=64)
+    linked_at = models.DateTimeField("Связан", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Контакт заявки в мессенджере"
+        verbose_name_plural = "Контакты заявок в мессенджерах"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["channel", "remote_chat_id"], name="custreq_contact_channel_chat_unique"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_channel_display()} для заявки {self.request_id}"
+
+
+class CustomerRequestMessengerLinkToken(models.Model):
+    """One-time secret link, stored only as a SHA-256 hash."""
+
+    class Channel(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+
+    request = models.ForeignKey(
+        CustomerRequest,
+        verbose_name="Заявка",
+        on_delete=models.CASCADE,
+        related_name="messenger_link_tokens",
+    )
+    channel = models.CharField("Канал", max_length=12, choices=Channel.choices)
+    token_hash = models.CharField("Хеш токена", max_length=64, unique=True)
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+    expires_at = models.DateTimeField("Действует до")
+    used_at = models.DateTimeField("Использован", null=True, blank=True)
+    revoked_at = models.DateTimeField("Отозван", null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто создал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Ссылка заявки в мессенджер"
+        verbose_name_plural = "Ссылки заявок в мессенджеры"
+        indexes = [
+            models.Index(fields=["channel", "expires_at"], name="custreq_link_channel_exp_idx")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_channel_display()} ссылка для заявки {self.request_id}"
