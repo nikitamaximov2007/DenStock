@@ -74,9 +74,6 @@
         <input type="checkbox" name="consent" value="1" required>
         <span>Согласен на обработку персональных данных для связи по этой заявке.</span>
       </label>
-      {% if consent_is_draft %}
-        <p class="field__hint">Черновик: текст согласия ждёт юридической проверки.</p>
-      {% endif %}
       <button class="btn btn--large btn--block" type="submit">Отправить заявку</button>
     </form>
     <aside class="request-summary" aria-labelledby="request-lines-title">

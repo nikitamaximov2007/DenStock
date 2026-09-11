@@ -354,7 +354,7 @@ def test_the_cart_leads_to_the_form_and_the_form_is_accessible(public_client, pu
     assert "Запрос о поставке, 1 шт" in body
     assert "1 400 ₽" in body
     assert 'class="hp" aria-hidden="true"' in body and 'tabindex="-1"' in body
-    assert "Черновик: текст согласия ждёт юридической проверки." in body
+    assert "юридической проверки" not in body
     assert "—" not in body
 
 

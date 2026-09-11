@@ -20,7 +20,6 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST, require_safe
 
-from apps.customer_requests.policies import current_consent_versions
 from apps.customer_requests.services import CustomerRequestError
 from apps.operations.write_guard import BusinessWriteBlocked
 
@@ -246,7 +245,6 @@ def public_cart_remove(request, public_id):
 
 
 def _request_form(request, cart, *, token, values=None, error="", status=200):
-    privacy_policy_version, consent_version = current_consent_versions()
     return _render(
         request,
         "public_catalog/request_form.html",
@@ -257,11 +255,6 @@ def _request_form(request, cart, *, token, values=None, error="", status=200):
             "values": values or {},
             "error": error,
             "honeypot_field": public_requests.HONEYPOT_FIELD,
-            # Until reviewed wording ships with real version identifiers, the
-            # form says so instead of pretending the text is final.
-            "consent_is_draft": any(
-                version.startswith("draft") for version in (privacy_policy_version, consent_version)
-            ),
         },
         status=status,
     )

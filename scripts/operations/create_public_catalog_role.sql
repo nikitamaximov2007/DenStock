@@ -112,6 +112,10 @@ BEGIN
         role_name
     );
 
+    -- Django reads this migration ledger during the standard startup check.
+    -- It contains migration labels only, not operational or customer data.
+    EXECUTE format('GRANT SELECT ON TABLE django_migrations TO %I', role_name);
+
     -- Photos: the public role can see a row only while it is published, even
     -- through direct SQL. A permissive policy keeps every other role (the
     -- internal runtime, backups, migrations) seeing all rows whether or not
