@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Фото для каталога · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Фото для публичного каталога</h1>
+  <p class="muted">
+    Покупатели видят фото только после публикации. Публикация делается в карточке детали:
+    там видно деталь целиком, и там же указывается источник фото.
+  </p>
+  <nav class="toolbar" aria-label="Состояние фото">
+    {% for value, label in states.items %}
+      {% if value == state %}
+        <span class="btn btn--small" aria-current="page">{{ label }}</span>
+      {% else %}
+        <a class="btn btn--small btn--secondary" href="?state={{ value }}">{{ label }}</a>
+      {% endif %}
+    {% endfor %}
+  </nav>
+  {% if page.object_list %}
+    <table class="table table--compact public-photo-table">
+      <thead>
+        <tr>
+          <th>Фото</th>
+          <th>Деталь</th>
+          <th>Загружено</th>
+          <th>Источник</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for image in page.object_list %}
+          <tr>
+            <td>
+              <img src="{{ image.image.url }}"
+                   alt="{{ image.caption|default:'Фото детали' }}"
+                   class="public-photo-thumb"
+                   width="72"
+                   height="72"
+                   loading="lazy">
+            </td>
+            <td>
+              <a href="{% url 'part_detail' image.part_id %}">{{ image.part.name }}</a>
+            </td>
+            <td>
+              {{ image.uploaded_at|ru_dt }}
+              {% if image.uploaded_by %}<span class="muted">· {{ image.uploaded_by }}</span>{% endif %}
+            </td>
+            <td>
+              {% if state == "candidates" %}
+                <span class="muted">не указан</span>
+              {% else %}
+                {{ image.public_decision.get_source_display|default:"не указан" }}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% include "partials/_pagination.html" with page_obj=page is_paginated=page.has_other_pages %}
+  {% else %}
+    {% include "partials/_empty_state.html" with title="Здесь пусто" text="В этом состоянии фото нет." compact=True %}
+  {% endif %}
+{% endblock %}

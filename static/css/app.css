@@ -886,3 +886,10 @@ form.toolbar input:focus, form.toolbar select:focus {
   width: min(460px, calc(100vw - 32px)); color: var(--text); }
 .customs-order-dialog::backdrop { background: rgba(16, 24, 40, 0.44); }
 .customs-order-dialog .page-actions { margin-top: 20px; justify-content: flex-end; }
+
+/* Фото для публичного каталога: миниатюра и компактная форма публикации. */
+.public-photo-thumb { width: 72px; height: 72px; object-fit: cover; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); }
+.public-photo-publish { display: grid; gap: 6px; max-width: 280px; }
+.public-photo-publish label { font-size: 13px; }
+.public-photo-confirm { display: flex; gap: 6px; align-items: center; }

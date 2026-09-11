@@ -4,6 +4,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -37,6 +38,15 @@ from .models import (
     PartNumber,
     PartType,
     PartTypeImage,
+    PublicPartPhoto,
+)
+from .public_photos import (
+    PublicPhotoError,
+    moderation_rows,
+    publish_photo,
+    reject_photo,
+    set_public_primary,
+    withdraw_for_source,
 )
 from .services import (
     AnalogLinkError,
@@ -116,6 +126,8 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         images = self.object.images.filter(is_active=True)
         ctx["images"] = images
         ctx["primary_image"] = next((i for i in images if i.is_primary), None)
+        ctx["public_photo_rows"] = moderation_rows(self.object)
+        ctx["public_photo_sources"] = PublicPartPhoto.Source.choices
         if ctx["can_manage"]:
             ctx["number_form"] = PartNumberForm()
             ctx["barcode_form"] = PartBarcodeForm()
@@ -320,6 +332,8 @@ def part_image_delete(request, pk):
     image = get_object_or_404(PartTypeImage, pk=pk)
     part_pk = image.part_id
     deactivate_image(image)
+    # Публичная копия не должна пережить удалённый оригинал.
+    withdraw_for_source(image, by=request.user)
     messages.success(request, "Фото удалено.")
     return redirect("part_detail", pk=part_pk)
 
@@ -336,6 +350,99 @@ def analog_confirm(request, pk):
     link.save(update_fields=["is_confirmed", "confirmed_at", "confirmed_by"])
     messages.success(request, "Аналог подтверждён для публичного каталога.")
     return redirect("part_detail", pk=link.original_id)
+
+
+@login_required
+@require_POST
+def analog_unconfirm(request, pk):
+    """Снять связь с публичного каталога, не удаляя её из склада."""
+    _require_parts(request)
+    link = get_object_or_404(PartAnalog, pk=pk)
+    link.is_confirmed = False
+    link.confirmed_at = None
+    link.confirmed_by = None
+    link.save(update_fields=["is_confirmed", "confirmed_at", "confirmed_by"])
+    messages.success(request, "Связь снята с публичного каталога. На складе она осталась.")
+    return redirect("part_detail", pk=link.original_id)
+
+
+# --- Фото для публичного каталога ---------------------------------------------
+#
+# Решает менеджер каталога, тем же правом, что подтверждает аналоги: это
+# решение о витрине, а не складская фотофиксация.
+
+PUBLIC_PHOTO_QUEUE_STATES = {
+    "candidates": "На проверке",
+    "published": "Опубликованные",
+    "rejected": "Не показывать",
+}
+
+
+@login_required
+def public_photo_queue(request):
+    _require_parts(request)
+    state = request.GET.get("state", "candidates")
+    if state not in PUBLIC_PHOTO_QUEUE_STATES:
+        state = "candidates"
+    images = PartTypeImage.objects.filter(is_active=True).select_related("part", "uploaded_by")
+    if state == "candidates":
+        images = images.filter(public_decision__isnull=True)
+    else:
+        images = images.filter(public_decision__status=state).select_related("public_decision")
+    page = Paginator(images.order_by("-uploaded_at", "-pk"), 50).get_page(request.GET.get("page"))
+    return render(
+        request,
+        "catalog/public_photo_queue.html",
+        {
+            "page": page,
+            "state": state,
+            "states": PUBLIC_PHOTO_QUEUE_STATES,
+        },
+    )
+
+
+@login_required
+@require_POST
+def public_photo_publish(request, pk):
+    _require_parts(request)
+    image = get_object_or_404(PartTypeImage, pk=pk)
+    if request.POST.get("confirm") != "1":
+        messages.error(request, "Отметьте, что на фото именно эта деталь.")
+        return redirect("part_detail", pk=image.part_id)
+    try:
+        publish_photo(
+            image,
+            source=request.POST.get("source", ""),
+            note=request.POST.get("source_note", ""),
+            by=request.user,
+        )
+    except PublicPhotoError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Фото опубликовано в каталоге.")
+    return redirect("part_detail", pk=image.part_id)
+
+
+@login_required
+@require_POST
+def public_photo_reject(request, pk):
+    _require_parts(request)
+    image = get_object_or_404(PartTypeImage, pk=pk)
+    reject_photo(image, by=request.user)
+    messages.success(request, "Фото не показывается в публичном каталоге.")
+    return redirect("part_detail", pk=image.part_id)
+
+
+@login_required
+@require_POST
+def public_photo_primary(request, pk):
+    _require_parts(request)
+    photo = get_object_or_404(PublicPartPhoto, pk=pk)
+    set_public_primary(photo)
+    messages.success(request, "Главное фото каталога обновлено.")
+    return redirect("part_detail", pk=photo.part_id)
+
+
 # --- Аналоги ------------------------------------------------------------------
 
 
