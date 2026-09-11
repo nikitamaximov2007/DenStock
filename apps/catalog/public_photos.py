@@ -27,7 +27,7 @@ from django.db import transaction
 from django.utils import timezone
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from .models import PartTypeImage, PublicPartPhoto, PublicPartPhotoRendition
+from .models import PartType, PartTypeImage, PublicPartPhoto, PublicPartPhotoRendition
 
 MAX_PUBLISHED_PER_PART = 8
 # Source uploads are already capped at 10 MB. A pixel cap refuses a small
@@ -179,6 +179,13 @@ def build_renditions(fileobj) -> list[_Rendition]:
 
 
 # --- Moderation (internal runtime only) -----------------------------------------------
+#
+# Every decision locks the part row first, so two managers acting on photos of
+# the same part are serialized and the "one primary" rule never races.
+
+
+def _lock_part(part_id: int) -> None:
+    PartType.objects.select_for_update().filter(pk=part_id).values_list("pk", flat=True).first()
 
 
 def _promote_next_primary(part_id: int) -> None:
@@ -203,6 +210,7 @@ def publish_photo(image: PartTypeImage, *, source: str, note: str = "", by) -> P
     if source not in PublicPartPhoto.Source.values:
         raise PublicPhotoError("Укажите, откуда фото.")
     note = " ".join((note or "").split())[:255]
+    _lock_part(image.part_id)
     image = PartTypeImage.objects.select_for_update().select_related("part").get(pk=image.pk)
     if not image.is_active:
         raise PublicPhotoError("Это фото удалено из карточки детали.")
@@ -263,6 +271,7 @@ def publish_photo(image: PartTypeImage, *, source: str, note: str = "", by) -> P
 @transaction.atomic
 def reject_photo(image: PartTypeImage, *, by) -> PublicPartPhoto:
     """Keep a photo out of the public catalog; also withdraws a published one."""
+    _lock_part(image.part_id)
     image = PartTypeImage.objects.select_for_update().get(pk=image.pk)
     decision = PublicPartPhoto.objects.filter(source_image=image).first()
     if decision is None:
@@ -288,6 +297,7 @@ def withdraw_for_source(image: PartTypeImage, *, by) -> None:
 
 @transaction.atomic
 def set_public_primary(photo: PublicPartPhoto) -> None:
+    _lock_part(photo.part_id)
     photo = PublicPartPhoto.objects.select_for_update().get(pk=photo.pk)
     if photo.status != PublicPartPhoto.Status.PUBLISHED or photo.is_primary:
         return

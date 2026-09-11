@@ -7,7 +7,6 @@ here writes business data. The only state a request can change is the
 customer's own signed cart cookie.
 """
 
-import logging
 from uuid import UUID
 
 from django.contrib import messages
@@ -18,7 +17,7 @@ from django.urls import reverse
 from django.utils.cache import patch_cache_control
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_POST, require_safe
 
 from . import public_seo
 from .public_cart import (
@@ -43,8 +42,6 @@ from .public_catalog import (
 from .public_photos import part_photos, rendition_for
 from .search import MAX_QUERY_LENGTH
 
-logger = logging.getLogger("apps.catalog.public")
-
 PHOTO_MAX_AGE = 24 * 60 * 60
 CRAWLER_FILE_MAX_AGE = 60 * 60
 
@@ -60,7 +57,7 @@ def _render(request, template, context=None, *, status=200):
     return render(request, template, base, status=status)
 
 
-@require_GET
+@require_safe
 def public_root(request):
     return _render(
         request,
@@ -69,7 +66,7 @@ def public_root(request):
     )
 
 
-@require_GET
+@require_safe
 def public_search(request):
     result = search_catalog(request.GET.get("q"), request.GET)
     return _render(
@@ -104,7 +101,7 @@ def _filter_chips(result):
     return chips
 
 
-@require_GET
+@require_safe
 def public_part_detail(request, public_id):
     part_id = public_parts().filter(public_id=public_id).values_list("pk", flat=True).first()
     if part_id is None:
@@ -150,7 +147,7 @@ def _photo_path(photo, variant):
     return f"{path}?v={photo.version}" if photo.version else path
 
 
-@require_GET
+@require_safe
 def public_photo(request, public_id, variant):
     """One published rendition, re-checked against publication on every request."""
     rendition = rendition_for(public_id, variant)
@@ -167,7 +164,7 @@ def public_photo(request, public_id, variant):
     return response
 
 
-@require_GET
+@require_safe
 @never_cache
 def public_cart(request):
     cart = build_cart_view(request.session)
@@ -240,14 +237,14 @@ def public_cart_remove(request, public_id):
     return redirect("public_catalog_cart")
 
 
-@require_GET
+@require_safe
 def robots_txt(request):
     response = HttpResponse(public_seo.robots_txt(request), content_type="text/plain")
     patch_cache_control(response, public=True, max_age=CRAWLER_FILE_MAX_AGE)
     return response
 
 
-@require_GET
+@require_safe
 def sitemap_index(request):
     pages = [
         public_seo.absolute_url(request, reverse("public_catalog_sitemap_parts", args=[number]))
@@ -263,7 +260,7 @@ def sitemap_index(request):
     return response
 
 
-@require_GET
+@require_safe
 def sitemap_parts(request, number):
     if number < 1 or number > public_seo.sitemap_page_count():
         raise Http404
@@ -279,7 +276,7 @@ def sitemap_parts(request, number):
     return response
 
 
-@require_GET
+@require_safe
 @never_cache
 def healthz(request):
     try:

@@ -58,7 +58,6 @@ RELATION_LABELS = {
     RELATION_ANALOG: "Аналоги",
 }
 MAX_MANUFACTURER_LENGTH = 150
-FILTER_PARAMS = ("application", "manufacturer", "relation", "in_stock")
 
 
 def public_parts():

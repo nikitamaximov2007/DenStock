@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -331,9 +332,10 @@ def part_image_delete(request, pk):
     _require_images(request)
     image = get_object_or_404(PartTypeImage, pk=pk)
     part_pk = image.part_id
-    deactivate_image(image)
-    # Публичная копия не должна пережить удалённый оригинал.
-    withdraw_for_source(image, by=request.user)
+    with transaction.atomic():
+        deactivate_image(image)
+        # Публичная копия не должна пережить удалённый оригинал.
+        withdraw_for_source(image, by=request.user)
     messages.success(request, "Фото удалено.")
     return redirect("part_detail", pk=part_pk)
 
