@@ -47,6 +47,14 @@
           </td>
           {% if can_unlink %}
             <td class="table__actions">
+              {% if not row.link.is_confirmed %}
+                <form method="post"
+                      action="{% url 'part_analog_confirm' row.link.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn--small">Подтвердить</button>
+                </form>
+              {% endif %}
               <form method="post"
                     action="{% url 'part_analog_unlink' row.link.pk %}"
                     class="inline-form">

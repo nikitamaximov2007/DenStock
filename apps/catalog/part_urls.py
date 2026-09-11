@@ -14,6 +14,7 @@ urlpatterns = [
     # Аналоги: отдельная деталь со своими остатками, а не второй номер этой же.
     path("<int:pk>/analogs/add/", part_views.analog_add, name="part_analog_add"),
     path("analogs/<int:pk>/unlink/", part_views.analog_unlink, name="part_analog_unlink"),
+    path("analogs/<int:pk>/confirm/", part_views.analog_confirm, name="part_analog_confirm"),
     path("numbers/<int:pk>/delete/", part_views.number_delete, name="part_number_delete"),
     path("barcodes/<int:pk>/delete/", part_views.barcode_delete, name="part_barcode_delete"),
     path("compat/<int:pk>/delete/", part_views.compat_delete, name="part_compat_delete"),

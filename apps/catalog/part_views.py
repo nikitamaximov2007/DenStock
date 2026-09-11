@@ -6,6 +6,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, FormView, ListView, UpdateView
@@ -321,6 +322,20 @@ def part_image_delete(request, pk):
     deactivate_image(image)
     messages.success(request, "Фото удалено.")
     return redirect("part_detail", pk=part_pk)
+
+
+@login_required
+@require_POST
+def analog_confirm(request, pk):
+    """Human moderation gate before an analog reaches the public catalog."""
+    _require_parts(request)
+    link = get_object_or_404(PartAnalog, pk=pk)
+    link.is_confirmed = True
+    link.confirmed_at = timezone.now()
+    link.confirmed_by = request.user
+    link.save(update_fields=["is_confirmed", "confirmed_at", "confirmed_by"])
+    messages.success(request, "Аналог подтверждён для публичного каталога.")
+    return redirect("part_detail", pk=link.original_id)
 # --- Аналоги ------------------------------------------------------------------
 
 

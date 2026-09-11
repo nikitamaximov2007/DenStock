@@ -10,7 +10,7 @@ from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.http import require_GET
 
-from .models import PartCompatibility, PartType
+from .models import PartAnalog, PartCompatibility, PartType
 from .public_contracts import build_public_part_facts
 from .search import clean_query, search_parts
 
@@ -68,10 +68,16 @@ def public_part_detail(request, public_id):
     if part is None:
         raise Http404
     facts = build_public_part_facts([part.pk])[0]
+    links = PartAnalog.objects.filter(original=part, is_confirmed=True, analog__is_public=True)
+    analogs = build_public_part_facts(links.values_list("analog_id", flat=True))
     return render(
         request,
         "public_catalog/part_detail.html",
-        {"facts": facts, "canonical_path": reverse("public_catalog_part", args=[facts.public_id])},
+        {
+            "facts": facts,
+            "analogs": analogs,
+            "canonical_path": reverse("public_catalog_part", args=[facts.public_id]),
+        },
     )
 
 

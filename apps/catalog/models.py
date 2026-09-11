@@ -352,6 +352,17 @@ class PartAnalog(models.Model):
         on_delete=models.CASCADE, related_name="original_links",
     )
     note = models.CharField("Примечание", max_length=255, blank=True)
+    source = models.CharField("Источник", max_length=120, default="internal")
+    is_confirmed = models.BooleanField("Подтверждена для публичного каталога", default=False)
+    confirmed_at = models.DateTimeField("Подтверждена", null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто подтвердил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     created_at = models.DateTimeField("Создана", auto_now_add=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, verbose_name="Кто связал",
