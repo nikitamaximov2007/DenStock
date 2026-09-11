@@ -170,6 +170,7 @@ class CustomerRequestMessengerContact(models.Model):
 
     class Channel(models.TextChoices):
         TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
 
     request = models.OneToOneField(
         CustomerRequest,
@@ -199,6 +200,7 @@ class CustomerRequestMessengerLinkToken(models.Model):
 
     class Channel(models.TextChoices):
         TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
 
     request = models.ForeignKey(
         CustomerRequest,
