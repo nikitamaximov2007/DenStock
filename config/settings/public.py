@@ -23,6 +23,11 @@ _public_database_url = env("PUBLIC_DATABASE_URL", default="").strip()
 if not _public_database_url:
     raise ValueError("PUBLIC_DATABASE_URL must be set for the public runtime.")
 DATABASES = {"default": env.db_url_config(_public_database_url)}
+# Reuse a connection for a minute instead of opening one per request: less
+# latency and far less connection churn on the shared database. The role's
+# CONNECTION LIMIT caps the total; health checks drop a dead connection.
+DATABASES["default"]["CONN_MAX_AGE"] = env.int("PUBLIC_DB_CONN_MAX_AGE", default=60)
+DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 
 globals().update(PUBLIC_SETTINGS)
 TEMPLATES[0]["OPTIONS"]["context_processors"] = list(PUBLIC_CONTEXT_PROCESSORS)  # noqa: F405
