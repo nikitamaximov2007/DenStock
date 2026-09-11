@@ -20,7 +20,9 @@ def _seed(public_catalog):
     public_catalog.image(public_catalog.part("Candidate photo only", article="COV-3"))
     analog = public_catalog.part("Analog", article="COV-4", maker="PROX")
     public_catalog.analog(stocked, analog)
-    guessed = public_catalog.part("Guessed", maker=None, russian="Черновик", russian_confirmed=False)
+    guessed = public_catalog.part(
+        "Guessed", maker=None, russian="Черновик", russian_confirmed=False
+    )
     public_catalog.analog(stocked, guessed, confirmed=False)
     public_catalog.part("Hidden", article="COV-6", public=False)
     public_catalog.part("Retired", article="COV-7", active=False)
