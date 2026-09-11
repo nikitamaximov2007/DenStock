@@ -122,7 +122,7 @@ def _post_form(c: Checker, path: str, fields: dict, referer: str):
     )
 
 
-def _submit_request(c: Checker) -> None:
+def _submit_request(c: Checker, args) -> None:
     """Send the checker's cart as one request (writes one request row)."""
     status, _, body = c.fetch("/request/")
     form = _text(body)
@@ -133,10 +133,10 @@ def _submit_request(c: Checker) -> None:
     fields = {
         "csrfmiddlewaretoken": csrf.group(1),
         "submission_key": key.group(1),
-        "customer_name": "Проверка приёмки PRO-STOR",
-        "customer_phone": "+7 900 000-00-00",
+        "customer_name": args.request_name,
+        "customer_phone": args.request_phone,
         "preferred_messenger": "telegram",
-        "comment": "Автоматическая проверка приёмки. Не обрабатывать, отменить.",
+        "comment": args.request_comment,
         "consent": "1",
         "price": "1",
     }
@@ -322,7 +322,7 @@ def run(args) -> Checker:
                 cart = _text(body)
                 c.check("cart shows the line", "cart-line" in cart)
                 if args.submit_request:
-                    _submit_request(c)
+                    _submit_request(c, args)
                     return c
                 remove = re.search(r'action="(/cart/[0-9a-f-]{36}/remove/)"', cart)
                 token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', cart)
@@ -354,6 +354,15 @@ def main(argv=None) -> int:
         "--submit-request",
         action="store_true",
         help="With --exercise-cart: send the cart as a real request (writes one row).",
+    )
+    parser.add_argument("--request-name", default="Проверка приёмки PRO-STOR")
+    parser.add_argument(
+        "--request-phone",
+        default="+7 000 000-00-00",
+        help="A clearly synthetic number the form accepts; never a real person's.",
+    )
+    parser.add_argument(
+        "--request-comment", default="Автоматическая проверка приёмки. Не обрабатывать, отменить."
     )
     parser.add_argument(
         "--probe-post", action="store_true", help="Also POST to internal paths (expects 404)."
