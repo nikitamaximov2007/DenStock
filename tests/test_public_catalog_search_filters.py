@@ -19,7 +19,6 @@ from apps.catalog.public_catalog import (
 )
 from tests.public_catalog_support import assert_no_writes, capture
 
-
 # Search 2.0 issues up to 9 SELECTs on SQLite; on PostgreSQL inside a test
 # transaction its fuzzy tier adds a savepoint, the threshold read/restore and
 # the fuzzy query. The budget is fixed: it must not grow with the result size.
