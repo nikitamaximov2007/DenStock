@@ -22,36 +22,55 @@ the content is complete, and to improve content afterwards without code.
 
 ## Content coverage (improves after launch, never blocks it)
 
-Measured read-only with `manage.py public_catalog_coverage_report` on a
-local copy of the production catalog from 2026-09-06, migrated to the launch
-candidate (125,981 cards):
+Measured read-only with `manage.py public_catalog_coverage_report` on the
+preview database (a copy of production data, migrated to the launch
+candidate) on 2026-09-12; 125,987 cards:
 
 | Measure | Count | Share | What the customer sees when missing |
 | --- | ---: | ---: | --- |
-| Public parts | 125,979 | | 2 retired cards are hidden |
+| Public parts | 125,985 | | 2 retired cards are hidden |
 | Confirmed Russian name | 0 | 0.0% | the English catalog name as the title |
 | Published photo | 0 | 0.0% | a quiet placeholder "Фото появится после проверки" |
 | Part with a confirmed analog relation | 0 | 0.0% | "Подтверждённых аналогов для этой детали пока нет" |
-| In stock now | 826 | 0.7% | "Нет на складе" and "Узнать о поставке" |
-| Known price | 125,896 | 99.9% | "Уточнить цену" for the other 83 |
-| Article | 125,965 | 100.0% | 14 cards are findable by name only |
-| Manufacturer | 125,961 | 100.0% | 18 cards show no manufacturer |
-| Explicit application area | 0 | 0.0% | the "Техника" filter stays hidden until there is data |
+| Explicit application area | 12 | 0.01% | the "Техника" filter appears only on results that have the data |
+| In stock now | 825 | 0.7% | "Нет на складе" and "Узнать о поставке" (a supply inquiry) |
+| Known price | 125,902 | 99.9% | "Уточнить цену" for the other 83 |
+| Article | 125,970 | 100.0% | 15 cards are findable by name only |
+| Manufacturer | 125,964 | 100.0% | 21 cards show no manufacturer |
 
-Most of the catalog is the imported aftermarket range without stock: those
-parts are the "Узнать о поставке" offer, which is intended. The table is a
-work plan, not a gate. Recommended order, by customer value:
+Candidates already waiting inside DenisStock: 4 internal photos on 1 part
+(never published automatically), 1 unconfirmed analog link, and no
+unconfirmed Russian names. Of the 825 in-stock parts, 748 are BRP.
 
-1. **Russian names for parts that sell.** Confirm the Russian name on the
-   826 in-stock parts first (internal part card, customs data: "Русское
-   название подтверждено"). Search finds confirmed Russian names at once.
-2. **Analogs for in-stock originals.** Confirm the analog links that
-   operators already use ("Подтвердить" in the part card). Each one adds a
-   label, a filter value and a cross-link in public.
-3. **Photos for the top sellers.** Publish photos with a recorded source;
-   start with the BRP parts that have stock.
-4. **Application area.** Set it where operators already know it; the filter
-   appears automatically when results contain the data.
+### Classification
+
+* Technical blockers: none. Every gap above is handled by the pages and
+  proved by the acceptance run on the preview.
+* Content gaps: Russian names, photos, analogs, application areas.
+* External requirements: legal texts, DNS and TLS for `pro-stor.ru`,
+  messenger credentials (see the legal pack, the domain readiness and the
+  messenger runbook).
+
+### Content priorities
+
+Before launch (small, high value, a few hours of operator time):
+
+1. Russian names confirmed for the in-stock parts customers ask about
+   most, starting with the 748 in-stock BRP parts (internal part card,
+   customs data, "Русское название подтверждено"). Search finds confirmed
+   Russian names immediately.
+2. At least one published photo with a recorded source and one confirmed
+   analog, so the owner can show both on the live site.
+3. A look at the 83 cards without a price that have stock: either a price
+   or a deliberate "Уточнить цену".
+
+After launch (continuous, no deadline):
+
+4. Russian names for the rest of the in-stock range, then for parts that
+   receive supply inquiries.
+5. Analog confirmations where operators already rely on the links.
+6. Photos for the best sellers, BRP first.
+7. Application areas where operators know them; the filter follows.
 
 ## Re-measure
 
@@ -62,4 +81,6 @@ docker compose exec -T web python manage.py public_catalog_coverage_report --jso
 
 Both run in a read-only transaction and take a few seconds on the full
 catalog. Run them on production only in an approved window; the numbers
-above came from an isolated local copy.
+above came from the preview database. On the preview itself (no internal
+runtime there), run the command in a one-off owner container, as in the
+preview runbook step 6, with `public_catalog_coverage_report --json`.

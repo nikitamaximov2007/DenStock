@@ -9,7 +9,9 @@ For the next agent, the reviewer and the release operator. No secrets here.
 | Starting point (Stage 11 preview candidate) | `codex/public-catalog-stage11-read-cart-hardening` | `ebd79727866c126f9b1a9eb41513dc4531f52d3c` |
 | Independent launch-readiness stack | `claude/public-catalog-launch-readiness` | `468e3f6ba90c768ca1b77c2c8ed6a030ce3ac886` |
 | Request stack integration (Codex, reviewed, not modified) | `codex/public-catalog-request-stack-integration` | `891e6fd1784af03cce72a71af0c53470e4366985` |
-| Final integrated launch candidate | `claude/public-catalog-launch-candidate` | the branch head that contains this file |
+| Integrated launch candidate (reviewed, not modified) | `claude/public-catalog-launch-candidate` | `cf493a2fe2daaff62302ee36aa4de0b95b290405` |
+| Codex follow-up (reviewed, not modified) | `codex/public-catalog-launch-candidate-remediation` | `74e2e15021c75821782f9eab4e59fc59ef7dfc53` |
+| Final remediation, deployed to the preview | `claude/public-catalog-launch-final-remediation` | the branch head that contains this file |
 | Production | `main` | `a5c014621c3689340bfe699216e03bb0b88d7472` |
 
 The launch candidate starts at the exact request-stack SHA, merges the
@@ -17,6 +19,10 @@ launch-readiness stack (`2235214`) and fixes the request write in the real
 public runtime (`07ddc4d`). Review findings and evidence:
 `docs/qualification/public-catalog-launch-readiness.md`, section
 "Integrated launch candidate".
+
+The final night review (2026-09-12) reproduced the evidence, fixed five
+defects on top of the candidate and the Codex follow-up, and deployed the
+result to the preview: `docs/qualification/public-catalog-final-night-review.md`.
 
 The stack sits on the catalog chain that branched from `073ad9b`.
 Production `main` is six commits ahead (operator search, reports, sidebar),
