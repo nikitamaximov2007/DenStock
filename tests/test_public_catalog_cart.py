@@ -265,3 +265,21 @@ def test_cart_page_query_count_is_flat(public_client, public_catalog, lines, rec
     assert_no_writes(queries)
     record_property(f"public_cart_queries_{lines}", len(queries.captured_queries))
     assert len(queries.captured_queries) <= 14
+
+
+def test_expired_cart_cookie_is_an_empty_cart(public_client, public_catalog):
+    import time
+    from unittest import mock
+
+    from apps.catalog.public_settings import PUBLIC_SETTINGS
+
+    part = public_catalog.part("Old cart part", article="OLD-1")
+    public_catalog.stock(part, "1")
+    _set_cookie_cart(public_client, {str(part.public_id): 1})
+    assert "Old cart part" in _cart(public_client), "a fresh signed cart is read"
+
+    too_old = time.time() - PUBLIC_SETTINGS["SESSION_COOKIE_AGE"] - 60
+    with mock.patch("django.core.signing.time.time", return_value=too_old):
+        _set_cookie_cart(public_client, {str(part.public_id): 1})
+
+    assert "Корзина пуста" in _cart(public_client)
