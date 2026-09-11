@@ -13,7 +13,7 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.catalog.models import PartNumber
+from apps.catalog.models import PartNumber, PartType
 from apps.catalog.public_contracts import build_public_part_facts
 from apps.catalog.search import (
     MATCH_TYPE_RANKS,
@@ -375,8 +375,10 @@ def test_hits_hydrate_through_stage1_public_facts_in_rank_order(cat):
     cat.part("Target Longer", article="TGT-1000")
     hits = search_part_ids("TGT-100")
     facts = build_public_part_facts([hit.part_id for hit in hits])
-    assert [f.part_id for f in facts] == [hit.part_id for hit in hits]
-    assert facts[0].part_id == exact.pk
+    # Facts carry the opaque public identity, never the warehouse primary key.
+    public_ids = dict(PartType.objects.values_list("pk", "public_id"))
+    assert [f.public_id for f in facts] == [public_ids[hit.part_id] for hit in hits]
+    assert facts[0].public_id == exact.public_id
     assert facts[0].article == "TGT-100"
 
 
