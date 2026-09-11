@@ -33,6 +33,8 @@ MIDDLEWARE = [
 SESSION_ENGINE = "django.contrib.sessions.backends.signed_cookies"
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
+DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 32
 TEMPLATES[0]["OPTIONS"]["context_processors"] = [  # noqa: F405
     "django.template.context_processors.request",
 ]

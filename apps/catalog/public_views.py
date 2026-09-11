@@ -8,6 +8,7 @@ from django.db import connection
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import PartAnalog, PartCompatibility, PartType
@@ -116,11 +117,13 @@ def sitemap_xml(request):
 
 
 @require_GET
+@never_cache
 def public_cart(request):
     return render(request, "public_catalog/cart.html", {"lines": _cart_facts(request)})
 
 
 @require_POST
+@never_cache
 def public_cart_add(request, public_id):
     part = PartType.objects.filter(public_id=public_id, is_public=True).first()
     if part is None:
@@ -142,6 +145,7 @@ def public_cart_add(request, public_id):
 
 
 @require_POST
+@never_cache
 def public_cart_remove(request, public_id):
     cart = _cart(request)
     cart.pop(str(public_id), None)
