@@ -131,9 +131,12 @@ def test_unknown_and_hidden_parts_are_404_pages(public_client, public_catalog):
         assert "Traceback" not in body and "catalog_parttype" not in body
 
 
-def test_detail_query_count_is_bounded_and_read_only(public_client, public_catalog):
+@pytest.mark.parametrize("relations", [1, 20, 50])
+def test_detail_query_count_is_bounded_and_read_only(
+    public_client, public_catalog, relations, record_property
+):
     original = public_catalog.part("Bounded original", article="BO-1")
-    for index in range(20):
+    for index in range(relations):
         analog = public_catalog.part(f"Bounded analog {index}", article=f"BA-{index}")
         public_catalog.stock(analog, "1")
         public_catalog.analog(original, analog)
@@ -144,8 +147,9 @@ def test_detail_query_count_is_bounded_and_read_only(public_client, public_catal
         response = _detail(public_client, original)
 
     assert response.status_code == 200
-    assert response.content.decode().count("part-card--compact") == 20
+    assert response.content.decode().count("part-card--compact") == relations
     assert_no_writes(queries)
+    record_property(f"public_detail_queries_{relations}", len(queries.captured_queries))
     assert len(queries.captured_queries) <= 24
 
 
