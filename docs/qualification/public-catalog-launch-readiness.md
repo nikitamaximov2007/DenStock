@@ -227,17 +227,128 @@ this run.
 Catalog-related suites (Stages 1-8, 11, 14 and the new launch tests):
 SQLite 362 passed, 27 skipped (PostgreSQL-only); PG16 413 passed.
 
+## Integrated launch candidate
+
+Branch `claude/public-catalog-launch-candidate`, created from
+`origin/codex/public-catalog-request-stack-integration` at
+`891e6fd1784af03cce72a71af0c53470e4366985` (Stage 11 `ebd7972` plus the
+rebased request stack: `d429e1a` domain and internal workflow, `6835e77`
+Telegram linking, `96dbc61` MAX linking, `dfd4364` privacy lifecycle,
+`891e6fd` public cart requests). This stack is merged on top (`2235214`),
+followed by the write-guard fix (`07ddc4d`), docs (`1ece013`) and a
+query-count test (`7af38cf`). The Codex branches were not modified.
+
+### Review of the request stack
+
+Its own checks passed (67 tests, `makemigrations --check`, ruff). Running
+it as deployed did not:
+
+| # | Severity | Finding on `891e6fd` | Resolution |
+| --- | --- | --- | --- |
+| 1 | Blocking | Every public request answered 500 in the real public runtime. `customer_requests` is a business app, so the SQL write guard wraps the INSERT; in `DENSTOCK_MODE=public-catalog` it read `operations_deploymentstate` and `django_migrations`, which the public role cannot read, and the mode was never allowed to write. Reproduced on PG16 with the branch's own role script: "permission denied for table django_migrations". The tests passed only because test mode bypasses the guard. | `07ddc4d`: public-catalog mode writes only in normal work, column grants for the guard, a 503 "приём заявок временно приостановлен" page during a freeze |
+| 2 | High | The role script granted SELECT on the whole request tables: the internet-facing role could read every earlier customer's name, phone and comment. | column-level SELECT on `id`, `public_id`, `submission_key_hash` (request) and `id` (line) |
+| 3 | High | Cart lines were always sent with `supply_inquiry=False`; with a zero-stock line in the cart the service refused the whole request. | zero availability at submission makes the line a supply inquiry; a short line blocks sending |
+| 4 | Medium | The view resolved parts by `is_public` only (not `is_active`) and the service did not check `is_public`. | lines from `public_parts()`; the service refuses non-public parts for public requests |
+| 5 | Medium | Anonymous submission had no abuse limit. | per-address, per-process limit and a honeypot field |
+| 6 | Medium | The role script predated the analog, compatibility and photo read tables and had no session hardening. | reconciled script (read graph, RLS, read-only default, timeouts, connection limit) |
+| 7 | Low | The success page confirmed any request UUID by a database lookup and showed the raw UUID. | shown only to the sending browser, no read-back; 8-character reference, also shown to operators |
+| 8 | Low | The form showed a developer note about pending legal approval to every customer. | shown only while the consent versions are draft identifiers |
+| 9 | Low | The manual's request section was inserted in the middle of "Запчасти на заказ". | moved |
+| 10 | Info | Telegram and MAX are network-free boundaries (no-op providers); the webhook lives on the internal host behind a secret header. | kept as is |
+
+### PG16 fresh
+
+125 migrations from zero in 4 s, none pending, `makemigrations --check`
+clean. The role script ran twice against a LOGIN role (idempotent); the role
+ends `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`, connection limit 20,
+per-database defaults `default_transaction_read_only=on`,
+`statement_timeout=5s`, `idle_in_transaction_session_timeout=30s`.
+
+### PG16 upgrade rehearsals
+
+Representative data created with the old code, fingerprinted, migrated with
+the candidate, fingerprinted again.
+
+| From | Applied | Time | Result |
+| --- | --- | ---: | --- |
+| `ebd7972` (what the preview runs) | `catalog.0010`, `0011`, `customer_requests.0001` to `0004` | 0.99 s | 12 table fingerprints identical; no photo, no request created |
+| `891e6fd` with two existing requests and a status change | `catalog.0010`, `0011` | 0.68 s | 17 fingerprints identical, including requests, lines, status events and public IDs |
+| `a5c0146` (production `main`) | 11: `catalog.0007` to `0011`, `actions.0013`, `0014`, `customer_requests.0001` to `0004` | 1.11 s | 11 fingerprints identical; every part has a distinct public ID |
+
+The earlier real-data rehearsal (section "PG16 upgrade migration") remains
+the timing reference for `catalog.0008` on the full catalog.
+
+A role configured by the request-stack script and then re-derived by the
+candidate script loses the table-wide SELECT and the sequence grants. Probed
+through a real login: `default_transaction_read_only` on, statement timeout
+5 s, public parts readable, `SELECT customer_name` refused, a stray INSERT
+refused by the read-only transaction. The candidate runtime on that upgraded
+database passed the acceptance script with a request: 70 of 70.
+
+### Integrated end to end
+
+Candidate public runtime (Gunicorn gthread 3 x 2) with a real LOGIN role
+and the write guard on; internal runtime on the same PG16 database; Telegram
+mocked by posting the update Telegram would send to the local webhook.
+
+* `public_catalog_acceptance.py --exercise-cart --submit-request --probe-post`:
+  102 of 102 checks, request `BD119282`, retry lands on the same request,
+  cart emptied.
+* Multi-line cart, in-stock part x 2 and zero-stock part x 3: request
+  `6599301B`; `price_seen` equals `recommended_price` (30,047.00 and 950.00),
+  the zero-stock line is a supply inquiry.
+* Operator: list and detail show the reference, both articles and the
+  inquiry; new, in progress, completed; an illegal transition is refused;
+  a Telegram link is issued; the webhook refuses a wrong secret (404),
+  accepts the start once and ignores the replay; the detail shows the link.
+* Database before and after: only the request tables (2 requests, 3 lines,
+  2 status events, 1 messenger contact) and `business_generation`
+  (455 to 467) changed. Stock balances 20, movements 20, lot quantity
+  113.000, reservations 1 with 1 line, sales 0, customers 0, and the part
+  price and visibility checksum are identical.
+* Browser: request form at 320 px without horizontal overflow, every field
+  labelled, honeypot hidden; two columns at 1280 px; success page.
+* Load on the demo database, 8 clients for 20 s: 232 requests per second,
+  0 errors, 5 persistent connections.
+
+### Request query counts
+
+| Cart lines | 1 | 20 | 50 |
+| --- | ---: | ---: | ---: |
+| Form, SQLite / PG16 | 9 / 9 | 12 / 12 | 12 / 12 |
+| Submit, SQLite / PG16 | 22 / 23 | 28 / 29 | 28 / 29 |
+
+The submit writes two rows (the request, one bulk insert of lines); in the
+real runtime the write guard adds its lock, state read and generation
+update per write.
+
+### Full suite, immediate base against the integrated candidate
+
+| | Base `891e6fd` | Candidate `7af38cf` |
+| --- | ---: | ---: |
+| collected | 4,656 | 4,918 |
+| passed | 4,528 | 4,747 |
+| failed | 10 | 9 |
+| skipped | 118 | 162 |
+
+Candidate-only failures: **0**. The 9 are the known base set (7 calendar-
+dependent client sorting tests, the partial-repair report button, the AI
+renderer check). Fixed by the candidate: the stale Stage 2 hydration test.
+PG16, 31 public, request, catalog, search and write-guard modules: 572
+passed, 0 failed.
+
 ## Reproduce
 
 ```
 DATABASE_URL=postgres://<owner>@127.0.0.1:<port>/<db> python manage.py migrate
 DATABASE_URL=... python manage.py seed_public_catalog_demo --confirm-isolated
+psql -d <db> -c "CREATE ROLE denstock_public LOGIN"   # then \password denstock_public in psql
 psql -d <db> -v public_role=denstock_public -f scripts/operations/create_public_catalog_role.sql
 DATABASE_URL=... python manage.py generate_public_catalog_stage2_qualification --confirm-isolated
 DATABASE_URL=... python scripts/qualification/public_catalog_launch_benchmark.py \
     --confirm-isolated --expect-database <db> --enrich --output evidence.json
 python scripts/qualification/public_catalog_acceptance.py --base-url http://127.0.0.1:<port> \
-    --article 420892388 --exercise-cart --probe-post
+    --article 420892388 --exercise-cart --probe-post [--submit-request]
 python scripts/qualification/public_catalog_load.py --base-url http://127.0.0.1:<port> --clients 8
 DENSTOCK_TEST_DATABASE_URL=postgres://... pytest tests/test_public_catalog_*.py \
     tests/test_public_runtime_boundary.py tests/test_part_search_postgresql.py

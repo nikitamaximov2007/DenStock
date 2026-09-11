@@ -7,9 +7,16 @@ For the next agent, the reviewer and the release operator. No secrets here.
 | What | Branch | SHA |
 | --- | --- | --- |
 | Starting point (Stage 11 preview candidate) | `codex/public-catalog-stage11-read-cart-hardening` | `ebd79727866c126f9b1a9eb41513dc4531f52d3c` |
-| Independent launch-readiness stack | `claude/public-catalog-launch-readiness` | the branch head that contains this file |
-| Final launch candidate with the request stack | not created | `origin/codex/public-catalog-request-stack-integration` had not been published |
+| Independent launch-readiness stack | `claude/public-catalog-launch-readiness` | `468e3f6ba90c768ca1b77c2c8ed6a030ce3ac886` |
+| Request stack integration (Codex, reviewed, not modified) | `codex/public-catalog-request-stack-integration` | `891e6fd1784af03cce72a71af0c53470e4366985` |
+| Final integrated launch candidate | `claude/public-catalog-launch-candidate` | the branch head that contains this file |
 | Production | `main` | `a5c014621c3689340bfe699216e03bb0b88d7472` |
+
+The launch candidate starts at the exact request-stack SHA, merges the
+launch-readiness stack (`2235214`) and fixes the request write in the real
+public runtime (`07ddc4d`). Review findings and evidence:
+`docs/qualification/public-catalog-launch-readiness.md`, section
+"Integrated launch candidate".
 
 The stack sits on the catalog chain that branched from `073ad9b`.
 Production `main` is six commits ahead (operator search, reports, sidebar),
@@ -39,14 +46,20 @@ must include that merge and be re-qualified on the same-day baseline.
 * Migrations: `catalog.0010` (photo tables, no rows), `catalog.0011`
   (database defaults for an app-only rollback), and a set-based backfill in
   `catalog.0008` (1,903 s to 2 s on the real catalog copy).
-* Tools: demo seed, coverage report, HTTP acceptance, 125k benchmark,
-  bounded load test.
+* Tools: demo seed, coverage report, HTTP acceptance (with an opt-in real
+  request), 125k benchmark, bounded load test.
+* Request hand-off (`apps/catalog/public_requests.py`): the cart becomes
+  one customer request; zero-stock lines are supply inquiries; one token
+  per cart content; session-gated success page with an 8-character
+  reference; honeypot and per-address limit; one explicit read-write
+  transaction on a read-only role; the write guard applies (a freeze pauses
+  requests).
 
 ## Migration order (over production `main`)
 
 `actions.0013`, `actions.0014`, `catalog.0007`, `catalog.0008`,
-`catalog.0009`, `catalog.0010`, `catalog.0011`. Only `0008` touches existing
-rows (one UPDATE). Details and rollback realities:
+`catalog.0009`, `catalog.0010`, `catalog.0011`, `customer_requests.0001` to
+`0004`. Only `0008` touches existing rows (one UPDATE). Details and rollback realities:
 `docs/operations/public-catalog-release-runbook.md`.
 
 ## Evidence
@@ -58,20 +71,26 @@ no public photo created), query counts flat at 1/20/50, the 125k regression
 split into search, service and page, load runs with zero errors, the role
 and boundary proofs, and the full-suite comparison.
 
-Full suite (SQLite, same machine, same day): base `ebd7972` 4,626
-collected, 4,498 passed, 10 failed, 118 skipped; candidate `f13ee91` 4,845
-collected, 4,693 passed, 9 failed, 143 skipped. The 9
-candidate failures are all present on the base (calendar-dependent
-clients-overview set, the partial-repair report button, the AI renderer
-check). Candidate-only regressions: 0. Fixed by the candidate: the stale
-Stage 2 hydration test. Catalog suites on PG16: 413 passed.
+Full suite (SQLite, same machine, same day), integrated candidate against
+its immediate base: base `891e6fd` 4,656 collected, 4,528 passed, 10
+failed, 118 skipped; candidate `7af38cf` 4,918 collected, 4,747 passed, 9
+failed, 162 skipped. The 9 candidate failures are all present on the base
+(calendar-dependent clients-overview set, the partial-repair report button,
+the AI renderer check). Candidate-only regressions: 0. Fixed by the
+candidate: the stale Stage 2 hydration test. PG16: 572 passed across the
+public, request, catalog, search and write-guard modules. (The independent
+stack alone, `f13ee91` against `ebd7972`: also 0 candidate-only.)
 
 ## Known limitations (deliberate, documented)
 
-* No request submission yet: the cart ends at a summary. The request stack
-  (Stages 9, 10, 12, 13) plugs into `{% block cart_actions %}` in
-  `templates/public_catalog/cart.html`; map cart `public_id`s to parts
-  through `public_parts()` so a request can never name a hidden part.
+* The request-stack `?supply=<public_id>` shortcut form is folded into the
+  cart: a zero-stock part goes to the cart as a supply inquiry and is sent
+  with the rest. One path, one mental model.
+* The request limit is per process and per address (LocMem cache); it
+  stops a script, not a botnet. An edge rate limit in Caddy for
+  `/request/submit/` is the next step if abuse appears.
+* Operators find a request by its 8-character reference in the list; there
+  is no search box on the request list yet.
 * Content coverage is low by design at launch (no confirmed Russian names,
   photos or analogs in the 2026-09-06 copy); the pages handle every gap.
   See `docs/operations/public-catalog-launch-data-quality.md`.
@@ -90,19 +109,21 @@ Stage 2 hydration test. Catalog suites on PG16: 413 passed.
 
 ## Preview upgrade
 
-The preview runs `ebd7972`. Upgrading it to this stack applies
-`catalog.0010` and `catalog.0011` (its `0008` already ran with the old code
-and is not repeated), then the role script with
-`-v public_role=denstock_public_preview`, then a runtime recreate. Follow
+The preview runs `ebd7972`. Upgrading it to the candidate applies
+`catalog.0010`, `catalog.0011` and `customer_requests.0001` to `0004` (its
+`0008` already ran with the old code and is not repeated), then the role
+script with `-v public_role=denstock_public_preview`, then a runtime
+recreate. Follow
 `docs/operations/public-catalog-preview-runbook.md`, section B, and run the
 acceptance script afterwards. Nothing was deployed to the preview tonight.
 
 ## Production release prerequisites
 
-1. Independent review of this stack (it rewrites Stage 5-8 views and
-   templates and edits the Stage 4 migration backfill).
-2. The request stack integrated on top, reviewed, with the request-domain
-   role design from the release runbook.
+1. Independent review of this candidate (it rewrites Stage 5-8 views and
+   templates, edits the Stage 4 migration backfill, re-homes the request
+   hand-off and changes the write guard for `public-catalog` mode).
+2. Codex (or the owner of the request stack) agreeing with the changes to
+   their stack listed in the qualification document.
 3. Merge of the then-current `origin/main`, full-suite comparison against
    the same-day `main`, PG16 upgrade rehearsal on a fresh production copy.
 4. Legal wording for personal-data consent (request stack).
@@ -123,13 +144,16 @@ backup only for data damage. Full text in the release runbook.
 * DNS and TLS for `pro-stor.ru` and `admin.pro-stor.ru`.
 * Telegram and MAX credentials for the request stack.
 * Legal review of consent and privacy wording.
-* The Codex request-stack integration branch.
+* Codex's acknowledgement of the request-stack changes (review table in the
+  qualification document).
+* The privacy policy page and its URL on the form (legal).
 * Yandex Webmaster and Google Search Console after the indexing switch.
 
 ## Local environment used (disposable)
 
 A `postgres:16` container `denstock-launch-pg16` on 127.0.0.1:55520 with
-databases `launch_demo`, `launch_fresh`, `launch_upgrade`, `launch_corpus`,
-`launch_snapshot` and `launch_snapshot2`. It holds a copy of production
-data (the 2026-09-06 snapshot restores) and should be removed when no
-longer needed: `docker rm -f denstock-launch-pg16`.
+synthetic databases only (the production snapshot copies were dropped):
+`launch_demo`, `launch_fresh`, `launch_upgrade`, `launch_corpus`,
+`launch_e2e`, `launch_up_preview`, `launch_up_codex`, `launch_up_prod`,
+`launch_codexint`, and throwaway local roles for the rehearsals. Remove it
+when no longer needed: `docker rm -f denstock-launch-pg16`.
