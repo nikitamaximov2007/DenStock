@@ -45,6 +45,27 @@ write/schema privileges from `denstock_public`. A restricted-role acceptance
 must prove the three read facades work and catalogue, price, stock,
 reservation, customer, sale and repair writes are rejected by PostgreSQL.
 
+## Launch update (2026-09-11)
+
+The launch-readiness branch keeps this boundary and widens it only by what
+the pages need:
+
+* routes: home, search, part page, published photo renditions, cart, robots,
+  sitemap index and files, health (`config/public_urls.py`);
+* the middleware, cookies and error handlers live in
+  `apps.catalog.public_settings` and are exercised by the test suite;
+* the role script now grants the Stage 6, 7 and 14 read tables
+  (`catalog_partanalog`, compatibility and vehicle tables, the two photo
+  tables), applies row-level security to the photo tables and makes every
+  session of the role read-only with a statement timeout and a connection
+  limit. The authoritative list is `scripts/operations/create_public_catalog_role.sql`,
+  pinned by `tests/test_public_catalog_role_postgresql.py`;
+* the public process serves only `static/public_catalog/` through the
+  staticfiles finder; it still has no media mount.
+
+See `docs/operations/public-catalog-release-runbook.md` for the production
+design.
+
 ## Deferred work
 
 Public browse/search UI, part DTO HTTP endpoints, public identifiers, SEO,

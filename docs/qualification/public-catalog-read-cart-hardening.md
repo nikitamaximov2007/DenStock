@@ -11,3 +11,11 @@ The public settings bound request bodies to 64 KiB and form fields to 32,
 enable HttpOnly/Lax cookies, retain Django CSRF protection for cart writes and
 mark cart responses `never_cache`. Public routes remain GET-only except the
 two explicit CSRF-protected cart mutations.
+
+Launch update (2026-09-11): the cart now lives in the `prostor_cart` signed
+cookie (HttpOnly, SameSite=Lax, Secure by default). A part with no available
+stock can be added as a supply inquiry, never above 1,000 units; a part with
+some stock cannot exceed what is available. Malformed or forged cart content
+is dropped, parts that left the catalog are pruned with a notice, and the
+cart page recomputes price and availability on every view. Cart operations
+issue no database write (`tests/test_public_catalog_cart.py`).
