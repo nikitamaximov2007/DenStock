@@ -1,0 +1,12 @@
+{% extends "public_catalog/base.html" %}
+{% block content %}
+  <h1>Запчасти для техники</h1>
+  <p>Найдите деталь по артикулу или названию. Покажем актуальную цену, наличие и подтверждённые аналоги.</p>
+  <form class="search"
+        action="{% url 'public_catalog_search' %}"
+        method="get"><label for="q">Поиск запчасти</label><input id="q"
+       name="q"
+       required
+       maxlength="64"
+       placeholder="Например, 420-892-388"><button>Найти</button></form>
+{% endblock %}

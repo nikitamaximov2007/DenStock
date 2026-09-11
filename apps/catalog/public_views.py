@@ -5,13 +5,61 @@ the separate runtime boundary without exposing an internal screen or DTO.
 """
 
 from django.db import connection
-from django.http import JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
+from django.shortcuts import render
+from django.urls import reverse
 from django.views.decorators.http import require_GET
+
+from .models import PartType
+from .public_contracts import build_public_part_facts
+from .search import clean_query, search_parts
 
 
 @require_GET
 def public_root(request):
-    return JsonResponse({"service": "public-catalog", "status": "ok"})
+    return render(request, "public_catalog/home.html")
+
+
+@require_GET
+def public_search(request):
+    query = clean_query(request.GET.get("q"))
+    page = search_parts(query, page=request.GET.get("page", 1)) if query else None
+    facts = build_public_part_facts(hit.part_id for hit in page.hits) if page else []
+    return render(
+        request,
+        "public_catalog/search.html",
+        {"query": query, "page": page, "facts": facts},
+    )
+
+
+@require_GET
+def public_part_detail(request, public_id):
+    part = PartType.objects.filter(public_id=public_id, is_public=True).first()
+    if part is None:
+        raise Http404
+    facts = build_public_part_facts([part.pk])[0]
+    return render(
+        request,
+        "public_catalog/part_detail.html",
+        {"facts": facts, "canonical_path": reverse("public_catalog_part", args=[facts.public_id])},
+    )
+
+
+@require_GET
+def robots_txt(request):
+    return HttpResponse("User-agent: *\nAllow: /\nDisallow: /search/\n", content_type="text/plain")
+
+
+@require_GET
+def sitemap_xml(request):
+    public_ids = PartType.objects.filter(is_public=True).values_list("public_id", flat=True)
+    paths = [reverse("public_catalog_part", args=[public_id]) for public_id in public_ids]
+    return render(
+        request,
+        "public_catalog/sitemap.xml",
+        {"paths": paths},
+        content_type="application/xml",
+    )
 
 
 @require_GET

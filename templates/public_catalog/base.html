@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}PRO-STOR · запчасти{% endblock %}</title>
+    {% block meta %}{% endblock %}
+    <style>
+      body { margin: 0; background: #f6f7f9; color: #172033; font: 16px system-ui, sans-serif; }
+      header, main { max-width: 1040px; margin: auto; padding: 20px; } header { display:flex; justify-content:space-between; align-items:center; }
+      a { color:#0b5cab; } .brand { color:#172033; font-weight:800; text-decoration:none; } .search { display:flex; gap:8px; } input,button { font:inherit; padding:12px; border-radius:8px; border:1px solid #cbd2dc; } input { flex:1; } button { background:#0b5cab; color:white; border:0; cursor:pointer; } .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); } article { background:white; padding:18px; border-radius:12px; box-shadow:0 1px 4px #17203312; } .muted { color:#64748b; } .price { font-weight:700; font-size:1.15rem; } .zero { color:#9a5a00; font-weight:600; }
+    </style>
+  </head>
+  <body>
+    <header><a class="brand" href="{% url 'public_catalog_root' %}">PRO-STOR</a><a href="{% url 'public_catalog_search' %}">Поиск запчастей</a></header>
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

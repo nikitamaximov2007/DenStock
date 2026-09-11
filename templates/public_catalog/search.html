@@ -1,0 +1,10 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Поиск запчастей · PRO-STOR{% endblock %}
+{% block meta %}<meta name="robots" content="noindex,follow">{% endblock %}
+{% block content %}
+  <h1>Поиск запчастей</h1>
+  <form class="search" method="get">
+    <label for="q">Артикул или название</label><input id="q" name="q" value="{{ query }}" maxlength="64"><button>Найти</button>
+  </form>
+  {% if page %}<p class="muted">Найдено: {{ page.total }}</p><section class="grid">{% for fact in facts %}<article><h2><a href="{% url 'public_catalog_part' fact.public_id %}">{{ fact.russian_name|default:fact.english_name }}</a></h2><p class="muted">{{ fact.english_name }}</p><p>{{ fact.article }}{% if fact.manufacturer %} · {{ fact.manufacturer }}{% endif %}</p><p class="price">{% if fact.price.status == 'known' %}{{ fact.price.price_rub }} ₽{% else %}Уточнить цену{% endif %}</p><p>{% if fact.available_quantity > 0 %}В наличии: {{ fact.available_quantity }} {{ fact.unit.short_name }}{% else %}<span class="zero">Узнать о поставке</span>{% endif %}</p></article>{% empty %}<p>Ничего не найдено.</p>{% endfor %}</section>{% endif %}
+{% endblock %}
