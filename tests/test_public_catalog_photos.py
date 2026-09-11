@@ -346,16 +346,19 @@ def test_migration_creates_schema_only_and_never_backfills(public_catalog):
     assert PartTypeImage.objects.count() == 0
 
 
-def test_public_photo_reads_are_bounded(public_catalog):
+@pytest.mark.parametrize("count", [1, 20, 50])
+def test_public_photo_reads_are_bounded(public_catalog, count, record_property):
     parts = [
-        public_catalog.part(f"Bounded photo {index}", article=f"BPH-{index}") for index in range(50)
+        public_catalog.part(f"Bounded photo {index}", article=f"BPH-{index}")
+        for index in range(count)
     ]
     for part in parts:
         publish_photo(public_catalog.image(part), source="own", by=public_catalog.user)
     with capture() as queries:
         photos = primary_photos([part.pk for part in parts])
-    assert len(photos) == 50
+    assert len(photos) == count
+    record_property(f"public_primary_photos_queries_{count}", len(queries.captured_queries))
     assert len(queries.captured_queries) == 1
     assert_no_writes(queries)
-    assert PublicPartPhotoRendition.objects.count() == 100
+    assert PublicPartPhotoRendition.objects.count() == 2 * count
     assert timezone.now()
