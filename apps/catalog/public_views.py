@@ -269,6 +269,8 @@ def sitemap_parts(request, number):
         base + reverse("public_catalog_part", args=[public_id])
         for public_id in public_seo.sitemap_public_ids(number)
     ]
+    if number == 1:
+        urls.insert(0, base + reverse("public_catalog_root"))
     response = render(
         request, "public_catalog/sitemap.xml", {"urls": urls}, content_type="application/xml"
     )

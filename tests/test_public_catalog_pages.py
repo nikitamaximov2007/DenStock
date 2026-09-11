@@ -258,6 +258,7 @@ def test_sitemap_is_an_index_of_bounded_files(public_client, public_catalog):
     assert index.status_code == 200 and index["Content-Type"] == "application/xml"
     assert "<loc>https://pro-stor.ru/sitemaps/parts-1.xml</loc>" in index.content.decode()
     body = page.content.decode()
+    assert "<loc>https://pro-stor.ru/</loc>" in body
     assert f"<loc>https://pro-stor.ru/parts/{visible.public_id}/</loc>" in body
     assert str(hidden.public_id) not in body
     assert missing.status_code == 404

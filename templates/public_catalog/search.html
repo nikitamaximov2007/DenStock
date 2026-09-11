@@ -50,7 +50,7 @@
       </aside>
       <section class="results" aria-label="Результаты поиска">
         {% if chips %}
-          <div class="chips" aria-label="Выбранные фильтры">
+          <div class="chips" role="group" aria-label="Выбранные фильтры">
             {% for label, url in chips %}
               <a class="chip" href="{{ url }}">{{ label }}<span class="chip__remove" aria-hidden="true">×</span><span class="visually-hidden">: убрать фильтр</span></a>
             {% endfor %}
