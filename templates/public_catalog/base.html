@@ -48,16 +48,19 @@
         <a class="cart-link" href="{% url 'public_catalog_cart' %}">
           Корзина
           {% if cart_lines %}
+            <span class="visually-hidden">, позиций:</span>
             <span class="cart-link__count">{{ cart_lines }}</span>
-            <span class="visually-hidden">позиций</span>
           {% endif %}
         </a>
       </div>
     </header>
     <main id="main" class="site-main" tabindex="-1">
       {% if messages %}
-        <div class="notices" role="status">
-          {% for message in messages %}<p class="notice notice--{{ message.tags }}">{{ message }}</p>{% endfor %}
+        <div class="notices">
+          {% for message in messages %}
+            <p class="notice notice--{{ message.tags }}"
+               role="{% if message.level_tag == 'error' %}alert{% else %}status{% endif %}">{{ message }}</p>
+          {% endfor %}
         </div>
       {% endif %}
       {% block content %}{% endblock %}
