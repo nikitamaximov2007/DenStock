@@ -331,7 +331,7 @@ def public_request_submit(request):
     if request.POST.get("consent") != "1":
         return refuse("Подтвердите согласие на обработку персональных данных.", field="consent")
     try:
-        public_requests.check_rate(request)
+        public_requests.check_rate(request, submission)
         public_id, _created = public_requests.send_cart(request, cart, submission, values)
     except public_requests.RequestRefused as exc:
         return refuse(str(exc), status=429)

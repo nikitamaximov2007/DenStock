@@ -467,3 +467,26 @@ def test_service_errors_name_their_form_field(public_catalog):
         with pytest.raises(CustomerRequestError) as refused:
             create_customer_request(**{**base, **override})
         assert refused.value.field == field
+
+
+def test_a_retry_of_a_sent_request_is_never_rate_limited(public_client, public_catalog, settings):
+    """Two clicks can race; the one that loses must land on the created request."""
+    settings.PUBLIC_REQUEST_RATE_LIMIT = 1
+    part = public_catalog.part("SEAL", article="SE-1")
+    public_catalog.stock(part, "5")
+    _add(public_client, part, "1")
+    token = _open_form(public_client)
+    cookie_before_submit = public_client.cookies["prostor_cart"].value
+
+    first = _submit(public_client, token)
+    # The racing click still carries the cookie from before the first response.
+    public_client.cookies["prostor_cart"] = cookie_before_submit
+    racing = _submit(public_client, token)
+
+    assert first.status_code == racing.status_code == 302
+    assert racing["Location"] == first["Location"]
+    assert CustomerRequest.objects.count() == 1
+    public_client.cookies["prostor_cart"] = cookie_before_submit
+    _add(public_client, part, "2")
+    limited = _submit(public_client, _open_form(public_client))
+    assert limited.status_code == 429, "a genuinely new request is still limited"

@@ -31,7 +31,11 @@ from django.db import connection, transaction
 
 from apps.customer_requests.models import CustomerRequest
 from apps.customer_requests.policies import current_consent_versions
-from apps.customer_requests.services import RequestLineInput, create_customer_request
+from apps.customer_requests.services import (
+    RequestLineInput,
+    create_customer_request,
+    submission_key_hash,
+)
 
 from .public_cart import CART_SESSION_KEY, LINE_INQUIRY, CartView
 
@@ -114,8 +118,19 @@ def _client_key(request) -> str:
     return "public-request:" + hashlib.sha256(address.encode()).hexdigest()[:32]
 
 
-def check_rate(request) -> None:
-    if cache.get(_client_key(request), 0) >= settings.PUBLIC_REQUEST_RATE_LIMIT:
+def check_rate(request, submission: Submission) -> None:
+    """Refuse a NEW request over the limit; a retry of a sent one always passes.
+
+    Two clicks can arrive together, before either response has recorded the
+    request in the cookie. The one that loses the race must still land on the
+    request that was created, not on "too many requests".
+    """
+    if cache.get(_client_key(request), 0) < settings.PUBLIC_REQUEST_RATE_LIMIT:
+        return
+    already_sent = CustomerRequest.objects.filter(
+        submission_key_hash=submission_key_hash(submission.token)
+    ).exists()
+    if not already_sent:
         raise RequestRefused("Слишком много заявок подряд. Попробуйте через несколько минут.")
 
 
