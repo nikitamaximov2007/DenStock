@@ -61,3 +61,23 @@ def test_public_search_is_not_indexable_and_unknown_identity_is_404(part):
         "/parts/00000000-0000-0000-0000-000000000000/", HTTP_HOST="catalog.example"
     )
     assert unknown.status_code == 404
+
+
+@override_settings(ROOT_URLCONF="config.public_urls", ALLOWED_HOSTS=["catalog.example"])
+def test_anonymous_cart_rechecks_public_part_and_never_uses_a_client_price(part):
+    client = Client()
+    response = client.post(
+        reverse("public_catalog_cart_add", args=[part.public_id]),
+        {"quantity": "1", "price": "1"},
+        HTTP_HOST="catalog.example",
+    )
+    assert response.status_code == 302
+    cart = client.get(reverse("public_catalog_cart"), HTTP_HOST="catalog.example")
+    assert "Корзина пуста" in cart.content.decode()
+
+    too_many = client.post(
+        reverse("public_catalog_cart_add", args=[part.public_id]),
+        {"quantity": "1001"},
+        HTTP_HOST="catalog.example",
+    )
+    assert too_many.status_code == 302

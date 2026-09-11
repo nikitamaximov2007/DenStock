@@ -12,7 +12,7 @@
     </style>
   </head>
   <body>
-    <header><a class="brand" href="{% url 'public_catalog_root' %}">PRO-STOR</a><a href="{% url 'public_catalog_search' %}">Поиск запчастей</a></header>
+    <header><a class="brand" href="{% url 'public_catalog_root' %}">PRO-STOR</a><a href="{% url 'public_catalog_search' %}">Поиск запчастей</a><a href="{% url 'public_catalog_cart' %}">Корзина</a></header>
     <main>
       {% block content %}{% endblock %}
     </main>

@@ -6,15 +6,31 @@ the separate runtime boundary without exposing an internal screen or DTO.
 
 from django.db import connection
 from django.http import Http404, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from .models import PartAnalog, PartCompatibility, PartType
 from .public_contracts import build_public_part_facts
 from .search import clean_query, search_parts
 
 APPLICATIONS = ("ГИДРОЦИКЛ", "КВАДРОЦИКЛ", "СНЕГОХОД", "ЛОДОЧНЫЙ МОТОР", "КАТЕР")
+CART_SESSION_KEY = "public_catalog_cart"
+MAX_CART_LINES = 50
+MAX_CART_QUANTITY = 1000
+
+
+def _cart(request):
+    raw = request.session.get(CART_SESSION_KEY, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def _cart_facts(request):
+    cart = _cart(request)
+    parts = PartType.objects.filter(public_id__in=cart, is_public=True)
+    by_id = {str(part.public_id): part.pk for part in parts}
+    facts = {str(fact.public_id): fact for fact in build_public_part_facts(by_id.values())}
+    return [(facts[key], quantity) for key, quantity in cart.items() if key in facts]
 
 
 @require_GET
@@ -77,6 +93,7 @@ def public_part_detail(request, public_id):
             "facts": facts,
             "analogs": analogs,
             "canonical_path": reverse("public_catalog_part", args=[facts.public_id]),
+            "cart_count": sum(_cart(request).values()),
         },
     )
 
@@ -96,6 +113,40 @@ def sitemap_xml(request):
         {"paths": paths},
         content_type="application/xml",
     )
+
+
+@require_GET
+def public_cart(request):
+    return render(request, "public_catalog/cart.html", {"lines": _cart_facts(request)})
+
+
+@require_POST
+def public_cart_add(request, public_id):
+    part = PartType.objects.filter(public_id=public_id, is_public=True).first()
+    if part is None:
+        raise Http404
+    try:
+        quantity = int(request.POST.get("quantity", "1"))
+    except ValueError:
+        quantity = 0
+    facts = build_public_part_facts([part.pk])[0]
+    if quantity < 1 or quantity > MAX_CART_QUANTITY or facts.available_quantity < quantity:
+        return redirect("public_catalog_part", public_id=public_id)
+    cart = _cart(request)
+    key = str(public_id)
+    if key not in cart and len(cart) >= MAX_CART_LINES:
+        return redirect("public_catalog_cart")
+    cart[key] = quantity
+    request.session[CART_SESSION_KEY] = cart
+    return redirect("public_catalog_cart")
+
+
+@require_POST
+def public_cart_remove(request, public_id):
+    cart = _cart(request)
+    cart.pop(str(public_id), None)
+    request.session[CART_SESSION_KEY] = cart
+    return redirect("public_catalog_cart")
 
 
 @require_GET
