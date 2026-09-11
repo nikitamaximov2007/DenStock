@@ -6,5 +6,18 @@
   <form class="search" method="get">
     <label for="q">Артикул или название</label><input id="q" name="q" value="{{ query }}" maxlength="64"><button>Найти</button>
   </form>
+  {% if page %}
+    <form method="get">
+      <input type="hidden" name="q" value="{{ query }}">
+      <label for="application">Техника</label>
+      <select id="application" name="application"><option value="">Все</option>{% for value in applications %}<option value="{{ value }}"{% if application == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+      <label for="manufacturer">Производитель</label>
+      <select id="manufacturer" name="manufacturer"><option value="">Все</option>{% for value in manufacturers %}<option value="{{ value }}"{% if manufacturer == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+      <label><input type="checkbox"
+       name="in_stock"
+       value="1"
+       {% if in_stock %} checked{% endif %}> Только в наличии</label><button>Применить</button>
+    </form>
+  {% endif %}
   {% if page %}<p class="muted">Найдено: {{ page.total }}</p><section class="grid">{% for fact in facts %}<article><h2><a href="{% url 'public_catalog_part' fact.public_id %}">{{ fact.russian_name|default:fact.english_name }}</a></h2><p class="muted">{{ fact.english_name }}</p><p>{{ fact.article }}{% if fact.manufacturer %} · {{ fact.manufacturer }}{% endif %}</p><p class="price">{% if fact.price.status == 'known' %}{{ fact.price.price_rub }} ₽{% else %}Уточнить цену{% endif %}</p><p>{% if fact.available_quantity > 0 %}В наличии: {{ fact.available_quantity }} {{ fact.unit.short_name }}{% else %}<span class="zero">Узнать о поставке</span>{% endif %}</p></article>{% empty %}<p>Ничего не найдено.</p>{% endfor %}</section>{% endif %}
 {% endblock %}

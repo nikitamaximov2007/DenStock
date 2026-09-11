@@ -10,9 +10,11 @@ from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.http import require_GET
 
-from .models import PartType
+from .models import PartCompatibility, PartType
 from .public_contracts import build_public_part_facts
 from .search import clean_query, search_parts
+
+APPLICATIONS = ("ГИДРОЦИКЛ", "КВАДРОЦИКЛ", "СНЕГОХОД", "ЛОДОЧНЫЙ МОТОР", "КАТЕР")
 
 
 @require_GET
@@ -24,11 +26,39 @@ def public_root(request):
 def public_search(request):
     query = clean_query(request.GET.get("q"))
     page = search_parts(query, page=request.GET.get("page", 1)) if query else None
-    facts = build_public_part_facts(hit.part_id for hit in page.hits) if page else []
+    part_ids = [hit.part_id for hit in page.hits] if page else []
+    application = request.GET.get("application", "")
+    manufacturer = request.GET.get("manufacturer", "")
+    if application in APPLICATIONS:
+        part_ids = list(
+            PartCompatibility.objects.filter(
+                part_id__in=part_ids,
+                vehicle_model__vehicle_make__vehicle_type__name=application,
+            ).values_list("part_id", flat=True).distinct()
+        )
+    if manufacturer:
+        part_ids = list(
+            PartType.objects.filter(pk__in=part_ids, manufacturer__name=manufacturer).values_list(
+                "pk", flat=True
+            )
+        )
+    facts = build_public_part_facts(part_ids)
+    if request.GET.get("in_stock") == "1":
+        facts = [fact for fact in facts if fact.available_quantity > 0]
+    manufacturers = sorted({fact.manufacturer for fact in facts if fact.manufacturer})
     return render(
         request,
         "public_catalog/search.html",
-        {"query": query, "page": page, "facts": facts},
+        {
+            "query": query,
+            "page": page,
+            "facts": facts,
+            "applications": APPLICATIONS,
+            "application": application,
+            "manufacturer": manufacturer,
+            "manufacturers": manufacturers,
+            "in_stock": request.GET.get("in_stock") == "1",
+        },
     )
 
 
