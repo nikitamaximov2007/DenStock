@@ -411,3 +411,59 @@ def test_request_form_and_submit_query_counts_are_flat(
     assert len(form_queries.captured_queries) <= 14
     # Rebuilds the cart view, then the service re-reads parts and stock once.
     assert len(submit_queries.captured_queries) <= 30
+
+
+@pytest.mark.parametrize(
+    ("extra", "field_marker"),
+    [
+        ({"customer_phone": "позвоните мне"}, 'id="customer_phone"'),
+        ({"customer_name": "   "}, 'id="customer_name"'),
+        ({"comment": "x" * 2001}, 'id="comment"'),
+        ({"consent": ""}, 'name="consent"'),
+    ],
+)
+def test_a_refused_field_is_marked_and_points_at_the_message(
+    public_client, public_catalog, extra, field_marker
+):
+    part = public_catalog.part("SEAL", article="SE-1")
+    public_catalog.stock(part, "1")
+    _add(public_client, part)
+
+    response = _submit(public_client, _open_form(public_client), **extra)
+
+    body = response.content.decode()
+    assert response.status_code == 400
+    assert '<p id="request-error" class="notice notice--error" role="alert">' in body
+    tag = body[body.index(field_marker) :]
+    tag = tag[: tag.index(">")]
+    assert 'aria-invalid="true"' in tag and 'aria-describedby="request-error"' in tag
+    assert body.count('aria-invalid="true"') == 1, "only the field at fault is marked"
+    assert CustomerRequest.objects.count() == 0
+
+
+def test_service_errors_name_their_form_field(public_catalog):
+    from apps.customer_requests.services import (
+        CustomerRequestError,
+        RequestLineInput,
+        create_customer_request,
+    )
+
+    part = public_catalog.part("SEAL", article="SE-1")
+    base = {
+        "customer_name": "Иван",
+        "customer_phone": "+79121234567",
+        "preferred_messenger": "telegram",
+        "lines": [RequestLineInput(part.pk, 1, supply_inquiry=True)],
+        "privacy_policy_version": "v1",
+        "personal_data_consent_version": "v1",
+        "submission_key": "k" * 32,
+    }
+    for override, field in (
+        ({"customer_name": ""}, "customer_name"),
+        ({"customer_phone": "abc"}, "customer_phone"),
+        ({"preferred_messenger": "sms"}, "preferred_messenger"),
+        ({"comment": "x" * 2001}, "comment"),
+    ):
+        with pytest.raises(CustomerRequestError) as refused:
+            create_customer_request(**{**base, **override})
+        assert refused.value.field == field

@@ -244,7 +244,9 @@ def public_cart_remove(request, public_id):
 # --- Sending the cart as a customer request ----------------------------------------------
 
 
-def _request_form(request, cart, *, token, values=None, error="", status=200):
+def _request_form(
+    request, cart, *, token, values=None, error="", error_field=None, status=200
+):
     return _render(
         request,
         "public_catalog/request_form.html",
@@ -254,6 +256,8 @@ def _request_form(request, cart, *, token, values=None, error="", status=200):
             "submission_key": token,
             "values": values or {},
             "error": error,
+            # The field at fault is marked aria-invalid and points at the message.
+            "error_field": error_field,
             "honeypot_field": public_requests.HONEYPOT_FIELD,
         },
         status=status,
@@ -311,22 +315,28 @@ def public_request_submit(request):
             status=409,
         )
 
-    def refuse(error, status=400):
+    def refuse(error, status=400, field=None):
         return _request_form(
-            request, cart, token=submission.token, values=values, error=error, status=status
+            request,
+            cart,
+            token=submission.token,
+            values=values,
+            error=error,
+            error_field=field,
+            status=status,
         )
 
     if public_requests.looks_automated(request.POST):
         return refuse("Не удалось отправить заявку. Проверьте поля формы.")
     if request.POST.get("consent") != "1":
-        return refuse("Подтвердите согласие на обработку персональных данных.")
+        return refuse("Подтвердите согласие на обработку персональных данных.", field="consent")
     try:
         public_requests.check_rate(request)
         public_id, _created = public_requests.send_cart(request, cart, submission, values)
     except public_requests.RequestRefused as exc:
         return refuse(str(exc), status=429)
     except CustomerRequestError as exc:
-        return refuse(str(exc))
+        return refuse(str(exc), field=exc.field)
     except BusinessWriteBlocked:
         return refuse("Приём заявок временно приостановлен. Попробуйте позже.", status=503)
     return redirect("public_catalog_request_success", public_id=public_id)

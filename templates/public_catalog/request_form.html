@@ -9,7 +9,7 @@
     <h1 class="page-head__title">Отправить заявку</h1>
     <p class="page-head__meta">Оплата не нужна. Заявка не резервирует детали: менеджер свяжется с вами и подтвердит наличие, цену и срок.</p>
   </div>
-  {% if error %}<p class="notice notice--error" role="alert">{{ error }}</p>{% endif %}
+  {% if error %}<p id="request-error" class="notice notice--error" role="alert">{{ error }}</p>{% endif %}
   <div class="request-layout">
     <form class="request-form"
           method="post"
@@ -24,6 +24,7 @@
                maxlength="255"
                autocomplete="name"
                value="{{ values.customer_name }}"
+               {% if error_field == "customer_name" %}aria-invalid="true" aria-describedby="request-error"{% endif %}
                required>
       </div>
       <div class="field">
@@ -36,9 +37,11 @@
                inputmode="tel"
                placeholder="+7 900 000-00-00"
                value="{{ values.customer_phone }}"
+               {% if error_field == "customer_phone" %}aria-invalid="true" aria-describedby="request-error"{% endif %}
                required>
       </div>
-      <fieldset class="field choice-group">
+      <fieldset class="field choice-group"
+                {% if error_field == "preferred_messenger" %}aria-describedby="request-error"{% endif %}>
         <legend class="field__label">Где удобнее переписываться</legend>
         <label class="check">
           <input type="radio"
@@ -59,7 +62,11 @@
       </fieldset>
       <div class="field">
         <label class="field__label" for="comment">Комментарий <span class="field__optional">(необязательно)</span></label>
-        <textarea id="comment" name="comment" maxlength="2000" rows="4">{{ values.comment }}</textarea>
+        <textarea id="comment"
+                  name="comment"
+                  maxlength="2000"
+                  rows="4"
+                  {% if error_field == "comment" %}aria-invalid="true" aria-describedby="request-error"{% endif %}>{{ values.comment }}</textarea>
         <p class="field__hint">Например, модель техники или удобное время для звонка.</p>
       </div>
       <div class="hp" aria-hidden="true">
@@ -71,7 +78,11 @@
                autocomplete="off">
       </div>
       <label class="check consent">
-        <input type="checkbox" name="consent" value="1" required>
+        <input type="checkbox"
+               name="consent"
+               value="1"
+               {% if error_field == "consent" %}aria-invalid="true" aria-describedby="request-error"{% endif %}
+               required>
         <span>Согласен на обработку персональных данных для связи по этой заявке.</span>
       </label>
       <button class="btn btn--large btn--block" type="submit">Отправить заявку</button>

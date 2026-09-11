@@ -27,7 +27,15 @@ MAX_REQUEST_LINES = 50
 
 
 class CustomerRequestError(ValueError):
-    """A customer-facing validation error without sensitive details."""
+    """A customer-facing validation error without sensitive details.
+
+    ``field`` names the form field at fault, when there is one, so a form can
+    mark that field and point it at the message.
+    """
+
+    def __init__(self, message: str = "", *, field: str | None = None):
+        super().__init__(message)
+        self.field = field
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,20 +52,20 @@ def submission_key_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _required_text(value, field, maximum):
+def _required_text(value, field, maximum, *, form_field=None):
     cleaned = str(value or "").strip()
     if not cleaned:
-        raise CustomerRequestError(f"Укажите {field}.")
+        raise CustomerRequestError(f"Укажите {field}.", field=form_field)
     if len(cleaned) > maximum:
-        raise CustomerRequestError(f"Поле «{field}» слишком длинное.")
+        raise CustomerRequestError(f"Поле «{field}» слишком длинное.", field=form_field)
     return cleaned
 
 
 def _phone(value: str) -> str:
-    value = _required_text(value, "телефон", 50)
+    value = _required_text(value, "телефон", 50, form_field="customer_phone")
     normalized = normalize_phone(value)
     if len(normalized) < 5 or any(char.isalpha() for char in value):
-        raise CustomerRequestError("Укажите телефон в обычном формате.")
+        raise CustomerRequestError("Укажите телефон в обычном формате.", field="customer_phone")
     return value
 
 
@@ -145,13 +153,15 @@ def create_customer_request(
     if existing:
         return existing, False
 
-    customer_name = _required_text(customer_name, "имя", 255)
+    customer_name = _required_text(customer_name, "имя", 255, form_field="customer_name")
     customer_phone = _phone(customer_phone)
     if preferred_messenger not in CustomerRequest.Messenger.values:
-        raise CustomerRequestError("Выберите Telegram или MAX.")
+        raise CustomerRequestError("Выберите Telegram или MAX.", field="preferred_messenger")
     comment = str(comment or "").strip()
     if len(comment) > 2000:
-        raise CustomerRequestError("Комментарий не должен быть длиннее 2000 символов.")
+        raise CustomerRequestError(
+            "Комментарий не должен быть длиннее 2000 символов.", field="comment"
+        )
     privacy_policy_version = _required_text(privacy_policy_version, "версию политики", 64)
     personal_data_consent_version = _required_text(
         personal_data_consent_version, "версию согласия", 64
