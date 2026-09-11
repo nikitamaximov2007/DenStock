@@ -244,3 +244,27 @@ def test_operator_screens_permission_badge_and_status_post(client, part, admin, 
     assert response.status_code == 302
     customer_request.refresh_from_db()
     assert customer_request.status == CustomerRequest.Status.IN_PROGRESS
+
+
+def test_a_refused_status_change_returns_to_the_request_with_the_reason(client, part, admin):
+    """A stale page offering an old action must not fail with a server error."""
+    customer_request, _ = _create(part=part)
+    change_request_status(request_id=customer_request.pk, target_status="in_progress", by=admin)
+    change_request_status(request_id=customer_request.pk, target_status="completed", by=admin)
+    client.login(username="boss", password=PASSWORD)
+
+    response = client.post(
+        reverse("customer_request_status", args=[customer_request.pk]),
+        {"status": "canceled"},
+        follow=True,
+    )
+
+    assert response.redirect_chain[-1] == (
+        reverse("customer_request_detail", args=[customer_request.pk]),
+        302,
+    )
+    assert "Этот переход статуса недоступен." in response.content.decode()
+    customer_request.refresh_from_db()
+    assert customer_request.status == CustomerRequest.Status.COMPLETED
+    missing = client.post(reverse("customer_request_status", args=[999999]), {"status": "canceled"})
+    assert missing.status_code == 404

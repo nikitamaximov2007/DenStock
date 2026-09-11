@@ -76,17 +76,18 @@ def customer_request_status(request, pk):
         raise PermissionDenied
     target_status = (request.POST.get("status") or "").strip()
     try:
-        customer_request, changed = change_request_status(
+        _customer_request, changed = change_request_status(
             request_id=pk, target_status=target_status, by=request.user
         )
     except CustomerRequest.DoesNotExist:
-        customer_request = get_object_or_404(CustomerRequest, pk=pk)
+        raise Http404 from None
     except CustomerRequestError as exc:
+        # A stale page can offer a transition that is no longer allowed.
         messages.error(request, str(exc))
     else:
         if changed:
             messages.success(request, "Статус заявки обновлён.")
-    return redirect("customer_request_detail", pk=customer_request.pk)
+    return redirect("customer_request_detail", pk=pk)
 
 
 @login_required
