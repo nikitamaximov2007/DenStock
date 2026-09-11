@@ -51,6 +51,7 @@ def robots_txt(request) -> str:
         "Allow: /\n"
         "Disallow: /search/\n"
         "Disallow: /cart/\n"
+        "Disallow: /request/\n"
         f"Sitemap: {absolute_url(request, '/sitemap.xml')}\n"
     )
 

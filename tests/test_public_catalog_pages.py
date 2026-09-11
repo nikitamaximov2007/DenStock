@@ -244,6 +244,7 @@ def test_indexing_switch_opens_part_pages_only(public_client, public_catalog):
     assert '<meta name="robots" content="noindex, follow">' in search.content.decode()
     assert '<meta name="robots" content="noindex, nofollow">' in cart.content.decode()
     assert "Disallow: /search/" in robots and "Disallow: /cart/" in robots
+    assert "Disallow: /request/" in robots
     assert "Sitemap: https://pro-stor.ru/sitemap.xml" in robots
 
 
