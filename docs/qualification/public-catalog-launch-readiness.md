@@ -207,21 +207,25 @@ keep-alive connections; recycling was therefore not adopted.
 
 Same machine, same day, SQLite, `pytest tests/` in clean worktrees.
 
-| | Base `ebd7972` | Candidate `160ab20` |
+| | Base `ebd7972` | Candidate `f13ee91` |
 | --- | ---: | ---: |
-| tests | 4,626 | 4,836 |
-| failed | 10 | 10 |
-| skipped | 118 | 142 |
+| collected | 4,626 | 4,845 |
+| passed | 4,498 | 4,693 |
+| failed | 10 | 9 |
+| skipped | 118 | 143 |
 
-Failure IDs: 9 shared (the calendar-dependent
-`tests/test_clients_overview_sorting.py` set,
-`test_partial_repair_line_cancellation.py::test_report_button_confirm_screen_and_redirect_keep_filters`,
-`deployment/test_ai_support_renderer.py::test_check_mode_prints_only_redacted_status`).
+The 9 candidate failures are all in the base set: the calendar-dependent
+`tests/test_clients_overview_sorting.py` tests (7 today),
+`test_partial_repair_line_cancellation.py::test_report_button_confirm_screen_and_redirect_keep_filters`
+and `deployment/test_ai_support_renderer.py::test_check_mode_prints_only_redacted_status`.
 Fixed by the candidate: `test_part_search.py::test_hits_hydrate_through_stage1_public_facts_in_rank_order`.
-One candidate-only failure appeared in that run
-(`test_public_catalog_migrations.py::test_upgrade_backfills_unique_public_ids_and_publishes_nothing`,
-seed data flushed by an earlier transactional test); it was fixed in
-`ccbb9fd` and the final numbers are in the handoff document.
+Candidate-only regressions: **0**. An intermediate run had one
+candidate-only failure (the migration round-trip test lost seed data after
+an earlier transactional test); it was fixed with serialized rollback before
+this run.
+
+Catalog-related suites (Stages 1-8, 11, 14 and the new launch tests):
+SQLite 362 passed, 27 skipped (PostgreSQL-only); PG16 413 passed.
 
 ## Reproduce
 
