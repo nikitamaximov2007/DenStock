@@ -490,3 +490,22 @@ def test_a_retry_of_a_sent_request_is_never_rate_limited(public_client, public_c
     _add(public_client, part, "2")
     limited = _submit(public_client, _open_form(public_client))
     assert limited.status_code == 429, "a genuinely new request is still limited"
+
+
+def test_a_line_that_runs_out_after_the_form_is_confirmed_again(public_client, public_catalog):
+    part = public_catalog.part("STARTER", article="ST-1", price="12000")
+    lot = public_catalog.stock(part, "1")
+    _add(public_client, part, "1")
+    token = _open_form(public_client)
+    lot.quantity = Decimal("0")
+    lot.save(update_fields=["quantity"])
+
+    changed = _submit(public_client, token)
+
+    body = changed.content.decode()
+    assert changed.status_code == 409 and "Корзина изменилась" in body
+    assert "Запрос о поставке, 1 шт" in body, "the form now shows the line as an inquiry"
+    assert CustomerRequest.objects.count() == 0
+    confirmed = _submit(public_client, TOKEN_RE.search(body).group(1))
+    assert confirmed.status_code == 302
+    assert CustomerRequest.objects.get().lines.get().is_supply_inquiry is True

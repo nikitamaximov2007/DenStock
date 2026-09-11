@@ -9,9 +9,11 @@ only turns the current cart into its input and guards the anonymous edge:
   ``build_cart_view``, which maps cart keys through ``public_parts()``.
 * A line with nothing available is sent as a supply inquiry; a line asking
   for more than is available blocks sending until the customer fixes it.
-* One submission token belongs to one cart content. A browser retry of the
-  same form returns the request already created; a changed cart gets a new
-  token, so it can never be swallowed by an earlier submission.
+* One submission token belongs to one cart content, line states included. A
+  browser retry of the same form returns the request already created; a
+  changed cart (or a line that ran out of stock meanwhile) gets a new token
+  and is confirmed again, so it can never be swallowed by an earlier
+  submission or change meaning unseen.
 * The write runs in one explicit read-write transaction. The public role
   starts every other transaction read-only.
 * A small per-address limit and a honeypot field keep casual scripts from
@@ -58,7 +60,15 @@ class Submission:
 
 
 def cart_fingerprint(cart: CartView) -> str:
-    items = sorted((str(line.card.facts.public_id), line.quantity) for line in cart.lines)
+    """What the customer confirmed: parts, quantities and each line's state.
+
+    The state is part of it so that a line that ran out of stock (or came
+    back) after the form was shown is confirmed again, instead of being sent
+    silently as a supply inquiry (or as a normal line).
+    """
+    items = sorted(
+        (str(line.card.facts.public_id), line.quantity, line.state) for line in cart.lines
+    )
     return hashlib.sha256(repr(items).encode()).hexdigest()
 
 
