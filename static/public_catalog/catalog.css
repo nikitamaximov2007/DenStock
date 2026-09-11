@@ -330,7 +330,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 /* --- Part detail ----------------------------------------------------------- */
 
 .part {
-  display: grid; gap: var(--space-5); background: var(--surface);
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); background: var(--surface);
   border: 1px solid var(--line); border-radius: var(--radius); padding: var(--space-4);
 }
 .part__photo {
@@ -355,7 +355,8 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
   margin-top: var(--space-4); padding: var(--space-4); border-radius: var(--radius);
   background: var(--bg); border: 1px solid var(--line);
 }
-.offer__price { font-size: 1.9rem; font-weight: 800; margin-bottom: var(--space-1); white-space: nowrap; }
+/* The amount itself never breaks (non-breaking spaces); "за шт" may wrap. */
+.offer__price { font-size: 1.9rem; font-weight: 800; margin-bottom: var(--space-1); }
 .offer__unit { font-size: 14px; font-weight: 500; color: var(--muted); }
 .offer__stock { font-size: 1.1rem; margin-bottom: var(--space-2); }
 .offer__note { font-size: 15px; }

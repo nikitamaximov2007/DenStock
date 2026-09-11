@@ -13,7 +13,7 @@ def _leaf():
     return MigrationExecutor(connection).loader.graph.leaf_nodes()
 
 
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_upgrade_backfills_unique_public_ids_and_publishes_nothing():
     leaf = _leaf()
     try:
@@ -21,7 +21,10 @@ def test_upgrade_backfills_unique_public_ids_and_publishes_nothing():
         executor.migrate(BEFORE)
         old = executor.loader.project_state(BEFORE).apps
         category = old.get_model("catalog", "Category").objects.create(name="Old release")
-        unit = old.get_model("catalog", "Unit").objects.get(name="Штука")
+        # A transactional test before this one may have flushed the seeded units.
+        unit = old.get_model("catalog", "Unit").objects.get_or_create(
+            name="Штука", defaults={"short_name": "шт"}
+        )[0]
         OldPart = old.get_model("catalog", "PartType")
         for index in range(40):
             OldPart.objects.create(name=f"Old part {index}", category=category, unit=unit)
