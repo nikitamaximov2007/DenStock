@@ -378,3 +378,36 @@ def test_the_submission_token_is_stored_only_in_the_signed_cookie(
     _submit(public_client, token)
     request = CustomerRequest.objects.get()
     assert request.submission_key_hash != token and len(request.submission_key_hash) == 64
+
+
+@pytest.mark.parametrize("lines", [1, 20, 50])
+def test_request_form_and_submit_query_counts_are_flat(
+    public_client, public_catalog, lines, record_property
+):
+    from tests.public_catalog_support import assert_no_writes, capture
+
+    for index in range(lines):
+        part = public_catalog.part(f"Flat request line {index}", article=f"FR-{index}")
+        if index % 2:
+            public_catalog.stock(part, "2")
+        _add(public_client, part)
+
+    with capture() as form_queries:
+        token = _open_form(public_client)
+    with capture() as submit_queries:
+        response = _submit(public_client, token)
+
+    assert response.status_code == 302
+    assert CustomerRequest.objects.get().lines.count() == lines
+    assert_no_writes(form_queries)
+    writes = [
+        query["sql"]
+        for query in submit_queries.captured_queries
+        if query["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+    ]
+    assert len(writes) == 2, "one request row and one bulk insert of its lines"
+    record_property(f"public_request_form_queries_{lines}", len(form_queries.captured_queries))
+    record_property(f"public_request_submit_queries_{lines}", len(submit_queries.captured_queries))
+    assert len(form_queries.captured_queries) <= 14
+    # Rebuilds the cart view, then the service re-reads parts and stock once.
+    assert len(submit_queries.captured_queries) <= 30
