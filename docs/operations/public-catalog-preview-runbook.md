@@ -1,25 +1,27 @@
 # PRO-STOR public catalog: preview refresh and upgrade runbook
 
 The preview shows the public catalog on real catalog data without touching
-production. Current layout (2026-09-11):
+production. Actual layout on the VPS (checked 2026-09-12):
 
 ```
-catalog.185-250-44-206.sslip.io ──> Caddy ──> catalog-web-preview
-                                                    │ denstock_public_preview (restricted)
-                                                    v
-                                         database denstock_catalog_preview
+catalog.185-250-44-206.sslip.io ──> production Caddy (denstock-proxy-1)
+        │  route defined in /opt/denstock, never changed by a preview upgrade
+        v
+catalog-web-preview  (compose project denstock-catalog-preview,
+        │             networks: its own + denstock_default for Caddy)
+        │  role denstock_public_preview
+        v
+catalog-preview-db   (its own postgres:16 container and volume)
+        database denstock_catalog_preview, owner denstock_catalog_owner
 ```
 
-The preview database is restored from a verified production backup. The
-production database `denstock` is never read or written by the preview
-runtime. Every write step below starts by proving which database it is
-connected to.
-
-Placeholders: `<PREVIEW_DIR>` is the preview checkout on the server,
-`<SHA>` the candidate, `<DIR>` a verified backup folder, `$OWNER` the
-PostgreSQL owner role. Run the preview compose project with its own project
-name (`-p denstock-preview`) so no command can address production services
-by accident.
+* Checkout: `/opt/denstock-catalog-preview` (a git clone on a detached
+  HEAD). Untracked and preserved across checkouts: `.env.public`, `.env.db`,
+  `docker-compose.preview.yml`, `backups/`.
+* ALWAYS pass `-f docker-compose.preview.yml`. In that directory the
+  default `docker-compose.yml` describes the production-shaped stack.
+* The preview database is separate from production's `denstock-db-1`;
+  no preview command addresses the production database.
 
 ## A. Refresh the preview data from production
 
@@ -44,57 +46,79 @@ database with production-level care and drop it when the preview ends.
 
 ## B. Upgrade the preview to a new candidate
 
-1. `cd <PREVIEW_DIR> && git fetch origin && git checkout <SHA>`
-2. Build the preview image: `docker compose -p denstock-preview build catalog-web`
-   (or the preview service name used on the server).
-3. Migrate the preview database as the owner, bypassing the internal
-   entrypoint and pointing explicitly at the preview database:
+Run on the VPS as root, in `/opt/denstock-catalog-preview`. `<SHA>` is the
+reviewed commit, `<TS>` a timestamp.
+
+1. No other writer: `ps -eo args | grep -E "docker compose|git |manage.py|pg_dump"`
+   shows nothing, `git status --short` is empty, `git reflog -3` shows no
+   unexpected recent checkout. If someone else is working, wait.
+2. Backup, then prove it restores:
    ```
-   docker compose -p denstock-preview run --rm --no-deps --entrypoint "" \
-     -e DATABASE_URL=postgres://$OWNER:<secret>@db:5432/denstock_catalog_preview \
-     -e DJANGO_SETTINGS_MODULE=config.settings.prod \
-     catalog-web python manage.py migrate --noinput
+   docker exec catalog-preview-db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+     > backups/preview-pre-<TS>.dump
+   head -c 5 backups/preview-pre-<TS>.dump | xxd -p        # 5047444d50
+   sha256sum backups/preview-pre-<TS>.dump
+   docker exec catalog-preview-db sh -c 'createdb -U "$POSTGRES_USER" preview_restore_check'
+   docker exec -i catalog-preview-db sh -c 'pg_restore -U "$POSTGRES_USER" -d preview_restore_check --no-owner' \
+     < backups/preview-pre-<TS>.dump
+   # compare table and part counts with the live database, then:
+   docker exec catalog-preview-db sh -c 'dropdb -U "$POSTGRES_USER" preview_restore_check'
    ```
-   Never run the internal `web` entrypoint for this: it migrates whatever
-   `DATABASE_URL` its `.env` holds, which on the server is production.
-4. Confirm `showmigrations` (same command, `showmigrations | grep '\[ \]'`)
-   prints nothing. From the current preview (`ebd7972`) to the launch
-   candidate this applies `catalog.0010`, `catalog.0011` and
-   `customer_requests.0001` to `0004`: new tables and database defaults only,
-   under a second on the rehearsal copy.
-5. Re-derive the grants for the preview role, connected to the preview
-   database: `psql -v ON_ERROR_STOP=1 -v public_role=denstock_public_preview
-   -d denstock_catalog_preview -f scripts/operations/create_public_catalog_role.sql`.
-   This is required after every upgrade: new tables (for example the photo
-   and request tables) stay unusable until the script grants them. The
-   script expects the role to exist (it does on the preview) and replaces
-   any broader grant an earlier script gave, for example SELECT on whole
-   request tables.
-6. Preview `.env.public`: `PUBLIC_DATABASE_URL` with the preview role and
-   database, `DJANGO_PUBLIC_ALLOWED_HOSTS=catalog.185-250-44-206.sslip.io`,
-   `PUBLIC_CATALOG_INDEXING=false`, `DJANGO_SECURE_COOKIES=true`, a secret
-   key that is neither the production internal nor the production public key.
-7. Recreate only the preview runtime:
-   `docker compose -p denstock-preview up -d --no-deps catalog-web`.
-8. Noindex stays on at two levels: the application default and the Caddy
-   `X-Robots-Tag: noindex, nofollow` header of the preview host.
-9. Acceptance, read-only from a workstation:
+   (`docker exec` without `-t` keeps the binary stream intact.)
+3. Code: `git fetch origin && git checkout --detach <SHA>`.
+4. Configuration (back up each file first, `cp X X.bak-<TS>`):
+   `.env.public` has `PUBLIC_CATALOG_BASE_URL=https://catalog.185-250-44-206.sslip.io`
+   and no `PUBLIC_CATALOG_INDEXING=true`; `docker-compose.preview.yml` runs
+   `gunicorn ... --worker-class gthread --workers 2 --threads 2 --timeout 60`
+   (two workers on the one-vCPU VPS shared with production).
+5. Build: `docker compose -f docker-compose.preview.yml build catalog-web-preview`.
+6. Migrations as the owner, in a one-off container that is forced into
+   development mode (the runtime's `.env.public` would otherwise put it in
+   public mode):
+   ```
+   set -a; . ./.env.db; set +a
+   docker compose -f docker-compose.preview.yml run --rm --no-deps --entrypoint "" \
+     -e DJANGO_SETTINGS_MODULE=config.settings.dev -e DENSTOCK_MODE=development \
+     -e DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@catalog-preview-db:5432/$POSTGRES_DB" \
+     catalog-web-preview python manage.py migrate --plan
+   ```
+   Apply with `migrate --noinput` when the plan lists migrations; the plan
+   must be empty afterwards.
+7. Role, twice (idempotent), connected to the preview database:
+   ```
+   docker exec -i catalog-preview-db sh -c \
+     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -v public_role=denstock_public_preview -f -' \
+     < scripts/operations/create_public_catalog_role.sql
+   ```
+   Required after every upgrade: new tables stay unusable until it runs,
+   and it replaces any broader grant an earlier script gave.
+8. Recreate only the web runtime:
+   `docker compose -f docker-compose.preview.yml up -d --no-deps catalog-web-preview`
+   and wait for `(healthy)` in `docker ps`.
+9. Acceptance from a workstation:
    `python scripts/qualification/public_catalog_acceptance.py
    --base-url https://catalog.185-250-44-206.sslip.io --article 420892388
-   --expect-indexing off` must end with `"failed": 0`. Adding
-   `--exercise-cart --submit-request` proves the request write through the
-   preview role; the request lands in the preview database only, where no
-   internal runtime shows it.
+   --expect-indexing off --probe-post` must end with `"failed": 0`. With
+   `--exercise-cart --submit-request --request-name "PREVIEW ACCEPTANCE TEST"
+   --request-comment "Automated preview acceptance - safe to delete"` it also
+   proves the request write through the preview role; the request lands in
+   the preview database only.
+
+## Rollback
+
+* Application only (the schema changes are additive and `catalog.0011`
+  gives old code the defaults it needs):
+  `git checkout --detach <previous SHA>`, restore the `.bak-<TS>` copies of
+  `.env.public` and `docker-compose.preview.yml`, then steps 5 and 8. The
+  role keeps its grants; they include everything older code reads.
+* Data: stop the web runtime, then
+  `docker exec -i catalog-preview-db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < backups/preview-pre-<TS>.dump`,
+  re-run step 7, start the web runtime of the matching SHA.
 
 ## C. Safety checks worth keeping
 
-* The preview role must not be able to open the production database:
-  `psql -U denstock_public_preview -d denstock -c "select 1"` should be
-  refused. PostgreSQL grants CONNECT to PUBLIC by default, so if both
-  databases share one cluster, the owner should revoke it on `denstock`
-  (`REVOKE CONNECT ON DATABASE denstock FROM PUBLIC;` after checking which
-  roles rely on it). Even when it connects, the preview role has no table
-  grants there.
+* The preview role lives in the preview's own PostgreSQL container; it
+  does not exist in production's cluster at all.
 * Only one writer at a time: never upgrade or refresh the preview while
   another person or agent may be doing the same.
 * The preview has no `/media` mount. Published photos travel inside the

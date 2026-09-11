@@ -34,8 +34,9 @@ host, then confirm:
 - [ ] Phone widths 320, 375, 390 and 412 px: no horizontal scrolling on
       home, results (with filters open), part page and cart; long names
       and articles wrap.
-- [ ] Tablet (768 px) and desktop (1280 px): filters sit beside results;
-      the cart summary stays beside the lines.
+- [ ] Tablet (768 px): filters open from the "Фильтры" block above the
+      results. Desktop (1000 px and wider): filters sit beside the results
+      and the cart summary beside the lines.
 - [ ] Keyboard only: skip link, search, filters, result links, quantity,
       add to cart, remove; focus is always visible.
 - [ ] A part with a confirmed Russian name shows it as the title and the
