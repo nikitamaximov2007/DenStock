@@ -163,7 +163,8 @@ def run(args) -> Checker:
         status == 200 and json.loads(body or b"{}") == {"status": "ok", "db": "ok"},
     )
 
-    status, _, body = c.fetch("/search/?q=" + urllib.parse.quote("zz-no-such-part-zz"))
+    # Letters with no common trigram: fuzzy search cannot reach a real name.
+    status, _, body = c.fetch("/search/?q=ZXQJWVKQ")
     c.check("no-result search 200", status == 200 and "ничего не нашлось" in _text(body))
     status, _, body = c.fetch("/search/?q=a&page=abc")
     c.check("malformed page is not an error", status == 200)
