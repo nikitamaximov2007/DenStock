@@ -42,6 +42,9 @@ PUBLIC_CATALOG_BASE_URL = env("PUBLIC_CATALOG_BASE_URL", default="").strip().rst
 
 # --- Transport ------------------------------------------------------------------
 # Caddy terminates TLS and forwards X-Forwarded-Proto (prod.py trusts it).
+# Cookies are Secure unless explicitly turned off for a local HTTP run. prod.py
+# reads the same variable without a boolean cast, where "false" is truthy.
+SESSION_COOKIE_SECURE = CSRF_COOKIE_SECURE = env.bool("DJANGO_SECURE_COOKIES", default=True)
 # HSTS stays opt-in per host: a preview hostname must not be pinned by accident.
 SECURE_HSTS_SECONDS = env.int("PUBLIC_HSTS_SECONDS", default=0)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = False
