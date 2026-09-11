@@ -5,6 +5,10 @@ transactional in PostgreSQL, so nothing survives the test), then the same
 connection switches to the restricted role with SET LOCAL ROLE. Every public
 page and service call below therefore runs with the production grant set,
 and every forbidden write or read must be refused by PostgreSQL itself.
+
+One test runs outside a test transaction instead: it logs the whole request
+flow through a session that is read-only by default, as the role's database
+settings make it in deployment, with the write guard active.
 """
 
 import re
@@ -180,6 +184,11 @@ def test_other_roles_still_see_every_photo_row(restricted_role, seeded):
         "SELECT * FROM customer_requests_customerrequestmessengercontact",
         "SELECT * FROM customer_requests_customerrequestmessengerlinktoken",
         "INSERT INTO customer_requests_customerrequeststatusevent (request_id) VALUES (1)",
+        # The write guard's row: only the generation counter moves.
+        "UPDATE operations_deploymentstate SET write_state = 'normal'",
+        "SELECT database_identity FROM operations_deploymentstate",
+        "DELETE FROM operations_deploymentstate",
+        "SELECT * FROM django_migrations",
     ],
 )
 def test_the_role_cannot_write_or_read_outside_the_catalog(restricted_role, seeded, sql):
@@ -232,6 +241,10 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         ("customer_requests_customerrequest", "public_id", "SELECT"),
         ("customer_requests_customerrequest", "submission_key_hash", "SELECT"),
         ("customer_requests_customerrequestline", "id", "SELECT"),
+        ("operations_deploymentstate", "id", "SELECT"),
+        ("operations_deploymentstate", "write_state", "SELECT"),
+        ("operations_deploymentstate", "business_generation", "SELECT"),
+        ("operations_deploymentstate", "business_generation", "UPDATE"),
     }
     assert session_defaults == {
         "default_transaction_read_only=on",
@@ -257,6 +270,7 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
     part = public_catalog.part("SEAL", article="SE-1", price="700")
     missing = public_catalog.part("IMPELLER", article="IMP-1")
     public_catalog.stock(part, "5")
+    settings.DENSTOCK_MODE = "public-catalog"
     _as(restricted_role)
     try:
         public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "2"})
@@ -276,6 +290,7 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
         retry = public_client.post("/request/submit/", {"submission_key": token})
         success = public_client.get(response["Location"])
     finally:
+        settings.DENSTOCK_MODE = "test"
         _reset()
     from apps.customer_requests.models import CustomerRequest
 
@@ -287,3 +302,54 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
         (missing.pk, True),
     }
 
+
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_the_request_write_works_on_a_read_only_session_with_the_guard_on(
+    public_catalog, public_client, settings
+):
+    """As deployed: role defaults make every transaction read-only, the guard is on.
+
+    SET ROLE does not apply a role's login defaults, so the session sets the
+    same default explicitly. Everything outside the one explicit read-write
+    request transaction must stay read-only.
+    """
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL role grants need PostgreSQL")
+    from apps.catalog.models import Unit
+    from apps.customer_requests.models import CustomerRequest
+
+    part = public_catalog.part("SEAL", article="SE-1", price="700")
+    public_catalog.stock(part, "5")
+    role = f"public_test_{uuid.uuid4().hex[:10]}"
+    _apply_role_script(role)
+    settings.DENSTOCK_MODE = "public-catalog"
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SET default_transaction_read_only = on")
+            cursor.execute(f'SET ROLE "{role}"')
+        public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "1"})
+        form = public_client.get("/request/").content.decode()
+        token = re.search(r'name="submission_key" value="([^"]+)"', form).group(1)
+        response = public_client.post(
+            "/request/submit/",
+            {
+                "submission_key": token,
+                "customer_name": "Иван",
+                "customer_phone": "+7 912 123-45-67",
+                "preferred_messenger": "max",
+                "consent": "1",
+            },
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("RESET ROLE")
+        with pytest.raises(Exception, match="read-only transaction"):
+            Unit.objects.create(name="Probe unit", short_name="pr")
+    finally:
+        settings.DENSTOCK_MODE = "test"
+        with connection.cursor() as cursor:
+            cursor.execute("RESET ROLE")
+            cursor.execute("RESET default_transaction_read_only")
+            cursor.execute(f'DROP OWNED BY "{role}"')
+            cursor.execute(f'DROP ROLE "{role}"')
+    assert response.status_code == 302, response.content.decode()[:500]
+    assert CustomerRequest.objects.get().lines.get().part_type_id == part.pk

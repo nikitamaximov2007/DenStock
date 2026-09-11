@@ -75,6 +75,11 @@ def _state_allows_business_write(state: str) -> bool:
         return state == DeploymentState.WriteState.EMERGENCY_ACTIVE
     if mode == "production":
         return state == DeploymentState.WriteState.NORMAL
+    if mode == "public-catalog":
+        # catalog-web writes only new customer requests, into the production
+        # database, and only while that database accepts business writes: a
+        # freeze or failover stops public requests like every other write.
+        return state == DeploymentState.WriteState.NORMAL
     return mode in {"development", "test"} and state == DeploymentState.WriteState.NORMAL
 
 

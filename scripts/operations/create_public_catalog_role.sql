@@ -98,6 +98,20 @@ BEGIN
     );
     EXECUTE format('GRANT SELECT (id) ON TABLE customer_requests_customerrequestline TO %I', role_name);
 
+    -- Customer requests are business data, so the global write guard wraps
+    -- that INSERT: it checks the deployment write state (a frozen or failed-
+    -- over database refuses requests) and bumps the business generation that
+    -- backup and failback compare. Nothing else in that row is writable.
+    EXECUTE format(
+        'GRANT SELECT (id, write_state, business_generation) '
+        'ON TABLE operations_deploymentstate TO %I',
+        role_name
+    );
+    EXECUTE format(
+        'GRANT UPDATE (business_generation) ON TABLE operations_deploymentstate TO %I',
+        role_name
+    );
+
     -- Photos: the public role can see a row only while it is published, even
     -- through direct SQL. A permissive policy keeps every other role (the
     -- internal runtime, backups, migrations) seeing all rows whether or not

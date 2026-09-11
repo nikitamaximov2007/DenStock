@@ -16,6 +16,7 @@ from apps.catalog.public_requests import SUBMISSION_SESSION_KEY
 from apps.customer_requests.models import CustomerRequest
 from apps.inventory.availability import available_totals
 from apps.inventory.models import StockBalance, StockMovement
+from apps.operations.models import DeploymentState
 from apps.sales.models import Reservation, Sale
 
 TOKEN_RE = re.compile(r'name="submission_key" value="([^"]+)"')
@@ -287,6 +288,50 @@ def test_rate_limit_per_client_address(public_client, public_catalog, settings):
         HTTP_X_FORWARDED_FOR="203.0.113.7",
     )
     assert other_address.status_code == 302
+
+
+def test_public_requests_obey_the_global_write_freeze(public_client, public_catalog, settings):
+    """In the real public runtime the write guard is active, unlike in tests."""
+    part = public_catalog.part("SEAL", article="SE-1")
+    public_catalog.stock(part, "5")
+    _add(public_client, part, "1")
+    token = _open_form(public_client)
+    state = DeploymentState.get_solo()
+    generation = state.business_generation
+    state.write_state = DeploymentState.WriteState.MAINTENANCE
+    state.save(update_fields=["write_state", "updated_at"])
+    settings.DENSTOCK_MODE = "public-catalog"
+    try:
+        frozen = _submit(public_client, token)
+        assert frozen.status_code == 503
+        assert "Приём заявок временно приостановлен" in frozen.content.decode()
+        assert CustomerRequest.objects.count() == 0
+
+        state.write_state = DeploymentState.WriteState.NORMAL
+        state.save(update_fields=["write_state", "updated_at"])
+        accepted = _submit(public_client, token)
+    finally:
+        settings.DENSTOCK_MODE = "test"
+    assert accepted.status_code == 302
+    assert CustomerRequest.objects.count() == 1
+    state.refresh_from_db()
+    assert state.business_generation > generation, "request writes are fingerprinted"
+
+
+@pytest.mark.parametrize(
+    ("state", "allowed"),
+    [
+        (DeploymentState.WriteState.NORMAL, True),
+        (DeploymentState.WriteState.MAINTENANCE, False),
+        (DeploymentState.WriteState.EMERGENCY_ACTIVE, False),
+        (DeploymentState.WriteState.EMERGENCY_FROZEN, False),
+    ],
+)
+def test_catalog_web_writes_only_while_the_database_is_in_normal_work(settings, state, allowed):
+    from apps.operations.write_guard import _state_allows_business_write
+
+    settings.DENSTOCK_MODE = "public-catalog"
+    assert _state_allows_business_write(state) is allowed
 
 
 def test_the_cart_leads_to_the_form_and_the_form_is_accessible(public_client, public_catalog):
