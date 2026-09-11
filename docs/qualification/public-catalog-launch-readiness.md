@@ -235,8 +235,10 @@ Branch `claude/public-catalog-launch-candidate`, created from
 rebased request stack: `d429e1a` domain and internal workflow, `6835e77`
 Telegram linking, `96dbc61` MAX linking, `dfd4364` privacy lifecycle,
 `891e6fd` public cart requests). This stack is merged on top (`2235214`),
-followed by the write-guard fix (`07ddc4d`), docs (`1ece013`) and a
-query-count test (`7af38cf`). The Codex branches were not modified.
+followed by the write-guard fix (`07ddc4d`), docs (`1ece013`), a
+query-count test (`7af38cf`), the evidence docs (`f40ca95`) and a robots.txt
+rule for the request pages (`4597375`). The Codex branches were not
+modified.
 
 ### Review of the request stack
 
@@ -324,7 +326,7 @@ update per write.
 
 ### Full suite, immediate base against the integrated candidate
 
-| | Base `891e6fd` | Candidate `7af38cf` |
+| | Base `891e6fd` | Candidate `4597375` |
 | --- | ---: | ---: |
 | collected | 4,656 | 4,918 |
 | passed | 4,528 | 4,747 |

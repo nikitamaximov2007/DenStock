@@ -73,7 +73,7 @@ and boundary proofs, and the full-suite comparison.
 
 Full suite (SQLite, same machine, same day), integrated candidate against
 its immediate base: base `891e6fd` 4,656 collected, 4,528 passed, 10
-failed, 118 skipped; candidate `7af38cf` 4,918 collected, 4,747 passed, 9
+failed, 118 skipped; candidate `4597375` 4,918 collected, 4,747 passed, 9
 failed, 162 skipped. The 9 candidate failures are all present on the base
 (calendar-dependent clients-overview set, the partial-repair report button,
 the AI renderer check). Candidate-only regressions: 0. Fixed by the
