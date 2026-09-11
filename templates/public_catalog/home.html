@@ -1,12 +1,49 @@
 {% extends "public_catalog/base.html" %}
+{% block meta %}
+  <meta name="description"
+        content="Поиск запчастей по артикулу и названию: текущая цена, точное количество на складе и подтверждённые аналоги. Без регистрации.">
+  <link rel="canonical" href="{{ canonical_url }}">
+{% endblock %}
+{% block header_search %}{% endblock %}
 {% block content %}
-  <h1>Запчасти для техники</h1>
-  <p>Найдите деталь по артикулу или названию. Покажем актуальную цену, наличие и подтверждённые аналоги.</p>
-  <form class="search"
-        action="{% url 'public_catalog_search' %}"
-        method="get"><label for="q">Поиск запчасти</label><input id="q"
-       name="q"
-       required
-       maxlength="64"
-       placeholder="Например, 420-892-388"><button>Найти</button></form>
+  <section class="hero" aria-labelledby="hero-title">
+    <h1 id="hero-title" class="hero__title">Найдите запчасть по артикулу или названию</h1>
+    <p class="hero__lead">Сразу видно цену, сколько деталей можно купить сейчас и подтверждённые аналоги.</p>
+    <form class="search search--hero"
+          action="{% url 'public_catalog_search' %}"
+          method="get"
+          role="search">
+      <label class="search__label" for="q">Артикул или название детали</label>
+      <div class="search__row">
+        <input id="q"
+               class="search__input"
+               type="search"
+               name="q"
+               required
+               maxlength="{{ max_query_length }}"
+               placeholder="Например, 420892388"
+               autocomplete="off"
+               enterkeyhint="search"
+               aria-describedby="q-hint">
+        <button class="btn btn--large" type="submit">Найти</button>
+      </div>
+      <p id="q-hint" class="search__hint">
+        Артикул можно вводить с дефисами, пробелами или без них. Название пишите так, как в каталоге производителя.
+      </p>
+    </form>
+  </section>
+  <section class="facts" aria-label="Что показывает каталог">
+    <div class="fact">
+      <h2 class="fact__title">Цена</h2>
+      <p>Текущая цена детали. Если цены пока нет, её можно уточнить.</p>
+    </div>
+    <div class="fact">
+      <h2 class="fact__title">Наличие</h2>
+      <p>Точное количество, которое можно купить сейчас.</p>
+    </div>
+    <div class="fact">
+      <h2 class="fact__title">Нет на складе</h2>
+      <p>Деталь всё равно видна в каталоге. Её можно добавить в корзину и узнать о поставке.</p>
+    </div>
+  </section>
 {% endblock %}

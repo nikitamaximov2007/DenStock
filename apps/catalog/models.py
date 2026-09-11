@@ -300,6 +300,126 @@ class PartTypeImage(BaseImage):
         return PartTypeImage.objects.filter(part_id=self.part_id)
 
 
+class PublicPartPhoto(models.Model):
+    """Решение человека о том, может ли внутреннее фото детали стать публичным.
+
+    Кандидат - обычное фото вида детали (``PartTypeImage``). Наличие файла
+    ничего не решает: пока менеджер каталога не опубликовал конкретное фото и
+    не указал, откуда оно, публичный каталог его не видит. Строки без решения
+    нет - значит, фото не публичное. Отказ тоже хранится, чтобы то же фото не
+    возвращалось в очередь проверки.
+
+    Публикация сохраняет пережатые копии (``PublicPartPhotoRendition``) без
+    EXIF и ограниченного размера. Публичный процесс читает только их и только
+    через базу: каталог ``MEDIA_ROOT`` в него не монтируется.
+    """
+
+    class Status(models.TextChoices):
+        PUBLISHED = "published", "Опубликовано"
+        REJECTED = "rejected", "Не показывать"
+
+    class Source(models.TextChoices):
+        OWN = "own", "Собственное фото"
+        MANUFACTURER = "manufacturer", "Фото производителя"
+        SUPPLIER = "supplier", "Фото поставщика"
+
+    public_id = models.UUIDField("Публичный ID", default=uuid.uuid4, unique=True, editable=False)
+    part = models.ForeignKey(
+        PartType, verbose_name="Деталь", on_delete=models.CASCADE, related_name="public_photos"
+    )
+    source_image = models.OneToOneField(
+        PartTypeImage,
+        verbose_name="Внутреннее фото",
+        on_delete=models.CASCADE,
+        related_name="public_decision",
+    )
+    status = models.CharField("Статус", max_length=12, choices=Status.choices)
+    source = models.CharField("Источник фото", max_length=20, choices=Source.choices, blank=True)
+    source_note = models.CharField("Откуда фото (примечание)", max_length=255, blank=True)
+    is_primary = models.BooleanField("Главное в каталоге", default=False)
+    sort_order = models.PositiveIntegerField("Порядок", default=0)
+    # Меняется вместе с копиями: входит в адрес картинки, чтобы браузер не
+    # держал старую версию после повторной публикации.
+    version = models.CharField("Версия копий", max_length=16, blank=True)
+    confirmed_at = models.DateTimeField("Опубликовано", null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто опубликовал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    rejected_at = models.DateTimeField("Снято или отклонено", null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто снял",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Фото для публичного каталога"
+        verbose_name_plural = "Фото для публичного каталога"
+        ordering = ["-is_primary", "sort_order", "pk"]
+        indexes = [
+            models.Index(fields=["part", "status"], name="public_photo_part_status_idx"),
+        ]
+        constraints = [
+            # Публикация без источника и без подтверждения невозможна даже в
+            # обход формы: это правило стоит в базе.
+            models.CheckConstraint(
+                condition=~models.Q(status="published")
+                | (~models.Q(source="") & models.Q(confirmed_at__isnull=False)),
+                name="public_photo_published_has_provenance",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status="published") | models.Q(is_primary=False),
+                name="public_photo_primary_is_published",
+            ),
+            models.UniqueConstraint(
+                fields=["part"],
+                condition=models.Q(is_primary=True, status="published"),
+                name="uniq_public_photo_primary",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.part} · {self.get_status_display()}"
+
+
+class PublicPartPhotoRendition(models.Model):
+    """Пережатая копия опубликованного фото, которую отдаёт публичный каталог."""
+
+    class Variant(models.TextChoices):
+        CARD = "card", "Карточка в поиске"
+        DETAIL = "detail", "Страница детали"
+
+    photo = models.ForeignKey(
+        PublicPartPhoto, verbose_name="Фото", on_delete=models.CASCADE, related_name="renditions"
+    )
+    variant = models.CharField("Вариант", max_length=10, choices=Variant.choices)
+    content_type = models.CharField("Тип", max_length=40)
+    data = models.BinaryField("Данные")
+    width = models.PositiveIntegerField("Ширина")
+    height = models.PositiveIntegerField("Высота")
+    byte_size = models.PositiveIntegerField("Размер, байт")
+    sha256 = models.CharField("SHA-256", max_length=64)
+
+    class Meta:
+        verbose_name = "Копия публичного фото"
+        verbose_name_plural = "Копии публичных фото"
+        constraints = [
+            models.UniqueConstraint(fields=["photo", "variant"], name="uniq_public_photo_variant"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.photo_id} · {self.variant}"
+
+
 class PartCompatibility(models.Model):
     part = models.ForeignKey(PartType, on_delete=models.CASCADE, related_name="compatibilities")
     vehicle_model = models.ForeignKey(

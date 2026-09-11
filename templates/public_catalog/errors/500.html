@@ -1,0 +1,12 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Ошибка на сайте · PRO-STOR{% endblock %}
+{% block header_search %}{% endblock %}
+{% block content %}
+  <div class="empty empty--page">
+    <h1 class="empty__title">Что-то пошло не так</h1>
+    <p class="empty__text">Мы уже видим эту ошибку. Обновите страницу через минуту.</p>
+    <p>
+      <a class="btn" href="{% url 'public_catalog_root' %}">На главную</a>
+    </p>
+  </div>
+{% endblock %}

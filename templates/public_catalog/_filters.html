@@ -1,0 +1,80 @@
+{% comment %}
+  Фильтры результатов. Обычная GET-форма без скриптов: адрес с фильтрами
+  можно отправить другому человеку. Параметры: result, prefix (для уникальных
+  id, форма выводится дважды: на телефоне и на компьютере), reset_url.
+  Группа показывается, только если в этих результатах есть что выбрать:
+  фильтр, который гарантированно даёт пустой список, покупателю не нужен.
+{% endcomment %}
+<form class="filter-form"
+      method="get"
+      action="{% url 'public_catalog_search' %}">
+  <input type="hidden" name="q" value="{{ result.query }}">
+  <fieldset class="filter-group">
+    <legend class="filter-group__title">Наличие</legend>
+    <label class="check">
+      <input type="checkbox"
+             name="in_stock"
+             value="1"
+             {% if result.filters.in_stock %}checked{% endif %}>
+      <span>Только в наличии</span>
+      <span class="count">{{ result.facets.in_stock_count }}</span>
+    </label>
+  </fieldset>
+  {% if result.facets.has_applications %}
+    <div class="filter-group">
+      <label class="filter-group__title" for="{{ prefix }}-application">Техника</label>
+      <select id="{{ prefix }}-application" name="application">
+        <option value="">Любая</option>
+        {% for option in result.facets.applications %}
+          {% if option.count or option.selected %}
+            <option value="{{ option.value }}"
+                    {% if option.selected %}selected{% endif %}>{{ option.label }} ({{ option.count }})</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </div>
+  {% endif %}
+  {% if result.facets.manufacturers %}
+    <div class="filter-group">
+      <label class="filter-group__title" for="{{ prefix }}-manufacturer">Производитель</label>
+      <select id="{{ prefix }}-manufacturer" name="manufacturer">
+        <option value="">Любой</option>
+        {% for option in result.facets.manufacturers %}
+          <option value="{{ option.value }}"
+                  {% if option.selected %}selected{% endif %}>{{ option.label }} ({{ option.count }})</option>
+        {% endfor %}
+      </select>
+    </div>
+  {% endif %}
+  {% if result.facets.has_relations %}
+    <fieldset class="filter-group">
+      <legend class="filter-group__title">Оригинал или аналог</legend>
+      <label class="check">
+        <input type="radio"
+               name="relation"
+               value=""
+               {% if not result.filters.relation %}checked{% endif %}>
+        <span>Все детали</span>
+      </label>
+      {% for option in result.facets.relations %}
+        {% if option.count or option.selected %}
+          <label class="check">
+            <input type="radio"
+                   name="relation"
+                   value="{{ option.value }}"
+                   {% if option.selected %}checked{% endif %}>
+            <span>{{ option.label }}</span>
+            <span class="count">{{ option.count }}</span>
+          </label>
+        {% endif %}
+      {% endfor %}
+      <p class="filter-group__hint">Только связи, которые проверил сотрудник.</p>
+    </fieldset>
+  {% endif %}
+  <div class="filter-actions">
+    <button class="btn" type="submit">Показать</button>
+    {% if result.filters.active_count %}
+      <a class="btn btn--secondary" href="{{ reset_url }}">Сбросить</a>
+    {% endif %}
+  </div>
+</form>

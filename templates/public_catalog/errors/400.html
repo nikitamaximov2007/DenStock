@@ -1,0 +1,11 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Запрос не выполнен · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="empty empty--page">
+    <h1 class="empty__title">Запрос не выполнен</h1>
+    <p class="empty__text">Проверьте адрес страницы или начните с поиска.</p>
+    <p>
+      <a class="btn" href="{% url 'public_catalog_root' %}">На главную</a>
+    </p>
+  </div>
+{% endblock %}

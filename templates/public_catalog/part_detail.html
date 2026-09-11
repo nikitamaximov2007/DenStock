@@ -1,14 +1,172 @@
 {% extends "public_catalog/base.html" %}
-{% block title %}{{ facts.article }} купить · PRO-STOR{% endblock %}
+{% load public_catalog %}
+{% block title %}{{ page_title }}{% endblock %}
 {% block meta %}
-  <meta name="description"
-        content="{{ facts.article }}{% if facts.russian_name %} · {{ facts.russian_name }}{% endif %}. Актуальная цена и наличие.">
-  <link rel="canonical" href="{{ canonical_path }}">
+  <meta name="description" content="{{ meta_description }}">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PRO-STOR">
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  {% if og_image %}<meta property="og:image" content="{{ og_image }}">{% endif %}
 {% endblock %}
-{% block content %}<article><p class="muted">Артикул: {{ facts.article }}</p><h1>{{ facts.russian_name|default:facts.english_name }}</h1>{% if facts.russian_name %}<p>{{ facts.english_name }}</p>{% endif %}{% if facts.manufacturer %}<p>Производитель: {{ facts.manufacturer }}</p>{% endif %}<p class="price">{% if facts.price.status == 'known' %}{{ facts.price.price_rub }} ₽{% else %}Уточнить цену{% endif %}</p><p>{% if facts.available_quantity > 0 %}В наличии: {{ facts.available_quantity }} {{ facts.unit.short_name }}{% else %}<span class="zero">Узнать о поставке</span>{% endif %}</p>{% if facts.available_quantity > 0 %}<form method="post"
-      action="{% url 'public_catalog_cart_add' facts.public_id %}">{% csrf_token %}<label for="quantity">Количество</label><input id="quantity"
-       type="number"
-       min="1"
-       max="1000"
-       name="quantity"
-       value="1"><button>В корзину</button></form>{% else %}<p><a href="{% url 'public_catalog_request_form' %}?supply={{ facts.public_id }}">Узнать о поставке</a></p>{% endif %}<p class="muted">Фото появится после подтверждения.</p>{% if analogs %}<h2>Подтверждённые аналоги</h2><ul>{% for analog in analogs %}<li><a href="{% url 'public_catalog_part' analog.public_id %}">{{ analog.article }} · {{ analog.russian_name|default:analog.english_name }}</a></li>{% endfor %}</ul>{% endif %}</article>{% endblock %}
+{% block content %}
+  <nav class="breadcrumbs" aria-label="Навигация">
+    <a href="{% url 'public_catalog_root' %}">Главная</a>
+    <span aria-hidden="true">›</span>
+    {% if facts.article %}
+      <a href="{% url 'public_catalog_search' %}?q={{ facts.article|urlencode }}">Поиск</a>
+    {% else %}
+      <a href="{% url 'public_catalog_search' %}">Поиск</a>
+    {% endif %}
+  </nav>
+  <article class="part">
+    <div class="part__gallery">
+      {% if photos %}
+        {% with primary=photos.0 %}
+          <a class="part__photo"
+             href="{% url 'public_catalog_photo' primary.public_id 'detail' %}?v={{ primary.version }}">
+            <img src="{% url 'public_catalog_photo' primary.public_id 'detail' %}?v={{ primary.version }}"
+                 alt="{{ card.display_name }}"
+                 width="600"
+                 height="600"
+                 decoding="async">
+          </a>
+        {% endwith %}
+        {% if photos|length > 1 %}
+          <ul class="part__thumbs" aria-label="Другие фото">
+            {% for photo in photos|slice:"1:" %}
+              <li>
+                <a href="{% url 'public_catalog_photo' photo.public_id 'detail' %}?v={{ photo.version }}">
+                  <img src="{% url 'public_catalog_photo' photo.public_id 'card' %}?v={{ photo.version }}"
+                       alt="{{ card.display_name }}, фото {{ forloop.counter|add:1 }}"
+                       width="80"
+                       height="80"
+                       loading="lazy">
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% else %}
+        <div class="part__photo part__photo--empty">{% include "public_catalog/_photo_placeholder.html" %}</div>
+      {% endif %}
+    </div>
+    <div class="part__main">
+      {% if facts.article %}
+        <p class="part__article">
+          Артикул <span class="article__value">{{ facts.article }}</span>
+        </p>
+      {% endif %}
+      <h1 class="part__title">{{ card.display_name }}</h1>
+      {% if facts.russian_name %}
+        <p class="part__alt" lang="en">{{ facts.english_name }}</p>
+      {% endif %}
+      <dl class="part__specs">
+        {% if facts.manufacturer %}
+          <div>
+            <dt>Производитель</dt>
+            <dd>
+              {{ facts.manufacturer }}
+            </dd>
+          </div>
+        {% endif %}
+        <div>
+          <dt>Единица</dt>
+          <dd>
+            {{ facts.unit.name|lower }}
+          </dd>
+        </div>
+      </dl>
+      {% if card.is_original or card.is_analog %}
+        <p class="badges">
+          {% if card.is_original %}<span class="badge badge--original">Оригинал</span>{% endif %}
+          {% if card.is_analog %}<span class="badge badge--analog">Аналог</span>{% endif %}
+        </p>
+      {% endif %}
+      <section class="offer" aria-label="Цена и наличие">
+        <p class="offer__price">
+          {% if facts.price.status == "known" %}
+            {{ facts.price.price_rub|rub }}
+            <span class="offer__unit">за {{ facts.unit.short_name }}</span>
+          {% else %}
+            <span class="price__clarify">Уточнить цену</span>
+          {% endif %}
+        </p>
+        {% if card.in_stock %}
+          <p class="offer__stock stock__in">
+            В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}
+          </p>
+        {% else %}
+          <p class="offer__stock stock__out">Сейчас нет на складе</p>
+          <p class="offer__note">Добавьте деталь в корзину: мы узнаем о поставке и сообщим цену и срок.</p>
+        {% endif %}
+        {% if facts.price.status != "known" and card.in_stock %}
+          <p class="offer__note">Цену сообщим после запроса: добавьте деталь в корзину.</p>
+        {% endif %}
+        <form class="offer__form"
+              method="post"
+              action="{% url 'public_catalog_cart_add' facts.public_id %}">
+          {% csrf_token %}
+          <div class="offer__qty">
+            <label for="quantity">Количество, {{ facts.unit.short_name }}</label>
+            <input id="quantity"
+                   type="number"
+                   name="quantity"
+                   inputmode="numeric"
+                   min="1"
+                   max="{{ quantity_max }}"
+                   step="1"
+                   value="{% if in_cart %}{{ in_cart }}{% else %}1{% endif %}"
+                   required>
+          </div>
+          <button class="btn btn--large" type="submit">
+            {% if in_cart %}
+              Изменить количество
+            {% elif card.in_stock %}
+              В корзину
+            {% else %}
+              Узнать о поставке
+            {% endif %}
+          </button>
+        </form>
+        {% if in_cart %}
+          <p class="offer__note">
+            В корзине: {{ in_cart }} {{ facts.unit.short_name }}. <a href="{% url 'public_catalog_cart' %}">Перейти в корзину</a>
+          </p>
+        {% endif %}
+        <p class="offer__fine">
+          Цена и наличие на момент открытия страницы. Корзина не резервирует деталь: всё проверяется заново при оформлении.
+        </p>
+      </section>
+    </div>
+  </article>
+  <section class="relations" aria-labelledby="relations-title">
+    <h2 id="relations-title" class="relations__title">Оригинал и аналоги</h2>
+    {% if relations.originals %}
+      <h3 class="relations__subtitle">Оригинальная деталь</h3>
+      <ul class="relation-list">
+        {% for other in relations.originals %}
+          <li>{% include "public_catalog/_card.html" with card=other compact=True %}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if relations.analogs %}
+      <h3 class="relations__subtitle">Подтверждённые аналоги</h3>
+      <ul class="relation-list">
+        {% for other in relations.analogs %}
+          <li>{% include "public_catalog/_card.html" with card=other compact=True %}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% if not relations.originals and not relations.analogs %}
+      <p class="muted">Подтверждённых аналогов для этой детали пока нет.</p>
+    {% else %}
+      <p class="muted">Показаны только связи, которые проверил сотрудник.</p>
+    {% endif %}
+  </section>
+{% endblock %}
+{% block structured_data %}
+  <script type="application/ld+json">{{ json_ld|safe }}</script>
+{% endblock %}

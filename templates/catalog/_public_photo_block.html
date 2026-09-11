@@ -1,0 +1,115 @@
+{% comment %}
+  Фото для публичного каталога. Кандидат - любое активное фото вида детали.
+  Публикует менеджер каталога: указывает источник и подтверждает, что на фото
+  именно эта деталь. Без этого решения фото покупателям не показывается, как
+  бы давно файл ни лежал в карточке.
+
+  Параметры: rows (moderation_rows), sources (PublicPartPhoto.Source.choices),
+  can_moderate.
+{% endcomment %}
+{% if rows %}
+  <h2>Фото в публичном каталоге</h2>
+  <p class="muted">
+    Покупатели видят только опубликованные фото. Остальные фото карточки остаются внутренними.
+    {% if can_moderate %}<a href="{% url 'public_photo_queue' %}">Все фото на проверке</a>{% endif %}
+  </p>
+  <table class="table table--compact public-photo-table">
+    <thead>
+      <tr>
+        <th>Фото</th>
+        <th>Статус</th>
+        <th>Источник</th>
+        {% if can_moderate %}<th class="table__actions"></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>
+            <img src="{{ row.image.image.url }}"
+                 alt="{{ row.image.caption|default:'Фото детали' }}"
+                 class="public-photo-thumb"
+                 width="72"
+                 height="72"
+                 loading="lazy">
+          </td>
+          <td>
+            {% if row.decision.status == "published" %}
+              <span class="badge">Опубликовано</span>
+              {% if row.decision.is_primary %}<span class="muted">главное</span>{% endif %}
+              <br>
+              <span class="muted">{{ row.decision.confirmed_at|ru_dt }}{% if row.decision.confirmed_by %} · {{ row.decision.confirmed_by }}{% endif %}</span>
+            {% elif row.decision.status == "rejected" %}
+              Не показывать
+              <br>
+              <span class="muted">{{ row.decision.rejected_at|ru_dt }}{% if row.decision.rejected_by %} · {{ row.decision.rejected_by }}{% endif %}</span>
+            {% else %}
+              На проверке
+            {% endif %}
+          </td>
+          <td>
+            {% if row.decision.source %}
+              {{ row.decision.get_source_display }}
+              {% if row.decision.source_note %}
+                <br>
+                <span class="muted">{{ row.decision.source_note }}</span>
+              {% endif %}
+            {% else %}
+              <span class="muted">не указан</span>
+            {% endif %}
+          </td>
+          {% if can_moderate %}
+            <td class="table__actions">
+              {% if row.decision.status == "published" %}
+                {% if not row.decision.is_primary %}
+                  <form method="post"
+                        action="{% url 'public_photo_primary' row.decision.pk %}"
+                        class="inline-form">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn--small">Сделать главным</button>
+                  </form>
+                {% endif %}
+                <form method="post"
+                      action="{% url 'public_photo_reject' row.image.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn--small btn--ghost">Снять с публикации</button>
+                </form>
+              {% else %}
+                <form method="post"
+                      action="{% url 'public_photo_publish' row.image.pk %}"
+                      class="public-photo-publish">
+                  {% csrf_token %}
+                  <label for="public-source-{{ row.image.pk }}">Источник фото</label>
+                  <select id="public-source-{{ row.image.pk }}" name="source" required>
+                    <option value="">Выберите</option>
+                    {% for value, label in sources %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+                  </select>
+                  <label for="public-note-{{ row.image.pk }}">Примечание об источнике</label>
+                  <input id="public-note-{{ row.image.pk }}"
+                         type="text"
+                         name="source_note"
+                         maxlength="255"
+                         placeholder="Например, сайт производителя">
+                  <label class="public-photo-confirm">
+                    <input type="checkbox" name="confirm" value="1" required>
+                    На фото именно эта деталь
+                  </label>
+                  <button type="submit" class="btn btn--small">Опубликовать</button>
+                </form>
+                {% if row.decision.status != "rejected" %}
+                  <form method="post"
+                        action="{% url 'public_photo_reject' row.image.pk %}"
+                        class="inline-form">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn--small btn--ghost">Не публиковать</button>
+                  </form>
+                {% endif %}
+              {% endif %}
+            </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

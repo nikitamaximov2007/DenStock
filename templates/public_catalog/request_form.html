@@ -1,20 +1,119 @@
 {% extends "public_catalog/base.html" %}
+{% load public_catalog %}
 {% block title %}Отправить заявку · PRO-STOR{% endblock %}
-{% block meta %}<meta name="robots" content="noindex,nofollow">{% endblock %}
-{% block content %}<h1>Отправить заявку</h1><p>Это заявка, а не оплата, резерв или гарантия фиксированной цены.</p>{% if error %}<p role="alert">{{ error }}</p>{% endif %}<h2>Позиции</h2><ul>{% for fact, quantity, supply_inquiry in lines %}<li>{{ fact.article }} · {{ fact.russian_name|default:fact.english_name }} · {% if supply_inquiry %}Узнать о поставке{% else %}{{ quantity }} {{ fact.unit.short_name }}{% endif %}</li>{% endfor %}</ul><form method="post" action="{% url 'public_catalog_request_submit' %}">{% csrf_token %}<input type="hidden" name="submission_key" value="{{ submission_key }}"><label for="customer_name">Имя</label><input id="customer_name"
-       name="customer_name"
-       maxlength="255"
-       value="{{ values.customer_name }}"
-       required><label for="customer_phone">Телефон</label><input id="customer_phone"
-       name="customer_phone"
-       maxlength="50"
-       value="{{ values.customer_phone }}"
-       required><fieldset><legend>Предпочтительный мессенджер</legend><label><input type="radio"
-       name="preferred_messenger"
-       value="telegram"
-       {% if values.preferred_messenger == "telegram" %} checked{% endif %}
-       required> Telegram</label><label><input type="radio"
-       name="preferred_messenger"
-       value="max"
-       {% if values.preferred_messenger == "max" %} checked{% endif %}
-       required> MAX</label></fieldset><label for="comment">Комментарий</label><textarea id="comment" name="comment" maxlength="2000">{{ values.comment }}</textarea><label><input type="checkbox" name="consent" value="1" required> Согласен на обработку персональных данных для связи по заявке.</label><p class="muted">Версии политики и согласия фиксируются при отправке. Текст требует юридического утверждения до запуска.</p><button type="submit">Отправить заявку</button></form>{% endblock %}
+{% block robots %}
+  <meta name="robots" content="noindex, nofollow">
+{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1 class="page-head__title">Отправить заявку</h1>
+    <p class="page-head__meta">Оплата не нужна. Заявка не резервирует детали: менеджер свяжется с вами и подтвердит наличие, цену и срок.</p>
+  </div>
+  {% if error %}<p class="notice notice--error" role="alert">{{ error }}</p>{% endif %}
+  <div class="request-layout">
+    <form class="request-form"
+          method="post"
+          action="{% url 'public_catalog_request_submit' %}">
+      {% csrf_token %}
+      <input type="hidden" name="submission_key" value="{{ submission_key }}">
+      <div class="field">
+        <label class="field__label" for="customer_name">Имя</label>
+        <input id="customer_name"
+               type="text"
+               name="customer_name"
+               maxlength="255"
+               autocomplete="name"
+               value="{{ values.customer_name }}"
+               required>
+      </div>
+      <div class="field">
+        <label class="field__label" for="customer_phone">Телефон</label>
+        <input id="customer_phone"
+               type="tel"
+               name="customer_phone"
+               maxlength="50"
+               autocomplete="tel"
+               inputmode="tel"
+               placeholder="+7 900 000-00-00"
+               value="{{ values.customer_phone }}"
+               required>
+      </div>
+      <fieldset class="field choice-group">
+        <legend class="field__label">Где удобнее переписываться</legend>
+        <label class="check">
+          <input type="radio"
+                 name="preferred_messenger"
+                 value="telegram"
+                 {% if values.preferred_messenger == "telegram" %}checked{% endif %}
+                 required>
+          Telegram
+        </label>
+        <label class="check">
+          <input type="radio"
+                 name="preferred_messenger"
+                 value="max"
+                 {% if values.preferred_messenger == "max" %}checked{% endif %}
+                 required>
+          MAX
+        </label>
+      </fieldset>
+      <div class="field">
+        <label class="field__label" for="comment">Комментарий <span class="field__optional">(необязательно)</span></label>
+        <textarea id="comment" name="comment" maxlength="2000" rows="4">{{ values.comment }}</textarea>
+        <p class="field__hint">Например, модель техники или удобное время для звонка.</p>
+      </div>
+      <div class="hp" aria-hidden="true">
+        <label for="{{ honeypot_field }}">Не заполняйте это поле</label>
+        <input id="{{ honeypot_field }}"
+               type="text"
+               name="{{ honeypot_field }}"
+               tabindex="-1"
+               autocomplete="off">
+      </div>
+      <label class="check consent">
+        <input type="checkbox" name="consent" value="1" required>
+        <span>Согласен на обработку персональных данных для связи по этой заявке.</span>
+      </label>
+      {% if consent_is_draft %}
+        <p class="field__hint">Черновик: текст согласия ждёт юридической проверки.</p>
+      {% endif %}
+      <button class="btn btn--large btn--block" type="submit">Отправить заявку</button>
+    </form>
+    <aside class="request-summary" aria-labelledby="request-lines-title">
+      <h2 id="request-lines-title" class="request-summary__title">В заявке</h2>
+      <ul class="request-lines">
+        {% for line in cart.lines %}
+          {% with facts=line.card.facts %}
+            <li class="request-line">
+              <span class="request-line__name">{{ line.card.display_name }}</span>
+              {% if facts.article %}<span class="request-line__article">Артикул {{ facts.article }}</span>{% endif %}
+              <span class="request-line__qty">
+                {% if line.state == line_inquiry %}
+                  Запрос о поставке, {{ line.quantity }} {{ facts.unit.short_name }}
+                {% else %}
+                  {{ line.quantity }} {{ facts.unit.short_name }}
+                  ·
+                  {% if line.line_total is not None %}
+                    {{ line.line_total|rub }}
+                  {% else %}
+                    цена уточняется
+                  {% endif %}
+                {% endif %}
+              </span>
+            </li>
+          {% endwith %}
+        {% endfor %}
+      </ul>
+      {% if cart.priced_lines %}
+        <p class="cart-summary__total">
+          Сумма по деталям в наличии
+          <strong>{{ cart.total|rub }}</strong>
+        </p>
+      {% endif %}
+      <p class="cart-summary__fine">Цена и наличие меняются вместе со складом. Окончательные цену и срок подтвердит менеджер.</p>
+      <p>
+        <a href="{% url 'public_catalog_cart' %}">Изменить корзину</a>
+      </p>
+    </aside>
+  </div>
+{% endblock %}

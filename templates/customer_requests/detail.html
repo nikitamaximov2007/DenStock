@@ -2,7 +2,7 @@
 {% block title %}Заявка клиента · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Заявка клиента</h1>
+    <h1 class="page-title">Заявка {{ customer_request.reference }}</h1>
     <div class="page-actions"><a class="btn btn--small btn--secondary"
    href="{% url 'customer_request_list' %}">Все заявки</a></div>
   </div>

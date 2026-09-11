@@ -1,0 +1,13 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Страница устарела · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="empty empty--page">
+    <h1 class="empty__title">Страница устарела</h1>
+    <p class="empty__text">
+      Откройте страницу заново и повторите действие. Если не помогает, разрешите сайту сохранять cookie: корзина хранится в них.
+    </p>
+    <p>
+      <a class="btn" href="{% url 'public_catalog_cart' %}">Открыть корзину</a>
+    </p>
+  </div>
+{% endblock %}

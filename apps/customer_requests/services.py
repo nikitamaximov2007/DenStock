@@ -73,6 +73,10 @@ def _quantity(value) -> Decimal:
     return quantity
 
 
+def _quantity_text(value: Decimal) -> str:
+    return format(value.normalize(), "f").replace(".", ",") if value else "0"
+
+
 def _validated_lines(lines) -> list[RequestLineInput]:
     values = list(lines or [])
     if not values:
@@ -131,7 +135,13 @@ def create_customer_request(
     unique hash is also safe when two browser retries reach separate workers.
     """
     key_hash = submission_key_hash(submission_key)
-    existing = CustomerRequest.objects.filter(submission_key_hash=key_hash).first()
+    # The public database role may read only these columns of a request.
+    existing = (
+        CustomerRequest.objects.filter(submission_key_hash=key_hash)
+        .only("pk", "public_id")
+        .order_by("pk")
+        .first()
+    )
     if existing:
         return existing, False
 
@@ -149,12 +159,13 @@ def create_customer_request(
     consent_purpose = _required_text(consent_purpose, "цель согласия", 120)
     line_inputs = _validated_lines(lines)
     part_ids = [line.part_id for line in line_inputs]
+    candidates = PartType.objects.filter(pk__in=part_ids, is_active=True)
+    if source == CustomerRequest.Source.PUBLIC_CATALOG:
+        # A public request can name only a part the public catalog shows.
+        candidates = candidates.filter(is_public=True)
     parts = {
         part.pk: part
-        for part in with_part_identity(
-            PartType.objects.filter(pk__in=part_ids, is_active=True).select_related("unit"),
-            part_field="",
-        )
+        for part in with_part_identity(candidates.select_related("unit"), part_field="")
     }
     if len(parts) != len(part_ids):
         raise CustomerRequestError("Одна или несколько деталей больше недоступны.")
@@ -163,14 +174,17 @@ def create_customer_request(
     for line in line_inputs:
         part = parts[line.part_id]
         current_available = availability[line.part_id]
+        label = part_exact_number(part, default="") or part.name
         if line.supply_inquiry:
             if current_available > ZERO:
                 raise CustomerRequestError(
-                    "Запрос о поставке доступен только для детали без остатка."
+                    f"{label}: деталь появилась в наличии. Запрос о поставке доступен"
+                    " только для детали без остатка."
                 )
         elif line.quantity > current_available:
             raise CustomerRequestError(
-                f"Сейчас доступно: {current_available}. Измените количество или запросите поставку."
+                f"{label}: Сейчас доступно {_quantity_text(current_available)}."
+                " Измените количество или запросите поставку."
             )
         price = resolve_current_customer_price(part).price_rub
         prepared_lines.append((line, part, price))
@@ -195,7 +209,10 @@ def create_customer_request(
     except IntegrityError:
         # A concurrent retry won the unique key race. It is the same logical
         # submission, not a second request.
-        return CustomerRequest.objects.get(submission_key_hash=key_hash), False
+        return (
+            CustomerRequest.objects.only("pk", "public_id").get(submission_key_hash=key_hash),
+            False,
+        )
 
     CustomerRequestLine.objects.bulk_create(
         [

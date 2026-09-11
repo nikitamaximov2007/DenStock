@@ -183,6 +183,7 @@
     </form>
   {% endif %}
   {% include "partials/_image_gallery.html" with images=images primary_image=primary_image can_manage_images=can_manage_images add_url="part_image_add" primary_url="part_image_primary" delete_url="part_image_delete" owner_pk=part.pk %}
+  {% include "catalog/_public_photo_block.html" with rows=public_photo_rows sources=public_photo_sources can_moderate=can_manage %}
   <h2>Остатки</h2>
   {% if can_view_inventory %}
     <div class="page-actions">

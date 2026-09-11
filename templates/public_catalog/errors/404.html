@@ -1,0 +1,27 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Страница не найдена · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="empty empty--page">
+    <h1 class="empty__title">Такой страницы нет</h1>
+    <p class="empty__text">
+      Возможно, ссылка устарела или деталь убрали из каталога. Найдите её по артикулу или названию.
+    </p>
+    <form class="search search--inline"
+          action="{% url 'public_catalog_search' %}"
+          method="get"
+          role="search">
+      <label class="visually-hidden" for="missing-q">Артикул или название детали</label>
+      <div class="search__row">
+        <input id="missing-q"
+               class="search__input"
+               type="search"
+               name="q"
+               required
+               maxlength="64"
+               placeholder="Артикул или название"
+               autocomplete="off">
+        <button class="btn" type="submit">Найти</button>
+      </div>
+    </form>
+  </div>
+{% endblock %}

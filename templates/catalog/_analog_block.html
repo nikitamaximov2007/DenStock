@@ -27,7 +27,10 @@
     <tbody>
       {% for row in rows %}
         <tr>
-          <td><a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a></td>
+          <td>
+            <a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a>
+            {% if row.link.is_confirmed %}<span class="badge" title="Связь видна в публичном каталоге">В каталоге</span>{% endif %}
+          </td>
           <td>{{ row.exact_number|default:"·" }}</td>
           <td class="muted">{{ row.manufacturer|default:"·" }}</td>
           <td class="num--money">
@@ -47,7 +50,14 @@
           </td>
           {% if can_unlink %}
             <td class="table__actions">
-              {% if not row.link.is_confirmed %}
+              {% if row.link.is_confirmed %}
+                <form method="post"
+                      action="{% url 'part_analog_unconfirm' row.link.pk %}"
+                      class="inline-form">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn--small btn--ghost">Снять с каталога</button>
+                </form>
+              {% else %}
                 <form method="post"
                       action="{% url 'part_analog_confirm' row.link.pk %}"
                       class="inline-form">

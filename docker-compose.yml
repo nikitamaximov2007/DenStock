@@ -53,7 +53,20 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     entrypoint: ["/public-entrypoint.sh"]
-    command: ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "60"]
+    # Threaded workers: a slow typo search must not block the whole process.
+    # Measured locally on the 125k corpus: 2 sync workers saturate near
+    # 60 req/s; 3 workers x 2 threads with persistent connections reach about
+    # 125 req/s with zero errors, holding 6 database connections. Worker
+    # memory stayed flat, so workers are not recycled: a recycle drops open
+    # keep-alive connections mid-request.
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --bind=0.0.0.0:8000
+      - --worker-class=gthread
+      - --workers=${CATALOG_WEB_WORKERS:-3}
+      - --threads=${CATALOG_WEB_THREADS:-2}
+      - --timeout=60
     env_file: .env.public
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.public

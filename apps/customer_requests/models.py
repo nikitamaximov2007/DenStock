@@ -86,6 +86,15 @@ class CustomerRequest(models.Model):
             kwargs["update_fields"] = sorted(set(update_fields) | {"customer_phone_normalized"})
         super().save(*args, **kwargs)
 
+    @staticmethod
+    def reference_for(public_id) -> str:
+        """Short number shown to the customer and to the operator, e.g. ``5F3A9C21``."""
+        return str(public_id).split("-", 1)[0].upper()
+
+    @property
+    def reference(self) -> str:
+        return self.reference_for(self.public_id)
+
 
 class CustomerRequestLine(models.Model):
     request = models.ForeignKey(

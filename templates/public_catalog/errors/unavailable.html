@@ -1,0 +1,12 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Каталог временно недоступен · PRO-STOR{% endblock %}
+{% block header_search %}{% endblock %}
+{% block content %}
+  <div class="empty empty--page">
+    <h1 class="empty__title">Каталог временно недоступен</h1>
+    <p class="empty__text">Цены и наличие сейчас не загружаются. Попробуйте обновить страницу через минуту.</p>
+    <p>
+      <a class="btn" href="{% url 'public_catalog_root' %}">На главную</a>
+    </p>
+  </div>
+{% endblock %}
