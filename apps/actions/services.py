@@ -1044,6 +1044,18 @@ _APPLICATION_BY_VEHICLE_TYPE = {
     "автомобиль": _ApplicationArea.CAR,
 }
 MULTI_APPLICATION = _ApplicationArea.UNIVERSAL
+
+
+def application_area_for_vehicle_type(name: str) -> str:
+    """Категория для одного вида техники по той же таблице; "" - если не знаем.
+
+    Нужна публичному каталогу: фильтр по технике читает явную совместимость
+    той же таблицей, что и таможенное автоопределение, а не своей копией.
+    """
+    area = _APPLICATION_BY_VEHICLE_TYPE.get((name or "").strip().lower())
+    return str(area) if area else ""
+
+
 # Старый хардкод модели (прежний default application_area). Не входит в
 # ApplicationArea.choices намеренно: в таможенную форму не выгружается
 # никогда, а явное ручное значение с ним никогда не совпадёт.

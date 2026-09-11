@@ -1,0 +1,90 @@
+{% load public_catalog %}
+{% comment %}
+  Одна деталь в списке: результаты поиска и аналоги на странице детали.
+  Параметры: card (PartCard), next (куда вернуться после «В корзину»),
+  in_cart (public_id деталей, которые уже в корзине),
+  compact (без кнопки корзины и с заголовком h4, для блока аналогов).
+{% endcomment %}
+{% with facts=card.facts %}
+  <article class="part-card{% if compact %} part-card--compact{% endif %}">
+    <a class="part-card__photo"
+       href="{% url 'public_catalog_part' facts.public_id %}"
+       tabindex="-1"
+       aria-hidden="true">
+      {% if card.photo %}
+        <img src="{% url 'public_catalog_photo' card.photo.public_id 'card' %}?v={{ card.photo.version }}"
+             alt=""
+             width="120"
+             height="120"
+             loading="lazy"
+             decoding="async">
+      {% else %}
+        {% include "public_catalog/_photo_placeholder.html" %}
+      {% endif %}
+    </a>
+    <div class="part-card__body">
+      {% if compact %}
+        <h4 class="part-card__title">
+          <a href="{% url 'public_catalog_part' facts.public_id %}">{{ card.display_name }}</a>
+        </h4>
+      {% else %}
+        <h2 class="part-card__title">
+          <a href="{% url 'public_catalog_part' facts.public_id %}">{{ card.display_name }}</a>
+        </h2>
+      {% endif %}
+      {% if facts.russian_name %}
+        <p class="part-card__alt" lang="en">{{ facts.english_name }}</p>
+      {% endif %}
+      <p class="part-card__ids">
+        {% if facts.article %}
+          <span class="article">Артикул <span class="article__value">{{ facts.article }}</span></span>
+        {% endif %}
+        {% if facts.manufacturer %}<span class="maker">{{ facts.manufacturer }}</span>{% endif %}
+      </p>
+      {% if card.is_original or card.is_analog %}
+        <p class="badges">
+          {% if card.is_original %}<span class="badge badge--original">Оригинал</span>{% endif %}
+          {% if card.is_analog %}<span class="badge badge--analog">Аналог</span>{% endif %}
+        </p>
+      {% endif %}
+    </div>
+    <div class="part-card__offer">
+      <p class="price">
+        {% if facts.price.status == "known" %}
+          {{ facts.price.price_rub|rub }}
+        {% else %}
+          <span class="price__clarify">Уточнить цену</span>
+        {% endif %}
+      </p>
+      <p class="stock">
+        {% if card.in_stock %}
+          <span class="stock__in">В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}</span>
+        {% else %}
+          <span class="stock__out">Нет на складе</span>
+        {% endif %}
+      </p>
+      {% if not compact and facts.public_id in in_cart %}
+        <a class="btn btn--secondary btn--block part-card__action part-card__in-cart"
+           href="{% url 'public_catalog_cart' %}">В корзине<span class="visually-hidden">: {{ card.display_name }}, перейти в корзину</span></a>
+      {% elif not compact %}
+        <form class="part-card__action"
+              method="post"
+              action="{% url 'public_catalog_cart_add' facts.public_id %}">
+          {% csrf_token %}
+          <input type="hidden" name="quantity" value="1">
+          <input type="hidden" name="if_absent" value="1">
+          <input type="hidden" name="next" value="{{ next }}">
+          {% if card.in_stock %}
+            <button class="btn btn--block" type="submit">
+              В корзину<span class="visually-hidden">: {{ card.display_name }}</span>
+            </button>
+          {% else %}
+            <button class="btn btn--secondary btn--block" type="submit">
+              Узнать о поставке<span class="visually-hidden">: {{ card.display_name }}</span>
+            </button>
+          {% endif %}
+        </form>
+      {% endif %}
+    </div>
+  </article>
+{% endwith %}

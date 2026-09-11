@@ -1,23 +1,91 @@
 {% extends "public_catalog/base.html" %}
-{% block title %}Поиск запчастей · PRO-STOR{% endblock %}
-{% block meta %}<meta name="robots" content="noindex,follow">{% endblock %}
+{% block title %}
+  {% if query %}{{ query }}: поиск запчастей{% else %}Поиск запчастей{% endif %} · PRO-STOR
+{% endblock %}
+{% block robots %}
+  <meta name="robots" content="noindex, follow">
+{% endblock %}
 {% block content %}
-  <h1>Поиск запчастей</h1>
-  <form class="search" method="get">
-    <label for="q">Артикул или название</label><input id="q" name="q" value="{{ query }}" maxlength="64"><button>Найти</button>
-  </form>
-  {% if page %}
-    <form method="get">
-      <input type="hidden" name="q" value="{{ query }}">
-      <label for="application">Техника</label>
-      <select id="application" name="application"><option value="">Все</option>{% for value in applications %}<option value="{{ value }}"{% if application == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select>
-      <label for="manufacturer">Производитель</label>
-      <select id="manufacturer" name="manufacturer"><option value="">Все</option>{% for value in manufacturers %}<option value="{{ value }}"{% if manufacturer == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select>
-      <label><input type="checkbox"
-       name="in_stock"
-       value="1"
-       {% if in_stock %} checked{% endif %}> Только в наличии</label><button>Применить</button>
-    </form>
+  <div class="page-head">
+    {% if query %}
+      <h1 class="page-head__title">Результаты по запросу «{{ query }}»</h1>
+      {% if result.total %}
+        <p class="page-head__meta">
+          Найдено: {{ result.total }}
+          {% if result.pages > 1 %}· показаны {{ result.first_index }}–{{ result.last_index }}{% endif %}
+        </p>
+        {% if result.truncated %}
+          <p class="page-head__meta">Совпадений очень много: показаны лучшие. Уточните запрос, чтобы увидеть остальные.</p>
+        {% endif %}
+      {% endif %}
+    {% else %}
+      <h1 class="page-head__title">Поиск запчастей</h1>
+    {% endif %}
+  </div>
+  {% if not query %}
+    <div class="empty">
+      <p class="empty__title">Введите артикул или название детали</p>
+      <p class="empty__text">Поле поиска вверху страницы. Артикул можно вводить с дефисами, пробелами или без них.</p>
+    </div>
+  {% elif not result.ranked_total %}
+    <div class="empty">
+      <p class="empty__title">По запросу «{{ query }}» ничего не нашлось</p>
+      <ul class="empty__tips">
+        <li>Проверьте артикул: цифры и буквы, без лишних символов.</li>
+        <li>Попробуйте часть артикула, например первые 4–6 символов.</li>
+        <li>Название пишите так, как в каталоге производителя, обычно по-английски.</li>
+      </ul>
+    </div>
+  {% else %}
+    <div class="results-layout">
+      <details class="filters-mobile">
+        <summary class="filters-mobile__summary">
+          Фильтры
+          {% if result.filters.active_count %}<span class="count">{{ result.filters.active_count }}</span>{% endif %}
+        </summary>
+        {% include "public_catalog/_filters.html" with prefix="m" %}
+      </details>
+      <aside class="filters-desktop" aria-label="Фильтры">
+        {% include "public_catalog/_filters.html" with prefix="d" %}
+      </aside>
+      <section class="results" aria-label="Результаты поиска">
+        {% if chips %}
+          <div class="chips" aria-label="Выбранные фильтры">
+            {% for label, url in chips %}
+              <a class="chip" href="{{ url }}">{{ label }}<span class="chip__remove" aria-hidden="true">×</span><span class="visually-hidden">: убрать фильтр</span></a>
+            {% endfor %}
+            <a class="chips__reset" href="{{ reset_url }}">Сбросить все</a>
+          </div>
+        {% endif %}
+        {% if result.cards %}
+          <ol class="result-list">
+            {% for card in result.cards %}
+              <li>{% include "public_catalog/_card.html" with next=request.get_full_path %}</li>
+            {% endfor %}
+          </ol>
+          {% if result.pages > 1 %}
+            <nav class="pager" aria-label="Страницы результатов">
+              {% if previous_url %}
+                <a class="btn btn--secondary" href="{{ previous_url }}" rel="prev">Назад</a>
+              {% endif %}
+              <span class="pager__state">Страница {{ result.page }} из {{ result.pages }}</span>
+              {% if next_url %}
+                <a class="btn btn--secondary" href="{{ next_url }}" rel="next">Вперёд</a>
+              {% endif %}
+            </nav>
+          {% endif %}
+        {% else %}
+          <div class="empty">
+            <p class="empty__title">С этими фильтрами ничего нет</p>
+            <p class="empty__text">
+              По запросу нашлось деталей: {{ result.ranked_total }}. Уберите часть фильтров, чтобы их увидеть.
+            </p>
+            <p>
+              <a class="btn" href="{{ reset_url }}">Показать все результаты</a>
+            </p>
+          </div>
+        {% endif %}
+      </section>
+    </div>
   {% endif %}
-  {% if page %}<p class="muted">Найдено: {{ page.total }}</p><section class="grid">{% for fact in facts %}<article><h2><a href="{% url 'public_catalog_part' fact.public_id %}">{{ fact.russian_name|default:fact.english_name }}</a></h2><p class="muted">{{ fact.english_name }}</p><p>{{ fact.article }}{% if fact.manufacturer %} · {{ fact.manufacturer }}{% endif %}</p><p class="price">{% if fact.price.status == 'known' %}{{ fact.price.price_rub }} ₽{% else %}Уточнить цену{% endif %}</p><p>{% if fact.available_quantity > 0 %}В наличии: {{ fact.available_quantity }} {{ fact.unit.short_name }}{% else %}<span class="zero">Узнать о поставке</span>{% endif %}</p></article>{% empty %}<p>Ничего не найдено.</p>{% endfor %}</section>{% endif %}
 {% endblock %}

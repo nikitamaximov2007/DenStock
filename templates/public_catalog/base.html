@@ -1,20 +1,73 @@
+{% load static public_catalog %}
 <!DOCTYPE html>
 <html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}PRO-STOR · запчасти{% endblock %}</title>
+    <title>{% block title %}PRO-STOR · запчасти по артикулу и названию{% endblock %}</title>
+    {% if indexing %}
+      {% block robots %}{% endblock %}
+    {% else %}
+      <meta name="robots" content="noindex, nofollow">
+    {% endif %}
     {% block meta %}{% endblock %}
-    <style>
-      body { margin: 0; background: #f6f7f9; color: #172033; font: 16px system-ui, sans-serif; }
-      header, main { max-width: 1040px; margin: auto; padding: 20px; } header { display:flex; justify-content:space-between; align-items:center; }
-      a { color:#0b5cab; } .brand { color:#172033; font-weight:800; text-decoration:none; } .search { display:flex; gap:8px; } input,button { font:inherit; padding:12px; border-radius:8px; border:1px solid #cbd2dc; } input { flex:1; } button { background:#0b5cab; color:white; border:0; cursor:pointer; } .grid { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); } article { background:white; padding:18px; border-radius:12px; box-shadow:0 1px 4px #17203312; } .muted { color:#64748b; } .price { font-weight:700; font-size:1.15rem; } .zero { color:#9a5a00; font-weight:600; }
-    </style>
+    <link rel="stylesheet"
+          href="{% public_asset 'public_catalog/catalog.css' %}">
+    <link rel="icon"
+          href="{% static 'public_catalog/favicon.svg' %}"
+          type="image/svg+xml">
   </head>
   <body>
-    <header><a class="brand" href="{% url 'public_catalog_root' %}">PRO-STOR</a><a href="{% url 'public_catalog_search' %}">Поиск запчастей</a><a href="{% url 'public_catalog_cart' %}">Корзина</a></header>
-    <main>
+    <a class="skip-link" href="#main">Перейти к содержимому</a>
+    <header class="site-header">
+      <div class="site-header__inner">
+        <a class="brand" href="{% url 'public_catalog_root' %}">
+          <img src="{% static 'public_catalog/pro-stor-logo.svg' %}"
+               alt="PRO-STOR, на главную"
+               width="100"
+               height="40">
+        </a>
+        {% block header_search %}
+          <form class="header-search"
+                action="{% url 'public_catalog_search' %}"
+                method="get"
+                role="search">
+            <label class="visually-hidden" for="header-q">Поиск запчасти по артикулу или названию</label>
+            <input id="header-q"
+                   class="header-search__input"
+                   type="search"
+                   name="q"
+                   value="{{ query }}"
+                   maxlength="{{ max_query_length|default:64 }}"
+                   placeholder="Артикул или название"
+                   autocomplete="off"
+                   enterkeyhint="search">
+            <button class="btn header-search__button" type="submit">Найти</button>
+          </form>
+        {% endblock %}
+        <a class="cart-link" href="{% url 'public_catalog_cart' %}">
+          Корзина
+          {% if cart_lines %}
+            <span class="cart-link__count">{{ cart_lines }}</span>
+            <span class="visually-hidden">позиций</span>
+          {% endif %}
+        </a>
+      </div>
+    </header>
+    <main id="main" class="site-main" tabindex="-1">
+      {% if messages %}
+        <div class="notices" role="status">
+          {% for message in messages %}<p class="notice notice--{{ message.tags }}">{{ message }}</p>{% endfor %}
+        </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
+    <footer class="site-footer">
+      <div class="site-footer__inner">
+        <p>PRO-STOR · каталог запчастей</p>
+        <p>Цена и наличие показаны по данным склада на момент открытия страницы.</p>
+      </div>
+    </footer>
+    {% block structured_data %}{% endblock %}
   </body>
 </html>

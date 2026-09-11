@@ -5,7 +5,7 @@ available quantity, and public-safe identity data without recreating pricing
 or inventory business rules.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
@@ -63,12 +63,19 @@ def resolve_current_customer_price(part: PartType) -> CurrentCustomerPrice:
     return CurrentCustomerPrice(price_rub=None, status="clarify")
 
 
-def build_public_part_facts(part_ids: Iterable[int]) -> list[PublicPartFacts]:
+def build_public_part_facts(
+    part_ids: Iterable[int], *, quantities: Mapping[int, Decimal] | None = None
+) -> list[PublicPartFacts]:
     """Hydrate public-safe facts for many part IDs without per-part queries.
 
     Result order follows the requested IDs. Unknown IDs are omitted. The only
     Russian name included is a nonblank value that an operator explicitly
     confirmed in ``PartCustomsInfo``.
+
+    ``quantities`` lets a caller that already asked ``available_totals`` for a
+    superset of these IDs in the same request reuse that answer instead of
+    reading stock twice. It must come from ``available_totals``; any ID it
+    lacks is read fresh, so a partial mapping cannot report a false zero.
     """
     ids = list(dict.fromkeys(part_id for part_id in part_ids if part_id is not None))
     if not ids:
@@ -89,7 +96,9 @@ def build_public_part_facts(part_ids: Iterable[int]) -> list[PublicPartFacts]:
         ).values_list("part_type_id", "customs_name_ru")
         if customs_name_ru.strip()
     }
-    quantities = available_totals(parts_by_id)
+    known = quantities or {}
+    missing = [part_id for part_id in parts_by_id if part_id not in known]
+    quantities = {**known, **available_totals(missing)} if missing else known
 
     return [
         PublicPartFacts(

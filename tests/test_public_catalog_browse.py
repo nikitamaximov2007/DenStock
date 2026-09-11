@@ -56,7 +56,12 @@ def test_public_zero_stock_and_unknown_price_remain_visible(part):
 def test_public_search_is_not_indexable_and_unknown_identity_is_404(part):
     client = Client()
     search = client.get("/search/?q=420", HTTP_HOST="catalog.example")
-    assert "noindex,follow" in search.content.decode()
+    # Indexing is off unless the deployment turns it on; with it on, search
+    # result pages stay noindex but let crawlers follow to part pages.
+    assert '<meta name="robots" content="noindex, nofollow">' in search.content.decode()
+    with override_settings(PUBLIC_CATALOG_INDEXING=True):
+        search = client.get("/search/?q=420", HTTP_HOST="catalog.example")
+    assert '<meta name="robots" content="noindex, follow">' in search.content.decode()
     unknown = client.get(
         "/parts/00000000-0000-0000-0000-000000000000/", HTTP_HOST="catalog.example"
     )
@@ -72,8 +77,10 @@ def test_anonymous_cart_rechecks_public_part_and_never_uses_a_client_price(part)
         HTTP_HOST="catalog.example",
     )
     assert response.status_code == 302
-    cart = client.get(reverse("public_catalog_cart"), HTTP_HOST="catalog.example")
-    assert "Корзина пуста" in cart.content.decode()
+    cart = client.get(reverse("public_catalog_cart"), HTTP_HOST="catalog.example").content.decode()
+    # A part without stock becomes a supply inquiry; the posted price is ignored.
+    assert "запрос о поставке" in cart
+    assert "1\u00a0250\u00a0₽" in cart and "1\u00a0₽" not in cart
 
     too_many = client.post(
         reverse("public_catalog_cart_add", args=[part.public_id]),

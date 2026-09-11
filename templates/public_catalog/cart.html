@@ -1,5 +1,143 @@
 {% extends "public_catalog/base.html" %}
+{% load public_catalog %}
 {% block title %}Корзина · PRO-STOR{% endblock %}
-{% block meta %}<meta name="robots" content="noindex,nofollow">{% endblock %}
-{% block content %}<h1>Корзина</h1>{% for fact, quantity in lines %}<article><h2>{{ fact.article }} · {{ fact.russian_name|default:fact.english_name }}</h2><p>Количество: {{ quantity }} {{ fact.unit.short_name }}</p><p class="price">{% if fact.price.status == 'known' %}{{ fact.price.price_rub }} ₽{% else %}Уточнить цену{% endif %}</p><form method="post"
-      action="{% url 'public_catalog_cart_remove' fact.public_id %}">{% csrf_token %}<button>Удалить</button></form></article>{% empty %}<p>Корзина пуста.</p>{% endfor %}<p class="muted">Цена и наличие проверяются заново. Корзина не резервирует товар и не является заказом.</p>{% endblock %}
+{% block robots %}
+  <meta name="robots" content="noindex, nofollow">
+{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1 class="page-head__title">Корзина</h1>
+  </div>
+  {% if cart.is_empty %}
+    <div class="empty">
+      <p class="empty__title">Корзина пуста</p>
+      <p class="empty__text">Найдите деталь по артикулу или названию и добавьте её в корзину.</p>
+      <form class="search search--inline"
+            action="{% url 'public_catalog_search' %}"
+            method="get"
+            role="search">
+        <label class="visually-hidden" for="cart-q">Артикул или название детали</label>
+        <div class="search__row">
+          <input id="cart-q"
+                 class="search__input"
+                 type="search"
+                 name="q"
+                 required
+                 maxlength="{{ max_query_length }}"
+                 placeholder="Артикул или название"
+                 autocomplete="off">
+          <button class="btn" type="submit">Найти</button>
+        </div>
+      </form>
+    </div>
+  {% else %}
+    <div class="cart-layout">
+      <ul class="cart-lines" aria-label="Детали в корзине">
+        {% for line in cart.lines %}
+          {% with facts=line.card.facts %}
+            <li class="cart-line cart-line--{{ line.state }}">
+              <a class="cart-line__photo"
+                 href="{% url 'public_catalog_part' facts.public_id %}"
+                 tabindex="-1"
+                 aria-hidden="true">
+                {% if line.card.photo %}
+                  <img src="{% url 'public_catalog_photo' line.card.photo.public_id 'card' %}?v={{ line.card.photo.version }}"
+                       alt=""
+                       width="80"
+                       height="80"
+                       loading="lazy">
+                {% else %}
+                  {% include "public_catalog/_photo_placeholder.html" %}
+                {% endif %}
+              </a>
+              <div class="cart-line__body">
+                <h2 class="cart-line__title">
+                  <a href="{% url 'public_catalog_part' facts.public_id %}">{{ line.card.display_name }}</a>
+                </h2>
+                <p class="part-card__ids">
+                  {% if facts.article %}
+                    <span class="article">Артикул <span class="article__value">{{ facts.article }}</span></span>
+                  {% endif %}
+                  {% if facts.manufacturer %}<span class="maker">{{ facts.manufacturer }}</span>{% endif %}
+                </p>
+                <p class="cart-line__price">
+                  {% if facts.price.status == "known" %}
+                    {{ facts.price.price_rub|rub }} <span class="offer__unit">за {{ facts.unit.short_name }}</span>
+                  {% else %}
+                    <span class="price__clarify">Уточнить цену</span>
+                  {% endif %}
+                </p>
+                <p class="cart-line__state">
+                  {% if line.state == line_inquiry %}
+                    <span class="stock__out">Нет на складе: запрос о поставке</span>
+                  {% elif line.state == line_short %}
+                    <span class="stock__short">Сейчас доступно только {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}. Уменьшите количество.</span>
+                  {% else %}
+                    <span class="stock__in">В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}</span>
+                  {% endif %}
+                </p>
+              </div>
+              <div class="cart-line__controls">
+                <form class="cart-line__qty"
+                      method="post"
+                      action="{% url 'public_catalog_cart_add' facts.public_id %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="cart">
+                  <label for="qty-{{ forloop.counter }}">Количество, {{ facts.unit.short_name }}</label>
+                  <div class="cart-line__qty-row">
+                    <input id="qty-{{ forloop.counter }}"
+                           type="number"
+                           name="quantity"
+                           inputmode="numeric"
+                           min="1"
+                           max="{{ max_cart_quantity }}"
+                           step="1"
+                           value="{{ line.quantity }}"
+                           required>
+                    <button class="btn btn--secondary" type="submit">
+                      Изменить<span class="visually-hidden"> количество: {{ line.card.display_name }}</span>
+                    </button>
+                  </div>
+                </form>
+                {% if line.line_total is not None and line.state != line_inquiry %}
+                  <p class="cart-line__total">{{ line.line_total|rub }}</p>
+                {% endif %}
+                <form method="post"
+                      action="{% url 'public_catalog_cart_remove' facts.public_id %}">
+                  {% csrf_token %}
+                  <button class="btn btn--link" type="submit">
+                    Убрать<span class="visually-hidden">: {{ line.card.display_name }}</span>
+                  </button>
+                </form>
+              </div>
+            </li>
+          {% endwith %}
+        {% endfor %}
+      </ul>
+      <aside class="cart-summary" aria-label="Итог">
+        {% if cart.priced_lines %}
+          <p class="cart-summary__total">
+            Сумма по деталям в наличии
+            <strong>{{ cart.total|rub }}</strong>
+          </p>
+        {% endif %}
+        {% if cart.inquiry_lines %}
+          <p>Запрос о поставке: {{ cart.inquiry_lines }} поз. Цену и срок сообщим после проверки.</p>
+        {% endif %}
+        {% if cart.unpriced_lines %}
+          <p>Цена уточняется: {{ cart.unpriced_lines }} поз.</p>
+        {% endif %}
+        {% if cart.short_lines %}
+          <p class="stock__short">Для {{ cart.short_lines }} поз. выбрано больше, чем есть сейчас. Уменьшите количество.</p>
+        {% endif %}
+        <p class="cart-summary__fine">
+          Корзина не резервирует детали и не является заказом. Цена и наличие меняются вместе со складом и проверяются заново.
+        </p>
+        {% block cart_actions %}{% endblock %}
+        <p>
+          <a href="{% url 'public_catalog_root' %}">Продолжить поиск</a>
+        </p>
+      </aside>
+    </div>
+  {% endif %}
+{% endblock %}

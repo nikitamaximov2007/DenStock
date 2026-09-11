@@ -1,159 +1,286 @@
-"""Unauthenticated runtime probes for the future public catalog.
+"""Customer-facing PRO-STOR catalog views, served only by the public runtime.
 
-There is deliberately no browse/search UI in Stage 3.  These endpoints prove
-the separate runtime boundary without exposing an internal screen or DTO.
+Views orchestrate. Reads live in ``public_catalog``, ``public_photos`` and the
+Stage 1 facades; the cart lives in ``public_cart``. The public process has no
+authentication, no internal route and a SELECT-only database role, so nothing
+here writes business data. The only state a request can change is the
+customer's own signed cart cookie.
 """
 
+import logging
+from uuid import UUID
+
+from django.contrib import messages
 from django.db import connection
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseNotModified, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.cache import patch_cache_control
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import PartAnalog, PartCompatibility, PartType
-from .public_contracts import build_public_part_facts
-from .search import clean_query, search_parts
+from . import public_seo
+from .public_cart import (
+    LINE_INQUIRY,
+    LINE_SHORT,
+    MAX_CART_QUANTITY,
+    CartError,
+    build_cart_view,
+    cart_size,
+    quantity_in_cart,
+    read_cart,
+    remove_line,
+    set_line,
+)
+from .public_catalog import (
+    APPLICATION_LABELS,
+    cards_by_id,
+    part_relations,
+    public_parts,
+    search_catalog,
+)
+from .public_photos import part_photos, rendition_for
+from .search import MAX_QUERY_LENGTH
 
-APPLICATIONS = ("ГИДРОЦИКЛ", "КВАДРОЦИКЛ", "СНЕГОХОД", "ЛОДОЧНЫЙ МОТОР", "КАТЕР")
-CART_SESSION_KEY = "public_catalog_cart"
-MAX_CART_LINES = 50
-MAX_CART_QUANTITY = 1000
+logger = logging.getLogger("apps.catalog.public")
+
+PHOTO_MAX_AGE = 24 * 60 * 60
+CRAWLER_FILE_MAX_AGE = 60 * 60
 
 
-def _cart(request):
-    raw = request.session.get(CART_SESSION_KEY, {})
-    return raw if isinstance(raw, dict) else {}
-
-
-def _cart_facts(request):
-    cart = _cart(request)
-    parts = PartType.objects.filter(public_id__in=cart, is_public=True)
-    by_id = {str(part.public_id): part.pk for part in parts}
-    facts = {str(fact.public_id): fact for fact in build_public_part_facts(by_id.values())}
-    return [(facts[key], quantity) for key, quantity in cart.items() if key in facts]
+def _render(request, template, context=None, *, status=200):
+    """Every public page shares the header state and the indexing policy."""
+    base = {
+        "cart_lines": cart_size(request.session),
+        "indexing": public_seo.indexing_enabled(),
+        "max_query_length": MAX_QUERY_LENGTH,
+    }
+    base.update(context or {})
+    return render(request, template, base, status=status)
 
 
 @require_GET
 def public_root(request):
-    return render(request, "public_catalog/home.html")
+    return _render(
+        request,
+        "public_catalog/home.html",
+        {"canonical_url": public_seo.absolute_url(request, reverse("public_catalog_root"))},
+    )
 
 
 @require_GET
 def public_search(request):
-    query = clean_query(request.GET.get("q"))
-    page = search_parts(query, page=request.GET.get("page", 1)) if query else None
-    part_ids = [hit.part_id for hit in page.hits] if page else []
-    application = request.GET.get("application", "")
-    manufacturer = request.GET.get("manufacturer", "")
-    if application in APPLICATIONS:
-        part_ids = list(
-            PartCompatibility.objects.filter(
-                part_id__in=part_ids,
-                vehicle_model__vehicle_make__vehicle_type__name=application,
-            ).values_list("part_id", flat=True).distinct()
-        )
-    if manufacturer:
-        part_ids = list(
-            PartType.objects.filter(pk__in=part_ids, manufacturer__name=manufacturer).values_list(
-                "pk", flat=True
-            )
-        )
-    facts = build_public_part_facts(part_ids)
-    if request.GET.get("in_stock") == "1":
-        facts = [fact for fact in facts if fact.available_quantity > 0]
-    manufacturers = sorted({fact.manufacturer for fact in facts if fact.manufacturer})
-    return render(
+    result = search_catalog(request.GET.get("q"), request.GET)
+    return _render(
         request,
         "public_catalog/search.html",
         {
-            "query": query,
-            "page": page,
-            "facts": facts,
-            "applications": APPLICATIONS,
-            "application": application,
-            "manufacturer": manufacturer,
-            "manufacturers": manufacturers,
-            "in_stock": request.GET.get("in_stock") == "1",
+            "result": result,
+            "query": result.query,
+            "application_labels": APPLICATION_LABELS,
+            "previous_url": result.url(page=result.page - 1) if result.has_previous else "",
+            "next_url": result.url(page=result.page + 1) if result.has_next else "",
+            "reset_url": result.url(reset=True),
+            "chips": _filter_chips(result),
+            "in_cart": {UUID(key) for key in read_cart(request.session)},
         },
     )
+
+
+def _filter_chips(result):
+    """Selected filters as removable chips; every link is a complete URL."""
+    filters = result.filters
+    chips = []
+    if filters.in_stock:
+        chips.append(("Только в наличии", result.url(drop="in_stock")))
+    if filters.application:
+        chips.append((APPLICATION_LABELS[filters.application], result.url(drop="application")))
+    if filters.manufacturer:
+        chips.append((filters.manufacturer, result.url(drop="manufacturer")))
+    if filters.relation:
+        label = next(o.label for o in result.facets.relations if o.value == filters.relation)
+        chips.append((label, result.url(drop="relation")))
+    return chips
 
 
 @require_GET
 def public_part_detail(request, public_id):
-    part = PartType.objects.filter(public_id=public_id, is_public=True).first()
-    if part is None:
+    part_id = public_parts().filter(public_id=public_id).values_list("pk", flat=True).first()
+    if part_id is None:
         raise Http404
-    facts = build_public_part_facts([part.pk])[0]
-    links = PartAnalog.objects.filter(original=part, is_confirmed=True, analog__is_public=True)
-    analogs = build_public_part_facts(links.values_list("analog_id", flat=True))
-    return render(
+    card = cards_by_id([part_id])[part_id]
+    canonical_url = public_seo.absolute_url(
+        request, reverse("public_catalog_part", args=[public_id])
+    )
+    photos = part_photos(part_id)
+    photo_urls = [
+        public_seo.absolute_url(request, _photo_path(photo, "detail")) for photo in photos
+    ]
+    return _render(
         request,
         "public_catalog/part_detail.html",
         {
-            "facts": facts,
-            "analogs": analogs,
-            "canonical_path": reverse("public_catalog_part", args=[facts.public_id]),
-            "cart_count": sum(_cart(request).values()),
+            "card": card,
+            "facts": card.facts,
+            "photos": photos,
+            "relations": part_relations(part_id),
+            "canonical_url": canonical_url,
+            "page_title": public_seo.part_title(card),
+            "meta_description": public_seo.part_description(card),
+            "og_image": photo_urls[0] if photo_urls else "",
+            "json_ld": public_seo.json_for_script(
+                public_seo.product_json_ld(card, url=canonical_url, images=photo_urls)
+            ),
+            "in_cart": quantity_in_cart(request.session, public_id),
+            "quantity_max": _quantity_max(card),
         },
     )
 
 
-@require_GET
-def robots_txt(request):
-    return HttpResponse("User-agent: *\nAllow: /\nDisallow: /search/\n", content_type="text/plain")
+def _quantity_max(card):
+    """Browser-side hint only; the server re-checks availability on submit."""
+    if not card.in_stock:
+        return MAX_CART_QUANTITY
+    return max(1, min(int(card.facts.available_quantity), MAX_CART_QUANTITY))
+
+
+def _photo_path(photo, variant):
+    path = reverse("public_catalog_photo", args=[photo.public_id, variant])
+    return f"{path}?v={photo.version}" if photo.version else path
 
 
 @require_GET
-def sitemap_xml(request):
-    public_ids = PartType.objects.filter(is_public=True).values_list("public_id", flat=True)
-    paths = [reverse("public_catalog_part", args=[public_id]) for public_id in public_ids]
-    return render(
-        request,
-        "public_catalog/sitemap.xml",
-        {"paths": paths},
-        content_type="application/xml",
-    )
+def public_photo(request, public_id, variant):
+    """One published rendition, re-checked against publication on every request."""
+    rendition = rendition_for(public_id, variant)
+    if rendition is None:
+        raise Http404
+    etag = f'"{rendition["sha256"]}"'
+    if request.headers.get("If-None-Match") == etag:
+        response = HttpResponseNotModified()
+    else:
+        response = HttpResponse(bytes(rendition["data"]), content_type=rendition["content_type"])
+        response["Content-Length"] = str(rendition["byte_size"])
+    response["ETag"] = etag
+    patch_cache_control(response, public=True, max_age=PHOTO_MAX_AGE)
+    return response
 
 
 @require_GET
 @never_cache
 def public_cart(request):
-    return render(request, "public_catalog/cart.html", {"lines": _cart_facts(request)})
+    cart = build_cart_view(request.session)
+    if cart.removed_lines:
+        messages.info(
+            request,
+            "Некоторых деталей больше нет в каталоге. Мы убрали их из корзины.",
+        )
+    return _render(
+        request,
+        "public_catalog/cart.html",
+        {
+            "cart": cart,
+            "line_inquiry": LINE_INQUIRY,
+            "line_short": LINE_SHORT,
+            "max_cart_quantity": MAX_CART_QUANTITY,
+        },
+    )
+
+
+def _safe_next(request):
+    """Where to go after a cart change: the cart, or a local catalog page only."""
+    value = str(request.POST.get("next") or "")
+    if value == "cart":
+        return reverse("public_catalog_cart")
+    local = value.startswith(("/search/", "/parts/")) and url_has_allowed_host_and_scheme(
+        value, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    )
+    return value if local else ""
 
 
 @require_POST
 @never_cache
 def public_cart_add(request, public_id):
-    part = PartType.objects.filter(public_id=public_id, is_public=True).first()
-    if part is None:
+    """Set a line's quantity. Any client price or extra field is ignored.
+
+    ``if_absent=1`` (the button on a result card) adds one unit only when the
+    part is not in the cart yet, so a second click never silently overwrites a
+    quantity the customer chose on the part page or in the cart.
+    """
+    part_id = public_parts().filter(public_id=public_id).values_list("pk", flat=True).first()
+    if part_id is None:
         raise Http404
+    card = cards_by_id([part_id])[part_id]
+    next_url = _safe_next(request)
+    if request.POST.get("if_absent") == "1" and quantity_in_cart(request.session, public_id):
+        messages.info(request, f"{card.display_name}: уже в корзине.")
+        return redirect(next_url or reverse("public_catalog_cart"))
     try:
-        quantity = int(request.POST.get("quantity", "1"))
-    except ValueError:
-        quantity = 0
-    facts = build_public_part_facts([part.pk])[0]
-    if quantity < 1 or quantity > MAX_CART_QUANTITY or facts.available_quantity < quantity:
-        return redirect("public_catalog_part", public_id=public_id)
-    cart = _cart(request)
-    key = str(public_id)
-    if key not in cart and len(cart) >= MAX_CART_LINES:
-        return redirect("public_catalog_cart")
-    cart[key] = quantity
-    request.session[CART_SESSION_KEY] = cart
-    return redirect("public_catalog_cart")
+        set_line(request.session, card, request.POST.get("quantity", "1"))
+    except CartError as exc:
+        messages.error(request, f"{card.display_name}: {exc}")
+        return redirect(next_url or reverse("public_catalog_part", args=[public_id]))
+    if next_url == reverse("public_catalog_cart"):
+        messages.success(request, "Количество обновлено.")
+    elif card.in_stock:
+        messages.success(request, f"{card.display_name}: добавлено в корзину.")
+    else:
+        messages.success(
+            request, f"{card.display_name}: добавлено в корзину как запрос о поставке."
+        )
+    return redirect(next_url or reverse("public_catalog_cart"))
 
 
 @require_POST
 @never_cache
 def public_cart_remove(request, public_id):
-    cart = _cart(request)
-    cart.pop(str(public_id), None)
-    request.session[CART_SESSION_KEY] = cart
+    remove_line(request.session, public_id)
+    messages.success(request, "Позиция убрана из корзины.")
     return redirect("public_catalog_cart")
 
 
 @require_GET
+def robots_txt(request):
+    response = HttpResponse(public_seo.robots_txt(request), content_type="text/plain")
+    patch_cache_control(response, public=True, max_age=CRAWLER_FILE_MAX_AGE)
+    return response
+
+
+@require_GET
+def sitemap_index(request):
+    pages = [
+        public_seo.absolute_url(request, reverse("public_catalog_sitemap_parts", args=[number]))
+        for number in range(1, public_seo.sitemap_page_count() + 1)
+    ]
+    response = render(
+        request,
+        "public_catalog/sitemap_index.xml",
+        {"pages": pages},
+        content_type="application/xml",
+    )
+    patch_cache_control(response, public=True, max_age=CRAWLER_FILE_MAX_AGE)
+    return response
+
+
+@require_GET
+def sitemap_parts(request, number):
+    if number < 1 or number > public_seo.sitemap_page_count():
+        raise Http404
+    base = public_seo.base_url(request)
+    urls = [
+        base + reverse("public_catalog_part", args=[public_id])
+        for public_id in public_seo.sitemap_public_ids(number)
+    ]
+    response = render(
+        request, "public_catalog/sitemap.xml", {"urls": urls}, content_type="application/xml"
+    )
+    patch_cache_control(response, public=True, max_age=CRAWLER_FILE_MAX_AGE)
+    return response
+
+
+@require_GET
+@never_cache
 def healthz(request):
     try:
         with connection.cursor() as cursor:
@@ -162,3 +289,34 @@ def healthz(request):
     except Exception:  # noqa: BLE001 - readiness must fail closed
         return JsonResponse({"status": "down", "db": "down"}, status=503)
     return JsonResponse({"status": "ok", "db": "ok"})
+
+
+# --- Error pages -----------------------------------------------------------------------
+#
+# None of them touches the database or the session: the failure being reported
+# may be the database itself. They never show a traceback, SQL, a path or a
+# model name.
+
+
+def _error(request, template, status):
+    return render(request, template, {"indexing": False}, status=status)
+
+
+def bad_request(request, exception=None):
+    return _error(request, "public_catalog/errors/400.html", 400)
+
+
+def permission_denied(request, exception=None):
+    return _error(request, "public_catalog/errors/400.html", 403)
+
+
+def not_found(request, exception=None):
+    return _error(request, "public_catalog/errors/404.html", 404)
+
+
+def server_error(request):
+    return _error(request, "public_catalog/errors/500.html", 500)
+
+
+def csrf_failure(request, reason=""):
+    return _error(request, "public_catalog/errors/csrf.html", 403)

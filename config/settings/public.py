@@ -1,9 +1,13 @@
 """Restricted settings for the public catalog runtime.
 
-This process deliberately has no internal URL configuration, session or
-authentication middleware.  It uses a separate, SELECT-only database role in
-deployment; migrations are run by the privileged internal release job.
+This process deliberately has no internal URL configuration and no
+authentication middleware. It uses a separate, SELECT-only database role in
+deployment; migrations are run by the privileged internal release job. The
+request stack, cookies and error handlers come from
+``apps.catalog.public_settings`` so the tests exercise exactly this policy.
 """
+
+from apps.catalog.public_settings import PUBLIC_CONTEXT_PROCESSORS, PUBLIC_SETTINGS
 
 from .base import env
 from .prod import *  # noqa: F403
@@ -20,30 +24,55 @@ if not _public_database_url:
     raise ValueError("PUBLIC_DATABASE_URL must be set for the public runtime.")
 DATABASES = {"default": env.db_url_config(_public_database_url)}
 
-ROOT_URLCONF = "config.public_urls"
-MIDDLEWARE = [
-    "apps.core.observability.RequestIdMiddleware",
-    "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
-    "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",
-]
-SESSION_ENGINE = "django.contrib.sessions.backends.signed_cookies"
-SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = "Lax"
-DATA_UPLOAD_MAX_MEMORY_SIZE = 64 * 1024
-DATA_UPLOAD_MAX_NUMBER_FIELDS = 32
-TEMPLATES[0]["OPTIONS"]["context_processors"] = [  # noqa: F405
-    "django.template.context_processors.request",
-]
+globals().update(PUBLIC_SETTINGS)
+TEMPLATES[0]["OPTIONS"]["context_processors"] = list(PUBLIC_CONTEXT_PROCESSORS)  # noqa: F405
 
-# The public service has no media URL or media mount.  It exposes only static
-# assets baked into its image; all user uploads remain internal-only.
+# --- Search engines ------------------------------------------------------------
+# Indexing is OFF unless the deployment explicitly turns it on, so a preview
+# or a misconfigured host fails closed to noindex. Launch: set
+# PUBLIC_CATALOG_INDEXING=true and PUBLIC_CATALOG_BASE_URL=https://<domain>,
+# and remove the edge X-Robots-Tag header for that host.
+PUBLIC_CATALOG_INDEXING = env.bool("PUBLIC_CATALOG_INDEXING", default=False)
+PUBLIC_CATALOG_BASE_URL = env("PUBLIC_CATALOG_BASE_URL", default="").strip().rstrip("/")
+
+# --- Transport ------------------------------------------------------------------
+# Caddy terminates TLS and forwards X-Forwarded-Proto (prod.py trusts it).
+# HSTS stays opt-in per host: a preview hostname must not be pinned by accident.
+SECURE_HSTS_SECONDS = env.int("PUBLIC_HSTS_SECONDS", default=0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+SECURE_HSTS_PRELOAD = False
+
+# --- Static assets ----------------------------------------------------------------
+# Only the public asset folder is served, straight from the image through the
+# staticfiles finder. Internal JS/CSS and the Django admin assets are not part
+# of this process at all, and no collectstatic step is needed.
+STATICFILES_DIRS = [("public_catalog", BASE_DIR / "static" / "public_catalog")]  # noqa: F405
+STATICFILES_FINDERS = ["django.contrib.staticfiles.finders.FileSystemFinder"]
+STATIC_ROOT = None
+WHITENOISE_USE_FINDERS = True
+WHITENOISE_AUTOREFRESH = False
+
+# The public service has no media URL or media mount. Published catalog photos
+# are re-encoded copies read from the database; all uploads stay internal.
 MEDIA_URL = ""
 MEDIA_ROOT = BASE_DIR / ".public-media-disabled"  # noqa: F405
 PRIVATE_MEDIA_ROOT = BASE_DIR / ".public-private-media-disabled"  # noqa: F405
+
+# --- Logs -------------------------------------------------------------------------
+# One access line per request (route, status, latency) next to the existing
+# error channel. The formatter omits query strings, bodies and cookies.
+LOGGING["handlers"]["public_access"] = {  # noqa: F405
+    "class": "logging.StreamHandler",
+    "stream": "ext://sys.stderr",
+    "level": "INFO",
+    "formatter": "operational",
+    "filters": ["request_context"],
+}
+LOGGING["loggers"]["apps.catalog.public.access"] = {  # noqa: F405
+    "handlers": ["public_access"],
+    "level": "INFO",
+    "propagate": False,
+}
 
 # Fail closed if an internal integration is accidentally configured here.
 AI_SUPPORT_ENABLED = False
