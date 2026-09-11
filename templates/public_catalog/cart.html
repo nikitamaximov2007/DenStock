@@ -2,4 +2,4 @@
 {% block title %}Корзина · PRO-STOR{% endblock %}
 {% block meta %}<meta name="robots" content="noindex,nofollow">{% endblock %}
 {% block content %}<h1>Корзина</h1>{% for fact, quantity in lines %}<article><h2>{{ fact.article }} · {{ fact.russian_name|default:fact.english_name }}</h2><p>Количество: {{ quantity }} {{ fact.unit.short_name }}</p><p class="price">{% if fact.price.status == 'known' %}{{ fact.price.price_rub }} ₽{% else %}Уточнить цену{% endif %}</p><form method="post"
-      action="{% url 'public_catalog_cart_remove' fact.public_id %}">{% csrf_token %}<button>Удалить</button></form></article>{% empty %}<p>Корзина пуста.</p>{% endfor %}<p class="muted">Цена и наличие проверяются заново. Корзина не резервирует товар и не является заказом.</p>{% endblock %}
+      action="{% url 'public_catalog_cart_remove' fact.public_id %}">{% csrf_token %}<button>Удалить</button></form></article>{% empty %}<p>Корзина пуста.</p>{% endfor %}{% if lines %}<p><a href="{% url 'public_catalog_request_form' %}">Отправить заявку</a></p>{% endif %}<p class="muted">Цена и наличие проверяются заново. Корзина не резервирует товар и не является заказом.</p>{% endblock %}

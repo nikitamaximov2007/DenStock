@@ -370,10 +370,6 @@ def _warehouse_tabs(user, path):
     # продаж. Складского остатка у заказа нет, но живёт он рядом с «Клиентами»:
     # оператор приходит сюда из того же разговора с клиентом.
     if user.can_manage_sales:
-        # The badge deliberately counts only the actionable initial state, not
-        # every historical request.
-        from apps.customer_requests.models import CustomerRequest
-
         tabs.append(
             _tab(
                 "Запчасти на заказ",
@@ -389,7 +385,6 @@ def _warehouse_tabs(user, path):
                 reverse("customer_request_list"),
                 sidebar_key="customer-requests",
                 icon="message",
-                badge=CustomerRequest.objects.filter(status=CustomerRequest.Status.NEW).count(),
                 active=path.startswith("/customer-requests/"),
             )
         )

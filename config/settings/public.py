@@ -1,8 +1,9 @@
 """Restricted settings for the public catalog runtime.
 
-This process deliberately has no internal URL configuration, session or
-authentication middleware.  It uses a separate, SELECT-only database role in
-deployment; migrations are run by the privileged internal release job.
+This process deliberately has no internal URL configuration or authentication
+middleware. It uses a separate role that can read catalog projections and
+write only the minimum request-domain records; migrations are run by the
+privileged internal release job.
 """
 
 from .base import env

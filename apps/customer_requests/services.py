@@ -176,18 +176,22 @@ def create_customer_request(
         prepared_lines.append((line, part, price))
 
     try:
-        request = CustomerRequest.objects.create(
-            source=source,
-            customer_name=customer_name,
-            customer_phone=customer_phone,
-            preferred_messenger=preferred_messenger,
-            comment=comment,
-            privacy_policy_version=privacy_policy_version,
-            personal_data_consent_version=personal_data_consent_version,
-            consent_purpose=consent_purpose,
-            consent_accepted_at=timezone.now(),
-            submission_key_hash=key_hash,
-        )
+        # Keep the outer transaction usable after a duplicate-key race.  The
+        # savepoint is essential on PostgreSQL: querying after an IntegrityError
+        # raised directly in the outer atomic block would be forbidden.
+        with transaction.atomic():
+            request = CustomerRequest.objects.create(
+                source=source,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+                preferred_messenger=preferred_messenger,
+                comment=comment,
+                privacy_policy_version=privacy_policy_version,
+                personal_data_consent_version=personal_data_consent_version,
+                consent_purpose=consent_purpose,
+                consent_accepted_at=timezone.now(),
+                submission_key_hash=key_hash,
+            )
     except IntegrityError:
         # A concurrent retry won the unique key race. It is the same logical
         # submission, not a second request.

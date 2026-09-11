@@ -125,6 +125,40 @@ def test_idempotency_returns_one_original_request(part):
     assert CustomerRequest.objects.count() == 1
 
 
+def test_request_submission_query_count_is_bounded_for_one_twenty_and_fifty_lines(part):
+    """Part identity, current pricing and availability are hydrated in batches."""
+    parts = [part]
+    for index in range(2, 51):
+        parts.append(
+            PartType.objects.create(
+                name=f"Запросная деталь {index}",
+                category=part.category,
+                unit=part.unit,
+                manufacturer=part.manufacturer,
+                tracking_mode=PartType.TrackingMode.BULK,
+                recommended_price=Decimal("10000.00"),
+            )
+        )
+    query_counts = []
+    for line_count in (1, 20, 50):
+        with CaptureQueriesContext(connection) as captured:
+            create_customer_request(
+                customer_name="Иван Петров",
+                customer_phone="+7 (912) 123-45-67",
+                preferred_messenger=CustomerRequest.Messenger.TELEGRAM,
+                lines=[
+                    RequestLineInput(part_id=item.pk, quantity="1", supply_inquiry=True)
+                    for item in parts[:line_count]
+                ],
+                privacy_policy_version=POLICY,
+                personal_data_consent_version=POLICY,
+                submission_key=str(line_count) * 32,
+            )
+        query_counts.append(len(captured))
+
+    assert max(query_counts) - min(query_counts) <= 2
+
+
 def test_consent_versions_and_phone_search_snapshot_are_kept(part):
     request, _ = _create(part=part)
 

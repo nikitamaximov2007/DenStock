@@ -5,6 +5,7 @@
     <h1 class="page-title">Заявки клиентов</h1>
   </div>
   <p class="page-subtitle">Заявки из публичного каталога. Они не резервируют остатки и не являются оплатой или продажей.</p>
+  {% if new_count %}<p><span class="badge">Новые: {{ new_count }}</span></p>{% endif %}
   {% if page_obj.object_list %}
     <table class="table">
       <thead>

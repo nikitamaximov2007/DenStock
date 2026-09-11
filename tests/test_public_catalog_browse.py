@@ -5,6 +5,10 @@ from django.test import Client, override_settings
 from django.urls import reverse
 
 from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.customer_requests.models import CustomerRequest
+from apps.inventory.availability import available_totals
+from apps.inventory.models import StockBalance, StockMovement
+from apps.sales.models import Reservation, Sale
 
 
 @pytest.fixture
@@ -81,3 +85,136 @@ def test_anonymous_cart_rechecks_public_part_and_never_uses_a_client_price(part)
         HTTP_HOST="catalog.example",
     )
     assert too_many.status_code == 302
+
+
+def _make_public(part):
+    part.is_public = True
+    part.is_active = True
+    part.save(update_fields=["is_public", "is_active"])
+
+
+def _put_in_cart(client, part, quantity=1):
+    session = client.session
+    session["public_catalog_cart"] = {str(part.public_id): quantity}
+    session.save()
+
+
+def _request_token(client):
+    return client.session["public_catalog_request_submission"]["token"]
+
+
+def _valid_form_data(token, **extra):
+    return {
+        "submission_key": token,
+        "customer_name": "Иван Петров",
+        "customer_phone": "+7 (912) 123-45-67",
+        "preferred_messenger": "telegram",
+        "comment": "Нужна деталь.",
+        "consent": "1",
+        **extra,
+    }
+
+
+@override_settings(ROOT_URLCONF="config.public_urls", ALLOWED_HOSTS=["catalog.example"])
+def test_cart_request_uses_current_price_and_ignores_tampered_fields(part, monkeypatch):
+    _make_public(part)
+    client = Client()
+    _put_in_cart(client, part)
+    form = client.get(reverse("public_catalog_request_form"), HTTP_HOST="catalog.example")
+    assert form.status_code == 200
+    token = _request_token(client)
+    part.recommended_price = Decimal("11000.00")
+    part.save(update_fields=["recommended_price"])
+    monkeypatch.setattr(
+        "apps.customer_requests.services.available_totals", lambda ids: {part.pk: Decimal("2")}
+    )
+
+    response = client.post(
+        reverse("public_catalog_request_submit"),
+        _valid_form_data(
+            token,
+            price="1",
+            price_seen="1",
+            part_id="999999",
+            status="completed",
+            privacy_policy_version="forged",
+        ),
+        HTTP_HOST="catalog.example",
+    )
+
+    assert response.status_code == 302
+    request = CustomerRequest.objects.get()
+    line = request.lines.get()
+    assert request.status == CustomerRequest.Status.NEW
+    assert request.privacy_policy_version == "draft-legal-review-1"
+    assert line.part_type_id == part.pk
+    assert line.price_seen == Decimal("11000.00")
+
+
+@override_settings(ROOT_URLCONF="config.public_urls", ALLOWED_HOSTS=["catalog.example"])
+def test_cart_request_rechecks_availability_and_requires_consent(part, monkeypatch):
+    _make_public(part)
+    client = Client()
+    _put_in_cart(client, part, quantity=3)
+    client.get(reverse("public_catalog_request_form"), HTTP_HOST="catalog.example")
+    token = _request_token(client)
+    monkeypatch.setattr(
+        "apps.customer_requests.services.available_totals", lambda ids: {part.pk: Decimal("2")}
+    )
+    rejected = client.post(
+        reverse("public_catalog_request_submit"),
+        _valid_form_data(token),
+        HTTP_HOST="catalog.example",
+    )
+    assert rejected.status_code == 400
+    assert "Сейчас доступно" in rejected.content.decode()
+    assert CustomerRequest.objects.count() == 0
+
+    no_consent = client.post(
+        reverse("public_catalog_request_submit"),
+        _valid_form_data(token, consent=""),
+        HTTP_HOST="catalog.example",
+    )
+    assert no_consent.status_code == 400
+    assert CustomerRequest.objects.count() == 0
+
+
+@override_settings(ROOT_URLCONF="config.public_urls", ALLOWED_HOSTS=["catalog.example"])
+def test_zero_stock_supply_request_is_non_reserving_and_idempotent(part):
+    _make_public(part)
+    client = Client()
+    before = {
+        "balances": StockBalance.objects.count(),
+        "movements": StockMovement.objects.count(),
+        "reservations": Reservation.objects.count(),
+        "sales": Sale.objects.count(),
+        "available": available_totals([part.pk]),
+    }
+    form = client.get(
+        f"{reverse('public_catalog_request_form')}?supply={part.public_id}",
+        HTTP_HOST="catalog.example",
+    )
+    assert form.status_code == 200
+    assert "Узнать о поставке" in form.content.decode()
+    token = _request_token(client)
+    first = client.post(
+        reverse("public_catalog_request_submit"),
+        _valid_form_data(token, preferred_messenger="max"),
+        HTTP_HOST="catalog.example",
+    )
+    retry = client.post(
+        reverse("public_catalog_request_submit"),
+        _valid_form_data(token, preferred_messenger="max", comment="подменён"),
+        HTTP_HOST="catalog.example",
+    )
+    assert first.status_code == retry.status_code == 302
+    request = CustomerRequest.objects.get()
+    assert request.lines.get().is_supply_inquiry is True
+    assert CustomerRequest.objects.count() == 1
+    assert {
+        "balances": StockBalance.objects.count(),
+        "movements": StockMovement.objects.count(),
+        "reservations": Reservation.objects.count(),
+        "sales": Sale.objects.count(),
+        "available": available_totals([part.pk]),
+    } == before

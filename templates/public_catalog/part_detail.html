@@ -11,4 +11,4 @@
        min="1"
        max="1000"
        name="quantity"
-       value="1"><button>В корзину</button></form>{% endif %}<p class="muted">Фото появится после подтверждения.</p>{% if analogs %}<h2>Подтверждённые аналоги</h2><ul>{% for analog in analogs %}<li><a href="{% url 'public_catalog_part' analog.public_id %}">{{ analog.article }} · {{ analog.russian_name|default:analog.english_name }}</a></li>{% endfor %}</ul>{% endif %}</article>{% endblock %}
+       value="1"><button>В корзину</button></form>{% else %}<p><a href="{% url 'public_catalog_request_form' %}?supply={{ facts.public_id }}">Узнать о поставке</a></p>{% endif %}<p class="muted">Фото появится после подтверждения.</p>{% if analogs %}<h2>Подтверждённые аналоги</h2><ul>{% for analog in analogs %}<li><a href="{% url 'public_catalog_part' analog.public_id %}">{{ analog.article }} · {{ analog.russian_name|default:analog.english_name }}</a></li>{% endfor %}</ul>{% endif %}</article>{% endblock %}

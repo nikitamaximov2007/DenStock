@@ -10,6 +10,17 @@ urlpatterns = [
     path("search/", public_views.public_search, name="public_catalog_search"),
     path("parts/<uuid:public_id>/", public_views.public_part_detail, name="public_catalog_part"),
     path("cart/", public_views.public_cart, name="public_catalog_cart"),
+    path("request/", public_views.public_request_form, name="public_catalog_request_form"),
+    path(
+        "request/submit/",
+        public_views.public_request_submit,
+        name="public_catalog_request_submit",
+    ),
+    path(
+        "request/success/<uuid:public_id>/",
+        public_views.public_request_success,
+        name="public_catalog_request_success",
+    ),
     path(
         "cart/<uuid:public_id>/add/", public_views.public_cart_add, name="public_catalog_cart_add"
     ),

@@ -1,0 +1,20 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Отправить заявку · PRO-STOR{% endblock %}
+{% block meta %}<meta name="robots" content="noindex,nofollow">{% endblock %}
+{% block content %}<h1>Отправить заявку</h1><p>Это заявка, а не оплата, резерв или гарантия фиксированной цены.</p>{% if error %}<p role="alert">{{ error }}</p>{% endif %}<h2>Позиции</h2><ul>{% for fact, quantity, supply_inquiry in lines %}<li>{{ fact.article }} · {{ fact.russian_name|default:fact.english_name }} · {% if supply_inquiry %}Узнать о поставке{% else %}{{ quantity }} {{ fact.unit.short_name }}{% endif %}</li>{% endfor %}</ul><form method="post" action="{% url 'public_catalog_request_submit' %}">{% csrf_token %}<input type="hidden" name="submission_key" value="{{ submission_key }}"><label for="customer_name">Имя</label><input id="customer_name"
+       name="customer_name"
+       maxlength="255"
+       value="{{ values.customer_name }}"
+       required><label for="customer_phone">Телефон</label><input id="customer_phone"
+       name="customer_phone"
+       maxlength="50"
+       value="{{ values.customer_phone }}"
+       required><fieldset><legend>Предпочтительный мессенджер</legend><label><input type="radio"
+       name="preferred_messenger"
+       value="telegram"
+       {% if values.preferred_messenger == "telegram" %} checked{% endif %}
+       required> Telegram</label><label><input type="radio"
+       name="preferred_messenger"
+       value="max"
+       {% if values.preferred_messenger == "max" %} checked{% endif %}
+       required> MAX</label></fieldset><label for="comment">Комментарий</label><textarea id="comment" name="comment" maxlength="2000">{{ values.comment }}</textarea><label><input type="checkbox" name="consent" value="1" required> Согласен на обработку персональных данных для связи по заявке.</label><p class="muted">Версии политики и согласия фиксируются при отправке. Текст требует юридического утверждения до запуска.</p><button type="submit">Отправить заявку</button></form>{% endblock %}
