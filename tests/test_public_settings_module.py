@@ -25,6 +25,7 @@ print(json.dumps({
     "finders": s.STATICFILES_FINDERS,
     "context_processors": s.TEMPLATES[0]["OPTIONS"]["context_processors"],
     "ai": s.AI_SUPPORT_ENABLED,
+    "admin_loaded": "django.contrib.admin" in s.INSTALLED_APPS,
     "restore": s.DENSTOCK_ENABLE_WEB_RESTORE,
 }))
 """
@@ -72,6 +73,33 @@ def test_public_settings_fail_closed_by_default():
     assert loaded["media_url"] == "" and loaded["static_root"] is None
     assert loaded["finders"] == ["django.contrib.staticfiles.finders.FileSystemFinder"]
     assert loaded["ai"] is False and loaded["restore"] is False
+    assert loaded["admin_loaded"] is False
+
+
+def test_public_settings_pass_the_django_system_check():
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("DJANGO_", "PUBLIC_", "DATABASE_URL", "DENSTOCK_"))
+    }
+    env.update(
+        {
+            "DJANGO_SETTINGS_MODULE": "config.settings.public",
+            "DJANGO_SECRET_KEY": "public-settings-probe",
+            "DJANGO_ALLOWED_HOSTS": "catalog.example",
+            "DJANGO_PUBLIC_ALLOWED_HOSTS": "catalog.example",
+            "PUBLIC_DATABASE_URL": "postgres://denstock_public:x@db:5432/denstock",
+        }
+    )
+    result = subprocess.run(
+        [sys.executable, "manage.py", "check"],
+        cwd=settings.BASE_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "no issues" in result.stdout
 
 
 def test_public_settings_launch_switches_are_environment_only():

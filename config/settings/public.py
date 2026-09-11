@@ -30,6 +30,9 @@ DATABASES["default"]["CONN_MAX_AGE"] = env.int("PUBLIC_DB_CONN_MAX_AGE", default
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 
 globals().update(PUBLIC_SETTINGS)
+# The admin is never routed here. Not loading it also keeps admin autodiscovery
+# and its authentication-dependent system checks out of the public process.
+INSTALLED_APPS = [app for app in INSTALLED_APPS if app != "django.contrib.admin"]  # noqa: F405
 TEMPLATES[0]["OPTIONS"]["context_processors"] = list(PUBLIC_CONTEXT_PROCESSORS)  # noqa: F405
 
 # --- Search engines ------------------------------------------------------------
