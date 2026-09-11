@@ -11,13 +11,16 @@ from apps.accounts import roles
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.customer_requests.models import (
     CustomerRequest,
+    CustomerRequestPrivacyEvent,
     CustomerRequestStatusEvent,
 )
 from apps.customer_requests.services import (
     CustomerRequestError,
     RequestLineInput,
+    anonymize_request,
     change_request_status,
     create_customer_request,
+    withdraw_consent,
 )
 from apps.inventory.availability import available_totals
 from apps.inventory.models import StockBalance, StockMovement
@@ -130,6 +133,26 @@ def test_consent_versions_and_phone_search_snapshot_are_kept(part):
     assert request.personal_data_consent_version == POLICY
     assert request.consent_accepted_at is not None
     assert request.customer_phone_normalized == "79121234567"
+
+
+def test_withdrawal_and_explicit_anonymization_minimize_only_personal_data(part, admin):
+    request, _ = _create(part=part)
+    original_line = request.lines.get()
+
+    with pytest.raises(CustomerRequestError, match="Сначала"):
+        anonymize_request(request_id=request.pk, by=admin)
+    withdraw_consent(request_id=request.pk, by=admin)
+    anonymized = anonymize_request(request_id=request.pk, by=admin)
+
+    assert anonymized.customer_name == ""
+    assert anonymized.customer_phone == ""
+    assert anonymized.customer_phone_normalized == ""
+    assert anonymized.comment == ""
+    assert anonymized.data_anonymized_at is not None
+    assert anonymized.lines.get().pk == original_line.pk
+    assert list(
+        CustomerRequestPrivacyEvent.objects.order_by("pk").values_list("event_type", flat=True)
+    ) == ["consent_withdrawn", "anonymized"]
 
 
 def test_status_workflow_is_audited_and_retry_is_idempotent(part, admin):

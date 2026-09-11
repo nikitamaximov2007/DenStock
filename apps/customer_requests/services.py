@@ -14,7 +14,12 @@ from apps.core.phones import normalize_phone
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number, with_part_identity
 
-from .models import CustomerRequest, CustomerRequestLine, CustomerRequestStatusEvent
+from .models import (
+    CustomerRequest,
+    CustomerRequestLine,
+    CustomerRequestPrivacyEvent,
+    CustomerRequestStatusEvent,
+)
 from .policies import PUBLIC_REQUEST_CONSENT_PURPOSE
 
 ZERO = Decimal("0")
@@ -225,10 +230,46 @@ def change_request_status(
     return request, True
 
 
+@transaction.atomic
 def withdraw_consent(*, request_id: int, by=None) -> CustomerRequest:
-    """Record withdrawal; anonymization remains an explicit reviewed operation."""
-    request = CustomerRequest.objects.get(pk=request_id)
+    """Record withdrawal without silently deleting the operational record."""
+    request = CustomerRequest.objects.select_for_update().get(pk=request_id)
     if request.consent_withdrawn_at is None:
         request.consent_withdrawn_at = timezone.now()
         request.save(update_fields=["consent_withdrawn_at", "updated_at"])
+        CustomerRequestPrivacyEvent.objects.create(
+            request=request,
+            event_type=CustomerRequestPrivacyEvent.EventType.CONSENT_WITHDRAWN,
+            performed_by=by,
+        )
+    return request
+
+
+@transaction.atomic
+def anonymize_request(*, request_id: int, by=None) -> CustomerRequest:
+    """Explicit irreversible PII minimization after a reviewed withdrawal."""
+    request = CustomerRequest.objects.select_for_update().get(pk=request_id)
+    if request.consent_withdrawn_at is None:
+        raise CustomerRequestError("Сначала зафиксируйте отзыв согласия.")
+    if request.data_anonymized_at is not None:
+        return request
+    request.customer_name = ""
+    request.customer_phone = ""
+    request.comment = ""
+    request.data_anonymized_at = timezone.now()
+    request.save(
+        update_fields=[
+            "customer_name",
+            "customer_phone",
+            "customer_phone_normalized",
+            "comment",
+            "data_anonymized_at",
+            "updated_at",
+        ]
+    )
+    CustomerRequestPrivacyEvent.objects.create(
+        request=request,
+        event_type=CustomerRequestPrivacyEvent.EventType.ANONYMIZED,
+        performed_by=by,
+    )
     return request

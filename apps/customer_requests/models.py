@@ -232,3 +232,34 @@ class CustomerRequestMessengerLinkToken(models.Model):
 
     def __str__(self) -> str:
         return f"{self.get_channel_display()} ссылка для заявки {self.request_id}"
+
+
+class CustomerRequestPrivacyEvent(models.Model):
+    class EventType(models.TextChoices):
+        CONSENT_WITHDRAWN = "consent_withdrawn", "Согласие отозвано"
+        ANONYMIZED = "anonymized", "Данные обезличены"
+
+    request = models.ForeignKey(
+        CustomerRequest,
+        verbose_name="Заявка",
+        on_delete=models.CASCADE,
+        related_name="privacy_events",
+    )
+    event_type = models.CharField("Событие", max_length=24, choices=EventType.choices)
+    occurred_at = models.DateTimeField("Произошло", auto_now_add=True)
+    performed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто выполнил",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Событие приватности заявки"
+        verbose_name_plural = "События приватности заявок"
+        ordering = ["-occurred_at", "-pk"]
+
+    def __str__(self) -> str:
+        return self.get_event_type_display()
