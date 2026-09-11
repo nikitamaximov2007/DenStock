@@ -58,12 +58,18 @@ database with production-level care and drop it when the preview ends.
    Never run the internal `web` entrypoint for this: it migrates whatever
    `DATABASE_URL` its `.env` holds, which on the server is production.
 4. Confirm `showmigrations` (same command, `showmigrations | grep '\[ \]'`)
-   prints nothing.
+   prints nothing. From the current preview (`ebd7972`) to the launch
+   candidate this applies `catalog.0010`, `catalog.0011` and
+   `customer_requests.0001` to `0004`: new tables and database defaults only,
+   under a second on the rehearsal copy.
 5. Re-derive the grants for the preview role, connected to the preview
    database: `psql -v ON_ERROR_STOP=1 -v public_role=denstock_public_preview
    -d denstock_catalog_preview -f scripts/operations/create_public_catalog_role.sql`.
    This is required after every upgrade: new tables (for example the photo
-   tables) are unreadable until the script grants them.
+   and request tables) stay unusable until the script grants them. The
+   script expects the role to exist (it does on the preview) and replaces
+   any broader grant an earlier script gave, for example SELECT on whole
+   request tables.
 6. Preview `.env.public`: `PUBLIC_DATABASE_URL` with the preview role and
    database, `DJANGO_PUBLIC_ALLOWED_HOSTS=catalog.185-250-44-206.sslip.io`,
    `PUBLIC_CATALOG_INDEXING=false`, `DJANGO_SECURE_COOKIES=true`, a secret
@@ -75,7 +81,10 @@ database with production-level care and drop it when the preview ends.
 9. Acceptance, read-only from a workstation:
    `python scripts/qualification/public_catalog_acceptance.py
    --base-url https://catalog.185-250-44-206.sslip.io --article 420892388
-   --expect-indexing off` must end with `"failed": 0`.
+   --expect-indexing off` must end with `"failed": 0`. Adding
+   `--exercise-cart --submit-request` proves the request write through the
+   preview role; the request lands in the preview database only, where no
+   internal runtime shows it.
 
 ## C. Safety checks worth keeping
 

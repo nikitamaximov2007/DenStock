@@ -63,6 +63,14 @@ the pages need:
 * the public process serves only `static/public_catalog/` through the
   staticfiles finder; it still has no media mount.
 
+The launch candidate integrates the request stack and gives the role its one
+write: INSERT of a new customer request and its lines, with column-level
+SELECT only on what the insert reads back, and the two deployment-state
+columns the SQL write guard needs. Sessions stay read-only by default; the
+submission alone runs `SET TRANSACTION READ WRITE`
+(`apps/catalog/public_requests.py`). The Stage 3 statement "SELECT-only"
+above now reads "SELECT-only except that one insert".
+
 See `docs/operations/public-catalog-release-runbook.md` for the production
 design.
 

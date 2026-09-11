@@ -7,6 +7,11 @@ strictly read-only: GET requests only. ``--exercise-cart`` adds one cart
 add/remove round trip, which changes nothing but the checker's own cookie,
 and ``--probe-post`` also POSTs to the internal paths expecting 404.
 
+``--submit-request`` (with ``--exercise-cart``) instead sends the cart as a
+real customer request: it WRITES one request row that operators will see in
+their queue. Use it on an isolated stack or the preview; on production only
+with the operators' agreement, and cancel the request afterwards.
+
     python scripts/qualification/public_catalog_acceptance.py \\
         --base-url https://catalog.example --article 420892388 --expect-indexing off
 
@@ -49,6 +54,8 @@ INTERNAL_PATHS = (
     "/backups/",
     "/api/",
     "/ai-support/",
+    "/customer-requests/",
+    "/customer-requests/telegram/webhook/",
     "/media/part-types/1/x.jpg",
     "/private_media/x.png",
     "/static/css/app.css",
@@ -103,6 +110,54 @@ class Checker:
 
 def _text(body: bytes) -> str:
     return body.decode("utf-8", errors="replace")
+
+
+def _post_form(c: Checker, path: str, fields: dict, referer: str):
+    payload = urllib.parse.urlencode(fields).encode()
+    return c.fetch(
+        path,
+        method="POST",
+        data=payload,
+        headers={"Referer": c.base + referer, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+
+def _submit_request(c: Checker) -> None:
+    """Send the checker's cart as one request (writes one request row)."""
+    status, _, body = c.fetch("/request/")
+    form = _text(body)
+    csrf = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', form)
+    key = re.search(r'name="submission_key" value="([^"]+)"', form)
+    if not c.check("request form", status == 200 and bool(csrf and key), str(status)):
+        return
+    fields = {
+        "csrfmiddlewaretoken": csrf.group(1),
+        "submission_key": key.group(1),
+        "customer_name": "Проверка приёмки PRO-STOR",
+        "customer_phone": "+7 900 000-00-00",
+        "preferred_messenger": "telegram",
+        "comment": "Автоматическая проверка приёмки. Не обрабатывать, отменить.",
+        "consent": "1",
+        "price": "1",
+    }
+    status, head, _ = _post_form(c, "/request/submit/", fields, "/request/")
+    location = head.get("Location", "")
+    c.check(
+        "request accepted",
+        status == 302 and location.startswith("/request/success/"),
+        f"{status} {location}",
+    )
+    status, retry_head, _ = _post_form(c, "/request/submit/", fields, "/request/")
+    c.check("retry returns the same request", retry_head.get("Location") == location)
+    status, _, body = c.fetch(location)
+    reference = re.search(r"Номер заявки <strong>([0-9A-F]{8})</strong>", _text(body))
+    c.check(
+        "success page shows the reference",
+        status == 200 and bool(reference),
+        reference.group(1) if reference else str(status),
+    )
+    status, _, body = c.fetch("/cart/")
+    c.check("cart emptied after the request", "Корзина пуста" in _text(body))
 
 
 def run(args) -> Checker:
@@ -190,6 +245,12 @@ def run(args) -> Checker:
 
     status, _, _ = c.fetch("/cart/")
     c.check("cart page 200", status == 200)
+    status, head, _ = c.fetch("/request/")
+    c.check("empty cart has no request form", status == 302 and head.get("Location") == "/cart/")
+    status, _, _ = c.fetch(f"/request/success/{uuid.uuid4()}/")
+    c.check("foreign request success page 404", status == 404)
+    status, _, _ = c.fetch("/request/submit/")
+    c.check("request submit is POST only", status == 405, str(status))
 
     detail_path = None
     if args.article:
@@ -260,6 +321,9 @@ def run(args) -> Checker:
                 status, _, body = c.fetch("/cart/")
                 cart = _text(body)
                 c.check("cart shows the line", "cart-line" in cart)
+                if args.submit_request:
+                    _submit_request(c)
+                    return c
                 remove = re.search(r'action="(/cart/[0-9a-f-]{36}/remove/)"', cart)
                 token = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', cart)
                 if remove and token:
@@ -287,11 +351,18 @@ def main(argv=None) -> int:
     parser.add_argument("--expect-indexing", choices=("on", "off"), default="off")
     parser.add_argument("--exercise-cart", action="store_true")
     parser.add_argument(
+        "--submit-request",
+        action="store_true",
+        help="With --exercise-cart: send the cart as a real request (writes one row).",
+    )
+    parser.add_argument(
         "--probe-post", action="store_true", help="Also POST to internal paths (expects 404)."
     )
     parser.add_argument("--insecure", action="store_true", help="Skip TLS verification.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    if args.submit_request and not (args.exercise_cart and args.article):
+        parser.error("--submit-request needs --exercise-cart and --article")
     checker = run(args)
     failed = [result for result in checker.results if not result["ok"]]
     timings = sorted(checker.timings)
