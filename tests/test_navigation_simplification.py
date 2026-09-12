@@ -386,11 +386,16 @@ def test_navigation_context_has_constant_role_query_count(
     make_nav_user,
     django_assert_num_queries,
 ):
+    """Меню это две постоянные строки: права роли и счётчик новых заявок.
+
+    Оба запроса не зависят ни от числа ролей, ни от числа заявок, а боковое и
+    локальное меню собираются из одного и того же посчитанного значения.
+    """
     user = make_nav_user("query-admin", role=roles.ADMIN)
     request = RequestFactory().get(reverse("dashboard"))
     request.user = user
     request.resolver_match = None
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(2):
         context = navigation(request)
     assert len(context["nav_items"]) == 2
     assert [group["key"] for group in context["nav_groups"]] == [

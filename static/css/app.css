@@ -326,6 +326,12 @@ body.app {
 .badge { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600;
   color: var(--ok-fg); background: var(--ok-bg); border: 1px solid var(--ok-line);
   border-radius: 999px; }
+/* Счётчик в пункте меню прижат к правому краю, как «скоро» рядом с заглушкой. */
+.nav__link .badge { margin-left: auto; flex: 0 0 auto; }
+/* Текст только для скринридера: цифра в значке сама по себе ничего не говорит. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+  white-space: nowrap; border: 0; }
 
 /* ===========================================================================
    v1.1.1 — Дизайн-фундамент (этап 1 из плана аудита docs/audits/01-...).

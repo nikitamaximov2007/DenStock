@@ -128,7 +128,9 @@
                         <use href="#i-{{ item.icon }}"></use>
                       </svg>
                       <span class="nav__label">{{ item.label }}</span>
-                      {% if item.badge %}<span class="badge">{{ item.badge }}</span>{% endif %}
+                      {% if item.badge %}
+                        <span class="badge">{{ item.badge }}<span class="visually-hidden"> новых</span></span>
+                      {% endif %}
                     </a>
                   </li>
                 {% endfor %}

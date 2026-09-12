@@ -592,13 +592,16 @@ def test_customer_card_query_count_does_not_grow_with_documents(
 
     url = reverse("customer_detail", args=[customer.pk])
     client.get(url)  # прогрев кэшей сессии/прав
-    with django_assert_num_queries(6):
+    # Семь строк: шесть на саму карточку плюс постоянный счётчик новых заявок
+    # клиентов в меню. Важно не число, а то, что оно одинаково при трёх и при
+    # восьми документах.
+    with django_assert_num_queries(7):
         client.get(url)
 
     for _ in range(5):
         create_sale(customer=customer, by=admin)
         create_repair_order(customer=customer, by=admin)
-    with django_assert_num_queries(6):
+    with django_assert_num_queries(7):
         client.get(url)
 
 

@@ -2,6 +2,8 @@
 
 from django.urls import reverse
 
+from apps.customer_requests.models import CustomerRequest
+
 from . import roles
 
 
@@ -28,6 +30,7 @@ class _NavAccess:
     }
 
     def __init__(self, user):
+        self._new_customer_requests = None
         self.role_names = set() if user.is_superuser else user.role_names
         self.capabilities = (
             set(roles.ALL_CAPABILITIES)
@@ -40,6 +43,22 @@ class _NavAccess:
         self.is_viewer = roles.VIEWER in self.role_names
         for attr, capability in self._ATTRS.items():
             setattr(self, attr, capability in self.capabilities)
+
+    @property
+    def new_customer_requests(self) -> int:
+        """Сколько заявок клиентов ещё никто не взял в работу.
+
+        Считается один раз на отрисовку (меню собирается дважды: боковое и
+        локальное) и только тому, кто заявки видит. Индекс по статусу у заявок
+        есть, поэтому это один дешёвый COUNT, а не рост по числу заявок.
+        """
+        if self._new_customer_requests is None:
+            self._new_customer_requests = (
+                CustomerRequest.objects.filter(status=CustomerRequest.Status.NEW).count()
+                if self.can_manage_sales
+                else 0
+            )
+        return self._new_customer_requests
 
 
 def _item(key, label, url, icon, *, active=False, badge=None):
@@ -190,6 +209,12 @@ def _section_key(request):
     if path.startswith(("/parts/", "/brp/", "/polaris/")):
         return "catalog"
     if path.startswith("/ordered-parts/"):
+        return "warehouse"
+    # Заявки клиентов живут в той же группе, что «Клиенты» и «Запчасти на
+    # заказ»: оператор приходит сюда из того же разговора с клиентом. Без этой
+    # строки раздел открывался бы с погашенной группой и без подсветки пункта,
+    # то есть человек не видел бы, где он находится.
+    if path.startswith("/customer-requests/"):
         return "warehouse"
     if path.startswith("/sales/"):
         return "sales"
@@ -386,6 +411,10 @@ def _warehouse_tabs(user, path):
                 sidebar_key="customer-requests",
                 icon="message",
                 active=path.startswith("/customer-requests/"),
+                # Счётчик только у действительно новых заявок: взятая в работу,
+                # выполненная и отменённая больше внимания не требуют, и
+                # значок, который не гаснет, перестаёт что-либо значить.
+                badge=user.new_customer_requests or None,
             )
         )
     if user.can_view_purchase_cost and (

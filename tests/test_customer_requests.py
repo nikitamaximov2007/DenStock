@@ -1,4 +1,5 @@
 """Stage 9 contract tests for customer requests and their operator workflow."""
+import re
 from decimal import Decimal
 
 import pytest
@@ -22,6 +23,7 @@ from apps.customer_requests.services import (
     create_customer_request,
     withdraw_consent,
 )
+from apps.customers.models import CustomerPeriodPaymentAcknowledgement
 from apps.inventory.availability import available_totals
 from apps.inventory.models import StockBalance, StockMovement
 from apps.repairs.models import RepairOrder
@@ -75,6 +77,10 @@ def test_supply_request_is_a_price_snapshot_without_stock_side_effects(part):
         "sales": Sale.objects.count(),
         "sale_lines": SaleLine.objects.count(),
         "repairs": RepairOrder.objects.count(),
+        # Платёжного документа у продажи в DenisStock нет вовсе; подтверждение
+        # периода оплаты клиента - единственное, что похоже на платёж, и его
+        # заявка тоже не создаёт.
+        "payments": CustomerPeriodPaymentAcknowledgement.objects.count(),
         "available": available_totals([part.pk]),
     }
 
@@ -95,6 +101,7 @@ def test_supply_request_is_a_price_snapshot_without_stock_side_effects(part):
         "sales": Sale.objects.count(),
         "sale_lines": SaleLine.objects.count(),
         "repairs": RepairOrder.objects.count(),
+        "payments": CustomerPeriodPaymentAcknowledgement.objects.count(),
         "available": available_totals([part.pk]),
     } == before
 
@@ -268,3 +275,128 @@ def test_a_refused_status_change_returns_to_the_request_with_the_reason(client, 
     assert customer_request.status == CustomerRequest.Status.COMPLETED
     missing = client.post(reverse("customer_request_status", args=[999999]), {"status": "canceled"})
     assert missing.status_code == 404
+
+
+# --- Раздел «Заявки клиентов» в DenisStock --------------------------------------------------
+#
+# Заявка бесполезна, пока менеджер её не видит. Здесь проверяется именно это:
+# пункт в меню, счётчик новых, подсветка раздела и права.
+
+
+def _nav_item(response, label="Заявки клиентов"):
+    for group in response.context["nav_groups"]:
+        for item in group["items"]:
+            if item["label"] == label:
+                return item
+    return None
+
+
+def test_the_sidebar_offers_customer_requests_with_a_count_of_new_ones(client, part, admin):
+    _create(part=part, key="a" * 32)
+    _create(part=part, key="b" * 32)
+    client.login(username="boss", password=PASSWORD)
+
+    item = _nav_item(client.get(reverse("dashboard")))
+
+    assert item is not None, "пункт «Заявки клиентов» обязан быть в меню"
+    assert item["url"] == reverse("customer_request_list")
+    assert item["badge"] == 2
+
+
+def test_the_count_falls_when_a_request_is_taken_and_disappears_at_zero(client, part, admin):
+    first, _ = _create(part=part, key="a" * 32)
+    _create(part=part, key="b" * 32)
+    client.login(username="boss", password=PASSWORD)
+    change_request_status(request_id=first.pk, target_status="in_progress", by=admin)
+
+    assert _nav_item(client.get(reverse("dashboard")))["badge"] == 1
+
+    second = CustomerRequest.objects.exclude(pk=first.pk).get()
+    change_request_status(request_id=second.pk, target_status="canceled", by=admin)
+
+    # Ноль это не «0» в значке, а отсутствие значка: цифра, которая не гаснет,
+    # перестаёт что-либо значить.
+    assert _nav_item(client.get(reverse("dashboard")))["badge"] is None
+
+
+def test_the_requests_page_keeps_its_section_open_and_the_item_highlighted(client, part, admin):
+    _create(part=part)
+    client.login(username="boss", password=PASSWORD)
+
+    response = client.get(reverse("customer_request_list"))
+
+    assert response.context["active_section"] == "warehouse"
+    assert _nav_item(response)["active"] is True
+    labels = [tab["label"] for tab in response.context["section_tabs"]]
+    assert "Заявки клиентов" in labels
+    html = response.content.decode()
+    links = re.findall(r"<a\b[^>]*?/customer-requests/[^>]*?>", html)
+    assert links, "ссылка на заявки обязана быть отрисована"
+    assert any("is-active" in link and 'aria-current="page"' in link for link in links)
+
+
+def test_a_storekeeper_sees_neither_the_item_nor_the_count(client, part, admin, django_user_model):
+    _create(part=part)
+    keeper = django_user_model.objects.create_user(username="keeper", password=PASSWORD)
+    keeper.groups.add(Group.objects.get(name=roles.STOREKEEPER))
+    client.login(username="keeper", password=PASSWORD)
+
+    response = client.get(reverse("dashboard"))
+
+    assert _nav_item(response) is None
+    assert client.get(reverse("customer_request_list")).status_code == 403
+
+
+def test_the_list_marks_only_a_request_nobody_has_taken(client, part, admin):
+    taken, _ = _create(part=part, key="a" * 32)
+    _create(part=part, key="b" * 32)
+    change_request_status(request_id=taken.pk, target_status="in_progress", by=admin)
+    client.login(username="boss", password=PASSWORD)
+
+    html = client.get(reverse("customer_request_list")).content.decode()
+
+    assert html.count('<span class="badge">Новая</span>') == 1
+    assert "В работе" in html
+
+
+def test_the_card_shows_everything_the_manager_needs(client, part, admin):
+    customer_request, _ = _create(part=part)
+    client.login(username="boss", password=PASSWORD)
+
+    html = client.get(
+        reverse("customer_request_detail", args=[customer_request.pk])
+    ).content.decode()
+
+    for expected in (
+        customer_request.reference,
+        "Иван Петров",
+        "+7 912 123-45-67",
+        "Telegram",
+        "РЕМЕНЬ ПРИВОДНОЙ",
+        "448",
+        "10 000 ₽",
+        "Новая",
+        "Запрос о поставке",
+    ):
+        assert expected in html, expected
+
+
+def test_a_max_request_says_plainly_that_the_channel_is_not_wired(client, part, admin):
+    """Никаких обещаний, которых код не выполняет: MAX отправлять нечем."""
+    customer_request, _ = create_customer_request(
+        customer_name="Иван Петров",
+        customer_phone="+7 912 123-45-67",
+        preferred_messenger=CustomerRequest.Messenger.MAX,
+        lines=[RequestLineInput(part_id=part.pk, quantity="1", supply_inquiry=True)],
+        privacy_policy_version=POLICY,
+        personal_data_consent_version=POLICY,
+        submission_key="m" * 32,
+    )
+    client.login(username="boss", password=PASSWORD)
+
+    html = client.get(
+        reverse("customer_request_detail", args=[customer_request.pk])
+    ).content.decode()
+
+    assert "Связь с MAX из DenisStock пока не настроена" in html
+    assert "Создать ссылку Telegram" not in html

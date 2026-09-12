@@ -239,7 +239,8 @@ def test_queue_page_query_count_is_bounded(client, make_user, data):
     with CaptureQueriesContext(connection) as captured:
         response = client.get(URL)
     assert response.status_code == 200
-    assert len(captured) == 9
+    # Десятая строка это постоянный счётчик новых заявок клиентов в меню.
+    assert len(captured) == 10
 
 
 def test_queue_isolated_between_users(client, django_user_model, make_user, data):
