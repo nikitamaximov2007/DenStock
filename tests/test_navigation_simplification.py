@@ -79,7 +79,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Перемещение",
             "Инвентаризация",
             "Быстрые действия",
-                "Клиенты",
+            "Клиенты",
             "Ремонты",
             "Запчасти на заказ",
             "Заявки клиентов",
