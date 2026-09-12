@@ -1,0 +1,28 @@
+{
+  "in_stock_public": 825,
+  "with_russian_name": 0,
+  "confirmed_russian": 0,
+  "suggestions": 825,
+  "confidence": {
+    "NEEDS HUMAN REVIEW": 355,
+    "HIGH": 362,
+    "MEDIUM": 108
+  },
+  "special_categories": {
+    "без производителя": 9,
+    "нет каталога поставщика": 10,
+    "название уже по-русски": 7,
+    "без артикула": 1,
+    "rebuild": 4
+  },
+  "by_catalog": {
+    "нет": 10,
+    "BRP": 748,
+    "aftermarket": 63,
+    "POLARIS": 4
+  },
+  "price_status": {
+    "Уточнить цену": 37,
+    "показывается": 788
+  }
+}

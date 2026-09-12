@@ -1,0 +1,45 @@
+{
+  "usd_rate": "105.0000",
+  "brp_markup": "40.00",
+  "polaris_markup": "40.00",
+  "totals": {
+    "parts": 125987,
+    "public": 125985,
+    "in_stock_public": 825
+  },
+  "whole": {
+    "FORMULA_CERTIFIED": 125863,
+    "VALID_MANUAL_EXCEPTION": 1,
+    "TRUE_MISMATCH": 0,
+    "UNVERIFIED": 25,
+    "SOURCE_MISSING": 70,
+    "NOT_APPLICABLE": 28
+  },
+  "public": {
+    "FORMULA_CERTIFIED": 125863,
+    "VALID_MANUAL_EXCEPTION": 1,
+    "TRUE_MISMATCH": 0,
+    "UNVERIFIED": 25,
+    "SOURCE_MISSING": 70,
+    "NOT_APPLICABLE": 26
+  },
+  "in_stock": {
+    "FORMULA_CERTIFIED": 787,
+    "VALID_MANUAL_EXCEPTION": 1,
+    "TRUE_MISMATCH": 0,
+    "UNVERIFIED": 24,
+    "SOURCE_MISSING": 3,
+    "NOT_APPLICABLE": 10
+  },
+  "in_stock_showable": 788,
+  "in_stock_clarify": 37,
+  "price_changes": 0,
+  "certifiable_without_price_change": 125863,
+  "true_mismatches": [],
+  "russian": {
+    "customs_rows": 18,
+    "with_name": 0,
+    "confirmed": 0,
+    "in_stock_confirmed": 0
+  }
+}
