@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from apps.catalog.models import PartType
 from apps.catalog.public_contracts import resolve_current_customer_price
-from apps.core.phones import normalize_phone
+from apps.core.phones import canonical_phone_text, normalize_phone
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number, with_part_identity
 
@@ -62,11 +62,17 @@ def _required_text(value, field, maximum, *, form_field=None):
 
 
 def _phone(value: str) -> str:
+    """Телефон заявки: проверка и единая запись номера.
+
+    Решает сервер, а не браузер: маска в форме делает то же самое, но заявка,
+    отправленная с выключенным JS или из чужого клиента, получает ровно такую
+    же каноническую запись.
+    """
     value = _required_text(value, "телефон", 50, form_field="customer_phone")
     normalized = normalize_phone(value)
     if len(normalized) < 5 or any(char.isalpha() for char in value):
         raise CustomerRequestError("Укажите телефон в обычном формате.", field="customer_phone")
-    return value
+    return canonical_phone_text(value)
 
 
 def _quantity(value) -> Decimal:

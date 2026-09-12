@@ -35,10 +35,12 @@
                maxlength="50"
                autocomplete="tel"
                inputmode="tel"
-               placeholder="+7 900 000-00-00"
+               placeholder="+7 900 123-45-67"
+               data-phone-input="ru"
                value="{{ values.customer_phone }}"
-               {% if error_field == "customer_phone" %}aria-invalid="true" aria-describedby="request-error"{% endif %}
+               {% if error_field == "customer_phone" %}aria-invalid="true" aria-describedby="request-error request-phone-hint"{% else %}aria-describedby="request-phone-hint"{% endif %}
                required>
+        <p id="request-phone-hint" class="field__hint">Российский мобильный: наберите номер, «+7» подставится само.</p>
       </div>
       <fieldset class="field choice-group"
                 {% if error_field == "preferred_messenger" %}aria-describedby="request-error"{% endif %}>
@@ -124,4 +126,5 @@
       </p>
     </aside>
   </div>
+  <script defer src="{% public_asset 'js/phone_input.js' %}"></script>
 {% endblock %}

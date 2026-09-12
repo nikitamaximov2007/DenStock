@@ -436,7 +436,11 @@ def test_a_refused_field_is_marked_and_points_at_the_message(
     assert '<p id="request-error" class="notice notice--error" role="alert">' in body
     tag = body[body.index(field_marker) :]
     tag = tag[: tag.index(">")]
-    assert 'aria-invalid="true"' in tag and 'aria-describedby="request-error"' in tag
+    assert 'aria-invalid="true"' in tag
+    described_by = tag.split('aria-describedby="', 1)[1].split('"', 1)[0]
+    # Поле может описываться и своей подсказкой (телефон), но на сообщение об
+    # ошибке оно обязано указывать всегда.
+    assert "request-error" in described_by.split()
     assert body.count('aria-invalid="true"') == 1, "only the field at fault is marked"
     assert CustomerRequest.objects.count() == 0
 

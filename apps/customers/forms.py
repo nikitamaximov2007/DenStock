@@ -1,11 +1,15 @@
 from django import forms
 
+from apps.core.forms import PHONE_HELP_TEXT, PhoneFormMixin, PhoneInput
+
 from .models import Customer
 from .services import customers_by_recent_activity
 
 
-class CustomerForm(forms.ModelForm):
+class CustomerForm(PhoneFormMixin, forms.ModelForm):
     """Карточка клиента. Телефон необязателен и не уникален."""
+
+    phone_fields = ("phone",)
 
     class Meta:
         model = Customer
@@ -14,9 +18,10 @@ class CustomerForm(forms.ModelForm):
         # существующем поле comment: заводить рядом второе поле того же смысла
         # незачем. Видно оно только в карточке и её правке.
         labels = {"comment": "Описание клиента"}
+        help_texts = {"phone": PHONE_HELP_TEXT}
         widgets = {
             "name": forms.TextInput(attrs={"placeholder": "Иванов Иван", "autofocus": True}),
-            "phone": forms.TextInput(attrs={"placeholder": "+7 912 123-45-67"}),
+            "phone": PhoneInput(),
             "comment": forms.Textarea(
                 attrs={"rows": 3, "placeholder": "Чем занимается, какая техника, особенности"}
             ),
@@ -29,7 +34,7 @@ class CustomerForm(forms.ModelForm):
         return name
 
 
-class CustomerSelectionMixin(forms.ModelForm):
+class CustomerSelectionMixin(PhoneFormMixin, forms.ModelForm):
     """Выбор клиента из справочника с мягким переходом.
 
     Новый предпочтительный поток: выбрать карточку, тогда имя и телефон
@@ -37,8 +42,15 @@ class CustomerSelectionMixin(forms.ModelForm):
     сломалась бы совместимость с существующими сценариями и импортом.
     """
 
+    phone_fields = ("customer_phone",)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if "customer_phone" in self.fields:
+            self.fields["customer_phone"].widget = PhoneInput(
+                attrs={"maxlength": self.fields["customer_phone"].max_length or 50}
+            )
+            self.fields["customer_phone"].help_text = PHONE_HELP_TEXT
         if "customer" in self.fields:
             self.fields["customer"].required = False
             self.fields["customer"].label = "Клиент из справочника"
@@ -53,7 +65,10 @@ class CustomerSelectionMixin(forms.ModelForm):
         cleaned = super().clean()
         customer = cleaned.get("customer")
         if customer is not None:
-            # Карточка выбрана: снимок документа берётся из неё.
+            # Карточка выбрана: снимок документа берётся из неё как есть, уже
+            # после канонизации ручного ввода в PhoneFormMixin. Переписывать
+            # телефон карточки по пути в документ нельзя: снимок обязан
+            # совпадать с карточкой, включая старую запись номера.
             cleaned["customer_name"] = customer.name
             cleaned["customer_phone"] = customer.phone
         elif not (cleaned.get("customer_name") or "").strip():

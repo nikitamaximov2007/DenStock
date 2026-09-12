@@ -46,11 +46,17 @@ PUBLIC_SETTINGS = {
     "SECURE_REFERRER_POLICY": "same-origin",
 }
 
+# Скрипт на публичных страницах ровно один: маска телефона в форме заявки
+# (`static/js/phone_input.js`). Поэтому `script-src 'self'` без `unsafe-inline`
+# и `unsafe-eval`: встроенный код, внешние домены, аналитика и реклама
+# по-прежнему запрещены, а `default-src 'none'` закрывает всё остальное
+# (fetch, websocket, шрифты, медиа, фреймы).
 CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'none'",
         "img-src 'self'",
         "style-src 'self'",
+        "script-src 'self'",
         "form-action 'self'",
         "frame-ancestors 'none'",
         "base-uri 'none'",

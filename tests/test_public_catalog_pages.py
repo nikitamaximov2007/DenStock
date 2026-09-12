@@ -288,9 +288,13 @@ def test_html_is_never_cached_and_carries_the_security_headers(public_client, pu
         response = public_client.get(path)
         cache = response["Cache-Control"]
         assert "no-store" in cache and "private" in cache, path
-        assert "script-src" not in response["Content-Security-Policy"]
-        assert "default-src 'none'" in response["Content-Security-Policy"]
-        assert "frame-ancestors 'none'" in response["Content-Security-Policy"]
+        policy = response["Content-Security-Policy"]
+        # Скрипт на публичных страницах ровно один - маска телефона в форме
+        # заявки, и только свой: ни встроенного кода, ни внешних источников.
+        assert "script-src 'self'" in policy
+        assert "unsafe-inline" not in policy and "unsafe-eval" not in policy
+        assert "default-src 'none'" in policy
+        assert "frame-ancestors 'none'" in policy
         assert response["X-Frame-Options"] == "DENY"
         assert response["X-Content-Type-Options"] == "nosniff"
         assert response["Referrer-Policy"] == "same-origin"

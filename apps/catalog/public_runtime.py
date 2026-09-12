@@ -48,8 +48,9 @@ class PublicAccessLogMiddleware:
 class PublicResponsePolicyMiddleware:
     """Headers every public response carries, decided in one place.
 
-    * Content-Security-Policy: the pages load only same-origin styles and
-      images and run no script at all.
+    * Content-Security-Policy: the pages load only same-origin styles,
+      images and scripts. The only script is the phone mask on the request
+      form; inline script, external hosts and eval stay forbidden.
     * X-Robots-Tag: ``noindex, nofollow`` unless indexing is switched on.
     * Cache-Control: HTML shows live price, stock and the visitor's own cart,
       so it is never stored by a shared cache. Views that are safe to cache
