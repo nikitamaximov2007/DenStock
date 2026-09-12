@@ -1,10 +1,8 @@
-"""Stage 9 — ручная текущая цена живёт до следующего прайса, а не вечно.
+"""Manual current prices require explicit commercial confirmation.
 
-Продуктовое правило: цена, вписанная руками, отвечает на вопрос «сколько это
-стоит сегодня», а не «сколько это стоит всегда». Следующий удачный пересчёт по
-свежему прайсу поставщика её заменяет. Постоянного ручного замка нет: иначе
-карточка с однажды вписанной ценой навсегда выпадала бы из переоценки и тихо
-продавалась по курсу позапрошлого года.
+Ручная цена не является согласием на автоматическую подмену прайсом поставщика.
+До подтверждения её коммерческого происхождения она остаётся UNVERIFIED и не
+показывается публично числом.
 
 Историю это не касается вовсе. Проведённая продажа, проведённый ремонт и
 строка таможенного заказа держат СВОЮ замороженную цену, и пересчёт текущих
@@ -100,7 +98,7 @@ def _stock(env, part, qty="4"):
 # --- Ручная цена не переживает следующий прайс -------------------------------------------
 
 
-def test_a_manual_price_is_replaced_by_the_next_price_list(env):
+def test_a_manual_price_is_not_replaced_by_the_next_price_list(env):
     row, part = _brp("MANUAL-001", "10", manual=MANUAL_PRICE, admin=env["admin"])
     assert part.recommended_price == MANUAL_PRICE
 
@@ -109,12 +107,11 @@ def test_a_manual_price_is_replaced_by_the_next_price_list(env):
     _refresh()
 
     part.refresh_from_db()
-    assert part.recommended_price == _expected("12")
-    assert part.recommended_price != MANUAL_PRICE
+    assert part.recommended_price == MANUAL_PRICE
+    assert part.price_provenance == part.PriceProvenance.UNVERIFIED
 
 
-def test_there_is_no_permanent_manual_lock(env):
-    """Второй прайс тоже применяется: замок не появляется и после перекрытия."""
+def test_an_unconfirmed_manual_price_stays_unverified_after_later_price_lists(env):
     row, part = _brp("MANUAL-002", "10", manual=MANUAL_PRICE, admin=env["admin"])
     row.wholesale_price_usd = Decimal("12")
     row.save(update_fields=["wholesale_price_usd"])
@@ -124,10 +121,11 @@ def test_there_is_no_permanent_manual_lock(env):
     _refresh()
 
     part.refresh_from_db()
-    assert part.recommended_price == _expected("20")
+    assert part.recommended_price == MANUAL_PRICE
+    assert part.price_provenance == part.PriceProvenance.UNVERIFIED
 
 
-def test_the_link_stops_claiming_the_price_is_manual(env):
+def test_the_link_keeps_claiming_the_price_is_manual_until_confirmation(env):
     row, part = _brp("MANUAL-003", "10", manual=MANUAL_PRICE, admin=env["admin"])
     assert BrpPartLink.objects.get(part=part).price_source == BrpPartLink.PriceSource.MANUAL
 
@@ -135,7 +133,7 @@ def test_the_link_stops_claiming_the_price_is_manual(env):
     row.save(update_fields=["wholesale_price_usd"])
     _refresh()
 
-    assert BrpPartLink.objects.get(part=part).price_source == BrpPartLink.PriceSource.CALCULATED
+    assert BrpPartLink.objects.get(part=part).price_source == BrpPartLink.PriceSource.MANUAL
 
 
 def test_the_manual_value_stays_recorded_for_audit(env):
@@ -158,12 +156,12 @@ def test_a_calculated_price_still_follows_the_price_list(env):
     assert part.recommended_price == _expected("15")
 
 
-def test_the_command_reports_how_many_manual_prices_the_price_list_replaced(env, capsys):
+def test_the_command_does_not_report_unconfirmed_manual_prices_as_replaced(env, capsys):
     row, _part = _brp("MANUAL-005", "10", manual=MANUAL_PRICE, admin=env["admin"])
     row.wholesale_price_usd = Decimal("12")
     row.save(update_fields=["wholesale_price_usd"])
     call_command("recalculate_linked_part_prices", "--apply")
-    assert "Ручных цен перекрыто прайсом: 1" in capsys.readouterr().out
+    assert "Ручных цен перекрыто прайсом: 0" in capsys.readouterr().out
 
 
 # --- Неудачный или неполный прайс ничего не переписывает ---------------------------------

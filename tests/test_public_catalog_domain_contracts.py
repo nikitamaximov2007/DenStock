@@ -70,13 +70,20 @@ def domain_env(db, django_user_model):
 
 
 def _part(env, *, name="English part", tracking=PartType.TrackingMode.BULK, price="100"):
+    canonical_price = Decimal(price) if price is not None else None
     return PartType.objects.create(
         name=name,
         category=env["category"],
         manufacturer=env["manufacturer"],
         unit=env["unit"],
         tracking_mode=tracking,
-        recommended_price=Decimal(price) if price is not None else None,
+        recommended_price=canonical_price,
+        certified_price_rub=canonical_price if canonical_price and canonical_price > 0 else None,
+        price_provenance=(
+            PartType.PriceProvenance.FORMULA_CERTIFIED
+            if canonical_price and canonical_price > 0
+            else PartType.PriceProvenance.UNVERIFIED
+        ),
     )
 
 
@@ -328,6 +335,8 @@ def test_public_part_facts_use_canonical_identity_confirmed_ru_name_and_unit(dom
         unit=meter,
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=Decimal("400.25"),
+        certified_price_rub=Decimal("400.25"),
+        price_provenance=PartType.PriceProvenance.FORMULA_CERTIFIED,
     )
     PartNumber.objects.create(
         part=part,

@@ -45,6 +45,8 @@ def part(db):
         manufacturer=manufacturer,
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=Decimal("10000.00"),
+        certified_price_rub=Decimal("10000.00"),
+        price_provenance=PartType.PriceProvenance.FORMULA_CERTIFIED,
     )
     PartNumber.objects.create(part=result, value="448", is_primary=True)
     return result
@@ -144,6 +146,8 @@ def test_request_submission_query_count_is_bounded_for_one_twenty_and_fifty_line
                 manufacturer=part.manufacturer,
                 tracking_mode=PartType.TrackingMode.BULK,
                 recommended_price=Decimal("10000.00"),
+                certified_price_rub=Decimal("10000.00"),
+                price_provenance=PartType.PriceProvenance.FORMULA_CERTIFIED,
             )
         )
     query_counts = []

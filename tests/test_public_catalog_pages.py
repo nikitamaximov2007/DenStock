@@ -370,5 +370,6 @@ def test_price_is_shown_as_canonical_decimal_without_rounding(public_client, pub
     part = public_catalog.part("ODD PRICE", article="OP-1", price="1234.50")
     assert "1\u00a0234,50\u00a0₽" in _detail(public_client, part).content.decode()
     part.recommended_price = Decimal("1235")
-    part.save(update_fields=["recommended_price"])
+    part.certified_price_rub = Decimal("1235")
+    part.save(update_fields=["recommended_price", "certified_price_rub"])
     assert "1\u00a0235\u00a0₽" in _detail(public_client, part).content.decode()

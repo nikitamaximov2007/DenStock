@@ -12,7 +12,12 @@ def part(db):
     category = Category.objects.create(name="Public browse category")
     unit = Unit.objects.create(name="Штука для публичного поиска", short_name="шт")
     part = PartType.objects.create(
-        name="Public bearing", category=category, unit=unit, recommended_price=Decimal("1250")
+        name="Public bearing",
+        category=category,
+        unit=unit,
+        recommended_price=Decimal("1250"),
+        certified_price_rub=Decimal("1250"),
+        price_provenance=PartType.PriceProvenance.FORMULA_CERTIFIED,
     )
     PartNumber.objects.create(
         part=part, value="420-892-388", kind=PartNumber.Kind.ARTICLE, is_primary=True
