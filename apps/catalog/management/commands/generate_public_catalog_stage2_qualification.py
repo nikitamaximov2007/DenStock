@@ -5,6 +5,7 @@ from django.db import transaction
 
 from apps.actions.models import PartCustomsInfo
 from apps.catalog.models import Category, PartNumber, PartType, Unit, normalize_number
+from apps.core.search_text import fold_search_text
 
 SEED_ROWS = (
     ("420-892-388", "ARTICLE FIXTURE", "АРТИКУЛ ФИКСТУРЫ"),
@@ -116,14 +117,18 @@ class Command(BaseCommand):
                 customs = []
                 for index, part in enumerate(parts, offset):
                     confirmed = seeded_confirmed < confirmed_target
+                    russian_name = (
+                        f"ПРОКЛАДКА ГОЛОВКИ {index:06d}"
+                        if confirmed
+                        else f"НЕПОДТВЕРЖДЕННАЯ ПРОКЛАДКА {index:06d}"
+                    )
                     customs.append(
                         PartCustomsInfo(
                             part_type=part,
-                            customs_name_ru=(
-                                f"ПРОКЛАДКА ГОЛОВКИ {index:06d}"
-                                if confirmed
-                                else f"НЕПОДТВЕРЖДЕННАЯ ПРОКЛАДКА {index:06d}"
-                            ),
+                            customs_name_ru=russian_name,
+                            # bulk_create не зовёт save(), поэтому поисковую
+                            # форму названия считаем здесь той же функцией.
+                            search_name_ru=fold_search_text(russian_name),
                             customs_name_ru_confirmed=confirmed,
                         )
                     )

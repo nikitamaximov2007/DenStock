@@ -14,6 +14,8 @@ PartCustomsInfo — таможенная карточка детали для э
 from django.conf import settings
 from django.db import models
 
+from apps.core.search_text import fold_search_text
+
 
 class WarehouseAction(models.Model):
     """Одно проведённое действие со сканера: продажа, резерв или ремонт.
@@ -186,6 +188,16 @@ class PartCustomsInfo(models.Model):
     customs_name_ru_confirmed = models.BooleanField(
         "Русское название подтверждено", default=False
     )
+    # Поисковая форма русского названия: регистр свёрнут по правилам Unicode,
+    # «ё» приведена к «е» (`apps.core.search_text.fold_search_text`). Название
+    # для человека остаётся ровно тем, что ввёл оператор; здесь лежит только
+    # то, по чему сравнивают. Считается в Python, а не через `UPPER()` в базе:
+    # `UPPER` зависит от локали кластера и кириллицу в локали `C` не сворачивает
+    # вовсе, из-за чего поиск по русскому названию становился
+    # регистрозависимым.
+    search_name_ru = models.CharField(
+        "Русское название для поиска", max_length=255, blank=True, editable=False
+    )
     manufacturer = models.CharField("Производитель", max_length=80, default="BRP")
     country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)
     gross_weight_kg = models.DecimalField(
@@ -220,9 +232,25 @@ class PartCustomsInfo(models.Model):
     class Meta:
         verbose_name = "Таможенные данные детали"
         verbose_name_plural = "Таможенные данные деталей"
+        indexes = [
+            models.Index(fields=["search_name_ru"], name="customs_search_name_ru_idx"),
+        ]
 
     def __str__(self) -> str:
         return f"Таможенные данные: {self.part_type}"
+
+    def save(self, *args, **kwargs):
+        """Поисковая форма названия пересчитывается вместе с самим названием.
+
+        Отдельно чинится частый случай `update_fields`: если сохраняют только
+        `customs_name_ru`, поисковая форма обязана попасть в тот же список,
+        иначе она молча отстанет от видимого названия.
+        """
+        self.search_name_ru = fold_search_text(self.customs_name_ru)[:255]
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "customs_name_ru" in set(update_fields):
+            kwargs["update_fields"] = sorted(set(update_fields) | {"search_name_ru"})
+        super().save(*args, **kwargs)
 
 
 class PartCustomsDataVersion(models.Model):

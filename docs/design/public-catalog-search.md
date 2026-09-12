@@ -20,7 +20,8 @@ stable tie-breaker inside a tier:
 5. exact English name or confirmed Russian customs name;
 6. name prefix;
 7. name substring;
-8. PostgreSQL word-similarity name match.
+8. every word of a multiword query, in any order;
+9. PostgreSQL word-similarity name match.
 
 The normalized article path reuses `catalog.normalize_number`; there is no
 second article normalization scheme. Only OEM and ARTICLE numbers are public
@@ -31,6 +32,39 @@ Russian matching reads only `PartCustomsInfo.customs_name_ru` where
 `customs_name_ru_confirmed` is true. A generated, unconfirmed, or blank name
 is never treated as public search content. Search does not filter current
 stock, so a zero-stock part remains findable.
+
+### Case folding for Russian
+
+Russian names are matched on `PartCustomsInfo.search_name_ru`, a folded copy of
+the confirmed name, never through the database's own `UPPER()`. `UPPER` follows
+the cluster locale: a database created with locale `C` leaves Cyrillic
+untouched, which silently made every Russian tier case-sensitive and made the
+Russian fuzzy tier match nothing at all. Measured on PostgreSQL 16:
+
+    locale en_US.utf8  upper('прокладка') = 'ПРОКЛАДКА'
+    locale C           upper('прокладка') = 'прокладка'
+
+The one folding rule is `apps.core.search_text.fold_search_text`: Unicode case
+folding in Python, `ё` folded to `е`, whitespace collapsed. It is applied to
+the stored name (on save, and by migration `actions.0015_customs_search_name_ru`
+for existing rows) and to the query, so both sides are comparable with plain
+`=`, `LIKE` and trigrams on any backend. The internal operator lookup
+(`apps.core.part_lookup`) uses the same column and the same rule, so DenisStock
+and PRO-STOR answer a Russian query identically.
+
+English names keep the database's `UPPER()`: they are ASCII, where every locale
+folds correctly, and their existing expression index stays in use.
+
+### Multiword queries
+
+Word order in a Russian name is free, and a customer is not required to guess
+how the operator wrote it. Tier 8 therefore matches parts whose name contains
+EVERY word of the query in any order, so `масляный фильтр` finds
+`Фильтр масляный`. It ranks below the substring tier, where the words are
+adjacent and the match is stronger, and above typo tolerance, because it is an
+exact word match rather than a guess. The tier runs only for two to five words
+of at least three characters each: dropping a short word silently would answer
+a different question than the one asked.
 
 ## Bounds and portability
 
@@ -73,9 +107,16 @@ a product decision rather than a tuning detail.
 
 Migration `catalog.0007_search_trigram` installs `pg_trgm` and creates GIN
 trigram indexes for normalized articles and the uppercase English name.
-Migration `actions.0014_confirmed_customs_name_ru_trigram` replaces the
-Russian index with an uppercase partial GIN index whose predicate is
-`customs_name_ru_confirmed`. Therefore unconfirmed generated translations are
-not even in the fuzzy candidate index. PostgreSQL qualification uses ordinary
+Migration `actions.0015_customs_search_name_ru` moves the Russian GIN index
+from `UPPER(customs_name_ru)` to the folded `search_name_ru` column, keeping the
+partial predicate `customs_name_ru_confirmed`. Therefore unconfirmed generated
+translations are not even in the fuzzy candidate index.
+
+Typo tolerance for Cyrillic additionally needs a cluster whose CTYPE treats
+Cyrillic as letters. `pg_trgm` splits a string into trigrams by letters and
+digits only, so in a `C` database `show_trgm('проба')` is empty and the Russian
+fuzzy tier finds nothing - silently, without an error. Every other Russian tier
+works in any locale. `manage.py ops_check` reports this as a warning
+(`Опечатки в русском поиске`) instead of leaving it invisible. PostgreSQL qualification uses ordinary
 planner settings and `EXPLAIN (ANALYZE, BUFFERS)`; a separate restricted-scan
 test remains only as an expression/index compatibility check.

@@ -3,6 +3,22 @@
 from django.db import migrations, models
 
 
+def set_rolling_provenance_default(apps, schema_editor):
+    """Keep old PostgreSQL writers safe without issuing unsupported SQLite DDL."""
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute(
+            "ALTER TABLE catalog_parttype "
+            "ALTER COLUMN price_provenance SET DEFAULT 'unverified'"
+        )
+
+
+def drop_rolling_provenance_default(apps, schema_editor):
+    if schema_editor.connection.vendor == "postgresql":
+        schema_editor.execute(
+            "ALTER TABLE catalog_parttype ALTER COLUMN price_provenance DROP DEFAULT"
+        )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -43,8 +59,8 @@ class Migration(migrations.Migration):
         # pre-0012 column list.  Keep a database-level default until every
         # writer has the provenance-aware model; Django's model default alone
         # is not present in that old raw INSERT.
-        migrations.RunSQL(
-            "ALTER TABLE catalog_parttype ALTER COLUMN price_provenance SET DEFAULT 'unverified'",
-            "ALTER TABLE catalog_parttype ALTER COLUMN price_provenance DROP DEFAULT",
+        migrations.RunPython(
+            set_rolling_provenance_default,
+            drop_rolling_provenance_default,
         ),
     ]

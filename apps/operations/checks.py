@@ -107,6 +107,34 @@ def run_checks(settings_dict=None) -> list[CheckResult]:
     else:
         results.append(CheckResult("Клиенты PostgreSQL", OK, "SQLite — pg_dump не требуется"))
 
+    # 4a. Опечатки в русских названиях зависят от локали кластера.
+    #
+    # pg_trgm режет строку на триграммы только по буквам, а буква это или нет,
+    # решает CTYPE базы. В базе с локалью C кириллица буквами не считается, и
+    # тир опечаток для русского молча перестаёт находить что-либо. Остальной
+    # русский поиск (точное совпадение, префикс, подстрока, все слова) работает
+    # в любой локали: регистр и «ё» сворачиваются в Python.
+    if "postgresql" in s["ENGINE"]:
+        from apps.catalog.search import cyrillic_fuzzy_available
+
+        try:
+            if cyrillic_fuzzy_available():
+                results.append(
+                    CheckResult("Опечатки в русском поиске", OK, "локаль базы даёт триграммы")
+                )
+            else:
+                results.append(
+                    CheckResult(
+                        "Опечатки в русском поиске",
+                        WARN,
+                        "локаль базы (CTYPE C) не считает кириллицу буквами: поиск по "
+                        "опечаткам в русских названиях находить не будет; остальной "
+                        "русский поиск работает",
+                    )
+                )
+        except Exception as exc:  # noqa: BLE001 — проверка не должна валить ops_check
+            results.append(CheckResult("Опечатки в русском поиске", WARN, f"не проверено: {exc}"))
+
     # 5. Настройки media.
     if settings.MEDIA_URL and settings.MEDIA_ROOT:
         results.append(CheckResult("Настройки media", OK, f"MEDIA_URL={settings.MEDIA_URL}"))
