@@ -13,11 +13,38 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='parttype',
             name='certified_price_rub',
-            field=models.DecimalField(blank=True, decimal_places=2, editable=False, max_digits=12, null=True, verbose_name='Цена, подтверждённая расчётом (₽)'),
+            field=models.DecimalField(
+                blank=True,
+                decimal_places=2,
+                editable=False,
+                max_digits=12,
+                null=True,
+                verbose_name="Цена, подтверждённая расчётом (₽)",
+            ),
         ),
         migrations.AddField(
             model_name='parttype',
             name='price_provenance',
-            field=models.CharField(choices=[('formula_certified', 'Подтверждена формулой'), ('valid_manual_exception', 'Подтверждённое ручное исключение'), ('unverified', 'Цена требует проверки'), ('source_missing', 'Нет собственного оптового источника'), ('not_applicable', 'Формула не применяется')], default='unverified', editable=False, max_length=32, verbose_name='Основание текущей цены'),
+            field=models.CharField(
+                choices=[
+                    ("formula_certified", "Подтверждена формулой"),
+                    ("valid_manual_exception", "Подтверждённое ручное исключение"),
+                    ("unverified", "Цена требует проверки"),
+                    ("source_missing", "Нет собственного оптового источника"),
+                    ("not_applicable", "Формула не применяется"),
+                ],
+                default="unverified",
+                editable=False,
+                max_length=32,
+                verbose_name="Основание текущей цены",
+            ),
+        ),
+        # A rolling application rollback can still issue an INSERT with the
+        # pre-0012 column list.  Keep a database-level default until every
+        # writer has the provenance-aware model; Django's model default alone
+        # is not present in that old raw INSERT.
+        migrations.RunSQL(
+            "ALTER TABLE catalog_parttype ALTER COLUMN price_provenance SET DEFAULT 'unverified'",
+            "ALTER TABLE catalog_parttype ALTER COLUMN price_provenance DROP DEFAULT",
         ),
     ]
