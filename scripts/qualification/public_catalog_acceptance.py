@@ -130,6 +130,17 @@ def _submit_request(c: Checker, args) -> None:
     key = re.search(r'name="submission_key" value="([^"]+)"', form)
     if not c.check("request form", status == 200 and bool(csrf and key), str(status)):
         return
+    # Маска телефона лежит в общей папке, а не во внутреннем static/js: если её
+    # там нет, форма молча остаётся без маски.
+    mask = re.search(r'src="(/static/shared/phone_input\.js[^"]*)"', form)
+    if c.check("phone mask linked", bool(mask)):
+        mask_status, mask_head, _ = c.fetch(mask.group(1))
+        c.check(
+            "phone mask 200",
+            mask_status == 200 and "javascript" in mask_head.get("Content-Type", ""),
+            f"{mask_status} {mask_head.get('Content-Type', '')}",
+        )
+    c.check("phone field asks for the phone keyboard", 'inputmode="tel"' in form)
     fields = {
         "csrfmiddlewaretoken": csrf.group(1),
         "submission_key": key.group(1),
@@ -169,8 +180,13 @@ def run(args) -> Checker:
     c.check("home search form", 'name="q"' in html and 'role="search"' in html)
     csp = head.get("Content-Security-Policy", "")
     c.check(
-        "CSP no scripts, no framing",
-        "default-src 'none'" in csp and "frame-ancestors 'none'" in csp,
+        "CSP own scripts only, no inline, no framing",
+        "default-src 'none'" in csp
+        and "frame-ancestors 'none'" in csp
+        and "script-src 'self'" in csp
+        and "unsafe-inline" not in csp
+        and "unsafe-eval" not in csp
+        and "http" not in csp,
         csp,
     )
     c.check("X-Frame-Options DENY", head.get("X-Frame-Options") == "DENY")
