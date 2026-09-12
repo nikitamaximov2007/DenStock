@@ -11,7 +11,8 @@ For the next agent, the reviewer and the release operator. No secrets here.
 | Request stack integration (Codex, reviewed, not modified) | `codex/public-catalog-request-stack-integration` | `891e6fd1784af03cce72a71af0c53470e4366985` |
 | Integrated launch candidate (reviewed, not modified) | `claude/public-catalog-launch-candidate` | `cf493a2fe2daaff62302ee36aa4de0b95b290405` |
 | Codex follow-up (reviewed, not modified) | `codex/public-catalog-launch-candidate-remediation` | `74e2e15021c75821782f9eab4e59fc59ef7dfc53` |
-| Final remediation, deployed to the preview | `claude/public-catalog-launch-final-remediation` | the branch head that contains this file |
+| Final remediation, deployed to the preview | `claude/public-catalog-launch-final-remediation` | `55db9321d41ea5d5e9d3f8d717f94fbc0ae37b20` |
+| Release integration with production main | `claude/prostor-launch-integration` | the branch head that contains this file |
 | Production | `main` | `a5c014621c3689340bfe699216e03bb0b88d7472` |
 
 The launch candidate starts at the exact request-stack SHA, merges the
@@ -25,10 +26,17 @@ defects on top of the candidate and the Codex follow-up, and deployed the
 result to the preview: `docs/qualification/public-catalog-final-night-review.md`.
 
 The stack sits on the catalog chain that branched from `073ad9b`.
-Production `main` is six commits ahead (operator search, reports, sidebar),
-with no migrations. A trial merge of `origin/main` into this branch merged
-without conflicts (throwaway worktree, not committed). The release branch
-must include that merge and be re-qualified on the same-day baseline.
+Production `main` was six commits ahead (operator search, reports, sidebar),
+with no migrations. `claude/prostor-launch-integration` is that merge, made
+for real (four overlapping files, no conflicts), plus the work below. It is
+the branch to review for the release; the two SHAs above are its ancestors
+and were not modified.
+
+On top of the merge it adds: one canonical Russian phone record with a shared
+input mask, the operator section "Заявки клиентов" wired into the sidebar with
+a count of new requests, and the customer-price audit
+(`docs/operations/customer-price-audit.md`,
+`docs/qualification/customer-price-audit-2026-09-12.md`).
 
 ## What this stack adds (read the commits for detail)
 
