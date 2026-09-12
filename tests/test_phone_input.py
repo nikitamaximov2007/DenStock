@@ -10,7 +10,7 @@
 * уже сохранённые номера канон не переписывает - он живёт в слое ввода;
 * поле телефона везде одно и то же: телефонная клавиатура на мобильном,
   подсказка, связанная с полем, и общая маска;
-* сама маска (static/js/phone_input.js) проверяется прогоном в node, а при его
+* сама маска (static/shared/phone_input.js) проверяется прогоном в node, а при его
   отсутствии - статически, как и остальной JS проекта.
 """
 
@@ -31,7 +31,7 @@ from apps.repairs.forms import RepairOrderForm
 from apps.sales.forms import ReservationForm, SaleForm
 
 PASSWORD = "parol-12345"
-JS_PATH = Path(settings.BASE_DIR) / "static" / "js" / "phone_input.js"
+JS_PATH = Path(settings.BASE_DIR) / "static" / "shared" / "phone_input.js"
 JS = JS_PATH.read_text(encoding="utf-8")
 CANONICAL = "+7 900 123-45-67"
 SAME_NUMBER = ["89001234567", "79001234567", "+79001234567", "9001234567", CANONICAL]
@@ -202,7 +202,7 @@ def test_the_public_request_form_carries_the_same_field(public_client, public_ca
         assert attribute in tag, attribute
     described = tag.split('aria-describedby="', 1)[1].split('"', 1)[0]
     assert 'id="request-phone-hint"' in html and "request-phone-hint" in described.split()
-    assert "js/phone_input.js" in html
+    assert "shared/phone_input.js" in html
 
 
 def test_the_public_policy_allows_that_one_script_and_nothing_looser(public_client):
@@ -341,3 +341,19 @@ def _mask(value):
         check=True,
     )
     return json.loads(result.stdout)
+
+
+# --- Оформление поля -----------------------------------------------------------------------
+
+
+def test_the_phone_field_is_styled_like_the_other_fields_of_the_form():
+    """`type=tel` обязан попасть в то же правило, что `type=text`.
+
+    Поле телефона отличается от остальных только клавиатурой на мобильном.
+    Правило `.form input[type="text"]` его не покрывает, и без явного `tel`
+    поле теряло рамку, отступы и ширину: заметно это только на живой странице.
+    """
+    css = (Path(settings.BASE_DIR) / "static" / "css" / "app.css").read_text(encoding="utf-8")
+    rule = css[css.index('.form input[type="text"]') :]
+    rule = rule[: rule.index("}")]
+    assert 'input[type="tel"]' in rule

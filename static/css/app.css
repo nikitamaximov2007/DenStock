@@ -288,7 +288,10 @@ body.app {
 .customs-quick-form input[type="text"] { width: 92px; }
 .form p { margin: 10px 0; }
 .form label { display: inline-block; margin-bottom: 4px; color: var(--muted); }
-.form input[type="text"], .form input[type="password"] { padding: 10px 12px; font-size: 16px;
+/* tel здесь наравне с text: поле телефона отличается только клавиатурой на
+   мобильном, выглядеть оно обязано так же, как остальные поля формы. */
+.form input[type="text"], .form input[type="password"],
+.form input[type="tel"] { padding: 10px 12px; font-size: 16px;
   border: 1px solid var(--line); border-radius: 8px; min-width: 280px; }
 .messages { margin-bottom: 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
@@ -326,8 +329,12 @@ body.app {
 .badge { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600;
   color: var(--ok-fg); background: var(--ok-bg); border: 1px solid var(--ok-line);
   border-radius: 999px; }
-/* Счётчик в пункте меню прижат к правому краю, как «скоро» рядом с заглушкой. */
-.nav__link .badge { margin-left: auto; flex: 0 0 auto; }
+/* Счётчик в пункте меню прижат к правому краю, как «скоро» рядом с заглушкой,
+   и намеренно компактнее обычного значка: иначе он съедает ширину и название
+   раздела обрывается многоточием. */
+.nav__link .badge { margin-left: auto; flex: 0 0 auto; padding: 1px 5px;
+  font-size: 10px; line-height: 16px; }
+.nav__link:has(.badge) { gap: 6px; }
 /* Текст только для скринридера: цифра в значке сама по себе ничего не говорит. */
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);

@@ -55,10 +55,19 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = False
 SECURE_HSTS_PRELOAD = False
 
 # --- Static assets ----------------------------------------------------------------
-# Only the public asset folder is served, straight from the image through the
-# staticfiles finder. Internal JS/CSS and the Django admin assets are not part
-# of this process at all, and no collectstatic step is needed.
-STATICFILES_DIRS = [("public_catalog", BASE_DIR / "static" / "public_catalog")]  # noqa: F405
+# Only the public asset folder and the explicitly shared folder are served,
+# straight from the image through the staticfiles finder. Internal JS/CSS and
+# the Django admin assets are not part of this process at all, and no
+# collectstatic step is needed.
+#
+# `shared` содержит ровно те файлы, которые нужны и внутреннему, и публичному
+# интерфейсу (маска телефона). Отдельная папка, а не `static/js`: иначе на
+# публичном хосте открылся бы весь внутренний JS, а держать вторую копию одного
+# и того же файла - способ получить два разных поведения.
+STATICFILES_DIRS = [
+    ("public_catalog", BASE_DIR / "static" / "public_catalog"),  # noqa: F405
+    ("shared", BASE_DIR / "static" / "shared"),  # noqa: F405
+]
 STATICFILES_FINDERS = ["django.contrib.staticfiles.finders.FileSystemFinder"]
 STATIC_ROOT = None
 WHITENOISE_USE_FINDERS = True

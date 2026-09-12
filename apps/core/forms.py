@@ -26,7 +26,7 @@ class PhoneInput(forms.TextInput):
     """Единое поле телефона: телефонная клавиатура на мобильном и та же маска.
 
     `type=tel` с `inputmode=tel` открывает на телефоне цифровую клавиатуру, а
-    `data-phone-input` подключает общую маску (`static/js/phone_input.js`),
+    `data-phone-input` подключает общую маску (`static/shared/phone_input.js`),
     одну и ту же для DenisStock и публичной заявки PRO-STOR. Маска - только
     удобство: канон записи всё равно считает сервер (`canonical_phone_text`),
     поэтому с выключенным JS поле работает как обычный текст.

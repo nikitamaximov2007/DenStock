@@ -47,7 +47,7 @@ PUBLIC_SETTINGS = {
 }
 
 # Скрипт на публичных страницах ровно один: маска телефона в форме заявки
-# (`static/js/phone_input.js`). Поэтому `script-src 'self'` без `unsafe-inline`
+# (`static/shared/phone_input.js`). Поэтому `script-src 'self'` без `unsafe-inline`
 # и `unsafe-eval`: встроенный код, внешние домены, аналитика и реклама
 # по-прежнему запрещены, а `default-src 'none'` закрывает всё остальное
 # (fetch, websocket, шрифты, медиа, фреймы).

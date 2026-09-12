@@ -113,14 +113,31 @@ def test_public_host_header_is_enforced_by_the_real_stack(db):
         assert Client(HTTP_HOST="evil.example").get("/cart/").status_code == 400
 
 
-def test_public_static_serves_only_public_assets():
+def test_public_static_serves_only_public_and_explicitly_shared_assets():
+    """Публичный процесс отдаёт свою папку и общую - и больше ничего.
+
+    Общая папка нужна ровно для того, что обязано вести себя одинаково в
+    DenisStock и на публичном сайте (маска телефона). Держать вместо неё вторую
+    копию файла нельзя: две копии - это два разных поведения. Открывать
+    `static/js` тоже нельзя: тогда на публичном хосте оказался бы весь
+    внутренний JS.
+    """
+    import re
+
     from django.conf import settings
 
     public_settings_source = (settings.BASE_DIR / "config" / "settings" / "public.py").read_text()
-    assert 'STATICFILES_DIRS = [("public_catalog", BASE_DIR / "static" / "public_catalog")]' in (
-        public_settings_source
+    served = re.findall(
+        r'\("([^"]+)", BASE_DIR / "static" / "([^"]+)"\)', public_settings_source
     )
+    assert served == [("public_catalog", "public_catalog"), ("shared", "shared")]
     assert "FileSystemFinder" in public_settings_source
     assert "AppDirectoriesFinder" not in public_settings_source
     public_dir = settings.BASE_DIR / "static" / "public_catalog"
     assert {path.suffix for path in public_dir.iterdir()} <= {".css", ".svg"}
+
+    shared_dir = settings.BASE_DIR / "static" / "shared"
+    shared = {path.name for path in shared_dir.iterdir() if path.is_file()}
+    assert shared == {"phone_input.js"}
+    internal = {path.name for path in (settings.BASE_DIR / "static" / "js").iterdir()}
+    assert not (shared & internal), "копии одного файла в двух папках не бывает"

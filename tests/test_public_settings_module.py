@@ -2,8 +2,10 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 from django.conf import settings
 
@@ -23,6 +25,7 @@ print(json.dumps({
     "media_url": s.MEDIA_URL,
     "static_root": s.STATIC_ROOT,
     "finders": s.STATICFILES_FINDERS,
+    "static_dirs": [[prefix, str(path)] for prefix, path in s.STATICFILES_DIRS],
     "context_processors": s.TEMPLATES[0]["OPTIONS"]["context_processors"],
     "ai": s.AI_SUPPORT_ENABLED,
     "admin_loaded": "django.contrib.admin" in s.INSTALLED_APPS,
@@ -72,6 +75,7 @@ def test_public_settings_fail_closed_by_default():
     assert loaded["conn_max_age"] == 60
     assert loaded["media_url"] == "" and loaded["static_root"] is None
     assert loaded["finders"] == ["django.contrib.staticfiles.finders.FileSystemFinder"]
+    assert [prefix for prefix, _ in loaded["static_dirs"]] == ["public_catalog", "shared"]
     assert loaded["ai"] is False and loaded["restore"] is False
     assert loaded["admin_loaded"] is False
 
@@ -135,3 +139,36 @@ def test_public_settings_refuse_to_start_without_their_database_or_hosts():
             text=True,
         )
         assert result.returncode != 0 and missing in result.stderr, missing
+
+
+def test_the_public_runtime_serves_every_asset_its_pages_ask_for():
+    """Публичная страница не имеет права ссылаться на файл, которого нет.
+
+    Публичный процесс отдаёт только свою папку и общую: `static/js` на
+    публичном хосте не открыт совсем. Поэтому ссылка на внутренний путь была бы
+    молчаливым 404 - именно так маска телефона однажды и не загрузилась.
+    """
+    dirs = {prefix: Path(path) for prefix, path in _load()["static_dirs"]}
+    templates = sorted((Path(settings.BASE_DIR) / "templates" / "public_catalog").rglob("*.html"))
+    assert templates
+
+    asked = set()
+    for template in templates:
+        text = template.read_text(encoding="utf-8")
+        asked.update(re.findall(r"{%\s*(?:public_asset|static)\s+'([^']+)'", text))
+    assert "shared/phone_input.js" in asked, "маска телефона обязана подключаться"
+
+    for path in sorted(asked):
+        prefix, _, rest = path.partition("/")
+        root = dirs.get(prefix)
+        assert root is not None, f"публичный процесс не отдаёт префикс {prefix!r} ({path})"
+        assert (root / rest).is_file(), f"нет файла {path}"
+
+
+def test_the_public_runtime_does_not_expose_internal_scripts():
+    dirs = [Path(path) for _, path in _load()["static_dirs"]]
+    internal = {"app_shell.js", "ai_support.js", "partial_navigation.js", "scanner.js"}
+
+    served = {item.name for root in dirs for item in root.rglob("*") if item.is_file()}
+
+    assert not (served & internal), served & internal
