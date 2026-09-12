@@ -47,9 +47,14 @@ Companion documents:
   Scanning, drafts, imports, and catalog operations never change balances.
 - Do not silently rewrite historical posted documents or price snapshots.
 - Use `Decimal` for money, never float.
-- BRP customer RUB prices are WHOLE rubles: `retail_USD * rate *
+- BRP customer RUB prices are WHOLE rubles: `wholesale_USD * rate *
   (1 + markup/100)`, quantized with `ROUND_HALF_UP` (see `apps/brp/pricing.py`).
-  USD sources, rate, and markup are not rounded.
+  The source is the WHOLESALE column of the supplier price file
+  (`wholesale_price_usd`), never the retail one; USD sources, rate, and markup
+  are not rounded. The price source can be a replacement row resolved by
+  `find_brp_price_source`, and a VIN row carries the supplier's vintage-warehouse
+  surcharge, so compute prices through `catalog_part_price_rub`, never by hand.
+  `manage.py audit_customer_prices` proves the stored prices still agree.
 
 ## Warehouse addresses
 

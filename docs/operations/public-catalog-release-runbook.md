@@ -107,6 +107,13 @@ name inside `BACKUP_ROOT`.
    and `business_sha256` from the manifest.
 5. Confirm the offsite copy of `<DIR>` is listed at the offsite target.
    Do not continue without a verified, offsite PRE backup.
+6. Price gate. On a restored copy of the PRE backup, never on production:
+   `manage.py audit_customer_prices --csv <path>`. Every `PRICE_MISMATCH` and
+   `MANUAL_OVERRIDE` among public parts that are IN STOCK must be signed off by
+   the owner before the public site shows those prices; see
+   `docs/operations/customer-price-audit.md`. Reconciling prices, if the owner
+   asks for it, is a separate change with its own window: it is not part of
+   this release.
 
 ### Deploy the code and migrate (internal runtime)
 
