@@ -129,8 +129,15 @@ def promote_to_warehouse(
 
     valuation = ValuationSettings.get()
     settings = PolarisPricingSettings.get()
+    # Тот же источник цены, что у пересчёта текущих цен и у приёмки: у позиции
+    # с нулевой оптовой ценой цена берётся из связанной актуальной позиции
+    # (`find_polaris_price_source`, тут же рядом). Иначе карточка продвигалась
+    # бы без цены, хотя цена в прайсе есть.
+    price_source_part = (
+        find_polaris_price_source(polaris_part.part_number_norm, polaris_part) or polaris_part
+    )
     calculated = customer_price_rub(
-        polaris_part.wholesale_price_usd,
+        price_source_part.wholesale_price_usd,
         valuation.current_usd_rate,
         settings.polaris_markup_percent,
     )
@@ -170,6 +177,8 @@ def promote_to_warehouse(
     PolarisPartLink.objects.create(
         part=part,
         polaris_part=polaris_part,
+        # Цены в долларах - цены самой позиции; клиентская цена законно считается
+        # от источника цены (так же, как в BRP).
         polaris_retail_price_usd=polaris_part.retail_price_usd,
         polaris_wholesale_price_usd=polaris_part.wholesale_price_usd,
         usd_rate_used=valuation.current_usd_rate,
