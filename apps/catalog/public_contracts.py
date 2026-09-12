@@ -51,14 +51,26 @@ class PublicPartFacts:
 
 
 def resolve_current_customer_price(part: PartType) -> CurrentCustomerPrice:
-    """Read the authoritative current price from ``PartType.recommended_price``.
+    """Read a public-safe current price from the canonical price result.
 
     Pricing pipelines own all calculations and updates. The facade only
     exposes a finite positive Decimal as a known price; every other state is
     deliberately represented as ``clarify``.
     """
     price = part.recommended_price
-    if isinstance(price, Decimal) and price.is_finite() and price > ZERO:
+    formula_certified = (
+        part.price_provenance == PartType.PriceProvenance.FORMULA_CERTIFIED
+        and part.certified_price_rub == price
+    )
+    valid_manual_exception = (
+        part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+    )
+    if (
+        isinstance(price, Decimal)
+        and price.is_finite()
+        and price > ZERO
+        and (formula_certified or valid_manual_exception)
+    ):
         return CurrentCustomerPrice(price_rub=price, status="known")
     return CurrentCustomerPrice(price_rub=None, status="clarify")
 

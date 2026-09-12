@@ -162,6 +162,21 @@ class PartType(Dictionary):
         SERIAL = "serial", "Поштучный"
         BULK = "bulk", "Количественный"
 
+    class PriceProvenance(models.TextChoices):
+        """Why the current public customer price may be shown.
+
+        This is deliberately a statement about the *current* commercial
+        price, not a historical sale/receipt snapshot and not a second price
+        formula.  ``VALID_MANUAL_EXCEPTION`` is set only after an owner has
+        confirmed that this PartType is a distinct commercial item.
+        """
+
+        FORMULA_CERTIFIED = "formula_certified", "Подтверждена формулой"
+        VALID_MANUAL_EXCEPTION = "valid_manual_exception", "Подтверждённое ручное исключение"
+        UNVERIFIED = "unverified", "Цена требует проверки"
+        SOURCE_MISSING = "source_missing", "Нет собственного оптового источника"
+        NOT_APPLICABLE = "not_applicable", "Формула не применяется"
+
     name = models.CharField("Название", max_length=200)
     category = models.ForeignKey(
         Category, verbose_name="Категория", on_delete=models.PROTECT, related_name="parts"
@@ -183,6 +198,31 @@ class PartType(Dictionary):
     description = models.TextField("Описание", blank=True)
     recommended_price = models.DecimalField(
         "Рекомендуемая цена", max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    # Свидетельство расчёта: сумма, которую конвейер цен получил из ОПТОВОЙ
+    # цены каталога поставщика при последнем пересчёте. Пусто означает
+    # «проверить нечем»: оптового источника у детали нет, он неположительный
+    # или позиция ушла из прайса.
+    #
+    # Публичный каталог показывает число клиенту, только если эта сумма
+    # совпадает с `recommended_price`. Так сделано намеренно: любой, кто
+    # поставит цену руками, свидетельство не обновит, совпадение пропадёт, и
+    # витрина честно напишет «Уточнить цену» вместо непроверенного числа.
+    # Внутри DenisStock цена при этом остаётся видимой как была.
+    certified_price_rub = models.DecimalField(
+        "Цена, подтверждённая расчётом (₽)",
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    price_provenance = models.CharField(
+        "Основание текущей цены",
+        max_length=32,
+        choices=PriceProvenance.choices,
+        default=PriceProvenance.UNVERIFIED,
+        editable=False,
     )
     min_price = models.DecimalField(
         "Минимальная цена", max_digits=12, decimal_places=2, null=True, blank=True

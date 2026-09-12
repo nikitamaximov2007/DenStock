@@ -96,7 +96,7 @@ def test_cart_becomes_one_request_with_server_prices(public_client, public_catal
     assert request.privacy_policy_version == "draft-legal-review-1"
     lines = {line.part_type_id: line for line in request.lines.all()}
     assert set(lines) == {piston.pk, gasket.pk}
-    assert lines[piston.pk].price_seen == Decimal("16500.00"), "price at submission"
+    assert lines[piston.pk].price_seen is None, "unverified price is not public"
     assert lines[piston.pk].quantity_requested == Decimal("2")
     assert lines[piston.pk].article == "420892388"
     assert lines[gasket.pk].price_seen is None, "unknown price stays unknown"

@@ -92,6 +92,22 @@ def promote_to_warehouse(
         unit=_default_unit(),
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=money(final) if final is not None else None,
+        certified_price_rub=(
+            money(calculated)
+            if manual_price is None
+            and brp_part.wholesale_price_usd is not None
+            and brp_part.wholesale_price_usd > 0
+            and calculated is not None
+            else None
+        ),
+        price_provenance=(
+            PartType.PriceProvenance.FORMULA_CERTIFIED
+            if manual_price is None
+            and brp_part.wholesale_price_usd is not None
+            and brp_part.wholesale_price_usd > 0
+            and calculated is not None
+            else PartType.PriceProvenance.UNVERIFIED
+        ),
         description=f"Из BRP-каталога, номер {brp_part.material_no}."
                     f" Статус BRP: {brp_part.brp_status or 'нет'}.",
     )

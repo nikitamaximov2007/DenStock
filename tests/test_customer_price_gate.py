@@ -37,7 +37,11 @@ from apps.catalog.price_audit import (
     audit_prices,
 )
 from apps.catalog.public_contracts import resolve_current_customer_price
-from apps.catalog.services import get_current_price_settings, refresh_linked_part_prices
+from apps.catalog.services import (
+    certify_valid_manual_price_exception,
+    get_current_price_settings,
+    refresh_linked_part_prices,
+)
 from apps.customer_requests.models import CustomerRequest
 from apps.warehouse.models import ValuationSettings
 
@@ -196,6 +200,57 @@ def test_the_public_price_follows_a_new_wholesale_price_without_a_second_formula
     detail = public_client.get(f"/parts/{part.public_id}/").content.decode()
     assert f"17{NBSP}640{NBSP}₽" in detail
     assert f"14{NBSP}700{NBSP}₽" not in detail, "устаревшей копии цены нигде нет"
+
+
+def test_rebuild_manual_exception_never_inherits_replacement_wholesale_price(
+    pricing, admin_user, public_client, public_catalog
+):
+    """421000667 is a separate rebuild item, not the new replacement part."""
+    rebuild = _catalog_part("421000667", "0")
+    _catalog_part("421000668", "410.78", replacement="421000667")
+    part = promote_to_warehouse(rebuild, by=admin_user, manual_price=Decimal("45000"))
+    certify_valid_manual_price_exception(part)
+    _publish(part, public_catalog)
+
+    refresh_linked_part_prices(usd_rate=RATE, brp_markup=MARKUP, polaris_markup=MARKUP)
+    part.refresh_from_db()
+    assert part.recommended_price == Decimal("45000")
+    assert part.certified_price_rub is None
+    assert part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+    assert resolve_current_customer_price(part).price_rub == Decimal("45000")
+
+    shown = f"45{NBSP}000{NBSP}₽"
+    assert shown in public_client.get(f"/parts/{part.public_id}/").content.decode()
+    public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "1"})
+    assert shown in public_client.get("/cart/").content.decode()
+    form = public_client.get("/request/").content.decode()
+    assert shown in form
+    token = form.split('name="submission_key" value="', 1)[1].split('"', 1)[0]
+    response = public_client.post(
+        "/request/submit/",
+        {
+            "submission_key": token,
+            "customer_name": "Проверка rebuild",
+            "customer_phone": "9001234567",
+            "preferred_messenger": "telegram",
+            "comment": "",
+            "consent": "1",
+        },
+    )
+    assert response.status_code == 302
+    assert CustomerRequest.objects.get().lines.get().price_seen == Decimal("45000")
+
+
+def test_public_catalog_clarifies_an_unverified_numeric_price(pricing, admin_user):
+    part = promote_to_warehouse(_catalog_part("UNVERIFIED-PRICE", "100"), by=admin_user)
+    PartType.objects.filter(pk=part.pk).update(
+        recommended_price=Decimal("16000"),
+        certified_price_rub=None,
+        price_provenance=PartType.PriceProvenance.UNVERIFIED,
+    )
+    part.refresh_from_db()
+
+    assert resolve_current_customer_price(part).status == "clarify"
 
 
 # --- Аудит --------------------------------------------------------------------------------

@@ -93,9 +93,10 @@ def _polaris_link_price(link: PolarisPartLink, usd_rate: Decimal, markup: Decima
 class LinkedPriceRefreshPlan:
     """A non-mutating plan for current linked catalog prices.
 
-    Only ``PartType.recommended_price`` is deliberately eligible for updates.
-    Link records preserve their promotion-time snapshots and sale documents are
-    outside this service entirely.
+    Only ``PartType.recommended_price`` and its calculation certificate
+    (``certified_price_rub``) are eligible for updates. Link records preserve
+    their promotion-time snapshots and sale documents are outside this service
+    entirely.
     """
 
     parts_to_update: dict[int, object] = field(default_factory=dict)
@@ -107,10 +108,66 @@ class LinkedPriceRefreshPlan:
     brp_links: int = 0
     polaris_links: int = 0
     aftermarket_links: int = 0
+    # Сколько деталей меняют саму цену, и сколько - только свидетельство
+    # расчёта. Это разные числа: свидетельство появляется и у детали, чья цена
+    # уже правильная, а исчезает у детали, чей оптовый источник пропал.
+    prices_changed: int = 0
+    certificates_written: int = 0
+    certificates_cleared: int = 0
 
     @property
     def updated(self) -> int:
-        return len(self.parts_to_update)
+        """Число деталей, у которых меняется именно цена."""
+        return self.prices_changed
+
+    def set_price(self, part, price) -> None:
+        """Цена посчитана из оптовой: она же становится свидетельством."""
+        if part.recommended_price != price:
+            part.recommended_price = price
+            self.prices_changed += 1
+            self.parts_to_update[part.pk] = part
+        if part.certified_price_rub != price:
+            part.certified_price_rub = price
+            self.certificates_written += 1
+            self.parts_to_update[part.pk] = part
+        if part.price_provenance != PartType.PriceProvenance.FORMULA_CERTIFIED:
+            part.price_provenance = PartType.PriceProvenance.FORMULA_CERTIFIED
+            self.parts_to_update[part.pk] = part
+
+    def drop_certificate(self, part) -> None:
+        """Оптового источника нет: цену оставляем, свидетельство снимаем.
+
+        Прежняя цена может быть верной, но доказать её нечем, и витрина
+        обязана сказать «Уточнить цену», а не показать непроверенное число.
+        """
+        if part.certified_price_rub is not None:
+            part.certified_price_rub = None
+            self.certificates_cleared += 1
+            self.parts_to_update[part.pk] = part
+
+    def mark_source_missing(self, part) -> None:
+        """A linked part has no authoritative own wholesale source today."""
+        if part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
+            return
+        self.drop_certificate(part)
+        if part.price_provenance != PartType.PriceProvenance.SOURCE_MISSING:
+            part.price_provenance = PartType.PriceProvenance.SOURCE_MISSING
+            self.parts_to_update[part.pk] = part
+
+
+def certify_valid_manual_price_exception(part: PartType) -> PartType:
+    """Record owner-confirmed commercial pricing for a distinct manual item.
+
+    This narrow operation intentionally does not infer an exception from a
+    mere manual link.  In particular, a replacement/new-item catalog price
+    never becomes proof for a rebuild PartType.
+    """
+    if part.recommended_price is None or part.recommended_price <= 0:
+        raise ValueError("Подтверждённому ручному исключению нужна положительная цена.")
+    part.certified_price_rub = None
+    part.price_provenance = PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+    part.save(update_fields=["certified_price_rub", "price_provenance"])
+    return part
 
 
 def plan_linked_part_price_refresh(
@@ -136,23 +193,35 @@ def plan_linked_part_price_refresh(
         # там своя замороженная цена.
         for link in BrpPartLink.objects.select_related("brp_part", "part"):
             plan.brp_links += 1
+            if link.part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
+                continue
             if not link.brp_part.is_current:
                 if link.part.recommended_price is not None:
                     link.part.recommended_price = None
+                    plan.prices_changed += 1
                     plan.parts_to_update[link.part_id] = link.part
+                plan.mark_source_missing(link.part)
                 plan.skipped_without_wholesale += 1
                 continue
-            price = _brp_link_price(link, usd_rate, brp_markup)
+            # A replacement is useful reference data, but not evidence that a
+            # separately sold PartType (for example a rebuild) has that
+            # wholesale price.  Only the linked catalog row itself certifies.
+            price = (
+                _brp_link_price(link, usd_rate, brp_markup)
+                if link.brp_part.wholesale_price_usd and link.brp_part.wholesale_price_usd > 0
+                else None
+            )
             if price is None or price <= 0:
+                plan.mark_source_missing(link.part)
                 plan.skipped_without_wholesale += 1
                 continue
             plan.calculated_links += 1
             recommended = money(price)
             if link.part.recommended_price == recommended:
                 plan.unchanged += 1
+                plan.set_price(link.part, recommended)
                 continue
-            link.part.recommended_price = recommended
-            plan.parts_to_update[link.part_id] = link.part
+            plan.set_price(link.part, recommended)
             if link.price_source == BrpPartLink.PriceSource.MANUAL:
                 # Цена больше не ручная, и источник обязан говорить правду:
                 # отчёты решают по нему, пересчитывать цену или брать сохранённую.
@@ -163,17 +232,25 @@ def plan_linked_part_price_refresh(
     if "polaris" in selected_catalogs:
         for link in PolarisPartLink.objects.select_related("polaris_part", "part"):
             plan.polaris_links += 1
-            price = _polaris_link_price(link, usd_rate, polaris_markup)
+            if link.part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
+                continue
+            price = (
+                _polaris_link_price(link, usd_rate, polaris_markup)
+                if link.polaris_part.wholesale_price_usd
+                and link.polaris_part.wholesale_price_usd > 0
+                else None
+            )
             if price is None or price <= 0:
+                plan.mark_source_missing(link.part)
                 plan.skipped_without_wholesale += 1
                 continue
             plan.calculated_links += 1
             recommended = money(price)
             if link.part.recommended_price == recommended:
                 plan.unchanged += 1
+                plan.set_price(link.part, recommended)
                 continue
-            link.part.recommended_price = recommended
-            plan.parts_to_update[link.part_id] = link.part
+            plan.set_price(link.part, recommended)
             if link.price_source == PolarisPartLink.PriceSource.MANUAL:
                 link.price_source = PolarisPartLink.PriceSource.CALCULATED
                 plan.links_to_relabel.append(link)
@@ -202,7 +279,13 @@ def _plan_aftermarket_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> Non
 
     entries = (
         AftermarketCatalogPart.objects.select_related("part")
-        .only("id", "dealer_cost_usd", "part__id", "part__recommended_price")
+        .only(
+            "id",
+            "dealer_cost_usd",
+            "part__id",
+            "part__recommended_price",
+            "part__certified_price_rub",
+        )
         .iterator(chunk_size=2000)
     )
     for entry in entries:
@@ -210,16 +293,16 @@ def _plan_aftermarket_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> Non
         price = customer_price_rub(entry.dealer_cost_usd, usd_rate, markup)
         if price is None or price <= 0:
             # Нет дилерской цены или она неположительная: цену не выдумываем и
-            # уже стоящую не стираем - ровно как в ветках BRP и Polaris.
+            # уже стоящую не стираем - ровно как в ветках BRP и Polaris. Но
+            # доказать её нечем, поэтому свидетельство снимается.
+            plan.mark_source_missing(entry.part)
             plan.skipped_without_wholesale += 1
             continue
         plan.calculated_links += 1
         recommended = money(price)
         if entry.part.recommended_price == recommended:
             plan.unchanged += 1
-            continue
-        entry.part.recommended_price = recommended
-        plan.parts_to_update[entry.part_id] = entry.part
+        plan.set_price(entry.part, recommended)
 
 
 @transaction.atomic
@@ -248,7 +331,9 @@ def refresh_linked_part_prices(
         # Пачками: каталог аналогов насчитывает больше ста тысяч карточек, и
         # одним запросом такой bulk_update упирается в лимит параметров.
         PartType.objects.bulk_update(
-            list(plan.parts_to_update.values()), ["recommended_price"], batch_size=1000
+            list(plan.parts_to_update.values()),
+            ["recommended_price", "certified_price_rub", "price_provenance"],
+            batch_size=1000,
         )
     _relabel_overridden_links(plan.links_to_relabel)
     return plan.updated

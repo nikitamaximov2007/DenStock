@@ -106,13 +106,20 @@ class PublicCatalog:
         active=True,
         public=True,
     ) -> PartType:
+        canonical_price = Decimal(price) if price is not None else None
         part = PartType.objects.create(
             name=name,
             category=self.category,
             manufacturer=Manufacturer.objects.get_or_create(name=maker)[0] if maker else None,
             unit=unit or self.unit,
             tracking_mode=PartType.TrackingMode.BULK,
-            recommended_price=Decimal(price) if price is not None else None,
+            recommended_price=canonical_price,
+            certified_price_rub=canonical_price,
+            price_provenance=(
+                PartType.PriceProvenance.FORMULA_CERTIFIED
+                if canonical_price is not None
+                else PartType.PriceProvenance.UNVERIFIED
+            ),
             is_active=active,
             is_public=public,
         )
