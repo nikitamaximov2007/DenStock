@@ -7,6 +7,11 @@ presentation object. Consumers hydrate separately - the Public Catalog through
 through their own DTOs. Nothing here exposes locations, lots, serials, costs,
 suppliers, receipts, customers or staff.
 
+Russian names are matched on a folded search column, never through the
+database's own ``UPPER()``: that follows the cluster locale and does nothing to
+Cyrillic in locale ``C``. The one folding rule lives in
+``apps.core.search_text`` and is shared with the internal operator lookup.
+
 Ranking is tiered. Every tier is its own indexed, LIMITed SQL query and the
 tiers are concatenated in priority order, so an exact identifier always
 outranks a fuzzy name no matter what the similarity score is: the tier decides
@@ -29,6 +34,7 @@ from typing import Literal
 from django.db import connection, transaction
 
 from apps.actions.models import PartCustomsInfo
+from apps.core.search_text import fold_search_text
 from apps.inventory.presentation import EXACT_NUMBER_KINDS
 
 from .models import PartNumber, PartType, normalize_number
@@ -41,6 +47,7 @@ MatchType = Literal[
     "exact_name",
     "name_prefix",
     "name_partial",
+    "name_all_words",
     "name_fuzzy",
 ]
 
@@ -53,7 +60,13 @@ MATCH_TYPE_RANKS: dict[str, int] = {
     "exact_name": 5,
     "name_prefix": 6,
     "name_partial": 7,
-    "name_fuzzy": 8,
+    # Все слова запроса встречаются в названии, но не подряд: «масляный фильтр»
+    # находит «Фильтр масляный». Порядок слов в русском названии свободный, и
+    # запоминать, как его записал оператор, покупатель не обязан. Тир стоит
+    # ниже подстроки (там слова идут подряд, совпадение сильнее) и выше
+    # опечаток: это точное совпадение слов, а не догадка.
+    "name_all_words": 8,
+    "name_fuzzy": 9,
 }
 
 # --- Thresholds -------------------------------------------------------------
@@ -102,6 +115,26 @@ class PartSearchPage:
 def supports_trigram() -> bool:
     """Typo tolerance needs PostgreSQL; every other tier works on any backend."""
     return connection.vendor == "postgresql"
+
+
+def cyrillic_fuzzy_available() -> bool:
+    """Даёт ли кластер триграммы для кириллицы. Отдельно от `supports_trigram`.
+
+    pg_trgm режет строку на триграммы только по буквам и цифрам, а буква это
+    или нет, решает CTYPE базы. В базе с локалью `C` кириллица буквами не
+    считается: `show_trgm('проба')` возвращает пустой массив, и опечатки в
+    русских словах не находятся вообще - молча, без ошибки.
+
+    Регистр и «ё» это уже не лечит: их сворачивает `fold_search_text` в Python,
+    и остальные тиры русского поиска работают в любой локали. Не работает
+    ровно один тир - опечатки, - поэтому проверка нужна как явный сигнал в
+    `manage.py ops_check`, а не как исключение в поиске.
+    """
+    if not supports_trigram():
+        return False
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT cardinality(show_trgm(%s)) > 0", ["проба"])
+        return bool(cursor.fetchone()[0])
 
 
 def _has_letter(text: str) -> bool:
@@ -156,6 +189,16 @@ def _article_ids(normalized: str, lookup: str, limit: int) -> list[int]:
 # --- Name tiers -------------------------------------------------------------
 
 
+# Case-insensitive lookups differ per branch on purpose. The English catalog
+# name is ASCII, where the database's own `UPPER()` folds correctly in any
+# locale, so `__iexact`/`__istartswith`/`__icontains` keep using the existing
+# index. Russian names cannot rely on `UPPER()`: it follows the cluster locale
+# and leaves Cyrillic untouched in locale `C`. They are matched against the
+# folded column instead, with a case-SENSITIVE lookup, because both sides are
+# already folded by the one shared rule.
+_FOLDED_LOOKUPS = {"iexact": "exact", "istartswith": "startswith", "icontains": "contains"}
+
+
 def _name_ids(query: str, lookup: str, limit: int) -> list[int]:
     """English catalog name OR confirmed Russian name, merged by primary key.
 
@@ -165,10 +208,49 @@ def _name_ids(query: str, lookup: str, limit: int) -> list[int]:
     english = PartType.objects.filter(**{f"name__{lookup}": query}).values_list(
         "pk", flat=True
     )[:limit]
-    russian = PartCustomsInfo.objects.filter(
-        customs_name_ru_confirmed=True, **{f"customs_name_ru__{lookup}": query}
-    ).values_list("part_type_id", flat=True)[:limit]
+    folded = fold_search_text(query)
+    russian = (
+        PartCustomsInfo.objects.filter(
+            customs_name_ru_confirmed=True,
+            **{f"search_name_ru__{_FOLDED_LOOKUPS[lookup]}": folded},
+        ).values_list("part_type_id", flat=True)[:limit]
+        if folded
+        else []
+    )
     return sorted(set(english) | set(russian))[:limit]
+
+
+MAX_WORDS = 5
+MIN_WORD_LENGTH = 3
+
+
+def _query_words(query: str) -> list[str]:
+    """Слова запроса для тира «все слова». Пусто, если тир неприменим.
+
+    Одно слово этому тиру не нужно: его уже разобрала подстрока. Короткие
+    слова ("на", "1") делают запрос слишком широким, поэтому при них тир
+    выключается целиком, а не отбрасывает их молча: иначе «масло 2» искало бы
+    просто «масло» и выдавало не то, что спросили.
+    """
+    words = fold_search_text(query).split()
+    if len(words) < 2 or len(words) > MAX_WORDS:
+        return []
+    if any(len(word) < MIN_WORD_LENGTH for word in words):
+        return []
+    return words
+
+
+def _all_words_ids(words: list[str], limit: int) -> list[int]:
+    """Названия, где встречается КАЖДОЕ слово запроса, в любом порядке."""
+    english = PartType.objects.all()
+    russian = PartCustomsInfo.objects.filter(customs_name_ru_confirmed=True)
+    for word in words:
+        english = english.filter(name__icontains=word)
+        russian = russian.filter(search_name_ru__contains=word)
+    return sorted(
+        set(english.values_list("pk", flat=True)[:limit])
+        | set(russian.values_list("part_type_id", flat=True)[:limit])
+    )[:limit]
 
 
 _FUZZY_SQL = """
@@ -179,10 +261,10 @@ SELECT part_id, MAX(score) AS score FROM (
     WHERE UPPER(%s) <%% UPPER(pt.name::text)
   UNION ALL
     SELECT ci.part_type_id AS part_id,
-           word_similarity(UPPER(%s), UPPER(ci.customs_name_ru::text)) AS score
+           word_similarity(%s, ci.search_name_ru) AS score
     FROM actions_partcustomsinfo ci
     WHERE ci.customs_name_ru_confirmed
-      AND UPPER(%s) <%% UPPER(ci.customs_name_ru::text)
+      AND %s <%% ci.search_name_ru
 ) candidates
 GROUP BY part_id
 ORDER BY MAX(score) DESC, part_id
@@ -195,8 +277,14 @@ def _fuzzy_rows(query: str, limit: int) -> list[tuple[int, float]]:
 
     ``<%`` is what lets the GIN trigram index answer the query. Computing
     ``word_similarity()`` in a WHERE clause instead would score every catalog
-    row. Each branch of the UNION uses its own expression index; the Russian
-    branch reads confirmed names only.
+    row. Each branch of the UNION uses its own index; the Russian branch reads
+    confirmed names only.
+
+    The two branches fold case differently on purpose. English names are ASCII,
+    so the database's own ``UPPER()`` is safe in any locale and its expression
+    index is reused. Russian names are compared on the folded column, because
+    ``UPPER()`` follows the cluster locale and does nothing to Cyrillic in
+    locale ``C`` - which silently turned the whole Russian fuzzy tier off.
 
     The operator's cut-off is the ``pg_trgm.word_similarity_threshold``
     setting, applied with ``is_local => true`` so it ends with the transaction.
@@ -217,7 +305,8 @@ def _fuzzy_rows(query: str, limit: int) -> list[tuple[int, float]]:
             "SELECT set_config('pg_trgm.word_similarity_threshold', %s, true)",
             [str(WORD_SIMILARITY_THRESHOLD)],
         )
-        cursor.execute(_FUZZY_SQL, [query, query, query, query, limit])
+        folded = fold_search_text(query)
+        cursor.execute(_FUZZY_SQL, [query, query, folded, folded, limit])
         rows = [(int(part_id), float(score)) for part_id, score in cursor.fetchall()]
         if nested:
             cursor.execute(
@@ -289,7 +378,13 @@ def search_part_ids(raw_query: str | None, *, limit: int = RESULT_CAP) -> list[P
     if not full() and len(query) >= MIN_PARTIAL_LENGTH:
         take(_name_ids(query, "icontains", limit), "name_partial")
 
-    # 8. Typo tolerance last, so a fuzzy name can never outrank an identifier.
+    # 8. Every word of a multiword query, in any order.
+    if not full():
+        words = _query_words(query)
+        if words:
+            take(_all_words_ids(words, limit), "name_all_words")
+
+    # 9. Typo tolerance last, so a fuzzy name can never outrank an identifier.
     # It is for words: a query with no letter at all is an identifier, which
     # the exact, prefix and substring tiers already cover, so it is skipped.
     if not full() and len(query) >= MIN_FUZZY_LENGTH and _has_letter(query):

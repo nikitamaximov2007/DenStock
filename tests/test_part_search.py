@@ -241,7 +241,7 @@ def test_same_part_matching_english_and_russian_appears_once(cat):
 def test_ranking_contract_is_the_documented_tier_order():
     assert [t for t, _ in sorted(MATCH_TYPE_RANKS.items(), key=lambda kv: kv[1])] == [
         "exact_article", "normalized_exact_article", "article_prefix", "article_partial",
-        "exact_name", "name_prefix", "name_partial", "name_fuzzy",
+        "exact_name", "name_prefix", "name_partial", "name_all_words", "name_fuzzy",
     ]
 
 

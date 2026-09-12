@@ -4,9 +4,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import connection
 from django.db.models import Q
-from django.db.models.functions import Collate, Upper
 
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
@@ -19,6 +17,7 @@ from apps.catalog.models import (
 )
 from apps.catalog_import.origin import LABELS as ORIGIN_LABELS
 from apps.catalog_import.origin import aftermarket_part_ids, catalog_origin
+from apps.core.search_text import fold_search_text
 from apps.inventory.models import PartItem, StockBalance
 from apps.inventory.movement import LiveStockRow, live_stock_rows
 from apps.inventory.presentation import (
@@ -202,27 +201,27 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
 
 
 def _confirmed_ru_name_ids(raw: str, *, lookup: str):
-    """Confirmed RU-name IDs, case-insensitive even in a C-locale PostgreSQL DB.
+    """Confirmed RU-name IDs through the one shared folded search column.
 
-    PostgreSQL's ``UPPER``/``LOWER`` use the database locale.  A cluster
-    created with locale ``C`` therefore leaves Cyrillic untouched, making
-    Django's ``__iexact``/``__icontains`` effectively case-sensitive.  The
-    stock PostgreSQL 16 image provides the Unicode ICU collation; apply it
-    only to this operator-facing trusted-name comparison.
+    Case folding for Cyrillic cannot go through the database: ``UPPER`` follows
+    the cluster locale and leaves Cyrillic untouched in locale ``C``, which made
+    Django's ``__iexact``/``__icontains`` effectively case-sensitive here. Both
+    sides are folded by the same rule instead
+    (``apps.core.search_text.fold_search_text``), so the comparison is a plain
+    indexed one and the operator search and the public catalog answer
+    identically on any backend.
     """
-    names = PartType.objects.filter(customs_info__customs_name_ru_confirmed=True)
-    field = "customs_info__customs_name_ru"
-    if connection.vendor != "postgresql":
-        return names.filter(**{f"{field}__{lookup}": raw}).values("pk")
-
-    folded_lookup = {
-        "iexact": "_ru_name_folded",
-        "istartswith": "_ru_name_folded__startswith",
-        "icontains": "_ru_name_folded__contains",
+    folded = fold_search_text(raw)
+    if not folded:
+        return PartType.objects.none().values("pk")
+    field_lookup = {
+        "iexact": "customs_info__search_name_ru",
+        "istartswith": "customs_info__search_name_ru__startswith",
+        "icontains": "customs_info__search_name_ru__contains",
     }[lookup]
     return (
-        names.annotate(_ru_name_folded=Upper(Collate(field, "und-x-icu")))
-        .filter(**{folded_lookup: raw.upper()})
+        PartType.objects.filter(customs_info__customs_name_ru_confirmed=True)
+        .filter(**{field_lookup: folded})
         .values("pk")
     )
 

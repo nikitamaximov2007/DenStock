@@ -1,10 +1,11 @@
 """Print the read-only content coverage of the public catalog."""
 
+import csv
 import json
 
 from django.core.management.base import BaseCommand
 
-from apps.catalog.public_coverage import collect_coverage
+from apps.catalog.public_coverage import collect_coverage, russian_name_backlog
 
 
 def _share(part: int, whole: int) -> str:
@@ -16,9 +17,19 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--json", action="store_true", help="Machine-readable output.")
+        parser.add_argument(
+            "--russian-backlog",
+            help=(
+                "Куда выгрузить список деталей без подтверждённого русского названия "
+                "(CSV, сначала то, что есть на складе)."
+            ),
+        )
 
     def handle(self, *args, **options):
         report = collect_coverage()
+        if options["russian_backlog"]:
+            written = _write_backlog(options["russian_backlog"])
+            self.stdout.write(f"Список для перевода: {options['russian_backlog']} ({written} шт.)")
         if options["json"]:
             self.stdout.write(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
             return
@@ -56,3 +67,18 @@ class Command(BaseCommand):
         self.stdout.write("Производители (крупнейшие):")
         for name, count in report.top_manufacturers:
             self.stdout.write(f"  {name[: width - 2]:<{width - 2}}  {_share(count, whole)}")
+
+
+BACKLOG_FIELDS = ("part_id", "article", "manufacturer", "english_name", "available", "in_stock")
+
+
+def _write_backlog(path: str) -> int:
+    """Выгрузить очередь на перевод: сначала то, что покупатель может купить."""
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(BACKLOG_FIELDS)
+        written = 0
+        for row in russian_name_backlog():
+            writer.writerow([getattr(row, name) for name in BACKLOG_FIELDS])
+            written += 1
+    return written

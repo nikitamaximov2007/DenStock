@@ -159,3 +159,54 @@ def collect_coverage() -> CoverageReport:
         report = _collect()
         transaction.set_rollback(True)
     return report
+
+
+@dataclass(frozen=True, slots=True)
+class RussianNameBacklogRow:
+    """Одна публичная деталь, которой не хватает подтверждённого названия."""
+
+    part_id: int
+    article: str
+    manufacturer: str
+    english_name: str
+    available: Decimal
+    in_stock: bool
+
+
+def russian_name_backlog() -> list[RussianNameBacklogRow]:
+    """Очередь на перевод: публичные детали без подтверждённого названия.
+
+    Сначала то, что лежит на складе и по убыванию остатка: покупатель ищет по
+    русскому названию именно то, что можно купить сегодня. Только чтение.
+    """
+    from apps.inventory.presentation import (
+        manufacturer_display,
+        part_exact_number,
+        with_part_identity,
+    )
+
+    confirmed = set(
+        PartCustomsInfo.objects.filter(customs_name_ru_confirmed=True)
+        .exclude(customs_name_ru="")
+        .values_list("part_type_id", flat=True)
+    )
+    available: Counter = Counter()
+    for row in live_stock_rows():
+        available[row.part_type.pk] += row.available
+
+    rows = []
+    queryset = public_parts().exclude(pk__in=confirmed)
+    for part in with_part_identity(queryset, part_field="").iterator(chunk_size=2000):
+        quantity = available.get(part.pk, ZERO)
+        rows.append(
+            RussianNameBacklogRow(
+                part_id=part.pk,
+                article=part_exact_number(part, default=""),
+                manufacturer=manufacturer_display(part),
+                english_name=part.name,
+                available=quantity,
+                in_stock=quantity > ZERO,
+            )
+        )
+    rows.sort(key=lambda row: (not row.in_stock, -row.available, row.part_id))
+    return rows

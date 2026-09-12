@@ -55,7 +55,7 @@ def test_pg_trgm_is_installed(db):
     [
         "catalog_partnumber_normalized_trgm",
         "catalog_parttype_name_upper_trgm",
-        "actions_partcustomsinfo_ru_upper_trgm",
+        "actions_partcustomsinfo_search_ru_trgm",
     ],
 )
 def test_trigram_index_exists(db, index):
@@ -71,7 +71,7 @@ def test_russian_trigram_index_is_partial_for_confirmed_names(db):
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT indexdef FROM pg_indexes WHERE indexname = %s",
-            ["actions_partcustomsinfo_ru_upper_trgm"],
+            ["actions_partcustomsinfo_search_ru_trgm"],
         )
         indexdef = cursor.fetchone()[0]
     assert "WHERE customs_name_ru_confirmed" in indexdef
@@ -312,7 +312,7 @@ def indexed_catalog(cat):
         ("0001300", "catalog_partnumber_normalized_trgm"),
         ("drive", "catalog_parttype_name_upper_trgm"),
         ("bearng", "catalog_parttype_name_upper_trgm"),
-        ("ПРОКЛАДКА", "actions_partcustomsinfo_ru_upper_trgm"),
+        ("ПРОКЛАДКА", "actions_partcustomsinfo_search_ru_trgm"),
     ],
 )
 def test_search_can_be_served_by_the_intended_index(indexed_catalog, query, index):
