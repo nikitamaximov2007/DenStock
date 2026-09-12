@@ -42,7 +42,6 @@
           <th class="num">Ремонтов</th>
           <th class="num--money">Детали в ремонтах (₽)</th>
           <th class="num--money">Итого с клиента (₽)</th>
-          {% if show_costs %}<th class="num--money">Себестоимость ремонта (₽)</th>{% endif %}
           <th>Оплатил</th>
           <th>
             <a class="table-sort-link table-sort-link--wrap{% if date_sort.active %} table-sort-link--active{% endif %}"
@@ -94,7 +93,6 @@
               {{ row.client_total_known|money_int }}
               {% if row.client_total_unknown %}<span class="muted">*</span>{% endif %}
             </td>
-            {% if show_costs %}<td class="num--money">{{ row.issued_cost|money_int }}</td>{% endif %}
             <td>
               {% if row.linked %}
                 {% if not row.payment_status.period_bound %}

@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
+from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
     ensure_location_operation_allowed,
     recompute_balance_row,
@@ -484,7 +485,7 @@ def remove_sale_line(line, *, by=None) -> None:
 
 @transaction.atomic
 def create_sale_from_reservation(reservation, *, by=None) -> Sale:
-    """Собрать черновик продажи из активного резерва (цены — из recommended_price)."""
+    """Собрать черновик продажи из активного резерва по фактическим источникам."""
     reservation = Reservation.objects.select_for_update().get(pk=reservation.pk)
     if reservation.status != Reservation.Status.ACTIVE:
         raise SaleError("Продать можно только из активного резерва.")
@@ -505,7 +506,11 @@ def create_sale_from_reservation(reservation, *, by=None) -> Sale:
         sale.customer_id = reservation.customer_id
         sale.save(update_fields=["customer", "updated_at"])
     for rline in rlines:
-        unit_price = rline.part_type.recommended_price or Decimal("0")
+        source = rline.part_item if rline.part_item_id else rline.stock_lot
+        unit_price = (
+            resolve_effective_inventory_customer_price(source, rline.part_type.recommended_price)
+            or Decimal("0")
+        )
         if rline.part_item_id:
             SaleLine.objects.create(
                 sale=sale, part_type=rline.part_type, part_item=rline.part_item,

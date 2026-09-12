@@ -39,6 +39,7 @@ from apps.inventory.presentation import (
     part_exact_number,
     with_part_identity,
 )
+from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.services import find_polaris_price_source
 from apps.procurement.models import money
@@ -110,7 +111,7 @@ SALE_PRICE_STALE_ZERO = (
 )
 
 
-def check_sale_line_price(part, unit_price) -> None:
+def check_sale_line_price(part, unit_price, *, has_receipt_snapshot=False) -> None:
     """Не дать провести продажу по цене, которой никто не назначал.
 
     В быстрых действиях цену продажи руками не вводят: она приходит из карточки
@@ -119,7 +120,9 @@ def check_sale_line_price(part, unit_price) -> None:
     необязательна по своей природе и показывается прочерком.
     """
     canonical = part.recommended_price
-    if unit_price is None or (unit_price == 0 and canonical is None):
+    if unit_price is None or (
+        unit_price == 0 and canonical is None and not has_receipt_snapshot
+    ):
         raise ActionError(SALE_PRICE_NOT_SET.format(name=part.name))
     if unit_price == 0 and canonical != 0:
         raise ActionError(SALE_PRICE_STALE_ZERO.format(name=part.name))
@@ -346,15 +349,23 @@ def _perform_action_atomic(
     # Цена нужна и продаже, и записи журнала. Для продажи пустая цена - повод
     # остановиться, а не подставить ноль; резерв и ремонт живут по своим
     # правилам, и их запись в журнале остаётся прежней.
-    unit_price = part.recommended_price
-    journal_price = unit_price if unit_price is not None else Decimal("0")
+    journal_price = Decimal("0")
     sale = reservation = repair_order = None
     try:
         if action_type == WarehouseAction.Type.SALE:
-            check_sale_line_price(part, unit_price)
             sale = create_sale(customer_name=customer_comment, comment="Сканер действий", by=by)
             for lot, portion in portions:
+                unit_price = resolve_effective_inventory_customer_price(
+                    lot, part.recommended_price
+                )
+                check_sale_line_price(
+                    part,
+                    unit_price,
+                    has_receipt_snapshot=lot.receipt_customer_price_snapshot_rub is not None,
+                )
                 add_stock_lot_to_sale(sale, lot, portion, unit_price=unit_price, by=by)
+            journal_price = sale.lines.aggregate(price=Sum("total_price"))["price"] or Decimal("0")
+            journal_price = money(journal_price / quantity)
             sale = complete_sale(sale, by=by)
         elif action_type == WarehouseAction.Type.RESERVE:
             reservation = create_reservation(

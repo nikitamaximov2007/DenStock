@@ -83,6 +83,11 @@ class PartItem(models.Model):
     landed_cost_rub = models.DecimalField(
         "Себестоимость (₽)", max_digits=12, decimal_places=2, editable=False, default=0
     )
+    receipt_customer_price_snapshot_rub = models.DecimalField(
+        "Цена клиента при поступлении (₽)", max_digits=12, decimal_places=2,
+        null=True, blank=True, editable=False,
+        help_text="Снимок канонической цены в момент фактической приёмки.",
+    )
     status = models.CharField(
         "Статус", max_length=20, choices=Status.choices, default=Status.RECEIVING
     )
@@ -559,6 +564,11 @@ class StockLot(models.Model):
     )
     landed_unit_cost_rub = models.DecimalField(
         "Себестоимость за ед. (₽)", max_digits=12, decimal_places=2, editable=False, default=0
+    )
+    receipt_customer_price_snapshot_rub = models.DecimalField(
+        "Цена клиента при поступлении (₽)", max_digits=12, decimal_places=2,
+        null=True, blank=True, editable=False,
+        help_text="Снимок канонической цены в момент фактической приёмки.",
     )
     status = models.CharField(
         "Статус", max_length=20, choices=Status.choices, default=Status.RECEIVING

@@ -21,6 +21,7 @@ from django.utils import timezone
 from apps.catalog.models import PartType
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
+from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
     issue_part_item,
     issue_stock_lot,
@@ -50,9 +51,9 @@ def _freeze_repair_line_cost(line: RepairIssueLine) -> None:
     line.total_cost_rub = money(unit_cost * line.quantity)
 
 
-def _default_customer_price(part_type):
-    """Current catalog price is the default for a new repair draft."""
-    return part_type.recommended_price
+def _default_customer_price(inventory, current_price):
+    """Default a new repair line from its actual item or lot source."""
+    return resolve_effective_inventory_customer_price(inventory, current_price)
 
 
 # --- Создание / наполнение заказа --------------------------------------------
@@ -125,7 +126,7 @@ def add_part_item_to_repair_order(
         quantity=Decimal("1"),
         note=(note or "").strip(),
         customer_unit_price_rub=(
-            _default_customer_price(item.part_type)
+            _default_customer_price(item, item.part_type.recommended_price)
             if customer_unit_price_rub is None
             else Decimal(customer_unit_price_rub)
         ),
@@ -163,7 +164,7 @@ def add_stock_lot_to_repair_order(
         quantity=quantity,
         note=(note or "").strip(),
         customer_unit_price_rub=(
-            _default_customer_price(lot.part_type)
+            _default_customer_price(lot, lot.part_type.recommended_price)
             if customer_unit_price_rub is None
             else Decimal(customer_unit_price_rub)
         ),

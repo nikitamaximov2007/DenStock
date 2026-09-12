@@ -28,6 +28,7 @@ from django.db import transaction
 
 from apps.customers.models import Customer
 from apps.inventory.models import StockLot
+from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.procurement.models import money
 from apps.repairs.models import RepairOrder
 from apps.repairs.services import (
@@ -160,22 +161,31 @@ def cart_rows(cart) -> list[CartRow]:
                 "part": line.part_type,
                 "location": line.stock_lot.location,
                 "quantity": Decimal("0"),
-                "unit_price": (
-                    line.unit_price if isinstance(cart, Sale) else line.customer_unit_price_rub
-                ),
+                "unit_prices": set(),
+                "total_price": Decimal("0"),
+                "has_unknown_price": False,
             },
         )
         row["quantity"] += line.quantity
+        price = line.unit_price if isinstance(cart, Sale) else line.customer_unit_price_rub
+        if price is not None:
+            row["unit_prices"].add(price)
+            row["total_price"] += money(price * line.quantity)
+        else:
+            row["has_unknown_price"] = True
     rows = []
     for row in grouped.values():
-        unit_price = row["unit_price"]
+        prices = row["unit_prices"]
+        unit_price = next(iter(prices)) if len(prices) == 1 else None
         rows.append(
             CartRow(
                 part=row["part"],
                 location=row["location"],
                 quantity=row["quantity"],
                 unit_price=unit_price,
-                total_price=money(unit_price * row["quantity"]) if unit_price is not None else None,
+                total_price=(
+                    None if row["has_unknown_price"] else row["total_price"] if prices else None
+                ),
             )
         )
     return rows
@@ -219,7 +229,6 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
     """
     _ensure_draft(cart)
     quantity = parse_quantity(quantity, allow_zero=True)
-    prior = find_row(cart, part, location)
     _drop_row_lines(cart, part, location)
     if quantity == 0:
         return None
@@ -229,18 +238,20 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
         .order_by("created_at", "pk")
     )
     portions = _split_quantity_over_lots(lots, quantity)
-    if unit_price is None:
-        unit_price = prior.unit_price if prior is not None else part.recommended_price
-    if isinstance(cart, Sale):
-        # Раньше пустая цена превращалась здесь в 0.00, и деталь тихо уходила
-        # бесплатно. Теперь оператор узнаёт об этом на добавлении, а не из
-        # отчёта через неделю. Убрать позицию это не мешает: количество 0
-        # обрабатывается выше и сюда не доходит.
-        check_sale_line_price(part, unit_price)
     try:
         for lot, portion in portions:
             if isinstance(cart, Sale):
-                add_stock_lot_to_sale(cart, lot, portion, unit_price=unit_price, by=by)
+                price = unit_price
+                if price is None:
+                    price = resolve_effective_inventory_customer_price(
+                        lot, part.recommended_price
+                    )
+                check_sale_line_price(
+                    part,
+                    price,
+                    has_receipt_snapshot=lot.receipt_customer_price_snapshot_rub is not None,
+                )
+                add_stock_lot_to_sale(cart, lot, portion, unit_price=price, by=by)
             else:
                 add_stock_lot_to_repair_order(
                     cart, lot, portion, customer_unit_price_rub=unit_price, by=by

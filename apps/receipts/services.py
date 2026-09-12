@@ -167,12 +167,24 @@ def post_receipt(receipt: Receipt, *, by=None) -> Receipt:
     for line in lines:
         line.batch_line.refresh_from_db()
         note = f"Поступление {receipt.number}"
+        # Capture the canonical customer price exactly once, while this receipt
+        # is accepted.  Older inventory is deliberately left NULL by migration.
+        receipt_price = line.part_type.recommended_price
         if line.part_type.tracking_mode == PartType.TrackingMode.SERIAL:
-            items = create_part_items(line.batch_line, int(line.quantity))
+            items = create_part_items(
+                line.batch_line,
+                int(line.quantity),
+                receipt_customer_price_snapshot_rub=receipt_price,
+            )
             for item in items:
                 receive_part_item(item, to_location=line.location, by=by, comment=note)
         else:
-            lot = create_stock_lot(line.batch_line, line.location, line.quantity)
+            lot = create_stock_lot(
+                line.batch_line,
+                line.location,
+                line.quantity,
+                receipt_customer_price_snapshot_rub=receipt_price,
+            )
             receive_stock_lot(lot, by=by, comment=note)
 
     receipt.batch = batch

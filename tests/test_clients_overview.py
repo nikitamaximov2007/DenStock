@@ -238,6 +238,7 @@ def test_overview_page_shows_two_money_columns(client, make_user, data):
     assert "Выручка продаж (₽)" in html
     assert "Детали в ремонтах (₽)" in html
     assert "Итого с клиента (₽)" in html
+    assert "Себестоимость ремонта (₽)" not in html
 
 
 def test_overview_page_explains_client_total(client, make_user, data):

@@ -102,6 +102,7 @@ def create_part_items(
     serial_number: str = "",
     current_location=None,
     note: str = "",
+    receipt_customer_price_snapshot_rub=None,
 ) -> list[PartItem]:
     """Создать `count` экземпляров из строки партии (одиночно или массово).
 
@@ -142,6 +143,7 @@ def create_part_items(
             batch_line=line,
             serial_number=serial,
             landed_cost_rub=line.landed_unit_cost_rub,
+            receipt_customer_price_snapshot_rub=receipt_customer_price_snapshot_rub,
             current_location=current_location,
             note=note,
         )
@@ -175,7 +177,14 @@ def _validate_bulk_line(line: BatchLine) -> None:
 
 
 @transaction.atomic
-def create_stock_lot(line: BatchLine, location, quantity, *, note: str = "") -> StockLot:
+def create_stock_lot(
+    line: BatchLine,
+    location,
+    quantity,
+    *,
+    note: str = "",
+    receipt_customer_price_snapshot_rub=None,
+) -> StockLot:
     """Создать количественный лот из строки партии в конкретной ячейке."""
     _validate_bulk_line(line)
     quantity = Decimal(quantity)
@@ -206,6 +215,7 @@ def create_stock_lot(line: BatchLine, location, quantity, *, note: str = "") -> 
         quantity=quantity,
         initial_quantity=quantity,
         landed_unit_cost_rub=line.landed_unit_cost_rub,
+        receipt_customer_price_snapshot_rub=receipt_customer_price_snapshot_rub,
         note=note,
     )
     lot.save()

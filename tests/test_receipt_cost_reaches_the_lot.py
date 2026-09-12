@@ -15,7 +15,7 @@ from decimal import Decimal
 import pytest
 
 from apps.catalog.models import Category, PartNumber, PartType, Unit
-from apps.inventory.models import StockLot
+from apps.inventory.models import PartItem, StockLot
 from apps.receipts.models import Receipt, ReceiptLine
 from apps.receipts.services import post_receipt
 from apps.suppliers.models import Supplier
@@ -65,6 +65,29 @@ def test_a_posted_receipt_cost_lands_on_the_lot(scene):
     lot = StockLot.objects.get(part_type=scene["part"])
     assert lot.landed_unit_cost_rub == Decimal("160.00")
     assert lot.landed_unit_cost_rub > 0, "лот получил ноль при положительной цене приёмки"
+
+
+def test_posted_receipt_captures_canonical_customer_price_on_the_actual_lot(scene):
+    scene["part"].recommended_price = Decimal("1250")
+    scene["part"].save(update_fields=["recommended_price"])
+
+    post_receipt(_receipt(scene, quantity="2", unit_cost="160"), by=scene["admin"])
+
+    lot = StockLot.objects.get(part_type=scene["part"])
+    assert lot.receipt_customer_price_snapshot_rub == Decimal("1250.00")
+
+
+def test_posted_serial_receipt_captures_the_same_customer_price_on_each_item(scene):
+    scene["part"].tracking_mode = PartType.TrackingMode.SERIAL
+    scene["part"].recommended_price = Decimal("1250")
+    scene["part"].save(update_fields=["tracking_mode", "recommended_price"])
+
+    post_receipt(_receipt(scene, quantity="2", unit_cost="160"), by=scene["admin"])
+
+    assert list(
+        PartItem.objects.filter(part_type=scene["part"])
+        .values_list("receipt_customer_price_snapshot_rub", flat=True)
+    ) == [Decimal("1250.00"), Decimal("1250.00")]
 
 
 @pytest.mark.parametrize("unit_cost", ["0.01", "1", "160", "12345.67"])
