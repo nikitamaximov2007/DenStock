@@ -157,6 +157,25 @@ def test_recalculate_keeps_existing_recommendation_when_wholesale_price_is_missi
     assert "Без оптовой цены, текущая цена сохранена: 1" in capsys.readouterr().out
 
 
+def test_recalculate_does_not_overwrite_an_unconfirmed_manual_price(
+    db, django_user_model
+):
+    user = django_user_model.objects.create_superuser("manual-price", password="parol-12345")
+    brp = BrpCatalogPart.objects.create(
+        material_no="MANUAL-PRICE-001",
+        part_desc="MANUAL PRICE",
+        retail_price_usd=Decimal("100"),
+        wholesale_price_usd=Decimal("10"),
+    )
+    part = promote_to_warehouse(brp, by=user, manual_price=Decimal("45000"))
+
+    call_command("recalculate_linked_part_prices", "--apply")
+
+    part.refresh_from_db()
+    assert part.recommended_price == Decimal("45000")
+    assert part.price_provenance == part.PriceProvenance.UNVERIFIED
+
+
 def test_inactive_brp_catalog_row_clears_only_current_recommendation(wholesale_price_data):
     data = wholesale_price_data
     part = data["part"]

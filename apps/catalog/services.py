@@ -154,6 +154,13 @@ class LinkedPriceRefreshPlan:
             part.price_provenance = PartType.PriceProvenance.SOURCE_MISSING
             self.parts_to_update[part.pk] = part
 
+    def mark_unverified_manual(self, part) -> None:
+        """Keep an unconfirmed manual commercial price intact and non-public."""
+        self.drop_certificate(part)
+        if part.price_provenance != PartType.PriceProvenance.UNVERIFIED:
+            part.price_provenance = PartType.PriceProvenance.UNVERIFIED
+            self.parts_to_update[part.pk] = part
+
 
 def certify_valid_manual_price_exception(part: PartType) -> PartType:
     """Record owner-confirmed commercial pricing for a distinct manual item.
@@ -195,6 +202,13 @@ def plan_linked_part_price_refresh(
             plan.brp_links += 1
             if link.part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
                 continue
+            if link.price_source == BrpPartLink.PriceSource.MANUAL:
+                # A manual price is never consent to overwrite it merely
+                # because the supplier has a related or even own wholesale
+                # value.  Until its commercial meaning is confirmed, the
+                # public surface safely asks to clarify the price.
+                plan.mark_unverified_manual(link.part)
+                continue
             if not link.brp_part.is_current:
                 if link.part.recommended_price is not None:
                     link.part.recommended_price = None
@@ -233,6 +247,9 @@ def plan_linked_part_price_refresh(
         for link in PolarisPartLink.objects.select_related("polaris_part", "part"):
             plan.polaris_links += 1
             if link.part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
+                continue
+            if link.price_source == PolarisPartLink.PriceSource.MANUAL:
+                plan.mark_unverified_manual(link.part)
                 continue
             price = (
                 _polaris_link_price(link, usd_rate, polaris_markup)
@@ -285,6 +302,7 @@ def _plan_aftermarket_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> Non
             "part__id",
             "part__recommended_price",
             "part__certified_price_rub",
+            "part__price_provenance",
         )
         .iterator(chunk_size=2000)
     )
