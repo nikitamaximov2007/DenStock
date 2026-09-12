@@ -30,7 +30,7 @@
              name="q"
              type="text"
              class="scanner-page__input"
-             placeholder="Отсканируйте номер детали"
+             placeholder="Артикул или название детали"
              autocomplete="off"
              autofocus
              autocapitalize="off"
@@ -41,9 +41,9 @@
       <button type="submit" class="btn btn--primary">Сканировать</button>
     </form>
     <p class="action-panel__hint">
-      Скан и Enter сразу добавляют деталь в черновик, остаток изменится только
-      при финальном проведении. Если деталь есть в нескольких ячейках, сначала
-      выберите нужную ячейку.
+      Скан или поиск по названию сразу добавляет единственную найденную деталь
+      в черновик, остаток изменится только при финальном проведении. Если
+      найдено несколько деталей, выберите карточку; если деталь в нескольких ячейках, выберите нужную ячейку.
     </p>
   </div>
   {% for panel in cart_panels %}
@@ -247,19 +247,40 @@
       {% include "partials/_status_block.html" with kind="warning" text=lookup_message %}
       <div class="card">
         <div class="card__body">
-          <ul>
-            {% for candidate in lookup_candidates %}
-              <li>
-                <a href="?q={{ q|urlencode }}&amp;part_id={{ candidate.part.pk }}">
-                  {{ candidate.exact_number }} · {{ candidate.part.name }} · {{ candidate.manufacturer }}
-                </a>
-              </li>
-            {% endfor %}
-          </ul>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Название</th>
+                <th>Русское название</th>
+                <th>Артикул</th>
+                <th>Производитель</th>
+                <th class="num--qty">Доступно</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in lookup_candidate_rows %}
+                <tr>
+                  <td>
+                    <form method="post" action="{% url 'actions_cart_scan' %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="q" value="{{ q }}">
+                      <input type="hidden" name="kind" value="{{ selected_action_kind }}">
+                      <input type="hidden" name="part_id" value="{{ row.candidate.part.pk }}">
+                      <button type="submit" class="btn btn--small btn--secondary">{{ row.candidate.part.name }}</button>
+                    </form>
+                  </td>
+                  <td>{{ row.candidate.russian_name|default:"—" }}</td>
+                  <td><span class="code-pill">{{ row.candidate.exact_number|default:"—" }}</span></td>
+                  <td>{{ row.candidate.manufacturer|default:"—" }}</td>
+                  <td class="num--qty">{{ row.candidate.available|quantity_int }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
       </div>
     {% elif not_found %}
-      {% include "partials/_empty_state.html" with icon="search" title="Деталь не найдена в остатках склада." text="Действия работают только с реальным остатком. Если деталь новая, сначала примите её поступлением или инвентаризацией ячейки." compact=1 %}
+      {% include "partials/_empty_state.html" with icon="search" title="Деталь не найдена" text="Проверьте артикул или название детали." compact=1 %}
     {% elif overview %}
       <div class="card">
         <div class="card__body">
@@ -283,7 +304,9 @@
               <a href="{% url 'part_detail' overview.part.pk %}">карточки детали</a>.
             </p>
           {% endif %}
-          {% if overview.locations %}
+          {% if no_stock %}
+            <p class="muted"><strong>Нет в наличии.</strong> Провести действие сверх доступного количества нельзя.</p>
+          {% elif overview.locations and overview.locations|length > 1 or selected_action_kind == "reserve" and overview.locations %}
             {% if overview.locations|length > 1 %}
               <p>
                 <strong>{{ multi_location_message }}</strong>

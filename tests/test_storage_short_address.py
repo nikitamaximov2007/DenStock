@@ -206,7 +206,7 @@ def test_quick_actions_hides_the_single_cell_choice(client, make_user, env):
     _login(client, make_user)
     body = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
     assert "Ячейка списания" not in body
-    assert f'value="{env["loc"].pk}"' in body
+    assert "Добавить выбранную ячейку" not in body
 
 
 def test_quick_actions_still_completes_through_the_cell(client, make_user, env):

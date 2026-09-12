@@ -20,7 +20,7 @@ from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 
 from apps.catalog.models import PartType
-from apps.core.part_lookup import MatchSource, resolve_part_lookup
+from apps.core.part_lookup import resolve_part_lookup
 from apps.core.templatetags.number_format import quantity_int
 from apps.customers.models import Customer
 from apps.customers.services import customers_by_recent_activity
@@ -132,14 +132,39 @@ def _parse_date(value):
         return None
 
 
-def _eligible_action_locations(part: PartType) -> list[dict]:
+def _eligible_action_locations(part: PartType, *, overview=None) -> list[dict]:
     """Физические ячейки с доступным остатком для быстрых действий.
 
     ``stock_overview`` остаётся единственным расчётом доступности: здесь
     только отбрасываются его строки с нулевым остатком для выбора ячейки.
     Несколько лотов одной ячейки уже объединены этим обзором в одну строку.
     """
-    return [row for row in stock_overview(part)["locations"] if row["available"] > 0]
+    overview = overview if overview is not None else stock_overview(part)
+    return [row for row in overview["locations"] if row["available"] > 0]
+
+
+def _quick_actions_lookup(query, *, include_price: bool):
+    """Operator lookup: canonical numbers plus English and confirmed RU names."""
+    return resolve_part_lookup(
+        query,
+        allow_partial=True,
+        allow_name=True,
+        allow_confirmed_ru_name=True,
+        partial_exact_numbers_only=True,
+        include_price=include_price,
+    )
+
+
+def _selected_lookup_part(lookup, part_id):
+    """Accept only a card returned by this exact canonical lookup result."""
+    return next(
+        (
+            candidate.part
+            for candidate in lookup.candidates
+            if str(candidate.part.pk) == str(part_id)
+        ),
+        None,
+    )
 
 
 @login_required
@@ -167,36 +192,27 @@ def actions_scan(request):
         "selected_customer_id": request.GET.get("customer_id", ""),
     }
     if q:
-        lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
-        selected_part = None
-        if lookup.ambiguous:
-            selected_part_id = request.GET.get("part_id")
-            selected_part = next(
-                (
-                    candidate.part
-                    for candidate in lookup.candidates
-                    if str(candidate.part.pk) == selected_part_id
-                    and candidate.match_source
-                    in {
-                        MatchSource.EXACT,
-                        MatchSource.BARCODE,
-                    }
-                ),
-                None,
-            )
-            if selected_part is None:
-                ctx["lookup_candidates"] = lookup.candidates
-                ctx["lookup_message"] = lookup.message
+        lookup = _quick_actions_lookup(q, include_price=request.user.can_view_purchase_cost)
+        selected_part = _selected_lookup_part(lookup, request.GET.get("part_id"))
         part = selected_part or (lookup.candidate.part if lookup.found else None)
         overview = stock_overview(part) if part else None
         if overview is not None:
-            overview = {**overview, "locations": _eligible_action_locations(part)}
-        has_no_stock = overview and not overview["locations"] and not overview["unit_items"]
-        unresolved_ambiguity = lookup.ambiguous and selected_part is None
-        if not unresolved_ambiguity and (part is None or has_no_stock):
+            overview = {
+                **overview,
+                "locations": _eligible_action_locations(part, overview=overview),
+            }
+        unresolved_choice = part is None and bool(lookup.candidates)
+        if unresolved_choice:
+            ctx["lookup_candidates"] = lookup.candidates
+            ctx["lookup_message"] = lookup.message
+            ctx["lookup_candidate_rows"] = [
+                {"candidate": candidate} for candidate in lookup.candidates
+            ]
+        elif part is None:
             ctx["not_found"] = True
-        elif not unresolved_ambiguity:
+        else:
             ctx["overview"] = overview
+            ctx["no_stock"] = not overview["locations"] and not overview["unit_items"]
             ctx["request_token"] = secrets.token_urlsafe(32)
     return render(request, "actions/scan.html", ctx)
 
@@ -220,8 +236,13 @@ def actions_cart_scan(request):
     if not q:
         messages.error(request, "Отсканируйте номер детали.")
         return redirect(back)
-    lookup = resolve_part_lookup(q, include_price=request.user.can_view_purchase_cost)
-    if lookup.ambiguous or not lookup.found:
+    lookup = _quick_actions_lookup(q, include_price=request.user.can_view_purchase_cost)
+    part = _selected_lookup_part(lookup, request.POST.get("part_id")) or (
+        lookup.candidate.part if lookup.found else None
+    )
+    if part is None:
+        if lookup.candidates:
+            return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
         messages.error(request, lookup.message or NOT_FOUND_MESSAGE)
         return redirect(back)
     if kind not in CART_KINDS:
@@ -229,14 +250,18 @@ def actions_cart_scan(request):
         # корзины. Сохраняем прежнюю возможность, но не списываем товар при
         # сканировании.
         return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
-    part = lookup.candidate.part
     locations = _eligible_action_locations(part)
     if not locations:
-        messages.error(request, NOT_FOUND_MESSAGE)
-        return redirect(back)
+        return redirect(
+            reverse("actions_scan")
+            + f"?{urlencode({'q': q, 'kind': kind, 'part_id': part.pk})}"
+        )
     if len(locations) != 1:
         messages.warning(request, MULTI_LOCATION_MESSAGE)
-        return redirect(reverse("actions_scan") + f"?{urlencode({'q': q, 'kind': kind})}")
+        return redirect(
+            reverse("actions_scan")
+            + f"?{urlencode({'q': q, 'kind': kind, 'part_id': part.pk})}"
+        )
     location = locations[0]["location"]
     cart = _cart_for(request, kind, create=True)
     try:

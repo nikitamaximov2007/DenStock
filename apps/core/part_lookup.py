@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import connection
 from django.db.models import Q
+from django.db.models.functions import Collate, Upper
 
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
@@ -94,6 +96,7 @@ class PartLookupCandidate:
     # заполняется только там, где иначе каталожная позиция читалась бы как
     # лежащая в ячейке.
     catalog_origin: str = ""
+    russian_name: str = ""
 
     @property
     def catalog_origin_label(self) -> str:
@@ -198,7 +201,61 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
     return None
 
 
-def _secondary_match(norm: str, raw: str, *, allow_partial: bool, allow_name: bool):
+def _confirmed_ru_name_ids(raw: str, *, lookup: str):
+    """Confirmed RU-name IDs, case-insensitive even in a C-locale PostgreSQL DB.
+
+    PostgreSQL's ``UPPER``/``LOWER`` use the database locale.  A cluster
+    created with locale ``C`` therefore leaves Cyrillic untouched, making
+    Django's ``__iexact``/``__icontains`` effectively case-sensitive.  The
+    stock PostgreSQL 16 image provides the Unicode ICU collation; apply it
+    only to this operator-facing trusted-name comparison.
+    """
+    names = PartType.objects.filter(customs_info__customs_name_ru_confirmed=True)
+    field = "customs_info__customs_name_ru"
+    if connection.vendor != "postgresql":
+        return names.filter(**{f"{field}__{lookup}": raw}).values("pk")
+
+    folded_lookup = {
+        "iexact": "_ru_name_folded",
+        "istartswith": "_ru_name_folded__startswith",
+        "icontains": "_ru_name_folded__contains",
+    }[lookup]
+    return (
+        names.annotate(_ru_name_folded=Upper(Collate(field, "und-x-icu")))
+        .filter(**{folded_lookup: raw.upper()})
+        .values("pk")
+    )
+
+
+def _name_match_ids(raw: str, *, lookup: str, allow_confirmed_ru_name: bool) -> list[int]:
+    """Return cards by their English or explicitly confirmed Russian name."""
+    filters = Q(**{f"name__{lookup}": raw})
+    if allow_confirmed_ru_name:
+        filters |= Q(pk__in=_confirmed_ru_name_ids(raw, lookup=lookup))
+    return list(
+        PartType.objects.filter(filters)
+        .values_list("pk", flat=True)
+        .distinct()[:RESULT_LIMIT]
+    )
+
+
+def _number_match_ids(norm: str, *, lookup: str, exact_numbers_only: bool) -> list[int]:
+    """Return cards by a partial canonical article tier without leaking aliases."""
+    numbers = PartNumber.objects.filter(**{f"normalized_value__{lookup}": norm})
+    if exact_numbers_only:
+        numbers = numbers.filter(kind__in=EXACT_NUMBER_KINDS)
+    return list(numbers.values_list("part_id", flat=True).distinct()[:RESULT_LIMIT])
+
+
+def _secondary_match(
+    norm: str,
+    raw: str,
+    *,
+    allow_partial: bool,
+    allow_name: bool,
+    allow_confirmed_ru_name: bool,
+    partial_exact_numbers_only: bool,
+):
     item_q = Q(internal_number__iexact=raw) | Q(internal_barcode__iexact=raw)
     item_ids = list(
         PartItem.objects.filter(item_q)
@@ -216,19 +273,43 @@ def _secondary_match(norm: str, raw: str, *, allow_partial: bool, allow_name: bo
     if serial_ids:
         return serial_ids, MatchSource.SERIAL, raw
 
+    if allow_name:
+        # Exact names are stronger than every partial article match. An article
+        # such as PWHEELDISPLAY4 must not hide a card named WHEEL.
+        name_ids = _name_match_ids(
+            raw, lookup="iexact", allow_confirmed_ru_name=allow_confirmed_ru_name
+        )
+        if name_ids:
+            return name_ids, MatchSource.NAME, raw
+
     if allow_partial and norm:
-        partial_ids = list(
-            PartNumber.objects.filter(normalized_value__icontains=norm)
-            .values_list("part_id", flat=True)
-            .distinct()[:RESULT_LIMIT]
+        prefix_ids = _number_match_ids(
+            norm,
+            lookup="istartswith",
+            exact_numbers_only=partial_exact_numbers_only,
+        )
+        if prefix_ids:
+            return prefix_ids, MatchSource.NUMBER_PARTIAL, raw
+
+    if allow_name:
+        name_ids = _name_match_ids(
+            raw, lookup="istartswith", allow_confirmed_ru_name=allow_confirmed_ru_name
+        )
+        if name_ids:
+            return name_ids, MatchSource.NAME, raw
+
+    if allow_partial and norm:
+        partial_ids = _number_match_ids(
+            norm,
+            lookup="icontains",
+            exact_numbers_only=partial_exact_numbers_only,
         )
         if partial_ids:
             return partial_ids, MatchSource.NUMBER_PARTIAL, raw
 
     if allow_name:
-        name_ids = list(
-            PartType.objects.filter(name__icontains=raw)
-            .values_list("pk", flat=True)[:RESULT_LIMIT]
+        name_ids = _name_match_ids(
+            raw, lookup="icontains", allow_confirmed_ru_name=allow_confirmed_ru_name
         )
         if name_ids:
             return name_ids, MatchSource.NAME, raw
@@ -267,7 +348,9 @@ def _specific_alias_source(part: PartType, norm: str) -> str:
 def _parts_for_ids(part_ids) -> list[PartType]:
     return list(
         with_part_identity(
-            PartType.objects.filter(pk__in=part_ids).select_related("category", "unit"),
+            PartType.objects.filter(pk__in=part_ids).select_related(
+                "category", "unit", "customs_info"
+            ),
             part_field="",
         )
         .prefetch_related(analog_numbers_prefetch(), "barcodes")
@@ -308,6 +391,10 @@ def _candidates(
 
     result = []
     for part in parts:
+        try:
+            customs = part.customs_info
+        except ObjectDoesNotExist:
+            customs = None
         locations = stock_by_part.get(part.pk, [])
         physical = sum((row.physical for row in locations), DEC0)
         candidate_source = (
@@ -350,6 +437,11 @@ def _candidates(
                     is_aftermarket=part.pk in aftermarket_ids, has_stock=physical > DEC0
                 )
                 or "",
+                russian_name=(
+                    customs.customs_name_ru
+                    if customs is not None and customs.customs_name_ru_confirmed
+                    else ""
+                ),
             )
         )
     return result
@@ -360,6 +452,8 @@ def resolve_part_lookup(
     *,
     allow_partial: bool = False,
     allow_name: bool = False,
+    allow_confirmed_ru_name: bool = False,
+    partial_exact_numbers_only: bool = False,
     allow_alias: bool = False,
     include_price: bool = False,
 ) -> PartLookupResult:
@@ -377,7 +471,12 @@ def resolve_part_lookup(
     strong = matched is not None
     if matched is None:
         matched = _secondary_match(
-            norm, query, allow_partial=allow_partial, allow_name=allow_name
+            norm,
+            query,
+            allow_partial=allow_partial,
+            allow_name=allow_name,
+            allow_confirmed_ru_name=allow_confirmed_ru_name,
+            partial_exact_numbers_only=partial_exact_numbers_only,
         )
     if matched is None:
         return PartLookupResult(query, norm, "not_found", message=part_not_found_message(query))

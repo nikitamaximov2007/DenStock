@@ -25,7 +25,6 @@ from .payment_status import payment_statuses_for_rows
 from .services import (
     ALL_TIME,
     CLIENTS_SORT_DATE,
-    CLIENTS_SORT_DOCUMENTS,
     CLIENTS_SORTS,
     attach_customer_part_identity,
     attach_line_part_identity,
@@ -263,10 +262,10 @@ def _clients_sort(request) -> tuple[str, str]:
     Незнакомое или испорченное значение молча возвращает отчёт к умолчанию:
     сортировка не тот повод, чтобы показывать оператору ошибку.
     """
-    sort = request.GET.get("sort", CLIENTS_SORT_DOCUMENTS)
+    sort = request.GET.get("sort", CLIENTS_SORT_DATE)
     direction = request.GET.get("direction", "desc")
     if sort not in CLIENTS_SORTS or direction not in {"asc", "desc"}:
-        return CLIENTS_SORT_DOCUMENTS, "desc"
+        return CLIENTS_SORT_DATE, "desc"
     return sort, direction
 
 
