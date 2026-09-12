@@ -134,6 +134,18 @@ def test_legacy_source_without_snapshot_is_not_backfilled(price_scene):
     ) == Decimal("1000")
 
 
+def test_explicit_zero_receipt_snapshot_remains_a_valid_sale_price(price_scene):
+    user, part, location, received_lot = price_scene
+    received_lot(quantity="1", snapshot="0")
+    part.recommended_price = None
+    part.save(update_fields=["recommended_price"])
+
+    cart = open_cart("sale", by=user)
+    set_row_quantity(cart, part, location, Decimal("1"), by=user)
+
+    assert cart.lines.get().unit_price == Decimal("0")
+
+
 def test_below_cost_audit_reports_sales_and_repairs_with_evidence(price_scene):
     user, part, _location, received_lot = price_scene
     protected = received_lot(quantity="1", snapshot="2500", cost="500")

@@ -124,7 +124,9 @@ def check_sale_line_price(part, unit_price, *, has_receipt_snapshot=False) -> No
         unit_price == 0 and canonical is None and not has_receipt_snapshot
     ):
         raise ActionError(SALE_PRICE_NOT_SET.format(name=part.name))
-    if unit_price == 0 and canonical != 0:
+    if unit_price == 0 and canonical != 0 and not (
+        canonical is None and has_receipt_snapshot
+    ):
         raise ActionError(SALE_PRICE_STALE_ZERO.format(name=part.name))
 
 
