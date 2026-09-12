@@ -1,11 +1,25 @@
 {
+  "unique_groups": 530,
+  "repeated_groups": 104,
+  "repeated_groups_cover_parts": 399,
+  "repeated_by_confidence": {
+    "HIGH": 57,
+    "NEEDS_HUMAN_REVIEW": 35,
+    "MEDIUM": 12
+  },
+  "safe_bulk_groups": 141,
+  "safe_bulk_groups_cover_parts": 376,
+  "safe_repeated_groups": 57,
+  "safe_repeated_cover_parts": 292,
+  "multi_meaning_groups": 113,
+  "existing_russian_text_rows": 23,
   "in_stock_public": 825,
   "with_russian_name": 0,
   "confirmed_russian": 0,
   "suggestions": 825,
   "confidence": {
-    "NEEDS HUMAN REVIEW": 355,
-    "HIGH": 362,
+    "NEEDS HUMAN REVIEW": 341,
+    "HIGH": 376,
     "MEDIUM": 108
   },
   "special_categories": {

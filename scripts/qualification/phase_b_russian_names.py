@@ -67,7 +67,7 @@ HEADS = {
     "CONNECTING ROD": "Шатун",
     "CV JOINT": "ШРУС",
     "UNIVERSAL JOINT": "Крестовина",
-    "BALL BEARING": "Шарикоподшипник",
+    "BALL BEARING": "Подшипник шариковый",
     "AIR FILTER": "Фильтр воздушный",
     "OIL FILTER": "Фильтр масляный",
     "FUEL FILTER": "Фильтр топливный",
@@ -217,7 +217,7 @@ HEADS = {
     "PRESSURE PLATE": "Нажимной диск",
     "PISTON PIN": "Палец поршневой",
     "PISTON RING": "Кольцо поршневое",
-    "PISTON CIRCLIP": "Стопорное кольцо поршневого пальца",
+    "PISTON CIRCLIP": "Кольцо стопорное поршневого пальца",
     "NEEDLE BEARING": "Подшипник игольчатый",
     "BEARING NEEDLE": "Подшипник игольчатый",
     "BEARING HOUSING": "Корпус подшипника",
@@ -225,7 +225,7 @@ HEADS = {
     "SLIDER SHOE": "Ползун направляющей",
     "ROLLER PULLEY": "Ролик шкива",
     "PULLEY ROLLER": "Ролик шкива",
-    "OIL SEAL": "Сальник масляный",
+    "OIL SEAL": "Сальник",
     "VALVE SPRING": "Пружина клапана",
     "BRAKE PADS": "Колодки тормозные",
     "BRAKE PAD": "Колодка тормозная",
@@ -246,6 +246,21 @@ HEADS = {
     "TIE ROD": "Тяга рулевая",
     "SWAY BAR BUSHING": "Втулка стабилизатора",
     "IMPELLER BOOT": "Пыльник крыльчатки",
+    "CV JOINT BOOT KIT": "Комплект пыльника ШРУС",
+    "BOOT CV JOINT KIT": "Комплект пыльника ШРУС",
+    "TOP END GASKET SET": "Комплект прокладок верхней части двигателя",
+    "OIL PRESSURE SWITCH": "Датчик давления масла",
+    "CHECK VALVE": "Клапан обратный",
+    "SKI STOPPER": "Ограничитель лыжи",
+    "EXHAUST VALVE": "Клапан выпускной",
+    "TIE ROD END KIT": "Комплект наконечников рулевой тяги",
+    "SHOCK ABSORBER": "Амортизатор",
+    "WHEEL BEARING": "Подшипник ступицы",
+    "CRANKSHAFT SEAL": "Сальник коленвала",
+    "VALVE COVER GASKET": "Прокладка крышки клапанов",
+    "CYLINDER HEAD GASKET": "Прокладка головки блока цилиндров",
+    "EXHAUST GASKET": "Прокладка выпускного коллектора",
+    "INTAKE GASKET": "Прокладка впускного коллектора",
 }
 # Слова, которые сами по себе значат слишком много: без человека не решить.
 AMBIGUOUS_HEADS = {
@@ -269,11 +284,15 @@ MODIFIERS = {
 }
 BRANDS = {
     "BRONCO", "SPI", "PROX", "WILDBOAR", "NGK", "OETIKER", "SKI-DOO", "SEA-DOO",
-    "SKI", "DOO", "SEA", "ALL", "BALLS", "WISECO", "POLARIS", "BRP", "YUASA",
+    "ALL", "BALLS", "WISECO", "POLARIS", "BRP", "YUASA",
     "KENDA", "PIRELLI", "BRIDGESTONE", "CONTINENTAL", "EBC", "FMF", "POLISPORT",
     "PSYCHIC", "LIQUI", "MOLY", "K100", "SPX", "NITEX",
 }
 SIDES = {"LH": "левый", "RH": "правый", "LEFT": "левый", "RIGHT": "правый"}
+# Термин переводится, но у него в каталоге запчастей есть несколько равноправных
+# вариантов, и выбрать может только человек: «CAP» это и колпачок, и крышка, и
+# колпак. Такие названия попадают в MEDIUM, а не в HIGH.
+CHECK_MEANING = {"CAP", "PLATE", "SUPPORT", "INSERT", "ELEMENT", "MODULE", "BOX", "SHOE"}
 
 
 def tokenize(name):
@@ -281,12 +300,16 @@ def tokenize(name):
 
 
 def suggest(name):
-    """Черновик русского названия + причина, если нужен человек."""
+    """Черновик русского названия, уверенность, причина и съеденные термином слова.
+
+    Последнее нужно проверке многозначности: в «O-RING» слово RING само по себе
+    многозначное, но внутри термина «O-RING» никакой многозначности нет.
+    """
     if CYRILLIC.search(name):
-        return "", "NEEDS HUMAN REVIEW", "название уже содержит русский текст"
+        return "", "NEEDS HUMAN REVIEW", "название уже содержит русский текст", set()
     tokens = tokenize(name)
     if not tokens:
-        return "", "NEEDS HUMAN REVIEW", "пустое название"
+        return "", "NEEDS HUMAN REVIEW", "пустое название", set()
 
     upper = " ".join(tokens)
     # Английские составные названия головные справа: «PISTON PIN» это палец, а
@@ -308,8 +331,13 @@ def suggest(name):
     if head is None:
         first = tokens[0]
         if first in AMBIGUOUS_HEADS:
-            return "", "NEEDS HUMAN REVIEW", f"слово «{first}» без человека однозначно не перевести"
-        return "", "NEEDS HUMAN REVIEW", "головное слово не распознано"
+            return (
+                "",
+                "NEEDS HUMAN REVIEW",
+                f"слово «{first}» без человека однозначно не перевести",
+                set(),
+            )
+        return "", "NEEDS HUMAN REVIEW", "головное слово не распознано", set()
 
     used = set(best[2].split())
     tail, unknown, notes, secondary = [], [], [], []
@@ -344,16 +372,26 @@ def suggest(name):
             suggestion,
             "NEEDS HUMAN REVIEW",
             "не переведены слова: " + ", ".join(sorted(set(unknown))),
+            used,
+        )
+    if any(token in CHECK_MEANING for token in tokens):
+        checked = sorted({token for token in tokens if token in CHECK_MEANING})
+        return (
+            suggestion,
+            "MEDIUM",
+            "у слова несколько принятых переводов, выберите нужный: " + ", ".join(checked),
+            used,
         )
     if secondary:
         return (
             suggestion,
             "MEDIUM",
             "проверьте порядок слов: " + ", ".join(sorted(set(secondary))),
+            used,
         )
     if any(token in AMBIGUOUS_HEADS for token in tokens if token not in used):
-        return suggestion, "MEDIUM", "в названии есть многозначное слово, проверьте смысл"
-    return suggestion, "HIGH", ""
+        return suggestion, "MEDIUM", "в названии есть многозначное слово, проверьте смысл", used
+    return suggestion, "HIGH", "", used
 
 
 def main():
@@ -441,7 +479,7 @@ def main():
                 "special": ", ".join(flags),
             }
         )
-        text, level, note = suggest(part.name)
+        text, level, note, _used = suggest(part.name)
         confidence[level] += 1
         suggestions.append(
             {
@@ -460,7 +498,59 @@ def main():
     suggestions.sort(key=lambda row: (row["priority"], -row["in_stock_qty"]))
     _write(f"{args.out}/in_stock_russian_name_review.csv", review)
     _write(f"{args.out}/ru_translation_suggestions.csv", suggestions)
+
+    groups = build_groups(review)
+    repeated = [row for row in groups if row["number_of_in_stock_parttypes"] > 1]
+    _write(f"{args.out}/phase_b_ru_unique_review.csv", groups)
+    _write(f"{args.out}/phase_b_ru_top104_review.csv", repeated)
+    write_approval_template(f"{args.out}/phase_b_ru_approved_template.csv", repeated)
+
+    # Русский текст в самом названии карточки: смотрим ВСЕ публичные карточки,
+    # не только те, что есть на складе. Такой текст сам по себе подтверждением
+    # не является, но это самые быстрые кандидаты на ручное подтверждение.
+    already_russian = []
+    for part in with_part_identity(
+        PartType.objects.filter(pk__in=public_ids, name__regex=r"[А-Яа-яЁё]"), part_field=""
+    ):
+        name_ru, confirmed, source, _application = customs.get(part.pk, ("", False, "", ""))
+        quantity = in_stock.get(part.pk, ZERO)
+        already_russian.append(
+            {
+                "article": part_exact_number(part, default=""),
+                "parttype_name": part.name,
+                "customs_source": source or "нет таможенной карточки",
+                "current_customs_name_ru": name_ru,
+                "russian_confirmed": "да" if confirmed else "нет",
+                "suggested_canonical_ru": part.name.strip(),
+                "manufacturer": manufacturer_display(part),
+                "in_stock": "да" if quantity > ZERO else "нет",
+                "in_stock_qty": quantity,
+                "recommended_action": (
+                    "подтвердить как есть, если название верное; иначе исправить"
+                ),
+            }
+        )
+    already_russian.sort(key=lambda row: (row["in_stock"] != "да", -row["in_stock_qty"]))
+    _write(f"{args.out}/phase_b_existing_russian_text_review.csv", already_russian)
+    safe = [row for row in groups if row["safe_bulk_group"] == "да"]
+    safe_repeated = [row for row in repeated if row["safe_bulk_group"] == "да"]
     summary = {
+        "unique_groups": len(groups),
+        "repeated_groups": len(repeated),
+        "repeated_groups_cover_parts": sum(
+            row["number_of_in_stock_parttypes"] for row in repeated
+        ),
+        "repeated_by_confidence": dict(Counter(row["confidence"] for row in repeated)),
+        "safe_bulk_groups": len(safe),
+        "safe_bulk_groups_cover_parts": sum(
+            row["number_of_in_stock_parttypes"] for row in safe
+        ),
+        "safe_repeated_groups": len(safe_repeated),
+        "safe_repeated_cover_parts": sum(
+            row["number_of_in_stock_parttypes"] for row in safe_repeated
+        ),
+        "multi_meaning_groups": sum(1 for row in groups if row["multi_meaning"] == "да"),
+        "existing_russian_text_rows": len(already_russian),
         "in_stock_public": len(review),
         "with_russian_name": sum(1 for row in review if row["current_russian_name"].strip()),
         "confirmed_russian": sum(1 for row in review if row["russian_confirmed"] == "да"),
@@ -483,6 +573,163 @@ def _write(path, rows):
         writer.writerows(rows)
     print(f"written {path}: {len(rows)} rows")
 
+
+
+# --- Группы для одобрения владельцем ---------------------------------------------------
+
+
+# Селектор группы. Одно человеческое решение применяется ко ВСЕМ карточкам
+# группы, поэтому группа обязана быть однородной. Одного совпадения текста
+# английского названия мало: «BALL BEARING» у BRP и «BALL BEARING» у стороннего
+# поставщика это разные позиции разных каталогов, и подтверждать их одним
+# решением нельзя. Селектор берёт производителя и каталог-источник вместе с
+# точным названием - это самый узкий набор, который остаётся стабильным между
+# выгрузкой на проверку и применением.
+GROUP_FIELDS = ("english_name", "manufacturer", "catalog")
+
+
+def group_key(row):
+    return (row["english_name"], row["manufacturer"], row["catalog"])
+
+
+def catalog_wide_counts(rows):
+    """Сколько ВСЕГО карточек попадёт под каждую группу, а не только в наличии.
+
+    Решение оператора про название относится к названию, а не к сегодняшнему
+    остатку: «OIL SEAL» без остатка это тот же сальник. Поэтому подтверждение
+    применится и к карточкам без остатка, и человек должен видеть настоящий
+    масштаб до того, как подпишется.
+    """
+    from apps.catalog_import.models import AftermarketCatalogPart
+
+    names = {row["english_name"] for row in rows}
+    aftermarket = set(
+        AftermarketCatalogPart.objects.filter(part__name__in=names).values_list(
+            "part_id", flat=True
+        )
+    )
+    counts: Counter = Counter()
+    for part in with_part_identity(PartType.objects.filter(name__in=names), part_field=""):
+        catalog = (
+            "BRP"
+            if getattr(part, "brp_link", None)
+            else "POLARIS"
+            if getattr(part, "polaris_link", None)
+            else "aftermarket"
+            if part.pk in aftermarket
+            else "нет"
+        )
+        counts[(part.name, manufacturer_display(part), catalog)] += 1
+    return counts
+
+
+def build_groups(rows):
+    """Свернуть построчный список в группы «одно решение = один перевод»."""
+    groups = {}
+    for row in rows:
+        key = group_key(row)
+        group = groups.setdefault(
+            key,
+            {
+                "english_name": row["english_name"],
+                "manufacturer": row["manufacturer"],
+                "catalog": row["catalog"],
+                "parts": [],
+            },
+        )
+        group["parts"].append(row)
+    by_name = Counter(row["english_name"] for row in rows)
+    name_groups = Counter(key[0] for key in groups)
+    catalog_wide = catalog_wide_counts(rows)
+    result = []
+    for group in groups.values():
+        parts = group["parts"]
+        suggestion, confidence, note, consumed = suggest(group["english_name"])
+        tokens = set(tokenize(group["english_name"]))
+        reasons = []
+        if note:
+            reasons.append(note)
+        multi = sorted((tokens - consumed) & AMBIGUOUS_HEADS)
+        if multi:
+            reasons.append(
+                "многозначные слова, одним переводом на всю базу не закрывается: "
+                + ", ".join(multi)
+            )
+        split = name_groups[group["english_name"]] > 1
+        if split:
+            reasons.append(
+                "это же название встречается у другого производителя или каталога: "
+                "группа разделена, решение действует только на свою"
+            )
+        russian_in_name = any(CYRILLIC.search(part["english_name"]) for part in parts)
+        if russian_in_name:
+            reasons.append("в самом названии карточки уже есть русский текст")
+        # Разделение по производителю сужает область действия решения, но
+        # смысл названия от этого не становится многозначным: «BALL BEARING»
+        # у любого поставщика остаётся шариковым подшипником. Поэтому сплит
+        # безопасности не отменяет, а многозначное слово - отменяет.
+        safe = bool(suggestion and confidence == "HIGH" and not multi and not russian_in_name)
+        decision = "APPROVE" if safe else ("EDIT" if suggestion else "REVIEW")
+        applications = sorted(
+            {part["application_area"] for part in parts if part["application_area"]}
+        )
+        result.append(
+            {
+                "english_name": group["english_name"],
+                "suggested_russian_name": suggestion,
+                "confidence": confidence.replace(" ", "_"),
+                "ambiguity_reason": "; ".join(reasons),
+                "number_of_in_stock_parttypes": len(parts),
+                "total_in_stock_qty": sum(Decimal(str(part["in_stock_qty"])) for part in parts),
+                "manufacturers": group["manufacturer"] or "",
+                "catalog": group["catalog"],
+                "sample_articles": ", ".join(
+                    [part["article"] for part in parts if part["article"]][:5]
+                ),
+                "applications": ", ".join(applications),
+                "name_contains_russian": "да" if russian_in_name else "нет",
+                "multi_meaning": "да" if multi else "нет",
+                "split_by_source": "да" if split else "нет",
+                "safe_bulk_group": "да" if safe else "нет",
+                "parts_with_this_english_name_total": by_name[group["english_name"]],
+                "parttypes_in_whole_catalog": catalog_wide.get(
+                    (group["english_name"], group["manufacturer"], group["catalog"]),
+                    len(parts),
+                ),
+                "suggested_operator_decision": decision,
+            }
+        )
+    order = {"HIGH": 0, "MEDIUM": 1, "NEEDS_HUMAN_REVIEW": 2}
+    result.sort(
+        key=lambda row: (
+            -row["number_of_in_stock_parttypes"],
+            -row["total_in_stock_qty"],
+            order.get(row["confidence"], 3),
+            row["english_name"],
+        )
+    )
+    return result
+
+
+APPROVAL_FIELDS = ("english_name", "approved_russian_name", "decision", "scope", "note")
+
+
+def write_approval_template(path, groups):
+    """Пустой бланк решения. Ни одна подсказка не считается одобрением."""
+    with open(path, "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle, delimiter=";")
+        writer.writerow(APPROVAL_FIELDS)
+        for group in groups:
+            writer.writerow(
+                [
+                    group["english_name"],
+                    "",  # оператор вписывает сам; подсказка лежит в review-файле
+                    "",  # APPROVE / EDITED_APPROVE / SKIP / REVIEW_LATER
+                    f"{group['manufacturers']}|{group['catalog']}",
+                    "",
+                ]
+            )
+    print(f"written {path}: {len(groups)} rows")
 
 if __name__ == "__main__":
     main()

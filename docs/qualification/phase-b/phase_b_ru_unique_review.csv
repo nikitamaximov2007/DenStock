@@ -1,0 +1,531 @@
+﻿english_name;suggested_russian_name;confidence;ambiguity_reason;number_of_in_stock_parttypes;total_in_stock_qty;manufacturers;catalog;sample_articles;applications;name_contains_russian;multi_meaning;split_by_source;safe_bulk_group;parts_with_this_english_name_total;parttypes_in_whole_catalog;suggested_operator_decision
+OIL SEAL;Сальник;HIGH;;32;150.000;BRP;BRP;420831955, 420931795, 420950732, 420850055, 420931455;СНЕГОХОД;нет;нет;нет;да;32;33;APPROVE
+O-RING;Кольцо уплотнительное;HIGH;;28;148.000;BRP;BRP;732401030, 293300026, 420631300, 619230069, 420430373;СНЕГОХОД;нет;нет;нет;да;28;29;APPROVE
+GASKET;Прокладка;HIGH;;22;65.000;BRP;BRP;420430486, 420931568, 420931610, 420931813, 420630265;;нет;нет;нет;да;22;25;APPROVE
+BUSHING;Втулка;HIGH;;21;116.000;BRP;BRP;5446652, 420933523, 505072250, 505072690, 505072214;;нет;нет;нет;да;21;21;APPROVE
+BALL BEARING;Подшипник шариковый;HIGH;это же название встречается у другого производителя или каталога: группа разделена, решение действует только на свою;15;43.000;BRP;BRP;420832713, 420832176, 420832596, 293350150, 420832178;;нет;нет;да;да;16;15;APPROVE
+NEEDLE BEARING;Подшипник игольчатый;HIGH;;9;19.000;BRP;BRP;293350017, 420832030, 420632070, 611002529, 705402848;;нет;нет;нет;да;9;10;APPROVE
+OETIKER CLAMP;Хомут OETIKER;HIGH;;8;55.000;BRP;BRP;293650053, 293650125, 420851683, 293650199, 293650100;;нет;нет;нет;да;8;11;APPROVE
+BOOT_CV JOINT KIT;Комплект пыльника ШРУС;HIGH;;7;11.000;BRP;BRP;715900298, 715900299, 705500870, 705400511, 705400127;;нет;нет;нет;да;7;7;APPROVE
+SPRING;Пружина;HIGH;;6;16.000;BRP;BRP;415107100, 420238558, 420239943, 514054226, 420238120;;нет;нет;нет;да;6;6;APPROVE
+BELT_DRIVE;Ремень вариатора;HIGH;;6;9.000;BRP;BRP;605348425, 417300155, 417300551, 417300586, 417300197;;нет;нет;нет;да;6;6;APPROVE
+SPI TOP END GASKET SET;Комплект прокладок верхней части двигателя SPI;HIGH;;5;27.000;SPI;aftermarket;09-710303, 09-710278, SM-09507T, 09-710259, 09-710277;;нет;нет;нет;да;5;111;APPROVE
+CUSHION;Подушка;HIGH;;5;20.000;BRP;BRP;572034500, 420933180, 706200185, 505070003, M544417;;нет;нет;нет;да;5;5;APPROVE
+WILDBOAR BRAKE PADS SEMI METAL;Колодки тормозные WILDBOAR SEMI металлический;NEEDS_HUMAN_REVIEW;не переведены слова: SEMI;5;19.000;WILDBOAR;aftermarket;AT-05266, AT-05267, AT-05612, AT-05611, AT-05561;;нет;нет;нет;нет;5;78;EDIT
+SEAL;Сальник;HIGH;;5;16.000;BRP;BRP;293200144, 271002071, 705500265, 293200159, 293200158;;нет;нет;нет;да;5;5;APPROVE
+OIL PRESSURE SWITCH;Датчик давления масла;HIGH;;5;8.000;BRP;BRP;420856533, 420256978, 420256915, 420856536, 420856537;;нет;нет;нет;да;5;5;APPROVE
+PISTON CIRCLIP;Кольцо стопорное поршневого пальца;HIGH;;4;43.000;BRP;BRP;420845106, 420845467, 420945735, 420845107;;нет;нет;нет;да;4;4;APPROVE
+EXHAUST VALVE;Клапан выпускной;HIGH;;4;18.000;BRP;BRP;420854990, 420854371, 420854890, 420854449;;нет;нет;нет;да;4;4;APPROVE
+CIRCLIP;Кольцо стопорное;HIGH;;4;16.000;BRP;BRP;420845465, 293370038, 420845611, 420845580;;нет;нет;нет;да;4;4;APPROVE
+SKI STOPPER;Ограничитель лыжи;HIGH;;4;15.000;BRP;BRP;505071779, 505074831, 505074138, 505072594;;нет;нет;нет;да;4;4;APPROVE
+BOOT CV JOINT KIT;Комплект пыльника ШРУС;HIGH;;4;10.000;BRP;BRP;705501864, 705400512, 705401354, 705401346;;нет;нет;нет;да;4;4;APPROVE
+SPACER;Проставка;HIGH;;4;10.000;BRP;BRP;706001282, 420231080, 271001393, 271001264;;нет;нет;нет;да;4;4;APPROVE
+BRONCO BALL JOINT;Шаровая опора BRONCO;HIGH;;4;8.000;BRONCO PRODUCTS;aftermarket;AT-08812, AT-08810, AT-08819, AT-08807;;нет;нет;нет;да;4;42;APPROVE
+CHECK VALVE;Клапан обратный;HIGH;;4;8.000;BRP;BRP;420660543, 420956071, 420956511, 275500398;;нет;нет;нет;да;4;4;APPROVE
+RUNNER PROTECTOR;Защита направляющая;MEDIUM;проверьте порядок слов: RUNNER;4;8.000;BRP;BRP;605348954, 503192299, 572075400, 503191137;;нет;нет;нет;нет;4;4;EDIT
+BRONCO TIE ROD END;Наконечник рулевой тяги BRONCO;HIGH;;4;6.000;BRONCO PRODUCTS;aftermarket;AT-08776, AT-08122, AT-08123, AT-08760;КВАДРОЦИКЛ;нет;нет;нет;да;4;69;APPROVE
+LEVER;Рычаг;HIGH;;4;5.000;BRP;BRP;507032476, 415129216, 507032428, 706000554;;нет;нет;нет;да;4;4;APPROVE
+топливный фильтр;;NEEDS_HUMAN_REVIEW;"название уже содержит русский текст; в самом названии карточки уже есть русский текст";3;41.000;;нет;11G2, 12G4, 10G2;;да;нет;нет;нет;3;3;REVIEW
+PISTON PIN;Палец поршневой;HIGH;;3;39.000;BRP;BRP;420916412, 420916407, 420916480;;нет;нет;нет;да;3;3;APPROVE
+WASHER;Шайба;HIGH;;3;23.000;BRP;BRP;211200041, 517297900, 250200014;;нет;нет;нет;да;3;3;APPROVE
+CLIP;Клипса;HIGH;;3;15.000;BRP;BRP;517302785, 414227300, 517302674;;нет;нет;нет;да;3;3;APPROVE
+SPI CONNECTING ROD KIT;Шатун SPI комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";3;15.000;SPI;aftermarket;SM-09112, SM-09113, SM-09101;;нет;да;нет;нет;3;19;EDIT
+BUSHING_STABILIZER BAR;Втулка стабилизатора BAR;NEEDS_HUMAN_REVIEW;"не переведены слова: BAR; многозначные слова, одним переводом на всю базу не закрывается: BAR";3;14.000;BRP;BRP;706004640, 706204796, 706004641;;нет;да;нет;нет;3;3;EDIT
+BRONCO UNIVERSAL JOINT;Крестовина BRONCO;HIGH;;3;13.000;BRONCO PRODUCTS;aftermarket;AT-08532, AT-08533, AT-08503;;нет;нет;нет;да;3;19;APPROVE
+CAP;Колпачок;MEDIUM;у слова несколько принятых переводов, выберите нужный: CAP;3;10.000;BRP;BRP;506153294, 420960770, 504154145;СНЕГОХОД;нет;нет;нет;нет;3;3;EDIT
+EXHAUST GASKET;Прокладка выпускного коллектора;HIGH;;3;9.000;BRP;BRP;514054174, 707601033, 420950253;;нет;нет;нет;да;3;3;APPROVE
+GROMMET;Втулка резиновая;HIGH;;3;9.000;BRP;BRP;517303756, 293720008, 293720058;;нет;нет;нет;да;3;3;APPROVE
+RUBBER BOOT;Пыльник резиновый;HIGH;;3;9.000;BRP;BRP;715900118, 705401093, 272000001;;нет;нет;нет;да;3;3;APPROVE
+RUBBER STOPPER;Упор резиновый;HIGH;;3;8.000;BRP;BRP;605348439, 503191291, 503190576;;нет;нет;нет;да;3;3;APPROVE
+PROX PISTON KIT SKI-DOOMXZ500 LEGEND 500;Лыжа PROX поршень комплект DOOMXZ500 LEGEND 500;NEEDS_HUMAN_REVIEW;"не переведены слова: DOOMXZ500, LEGEND; многозначные слова, одним переводом на всю базу не закрывается: KIT";3;8.000;PROX;aftermarket;01.5400.000, 01.5400.050, 01.5400.100;;нет;да;нет;нет;3;3;EDIT
+GUARD;Защита;HIGH;;3;7.000;BRP;BRP;271002228, 271002225, 417009205;;нет;нет;нет;да;3;3;APPROVE
+RUBBER MOUNT;Опора резиновый;HIGH;;3;6.000;BRP;BRP;512060448, 512059691, 512060564;;нет;нет;нет;да;3;4;APPROVE
+SPI CRANK WEB SKI-DOO PTO SIDE;Лыжа SPI CRANK WEB DOO PTO SIDE;NEEDS_HUMAN_REVIEW;"не переведены слова: CRANK, DOO, PTO, SIDE, WEB; многозначные слова, одним переводом на всю базу не закрывается: WEB";3;6.000;SPI;aftermarket;SM-09188-4A, SM-09188-2, SM-09188-4;;нет;да;нет;нет;3;7;EDIT
+WILDBOAR BRAKE PADS FULL METAL;Колодки тормозные WILDBOAR FULL металлический;NEEDS_HUMAN_REVIEW;не переведены слова: FULL;3;6.000;WILDBOAR;aftermarket;AT-05266F, AT-05267F, AT-05015F;;нет;нет;нет;нет;3;49;EDIT
+AIR FILTER;Фильтр воздушный;HIGH;;3;4.000;BRP;BRP;707800288, 508000568, 508000609;;нет;нет;нет;да;3;3;APPROVE
+COVER;Крышка;HIGH;;3;4.000;BRP;BRP;706000749, 420910821, 415129685;;нет;нет;нет;да;3;3;APPROVE
+DRIVE SLIDING SHEAVE ASSY;Щека шкива приводной SLIDING в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: SLIDING; многозначные слова, одним переводом на всю базу не закрывается: ASSY";3;4.000;BRP;BRP;417224044, 420280467, 417224101;;нет;да;нет;нет;3;3;EDIT
+SLIDER SHOE;Ползун направляющей;MEDIUM;у слова несколько принятых переводов, выберите нужный: SHOE;2;32.000;BRP;BRP;417223021, 417223919;СНЕГОХОД;нет;нет;нет;нет;2;2;EDIT
+ROLLER_PULLEY;Ролик шкива;HIGH;;2;27.000;BRP;BRP;417127943, 417127016;;нет;нет;нет;да;2;2;APPROVE
+DAMPER_VIBRATION;Демпфер VIBRATION;NEEDS_HUMAN_REVIEW;не переведены слова: VIBRATION;2;21.000;BRP;BRP;512061507, 512061516;;нет;нет;нет;нет;2;2;EDIT
+FILTER_FUEL;Фильтр топливный;HIGH;;2;19.000;BRP;BRP;513034047, 513034279;;нет;нет;нет;да;2;2;APPROVE
+CLAMP;Хомут;HIGH;;2;13.000;BRP;BRP;420851508, 420851110;;нет;нет;нет;да;2;2;APPROVE
+LOWER EXHAUST VALVE;Клапан выпускной нижний;HIGH;;2;13.000;BRP;BRP;420954054, 420854904;;нет;нет;нет;да;2;2;APPROVE
+GRIP;Рукоятка;HIGH;;2;11.000;BRP;BRP;506152483, 506152486;;нет;нет;нет;да;2;2;APPROVE
+CHAIN GUIDE;Направляющая цепь;MEDIUM;проверьте порядок слов: CHAIN;2;11.000;BRP;BRP;420236351, 420236584;;нет;нет;нет;нет;2;2;EDIT
+INSULATION_THERMAL;;NEEDS_HUMAN_REVIEW;головное слово не распознано;2;10.000;BRP;BRP;506153177, 506153176;;нет;нет;нет;нет;2;2;REVIEW
+SPARK PLUG NGK PFR7AB;Свеча зажигания NGK PFR7AB;NEEDS_HUMAN_REVIEW;не переведены слова: PFR7AB;2;10.000;BRP;BRP;415131139, 415129484;;нет;нет;нет;нет;2;2;EDIT
+WHEEL CAP;Колпак колеса;MEDIUM;у слова несколько принятых переводов, выберите нужный: CAP;2;8.000;BRP;BRP;570063600, 705400520;;нет;нет;нет;нет;2;3;EDIT
+BUSHING HALF;Втулка HALF;NEEDS_HUMAN_REVIEW;"не переведены слова: HALF; многозначные слова, одним переводом на всю базу не закрывается: HALF";2;8.000;BRP;BRP;420233980, 420233995;;нет;да;нет;нет;2;2;EDIT
+BALL JOINT;Шаровая опора;HIGH;;2;7.000;BRP;BRP;706202044, 204120074;;нет;нет;нет;да;2;3;APPROVE
+BLACK HANDLE;Ручка чёрный;HIGH;;2;7.000;BRP;BRP;505072976, 505070963;;нет;нет;нет;да;2;2;APPROVE
+ROLLER;Ролик;HIGH;;2;7.000;BRP;BRP;417222947, 417127189;СНЕГОХОД;нет;нет;нет;да;2;2;APPROVE
+IMPELLER BOOT;Пыльник крыльчатки;HIGH;;2;6.000;BRP;BRP;267000206, 271000516;;нет;нет;нет;да;2;2;APPROVE
+CARBURETOR SOCKET;Гнездо карбюратор;MEDIUM;проверьте порядок слов: CARBURETOR;2;6.000;BRP;BRP;420867105, 420867300;;нет;нет;нет;нет;2;2;EDIT
+GASKET VALVE ROD HOUSING;Корпус прокладка клапан ROD;NEEDS_HUMAN_REVIEW;"не переведены слова: ROD; многозначные слова, одним переводом на всю базу не закрывается: ROD";2;6.000;BRP;BRP;420430037, 420631001;;нет;да;нет;нет;2;2;EDIT
+HALF BUSHING;Втулка HALF;NEEDS_HUMAN_REVIEW;"не переведены слова: HALF; многозначные слова, одним переводом на всю базу не закрывается: HALF";2;6.000;BRP;BRP;420933442, 420933862;;нет;да;нет;нет;2;4;EDIT
+PAWL;;NEEDS_HUMAN_REVIEW;головное слово не распознано;2;6.000;BRP;BRP;420852633, 420852639;;нет;нет;нет;нет;2;2;REVIEW
+PROX PISTON KIT SKI-DOO MXZ600 '99-01;Лыжа PROX поршень комплект DOO MXZ600 '99 01;NEEDS_HUMAN_REVIEW;"не переведены слова: '99, DOO, MXZ600; многозначные слова, одним переводом на всю базу не закрывается: KIT";2;6.000;PROX;aftermarket;01.5699.050, 01.5699.000;;нет;да;нет;нет;2;3;EDIT
+PROX PISTON KIT SKI-DOO MZX550;Лыжа PROX поршень комплект DOO MZX550;NEEDS_HUMAN_REVIEW;"не переведены слова: DOO, MZX550; многозначные слова, одним переводом на всю базу не закрывается: KIT";2;6.000;PROX;aftermarket;01.5503.000, 01.5503.100;;нет;да;нет;нет;2;3;EDIT
+PUMP_HYDRAULIC;Насос HYDRAULIC;NEEDS_HUMAN_REVIEW;не переведены слова: HYDRAULIC;2;6.000;BRP;BRP;519000376, 519000375;;нет;нет;нет;нет;2;2;EDIT
+RUBBER RING;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";2;6.000;BRP;BRP;420931590, 420850045;;нет;да;нет;нет;2;2;REVIEW
+WEAR RING;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";2;6.000;BRP;BRP;705400036, 277001874;;нет;да;нет;нет;2;2;REVIEW
+BELLOWS;Гофра;HIGH;;2;5.000;BRP;BRP;420260725, 272000184;;нет;нет;нет;да;2;2;APPROVE
+PIN;Палец;HIGH;;2;5.000;BRP;BRP;417222594, 417224510;;нет;нет;нет;да;2;2;APPROVE
+WEAR PLATE;Пластина WEAR;NEEDS_HUMAN_REVIEW;не переведены слова: WEAR;2;5.000;BRP;BRP;706201660, 505072634;;нет;нет;нет;нет;2;2;EDIT
+PLASTIC NUT;Гайка пластиковый;HIGH;;2;4.000;BRP;BRP;512060671, 512059094;;нет;нет;нет;да;2;2;APPROVE
+STOPPER;Упор;HIGH;;2;4.000;BRP;BRP;514055203, 512060395;;нет;нет;нет;да;2;2;APPROVE
+CLEAR HANDLE BAR;Ручка CLEAR BAR;NEEDS_HUMAN_REVIEW;"не переведены слова: BAR, CLEAR; многозначные слова, одним переводом на всю базу не закрывается: BAR";2;4.000;BRP;BRP;506152709, 506152708;;нет;да;нет;нет;2;2;EDIT
+ROTARY SEAL;Сальник ROTARY;NEEDS_HUMAN_REVIEW;не переведены слова: ROTARY;2;4.000;BRP;BRP;420650371, 420650370;;нет;нет;нет;нет;2;2;EDIT
+BELT DRIVE;Ремень вариатора;HIGH;;2;3.000;BRP;BRP;422280366, 422280283;;нет;нет;нет;да;2;2;APPROVE
+INTAKE NECK;Горловина впускной;HIGH;;2;3.000;BRP;BRP;420267042, 420267340;;нет;нет;нет;да;2;2;APPROVE
+O RING;Кольцо уплотнительное;HIGH;;2;3.000;BRP;BRP;614602431, 293300185;;нет;нет;нет;да;2;2;APPROVE
+Seal;Сальник;HIGH;;2;3.000;BRP;BRP;5444186, 614103562;;нет;нет;нет;да;2;2;APPROVE
+THERMOSTAT;Термостат;HIGH;;2;3.000;BRP;BRP;420822655, 420922519;;нет;нет;нет;да;2;2;APPROVE
+AIR FILTER RH, (NITEX MESH);Фильтр воздушный правый NITEX сетка;MEDIUM;проверьте порядок слов: MESH;2;3.000;BRP;BRP;508000906, 508000806;;нет;нет;нет;нет;2;2;EDIT
+HOOD LATCH;Защёлка капот;MEDIUM;проверьте порядок слов: HOOD;2;3.000;BRP;BRP;570027100, 5342952;;нет;нет;нет;нет;2;2;EDIT
+OIL PUMP SHAFT;Насос масляный вал;MEDIUM;проверьте порядок слов: SHAFT;2;3.000;BRP;BRP;420820090, 420237059;;нет;нет;нет;нет;2;2;EDIT
+SPRING SEAT;Сиденье пружина;MEDIUM;проверьте порядок слов: SPRING;2;3.000;BRP;BRP;417222312, 230076;;нет;нет;нет;нет;2;2;EDIT
+WATER PUMP HOUSING;Насос водяной корпус;MEDIUM;проверьте порядок слов: HOUSING;2;3.000;BRP;BRP;420822287, 420822285;;нет;нет;нет;нет;2;2;EDIT
+CLAMP_CRIMP;Хомут CRIMP;NEEDS_HUMAN_REVIEW;не переведены слова: CRIMP;2;3.000;BRP;BRP;293650350, 293650332;;нет;нет;нет;нет;2;2;EDIT
+DOUBLE GASKET 0.7 MM;Прокладка DOUBLE 0.7 MM;NEEDS_HUMAN_REVIEW;не переведены слова: DOUBLE;2;3.000;BRP;BRP;420831022, 420430082;;нет;нет;нет;нет;2;2;EDIT
+NEOPRENE SEAL;Сальник NEOPRENE;NEEDS_HUMAN_REVIEW;не переведены слова: NEOPRENE;2;3.000;BRP;BRP;293200134, 293200087;;нет;нет;нет;нет;2;2;EDIT
+OEM STYLE PISTON KIT WITH RINGS TEFLON COATED STD.;Поршень OEM STYLE комплект WITH RINGS TEFLON COATED STD.;NEEDS_HUMAN_REVIEW;"не переведены слова: COATED, OEM, RINGS, STD., STYLE, TEFLON, WITH; многозначные слова, одним переводом на всю базу не закрывается: KIT";2;3.000;SPI;aftermarket;09-780, 09-830;;нет;да;нет;нет;2;52;EDIT
+SPI MAG CRANK WEB;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: WEB";2;3.000;SPI;aftermarket;SM-09188-5A, SM-09375;;нет;да;нет;нет;2;2;REVIEW
+BUMPER;Бампер;HIGH;;2;2.000;BRP;BRP;514053352, 514054275;;нет;нет;нет;да;2;2;APPROVE
+DECAL RH;Наклейка правый;HIGH;;2;2.000;BRP;BRP;516008458, 516007614;;нет;нет;нет;да;2;2;APPROVE
+LENS;Рассеиватель;HIGH;;2;2.000;BRP;BRP;415129320, 414513700;;нет;нет;нет;да;2;3;APPROVE
+FRAME CORNER LH;;NEEDS_HUMAN_REVIEW;головное слово не распознано;2;2.000;BRP;BRP;518325524, 518325643;;нет;нет;нет;нет;2;2;REVIEW
+FRAME CORNER RH;;NEEDS_HUMAN_REVIEW;головное слово не распознано;2;2.000;BRP;BRP;518325644, 518328024;;нет;нет;нет;нет;2;2;REVIEW
+GUARD_MUD;Защита MUD;NEEDS_HUMAN_REVIEW;не переведены слова: MUD;2;2.000;BRP;BRP;705004888, 705004889;;нет;нет;нет;нет;2;2;EDIT
+IMPELLER RING;Крыльчатка RING;NEEDS_HUMAN_REVIEW;"не переведены слова: RING; многозначные слова, одним переводом на всю базу не закрывается: RING";2;2.000;BRP;BRP;271000517, 271001153;;нет;да;нет;нет;2;2;EDIT
+MICROSWITCH;;NEEDS_HUMAN_REVIEW;головное слово не распознано;2;2.000;BRP;BRP;507032597, 507032479;;нет;нет;нет;нет;2;2;REVIEW
+NAMURA PWC CONNECTING ROD;Шатун NAMURA PWC;NEEDS_HUMAN_REVIEW;не переведены слова: NAMURA, PWC;2;2.000;NAMURA TECHNOLOGIES;aftermarket;RW-10002, RW-10001;;нет;нет;нет;нет;2;22;EDIT
+SIDE DECAL LH;Наклейка SIDE левый;NEEDS_HUMAN_REVIEW;не переведены слова: SIDE;2;2.000;BRP;BRP;516007613, 516008457;;нет;нет;нет;нет;2;2;EDIT
+THROTTLE CABLE;Трос THROTTLE;NEEDS_HUMAN_REVIEW;не переведены слова: THROTTLE;2;2.000;BRP;BRP;512061326, 512060885;;нет;нет;нет;нет;2;2;EDIT
+шайба;;NEEDS_HUMAN_REVIEW;"название уже содержит русский текст; в самом названии карточки уже есть русский текст";1;50.000;;нет;14YETISHIM;;да;нет;нет;нет;1;1;REVIEW
+Гильза маслонасоса;;NEEDS_HUMAN_REVIEW;"название уже содержит русский текст; в самом названии карточки уже есть русский текст";1;44.000;;нет;10F;СНЕГОХОД;да;нет;нет;нет;1;1;REVIEW
+LOCKING CLIP;Клипса LOCKING;NEEDS_HUMAN_REVIEW;не переведены слова: LOCKING;1;36.000;BRP;BRP;513033135;;нет;нет;нет;нет;1;1;EDIT
+FUEL FILTER;Фильтр топливный;HIGH;;1;32.000;BRP;BRP;415129510;;нет;нет;нет;да;1;1;APPROVE
+BOOT;Пыльник;HIGH;;1;21.000;BRP;BRP;508000548;;нет;нет;нет;да;1;1;APPROVE
+RIVET_POP 3/16 X ,550;Заклёпка POP 3 16 X 550;NEEDS_HUMAN_REVIEW;не переведены слова: POP;1;21.000;BRP;BRP;390402300;;нет;нет;нет;нет;1;1;EDIT
+SPARK PLUG NGK MR7BI-8;Свеча зажигания NGK MR7BI 8;NEEDS_HUMAN_REVIEW;не переведены слова: MR7BI;1;20.000;BRP;BRP;415129670;;нет;нет;нет;нет;1;1;EDIT
+FRONT CAM SLIDER SHOE, BLACK;Ползун направляющей передний CAM чёрный;NEEDS_HUMAN_REVIEW;"не переведены слова: CAM; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;19.000;BRP;BRP;417126374;;нет;да;нет;нет;1;1;EDIT
+WINDSHIELD LATCH;Защёлка ветровое стекло;MEDIUM;проверьте порядок слов: WINDSHIELD;1;18.000;BRP;BRP;570023800;;нет;нет;нет;нет;1;1;EDIT
+CHROME WHEEL NUT M10 X 1.25;Гайка CHROME колесо M10 X 1.25;NEEDS_HUMAN_REVIEW;не переведены слова: CHROME;1;18.000;BRP;BRP;250100185;;нет;нет;нет;нет;1;1;EDIT
+VALVE STEM SEAL;Сальник клапан STEM;NEEDS_HUMAN_REVIEW;не переведены слова: STEM;1;18.000;BRP;BRP;420230515;;нет;нет;нет;нет;1;1;EDIT
+Cam slide shoe;Ползун CAM SLIDE;NEEDS_HUMAN_REVIEW;"не переведены слова: CAM, SLIDE; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;17.000;BRP;BRP;140068;;нет;да;нет;нет;1;1;EDIT
+LOCKING PLATE;Пластина LOCKING;NEEDS_HUMAN_REVIEW;не переведены слова: LOCKING;1;17.000;BRP;BRP;517304538;;нет;нет;нет;нет;1;1;EDIT
+LOWER VIBRATION RING;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";1;17.000;BRP;BRP;506152518;;нет;да;нет;нет;1;1;REVIEW
+RIVET_HEMLOK 6,4 X 15;Заклёпка HEMLOK 6 4 X 15;NEEDS_HUMAN_REVIEW;не переведены слова: HEMLOK;1;16.000;BRP;BRP;293150119;;нет;нет;нет;нет;1;1;EDIT
+SPI FUEL FILTER;Фильтр топливный SPI;HIGH;;1;15.000;SPI;aftermarket;SM-07353;;нет;нет;нет;да;1;8;APPROVE
+CLINCH NUT HEXSERT M8;Гайка CLINCH HEXSERT M8;NEEDS_HUMAN_REVIEW;не переведены слова: CLINCH, HEXSERT;1;15.000;BRP;BRP;605636002;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS'Y 76.11 MM, 1ST OVERSIZE;Поршень в сборе 76.11 MM 1ST OVERSIZE;NEEDS_HUMAN_REVIEW;"не переведены слова: OVERSIZE; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;15.000;BRP;BRP;420889051;;нет;да;нет;нет;1;1;EDIT
+DRIVEN BOLT KIT M139;Болт DRIVEN комплект M139;NEEDS_HUMAN_REVIEW;"не переведены слова: DRIVEN; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;13.000;BRP;BRP;703500876;;нет;да;нет;нет;1;1;EDIT
+BUTTON;Кнопка;HIGH;;1;12.000;BRP;BRP;517304744;;нет;нет;нет;да;1;1;APPROVE
+TAPPING SCREW M4.8 X 16;Винт TAPPING M4.8 X 16;NEEDS_HUMAN_REVIEW;не переведены слова: TAPPING;1;12.000;BRP;BRP;417300006;;нет;нет;нет;нет;1;1;EDIT
+TORX HEAD SCREW M6 X 16;Винт TORX HEAD M6 X 16;NEEDS_HUMAN_REVIEW;"не переведены слова: HEAD, TORX; многозначные слова, одним переводом на всю базу не закрывается: HEAD";1;12.000;BRP;BRP;250000717;;нет;да;нет;нет;1;1;EDIT
+LOCKING ELEMENT;Элемент LOCKING;NEEDS_HUMAN_REVIEW;не переведены слова: LOCKING;1;11.000;BRP;BRP;420845560;;нет;нет;нет;нет;1;1;EDIT
+SWIVEL BUSHING;Втулка SWIVEL;NEEDS_HUMAN_REVIEW;не переведены слова: SWIVEL;1;11.000;BRP;BRP;505073329;;нет;нет;нет;нет;1;1;EDIT
+KIT SPRING SUPPORT;Кронштейн комплект пружина;MEDIUM;"у слова несколько принятых переводов, выберите нужный: SUPPORT; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;10.000;BRP;BRP;861805547;СНЕГОХОД;нет;да;нет;нет;1;1;EDIT
+COTTER PIN;Палец COTTER;NEEDS_HUMAN_REVIEW;не переведены слова: COTTER;1;10.000;BRP;BRP;250400060;СНЕГОХОД;нет;нет;нет;нет;1;1;EDIT
+GASKET RING 10/17/2,3;Прокладка RING 10 17 2 3;NEEDS_HUMAN_REVIEW;"не переведены слова: RING; многозначные слова, одним переводом на всю базу не закрывается: RING";1;10.000;BRP;BRP;420431380;СНЕГОХОД;нет;да;нет;нет;1;1;EDIT
+HEX.SCREW M6 X 20;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;10.000;BRP;BRP;420441311;;нет;нет;нет;нет;1;1;REVIEW
+SPARK PLUG NGK ILKR8Q7;Свеча зажигания NGK ILKR8Q7;NEEDS_HUMAN_REVIEW;не переведены слова: ILKR8Q7;1;10.000;BRP;BRP;415130651;;нет;нет;нет;нет;1;1;EDIT
+LOWER STOPPER;Упор нижний;HIGH;;1;9.000;BRP;BRP;514054529;;нет;нет;нет;да;1;1;APPROVE
+BUSHING_SUSPENSION ARM KIT;Втулка подвески ARM комплект;NEEDS_HUMAN_REVIEW;"не переведены слова: ARM; многозначные слова, одним переводом на всю базу не закрывается: ARM, KIT";1;9.000;BRP;BRP;703500875;;нет;да;нет;нет;1;1;EDIT
+Hex Sc.  M8 x 20 BN73 m(1=10pcs);;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;9.000;BRP;BRP;40316;;нет;нет;нет;нет;1;1;REVIEW
+UPPER ANTI-VIBRATION GASKET;Прокладка верхний ANTI VIBRATION;NEEDS_HUMAN_REVIEW;не переведены слова: ANTI, VIBRATION;1;9.000;BRP;BRP;506152509;;нет;нет;нет;нет;1;1;EDIT
+BEARING NEEDLE;Подшипник игольчатый;HIGH;;1;8.000;BRP;BRP;420832445;;нет;нет;нет;да;1;1;APPROVE
+DAMPER;Демпфер;HIGH;;1;8.000;BRP;BRP;707001169;;нет;нет;нет;да;1;1;APPROVE
+EXHAUST VALVE, LOWER;Клапан выпускной нижний;HIGH;;1;8.000;BRP;BRP;420854974;СНЕГОХОД;нет;нет;нет;да;1;1;APPROVE
+BLACK WHEEL CAP;Колпак колеса чёрный;MEDIUM;у слова несколько принятых переводов, выберите нужный: CAP;1;8.000;BRP;BRP;503192771;;нет;нет;нет;нет;1;1;EDIT
+FASTENER KIT;Крепёж комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;8.000;BRP;BRP;860200808;;нет;да;нет;нет;1;1;EDIT
+RETAINER CUSHION;Подушка фиксатор;MEDIUM;проверьте порядок слов: RETAINER;1;8.000;BRP;BRP;503190754;;нет;нет;нет;нет;1;1;EDIT
+BUSHING_SUSPENSION ARM;Втулка подвески ARM;NEEDS_HUMAN_REVIEW;"не переведены слова: ARM; многозначные слова, одним переводом на всю базу не закрывается: ARM";1;8.000;BRP;BRP;706206653;;нет;да;нет;нет;1;1;EDIT
+SPARK PLUG NGK ILKR9Q7G;Свеча зажигания NGK ILKR9Q7G;NEEDS_HUMAN_REVIEW;не переведены слова: ILKR9Q7G;1;8.000;BRP;BRP;415130211;;нет;нет;нет;нет;1;1;EDIT
+TORX SCREW M5 X 26;Винт TORX M5 X 26;NEEDS_HUMAN_REVIEW;не переведены слова: TORX;1;8.000;BRP;BRP;250000587;;нет;нет;нет;нет;1;1;EDIT
+WASHER_THRUST;Шайба THRUST;NEEDS_HUMAN_REVIEW;не переведены слова: THRUST;1;8.000;BRP;BRP;417224868;;нет;нет;нет;нет;1;1;EDIT
+Впускной коллектор 550XU;;NEEDS_HUMAN_REVIEW;"название уже содержит русский текст; в самом названии карточки уже есть русский текст";1;8;BRP;нет;;;да;нет;нет;нет;1;1;REVIEW
+AXLE - 10MM;Ось 10MM;HIGH;;1;7.000;BRP;BRP;417224204;;нет;нет;нет;да;1;1;APPROVE
+GASKET 0,6;Прокладка 0 6;HIGH;;1;7.000;BRP;BRP;420950912;;нет;нет;нет;да;1;1;APPROVE
+SPRING NUT U M6 X 1.0;Гайка пружина U M6 X 1.0;MEDIUM;проверьте порядок слов: SPRING;1;7.000;BRP;BRP;250100198;;нет;нет;нет;нет;1;1;EDIT
+THERMOSTAT GASKET;Прокладка термостат;MEDIUM;проверьте порядок слов: THERMOSTAT;1;7.000;BRP;BRP;420650300;;нет;нет;нет;нет;1;1;EDIT
+IGNITION CABLE;Трос IGNITION;NEEDS_HUMAN_REVIEW;не переведены слова: IGNITION;1;7.000;BRP;BRP;512061126;;нет;нет;нет;нет;1;1;EDIT
+MAGNETIC PLUG;Пробка MAGNETIC;NEEDS_HUMAN_REVIEW;не переведены слова: MAGNETIC;1;7.000;BRP;BRP;619230070;;нет;нет;нет;нет;1;1;EDIT
+PROTECTION HOSE;Шланг PROTECTION;NEEDS_HUMAN_REVIEW;не переведены слова: PROTECTION;1;7.000;BRP;BRP;420960205;;нет;нет;нет;нет;1;1;EDIT
+REBUILD-CYLINDER NICAS 593ETEC 08-09;Цилиндр REBUILD NICAS 593ETEC 08 09;NEEDS_HUMAN_REVIEW;не переведены слова: NICAS, REBUILD;1;7.000;BRP;BRP;421000667;;нет;нет;нет;нет;1;1;EDIT
+SPARK PLUG NGK MR8BI-8;Свеча зажигания NGK MR8BI 8;NEEDS_HUMAN_REVIEW;не переведены слова: MR8BI;1;7.000;BRP;BRP;415129944;;нет;нет;нет;нет;1;1;EDIT
+SPI CONNECTING ROD KIT - MAG & PTO;Шатун SPI комплект MAG & PTO;NEEDS_HUMAN_REVIEW;"не переведены слова: MAG, PTO; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;7.000;SPI;aftermarket;SM-09344;;нет;да;нет;нет;1;1;EDIT
+TAPPING SCREW M5 X 22;Винт TAPPING M5 X 22;NEEDS_HUMAN_REVIEW;не переведены слова: TAPPING;1;7.000;BRP;BRP;420841550;;нет;нет;нет;нет;1;1;EDIT
+GASKET 1.0 MM;Прокладка 1.0 MM;HIGH;;1;6.000;BRP;BRP;420831849;;нет;нет;нет;да;1;1;APPROVE
+HEX. SCREW M8 X 16;Винт шестигранный M8 X 16;HIGH;;1;6.000;BRP;BRP;236281684;;нет;нет;нет;да;1;1;APPROVE
+GASKET ENGINE SUPPORT;Кронштейн прокладка двигателя;MEDIUM;у слова несколько принятых переводов, выберите нужный: SUPPORT;1;6.000;BRP;BRP;420430070;;нет;нет;нет;нет;1;1;EDIT
+HOOK KIT;Крюк комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;6.000;BRP;BRP;861805521;;нет;да;нет;нет;1;1;EDIT
+PIN_SPRING 2.6MM X 20.5MM;Пружина палец 2.6MM X 20.5MM;MEDIUM;проверьте порядок слов: PIN;1;6.000;BRP;BRP;250400101;;нет;нет;нет;нет;1;1;EDIT
+ROLLER_PULLEY ASSY;Ролик шкива в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASSY";1;6.000;BRP;BRP;417224947;;нет;да;нет;нет;1;1;EDIT
+BUSHING_HALF;Втулка HALF;NEEDS_HUMAN_REVIEW;"не переведены слова: HALF; многозначные слова, одним переводом на всю базу не закрывается: HALF";1;6.000;BRP;BRP;709400783;;нет;да;нет;нет;1;1;EDIT
+HEATING ELEMENT 20 WATT;Элемент HEATING 20 WATT;NEEDS_HUMAN_REVIEW;не переведены слова: HEATING, WATT;1;6.000;BRP;BRP;506152578;;нет;нет;нет;нет;1;1;EDIT
+HEX. FLANGED ELASTIC NUT M8;Гайка шестигранный фланцевый ELASTIC M8;NEEDS_HUMAN_REVIEW;не переведены слова: ELASTIC;1;6.000;BRP;BRP;233281434;;нет;нет;нет;нет;1;1;EDIT
+INTAKE SOCKET WITH REED VALVE;Клапан впускной гнездо WITH REED;NEEDS_HUMAN_REVIEW;не переведены слова: REED, WITH;1;6.000;BRP;BRP;420667533;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS?Y, 76.13 MM, OVERSIZE;Поршень ASS?Y 76.13 MM OVERSIZE;NEEDS_HUMAN_REVIEW;не переведены слова: ASS?Y, OVERSIZE;1;6.000;BRP;BRP;420889174;;нет;нет;нет;нет;1;1;EDIT
+RIVET_HEMLOK 6,4 X 18;Заклёпка HEMLOK 6 4 X 18;NEEDS_HUMAN_REVIEW;не переведены слова: HEMLOK;1;6.000;BRP;BRP;293150183;;нет;нет;нет;нет;1;1;EDIT
+ROD_RETAINING;;NEEDS_HUMAN_REVIEW;"слово «ROD» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: ROD";1;6.000;BRP;BRP;517305734;;нет;да;нет;нет;1;1;REVIEW
+ROLLER_PULLEY INT;Ролик шкива INT;NEEDS_HUMAN_REVIEW;не переведены слова: INT;1;6.000;BRP;BRP;417224153;;нет;нет;нет;нет;1;1;EDIT
+SWITCH KNOB, RED;Выключатель KNOB RED;NEEDS_HUMAN_REVIEW;не переведены слова: KNOB, RED;1;6.000;BRP;BRP;277001802;;нет;нет;нет;нет;1;1;EDIT
+WATERTIGHT SEAL;Сальник WATERTIGHT;NEEDS_HUMAN_REVIEW;не переведены слова: WATERTIGHT;1;6.000;BRP;BRP;293250084;;нет;нет;нет;нет;1;1;EDIT
+BRONCO CV JOINT BOOT KIT;Комплект пыльника ШРУС BRONCO;HIGH;;1;5.000;BRONCO PRODUCTS;aftermarket;AT-08545;;нет;нет;нет;да;1;8;APPROVE
+LATCH - LEFT;Защёлка левый;HIGH;;1;5.000;BRP;BRP;517306310;;нет;нет;нет;да;1;1;APPROVE
+LATCH - RIGHT;Защёлка правый;HIGH;;1;5.000;BRP;BRP;517306309;;нет;нет;нет;да;1;1;APPROVE
+SPI, TOP END GASKET SET;Комплект прокладок верхней части двигателя SPI;HIGH;;1;5.000;SPI;aftermarket;SM-09537T;;нет;нет;нет;да;1;2;APPROVE
+PLATE;Пластина;MEDIUM;у слова несколько принятых переводов, выберите нужный: PLATE;1;5.000;BRP;BRP;506152163;;нет;нет;нет;нет;1;1;EDIT
+CHAIN TENSION GUIDE;Направляющая цепь TENSION;NEEDS_HUMAN_REVIEW;не переведены слова: TENSION;1;5.000;BRP;BRP;420436014;;нет;нет;нет;нет;1;1;EDIT
+HEATING GRIP;Рукоятка HEATING;NEEDS_HUMAN_REVIEW;не переведены слова: HEATING;1;5.000;BRP;BRP;515175664;;нет;нет;нет;нет;1;1;EDIT
+RELAY, 30 AMP;Реле 30 AMP;NEEDS_HUMAN_REVIEW;не переведены слова: AMP;1;5.000;BRP;BRP;515176774;;нет;нет;нет;нет;1;1;EDIT
+RIVET_HEMLOK 6,4 X 19;Заклёпка HEMLOK 6 4 X 19;NEEDS_HUMAN_REVIEW;не переведены слова: HEMLOK;1;5.000;BRP;BRP;293150120;;нет;нет;нет;нет;1;1;EDIT
+SCREW TORX TAPTITE FLANGE M6X20;Фланец винт TORX TAPTITE M6X20;NEEDS_HUMAN_REVIEW;не переведены слова: TAPTITE, TORX;1;5.000;BRP;BRP;420941256;;нет;нет;нет;нет;1;1;EDIT
+SLIDER SHOE SET 1 SET = 12 PC;Ползун направляющей SET 1 SET = 12 PC;NEEDS_HUMAN_REVIEW;"не переведены слова: SET; многозначные слова, одним переводом на всю базу не закрывается: SET";1;5.000;BRP;BRP;420281296;;нет;да;нет;нет;1;1;EDIT
+SPARK PLUG NGK CR8EB;Свеча зажигания NGK CR8EB;NEEDS_HUMAN_REVIEW;не переведены слова: CR8EB;1;5.000;BRP;BRP;415130795;;нет;нет;нет;нет;1;1;EDIT
+SPARK PLUG NGK DCPR8E;Свеча зажигания NGK DCPR8E;NEEDS_HUMAN_REVIEW;не переведены слова: DCPR8E;1;5.000;BRP;BRP;715900637;;нет;нет;нет;нет;1;1;EDIT
+SPI CONNECTING ROD SKI DOO;Шатун SPI лыжа DOO;NEEDS_HUMAN_REVIEW;не переведены слова: DOO;1;5.000;SPI;aftermarket;SM-09510;;нет;нет;нет;нет;1;1;EDIT
+SUPERCHARGER KIT;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;5.000;BRP;BRP;420881102;;нет;да;нет;нет;1;1;REVIEW
+TORX SCREW M6 X 20;Винт TORX M6 X 20;NEEDS_HUMAN_REVIEW;не переведены слова: TORX;1;5.000;BRP;BRP;250000722;;нет;нет;нет;нет;1;1;EDIT
+ADAPTOR;Переходник;HIGH;;1;4.000;BRP;BRP;707001274;;нет;нет;нет;да;1;1;APPROVE
+BEARING SLEEVE;Втулка подшипника;HIGH;;1;4.000;BRP;BRP;420933492;;нет;нет;нет;да;1;1;APPROVE
+EXHAUST VALVE, UPPER;Клапан выпускной верхний;HIGH;;1;4.000;BRP;BRP;420854980;;нет;нет;нет;да;1;1;APPROVE
+ISOLATOR;Изолятор;HIGH;;1;4.000;BRP;BRP;707000949;;нет;нет;нет;да;1;1;APPROVE
+RETAINER;Фиксатор;HIGH;;1;4.000;BRP;BRP;505071812;;нет;нет;нет;да;1;1;APPROVE
+UPPER CUSHION;Подушка верхний;HIGH;;1;4.000;BRP;BRP;414803100;;нет;нет;нет;да;1;1;APPROVE
+V-BELT;Ремень V;HIGH;;1;4.000;BRP;BRP;420980514;;нет;нет;нет;да;1;1;APPROVE
+BRACKET COVER;Крышка кронштейн;MEDIUM;проверьте порядок слов: BRACKET;1;4.000;BRP;BRP;705004987;;нет;нет;нет;нет;1;1;EDIT
+BUMPER PLUG, BLACK;Пробка бампер чёрный;MEDIUM;проверьте порядок слов: BUMPER;1;4.000;BRP;BRP;291000339;;нет;нет;нет;нет;1;1;EDIT
+CHAIN TENSIONER HOUSING;Натяжитель цепи корпус;MEDIUM;проверьте порядок слов: HOUSING;1;4.000;BRP;BRP;420236510;;нет;нет;нет;нет;1;1;EDIT
+CONNECTING ROD SCREW M8 X 1;Шатун винт M8 X 1;MEDIUM;проверьте порядок слов: SCREW;1;4.000;BRP;BRP;420641640;;нет;нет;нет;нет;1;1;EDIT
+NEEDLE PIN;Палец игла;MEDIUM;проверьте порядок слов: NEEDLE;1;4.000;BRP;BRP;420632435;;нет;нет;нет;нет;1;1;EDIT
+PIN KIT;Палец комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;4.000;BRP;BRP;715500337;;нет;да;нет;нет;1;1;EDIT
+PIN_ROLLER;Ролик палец;MEDIUM;проверьте порядок слов: PIN;1;4.000;BRP;BRP;417127294;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS'Y, 73.958 MM;Поршень в сборе 73.958 MM;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;4.000;BRP;BRP;420893970;;нет;да;нет;нет;1;1;EDIT
+SKI AXLE;Ось лыжа;MEDIUM;проверьте порядок слов: SKI;1;4.000;BRP;BRP;505073209;;нет;нет;нет;нет;1;1;EDIT
+VALVE COVER;Крышка клапан;MEDIUM;проверьте порядок слов: VALVE;1;4.000;BRP;BRP;420854442;;нет;нет;нет;нет;1;1;EDIT
+BUSHING-INT.;Втулка INT.;NEEDS_HUMAN_REVIEW;не переведены слова: INT.;1;4.000;BRP;BRP;706201590;;нет;нет;нет;нет;1;1;EDIT
+CHAIN TENSIONER PLUNGER;Натяжитель цепи PLUNGER;NEEDS_HUMAN_REVIEW;не переведены слова: PLUNGER;1;4.000;BRP;BRP;420236521;;нет;нет;нет;нет;1;1;EDIT
+FLEXIBLE ADAPTOR;Переходник FLEXIBLE;NEEDS_HUMAN_REVIEW;не переведены слова: FLEXIBLE;1;4.000;BRP;BRP;707002585;;нет;нет;нет;нет;1;1;EDIT
+JOINT_BALL LWR;;NEEDS_HUMAN_REVIEW;"слово «JOINT» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: JOINT";1;4.000;BRP;BRP;505074133;;нет;да;нет;нет;1;1;REVIEW
+MAINTENANCE CLUTCH KIT eDrive II;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;4.000;BRP;BRP;415129781;;нет;да;нет;нет;1;1;REVIEW
+PROX PISTON KIT SKI DOO MXZ500;Лыжа PROX поршень комплект DOO MXZ500;NEEDS_HUMAN_REVIEW;"не переведены слова: DOO, MXZ500; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;4.000;PROX;aftermarket;01.5595.050;;нет;да;нет;нет;1;5;EDIT
+PROX PISTON KIT SKI-DOO MXZ600 '03-09;Лыжа PROX поршень комплект DOO MXZ600 '03 09;NEEDS_HUMAN_REVIEW;"не переведены слова: '03, DOO, MXZ600; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;4.000;PROX;aftermarket;01.5600.000;;нет;да;нет;нет;1;1;EDIT
+REBUILD-CYLINDER NI SI C;Цилиндр REBUILD NI SI C;NEEDS_HUMAN_REVIEW;не переведены слова: REBUILD;1;4.000;BRP;BRP;421000702;;нет;нет;нет;нет;1;1;EDIT
+REED VALVE ASS'Y;Клапан REED в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: REED; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;4.000;BRP;BRP;420924798;;нет;да;нет;нет;1;1;EDIT
+RING;;NEEDS_HUMAN_REVIEW;"слово «RING» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: RING";1;4.000;BRP;BRP;517305723;;нет;да;нет;нет;1;1;REVIEW
+SCREW-HEX.M8 X 60;Винт HEX.M8 X 60;NEEDS_HUMAN_REVIEW;не переведены слова: HEX.M8;1;4.000;BRP;BRP;420840096;;нет;нет;нет;нет;1;1;EDIT
+SILENT CHAIN;Цепь SILENT;NEEDS_HUMAN_REVIEW;не переведены слова: SILENT;1;4.000;BRP;BRP;420297063;;нет;нет;нет;нет;1;1;EDIT
+START/RER BUTTON;Кнопка START RER;NEEDS_HUMAN_REVIEW;не переведены слова: RER, START;1;4.000;BRP;BRP;515176088;;нет;нет;нет;нет;1;1;EDIT
+TORQUE GEAR;Шестерня TORQUE;NEEDS_HUMAN_REVIEW;не переведены слова: TORQUE;1;4.000;BRP;BRP;420660124;;нет;нет;нет;нет;1;1;EDIT
+TORX-TRUSS M/S NYLON PATCH M5X20;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;4.000;BRP;BRP;250000586;;нет;нет;нет;нет;1;1;REVIEW
+Лепестки Rotax797;;NEEDS_HUMAN_REVIEW;"название уже содержит русский текст; в самом названии карточки уже есть русский текст";1;4.000;;нет;420924798 карбон;;да;нет;нет;нет;1;2;REVIEW
+FLANGED SCREW;Винт фланцевый;HIGH;;1;3.000;BRP;BRP;732601143;;нет;нет;нет;да;1;1;APPROVE
+GRIP 148MM;Рукоятка 148MM;HIGH;;1;3.000;BRP;BRP;506152560;;нет;нет;нет;да;1;1;APPROVE
+HEX. FLANGED SCREW M10 X 150;Винт шестигранный фланцевый M10 X 150;HIGH;;1;3.000;BRP;BRP;420641762;;нет;нет;нет;да;1;1;APPROVE
+O-RING, 64 MM X 2 MM;Кольцо уплотнительное 64 MM X 2 MM;HIGH;;1;3.000;BRP;BRP;293300022;;нет;нет;нет;да;1;1;APPROVE
+SCREW HEX. M10 X 60;Винт шестигранный M10 X 60;HIGH;;1;3.000;BRP;BRP;250000290;;нет;нет;нет;да;1;1;APPROVE
+SWAY BAR BUSHING;Втулка стабилизатора;HIGH;;1;3.000;BRP;BRP;706203286;;нет;нет;нет;да;1;1;APPROVE
+BLACK LATCH KIT;Защёлка чёрный комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;3.000;BRP;BRP;860200239;;нет;да;нет;нет;1;1;EDIT
+DRIVE SHAFT PLUG;Пробка приводной вал;MEDIUM;проверьте порядок слов: SHAFT;1;3.000;BRP;BRP;272000173;;нет;нет;нет;нет;1;1;EDIT
+FRONT SUSPENSION SUPPORT;Кронштейн передний подвески;MEDIUM;у слова несколько принятых переводов, выберите нужный: SUPPORT;1;3.000;BRP;BRP;518327487;;нет;нет;нет;нет;1;1;EDIT
+PIN SCREW;Винт палец;MEDIUM;проверьте порядок слов: PIN;1;3.000;BRP;BRP;417222813;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS'Y, 81.852 MM;Поршень в сборе 81.852 MM;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;3.000;BRP;BRP;420893436;;нет;да;нет;нет;1;1;EDIT
+SWITCH COVER;Крышка выключатель;MEDIUM;проверьте порядок слов: SWITCH;1;3.000;BRP;BRP;572100901;;нет;нет;нет;нет;1;1;EDIT
+AMBER REFLECTOR;Катафот AMBER;NEEDS_HUMAN_REVIEW;не переведены слова: AMBER;1;3.000;BRP;BRP;705002409;;нет;нет;нет;нет;1;1;EDIT
+CAM MOLDED;;NEEDS_HUMAN_REVIEW;"слово «CAM» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;3.000;BRP;BRP;417224113;;нет;да;нет;нет;1;1;REVIEW
+CENTRIFUGAL WEIGHT;Груз CENTRIFUGAL;NEEDS_HUMAN_REVIEW;не переведены слова: CENTRIFUGAL;1;3.000;BRP;BRP;420231070;;нет;нет;нет;нет;1;1;EDIT
+COLLAR NUT M8;Гайка COLLAR M8;NEEDS_HUMAN_REVIEW;не переведены слова: COLLAR;1;3.000;BRP;BRP;420942331;;нет;нет;нет;нет;1;1;EDIT
+CYLINDER BLOCK PLASMA REBUILD G4;Цилиндр BLOCK PLASMA REBUILD G4;NEEDS_HUMAN_REVIEW;"не переведены слова: BLOCK, PLASMA, REBUILD; многозначные слова, одним переводом на всю базу не закрывается: BLOCK";1;3.000;;нет;420413575RG4;;нет;да;нет;нет;1;1;EDIT
+DEKO WASHER;Шайба DEKO;NEEDS_HUMAN_REVIEW;не переведены слова: DEKO;1;3.000;BRP;BRP;420231090;;нет;нет;нет;нет;1;1;EDIT
+DOUBLE GASKET 0.6 MM;Прокладка DOUBLE 0.6 MM;NEEDS_HUMAN_REVIEW;не переведены слова: DOUBLE;1;3.000;BRP;BRP;420831021;;нет;нет;нет;нет;1;1;EDIT
+FRICTION WASHER;Шайба FRICTION;NEEDS_HUMAN_REVIEW;не переведены слова: FRICTION;1;3.000;BRP;BRP;420460430;;нет;нет;нет;нет;1;1;EDIT
+HANDLEBAR ANODIZED;Руль ANODIZED;NEEDS_HUMAN_REVIEW;не переведены слова: ANODIZED;1;3.000;BRP;BRP;506152825;;нет;нет;нет;нет;1;1;EDIT
+HEX. DISTANCE SCREW M6 X 30.5;Винт шестигранный DISTANCE M6 X 30.5;NEEDS_HUMAN_REVIEW;не переведены слова: DISTANCE;1;3.000;BRP;BRP;420440568;;нет;нет;нет;нет;1;1;EDIT
+LABYRINTH SEAL;Сальник LABYRINTH;NEEDS_HUMAN_REVIEW;не переведены слова: LABYRINTH;1;3.000;BRP;BRP;503190434;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS'Y 75.86 MM, STANDARD;Поршень в сборе 75.86 MM STANDARD;NEEDS_HUMAN_REVIEW;"не переведены слова: STANDARD; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;3.000;BRP;BRP;420889050;;нет;да;нет;нет;1;1;EDIT
+PISTON ASS?Y, 75.88 MM, STANDARD;Поршень ASS?Y 75.88 MM STANDARD;NEEDS_HUMAN_REVIEW;не переведены слова: ASS?Y, STANDARD;1;3.000;BRP;BRP;420889173;;нет;нет;нет;нет;1;1;EDIT
+QUARTER-TURN HANDLE;Ручка QUARTER TURN;NEEDS_HUMAN_REVIEW;не переведены слова: QUARTER, TURN;1;3.000;BRP;BRP;517304296;;нет;нет;нет;нет;1;1;EDIT
+RAMP 441;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;3.000;BRP;BRP;417223098;;нет;нет;нет;нет;1;1;REVIEW
+RAMP 614;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;3.000;BRP;BRP;417222883;;нет;нет;нет;нет;1;1;REVIEW
+RETAINING RING_EXTERNAL;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";1;3.000;BRP;BRP;293370183;;нет;да;нет;нет;1;1;REVIEW
+ROLLER_PULLEY EXT;Ролик шкива EXT;NEEDS_HUMAN_REVIEW;не переведены слова: EXT;1;3.000;BRP;BRP;417224916;;нет;нет;нет;нет;1;1;EDIT
+SCREW-HEX.FLANGE M10 X 16 S.GRIP;Винт HEX.FLANGE M10 X 16 S.GRIP;NEEDS_HUMAN_REVIEW;не переведены слова: HEX.FLANGE, S.GRIP;1;3.000;BRP;BRP;250001044;;нет;нет;нет;нет;1;1;EDIT
+SEALING CUP;Стакан SEALING;NEEDS_HUMAN_REVIEW;не переведены слова: SEALING;1;3.000;BRP;BRP;420460830;;нет;нет;нет;нет;1;1;EDIT
+SHOE CAM SLIDER;Ползун ползун CAM;NEEDS_HUMAN_REVIEW;"не переведены слова: CAM; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;3.000;BRP;BRP;417212500;;нет;да;нет;нет;1;1;EDIT
+SPONSON ADAPTER;Переходник SPONSON;NEEDS_HUMAN_REVIEW;не переведены слова: SPONSON;1;3.000;BRP;BRP;292001046;;нет;нет;нет;нет;1;1;EDIT
+THRUST-BEARING;Подшипник THRUST;NEEDS_HUMAN_REVIEW;не переведены слова: THRUST;1;3.000;BRP;BRP;293350022;;нет;нет;нет;нет;1;1;EDIT
+TORX-TRUSS M/S M5 X 14 S.GRIP;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;3.000;BRP;BRP;250000763;;нет;нет;нет;нет;1;1;REVIEW
+ALL BALLS TIE ROD END KIT LEFT;Комплект наконечников рулевой тяги ALL BALLS левый;HIGH;;1;2.000;ALL BALLS RACING INC;aftermarket;51-1046-L;;нет;нет;нет;да;1;10;APPROVE
+ANGLED BEARING;Подшипник угловой;HIGH;;1;2.000;BRP;BRP;271002182;;нет;нет;нет;да;1;1;APPROVE
+BELLOW;Гофра;HIGH;;1;2.000;BRP;BRP;271001422;;нет;нет;нет;да;1;1;APPROVE
+CUP;Стакан;HIGH;;1;2.000;BRP;BRP;705007171;;нет;нет;нет;да;1;1;APPROVE
+EXHAUST BELLOWS;Гофра выпускной;HIGH;;1;2.000;BRP;BRP;420260723;;нет;нет;нет;да;1;1;APPROVE
+EXHAUST HOSE;Шланг выпускной;HIGH;;1;2.000;BRP;BRP;274001302;;нет;нет;нет;да;1;1;APPROVE
+FUEL RAIL;Рампа топливная;HIGH;;1;2.000;BRP;BRP;420874410;;нет;нет;нет;да;1;1;APPROVE
+HEX. SCREW M8 X 70;Винт шестигранный M8 X 70;HIGH;;1;2.000;BRP;BRP;207087060;;нет;нет;нет;да;1;1;APPROVE
+LH AIR FILTER;Фильтр воздушный левый;HIGH;;1;2.000;BRP;BRP;508000731;;нет;нет;нет;да;1;1;APPROVE
+LOWER CUSHION;Подушка нижний;HIGH;;1;2.000;BRP;BRP;414803200;;нет;нет;нет;да;1;1;APPROVE
+MANIFOLD;Коллектор;HIGH;;1;2.000;BRP;BRP;512060692;;нет;нет;нет;да;1;1;APPROVE
+RH FRONT MEMBER;Балка правый передний;HIGH;;1;2.000;BRP;BRP;518325949;;нет;нет;нет;да;1;1;APPROVE
+RUBBER BELLOW;Гофра резиновый;HIGH;;1;2.000;BRP;BRP;705400352;;нет;нет;нет;да;1;1;APPROVE
+SCREW HEX. M10 X 70;Винт шестигранный M10 X 70;HIGH;;1;2.000;BRP;BRP;250001024;;нет;нет;нет;да;1;1;APPROVE
+UPPER EXHAUST VALVE;Клапан выпускной верхний;HIGH;;1;2.000;BRP;BRP;420854900;;нет;нет;нет;да;1;1;APPROVE
+AIR FILTER LH (NITEX MESH);Фильтр воздушный левый NITEX сетка;MEDIUM;проверьте порядок слов: MESH;1;2.000;BRP;BRP;508000807;;нет;нет;нет;нет;1;1;EDIT
+BRONCO CV BOOT KIT;Пыльник BRONCO CV комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;2.000;BRONCO PRODUCTS;aftermarket;AT-03081;;нет;да;нет;нет;1;23;EDIT
+CHAIN SLIDER;Ползун цепь;MEDIUM;проверьте порядок слов: CHAIN;1;2.000;BRP;BRP;504153312;;нет;нет;нет;нет;1;1;EDIT
+CONNECTING ROD KIT;Шатун комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;2.000;SPI;aftermarket;SM-09352;;нет;да;нет;нет;1;2;EDIT
+DRAIN PLUG KIT;Пробка сливная комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;2.000;BRP;BRP;707001179;;нет;да;нет;нет;1;1;EDIT
+DRAIN PLUG NECK;Пробка сливная горловина;MEDIUM;проверьте порядок слов: NECK;1;2.000;BRP;BRP;269800521;;нет;нет;нет;нет;1;1;EDIT
+EXHAUST MANIFOLD GASKET;Прокладка выпускной коллектор;MEDIUM;проверьте порядок слов: MANIFOLD;1;2.000;BRP;BRP;420931653;;нет;нет;нет;нет;1;1;EDIT
+GASKET COVER WATER PUMP;Насос водяной прокладка крышка;MEDIUM;проверьте порядок слов: COVER, GASKET;1;2.000;BRP;BRP;420430051;;нет;нет;нет;нет;1;1;EDIT
+GEAR CLAMP;Хомут шестерня;MEDIUM;проверьте порядок слов: GEAR;1;2.000;BRP;BRP;420853023;;нет;нет;нет;нет;1;1;EDIT
+GRIP HANDLEBAR;Руль рукоятка;MEDIUM;проверьте порядок слов: GRIP;1;2.000;BRP;BRP;860201802;;нет;нет;нет;нет;1;1;EDIT
+GUARD_HOSE F;Шланг защита F;MEDIUM;проверьте порядок слов: GUARD;1;2.000;BRP;BRP;705601893;;нет;нет;нет;нет;1;1;EDIT
+LATCH-PANEL;Панель защёлка;MEDIUM;проверьте порядок слов: LATCH;1;2.000;BRP;BRP;517304572;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS'Y,;Поршень в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;2.000;BRP;BRP;420893797;;нет;да;нет;нет;1;1;EDIT
+PLUG ASS'Y;Пробка в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;2.000;BRP;BRP;292002022;;нет;да;нет;нет;1;1;EDIT
+PLUG SCREW;Винт пробка;MEDIUM;проверьте порядок слов: PLUG;1;2.000;BRP;BRP;420641150;;нет;нет;нет;нет;1;1;EDIT
+PROTECTOR HOSE;Шланг защита;MEDIUM;проверьте порядок слов: PROTECTOR;1;2.000;BRP;BRP;271000459;;нет;нет;нет;нет;1;1;EDIT
+RETAINER CABLE;Трос фиксатор;MEDIUM;проверьте порядок слов: RETAINER;1;2.000;BRP;BRP;517302673;;нет;нет;нет;нет;1;1;EDIT
+RH/LH MIRROR ASS'Y;Зеркало правый левый в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;2.000;BRP;BRP;517305787;;нет;да;нет;нет;1;1;EDIT
+SLIDER FLANGE ASS'Y;Фланец ползун в сборе;MEDIUM;"проверьте порядок слов: SLIDER; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;2.000;BRP;BRP;417223606;;нет;да;нет;нет;1;1;EDIT
+SPRING NUT U M5 X 0.8;Гайка пружина U M5 X 0.8;MEDIUM;проверьте порядок слов: SPRING;1;2.000;BRP;BRP;250000958;;нет;нет;нет;нет;1;1;EDIT
+ALLEN SCREW M8 X 10;Винт ALLEN M8 X 10;NEEDS_HUMAN_REVIEW;не переведены слова: ALLEN;1;2.000;BRP;BRP;619230037;;нет;нет;нет;нет;1;1;EDIT
+BIMINI POST;Стойка BIMINI;NEEDS_HUMAN_REVIEW;не переведены слова: BIMINI;1;2.000;BRP;BRP;204950033;;нет;нет;нет;нет;1;1;EDIT
+BLACK-ELECTRONIC KEY;Ключ чёрный ELECTRONIC;NEEDS_HUMAN_REVIEW;не переведены слова: ELECTRONIC;1;2.000;BRP;BRP;710000817;;нет;нет;нет;нет;1;1;EDIT
+BOLT-M10X1.5X150,HXHD FLG;Болт M10X1.5X150 HXHD FLG;NEEDS_HUMAN_REVIEW;не переведены слова: FLG, HXHD;1;2.000;POLARIS;POLARIS;7518696;;нет;нет;нет;нет;1;1;EDIT
+CARBON BRUSH SET;Щётка CARBON SET;NEEDS_HUMAN_REVIEW;"не переведены слова: CARBON, SET; многозначные слова, одним переводом на всю базу не закрывается: SET";1;2.000;BRP;BRP;420881148;;нет;да;нет;нет;1;1;EDIT
+COMPRESSION SPRING;Пружина COMPRESSION;NEEDS_HUMAN_REVIEW;не переведены слова: COMPRESSION;1;2.000;BRP;BRP;420638040;;нет;нет;нет;нет;1;1;EDIT
+CONE BEARING;Подшипник CONE;NEEDS_HUMAN_REVIEW;не переведены слова: CONE;1;2.000;BRP;BRP;706000009;;нет;нет;нет;нет;1;1;EDIT
+CONNECTING ROD ASS?Y;Шатун ASS?Y;NEEDS_HUMAN_REVIEW;не переведены слова: ASS?Y;1;2.000;BRP;BRP;420917546;;нет;нет;нет;нет;1;1;EDIT
+DOUBLE BALL JOINT LINK;Шаровая опора DOUBLE LINK;NEEDS_HUMAN_REVIEW;не переведены слова: DOUBLE, LINK;1;2.000;BRP;BRP;505072204;;нет;нет;нет;нет;1;1;EDIT
+DRAFT BAR;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: BAR";1;2.000;BRP;BRP;518326449;;нет;да;нет;нет;1;1;REVIEW
+FLANGED HEX. SCREW M6 X 18, SCOTCH GRIP;Рукоятка фланцевый шестигранный винт M6 X 18 SCOTCH;NEEDS_HUMAN_REVIEW;не переведены слова: SCOTCH;1;2.000;BRP;BRP;250000418;;нет;нет;нет;нет;1;1;EDIT
+FORK, FORWARDS;Вилка FORWARDS;NEEDS_HUMAN_REVIEW;не переведены слова: FORWARDS;1;2.000;BRP;BRP;619230055;;нет;нет;нет;нет;1;1;EDIT
+HAIRPIN CUTTER;Резак HAIRPIN;NEEDS_HUMAN_REVIEW;не переведены слова: HAIRPIN;1;2.000;BRP;BRP;269800431;;нет;нет;нет;нет;1;1;EDIT
+HALF-HOUSING;Корпус HALF;NEEDS_HUMAN_REVIEW;"не переведены слова: HALF; многозначные слова, одним переводом на всю базу не закрывается: HALF";1;2.000;BRP;BRP;709400034;;нет;да;нет;нет;1;1;EDIT
+HALF-RING;;NEEDS_HUMAN_REVIEW;"слово «HALF» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: HALF, RING";1;2.000;BRP;BRP;420933470;;нет;да;нет;нет;1;1;REVIEW
+HEATED FILM, 25W;Плёнка HEATED 25W;NEEDS_HUMAN_REVIEW;не переведены слова: HEATED;1;2.000;BRP;BRP;506152428;;нет;нет;нет;нет;1;1;EDIT
+HEX. FLANGED SCREW M8 X 16, SCOTCH GRIP;Рукоятка шестигранный фланцевый винт M8 X 16 SCOTCH;NEEDS_HUMAN_REVIEW;не переведены слова: SCOTCH;1;2.000;BRP;BRP;207581646;;нет;нет;нет;нет;1;1;EDIT
+JOINT ATTACHMENT;;NEEDS_HUMAN_REVIEW;"слово «JOINT» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: JOINT";1;2.000;BRP;BRP;706200444;;нет;да;нет;нет;1;1;REVIEW
+LATCH PANNEL;Защёлка PANNEL;NEEDS_HUMAN_REVIEW;не переведены слова: PANNEL;1;2.000;BRP;BRP;517304289;;нет;нет;нет;нет;1;1;EDIT
+LOWER HALF-HOUSING;Корпус нижний HALF;NEEDS_HUMAN_REVIEW;"не переведены слова: HALF; многозначные слова, одним переводом на всю базу не закрывается: HALF";1;2.000;BRP;BRP;506153048;;нет;да;нет;нет;1;1;EDIT
+MASTER CYLINDER RESERVOIR ASS'Y;Цилиндр MASTER RESERVOIR в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: MASTER, RESERVOIR; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;2.000;BRP;BRP;507032478;;нет;да;нет;нет;1;1;EDIT
+OBLONG GROMMET;Втулка резиновая OBLONG;NEEDS_HUMAN_REVIEW;не переведены слова: OBLONG;1;2.000;BRP;BRP;705002665;;нет;нет;нет;нет;1;1;EDIT
+OIL LEVEL SENSOR;Датчик масляный LEVEL;NEEDS_HUMAN_REVIEW;не переведены слова: LEVEL;1;2.000;BRP;BRP;515176508;;нет;нет;нет;нет;1;1;EDIT
+PISTON 72.16, 1ST OVERSIZE;Поршень 72.16 1ST OVERSIZE;NEEDS_HUMAN_REVIEW;не переведены слова: OVERSIZE;1;2.000;BRP;BRP;420890071;;нет;нет;нет;нет;1;1;EDIT
+PISTON ASS'Y WITH RINGS, 72.17MM;Поршень в сборе WITH RINGS 72.17MM;NEEDS_HUMAN_REVIEW;"не переведены слова: RINGS, WITH; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;2.000;BRP;BRP;420893895;;нет;да;нет;нет;1;1;EDIT
+PISTON ASSY 76.36 MM, 2ND OVERSIZE;Поршень в сборе 76.36 MM 2ND OVERSIZE;NEEDS_HUMAN_REVIEW;"не переведены слова: OVERSIZE; многозначные слова, одним переводом на всю базу не закрывается: ASSY";1;2.000;BRP;BRP;420889052;;нет;да;нет;нет;1;1;EDIT
+PROTECTIVE RUBBER;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;2.000;BRP;BRP;504153054;;нет;нет;нет;нет;1;1;REVIEW
+PROX PISTON KIT SKI DOO MXZ500 '98-99;Лыжа PROX поршень комплект DOO MXZ500 '98 99;NEEDS_HUMAN_REVIEW;"не переведены слова: '98, DOO, MXZ500; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;2.000;PROX;aftermarket;01.5598.100;;нет;да;нет;нет;1;2;EDIT
+PROX PISTON KIT SKI-DOO 850 ETEC 2017-20;Лыжа PROX поршень комплект DOO 850 ETEC 2017 20;NEEDS_HUMAN_REVIEW;"не переведены слова: DOO, ETEC; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;2.000;PROX;aftermarket;01.5817.000;;нет;да;нет;нет;1;1;EDIT
+REDUCER;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;2.000;BRP;BRP;271002029;;нет;нет;нет;нет;1;1;REVIEW
+REED PEDAL;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;2.000;BRP;BRP;420924532;;нет;нет;нет;нет;1;1;REVIEW
+RIVET_POP 1/4 X ,625;Заклёпка POP 1 4 X 625;NEEDS_HUMAN_REVIEW;не переведены слова: POP;1;2.000;BRP;BRP;293150151;;нет;нет;нет;нет;1;1;EDIT
+ROD_LINK;;NEEDS_HUMAN_REVIEW;"слово «ROD» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: ROD";1;2.000;BRP;BRP;506152498;;нет;да;нет;нет;1;1;REVIEW
+SNOW GUARD;Защита SNOW;NEEDS_HUMAN_REVIEW;не переведены слова: SNOW;1;2.000;BRP;BRP;520001405;;нет;нет;нет;нет;1;1;EDIT
+SPARK PLUG NGK PZFR6F;Свеча зажигания NGK PZFR6F;NEEDS_HUMAN_REVIEW;не переведены слова: PZFR6F;1;2.000;BRP;BRP;415130430;;нет;нет;нет;нет;1;1;EDIT
+SPI THROTTLE CABLE;Трос SPI THROTTLE;NEEDS_HUMAN_REVIEW;не переведены слова: THROTTLE;1;2.000;SPI;aftermarket;SM-05179;;нет;нет;нет;нет;1;63;EDIT
+SPRING-COMPRESSION;Пружина COMPRESSION;NEEDS_HUMAN_REVIEW;не переведены слова: COMPRESSION;1;2.000;BRP;BRP;415129020;;нет;нет;нет;нет;1;1;EDIT
+SQUARE RING;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";1;2.000;BRP;BRP;420430041;;нет;да;нет;нет;1;1;REVIEW
+STOP SLEEVE;Втулка распорная STOP;NEEDS_HUMAN_REVIEW;не переведены слова: STOP;1;2.000;BRP;BRP;420660280;;нет;нет;нет;нет;1;1;EDIT
+STRAP-FUEL TANK;Ремешок топливный TANK;NEEDS_HUMAN_REVIEW;не переведены слова: TANK;1;2.000;BRP;BRP;293850093;;нет;нет;нет;нет;1;1;EDIT
+SWIVEL ABUTMENT;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;2.000;BRP;BRP;417127116;;нет;нет;нет;нет;1;1;REVIEW
+TORX FLAT HEAD SCREW M8X16, SCOTCHGRIP;Винт TORX FLAT HEAD M8X16 SCOTCHGRIP;NEEDS_HUMAN_REVIEW;"не переведены слова: FLAT, HEAD, SCOTCHGRIP, TORX; многозначные слова, одним переводом на всю базу не закрывается: HEAD";1;2.000;BRP;BRP;235381646;;нет;да;нет;нет;1;1;EDIT
+TRIANGLE;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;2.000;BRP;BRP;268000013;;нет;нет;нет;нет;1;1;REVIEW
+TRIDON GEAR CLAMP;Хомут TRIDON шестерня;NEEDS_HUMAN_REVIEW;не переведены слова: TRIDON;1;2.000;BRP;BRP;293650179;;нет;нет;нет;нет;1;1;EDIT
+VIPER RED HANDLE;Ручка VIPER RED;NEEDS_HUMAN_REVIEW;не переведены слова: RED, VIPER;1;2.000;BRP;BRP;505071059;;нет;нет;нет;нет;1;1;EDIT
+AIR INTAKE FILTER;Фильтр воздухозаборника;HIGH;;1;1.000;BRP;BRP;508000595;;нет;нет;нет;да;1;1;APPROVE
+ALL BALLS TIE ROD END KIT RIGHT;Комплект наконечников рулевой тяги ALL BALLS правый;HIGH;;1;1.000;ALL BALLS RACING INC;aftermarket;51-1047-R;;нет;нет;нет;да;1;11;APPROVE
+BALL BEARING;Подшипник шариковый;HIGH;это же название встречается у другого производителя или каталога: группа разделена, решение действует только на свою;1;1.000;POLARIS;POLARIS;3086878;;нет;нет;да;да;16;1;APPROVE
+BEARING HOUSING;Корпус подшипника;HIGH;;1;1.000;BRP;BRP;507032437;;нет;нет;нет;да;1;1;APPROVE
+BILGE PUMP;Насос трюмный;HIGH;;1;1.000;BRP;BRP;295100739;;нет;нет;нет;да;1;1;APPROVE
+BRAKE LINE;Магистраль тормозная;HIGH;;1;1.000;BRP;BRP;705601519;;нет;нет;нет;да;1;1;APPROVE
+BRAKE SWITCH;Выключатель стоп-сигнала;HIGH;;1;1.000;BRP;BRP;710001345;;нет;нет;нет;да;1;1;APPROVE
+BUMPER F;Бампер F;HIGH;;1;1.000;BRP;BRP;502007869;;нет;нет;нет;да;1;1;APPROVE
+BUMPER, BLACK;Бампер чёрный;HIGH;;1;1.000;BRP;BRP;502006679;;нет;нет;нет;да;1;1;APPROVE
+CYLINDER;Цилиндр;HIGH;;1;1.000;BRP;BRP;420413041;;нет;нет;нет;да;1;1;APPROVE
+CYLINDER, 77.25;Цилиндр 77.25;HIGH;;1;1.000;POLARIS;POLARIS;3022206;;нет;нет;нет;да;1;1;APPROVE
+DEFLECTOR;Дефлектор;HIGH;;1;1.000;BRP;BRP;509000985;;нет;нет;нет;да;1;1;APPROVE
+DRAIN PLUG;Пробка сливная;HIGH;;1;1.000;BRP;BRP;705500894;;нет;нет;нет;да;1;1;APPROVE
+EXHAUST CLAMP;Хомут выпускной;HIGH;;1;1.000;BRP;BRP;274001417;;нет;нет;нет;да;1;1;APPROVE
+FRONT MEMBER;Балка передний;HIGH;;1;1.000;BRP;BRP;518326198;;нет;нет;нет;да;1;1;APPROVE
+GRILL RH;Решётка правый;HIGH;;1;1.000;BRP;BRP;517307408;;нет;нет;нет;да;1;1;APPROVE
+GUIDE;Направляющая;HIGH;;1;1.000;BRP;BRP;417300381;;нет;нет;нет;да;1;1;APPROVE
+HEX FLANGED SCREW M12 X 16;Винт шестигранный фланцевый M12 X 16;HIGH;;1;1.000;BRP;BRP;250001039;;нет;нет;нет;да;1;1;APPROVE
+HOOD;Капот;HIGH;;1;1.000;BRP;BRP;517307433;;нет;нет;нет;да;1;1;APPROVE
+HOOD LH B-160;Капот левый B 160;HIGH;;1;1.000;BRP;BRP;517305240;;нет;нет;нет;да;1;1;APPROVE
+HOOK - RIGHT;Крюк правый;HIGH;;1;1.000;BRP;BRP;517306311;;нет;нет;нет;да;1;1;APPROVE
+IGNITION COIL;Катушка зажигания;HIGH;;1;1.000;BRP;BRP;512060953;;нет;нет;нет;да;1;1;APPROVE
+LATCH;Защёлка;HIGH;;1;1.000;BRP;BRP;269500530;;нет;нет;нет;да;1;1;APPROVE
+LH FRONT MEMBER;Балка левый передний;HIGH;;1;1.000;BRP;BRP;518325950;;нет;нет;нет;да;1;1;APPROVE
+LH HEX. NUT M6;Гайка левый шестигранный M6;HIGH;;1;1.000;BRP;BRP;232066414;;нет;нет;нет;да;1;1;APPROVE
+LOWER GRILL;Решётка нижний;HIGH;;1;1.000;BRP;BRP;705002283;;нет;нет;нет;да;1;1;APPROVE
+O-ring;Кольцо уплотнительное;HIGH;;1;1.000;BRP;BRP;614601523;;нет;нет;нет;да;1;1;APPROVE
+OIL PUMP;Насос масляный;HIGH;;1;1.000;BRP;BRP;519000305;;нет;нет;нет;да;1;1;APPROVE
+OIL SENSOR;Датчик масляный;HIGH;;1;1.000;BRP;BRP;278001515;;нет;нет;нет;да;1;1;APPROVE
+Oil seal;Сальник;HIGH;;1;1.000;BRP;BRP;614102031;;нет;нет;нет;да;1;1;APPROVE
+RH AIR DEFLECTOR;Дефлектор правый воздушный;HIGH;;1;1.000;BRP;BRP;705006135;;нет;нет;нет;да;1;1;APPROVE
+RH AIR FILTER;Фильтр воздушный правый;HIGH;;1;1.000;BRP;BRP;508000730;;нет;нет;нет;да;1;1;APPROVE
+RH PROTECTOR;Защита правый;HIGH;;1;1.000;BRP;BRP;520000693;;нет;нет;нет;да;1;1;APPROVE
+RH STEERING BRACKET;Кронштейн правый рулевой;HIGH;;1;1.000;BRP;BRP;709400994;;нет;нет;нет;да;1;1;APPROVE
+RUBBER BUMPER;Бампер резиновый;HIGH;;1;1.000;BRP;BRP;514053654;;нет;нет;нет;да;1;1;APPROVE
+RUBBER WASHER 5 MM;Шайба резиновый 5 MM;HIGH;;1;1.000;BRP;BRP;250200024;;нет;нет;нет;да;1;1;APPROVE
+Rubber Stopper;Упор резиновый;HIGH;;1;1.000;BRP;BRP;535455;;нет;нет;нет;да;1;1;APPROVE
+SLIDER;Ползун;HIGH;;1;1.000;BRP;BRP;271001107;;нет;нет;нет;да;1;1;APPROVE
+STRAP;Ремешок;HIGH;;1;1.000;BRP;BRP;293850022;;нет;нет;нет;да;1;1;APPROVE
+STUD-FRONT;Шпилька передний;HIGH;;1;1.000;BRP;BRP;517305988;;нет;нет;нет;да;1;1;APPROVE
+AIR FILTER LH  (NITEX MESH);Фильтр воздушный левый NITEX сетка;MEDIUM;проверьте порядок слов: MESH;1;1.000;BRP;BRP;508000905;;нет;нет;нет;нет;1;1;EDIT
+BLACK WHEEL ASS'Y, 200 MM;Колесо чёрный в сборе 200 MM;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;503193098;;нет;да;нет;нет;1;1;EDIT
+CLAMP KIT;Хомут комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;1.000;BRP;BRP;860202520;;нет;да;нет;нет;1;1;EDIT
+EXHAUST MUFFLER SUPPORT;Кронштейн выпускной глушитель;MEDIUM;у слова несколько принятых переводов, выберите нужный: SUPPORT;1;1.000;BRP;BRP;514054767;;нет;нет;нет;нет;1;1;EDIT
+GUIDE SCREW;Винт направляющая;MEDIUM;проверьте порядок слов: GUIDE;1;1.000;BRP;BRP;404105500;;нет;нет;нет;нет;1;1;EDIT
+HANDLE ASS'Y;Ручка в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;512061250;;нет;да;нет;нет;1;1;EDIT
+HOSE BRACKET;Кронштейн шланг;MEDIUM;проверьте порядок слов: HOSE;1;1.000;BRP;BRP;420660290;;нет;нет;нет;нет;1;1;EDIT
+HOSE RADIATOR;Радиатор шланг;MEDIUM;проверьте порядок слов: HOSE;1;1.000;BRP;BRP;509000983;;нет;нет;нет;нет;1;1;EDIT
+INSERT;Вставка;MEDIUM;у слова несколько принятых переводов, выберите нужный: INSERT;1;1.000;BRP;BRP;293450153;;нет;нет;нет;нет;1;1;EDIT
+LATCH PANEL;Панель защёлка;MEDIUM;проверьте порядок слов: LATCH;1;1.000;BRP;BRP;517304290;;нет;нет;нет;нет;1;1;EDIT
+LH CAP;Колпачок левый;MEDIUM;у слова несколько принятых переводов, выберите нужный: CAP;1;1.000;BRP;BRP;705004409;;нет;нет;нет;нет;1;1;EDIT
+LH HOUSING SWITCH;Выключатель левый корпус;MEDIUM;проверьте порядок слов: HOUSING;1;1.000;BRP;BRP;515177509;;нет;нет;нет;нет;1;1;EDIT
+LH PANEL LATCH;Защёлка левый панель;MEDIUM;проверьте порядок слов: PANEL;1;1.000;BRP;BRP;517303808;;нет;нет;нет;нет;1;1;EDIT
+MIRROR BRACKET;Кронштейн зеркало;MEDIUM;проверьте порядок слов: MIRROR;1;1.000;BRP;BRP;715000190;;нет;нет;нет;нет;1;1;EDIT
+NEEDLE BEARING ASS'Y;Подшипник игольчатый в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;703500836;;нет;да;нет;нет;1;1;EDIT
+NEEDLE BUSHING;Втулка игла;MEDIUM;проверьте порядок слов: NEEDLE;1;1.000;BRP;BRP;420232480;;нет;нет;нет;нет;1;1;EDIT
+OIL PUMP COVER;Насос масляный крышка;MEDIUM;проверьте порядок слов: COVER;1;1.000;BRP;BRP;420210646;;нет;нет;нет;нет;1;1;EDIT
+PAD_BRAKE KIT;Колодка тормозной комплект;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;1.000;BRP;BRP;507032473;;нет;да;нет;нет;1;1;EDIT
+PROTECTOR CAP;Колпачок защита;MEDIUM;у слова несколько принятых переводов, выберите нужный: CAP;1;1.000;BRP;BRP;710000496;;нет;нет;нет;нет;1;1;EDIT
+PULLEY DRIVE BOLT;Болт шкив приводной;MEDIUM;проверьте порядок слов: PULLEY;1;1.000;BRP;BRP;417300432;;нет;нет;нет;нет;1;1;EDIT
+RH PANEL LATCH;Защёлка правый панель;MEDIUM;проверьте порядок слов: PANEL;1;1.000;BRP;BRP;517303612;;нет;нет;нет;нет;1;1;EDIT
+SLIDER ADAPTOR ASS'Y;Переходник ползун в сборе;MEDIUM;"проверьте порядок слов: SLIDER; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;417223615;;нет;да;нет;нет;1;1;EDIT
+SPRING BRACKET;Кронштейн пружина;MEDIUM;проверьте порядок слов: SPRING;1;1.000;BRP;BRP;514053393;;нет;нет;нет;нет;1;1;EDIT
+SPRING COVER ASS'Y;Крышка пружина в сборе;MEDIUM;"проверьте порядок слов: SPRING; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;417007500;;нет;да;нет;нет;1;1;EDIT
+SPRING GUIDE;Направляющая пружина;MEDIUM;проверьте порядок слов: SPRING;1;1.000;BRP;BRP;417224002;;нет;нет;нет;нет;1;1;EDIT
+SPRING PLATE;Пластина пружина;MEDIUM;у слова несколько принятых переводов, выберите нужный: PLATE;1;1.000;BRP;BRP;M5346728;;нет;нет;нет;нет;1;1;EDIT
+STARTER RELAY;Реле стартер;MEDIUM;проверьте порядок слов: STARTER;1;1.000;BRP;BRP;278003012;;нет;нет;нет;нет;1;1;EDIT
+STOPPER WASHER;Шайба упор;MEDIUM;проверьте порядок слов: STOPPER;1;1.000;BRP;BRP;417004302;;нет;нет;нет;нет;1;1;EDIT
+STRAP COVER;Крышка ремешок;MEDIUM;проверьте порядок слов: STRAP;1;1.000;BRP;BRP;510005146;;нет;нет;нет;нет;1;1;EDIT
+SUPPORT;Кронштейн;MEDIUM;у слова несколько принятых переводов, выберите нужный: SUPPORT;1;1.000;BRP;BRP;707600933;;нет;нет;нет;нет;1;1;EDIT
+SWITCH ASS'Y;Выключатель в сборе;MEDIUM;"в названии есть многозначное слово, проверьте смысл; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;515176472;;нет;да;нет;нет;1;1;EDIT
+VALVE HOUSING;Корпус клапан;MEDIUM;проверьте порядок слов: VALVE;1;1.000;BRP;BRP;420954063;;нет;нет;нет;нет;1;1;EDIT
+ANTI-THEFT TETHER CORD;Шнур ANTI THEFT чека;NEEDS_HUMAN_REVIEW;не переведены слова: ANTI, THEFT;1;1.000;BRP;BRP;278003400;;нет;нет;нет;нет;1;1;EDIT
+AXLE BAR (LONG);Ось BAR длинный;NEEDS_HUMAN_REVIEW;"не переведены слова: BAR; многозначные слова, одним переводом на всю базу не закрывается: BAR";1;1.000;BRP;BRP;503190643;;нет;да;нет;нет;1;1;EDIT
+Adjustment plate, extension;Пластина ADJUSTMENT EXTENSION;NEEDS_HUMAN_REVIEW;не переведены слова: ADJUSTMENT, EXTENSION;1;1.000;BRP;BRP;5440645;;нет;нет;нет;нет;1;1;EDIT
+BLOCK-RH;;NEEDS_HUMAN_REVIEW;"слово «BLOCK» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: BLOCK";1;1.000;BRP;BRP;503192427;;нет;да;нет;нет;1;1;REVIEW
+BOLT-M10X1.5X125,HX HD FLG;Болт M10X1.5X125 HX HD FLG;NEEDS_HUMAN_REVIEW;не переведены слова: FLG;1;1.000;POLARIS;POLARIS;7518680;;нет;нет;нет;нет;1;1;EDIT
+BOTTOM PAN AIR VENT RH.;Вентиляционная решётка BOTTOM PAN воздушный RH.;NEEDS_HUMAN_REVIEW;"не переведены слова: BOTTOM, PAN, RH.; многозначные слова, одним переводом на всю базу не закрывается: PAN";1;1.000;BRP;BRP;517306982;;нет;да;нет;нет;1;1;EDIT
+BOTTOM PAN GRILL;Решётка BOTTOM PAN;NEEDS_HUMAN_REVIEW;"не переведены слова: BOTTOM, PAN; многозначные слова, одним переводом на всю базу не закрывается: PAN";1;1.000;BRP;BRP;502006687;;нет;да;нет;нет;1;1;EDIT
+BOWDEN CABLE ASSY;Трос BOWDEN в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: BOWDEN; многозначные слова, одним переводом на всю базу не закрывается: ASSY";1;1.000;BRP;BRP;420997033;;нет;да;нет;нет;1;1;EDIT
+CALIBRATION MODULE;Модуль CALIBRATION;NEEDS_HUMAN_REVIEW;не переведены слова: CALIBRATION;1;1.000;BRP;BRP;512059626;;нет;нет;нет;нет;1;1;EDIT
+CALIBRATION SCREW;Винт CALIBRATION;NEEDS_HUMAN_REVIEW;не переведены слова: CALIBRATION;1;1.000;BRP;BRP;417222955;;нет;нет;нет;нет;1;1;EDIT
+CAM;;NEEDS_HUMAN_REVIEW;"слово «CAM» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;1.000;BRP;BRP;420280473;;нет;да;нет;нет;1;1;REVIEW
+CAM ASS'Y;;NEEDS_HUMAN_REVIEW;"слово «CAM» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y, CAM";1;1.000;BRP;BRP;417127367;;нет;да;нет;нет;1;1;REVIEW
+CAMSHAFT POSITION SENSOR ASS'Y;Датчик CAMSHAFT POSITION в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: CAMSHAFT, POSITION; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;420664046;;нет;да;нет;нет;1;1;EDIT
+CASTED SUPPORT;Кронштейн CASTED;NEEDS_HUMAN_REVIEW;не переведены слова: CASTED;1;1.000;BRP;BRP;503193894;;нет;нет;нет;нет;1;1;EDIT
+CHOKE CABLE;Трос CHOKE;NEEDS_HUMAN_REVIEW;не переведены слова: CHOKE;1;1.000;BRP;BRP;512060674;;нет;нет;нет;нет;1;1;EDIT
+CLAMP AND SCREW KIT;Винт хомут AND комплект;NEEDS_HUMAN_REVIEW;"не переведены слова: AND; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;1.000;BRP;BRP;507032477;;нет;да;нет;нет;1;1;EDIT
+CONICAL SPRING WASHER M18;Шайба CONICAL пружина M18;NEEDS_HUMAN_REVIEW;не переведены слова: CONICAL;1;1.000;BRP;BRP;250200171;;нет;нет;нет;нет;1;1;EDIT
+CONSOLE NUT;Гайка CONSOLE;NEEDS_HUMAN_REVIEW;не переведены слова: CONSOLE;1;1.000;BRP;BRP;517304518;;нет;нет;нет;нет;1;1;EDIT
+COTTER VALVE;Клапан COTTER;NEEDS_HUMAN_REVIEW;не переведены слова: COTTER;1;1.000;BRP;BRP;420254630;;нет;нет;нет;нет;1;1;EDIT
+CVT AIR DUCT PULLEY;Шкив CVT воздушный DUCT;NEEDS_HUMAN_REVIEW;не переведены слова: CVT, DUCT;1;1.000;BRP;BRP;417300440;;нет;нет;нет;нет;1;1;EDIT
+CYLINDER BLOCK PLASMA;Цилиндр BLOCK PLASMA;NEEDS_HUMAN_REVIEW;"не переведены слова: BLOCK, PLASMA; многозначные слова, одним переводом на всю базу не закрывается: BLOCK";1;1.000;BRP;BRP;420413575;;нет;да;нет;нет;1;1;EDIT
+CYLINDER BLOCK PLASMA REBUILD G5;Цилиндр BLOCK PLASMA REBUILD G5;NEEDS_HUMAN_REVIEW;"не переведены слова: BLOCK, PLASMA, REBUILD; многозначные слова, одним переводом на всю базу не закрывается: BLOCK";1;1.000;;нет;420413575RG5;;нет;да;нет;нет;1;1;EDIT
+DEEP BLACK LH BOTTOM PAN;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: PAN";1;1.000;BRP;BRP;502007175;;нет;да;нет;нет;1;1;REVIEW
+DEKO SHAFT;Вал DEKO;NEEDS_HUMAN_REVIEW;не переведены слова: DEKO;1;1.000;BRP;BRP;420620120;;нет;нет;нет;нет;1;1;EDIT
+DEKO TORSION SPRING;Пружина DEKO TORSION;NEEDS_HUMAN_REVIEW;не переведены слова: DEKO, TORSION;1;1.000;BRP;BRP;420238270;;нет;нет;нет;нет;1;1;EDIT
+DISTANCE GAUGE;Указатель DISTANCE;NEEDS_HUMAN_REVIEW;не переведены слова: DISTANCE;1;1.000;BRP;BRP;529036415;;нет;нет;нет;нет;1;1;EDIT
+DOOR - BOTTOM PAN;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: PAN";1;1.000;BRP;BRP;502007676;;нет;да;нет;нет;1;1;REVIEW
+DRAIN NECK;Горловина DRAIN;NEEDS_HUMAN_REVIEW;не переведены слова: DRAIN;1;1.000;BRP;BRP;292001552;;нет;нет;нет;нет;1;1;EDIT
+DRIVE CHAIN, 116 LINKS;Цепь приводной 116 LINKS;NEEDS_HUMAN_REVIEW;не переведены слова: LINKS;1;1.000;BRP;BRP;504153759;;нет;нет;нет;нет;1;1;EDIT
+DRIVE PULLEY CLUTCH;Шкив приводной CLUTCH;NEEDS_HUMAN_REVIEW;не переведены слова: CLUTCH;1;1.000;BRP;BRP;420257195;;нет;нет;нет;нет;1;1;EDIT
+DRIVEN PULLEY CAM;Шкив DRIVEN CAM;NEEDS_HUMAN_REVIEW;"не переведены слова: CAM, DRIVEN; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;1.000;BRP;BRP;420280199;;нет;да;нет;нет;1;1;EDIT
+END-PIECE;;NEEDS_HUMAN_REVIEW;"слово «END» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: END";1;1.000;BRP;BRP;709400449;;нет;да;нет;нет;1;1;REVIEW
+EXTENSION TUBE LH;Трубка EXTENSION левый;NEEDS_HUMAN_REVIEW;не переведены слова: EXTENSION;1;1.000;BRP;BRP;605251783;;нет;нет;нет;нет;1;1;EDIT
+FASTENING PLATE;Пластина FASTENING;NEEDS_HUMAN_REVIEW;не переведены слова: FASTENING;1;1.000;BRP;BRP;518326450;;нет;нет;нет;нет;1;1;EDIT
+FLANGED HEX. SCREW M6 X 12, SCOTCH GRIP;Рукоятка фланцевый шестигранный винт M6 X 12 SCOTCH;NEEDS_HUMAN_REVIEW;не переведены слова: SCOTCH;1;1.000;BRP;BRP;250000412;;нет;нет;нет;нет;1;1;EDIT
+FLANGED HEX. SCREW M8 X 30, SCOTCH GRIP;Рукоятка фланцевый шестигранный винт M8 X 30 SCOTCH;NEEDS_HUMAN_REVIEW;не переведены слова: SCOTCH;1;1.000;BRP;BRP;207583086;;нет;нет;нет;нет;1;1;EDIT
+FLAT WASHER M12;Шайба FLAT M12;NEEDS_HUMAN_REVIEW;не переведены слова: FLAT;1;1.000;BRP;BRP;250200102;;нет;нет;нет;нет;1;1;EDIT
+FLAT WASHER M6.6 X 22;Шайба FLAT M6.6 X 22;NEEDS_HUMAN_REVIEW;не переведены слова: FLAT;1;1.000;BRP;BRP;250200022;;нет;нет;нет;нет;1;1;EDIT
+FORK, REVERSE;Вилка REVERSE;NEEDS_HUMAN_REVIEW;не переведены слова: REVERSE;1;1.000;BRP;BRP;619230015;;нет;нет;нет;нет;1;1;EDIT
+FORMED HOSE;Шланг FORMED;NEEDS_HUMAN_REVIEW;не переведены слова: FORMED;1;1.000;BRP;BRP;420922828;;нет;нет;нет;нет;1;1;EDIT
+FRNT SKID;Отбойник FRNT;NEEDS_HUMAN_REVIEW;не переведены слова: FRNT;1;1.000;BRP;BRP;715000548;;нет;нет;нет;нет;1;1;EDIT
+FUEL INJECTOR PTO;Форсунка топливный PTO;NEEDS_HUMAN_REVIEW;не переведены слова: PTO;1;1.000;BRP;BRP;420874876;;нет;нет;нет;нет;1;1;EDIT
+FUSE BOX BASE;Коробка предохранитель BASE;NEEDS_HUMAN_REVIEW;"не переведены слова: BASE; многозначные слова, одним переводом на всю базу не закрывается: BASE";1;1.000;BRP;BRP;515176065;;нет;да;нет;нет;1;1;EDIT
+GAUGE RING;Указатель RING;NEEDS_HUMAN_REVIEW;"не переведены слова: RING; многозначные слова, одним переводом на всю базу не закрывается: RING";1;1.000;BRP;BRP;415129370;;нет;да;нет;нет;1;1;EDIT
+GICLEUR D'HUILE ASS'Y;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;420856877;;нет;да;нет;нет;1;1;REVIEW
+GPS SUPPORT PROTECTOR;Защита GPS кронштейн;NEEDS_HUMAN_REVIEW;не переведены слова: GPS;1;1.000;BRP;BRP;709400450;;нет;нет;нет;нет;1;1;EDIT
+HAND LEVER_ACCELERATOR;Рычаг HAND ACCELERATOR;NEEDS_HUMAN_REVIEW;не переведены слова: ACCELERATOR, HAND;1;1.000;BRP;BRP;707000595;;нет;нет;нет;нет;1;1;EDIT
+HEX. FLANGED CASTELLATED NUT M18;Гайка шестигранный фланцевый CASTELLATED M18;NEEDS_HUMAN_REVIEW;не переведены слова: CASTELLATED;1;1.000;BRP;BRP;232291413;;нет;нет;нет;нет;1;1;EDIT
+HEX. FLANGED SCEW M6 X 18;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;250000059;;нет;нет;нет;нет;1;1;REVIEW
+HOOD GRILL WITH MESH;Сетка капот решётка WITH;NEEDS_HUMAN_REVIEW;не переведены слова: WITH;1;1.000;BRP;BRP;517305553;;нет;нет;нет;нет;1;1;EDIT
+IGNITION SWITCH;Выключатель IGNITION;NEEDS_HUMAN_REVIEW;не переведены слова: IGNITION;1;1.000;BRP;BRP;710002324;;нет;нет;нет;нет;1;1;EDIT
+INTERMEDITE GEAR, 21 TEETH;Шестерня INTERMEDITE 21 TEETH;NEEDS_HUMAN_REVIEW;не переведены слова: INTERMEDITE, TEETH;1;1.000;BRP;BRP;420434582;;нет;нет;нет;нет;1;1;EDIT
+KILL SWITCH;Выключатель KILL;NEEDS_HUMAN_REVIEW;не переведены слова: KILL;1;1.000;BRP;BRP;515177362;;нет;нет;нет;нет;1;1;EDIT
+KILL SWITCH SUPPORT;Кронштейн KILL выключатель;NEEDS_HUMAN_REVIEW;не переведены слова: KILL;1;1.000;BRP;BRP;515176825;;нет;нет;нет;нет;1;1;EDIT
+KIT BALL JOINT WITH CIRCLIP;Шаровая опора комплект WITH кольцо стопорное;NEEDS_HUMAN_REVIEW;"не переведены слова: WITH; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;1.000;BRP;BRP;703501262;;нет;да;нет;нет;1;1;EDIT
+LH KNUCKLE;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;705400817;;нет;нет;нет;нет;1;1;REVIEW
+LH SIDE VANE;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;277001486;;нет;нет;нет;нет;1;1;REVIEW
+LOCK;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;710001633;;нет;нет;нет;нет;1;1;REVIEW
+MAGNETIC CAP;Колпачок MAGNETIC;NEEDS_HUMAN_REVIEW;не переведены слова: MAGNETIC;1;1.000;BRP;BRP;504152619;;нет;нет;нет;нет;1;1;EDIT
+MASTER CYLINDER;Цилиндр MASTER;NEEDS_HUMAN_REVIEW;не переведены слова: MASTER;1;1.000;BRP;BRP;507032596;;нет;нет;нет;нет;1;1;EDIT
+MASTER CYLINDER ASS'Y;Цилиндр MASTER в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: MASTER; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;507032408;;нет;да;нет;нет;1;1;EDIT
+NAMURA PWC SEADOO TOP-END GASKET SET;Комплект прокладок верхней части двигателя NAMURA PWC SEADOO;NEEDS_HUMAN_REVIEW;не переведены слова: NAMURA, PWC, SEADOO;1;1.000;NAMURA TECHNOLOGIES;aftermarket;NW-10003T;;нет;нет;нет;нет;1;7;EDIT
+NEEDLE JET;Игла JET;NEEDS_HUMAN_REVIEW;не переведены слова: JET;1;1.000;BRP;BRP;404162036;;нет;нет;нет;нет;1;1;EDIT
+OIL DIPSTICK;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;420256802;;нет;нет;нет;нет;1;1;REVIEW
+PAWL LOCK;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;420852640;;нет;нет;нет;нет;1;1;REVIEW
+PINION GEAR 28T;Шестерня PINION 28T;NEEDS_HUMAN_REVIEW;не переведены слова: PINION;1;1.000;BRP;BRP;420934102;;нет;нет;нет;нет;1;1;EDIT
+PINION GEAR SHIM;Шайба регулировочная PINION шестерня;NEEDS_HUMAN_REVIEW;не переведены слова: PINION;1;1.000;BRP;BRP;705501162;;нет;нет;нет;нет;1;1;EDIT
+PINION SHIM KIT;Шайба регулировочная PINION комплект;NEEDS_HUMAN_REVIEW;"не переведены слова: PINION; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;1.000;BRP;BRP;703500049;;нет;да;нет;нет;1;1;EDIT
+PLAIN BEARING;Подшипник PLAIN;NEEDS_HUMAN_REVIEW;не переведены слова: PLAIN;1;1.000;BRP;BRP;420933545;;нет;нет;нет;нет;1;1;EDIT
+PLASTIC LINQ;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;715002412;;нет;нет;нет;нет;1;1;REVIEW
+PLUG DRAIN;Пробка DRAIN;NEEDS_HUMAN_REVIEW;не переведены слова: DRAIN;1;1.000;BRP;BRP;705501724;;нет;нет;нет;нет;1;1;EDIT
+PLUNGER ASS'Y;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;404162038;;нет;да;нет;нет;1;1;REVIEW
+POSITION SENSOR;Датчик POSITION;NEEDS_HUMAN_REVIEW;не переведены слова: POSITION;1;1.000;BRP;BRP;420866120;;нет;нет;нет;нет;1;1;EDIT
+PUSHER ASS?Y;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;271001124;;нет;нет;нет;нет;1;1;REVIEW
+RAMP 413;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;417222508;;нет;нет;нет;нет;1;1;REVIEW
+RAMP 600;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;417222444;СНЕГОХОД;нет;нет;нет;нет;1;1;REVIEW
+RAMP 617;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;417223088;;нет;нет;нет;нет;1;1;REVIEW
+REAR LIGHT COVER;Крышка задний LIGHT;NEEDS_HUMAN_REVIEW;не переведены слова: LIGHT;1;1.000;BRP;BRP;511000764;;нет;нет;нет;нет;1;1;EDIT
+REDUCTION COVER GEAR;Шестерня REDUCTION крышка;NEEDS_HUMAN_REVIEW;не переведены слова: REDUCTION;1;1.000;BRP;BRP;420610891;;нет;нет;нет;нет;1;1;EDIT
+REGULATOR;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;415129821;;нет;нет;нет;нет;1;1;REVIEW
+REGULATOR_VOLTAGE;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;710010539;;нет;нет;нет;нет;1;1;REVIEW
+RELAY, 50 AMP;Реле 50 AMP;NEEDS_HUMAN_REVIEW;не переведены слова: AMP;1;1.000;BRP;BRP;515176775;;нет;нет;нет;нет;1;1;EDIT
+REVERSE HANDLE, APPLE GREEN;Ручка REVERSE APPLE GREEN;NEEDS_HUMAN_REVIEW;не переведены слова: APPLE, GREEN, REVERSE;1;1.000;BRP;BRP;271001334;;нет;нет;нет;нет;1;1;EDIT
+RH ADJUST CAM;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: CAM";1;1.000;BRP;BRP;572030900;;нет;да;нет;нет;1;1;REVIEW
+RH SIDE MEMBER;Балка правый SIDE;NEEDS_HUMAN_REVIEW;не переведены слова: SIDE;1;1.000;BRP;BRP;518326328;;нет;нет;нет;нет;1;1;EDIT
+RING_WEAR;;NEEDS_HUMAN_REVIEW;"слово «RING» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: RING";1;1.000;BRP;BRP;277002318;;нет;да;нет;нет;1;1;REVIEW
+RISER SHIM;Шайба регулировочная RISER;NEEDS_HUMAN_REVIEW;не переведены слова: RISER;1;1.000;BRP;BRP;514054806;;нет;нет;нет;нет;1;1;EDIT
+ROD PIVOT;;NEEDS_HUMAN_REVIEW;"слово «ROD» без человека однозначно не перевести; многозначные слова, одним переводом на всю базу не закрывается: ROD";1;1.000;BRP;BRP;268000014;;нет;да;нет;нет;1;1;REVIEW
+ROTAX ENGINE 503 ASY;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;;нет;400509000;;нет;нет;нет;нет;1;1;REVIEW
+RUBBER;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;514055632;;нет;нет;нет;нет;1;1;REVIEW
+SAFETY LANYARD, ANTITHEFT;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;278002199;;нет;нет;нет;нет;1;1;REVIEW
+SCOOP GRILL;Решётка SCOOP;NEEDS_HUMAN_REVIEW;не переведены слова: SCOOP;1;1.000;BRP;BRP;517306980;;нет;нет;нет;нет;1;1;EDIT
+SCREW-TORX TRUSS CONE HD.M6X50;Винт TORX TRUSS CONE HD.M6X50;NEEDS_HUMAN_REVIEW;не переведены слова: CONE, HD.M6X50, TORX, TRUSS;1;1.000;BRP;BRP;250000827;;нет;нет;нет;нет;1;1;EDIT
+SEAL NEOPRENE;Сальник NEOPRENE;NEEDS_HUMAN_REVIEW;не переведены слова: NEOPRENE;1;1.000;BRP;BRP;293200024;;нет;нет;нет;нет;1;1;EDIT
+SEMI-TRAPEZ RING;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";1;1.000;BRP;BRP;420815416;;нет;да;нет;нет;1;1;REVIEW
+SERVOMOTOR;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;420889432;;нет;нет;нет;нет;1;1;REVIEW
+SHIFTING DRUM;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;619230056;;нет;нет;нет;нет;1;1;REVIEW
+SHIFTING SLEEVE;Втулка распорная SHIFTING;NEEDS_HUMAN_REVIEW;не переведены слова: SHIFTING;1;1.000;BRP;BRP;420257944;;нет;нет;нет;нет;1;1;EDIT
+SKILEG LH MACHINED;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;505073579;;нет;нет;нет;нет;1;1;REVIEW
+SOCKET HEAD SCREW M6 X 25;Винт гнездо HEAD M6 X 25;NEEDS_HUMAN_REVIEW;"не переведены слова: HEAD; многозначные слова, одним переводом на всю базу не закрывается: HEAD";1;1.000;BRP;BRP;420640690;;нет;да;нет;нет;1;1;EDIT
+SOCKET HEAD SCREW M6 X 25, SCOTCH GRIP;Рукоятка гнездо HEAD винт M6 X 25 SCOTCH;NEEDS_HUMAN_REVIEW;"не переведены слова: HEAD, SCOTCH; многозначные слова, одним переводом на всю базу не закрывается: HEAD";1;1.000;BRP;BRP;205562560;;нет;да;нет;нет;1;1;EDIT
+SPACING TOOL;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;BRP;BRP;520001142;;нет;нет;нет;нет;1;1;REVIEW
+SPEEDOMETER BUTTON;Кнопка SPEEDOMETER;NEEDS_HUMAN_REVIEW;не переведены слова: SPEEDOMETER;1;1.000;BRP;BRP;415129355;;нет;нет;нет;нет;1;1;EDIT
+SPI CRANK WEB - PTO SIDE;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: WEB";1;1.000;SPI;aftermarket;SM-09381;;нет;да;нет;нет;1;4;REVIEW
+SPI PTO CRANK WEB;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: WEB";1;1.000;SPI;aftermarket;SM-09374;;нет;да;нет;нет;1;1;REVIEW
+SPI TAILLIGHT;;NEEDS_HUMAN_REVIEW;головное слово не распознано;1;1.000;SPI;aftermarket;SM-01502;;нет;нет;нет;нет;1;2;REVIEW
+STARTER CLUTCH ASS'Y;Стартер CLUTCH в сборе;NEEDS_HUMAN_REVIEW;"не переведены слова: CLUTCH; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;278001106;;нет;да;нет;нет;1;1;EDIT
+STARTER REWIND ASSEMBLY, SKI DOO;Лыжа стартер REWIND ASSEMBLY DOO;NEEDS_HUMAN_REVIEW;не переведены слова: ASSEMBLY, DOO, REWIND;1;1.000;SPI;aftermarket;SM-11014;;нет;нет;нет;нет;1;1;EDIT
+STEERING RACK BOOT KIT;Пыльник рулевой RACK комплект;NEEDS_HUMAN_REVIEW;"не переведены слова: RACK; многозначные слова, одним переводом на всю базу не закрывается: KIT";1;1.000;BRONCO PRODUCTS;aftermarket;AT-08255;;нет;да;нет;нет;1;2;EDIT
+STEERING STEM ARM;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: ARM";1;1.000;BRP;BRP;277001472;;нет;да;нет;нет;1;1;REVIEW
+SUPPORT-DOUBLE;Кронштейн DOUBLE;NEEDS_HUMAN_REVIEW;не переведены слова: DOUBLE;1;1.000;BRP;BRP;715000043;;нет;нет;нет;нет;1;1;EDIT
+TEMPERATURE SENSOR;Датчик TEMPERATURE;NEEDS_HUMAN_REVIEW;не переведены слова: TEMPERATURE;1;1.000;BRP;BRP;278002895;;нет;нет;нет;нет;1;1;EDIT
+TERMINAL SUPPORT;Кронштейн TERMINAL;NEEDS_HUMAN_REVIEW;не переведены слова: TERMINAL;1;1.000;BRP;BRP;515176224;;нет;нет;нет;нет;1;1;EDIT
+THRUST WASHER;Шайба THRUST;NEEDS_HUMAN_REVIEW;не переведены слова: THRUST;1;1.000;BRP;BRP;293350020;;нет;нет;нет;нет;1;1;EDIT
+TRIM RING;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: RING";1;1.000;BRP;BRP;710000353;;нет;да;нет;нет;1;1;REVIEW
+TUFLOK PLASTIC RIVET;Заклёпка TUFLOK пластиковый;NEEDS_HUMAN_REVIEW;не переведены слова: TUFLOK;1;1.000;BRP;BRP;293150089;;нет;нет;нет;нет;1;1;EDIT
+TURBOCHARGER ASS'Y;;NEEDS_HUMAN_REVIEW;"головное слово не распознано; многозначные слова, одним переводом на всю базу не закрывается: ASS'Y";1;1.000;BRP;BRP;420893881;;нет;да;нет;нет;1;1;REVIEW
+WEAR SLEEVE;Втулка распорная WEAR;NEEDS_HUMAN_REVIEW;не переведены слова: WEAR;1;1.000;BRP;BRP;705501121;;нет;нет;нет;нет;1;1;EDIT
