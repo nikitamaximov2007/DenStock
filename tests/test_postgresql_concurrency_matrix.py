@@ -46,6 +46,7 @@ from apps.sales.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 # Потокам нужны настоящие коммиты: под обычной тестовой транзакцией второе
 # соединение не увидело бы данных первого. serialized_rollback возвращает
@@ -78,6 +79,7 @@ def world():
         tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
     )
     PartNumber.objects.create(part=part, value="700100", kind=PartNumber.Kind.OEM)
+    remember_customs(part)
 
     def make_lot(location, qty):
         batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
