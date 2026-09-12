@@ -55,20 +55,19 @@ def promote_to_warehouse(
 
     valuation = ValuationSettings.get()
     settings = BrpPricingSettings.get()
+    # Импорт внутри функции: воронка выбора источника цены живёт в
+    # apps.counting.services, а тот модуль импортирует это продвижение.
+    from apps.counting.services import find_brp_price_source
+
     # Источник цены ищется так же, как во всех остальных местах проекта
     # (пересчёт текущих цен, приёмка, быстрые действия): у позиции с нулевой
     # оптовой ценой цена берётся из связанной по цепочке замен АКТУАЛЬНОЙ
     # позиции. Без этого карточка при продвижении оставалась совсем без цены,
     # хотя цена в каталоге есть, и оператору приходилось вписывать её руками -
     # а следующий пересчёт эту ручную цену молча заменял расчётной.
-    #
+    price_source_part = find_brp_price_source(brp_part.material_no_norm, brp_part) or brp_part
     # Через catalog_part_price_rub, а не по сырой цене: у VIN-позиций к оптовой
     # цене добавляется доставка с винтажного склада.
-    # Импорт внутри функции: воронка выбора источника цены живёт в
-    # apps.counting.services, а тот модуль импортирует это продвижение.
-    from apps.counting.services import find_brp_price_source
-
-    price_source_part = find_brp_price_source(brp_part.material_no_norm, brp_part) or brp_part
     calculated = catalog_part_price_rub(
         price_source_part,
         valuation.current_usd_rate,

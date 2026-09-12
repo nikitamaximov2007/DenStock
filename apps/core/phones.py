@@ -69,9 +69,7 @@ def format_ru_phone(value: str) -> str:
     digits = normalize_phone(value)
     if len(digits) != RU_FULL_LENGTH or not digits.startswith(RU_COUNTRY_CODE):
         return ""
-    return (
-        f"+{RU_COUNTRY_CODE} {digits[1:4]} {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
-    )
+    return f"+{RU_COUNTRY_CODE} {digits[1:4]} {digits[4:7]}-{digits[7:9]}-{digits[9:11]}"
 
 
 def canonical_phone_text(value: str) -> str:

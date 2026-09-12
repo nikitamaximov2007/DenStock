@@ -20,10 +20,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from django import forms
 from django.conf import settings
 from django.core.cache import cache
 from django.urls import reverse
 
+from apps.core.forms import PhoneFormMixin, PhoneInput
 from apps.core.phones import canonical_phone_text, format_ru_phone, normalize_phone
 from apps.customer_requests.models import CustomerRequest
 from apps.customers.models import Customer
@@ -357,3 +359,58 @@ def test_the_phone_field_is_styled_like_the_other_fields_of_the_form():
     rule = css[css.index('.form input[type="text"]') :]
     rule = rule[: rule.index("}")]
     assert 'input[type="tel"]' in rule
+
+
+# --- Полнота: ни одной формы с телефоном мимо общего поля --------------------------------
+
+
+def _model_forms():
+    """Все формы проекта, объявленные в apps/*/forms.py."""
+    import importlib
+    import pkgutil
+
+    import apps
+
+    found = []
+    for module in pkgutil.iter_modules(apps.__path__, prefix="apps."):
+        try:
+            forms_module = importlib.import_module(f"{module.name}.forms")
+        except ModuleNotFoundError:
+            continue
+        for name in dir(forms_module):
+            candidate = getattr(forms_module, name)
+            if isinstance(candidate, type) and issubclass(candidate, forms.BaseForm):
+                found.append((f"{module.name}.forms.{name}", candidate))
+    return found
+
+
+def test_every_customer_phone_field_uses_the_shared_one(db):
+    """Новая форма с телефоном клиента не должна завести пятое правило записи.
+
+    Единственное исключение - телефон ПОСТАВЩИКА: это не клиент, его номер
+    чаще иностранный, и канонизировать его российским правилом незачем.
+    """
+    supplier_only = {"apps.suppliers.forms.SupplierForm"}
+    checked = []
+    for label, form_class in _model_forms():
+        if label in supplier_only:
+            continue
+        try:
+            form = form_class()
+        except Exception:  # noqa: BLE001 - форме может быть нужен контекст
+            continue
+        for name, field in form.fields.items():
+            if "phone" not in name:
+                continue
+            checked.append(f"{label}.{name}")
+            assert isinstance(field.widget, PhoneInput), f"{label}.{name} мимо общего поля"
+            assert isinstance(form, PhoneFormMixin), f"{label} не приводит телефон к канону"
+
+    # Список закреплён: новая точка ввода телефона обязана попасть сюда
+    # осознанно, а не проскочить мимо общего поля.
+    assert sorted(checked) == [
+        "apps.customers.forms.CustomerForm.phone",
+        "apps.repairs.forms.RepairOrderForm.customer_phone",
+        "apps.sales.forms.ReservationForm.customer_phone",
+        "apps.sales.forms.SaleForm.customer_phone",
+    ]
