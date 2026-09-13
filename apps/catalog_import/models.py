@@ -24,6 +24,7 @@ class CatalogImportBatch(models.Model):
 
     class Catalog(models.TextChoices):
         BRP = "brp", "BRP"
+        ARCTIC_CAT = "arctic_cat", "Arctic Cat"
         ANALOGS = "analogs", "Аналоги"
         AFTERMARKET = "aftermarket", "Каталог аналогов / aftermarket"
 
@@ -144,4 +145,63 @@ class AftermarketCatalogPart(models.Model):
         from apps.catalog.models import normalize_number
 
         self.normalized_manufacturer_number = normalize_number(self.manufacturer_number)
+        super().save(*args, **kwargs)
+
+
+class ArcticCatCatalogPart(models.Model):
+    """Current supplier facts from an Arctic Cat dealer workbook.
+
+    This is deliberately reference data, distinct from the operational
+    ``PartType`` card.  The link makes the source article searchable internally
+    without treating a supplier package as warehouse stock or manufacturing a
+    customer price from a dealer value whose commercial semantics are unknown.
+    """
+
+    SOURCE_DEALER = "dealer"
+    SOURCE_CHOICES = ((SOURCE_DEALER, "Arctic Cat dealer"),)
+
+    class DealerPriceState(models.TextChoices):
+        KNOWN = "known", "Указана"
+        BLANK = "blank", "Не указана"
+        ZERO = "zero", "Нулевая, недоступна"
+
+    source = models.CharField("Источник каталога", max_length=40, choices=SOURCE_CHOICES)
+    part = models.OneToOneField(
+        "catalog.PartType", on_delete=models.PROTECT, related_name="arctic_cat_catalog_entry"
+    )
+    supplier_article = models.CharField("Артикул Arctic Cat", max_length=100)
+    normalized_supplier_article = models.CharField(max_length=100, db_index=True)
+    source_description = models.CharField("Описание поставщика", max_length=255)
+    package_quantity = models.CharField(
+        "Количество в упаковке поставщика", max_length=80, blank=True
+    )
+    dealer_price_usd = models.DecimalField(
+        "Цена дилера Arctic Cat, USD", max_digits=14, decimal_places=2, null=True, blank=True
+    )
+    dealer_price_state = models.CharField(
+        "Состояние цены дилера", max_length=10,
+        choices=DealerPriceState.choices, default=DealerPriceState.BLANK,
+    )
+    replacement_article = models.CharField("Артикул замены Arctic Cat", max_length=100, blank=True)
+    normalized_replacement_article = models.CharField(max_length=100, blank=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Позиция Arctic Cat-каталога"
+        verbose_name_plural = "Позиции Arctic Cat-каталога"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "normalized_supplier_article"],
+                name="uniq_arctic_cat_source_article",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.supplier_article} {self.source_description}".strip()
+
+    def save(self, *args, **kwargs):
+        from apps.catalog.models import normalize_number
+
+        self.normalized_supplier_article = normalize_number(self.supplier_article)
+        self.normalized_replacement_article = normalize_number(self.replacement_article)
         super().save(*args, **kwargs)

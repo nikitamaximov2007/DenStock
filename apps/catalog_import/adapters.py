@@ -19,6 +19,7 @@ from pathlib import Path
 from django.db.models import Max
 
 BRP = "brp"
+ARCTIC_CAT = "arctic_cat"
 ANALOGS = "analogs"
 AFTERMARKET = "aftermarket"
 
@@ -131,7 +132,13 @@ class BrpCatalogAdapter(CatalogAdapter):
         return inspect_workbook(path, sample_rows=sample_rows)
 
 
-def inspect_workbook(path, *, sample_rows: int = 5) -> dict:
+def inspect_workbook(
+    path,
+    *,
+    sample_rows: int = 5,
+    preferred_sheet: str | None = None,
+    expected_headers: dict[str, set[str]] | None = None,
+) -> dict:
     """Показать структуру xlsx, ничего не меняя и не загружая книгу целиком."""
     try:
         from openpyxl import load_workbook
@@ -149,7 +156,19 @@ def inspect_workbook(path, *, sample_rows: int = 5) -> dict:
         raise CatalogAdapterError(f"Файл не читается как Excel: {exc}") from exc
     try:
         sheets = list(workbook.sheetnames)
-        worksheet = workbook[sheets[0]]
+        selected = next(
+            (
+                name
+                for name in sheets
+                if preferred_sheet and name.casefold() == preferred_sheet.casefold()
+            ),
+            sheets[0],
+        )
+        worksheet = workbook[selected]
+        sheet_headers = {}
+        for name in sheets:
+            row = next(workbook[name].iter_rows(max_row=1, values_only=True), ())
+            sheet_headers[name] = ["" if cell is None else str(cell).strip() for cell in row]
         headers: list[str] = []
         samples: list[list[str]] = []
         # read_only-итератор не держит книгу в памяти: берём только начало.
@@ -161,10 +180,20 @@ def inspect_workbook(path, *, sample_rows: int = 5) -> dict:
                 samples.append(values)
             else:
                 break
+        expected_headers = expected_headers or {}
+        normalized = {" ".join(value.lower().split()) for value in headers if value}
+        missing_headers = [
+            label
+            for label, aliases in expected_headers.items()
+            if not normalized.intersection({" ".join(alias.lower().split()) for alias in aliases})
+        ]
         return {
             "sheets": sheets,
-            "sheet": sheets[0],
+            "sheet": selected,
             "headers": headers,
+            "sheet_headers": sheet_headers,
+            "expected_headers": list(expected_headers),
+            "missing_headers": missing_headers,
             "sample_rows": samples,
             "declared_max_row": worksheet.max_row,
             "declared_max_column": worksheet.max_column,
@@ -258,8 +287,57 @@ class AftermarketCatalogAdapter(CatalogAdapter):
         return inspect_workbook(path, sample_rows=sample_rows)
 
 
+class ArcticCatCatalogAdapter(CatalogAdapter):
+    """Arctic Cat dealer format, isolated from the BRP parser and policy."""
+
+    key = ARCTIC_CAT
+    label = "Arctic Cat"
+
+    def check(self, path: Path) -> dict:
+        from apps.catalog_import.arctic_cat_catalog import ArcticCatCatalogError, build_plan
+
+        try:
+            return build_plan(path).as_summary()
+        except ArcticCatCatalogError as exc:
+            raise CatalogAdapterError(str(exc)) from exc
+
+    def apply(self, path: Path) -> dict:
+        from apps.catalog_import.arctic_cat_catalog import ArcticCatCatalogError, apply_file
+
+        try:
+            return apply_file(path)
+        except ArcticCatCatalogError as exc:
+            raise CatalogAdapterError(str(exc)) from exc
+
+    def fingerprint(self) -> str:
+        from apps.catalog_import.arctic_cat_catalog import catalog_fingerprint
+
+        return catalog_fingerprint()
+
+    def validation_error(self, summary: dict) -> str | None:
+        if int(summary.get("valid", 0) or 0) == 0:
+            return "В файле нет ни одной безопасно применимой позиции Arctic Cat."
+        return None
+
+    def inspect(self, path: Path, *, sample_rows: int = 5) -> dict:
+        from apps.catalog_import.arctic_cat_catalog import HEADER_ALIASES, SHEET_NAME
+
+        return inspect_workbook(
+            path,
+            sample_rows=sample_rows,
+            preferred_sheet=SHEET_NAME,
+            expected_headers={
+                "P/N": HEADER_ALIASES["article"],
+                "Description": HEADER_ALIASES["description"],
+                "Pkg Qty": HEADER_ALIASES["package_quantity"],
+                "DEALER PRICE": HEADER_ALIASES["dealer_price"],
+            },
+        )
+
+
 ADAPTERS: dict[str, CatalogAdapter] = {
     BRP: BrpCatalogAdapter(),
+    ARCTIC_CAT: ArcticCatCatalogAdapter(),
     ANALOGS: AnalogCatalogAdapter(),
     AFTERMARKET: AftermarketCatalogAdapter(),
 }

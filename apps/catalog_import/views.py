@@ -89,6 +89,29 @@ AFTERMARKET_APPLY_ROWS = AFTERMARKET_SUMMARY_ROWS + (
     ("created_parts", "Заведено деталей"),
     ("updated_parts", "Обновлено деталей"),
 )
+ARCTIC_CAT_SUMMARY_ROWS = (
+    ("format_label", "Распознанный формат"),
+    ("sheet", "Лист"),
+    ("rows_scanned", "Строк обработано"),
+    ("unique_part_numbers", "Уникальных P/N"),
+    ("new", "Новых позиций"),
+    ("existing", "Существующих позиций"),
+    ("unchanged", "Без изменений"),
+    ("description_changed", "Изменилось описание"),
+    ("price_changed", "Изменилась цена поставщика"),
+    ("replacement_changed", "Изменилась замена"),
+    ("package_quantity_changed", "Изменилась упаковка"),
+    ("zero_price_rows", "Нулевых цен поставщика"),
+    ("blank_price_rows", "Пустых цен поставщика"),
+    ("duplicate_part_numbers", "Повторов P/N"),
+    ("warnings", "Предупреждений"),
+    ("errors", "Ошибок"),
+    ("stock_changes", "Изменения склада"),
+)
+ARCTIC_CAT_APPLY_ROWS = ARCTIC_CAT_SUMMARY_ROWS + (
+    ("created_parts", "Заведено карточек"),
+    ("updated_parts", "Обновлено карточек"),
+)
 
 
 # Счётчики строки истории, в порядке колонок таблицы. Держатся здесь, а не в
@@ -157,7 +180,9 @@ def _summary_rows(summary: dict, *, applied: bool) -> list:
     Раньше недостающие ключи подставлялись нулём, и коррекция выглядела так,
     будто она пересчитала весь каталог и ничего не нашла.
     """
-    if summary.get("format") == "AFTERMARKET_SUPPLIER_CATALOG":
+    if summary.get("format") == "ARCTIC_CAT_DEALER_CATALOG":
+        layout = ARCTIC_CAT_APPLY_ROWS if applied else ARCTIC_CAT_SUMMARY_ROWS
+    elif summary.get("format") == "AFTERMARKET_SUPPLIER_CATALOG":
         layout = AFTERMARKET_APPLY_ROWS if applied else AFTERMARKET_SUMMARY_ROWS
     elif "rows_total" in summary and (
         "will_create_links" in summary or "created_links" in summary

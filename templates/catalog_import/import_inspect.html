@@ -53,6 +53,34 @@
           {% endfor %}
         </tbody>
       </table>
+      {% if structure.expected_headers %}
+        <h3 class="card__title">Ожидаемая схема</h3>
+        <p class="muted">Ожидаемые заголовки: {{ structure.expected_headers|join:", " }}.</p>
+        {% if structure.missing_headers %}
+          <p class="muted">Отсутствуют обязательные заголовки: {{ structure.missing_headers|join:", " }}.</p>
+        {% else %}
+          <p class="muted">Все обязательные заголовки найдены.</p>
+        {% endif %}
+      {% endif %}
+      {% if structure.sheet_headers %}
+        <h3 class="card__title">Заголовки по листам</h3>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Лист</th>
+              <th>Заголовки</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sheet, headers in structure.sheet_headers.items %}
+              <tr>
+                <td>{{ sheet }}</td>
+                <td>{{ headers|join:", " }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
       <h3 class="card__title">Первые строки</h3>
       <table class="table">
         <tbody>
