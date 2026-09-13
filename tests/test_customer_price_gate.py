@@ -253,6 +253,26 @@ def test_public_catalog_clarifies_an_unverified_numeric_price(pricing, admin_use
     assert resolve_current_customer_price(part).status == "clarify"
 
 
+def test_refresh_marks_a_card_without_any_catalog_as_not_applicable(pricing, admin_user):
+    source = promote_to_warehouse(_catalog_part("NO-CATALOG-SOURCE", "100"), by=admin_user)
+    manual = PartType.objects.create(
+        name="Ручная карточка без каталога",
+        category=source.category,
+        unit=source.unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("1250"),
+        certified_price_rub=Decimal("1250"),
+        price_provenance=PartType.PriceProvenance.FORMULA_CERTIFIED,
+    )
+
+    refresh_linked_part_prices(usd_rate=RATE, brp_markup=MARKUP, polaris_markup=MARKUP)
+    manual.refresh_from_db()
+
+    assert manual.recommended_price == Decimal("1250")
+    assert manual.certified_price_rub is None
+    assert manual.price_provenance == PartType.PriceProvenance.NOT_APPLICABLE
+
+
 # --- Аудит --------------------------------------------------------------------------------
 
 

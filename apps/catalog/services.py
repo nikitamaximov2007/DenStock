@@ -161,6 +161,15 @@ class LinkedPriceRefreshPlan:
             part.price_provenance = PartType.PriceProvenance.UNVERIFIED
             self.parts_to_update[part.pk] = part
 
+    def mark_not_applicable(self, part) -> None:
+        """Mark a card with no catalog relationship as outside the formula."""
+        if part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
+            return
+        self.drop_certificate(part)
+        if part.price_provenance != PartType.PriceProvenance.NOT_APPLICABLE:
+            part.price_provenance = PartType.PriceProvenance.NOT_APPLICABLE
+            self.parts_to_update[part.pk] = part
+
 
 def certify_valid_manual_price_exception(part: PartType) -> PartType:
     """Record owner-confirmed commercial pricing for a distinct manual item.
@@ -275,6 +284,14 @@ def plan_linked_part_price_refresh(
 
     if "aftermarket" in selected_catalogs:
         _plan_aftermarket_prices(plan, usd_rate=usd_rate, markup=brp_markup)
+    # Formula certification requires a catalog relationship.  Do this in the
+    # database, rather than collecting a large catalogue ID set in Python.
+    for part in PartType.objects.filter(
+        brp_link__isnull=True,
+        polaris_link__isnull=True,
+        aftermarket_catalog_entry__isnull=True,
+    ).only("id", "recommended_price", "certified_price_rub", "price_provenance"):
+        plan.mark_not_applicable(part)
     return plan
 
 
