@@ -18,6 +18,7 @@
 """
 
 from decimal import Decimal
+from io import StringIO
 
 import pytest
 from django.core.cache import cache
@@ -271,6 +272,29 @@ def test_refresh_marks_a_card_without_any_catalog_as_not_applicable(pricing, adm
     assert manual.recommended_price == Decimal("1250")
     assert manual.certified_price_rub is None
     assert manual.price_provenance == PartType.PriceProvenance.NOT_APPLICABLE
+
+
+def test_manual_exception_command_is_dry_run_until_explicit_apply(pricing, admin_user):
+    catalog_part = _catalog_part("CERTIFY-MANUAL", "0")
+    part = promote_to_warehouse(catalog_part, by=admin_user, manual_price=Decimal("45000"))
+    from apps.catalog.models import PartNumber
+
+    PartNumber.objects.create(part=part, value="421000667", kind=PartNumber.Kind.OEM)
+    output = StringIO()
+
+    call_command(
+        "certify_manual_customer_price_exception", "--part-number", "421000667", stdout=output
+    )
+    part.refresh_from_db()
+    assert part.price_provenance == PartType.PriceProvenance.UNVERIFIED
+    assert "Dry-run only" in output.getvalue()
+
+    call_command(
+        "certify_manual_customer_price_exception", "--part-number", "421000667", "--apply"
+    )
+    part.refresh_from_db()
+    assert part.recommended_price == Decimal("45000")
+    assert part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
 
 
 # --- Аудит --------------------------------------------------------------------------------
