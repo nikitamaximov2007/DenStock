@@ -1,9 +1,19 @@
 """Import Arctic Cat dealer catalog facts through the shared import workflow.
 
-The adapter accepts the documented ``usprice`` sheet only.  Arctic Cat dealer
-price is source data, not a confirmed DenisStock customer-price policy, so it
-never recalculates ``PartType.recommended_price``.  Package quantity remains
-supplier metadata and never creates stock.
+The adapter accepts the documented ``usprice`` sheet only.  Owner-confirmed
+business rules:
+
+* ``DEALER PRICE`` is the USD price of ONE part.  A positive value is an
+  authoritative source and becomes the current customer price through the
+  canonical pricing service (``apps.catalog.services.certify_dealer_unit_price``:
+  shared USD rate, shop markup, Decimal, ROUND_HALF_UP).  There is no Arctic
+  formula in this module.
+* ``Pkg Qty`` is supplier metadata only.  It never multiplies or divides the
+  price and never creates stock.
+* A zero, blank or invalid price never produces a 0 ₽ customer price: the card
+  stays unpriced with ``SOURCE_MISSING``.
+* An exact ``R/B <article>`` row is not imported at all (``skipped_rb``).
+* Import is not publication: cards are created with ``is_public=False``.
 """
 
 from __future__ import annotations
@@ -18,8 +28,12 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
-from apps.brp.pricing import current_customer_price_rub
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit, normalize_number
+from apps.catalog.services import (
+    LinkedPriceRefreshPlan,
+    certify_dealer_unit_price,
+    get_current_price_settings,
+)
 
 from .models import ArcticCatCatalogPart
 
@@ -97,6 +111,9 @@ class Plan:
     warnings: int = 0
     errors: int = 0
     skipped_rb: int = 0
+    positive_price_rows: int = 0
+    usd_rate: Decimal | None = None
+    markup_percent: Decimal | None = None
     problems: list[Problem] = field(default_factory=list)
 
     def problem(self, row: int, reason: str, detail: str = "", *, error: bool) -> None:
@@ -131,8 +148,12 @@ class Plan:
             "warnings": self.warnings,
             "errors": self.errors,
             "skipped_rb": self.skipped_rb,
+            "positive_price_rows": self.positive_price_rows,
             "currency": "USD",
-            "price_policy": "raw_supplier_only",
+            "price_basis": "per_unit",
+            "price_policy": "canonical_usd_formula",
+            "usd_rate": None if self.usd_rate is None else str(self.usd_rate),
+            "markup_percent": None if self.markup_percent is None else str(self.markup_percent),
             "stock_changes": False,
             "problems": [item.__dict__ for item in self.problems],
             "problems_total": self.warnings + self.errors,
@@ -276,12 +297,23 @@ def _read(path: Path) -> tuple[list[IncomingRow], Plan]:
             if not normalized:
                 plan.problem(row_number, "Некорректный P/N", article, error=True)
                 continue
+            replacement_article, _normalized_replacement, replacement_warning = _replacement(
+                description
+            )
+            if replacement_article:
+                # Owner-confirmed: exact R/B rows are not needed at all.  The
+                # strict parser only classifies them; no card, number, price
+                # or replacement relation is derived from such a row.
+                plan.skipped_rb += 1
+                continue
             try:
                 price, price_state = _dealer_price(mapped["dealer_price"].value)
             except ArcticCatCatalogError as exc:
                 plan.problem(row_number, "Некорректная цена", str(exc), error=True)
                 continue
-            if price_state == ArcticCatCatalogPart.DealerPriceState.ZERO:
+            if price_state == ArcticCatCatalogPart.DealerPriceState.KNOWN:
+                plan.positive_price_rows += 1
+            elif price_state == ArcticCatCatalogPart.DealerPriceState.ZERO:
                 plan.zero_price_rows += 1
             elif price_state == ArcticCatCatalogPart.DealerPriceState.BLANK:
                 plan.blank_price_rows += 1
@@ -296,14 +328,6 @@ def _read(path: Path) -> tuple[list[IncomingRow], Plan]:
                     package_quantity,
                     error=False,
                 )
-            replacement_article, normalized_replacement, replacement_warning = _replacement(
-                description
-            )
-            if replacement_article:
-                # Owner-confirmed: an exact R/B source row is not a saleable
-                # article and must not create an identity or price fact.
-                plan.skipped_rb += 1
-                continue
             if replacement_warning:
                 plan.problem(
                     row_number,
@@ -319,8 +343,10 @@ def _read(path: Path) -> tuple[list[IncomingRow], Plan]:
                 package_quantity=package_quantity,
                 dealer_price_usd=price,
                 dealer_price_state=price_state,
-                replacement_article=replacement_article,
-                normalized_replacement_article=normalized_replacement,
+                # Exact R/B rows never reach this point, so no row carries a
+                # replacement relation.
+                replacement_article="",
+                normalized_replacement_article="",
             )
             previous = seen.get(record.identity)
             if previous is not None:
@@ -399,9 +425,19 @@ def _classify(records: list[IncomingRow], plan: Plan) -> None:
         plan.replacement_changed += "replacement" in changes
 
 
+def _price_settings(plan: Plan, *, create: bool):
+    """Read the shared USD rate and shop markup once per file, never per row."""
+    pricing = get_current_price_settings(create=create)
+    plan.usd_rate = pricing.current_usd_rate
+    plan.markup_percent = pricing.brp_markup_percent
+    return pricing
+
+
 def build_plan(path) -> Plan:
     records, plan = _read(Path(path))
     _classify(records, plan)
+    # Dry-run must stay read-only, so missing settings rows are not created.
+    _price_settings(plan, create=False)
     return plan
 
 
@@ -428,27 +464,28 @@ def apply_file(path) -> dict:
     category, _ = Category.objects.get_or_create(name=ARCTIC_CAT_CATEGORY, parent=None)
     manufacturer, _ = Manufacturer.objects.get_or_create(name=ARCTIC_CAT_MANUFACTURER)
     unit = _unit()
+    pricing = _price_settings(plan, create=True)
+    rate, markup = pricing.current_usd_rate, pricing.brp_markup_percent
+    # Throwaway plan for new, unsaved cards; ``certify`` only mutates them.
+    creation_pricing = LinkedPriceRefreshPlan()
     to_create = [record for record in records if record.identity not in entries]
-    cards = [
-        PartType(
+    cards = []
+    for record in to_create:
+        card = PartType(
             name=record.description,
             description=record.description,
             category=category,
             manufacturer=manufacturer,
             unit=unit,
             tracking_mode=PartType.TrackingMode.BULK,
-            recommended_price=current_customer_price_rub(record.dealer_price_usd),
-            certified_price_rub=current_customer_price_rub(record.dealer_price_usd),
-            price_provenance=(
-                PartType.PriceProvenance.FORMULA_CERTIFIED
-                if record.dealer_price_usd is not None and record.dealer_price_usd > 0
-                else PartType.PriceProvenance.SOURCE_MISSING
-            ),
+            recommended_price=None,
             # Public exposure remains a separate explicit eligibility decision.
             is_public=False,
         )
-        for record in to_create
-    ]
+        certify_dealer_unit_price(
+            creation_pricing, card, record.dealer_price_usd, usd_rate=rate, markup=markup
+        )
+        cards.append(card)
     if cards:
         PartType.objects.bulk_create(cards, batch_size=1000)
         PartNumber.objects.bulk_create(
@@ -484,13 +521,17 @@ def apply_file(path) -> dict:
         )
 
     updated_entries: list[ArcticCatCatalogPart] = []
-    updated_parts: list[PartType] = []
+    part_names: dict[int, PartType] = {}
+    repricing = LinkedPriceRefreshPlan()
     for record in records:
         entry = entries.get(record.identity)
         if entry is None:
             continue
         changes = _changes(entry, record)
         if not changes:
+            certify_dealer_unit_price(
+                repricing, entry.part, entry.dealer_price_usd, usd_rate=rate, markup=markup
+            )
             continue
         price, price_state = _stored_price(entry, record)
         entry.source_description = record.description
@@ -504,9 +545,16 @@ def apply_file(path) -> dict:
         if "description" in changes:
             entry.part.name = record.description
             entry.part.description = record.description
-            updated_parts.append(entry.part)
+            part_names[entry.part.pk] = entry.part
+        # The stored price already honours "a zero never erases a known price".
+        certify_dealer_unit_price(repricing, entry.part, price, usd_rate=rate, markup=markup)
+    updated_parts = {**repricing.parts_to_update, **part_names}
     if updated_parts:
-        PartType.objects.bulk_update(updated_parts, ["name", "description"], batch_size=1000)
+        PartType.objects.bulk_update(
+            list(updated_parts.values()),
+            ["name", "description", "recommended_price", "certified_price_rub", "price_provenance"],
+            batch_size=1000,
+        )
     if updated_entries:
         ArcticCatCatalogPart.objects.bulk_update(
             updated_entries,
@@ -526,6 +574,7 @@ def apply_file(path) -> dict:
         {
             "created_parts": len(to_create),
             "updated_parts": len(updated_entries),
+            "repriced_parts": len(repricing.parts_to_update),
             "stock_changes": False,
         }
     )
