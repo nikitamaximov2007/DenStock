@@ -6,14 +6,19 @@
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
          href="{% url 'customs_orders_list' %}">Все заказы</a>
-      <a class="btn btn--small btn--primary"
-         data-full-navigation
-         href="?export=1">Экспорт в Excel</a>
+      {% if order.status == "finalized" %}
+        <a class="btn btn--small btn--primary" data-full-navigation href="?export=1">Скачать Excel</a>
+      {% else %}
+        <form method="post">
+          {% csrf_token %}
+          <button class="btn btn--small btn--primary" name="finalize" value="1" type="submit">Зафиксировать и скачать Excel</button>
+        </form>
+      {% endif %}
     </div>
   </div>
   <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Кто создал: {{ order.created_by|default:"·" }}</p>
   <p>Курс USD/RUB: {{ order.fx_rate }} · Количество: {{ order.total_quantity|quantity_int }} · Сумма: {{ order.total_rub }} ₽</p>
-  <p class="page-subtitle">Сохранённый состав заказа. Цена и курс зафиксированы при его создании.</p>
+  <p class="page-subtitle">Статус: {{ order.get_status_display }}. {% if order.status == "draft" %}Таможенные данные будут обновлены при фиксации.{% else %}Состав, цена и таможенные данные зафиксированы.{% endif %}</p>
   <table class="table table--wide">
     <thead>
       <tr>

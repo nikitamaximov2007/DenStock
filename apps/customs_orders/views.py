@@ -17,6 +17,7 @@ from .services import (
     create_customs_order_from_boundary,
     current_fx_rate,
     eligible_customs_sources,
+    finalize_customs_order,
     next_order_number,
     selection_payload,
 )
@@ -39,11 +40,19 @@ def customs_orders_list(request):
 
 
 @login_required
-@require_safe
+@require_http_methods(["GET", "POST"])
 def customs_order_detail(request, pk):
     _require_customs_access(request)
     order = get_object_or_404(CustomsOrder.objects.prefetch_related("lines"), pk=pk)
-    if request.GET.get("export") == "1":
+    download = request.GET.get("export") == "1"
+    if request.method == "POST" and request.POST.get("finalize") == "1":
+        try:
+            order = finalize_customs_order(order, request.user)
+        except CustomsOrderError as exc:
+            messages.error(request, str(exc))
+            return redirect("customs_order_detail", pk=order.pk)
+        download = True
+    if download and order.status == CustomsOrder.Status.FINALIZED:
         output = export_customs_order_xlsx(order)
         response = HttpResponse(
             output.getvalue(),

@@ -7,6 +7,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from django.core import signing
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.catalog.services import get_current_price_settings
 from apps.warehouse.models import ValuationSettings
@@ -177,6 +178,7 @@ def _persist(number, selected, rate, by, order_type):
     CustomsOrderLine.objects.bulk_create([
         CustomsOrderLine(
             order=order, source=row["source"], source_id=row["source_id"], article=row["number"],
+            part_type=row.get("part"),
             name_ru=row["name_ru"], name_en=row["name_en"], manufacturer=row["manufacturer"],
             country=row["country"],
             gross_weight_kg=row.get("actual_gross_weight_kg", row["gross_weight_kg"]),
@@ -188,6 +190,40 @@ def _persist(number, selected, rate, by, order_type):
         ) for row, amount in zip(selected, amounts, strict=True)
     ])
     return order
+
+
+def sync_customs_order_snapshots(order):
+    """Refresh a draft from approved, stable part identities only."""
+    from apps.actions.services import part_export_data
+
+    if order.status != CustomsOrder.Status.DRAFT:
+        raise CustomsOrderError("Зафиксированный заказ обновлять нельзя.")
+    for line in order.lines.select_related("part_type"):
+        if line.part_type_id is None:
+            continue
+        data = part_export_data(line.part_type, number=line.article)
+        line.name_ru = data["name_ru"] if data["name_ru_confirmed"] else ""
+        line.name_en = data["name_en"]
+        line.manufacturer = data["manufacturer"]
+        line.country = data["country"]
+        line.gross_weight_kg = data["actual_gross_weight_kg"]
+        line.net_weight_kg = data["actual_net_weight_kg"]
+        line.application_area = data["application_area"]
+        line.save()
+
+
+def finalize_customs_order(order, user=None):
+    """Atomically freeze a draft after its last canonical-data synchronization."""
+    with transaction.atomic():
+        locked = CustomsOrder.objects.select_for_update().get(pk=order.pk)
+        if locked.status != CustomsOrder.Status.DRAFT:
+            raise CustomsOrderError("Заказ уже зафиксирован.")
+        sync_customs_order_snapshots(locked)
+        locked.status = CustomsOrder.Status.FINALIZED
+        locked.finalized_at = timezone.now()
+        locked.finalized_by = user
+        locked.save(update_fields=["status", "finalized_at", "finalized_by"])
+    return locked
 
 
 def create_customs_order_from_boundary(

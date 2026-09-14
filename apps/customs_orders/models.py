@@ -11,22 +11,26 @@ class FrozenSnapshot(models.Model):
     class Meta:
         abstract = True
 
-    def save(self, *args, **kwargs):
-        if not self._state.adding:
-            raise ValidationError("Сформированный таможенный заказ нельзя изменять.")
-        return super().save(*args, **kwargs)
-
     def delete(self, *args, **kwargs):
         raise ValidationError("Сформированный таможенный заказ нельзя удалять.")
 
 
 class CustomsOrder(FrozenSnapshot):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Черновик"
+        FINALIZED = "finalized", "Зафиксирован"
     class OrderType(models.TextChoices):
         ORIGINAL = "original", "Оригиналы"
         ANALOG = "analog", "Аналоги"
 
     order_type = models.CharField(
         "Тип заказа", max_length=20, choices=OrderType.choices, default=OrderType.ORIGINAL
+    )
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    finalized_at = models.DateTimeField(null=True, blank=True)
+    finalized_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="finalized_customs_orders",
     )
     number = models.PositiveIntegerField("Номер заказа")
     created_at = models.DateTimeField("Создан", auto_now_add=True)
@@ -58,6 +62,13 @@ class CustomsOrder(FrozenSnapshot):
     def __str__(self):
         return f"{self.get_order_type_display()} - заказ №{self.number}"
 
+    def save(self, *args, **kwargs):
+        if not self._state.adding and type(self).objects.filter(
+            pk=self.pk, status=self.Status.FINALIZED
+        ).exists():
+            raise ValidationError("Сформированный таможенный заказ нельзя изменять.")
+        return models.Model.save(self, *args, **kwargs)
+
 
 class CustomsOrderLine(FrozenSnapshot):
     class Source(models.TextChoices):
@@ -68,6 +79,10 @@ class CustomsOrderLine(FrozenSnapshot):
     order = models.ForeignKey(CustomsOrder, related_name="lines", on_delete=models.PROTECT)
     source = models.CharField(max_length=20, choices=Source.choices)
     source_id = models.PositiveBigIntegerField()
+    part_type = models.ForeignKey(
+        "catalog.PartType", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="customs_order_lines",
+    )
     article = models.CharField(max_length=100, blank=True)
     name_ru = models.CharField(max_length=255, blank=True)
     name_en = models.CharField(max_length=255, blank=True)
@@ -98,3 +113,8 @@ class CustomsOrderLine(FrozenSnapshot):
 
     def __str__(self):
         return f"{self.article} в заказе №{self.order.number}"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding and self.order.status == CustomsOrder.Status.FINALIZED:
+            raise ValidationError("Зафиксированную строку таможенного заказа нельзя изменять.")
+        return models.Model.save(self, *args, **kwargs)

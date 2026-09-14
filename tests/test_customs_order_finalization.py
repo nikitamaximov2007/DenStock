@@ -93,6 +93,7 @@ def test_missing_price_fails_closed_without_an_empty_order(monkeypatch):
 
 def test_finalized_snapshots_cannot_be_edited_or_deleted(monkeypatch):
     order = _finalize(monkeypatch, [_row(1)], boundary=1)
+    order = services.finalize_customs_order(order)
     line = order.lines.get()
     order.total_rub = Decimal("1")
     line.article = "CHANGED"
