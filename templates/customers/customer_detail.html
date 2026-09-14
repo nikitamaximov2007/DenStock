@@ -25,10 +25,11 @@
             <th>Телефон</th>
             <td>{{ customer.phone|default:"·" }}</td>
           </tr>
-          <tr>
-            <th>Описание клиента</th>
-            <td>{{ customer.comment|default:"·" }}</td>
-          </tr>
+          {% if customer.city %}<tr><th>Город</th><td>{{ customer.city }}</td></tr>{% endif %}
+          {% if customer.equipment %}<tr><th>Техника</th><td>{{ customer.equipment }}</td></tr>{% endif %}
+          {% if customer.vin %}<tr><th>VIN</th><td>{{ customer.vin }}</td></tr>{% endif %}
+          {% if customer.mileage_at_arrival is not None %}<tr><th>Пробег</th><td>{{ customer.mileage_at_arrival }}</td></tr>{% endif %}
+          {% if customer.comment %}<tr><th>Комментарий</th><td>{{ customer.comment }}</td></tr>{% endif %}
           <tr>
             <th>Создан</th>
             <td>{{ customer.created_at|ru_dt }}</td>

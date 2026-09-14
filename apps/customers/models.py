@@ -33,6 +33,10 @@ class Customer(models.Model):
         "Телефон для поиска", max_length=50, blank=True, db_index=True, editable=False
     )
     comment = models.TextField("Комментарий", blank=True)
+    city = models.CharField("Город", max_length=150, blank=True)
+    equipment = models.CharField("Техника", max_length=255, blank=True)
+    vin = models.CharField("VIN", max_length=100, blank=True)
+    mileage_at_arrival = models.PositiveIntegerField("Пробег", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -48,6 +52,9 @@ class Customer(models.Model):
     def save(self, *args, **kwargs):
         self.name = (self.name or "").strip()
         self.phone = (self.phone or "").strip()
+        self.city = (self.city or "").strip()
+        self.equipment = (self.equipment or "").strip()
+        self.vin = (self.vin or "").strip()
         self.phone_normalized = normalize_phone(self.phone)
         update_fields = kwargs.get("update_fields")
         if update_fields is not None:

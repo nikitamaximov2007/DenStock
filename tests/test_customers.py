@@ -402,6 +402,112 @@ def test_customer_can_be_created_and_edited_through_ui(client, make_user, db):
     assert customer.phone_normalized == ""
 
 
+def test_customer_structured_fields_create_reload_edit_and_clear(client, make_user, db):
+    _login(client, make_user)
+    created = client.post(
+        reverse("customer_create"),
+        {
+            "name": "Иванов",
+            "phone": "",
+            "city": "  Пермь  ",
+            "equipment": "BRP Ski-Doo Summit",
+            "vin": "  TEST-VIN-12345  ",
+            "mileage_at_arrival": "1500",
+            "comment": "test comment",
+        },
+    )
+    customer = Customer.objects.get(name="Иванов")
+    assert created["Location"] == reverse("customer_detail", args=[customer.pk])
+    customer.refresh_from_db()
+    assert (customer.city, customer.equipment, customer.vin, customer.mileage_at_arrival) == (
+        "Пермь",
+        "BRP Ski-Doo Summit",
+        "TEST-VIN-12345",
+        1500,
+    )
+    assert customer.comment == "test comment"
+
+    updated = client.post(
+        reverse("customer_edit", args=[customer.pk]),
+        {
+            "name": customer.name,
+            "phone": customer.phone,
+            "city": "Березники",
+            "equipment": "",
+            "vin": "TEST-VIN-12345",
+            "mileage_at_arrival": "1750",
+            "comment": "test comment",
+        },
+        follow=True,
+    )
+    customer.refresh_from_db()
+    assert (customer.city, customer.equipment, customer.vin, customer.mileage_at_arrival) == (
+        "Березники",
+        "",
+        "TEST-VIN-12345",
+        1750,
+    )
+    assert customer.comment == "test comment"
+    body = updated.content.decode()
+    assert "Березники" in body and "TEST-VIN-12345" in body and "1750" in body
+    assert "test comment" in body
+
+
+def test_customer_structured_fields_keep_existing_comment_and_blank_legacy_client(
+    client, make_user, db
+):
+    _login(client, make_user)
+    customer = Customer.objects.create(name="Старый клиент", comment="Пермь, техника, VIN")
+
+    customer.refresh_from_db()
+    assert customer.city == customer.equipment == customer.vin == ""
+    assert customer.mileage_at_arrival is None
+    assert customer.comment == "Пермь, техника, VIN"
+
+    form = client.get(reverse("customer_edit", args=[customer.pk])).content.decode()
+    detail = client.get(reverse("customer_detail", args=[customer.pk])).content.decode()
+    for label in ("Город", "Техника", "VIN", "Пробег", "Комментарий"):
+        assert label in form
+    assert "Пермь, техника, VIN" in detail
+    assert "<th>Город</th>" not in detail
+
+
+def test_customer_structured_fields_reject_negative_mileage_and_accept_nonstandard_vin(
+    client, make_user, db
+):
+    _login(client, make_user)
+    rejected = client.post(
+        reverse("customer_create"),
+        {
+            "name": "Пробег",
+            "phone": "",
+            "city": "",
+            "equipment": "",
+            "vin": "ATV-42",
+            "mileage_at_arrival": "-1",
+            "comment": "",
+        },
+    )
+    assert rejected.status_code == 200
+    assert 'name="mileage_at_arrival"' in rejected.content.decode()
+    assert not Customer.objects.filter(name="Пробег").exists()
+
+    client.post(
+        reverse("customer_create"),
+        {
+            "name": "Квадроцикл",
+            "phone": "",
+            "city": "",
+            "equipment": "ATV",
+            "vin": "ATV-42",
+            "mileage_at_arrival": "0",
+            "comment": "",
+        },
+    )
+    customer = Customer.objects.get(name="Квадроцикл")
+    assert customer.vin == "ATV-42" and customer.mileage_at_arrival == 0
+
+
 def test_customer_create_returns_to_local_operator_flow_with_selected_card(client, make_user, db):
     _login(client, make_user)
     target = reverse("actions_scan") + "?kind=sale"
