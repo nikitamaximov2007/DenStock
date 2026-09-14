@@ -33,6 +33,32 @@ Russian matching reads only `PartCustomsInfo.customs_name_ru` where
 is never treated as public search content. Search does not filter current
 stock, so a zero-stock part remains findable.
 
+## Public catalog availability order
+
+`apps.catalog.public_catalog.search_catalog` applies one additional
+presentation ranking after Search 2.0 has produced its bounded identity list
+and after it has fetched canonical availability in one batch. It never changes
+the Search 2.0 matching tiers themselves.
+
+The public ordering contract is deterministic:
+
+1. exact or normalized-exact article matches;
+2. all other matches with canonical `available_quantity > 0`;
+3. all other matches with canonical `available_quantity <= 0`.
+
+Within every group the existing Search 2.0 order is retained exactly, including
+its score and primary-key tie-breaker. If duplicate exact articles exist, an
+available exact card may precede an unavailable exact card, but no exact card
+can fall beneath a non-exact match. The availability source is
+`inventory.availability.available_totals`, so active reservations, serial
+items and quantities from all physical lots use the same semantics as a card
+and a cart recheck.
+
+This ordering happens before public filters and pagination. The public catalog
+only ranks Search 2.0's fixed `RESULT_CAP` window, which prevents N+1 reads and
+unbounded materialization. The current public UI is search-first: it has no
+separate unfiltered catalog-browse route.
+
 ### Case folding for Russian
 
 Russian names are matched on `PartCustomsInfo.search_name_ru`, a folded copy of

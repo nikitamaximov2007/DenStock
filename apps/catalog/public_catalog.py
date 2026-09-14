@@ -33,7 +33,7 @@ from apps.inventory.presentation import manufacturer_display
 from .models import PartAnalog, PartCompatibility, PartType
 from .public_contracts import PublicPartFacts, build_public_part_facts
 from .public_photos import PublicPhotoRef, primary_photos
-from .search import RESULT_CAP, clean_query, search_part_ids
+from .search import RESULT_CAP, PartSearchHit, clean_query, search_part_ids
 
 ZERO = Decimal("0")
 PAGE_SIZE = 20
@@ -207,6 +207,42 @@ def _attributes(part_ids: list[int]) -> tuple[list[int], dict[int, _Attributes]]
         )
         for part_id in visible
     }
+
+
+# --- Public availability-first ranking -------------------------------------------
+
+
+EXACT_ARTICLE_MATCHES = frozenset({"exact_article", "normalized_exact_article"})
+
+
+def _rank_by_availability(
+    hits: Iterable[PartSearchHit], attributes: Mapping[int, _Attributes]
+) -> list[int]:
+    """Order public hits by the availability-first catalog contract.
+
+    Search 2.0 has already produced a bounded, deterministic relevance list.
+    This function intentionally does not recalculate relevance: its original
+    position is the final tie-breaker.  Availability is read once through
+    ``_attributes`` and therefore has the same reservation-aware, aggregate
+    semantics as every public card.
+
+    Exact and normalized-exact articles form a protected tier.  They always
+    stay above non-exact matches.  Within that protected tier an available
+    duplicate may lead an unavailable one; everywhere else availability leads
+    relevance.  The bounded ``RESULT_CAP`` list is ranked before filters and
+    pagination, never after a page has been selected.
+    """
+    ranked = [hit for hit in hits if hit.part_id in attributes]
+    return [
+        hit.part_id
+        for hit in sorted(
+            ranked,
+            key=lambda hit: (
+                0 if hit.match_type in EXACT_ARTICLE_MATCHES else 1,
+                0 if attributes[hit.part_id].available > ZERO else 1,
+            ),
+        )
+    ]
 
 
 # --- Filtering and facets --------------------------------------------------------
@@ -408,9 +444,10 @@ def search_catalog(raw_query, params: Mapping, *, page_size: int = PAGE_SIZE) ->
     """
     query = clean_query(raw_query)
     filters = CatalogFilters.from_params(params)
-    ranked = [hit.part_id for hit in search_part_ids(query, limit=RESULT_CAP)] if query else []
-    visible, attributes = _attributes(ranked)
-    matched = [part_id for part_id in visible if _passes(attributes[part_id], filters)]
+    hits = search_part_ids(query, limit=RESULT_CAP) if query else []
+    visible, attributes = _attributes([hit.part_id for hit in hits])
+    ranked = _rank_by_availability(hits, attributes)
+    matched = [part_id for part_id in ranked if _passes(attributes[part_id], filters)]
     pages = max(1, math.ceil(len(matched) / page_size))
     page = min(parse_page(params.get("page")), pages)
     window = matched[(page - 1) * page_size : page * page_size]
@@ -428,10 +465,10 @@ def search_catalog(raw_query, params: Mapping, *, page_size: int = PAGE_SIZE) ->
         cards=cards,
         facets=_facets(attributes, filters),
         total=len(matched),
-        ranked_total=len(visible),
+        ranked_total=len(ranked),
         page=page,
         pages=pages,
-        truncated=len(ranked) >= RESULT_CAP,
+        truncated=len(hits) >= RESULT_CAP,
     )
 
 
