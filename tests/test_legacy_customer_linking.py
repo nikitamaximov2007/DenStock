@@ -224,7 +224,7 @@ def test_the_form_shows_the_original_record_and_the_suggestion(boss, db):
     assert "Петр 89120707078" in body  # исходная запись показана целиком
     assert 'value="Петр"' in body  # подсказка имени
     assert 'value="89120707078"' in body  # подсказка телефона
-    assert "Описание клиента" in body
+    assert "Комментарий" in body
     assert "продаж 1" in body and "ремонтов 1" in body
 
 
