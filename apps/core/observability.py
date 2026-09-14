@@ -48,9 +48,15 @@ _SECRET_PATTERN = re.compile(
 )
 
 
+# Токен Telegram-бота узнаётся по форме «цифры:длинный ключ» и в URL вида
+# /bot<токен>/: такое значение вычищается, даже если рядом нет имени поля.
+_BOT_TOKEN_PATTERN = re.compile(r"(?<![0-9])[0-9]{5,16}:[A-Za-z0-9_-]{30,}")
+
+
 def redact(text: str) -> str:
     """Убрать значения секретов, оставив имена полей."""
-    return _SECRET_PATTERN.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    text = _SECRET_PATTERN.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    return _BOT_TOKEN_PATTERN.sub(REDACTED, text)
 
 
 def current_request_id() -> str:

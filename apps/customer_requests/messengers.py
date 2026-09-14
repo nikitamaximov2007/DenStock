@@ -59,6 +59,11 @@ def issue_messenger_link(*, request_id: int, channel: str, by=None) -> IssuedMes
         raise MessengerLinkError("Неизвестный мессенджер.")
     if request.preferred_messenger != channel:
         raise MessengerLinkError("Для этой заявки выбран другой мессенджер.")
+    if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM:
+        from .models import TelegramConversation
+
+        # Requests created before Telegram messaging get their conversation here.
+        TelegramConversation.objects.get_or_create(request=request)
     now = timezone.now()
     CustomerRequestMessengerLinkToken.objects.filter(
         request=request,
@@ -90,6 +95,29 @@ def issue_telegram_link(*, request_id: int, by=None) -> IssuedMessengerLink:
     )
 
 
+def issue_initial_telegram_link(request: CustomerRequest) -> str:
+    """The first link of a request created a moment ago, in the same transaction.
+
+    INSERT only: the public database role cannot lock or update requests, and a
+    brand-new request has no earlier link to revoke. Returns the raw token for
+    the customer's success page, or "" when the lifetime is misconfigured, so
+    a Telegram setting can never cost the customer the request itself.
+    """
+    channel = CustomerRequestMessengerLinkToken.Channel.TELEGRAM
+    try:
+        ttl = _link_ttl(channel)
+    except MessengerLinkError:
+        return ""
+    token = secrets.token_urlsafe(32)
+    CustomerRequestMessengerLinkToken.objects.create(
+        request=request,
+        channel=channel,
+        token_hash=_token_hash(token),
+        expires_at=timezone.now() + ttl,
+    )
+    return token
+
+
 def issue_max_link(*, request_id: int, by=None) -> IssuedMessengerLink:
     return issue_messenger_link(
         request_id=request_id,
@@ -109,7 +137,14 @@ def telegram_start_url(token: str) -> str | None:
 
 
 @transaction.atomic
-def consume_messenger_start(*, channel: str, token: str, chat_id: int | str) -> CustomerRequest:
+def consume_messenger_start(
+    *,
+    channel: str,
+    token: str,
+    chat_id: int | str,
+    user_id: int | None = None,
+    username: str = "",
+) -> CustomerRequest:
     """Consume one valid token after a user has explicitly started a channel."""
     if channel not in CustomerRequestMessengerLinkToken.Channel.values:
         raise MessengerLinkError("Ссылка недействительна или уже использована.")
@@ -117,6 +152,10 @@ def consume_messenger_start(*, channel: str, token: str, chat_id: int | str) -> 
         raise MessengerLinkError("Ссылка недействительна или уже использована.")
     chat_id = str(chat_id or "").strip()
     if not chat_id or len(chat_id) > 64:
+        raise MessengerLinkError("Ссылка недействительна или уже использована.")
+    if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM and not re.fullmatch(
+        r"-?[0-9]{1,20}", chat_id
+    ):
         raise MessengerLinkError("Ссылка недействительна или уже использована.")
     now = timezone.now()
     try:
@@ -149,14 +188,28 @@ def consume_messenger_start(*, channel: str, token: str, chat_id: int | str) -> 
         raise MessengerLinkError("Этот чат уже связан с другой заявкой.") from exc
     row.used_at = now
     row.save(update_fields=["used_at"])
+    if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM:
+        from .telegram_service import bind_customer_chat
+
+        bind_customer_chat(
+            request=row.request,
+            chat_id=int(chat_id),
+            user_id=user_id,
+            username=username,
+            link_token_id=row.pk,
+        )
     return row.request
 
 
-def consume_telegram_start(*, token: str, chat_id: int | str) -> CustomerRequest:
+def consume_telegram_start(
+    *, token: str, chat_id: int | str, user_id: int | None = None, username: str = ""
+) -> CustomerRequest:
     return consume_messenger_start(
         channel=CustomerRequestMessengerLinkToken.Channel.TELEGRAM,
         token=token,
         chat_id=chat_id,
+        user_id=user_id,
+        username=username,
     )
 
 

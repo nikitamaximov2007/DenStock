@@ -184,6 +184,17 @@ def test_other_roles_still_see_every_photo_row(restricted_role, seeded):
         "SELECT * FROM customer_requests_customerrequestmessengercontact",
         "SELECT * FROM customer_requests_customerrequestmessengerlinktoken",
         "INSERT INTO customer_requests_customerrequeststatusevent (request_id) VALUES (1)",
+        # Telegram rows: insert only; chats, tokens and messages stay unreadable.
+        "SELECT customer_chat_id FROM customer_requests_telegramconversation",
+        "UPDATE customer_requests_telegramconversation SET customer_chat_id = 1",
+        "SELECT token_hash FROM customer_requests_customerrequestmessengerlinktoken",
+        "UPDATE customer_requests_customerrequestmessengerlinktoken SET used_at = now()",
+        "SELECT * FROM customer_requests_telegrammessage",
+        "INSERT INTO customer_requests_telegrammessage (conversation_id) VALUES (1)",
+        "SELECT * FROM customer_requests_telegramoperator",
+        "SELECT * FROM customer_requests_telegramdelivery",
+        "DELETE FROM customer_requests_telegramoutboxevent",
+        "SELECT * FROM operations_telegrambotruntime",
         # The write guard's row: only the generation counter moves.
         "UPDATE operations_deploymentstate SET write_state = 'normal'",
         "SELECT database_identity FROM operations_deploymentstate",
@@ -235,12 +246,18 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
     assert {table for table, privilege in grants if privilege == "INSERT"} == {
         "customer_requests_customerrequest",
         "customer_requests_customerrequestline",
+        "customer_requests_telegramconversation",
+        "customer_requests_telegramoutboxevent",
+        "customer_requests_customerrequestmessengerlinktoken",
     }
     assert columns == {
         ("customer_requests_customerrequest", "id", "SELECT"),
         ("customer_requests_customerrequest", "public_id", "SELECT"),
         ("customer_requests_customerrequest", "submission_key_hash", "SELECT"),
         ("customer_requests_customerrequestline", "id", "SELECT"),
+        ("customer_requests_telegramconversation", "id", "SELECT"),
+        ("customer_requests_telegramoutboxevent", "id", "SELECT"),
+        ("customer_requests_customerrequestmessengerlinktoken", "id", "SELECT"),
         ("operations_deploymentstate", "id", "SELECT"),
         ("operations_deploymentstate", "write_state", "SELECT"),
         ("operations_deploymentstate", "business_generation", "SELECT"),

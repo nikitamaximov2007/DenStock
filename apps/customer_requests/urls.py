@@ -12,4 +12,15 @@ urlpatterns = [
         name="customer_request_telegram_link",
     ),
     path("telegram/webhook/", views.telegram_webhook, name="customer_request_telegram_webhook"),
+    path("telegram/", views.telegram_settings, name="telegram_settings"),
+    path(
+        "telegram/operators/<int:pk>/toggle/",
+        views.telegram_operator_toggle,
+        name="telegram_operator_toggle",
+    ),
+    path(
+        "telegram/operators/<int:pk>/role/",
+        views.telegram_operator_role,
+        name="telegram_operator_role",
+    ),
 ]

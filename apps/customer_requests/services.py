@@ -246,6 +246,12 @@ def create_customer_request(
             for line, part, price in prepared_lines
         ]
     )
+    if request.preferred_messenger == CustomerRequest.Messenger.TELEGRAM:
+        # Local rows only, in this transaction: the bot delivers later, so a
+        # Telegram outage can never fail or roll back the request.
+        from .telegram_service import start_request_conversation
+
+        start_request_conversation(request)
     return request, True
 
 
@@ -309,4 +315,7 @@ def anonymize_request(*, request_id: int, by=None) -> CustomerRequest:
         event_type=CustomerRequestPrivacyEvent.EventType.ANONYMIZED,
         performed_by=by,
     )
+    from .telegram_service import anonymize_conversation
+
+    anonymize_conversation(request)
     return request

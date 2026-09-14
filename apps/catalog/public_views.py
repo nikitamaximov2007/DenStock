@@ -352,7 +352,10 @@ def public_request_success(request, public_id):
     return _render(
         request,
         "public_catalog/request_success.html",
-        {"reference": public_requests.request_reference(public_id)},
+        {
+            "reference": public_requests.request_reference(public_id),
+            **public_requests.telegram_success(request.session, public_id),
+        },
     )
 
 
