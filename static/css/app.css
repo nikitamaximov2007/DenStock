@@ -812,10 +812,41 @@ form.toolbar input:focus, form.toolbar select:focus {
 .receiving-group h2 { margin-top: 0; }
 .receiving-group .inline-form input[type="number"],
 .receiving-queue-line .inline-form input[type="number"] { width: 78px; }
-.receiving-group .inline-form .btn--danger { background: var(--danger);
+.receiving-group .inline-form .btn--danger,
+.receiving-queue-line .inline-form .btn--danger { background: var(--danger);
   border-color: var(--danger); color: #fff; }
 .receiving-location-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .receiving-location-form input { flex: 1 1 260px; min-width: 0; }
+.receiving-current-cells .table__actions .inline-form { margin-left: 0; }
+.receiving-current-cells td .muted { margin-left: 6px; }
+.receiving-preferred { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 0 0 10px; }
+.receiving-preferred .inline-form { margin-left: 4px; }
+
+/* Receiving cell picker: the list stays in the form flow, so the card's
+   overflow never clips it and it never covers «Назначить ячейку». */
+.move-destination__field { position: relative; }
+.move-destination__field .move-destination__input { padding-right: 44px; }
+.move-destination__options--inline { position: static; max-height: 320px; margin-top: 4px;
+  box-shadow: none; }
+.move-destination__options--inline .move-destination__option { display: flex;
+  flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.move-destination__group { padding: 8px 10px 4px; font-size: 12px; font-weight: 600;
+  letter-spacing: .02em; text-transform: uppercase; color: var(--muted); cursor: default; }
+.move-destination__option-code { font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-weight: 600; }
+.move-destination__option-meta { color: var(--muted); }
+.move-destination__option-stock { margin-left: auto; padding-left: 12px; color: var(--muted);
+  font-size: 13px; white-space: nowrap; }
+.move-destination__option.is-selected { background: var(--info-bg); color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent); }
+.move-destination__option.is-selected .move-destination__option-code::after { content: " ✓"; }
+.move-destination.has-selection .move-destination__input { border-color: var(--accent);
+  background: var(--info-bg); font-weight: 600; }
+.move-destination__clear { position: absolute; top: 50%; right: 6px; width: 32px; height: 32px;
+  padding: 0; transform: translateY(-50%); border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; }
+.move-destination__clear:hover { background: var(--bg); color: var(--text); }
 
 /* Повседневный пересчёт одной ячейки. */
 .recount-metrics { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr));

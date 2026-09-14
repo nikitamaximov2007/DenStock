@@ -15,6 +15,11 @@ urlpatterns = [
         name="scanner_receiving_location_guidance",
     ),
     path(
+        "scanner/receiving/locations/",
+        views.scanner_receiving_locations,
+        name="scanner_receiving_locations",
+    ),
+    path(
         "scanner/move/locations/",
         views.scanner_move_locations,
         name="scanner_move_locations",

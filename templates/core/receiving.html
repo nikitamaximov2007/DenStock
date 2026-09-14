@@ -133,38 +133,78 @@
                 <p class="muted">Выберите другую активную ячейку для этой приёмки.</p>
               {% elif line.location_mode == "preferred_unavailable" %}
                 <p class="muted">
-                  Закреплённая ячейка <span class="code-pill">{{ line.preferred_location.short_code }}</span>
+                  Закреплённая ячейка <span class="code-pill">{{ line.preferred_location.short_code|default:line.preferred_location.code }}</span>
                   недоступна. Выберите новую активную ячейку.
                 </p>
               {% elif line.location_mode == "new" %}
                 <p class="muted">Ячейка не назначена. Выберите существующую активную ячейку.</p>
               {% endif %}
+              {% if error and error_line_id == line.id %}
+                {% include "partials/_status_block.html" with kind="error" text=error %}
+              {% endif %}
               {% if line.location_choices %}
-                <table class="table table--compact">
+                <table class="table table--compact receiving-current-cells">
                   <thead>
                     <tr>
                       <th>Сейчас находится в ячейке</th>
                       <th class="num--qty">Физически</th>
                       <th class="num--qty">Резерв</th>
                       <th class="num--qty">Доступно</th>
+                      <th>Приёмка</th>
                     </tr>
                   </thead>
                   <tbody>
                     {% for choice in line.location_choices %}
                       <tr>
-                        <td><span class="code-pill">{{ choice.short_code }}</span></td>
+                        <td>
+                          {% if choice.short_code or choice.code %}
+                            <span class="code-pill">{{ choice.short_code|default:choice.code }}</span>
+                            {% if choice.name and choice.name != choice.code %}<span class="muted">{{ choice.name }}</span>{% endif %}
+                          {% else %}
+                            <span class="muted">ячейка не указана</span>
+                          {% endif %}
+                        </td>
                         <td class="num--qty">{{ choice.physical|quantity_int }}</td>
                         <td class="num--qty">{{ choice.reserved|quantity_int }}</td>
                         <td class="num--qty">{{ choice.available|quantity_int }}</td>
+                        <td class="table__actions">
+                          {% if choice.id and choice.is_usable %}
+                            <form method="post" class="inline-form">
+                              {% csrf_token %}
+                              <input type="hidden" name="line_id" value="{{ line.id }}">
+                              <input type="hidden" name="location_id" value="{{ choice.id }}">
+                              <button type="submit"
+                                      name="action"
+                                      value="queue_assign"
+                                      data-receiving-quick-assign>Принять сюда</button>
+                            </form>
+                          {% else %}
+                            <span class="muted">недоступна для приёмки</span>
+                          {% endif %}
+                        </td>
                       </tr>
                     {% endfor %}
                   </tbody>
                 </table>
               {% endif %}
               {% if line.preferred_location and line.location_mode != "preferred_unavailable" %}
-                <p class="muted">
-                  Закреплённая ячейка: <span class="code-pill">{{ line.preferred_location.short_code }}</span>.
-                </p>
+                <div class="receiving-preferred">
+                  <span class="muted">Закреплённая ячейка:</span>
+                  <span class="code-pill">{{ line.preferred_location.short_code|default:line.preferred_location.code }}</span>
+                  {% if line.preferred_location.is_usable and not line.preferred_is_choice %}
+                    <form method="post" class="inline-form">
+                      {% csrf_token %}
+                      <input type="hidden" name="line_id" value="{{ line.id }}">
+                      <input type="hidden"
+                             name="location_id"
+                             value="{{ line.preferred_location.id }}">
+                      <button type="submit"
+                              name="action"
+                              value="queue_assign"
+                              data-receiving-quick-assign>Принять сюда</button>
+                    </form>
+                  {% endif %}
+                </div>
               {% endif %}
               <form method="post"
                     class="form receiving-location-form move-destination-form"
@@ -173,26 +213,36 @@
                 <input type="hidden" name="line_id" value="{{ line.id }}">
                 <div class="move-destination"
                      data-move-destination
-                     data-search-url="{% url 'scanner_move_locations' %}">
+                     data-search-url="{% url 'scanner_receiving_locations' %}"
+                     data-part-id="{{ line.part_id|default_if_none:'' }}"
+                     data-submit-on-enter>
                   <label for="receiving-location-input-{{ line.id }}">Ячейка приёмки</label>
                   <div class="move-destination__control">
-                    <input id="receiving-location-input-{{ line.id }}"
-                           name="location_code"
-                           type="text"
-                           class="move-destination__input"
-                           placeholder="Начните вводить код, например S03-D02"
-                           autocomplete="off"
-                           role="combobox"
-                           aria-autocomplete="list"
-                           aria-haspopup="listbox"
-                           aria-expanded="false"
-                           aria-controls="receiving-location-options-{{ line.id }}"
-                           aria-describedby="receiving-location-status-{{ line.id }}"
-                           required
-                           data-move-destination-input>
+                    <div class="move-destination__field">
+                      <input id="receiving-location-input-{{ line.id }}"
+                             name="location_code"
+                             type="text"
+                             class="move-destination__input"
+                             placeholder="Нажмите, чтобы выбрать ячейку, или введите код"
+                             autocomplete="off"
+                             role="combobox"
+                             aria-autocomplete="list"
+                             aria-haspopup="listbox"
+                             aria-expanded="false"
+                             aria-controls="receiving-location-options-{{ line.id }}"
+                             aria-describedby="receiving-location-status-{{ line.id }}"
+                             required
+                             data-move-destination-input>
+                      <button type="button"
+                              class="move-destination__clear"
+                              aria-label="Очистить выбранную ячейку"
+                              title="Очистить"
+                              hidden
+                              data-move-destination-clear>×</button>
+                    </div>
                     <input type="hidden" name="location_id" data-move-destination-id>
                     <ul id="receiving-location-options-{{ line.id }}"
-                        class="move-destination__options"
+                        class="move-destination__options move-destination__options--inline"
                         role="listbox"
                         hidden
                         data-move-destination-options>
@@ -201,12 +251,15 @@
                   <p id="receiving-location-status-{{ line.id }}"
                      class="move-destination__status muted"
                      aria-live="polite"
-                     data-move-destination-status>Начните вводить код или отсканируйте ячейку.</p>
+                     data-move-destination-status>
+                    Нажмите на поле — откроется список ячеек. Можно ввести код или отсканировать ячейку.
+                  </p>
                 </div>
                 <button type="submit"
                         name="action"
                         value="queue_assign"
-                        class="btn btn--primary">Назначить ячейку</button>
+                        class="btn btn--primary"
+                        data-move-destination-submit>Назначить ячейку</button>
                 {% if line.location_mode == "change" and line.location_change_previous %}
                   <button type="submit"
                           name="action"
