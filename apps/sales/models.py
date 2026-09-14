@@ -113,7 +113,7 @@ class Sale(models.Model):
     """Коммерческий документ продажи (Слой 16).
 
     Впервые порождает физический складской расход, но сам ledger НЕ пишет:
-    `apps/sales` ведёт документ (цены/выручку/себестоимость/прибыль, связь с
+    `apps/sales` ведёт документ (цены/выручку/себестоимость, связь с
     резервом), а физическое списание (`PartItem.status`/`StockLot.quantity`,
     `StockMovement`, `StockBalance`) выполняют сервисы `apps/inventory`
     (`sell_part_item`/`sell_stock_lot`). Проведённая продажа неизменяема —
@@ -187,9 +187,10 @@ class Sale(models.Model):
 class SaleLine(models.Model):
     """Строка продажи: экземпляр целиком ИЛИ количество из лота (XOR).
 
-    Себестоимость (`unit_cost_rub`/`total_cost_rub`) и прибыль (`profit_rub`)
-    замораживаются в момент проведения продажи и не пересчитываются от будущих
-    изменений landed cost.
+    Себестоимость (`unit_cost_rub`/`total_cost_rub`) замораживается в момент
+    проведения. Старое техническое ``profit_rub`` сохранено ради обратной
+    совместимости, но пользовательская прибыль считается только от нового
+    снимка немаркированной цены.
     """
 
     sale = models.ForeignKey(
@@ -227,6 +228,22 @@ class SaleLine(models.Model):
     profit_rub = models.DecimalField(
         "Прибыль (₽)", max_digits=14, decimal_places=2, editable=False, default=0
     )
+    # Customer-price base, not landed cost.  It is written only on completion
+    # (or the owner-authorised legacy cutover) and makes report profit stable.
+    unmarked_unit_price_rub_snapshot = models.DecimalField(
+        "Немаркированная цена за ед. (снимок, ₽)", max_digits=14, decimal_places=2,
+        null=True, blank=True, editable=False,
+    )
+    unmarked_dealer_unit_usd_snapshot = models.DecimalField(
+        "Дилерская цена за ед. (снимок, USD)", max_digits=14, decimal_places=4,
+        null=True, blank=True, editable=False,
+    )
+    unmarked_usd_rate_snapshot = models.DecimalField(
+        "Курс для немаркированной цены (снимок)", max_digits=10, decimal_places=4,
+        null=True, blank=True, editable=False,
+    )
+    unmarked_price_source = models.CharField(max_length=20, blank=True, editable=False)
+    unmarked_price_snapshot_note = models.CharField(max_length=80, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -364,7 +364,8 @@ def test_unpriced_positions_do_not_break_dashboard(client, make_user, env):
     html = client.get(reverse("statistics_dashboard")).content.decode()
     assert "Закупочная стоимость склада" in html
     assert "Оценка склада по цене продажи" in html
-    assert "Потенциальная прибыль" in html
+    assert "Разница оценок" in html
+    assert "Потенциальная прибыль" not in html
     assert "Без закупочной цены: 1 позиций" in html
     assert "не включены в закупочную стоимость" in html  # пояснение о неполноте
     assert "Как считаются показатели?" in html

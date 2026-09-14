@@ -162,7 +162,8 @@ def test_manager_export_has_financial_columns(make_user, client, data):
     text = _csv_text(client.get(reverse("reports_export_sales")))
     assert "Выручка (₽)" in text
     assert "Себестоимость (₽)" in text
-    assert "Валовая прибыль (₽)" in text
+    assert "Валовая прибыль (₽)" not in text
+    assert "Прибыль (₽)" in text
     assert "900" in text
     assert "900,00" not in text
 

@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.procurement.models import money
+from apps.reports.services import sale_returned_quantities
 from apps.reports.warehouse_finance import get_warehouse_valuation
 from apps.sales.models import Reservation, Sale, SaleLine
 
@@ -234,17 +235,35 @@ def _movers(period: StatsPeriod) -> list:
     since = _since(period)
     if since is not None:
         lines = lines.filter(sale__sold_at__gte=since)
-    top = (
-        lines.values("part_type__name")
-        .annotate(qty=Sum("quantity"), revenue=Sum("total_price"), profit=Sum("profit_rub"))
-        .order_by("-qty")[:TOP_N]
-    )
-    return [
-        MoverRow(
-            r["part_type__name"], r["qty"] or DEC0,
-            money(r["revenue"] or DEC0), money(r["profit"] or DEC0),
+    rows = list(
+        lines.select_related("part_type").only(
+            "id",
+            "quantity",
+            "total_price",
+            "unit_price",
+            "unmarked_unit_price_rub_snapshot",
+            "part_type__name",
         )
-        for r in top
+    )
+    returned = sale_returned_quantities(rows)
+    grouped = {}
+    for line in rows:
+        quantity = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
+        if not quantity:
+            continue
+        row = grouped.setdefault(
+            line.part_type.name, {"quantity": DEC0, "revenue": DEC0, "profit": DEC0}
+        )
+        row["quantity"] += quantity
+        row["revenue"] += line.unit_price * quantity
+        if line.unmarked_unit_price_rub_snapshot is not None:
+            row["profit"] += (
+                line.unit_price - line.unmarked_unit_price_rub_snapshot
+            ) * quantity
+    ordered = sorted(grouped.items(), key=lambda item: item[1]["quantity"], reverse=True)
+    return [
+        MoverRow(name, values["quantity"], money(values["revenue"]), money(values["profit"]))
+        for name, values in ordered[:TOP_N]
     ]
 
 

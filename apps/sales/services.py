@@ -375,7 +375,7 @@ def expire_reservations(*, now=None, by=None) -> int:
 
 # --- Слой 16: продажи (коммерческий документ) --------------------------------
 #
-# apps/sales ведёт документ: цены, выручка/себестоимость/прибыль, проверка
+# apps/sales ведёт документ: цены, выручка/себестоимость, проверка
 # резервов, оркестрация. Физическое списание (статус/количество, StockMovement,
 # StockBalance) делают inventory.sell_part_item/sell_stock_lot — sales их только
 # вызывает и НЕ пишет ledger напрямую.
@@ -412,7 +412,7 @@ def _ensure_sale_draft(sale: Sale) -> None:
 
 
 def _freeze_line_costs(line: SaleLine) -> None:
-    """Заморозить цену/себестоимость/прибыль строки на момент продажи."""
+    """Заморозить цену и landed-себестоимость строки на момент продажи."""
     if line.part_item_id:
         unit_cost = line.part_item.landed_cost_rub
     else:
@@ -421,6 +421,25 @@ def _freeze_line_costs(line: SaleLine) -> None:
     line.unit_cost_rub = unit_cost
     line.total_cost_rub = money(unit_cost * line.quantity)
     line.profit_rub = money(line.total_price - line.total_cost_rub)
+
+
+def _freeze_line_unmarked_price(line: SaleLine) -> None:
+    """Freeze the authoritative customer-price base, never landed cost."""
+    from apps.sales.pricing_snapshots import capture_current_unmarked_price
+
+    snapshot, reason = capture_current_unmarked_price(line.part_type)
+    if snapshot is None:
+        line.unmarked_unit_price_rub_snapshot = None
+        line.unmarked_dealer_unit_usd_snapshot = None
+        line.unmarked_usd_rate_snapshot = None
+        line.unmarked_price_source = ""
+        line.unmarked_price_snapshot_note = reason
+        return
+    line.unmarked_unit_price_rub_snapshot = snapshot.unmarked_unit_price_rub
+    line.unmarked_dealer_unit_usd_snapshot = snapshot.dealer_unit_usd
+    line.unmarked_usd_rate_snapshot = snapshot.usd_rate
+    line.unmarked_price_source = snapshot.source
+    line.unmarked_price_snapshot_note = "sale_completion"
 
 
 @transaction.atomic
@@ -590,8 +609,12 @@ def complete_sale(sale, *, by=None) -> Sale:
                 )
             line.part_item = item
             _freeze_line_costs(line)
+            _freeze_line_unmarked_price(line)
             line.save(update_fields=[
-                "total_price", "unit_cost_rub", "total_cost_rub", "profit_rub"
+                "total_price", "unit_cost_rub", "total_cost_rub", "profit_rub",
+                "unmarked_unit_price_rub_snapshot", "unmarked_dealer_unit_usd_snapshot",
+                "unmarked_usd_rate_snapshot", "unmarked_price_source",
+                "unmarked_price_snapshot_note",
             ])
             sell_part_item(item, by=by, document_id=sale.pk, comment=f"Продажа {sale.number}")
         else:
@@ -603,8 +626,12 @@ def complete_sale(sale, *, by=None) -> Sale:
                 raise SaleError(f"Лот #{lot.pk}: недостаточно для продажи.")
             line.stock_lot = lot
             _freeze_line_costs(line)
+            _freeze_line_unmarked_price(line)
             line.save(update_fields=[
-                "total_price", "unit_cost_rub", "total_cost_rub", "profit_rub"
+                "total_price", "unit_cost_rub", "total_cost_rub", "profit_rub",
+                "unmarked_unit_price_rub_snapshot", "unmarked_dealer_unit_usd_snapshot",
+                "unmarked_usd_rate_snapshot", "unmarked_price_source",
+                "unmarked_price_snapshot_note",
             ])
             sell_stock_lot(
                 lot, line.quantity, by=by, document_id=sale.pk, comment=f"Продажа {sale.number}"

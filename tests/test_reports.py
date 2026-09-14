@@ -136,7 +136,8 @@ def data(db, admin):
     receive_stock_lot(lot_inv, by=admin)
     remember_customs(serial, bulk)
 
-    # Продажа: item_a (500) + lot_sale × 2 (200) → выручка 900, себест. 328, прибыль 572.
+    # Продажа без авторитетного USD-источника: отчёт честно не подменяет
+    # прибыль landed-себестоимостью.
     sale = create_sale(customer_name="Покупатель", by=admin)
     add_part_item_to_sale(sale, item_a, unit_price=Decimal("500"), by=admin)
     add_stock_lot_to_sale(sale, lot_sale, Decimal("2"), unit_price=Decimal("200"), by=admin)
@@ -178,7 +179,8 @@ def test_sales_totals(data):
     assert rep.count == 1
     assert rep.revenue == Decimal("900.00")
     assert rep.cost == Decimal("328.00")
-    assert rep.profit == Decimal("572.00")
+    assert rep.profit == Decimal("0.00")
+    assert rep.profit_unavailable_lines == 1  # строка item_a уже полностью возвращена
 
 
 def test_sales_only_completed_in_period(data):
@@ -299,7 +301,8 @@ def test_manager_sees_reports_with_money(make_user, client, data):
     client.login(username="boss", password=PASSWORD)
     html = client.get(reverse("reports_dashboard")).content.decode()
     assert "Выручка" in html  # денежный блок показан (точные суммы — в сервис-тестах)
-    assert "Валовая прибыль" in html
+    assert "Валовая прибыль" not in html
+    assert "Прибыль" in html
 
 
 def test_storekeeper_sees_reports_without_money(make_user, client, data):

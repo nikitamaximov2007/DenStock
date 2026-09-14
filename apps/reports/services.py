@@ -131,6 +131,7 @@ class SalesReport:
     revenue: Decimal
     cost: Decimal
     profit: Decimal
+    profit_unavailable_lines: int = 0
     top_by_revenue: list = field(default_factory=list)
     top_by_quantity: list = field(default_factory=list)
 
@@ -220,9 +221,24 @@ def get_sales_report(period: Period) -> SalesReport:
         count=Count("id"),
         revenue=Sum("revenue_total"),
         cost=Sum("cost_total"),
-        profit=Sum("profit_total"),
     )
     lines = SaleLine.objects.filter(sale__in=sales)
+    profit_lines = list(
+        lines.only("id", "quantity", "unit_price", "unmarked_unit_price_rub_snapshot")
+    )
+    returned = sale_returned_quantities(profit_lines)
+    profit = DEC0
+    unavailable = 0
+    for line in profit_lines:
+        effective_quantity = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
+        if not effective_quantity:
+            continue
+        if line.unmarked_unit_price_rub_snapshot is None:
+            unavailable += 1
+            continue
+        profit += (
+            line.unit_price - line.unmarked_unit_price_rub_snapshot
+        ) * effective_quantity
     top_rev = list(
         lines.values("part_type_id", "part_type__name")
         .annotate(v=Sum("total_price"))
@@ -241,7 +257,8 @@ def get_sales_report(period: Period) -> SalesReport:
         line_count=lines.count(),
         revenue=money(agg["revenue"] or DEC0),
         cost=money(agg["cost"] or DEC0),
-        profit=money(agg["profit"] or DEC0),
+        profit=money(profit),
+        profit_unavailable_lines=unavailable,
         top_by_revenue=[
             TopRow(
                 r["part_type__name"],

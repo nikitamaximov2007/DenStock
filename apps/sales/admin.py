@@ -22,7 +22,8 @@ class SaleLineInline(admin.TabularInline):
     model = SaleLine
     extra = 0
     autocomplete_fields = ["part_type", "part_item", "stock_lot"]
-    readonly_fields = ("unit_cost_rub", "total_cost_rub", "profit_rub")
+    readonly_fields = ("unit_cost_rub", "total_cost_rub")
+    exclude = ("profit_rub",)
 
 
 @admin.register(Sale)
@@ -32,6 +33,7 @@ class SaleAdmin(admin.ModelAdmin):
     search_fields = ("number", "customer_name", "customer_phone")
     readonly_fields = (
         "number", "created_at", "updated_at", "sold_at", "canceled_at",
-        "revenue_total", "cost_total", "profit_total",
+        "revenue_total", "cost_total",
     )
+    exclude = ("profit_total",)
     inlines = [SaleLineInline]
