@@ -3,6 +3,7 @@
 from django.core.management.base import BaseCommand
 
 from apps.catalog.services import (
+    PRICED_CATALOGS,
     get_current_price_settings,
     plan_linked_part_price_refresh,
     refresh_linked_part_prices,
@@ -11,7 +12,7 @@ from apps.catalog.services import (
 
 class Command(BaseCommand):
     help = (
-        "Пересчитать текущие рекомендованные цены BRP/Polaris/аналогов из "
+        "Пересчитать текущие рекомендованные цены BRP/Polaris/аналогов/Arctic Cat из "
         "оптовых цен. По умолчанию только dry-run."
     )
 
@@ -23,14 +24,14 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--catalog",
-            choices=("all", "brp", "polaris", "aftermarket"),
+            choices=("all", "brp", "polaris", "aftermarket", "arctic_cat"),
             default="all",
             help="Ограничить пересчёт одним каталогом (по умолчанию все).",
         )
 
     def handle(self, *args, **options):
         catalogs = (
-            frozenset({"brp", "polaris", "aftermarket"})
+            PRICED_CATALOGS
             if options["catalog"] == "all"
             else frozenset({options["catalog"]})
         )
@@ -52,6 +53,7 @@ class Command(BaseCommand):
         write(f"Расчётных BRP-связей: {plan.brp_links}")
         write(f"Расчётных Polaris-связей: {plan.polaris_links}")
         write(f"Карточек каталога аналогов: {plan.aftermarket_links}")
+        write(f"Карточек Arctic Cat: {plan.arctic_cat_links}")
         write(f"Ручных цен перекрыто прайсом: {plan.manual_overridden}")
         write(f"Без оптовой цены, текущая цена сохранена: {plan.skipped_without_wholesale}")
         write(f"Без изменения: {plan.unchanged}")

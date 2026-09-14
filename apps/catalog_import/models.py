@@ -153,8 +153,9 @@ class ArcticCatCatalogPart(models.Model):
 
     This is deliberately reference data, distinct from the operational
     ``PartType`` card.  The link makes the source article searchable internally
-    without treating a supplier package as warehouse stock or manufacturing a
-    customer price from a dealer value whose commercial semantics are unknown.
+    without treating a supplier package as warehouse stock.  ``dealer_price_usd``
+    is the USD price of one part; the card's customer price is derived from it
+    only by the canonical pricing service, never by multiplying by the package.
     """
 
     SOURCE_DEALER = "dealer"

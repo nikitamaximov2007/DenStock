@@ -69,6 +69,7 @@ CATEGORIES = (
 BRP = "brp"
 POLARIS = "polaris"
 AFTERMARKET = "aftermarket"
+ARCTIC_CAT = "arctic_cat"
 NO_SOURCE = "none"
 
 
@@ -275,6 +276,43 @@ def _aftermarket_rows(usd_rate, markup, availability):
         )
 
 
+def _arctic_cat_rows(usd_rate, markup, availability):
+    from apps.catalog_import.models import ArcticCatCatalogPart
+
+    rows = (
+        ArcticCatCatalogPart.objects.values_list(
+            "part_id",
+            "supplier_article",
+            "dealer_price_usd",
+            "part__recommended_price",
+            "part__is_public",
+            "part__is_active",
+            "part__price_provenance",
+        )
+        .order_by("part_id")
+        .iterator(chunk_size=5000)
+    )
+    for part_id, article, dealer_price, actual, is_public, is_active, provenance in rows:
+        expected = _expected_from_wholesale(dealer_price, usd_rate, markup)
+        missing = dealer_price in (None, "")
+        manual = provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+        yield PriceAuditRow(
+            part_id=part_id,
+            category=_classify(expected, actual, manual=manual, missing_source=missing),
+            source=ARCTIC_CAT,
+            source_reference=article or "",
+            wholesale_usd=dealer_price,
+            surcharge_usd=ZERO,
+            expected_price=expected,
+            actual_price=actual,
+            manual=manual,
+            is_public=bool(is_public and is_active),
+            available=availability.get(part_id, ZERO),
+            reason="у карточки Arctic Cat нет цены дилера" if missing else "",
+            article=article or "",
+        )
+
+
 def _row(
     part,
     source,
@@ -365,6 +403,7 @@ def audit_prices(
         _brp_rows(usd_rate, brp_markup, availability),
         _polaris_rows(usd_rate, polaris_markup, availability),
         _aftermarket_rows(usd_rate, brp_markup, availability),
+        _arctic_cat_rows(usd_rate, brp_markup, availability),
     )
     for stream in streams:
         for row in stream:

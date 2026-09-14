@@ -108,6 +108,7 @@ class LinkedPriceRefreshPlan:
     brp_links: int = 0
     polaris_links: int = 0
     aftermarket_links: int = 0
+    arctic_cat_links: int = 0
     # Сколько деталей меняют саму цену, и сколько - только свидетельство
     # расчёта. Это разные числа: свидетельство появляется и у детали, чья цена
     # уже правильная, а исчезает у детали, чей оптовый источник пропал.
@@ -186,6 +187,40 @@ def certify_valid_manual_price_exception(part: PartType) -> PartType:
     return part
 
 
+PRICED_CATALOGS = frozenset({"brp", "polaris", "aftermarket", "arctic_cat"})
+
+
+def certify_dealer_unit_price(plan, part, dealer_price_usd, *, usd_rate, markup) -> None:
+    """Current customer price of one supplier card from a per-unit dealer USD price.
+
+    The single place where a supplier dealer price that is already a price for
+    ONE unit becomes a customer price: the canonical ``customer_price_rub``
+    formula, shop markup, ``money`` and the certificate helpers of ``plan``.
+    Importers and the repricing run share it, so an import and a later
+    recalculation can never disagree.
+
+    A missing or non-positive source never invents a price (no 0 ₽) and never
+    erases the price a card already has; it only withdraws the certificate.
+    An owner-confirmed manual exception is never touched.
+    """
+    if part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION:
+        return
+    price = (
+        customer_price_rub(dealer_price_usd, usd_rate, markup)
+        if dealer_price_usd is not None and dealer_price_usd > 0
+        else None
+    )
+    if price is None or price <= 0:
+        plan.mark_source_missing(part)
+        plan.skipped_without_wholesale += 1
+        return
+    plan.calculated_links += 1
+    recommended = money(price)
+    if part.recommended_price == recommended:
+        plan.unchanged += 1
+    plan.set_price(part, recommended)
+
+
 def plan_linked_part_price_refresh(
     *,
     usd_rate: Decimal,
@@ -194,8 +229,8 @@ def plan_linked_part_price_refresh(
     catalogs: frozenset[str] | None = None,
 ) -> LinkedPriceRefreshPlan:
     """Build a dry-run-safe plan using current wholesale catalog prices."""
-    selected_catalogs = catalogs or frozenset({"brp", "polaris", "aftermarket"})
-    unknown = selected_catalogs - {"brp", "polaris", "aftermarket"}
+    selected_catalogs = catalogs or PRICED_CATALOGS
+    unknown = selected_catalogs - PRICED_CATALOGS
     if unknown:
         raise ValueError(f"Неизвестный каталог для пересчёта: {', '.join(sorted(unknown))}")
 
@@ -284,12 +319,15 @@ def plan_linked_part_price_refresh(
 
     if "aftermarket" in selected_catalogs:
         _plan_aftermarket_prices(plan, usd_rate=usd_rate, markup=brp_markup)
+    if "arctic_cat" in selected_catalogs:
+        _plan_arctic_cat_prices(plan, usd_rate=usd_rate, markup=brp_markup)
     # Formula certification requires a catalog relationship.  Do this in the
     # database, rather than collecting a large catalogue ID set in Python.
     for part in PartType.objects.filter(
         brp_link__isnull=True,
         polaris_link__isnull=True,
         aftermarket_catalog_entry__isnull=True,
+        arctic_cat_catalog_entry__isnull=True,
     ).only("id", "recommended_price", "certified_price_rub", "price_provenance"):
         plan.mark_not_applicable(part)
     return plan
@@ -338,6 +376,33 @@ def _plan_aftermarket_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> Non
         if entry.part.recommended_price == recommended:
             plan.unchanged += 1
         plan.set_price(entry.part, recommended)
+
+
+def _plan_arctic_cat_prices(plan, *, usd_rate: Decimal, markup: Decimal) -> None:
+    """Arctic Cat DEALER PRICE is a USD price for one part (owner-confirmed).
+
+    Package quantity is supplier metadata and deliberately plays no role here.
+    The shop markup is the same single markup used for aftermarket cards.
+    """
+    from apps.catalog_import.models import ArcticCatCatalogPart
+
+    entries = (
+        ArcticCatCatalogPart.objects.select_related("part")
+        .only(
+            "id",
+            "dealer_price_usd",
+            "part__id",
+            "part__recommended_price",
+            "part__certified_price_rub",
+            "part__price_provenance",
+        )
+        .iterator(chunk_size=2000)
+    )
+    for entry in entries:
+        plan.arctic_cat_links += 1
+        certify_dealer_unit_price(
+            plan, entry.part, entry.dealer_price_usd, usd_rate=usd_rate, markup=markup
+        )
 
 
 @transaction.atomic
