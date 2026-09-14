@@ -268,11 +268,21 @@
             <td>{{ row.name }}</td>
             <td class="num--qty">{{ row.quantity|quantity_int }}</td>
             <td class="num--money">{{ row.revenue|money_int }}</td>
-            <td class="num--money">{{ row.profit|money_int }}</td>
+            <td class="num--money">
+              {% if row.profit_unavailable %}
+                <span class="muted" title="Нет подтверждённой дилерской цены">нет базы</span>
+              {% else %}
+                {{ row.profit|money_int }}
+                {% if row.profit_partial %}
+                  <span class="muted" title="Прибыль посчитана не по всем проданным единицам">без базы: {{ row.profit_unavailable_quantity|quantity_int }}</span>
+                {% endif %}
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    <p class="muted">Прибыль: цена продажи минус немаркированная дилерская цена. «Нет базы»: для детали нет подтверждённой дилерской цены, прибыль не считается.</p>
   {% else %}
     {% include "partials/_empty_state.html" with icon="cart" title="Продаж за период нет" text="Ходовые позиции появятся после проведённых продаж за выбранный период." compact=1 %}
   {% endif %}

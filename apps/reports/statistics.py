@@ -101,6 +101,17 @@ class MoverRow:
     quantity: Decimal
     revenue: Decimal
     profit: Decimal
+    # Sold quantity without a confirmed unmarked-price snapshot. Its profit is
+    # unknown, so it is excluded from ``profit`` and disclosed, never shown as 0.
+    profit_unavailable_quantity: Decimal = Decimal("0")
+
+    @property
+    def profit_unavailable(self) -> bool:
+        return self.profit_unavailable_quantity >= self.quantity > 0
+
+    @property
+    def profit_partial(self) -> bool:
+        return 0 < self.profit_unavailable_quantity < self.quantity
 
 
 @dataclass
@@ -252,17 +263,26 @@ def _movers(period: StatsPeriod) -> list:
         if not quantity:
             continue
         row = grouped.setdefault(
-            line.part_type.name, {"quantity": DEC0, "revenue": DEC0, "profit": DEC0}
+            line.part_type.name,
+            {"quantity": DEC0, "revenue": DEC0, "profit": DEC0, "unavailable": DEC0},
         )
         row["quantity"] += quantity
         row["revenue"] += line.unit_price * quantity
-        if line.unmarked_unit_price_rub_snapshot is not None:
+        if line.unmarked_unit_price_rub_snapshot is None:
+            row["unavailable"] += quantity
+        else:
             row["profit"] += (
                 line.unit_price - line.unmarked_unit_price_rub_snapshot
             ) * quantity
     ordered = sorted(grouped.items(), key=lambda item: item[1]["quantity"], reverse=True)
     return [
-        MoverRow(name, values["quantity"], money(values["revenue"]), money(values["profit"]))
+        MoverRow(
+            name,
+            values["quantity"],
+            money(values["revenue"]),
+            money(values["profit"]),
+            values["unavailable"],
+        )
         for name, values in ordered[:TOP_N]
     ]
 

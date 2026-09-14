@@ -284,3 +284,26 @@ def test_invalid_period_falls_back(client, make_user):
     resp = client.get(reverse("statistics_dashboard") + "?period=bogus")
     assert resp.status_code == 200
     assert "30 дней" in resp.content.decode()
+
+
+def test_mover_without_confirmed_unmarked_base_is_disclosed_not_zero(data, client):
+    """A sale line without a dealer-price snapshot must never read as 0 ₽ profit."""
+    remember_customs(data["lot"].part_type)
+    sale = create_sale(customer_name="Иван", by=data["admin"])
+    add_stock_lot_to_sale(
+        sale, data["lot"], Decimal("2"), unit_price=Decimal("300"), by=data["admin"]
+    )
+    complete_sale(sale, by=data["admin"])
+    line = sale.lines.get()
+    assert line.unmarked_unit_price_rub_snapshot is None  # no authoritative source
+
+    mover = get_statistics(resolve_stats_period({"period": "7"})).movers[0]
+    assert mover.profit_unavailable_quantity == Decimal("2")
+    assert mover.profit_unavailable and not mover.profit_partial
+
+    client.force_login(data["admin"])
+    html = client.get(reverse("statistics_dashboard"), {"period": "7"}).content.decode()
+    movers = html.split("Ходовые позиции", 1)[1]
+    row = movers.split("Болт-Стат", 1)[1].split("</tr>", 1)[0]
+    assert "нет базы" in row
+    assert ">0<" not in row.replace(" ", "").replace("\n", "")
