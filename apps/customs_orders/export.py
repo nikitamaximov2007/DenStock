@@ -1,5 +1,6 @@
 """Таможенная форма из зафиксированных данных заказа."""
 
+import datetime
 from collections import defaultdict
 from decimal import Decimal
 from io import BytesIO
@@ -19,6 +20,7 @@ _METADATA_FIELDS = (
     "net_weight_kg",
     "application_area",
 )
+_EPOCH = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 
 
 def _identity_value(value) -> str:
@@ -29,6 +31,11 @@ def _identity_value(value) -> str:
 def _metadata_signature(line) -> tuple:
     """Only stated metadata participates; blanks never invent a fact."""
     return tuple(getattr(line, field) for field in _METADATA_FIELDS)
+
+
+def _chronological_key(line) -> tuple:
+    """Match the Customs history order for the frozen source operation."""
+    return (line.occurred_at or _EPOCH, line.source, line.source_id)
 
 
 def _matches_signature(partial: tuple, complete: tuple) -> bool:
@@ -50,6 +57,7 @@ def _line_row(line) -> dict:
             "application_area": line.application_area,
             "provenance": ORDERED_PROVENANCE if line.is_ordered else SALES_REPAIRS_PROVENANCE,
             "is_analog": line.is_analog,
+            "_chronological_key": _chronological_key(line),
         }
 
 
@@ -111,6 +119,9 @@ def _aggregate_lines(lines) -> list[dict]:
                 ORDERED_PROVENANCE if any(line.is_ordered for line in group)
                 else SALES_REPAIRS_PROVENANCE
             )
+            # A merged row represents its earliest source operation, just as
+            # the Customs history does.  Keep the full key for stable ties.
+            row["_chronological_key"] = min(_chronological_key(line) for line in group)
             rows.append(row)
     return rows
 
@@ -120,4 +131,8 @@ def export_customs_order_xlsx(order) -> BytesIO:
     originals, analogs = [], []
     for row in _aggregate_lines(order.lines.all()):
         (analogs if row.pop("is_analog", False) else originals).append(row)
+    for section in (originals, analogs):
+        section.sort(key=lambda row: row["_chronological_key"])
+        for row in section:
+            row.pop("_chronological_key")
     return export_customs_xlsx(sheet_rows=[("Оригиналы", originals), ("Аналоги", analogs)])
