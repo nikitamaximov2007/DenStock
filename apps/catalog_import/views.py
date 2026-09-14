@@ -101,6 +101,8 @@ ARCTIC_CAT_SUMMARY_ROWS = (
     ("price_changed", "Изменилась цена поставщика"),
     ("replacement_changed", "Изменилась замена"),
     ("package_quantity_changed", "Изменилась упаковка"),
+    ("positive_package_quantity_rows", "Положительных Pkg Qty"),
+    ("invalid_package_quantity_rows", "Некорректных Pkg Qty"),
     ("zero_price_rows", "Нулевых цен поставщика"),
     ("blank_price_rows", "Пустых цен поставщика"),
     ("duplicate_part_numbers", "Повторов P/N"),

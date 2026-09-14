@@ -161,6 +161,22 @@ def test_malformed_replacement_is_a_warning_and_stays_plain_description(boss):
     assert entry.replacement_article == ""
 
 
+def test_real_style_alphanumeric_replacement_is_exactly_recognized(boss):
+    _apply(boss, [["0409-200", "R/B H680507", "1", "348.58"]])
+    entry = ArcticCatCatalogPart.objects.get()
+    assert entry.replacement_article == "H680507"
+    assert entry.normalized_replacement_article == "H680507"
+
+
+def test_invalid_package_quantity_is_a_warning_and_never_stock(boss):
+    before = _stock_snapshot()
+    batch = _apply(boss, [["0101-045", "KEY", "0", "1.61"]])
+    entry = ArcticCatCatalogPart.objects.get()
+    assert batch.apply_summary["invalid_package_quantity_rows"] == 1
+    assert entry.package_quantity == "0"
+    assert _stock_snapshot() == before
+
+
 def test_duplicates_are_reported_and_conflicts_are_never_arbitrarily_applied(boss):
     _send(
         boss,

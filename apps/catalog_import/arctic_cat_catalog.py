@@ -33,7 +33,9 @@ FORMAT = "ARCTIC_CAT_DEALER_CATALOG"
 
 # This intentionally recognizes only the documented whole-cell reference.
 # A prose description beginning with R/B is not a supersession instruction.
-REPLACEMENT_RE = re.compile(r"^R/B\s+([0-9]{4}-[0-9]{3})$", flags=re.IGNORECASE)
+REPLACEMENT_RE = re.compile(
+    r"^R/B\s+([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)$", flags=re.IGNORECASE
+)
 
 HEADER_ALIASES = {
     "article": {"p/n", "pn", "part number", "part no", "part #"},
@@ -86,6 +88,8 @@ class Plan:
     price_changed: int = 0
     replacement_changed: int = 0
     package_quantity_changed: int = 0
+    positive_package_quantity_rows: int = 0
+    invalid_package_quantity_rows: int = 0
     zero_price_rows: int = 0
     blank_price_rows: int = 0
     duplicate_part_numbers: int = 0
@@ -117,6 +121,8 @@ class Plan:
             "price_changed": self.price_changed,
             "replacement_changed": self.replacement_changed,
             "package_quantity_changed": self.package_quantity_changed,
+            "positive_package_quantity_rows": self.positive_package_quantity_rows,
+            "invalid_package_quantity_rows": self.invalid_package_quantity_rows,
             "zero_price_rows": self.zero_price_rows,
             "blank_price_rows": self.blank_price_rows,
             "duplicate_part_numbers": self.duplicate_part_numbers,
@@ -174,6 +180,18 @@ def _dealer_price(value: object) -> tuple[Decimal | None, str]:
     if price == 0:
         return None, ArcticCatCatalogPart.DealerPriceState.ZERO
     return price, ArcticCatCatalogPart.DealerPriceState.KNOWN
+
+
+def _package_quantity_state(value: str) -> str:
+    """Classify metadata without assigning it any inventory semantics."""
+    compact = value.replace(" ", "").replace(",", ".")
+    if not compact:
+        return "blank"
+    try:
+        quantity = Decimal(compact)
+    except (InvalidOperation, ValueError):
+        return "invalid"
+    return "positive" if quantity.is_finite() and quantity > 0 else "invalid"
 
 
 def _sheet_name(names) -> str:
@@ -264,6 +282,17 @@ def _read(path: Path) -> tuple[list[IncomingRow], Plan]:
                 plan.zero_price_rows += 1
             elif price_state == ArcticCatCatalogPart.DealerPriceState.BLANK:
                 plan.blank_price_rows += 1
+            package_state = _package_quantity_state(package_quantity)
+            if package_state == "positive":
+                plan.positive_package_quantity_rows += 1
+            elif package_state == "invalid":
+                plan.invalid_package_quantity_rows += 1
+                plan.problem(
+                    row_number,
+                    "Некорректное Pkg Qty сохранено только как исходный текст",
+                    package_quantity,
+                    error=False,
+                )
             replacement_article, normalized_replacement, replacement_warning = _replacement(
                 description
             )
