@@ -239,6 +239,22 @@ def test_invalid_package_quantity_is_a_warning_and_never_stock(boss):
     assert _stock_snapshot() == before
 
 
+def test_arctic_preview_explains_price_policy_and_package_warning_correctly(boss):
+    response = _send(boss, [["0101-045", "KEY", "0", "1.61"]])
+
+    batch = CatalogImportBatch.objects.get()
+    body = response.content.decode()
+    assert batch.status == CatalogImportBatch.Status.CHECKED
+    assert batch.summary["invalid_package_quantity_rows"] == 1
+    assert "цена одной детали в USD" in body
+    assert "централизованным курсу USD" in body
+    assert "помечает её как подтверждённую формулой" in body
+    assert "Предупреждение о некорректном" in body
+    assert "Pkg Qty не исключает строку" in body
+    assert "ещё нет утверждённой политики цены клиента" not in body
+    assert "Эти строки не применяются" not in body
+
+
 def test_duplicates_are_reported_and_conflicts_are_never_arbitrarily_applied(boss):
     _send(
         boss,
