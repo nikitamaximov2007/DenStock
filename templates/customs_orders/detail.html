@@ -7,11 +7,16 @@
       <a class="btn btn--small btn--secondary"
          href="{% url 'customs_orders_list' %}">Все заказы</a>
       {% if order.status == "finalized" %}
-        <a class="btn btn--small btn--primary" data-full-navigation href="?export=1">Скачать Excel</a>
+        <a class="btn btn--small btn--primary"
+           data-full-navigation
+           href="?export=1">Скачать Excel</a>
       {% else %}
         <form method="post">
           {% csrf_token %}
-          <button class="btn btn--small btn--primary" name="finalize" value="1" type="submit">Зафиксировать и скачать Excel</button>
+          <button class="btn btn--small btn--primary"
+                  name="finalize"
+                  value="1"
+                  type="submit">Зафиксировать и скачать Excel</button>
         </form>
       {% endif %}
     </div>
