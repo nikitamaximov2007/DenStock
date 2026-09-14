@@ -68,8 +68,14 @@ def sales_rows(report, period, *, include_costs):
     header = ["Период с", "Период по", "Продаж", "Строк продаж"]
     row = [_d(period.date_from), _d(period.date_to), report.count, report.line_count]
     if include_costs:
-        header += ["Выручка (₽)", "Себестоимость (₽)", "Прибыль (₽)"]
-        row += [_money(report.revenue), _money(report.cost), _money(report.profit)]
+        header += [
+            "Выручка (₽)", "Себестоимость (₽)", "Прибыль (₽)",
+            "Строк без подтверждённой базы прибыли",
+        ]
+        row += [
+            _money(report.revenue), _money(report.cost), _money(report.profit),
+            report.profit_unavailable_lines,
+        ]
     return header, [row]
 
 

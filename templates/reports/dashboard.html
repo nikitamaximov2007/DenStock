@@ -78,53 +78,27 @@
     <p class="muted">Финансовые показатели скрыты для вашей роли.</p>
   {% endif %}
   <section class="dashboard-section" aria-label="Популярные детали">
-    <h2 class="page-title">Популярные детали</h2>
-    <div class="report-columns">
-      <div>
-        {% if show_costs %}
-          <h3>По выручке</h3>
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Название детали</th>
-                <th>Артикул</th>
-                <th class="num--money">Выручка (₽)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in report.sales.top_by_revenue %}
-                <tr>
-                  <td>{{ row.part_type }}</td>
-                  <td>
-                    {% if row.exact_number %}
-                      <span class="code-pill">{{ row.exact_number }}</span>
-                    {% else %}
-                      <span class="muted">не указан</span>
-                    {% endif %}
-                  </td>
-                  <td class="num--money">{{ row.value|money_int }}</td>
-                </tr>
-              {% empty %}
-                <tr>
-                  <td colspan="3" class="muted">Нет данных за период.</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        {% endif %}
+    <div class="page-header">
+      <h2 class="page-title">Популярные детали</h2>
+      <div class="segmented"
+           role="tablist"
+           aria-label="Сортировка популярных деталей">
+        <button class="is-active" type="button" data-popular-tab="revenue">По выручке</button>
+        <button type="button" data-popular-tab="quantity">По количеству</button>
       </div>
-      <div>
-        <h3>По количеству</h3>
+    </div>
+    <div data-popular-panel="revenue">
+      {% if show_costs %}
         <table class="table">
           <thead>
             <tr>
               <th>Название детали</th>
               <th>Артикул</th>
-              <th class="num--qty">Кол-во</th>
+              <th class="num--money">Выручка (₽)</th>
             </tr>
           </thead>
           <tbody>
-            {% for row in report.sales.top_by_quantity %}
+            {% for row in report.sales.top_by_revenue %}
               <tr>
                 <td>{{ row.part_type }}</td>
                 <td>
@@ -134,7 +108,7 @@
                     <span class="muted">не указан</span>
                   {% endif %}
                 </td>
-                <td class="num--qty">{{ row.value|quantity_int }}</td>
+                <td class="num--money">{{ row.value|money_int }}</td>
               </tr>
             {% empty %}
               <tr>
@@ -143,7 +117,37 @@
             {% endfor %}
           </tbody>
         </table>
-      </div>
+      {% endif %}
+    </div>
+    <div data-popular-panel="quantity" hidden>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Название детали</th>
+            <th>Артикул</th>
+            <th class="num--qty">Кол-во</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.sales.top_by_quantity %}
+            <tr>
+              <td>{{ row.part_type }}</td>
+              <td>
+                {% if row.exact_number %}
+                  <span class="code-pill">{{ row.exact_number }}</span>
+                {% else %}
+                  <span class="muted">не указан</span>
+                {% endif %}
+              </td>
+              <td class="num--qty">{{ row.value|quantity_int }}</td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="3" class="muted">Нет данных за период.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </section>
   <details class="dashboard-section">
@@ -265,4 +269,16 @@
       </tbody>
     </table>
   </details>
+  <script>
+    document.querySelectorAll("[data-popular-tab]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-popular-tab]").forEach((item) => {
+          item.classList.toggle("is-active", item === button);
+        });
+        document.querySelectorAll("[data-popular-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.popularPanel !== button.dataset.popularTab;
+        });
+      });
+    });
+  </script>
 {% endblock %}

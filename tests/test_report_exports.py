@@ -164,6 +164,7 @@ def test_manager_export_has_financial_columns(make_user, client, data):
     assert "Себестоимость (₽)" in text
     assert "Валовая прибыль (₽)" not in text
     assert "Прибыль (₽)" in text
+    assert "Строк без подтверждённой базы прибыли" in text
     assert "900" in text
     assert "900,00" not in text
 
