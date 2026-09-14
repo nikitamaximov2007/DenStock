@@ -2,9 +2,12 @@
 
 import hashlib
 import json
+import re
 import secrets
 from dataclasses import asdict, dataclass
 from decimal import Decimal
+
+from django.db.models import Sum
 
 from apps.actions.services import stock_overview
 from apps.brp.models import BrpCatalogPart, BrpPartLink
@@ -12,7 +15,7 @@ from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_ru
 from apps.catalog.models import PartNumber, PartType, normalize_number
 from apps.catalog.services import get_current_price_settings
 from apps.counting.services import find_brp_price_source
-from apps.inventory.models import PartPreferredLocation
+from apps.inventory.models import PartPreferredLocation, StockLot
 from apps.inventory.presentation import part_exact_number
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
@@ -24,6 +27,7 @@ from apps.warehouse.services import (
 )
 
 from .part_lookup import clean_lookup_value, resolve_part_lookup
+from .templatetags.number_format import quantity_int
 
 QUEUE_SESSION_KEY = "batch_receiving_queue_v1"
 PENDING_SESSION_KEY = "batch_receiving_candidates_v1"
@@ -31,6 +35,13 @@ PENDING_SESSION_KEY = "batch_receiving_candidates_v1"
 
 class ReceivingQueueError(Exception):
     pass
+
+
+class QueueLineNotFound(ReceivingQueueError):
+    """The line was already merged, posted, removed, or cleared in another tab."""
+
+
+RECEIVING_LOCATION_LIMIT = 300
 
 
 @dataclass(frozen=True)
@@ -219,21 +230,39 @@ def save_queue(session, queue: dict) -> None:
     session.modified = True
 
 
+_NATURAL_CHUNK = re.compile(r"(\d+)")
+
+
+def natural_code_key(code: str) -> tuple:
+    """Order cell codes as people read them: 1-2-10 after 1-2-9, not after 1-2-1."""
+    return tuple(
+        (0, int(chunk), "") if chunk.isdigit() else (1, 0, chunk.upper())
+        for chunk in _NATURAL_CHUNK.split(code or "")
+        if chunk
+    )
+
+
+def location_sort_key(location: StorageLocation) -> tuple:
+    return natural_code_key(location.short_code), location.code
+
+
 def _serialized_locations(part_id: int | None) -> list[dict]:
     if not part_id:
         return []
     overview = stock_overview(PartType.objects.get(pk=part_id))
+    rows = sorted(overview["locations"], key=lambda row: location_sort_key(row["location"]))
     return [
         {
             "id": row["location"].pk,
             "code": row["location"].code,
+            "short_code": row["location"].short_code,
             "name": row["location"].name,
             "physical": str(row["physical"]),
             "reserved": str(row["reserved"]),
             "available": str(row["available"]),
             "is_usable": row["location"].can_hold_stock(),
         }
-        for row in overview["locations"]
+        for row in rows
     ]
 
 
@@ -252,6 +281,7 @@ def _location_guidance(part_id: int | None) -> dict:
         preferred = {
             "id": preference.location_id,
             "code": preference.location.short_code,
+            "short_code": preference.location.short_code,
             "name": preference.location.name,
             "is_usable": preference.location.can_hold_stock(),
         }
@@ -327,7 +357,30 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
         ),
         None,
     )
+    keep_chosen_location = False
+    if existing is None and location_id is None:
+        # The stock alone cannot pick a cell (several current cells, none, or
+        # an archived preference), but the operator already chose one for this
+        # exact identity in this queue. Another scan of the same part is one
+        # more unit for that choice, not a new "choose a cell" line.
+        chosen = [
+            line
+            for line in queue["lines"].values()
+            if line.get("location_mode") == "selected"
+            and line.get("location_id") is not None
+            and _queue_merge_key(
+                line["source"], line["source_id"], line.get("exact_number", ""), None
+            )
+            == candidate_key
+        ]
+        if len(chosen) == 1:
+            existing = chosen[0]
+            keep_chosen_location = True
     if existing is not None:
+        chosen_location = {
+            key: existing.get(key)
+            for key in ("location_id", "location_mode", "location_recommended")
+        }
         existing["quantity"] += 1
         existing.update(
             manufacturer=candidate.manufacturer,
@@ -336,6 +389,8 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
             exact_number=candidate.exact_number,
             **guidance,
         )
+        if keep_chosen_location:
+            existing.update(chosen_location)
         added_new = False
         line = existing
     else:
@@ -425,11 +480,61 @@ def clear_queue(session) -> None:
     session.pop(PENDING_SESSION_KEY, None)
 
 
+def receiving_location_options(
+    locations, part_id: int | None, limit: int = RECEIVING_LOCATION_LIMIT
+):
+    """Cells for the receiving picker in three fixed-cost queries.
+
+    Order: cells where the part already lies, then its preferred cell, then
+    every other cell; each group in natural code order. `locations` is the
+    already permission- and search-filtered queryset of usable cells.
+    """
+    rows = list(locations.only("pk", "code", "barcode", "name"))
+    physical: dict[int, Decimal] = {}
+    preferred_id = None
+    if part_id:
+        physical = {
+            row["location_id"]: row["physical"]
+            for row in StockLot.objects.filter(
+                part_type_id=part_id, status=StockLot.Status.AVAILABLE, quantity__gt=0
+            )
+            .values("location_id")
+            .annotate(physical=Sum("quantity"))
+        }
+        preferred_id = (
+            PartPreferredLocation.objects.filter(part_type_id=part_id)
+            .values_list("location_id", flat=True)
+            .first()
+        )
+
+    def group(location) -> str:
+        if location.pk in physical:
+            return "current"
+        if location.pk == preferred_id:
+            return "preferred"
+        return "other"
+
+    rank = {"current": 0, "preferred": 1, "other": 2}
+    rows.sort(key=lambda location: (rank[group(location)], location_sort_key(location)))
+    results = [
+        {
+            "id": location.pk,
+            "code": location.short_code,
+            "barcode": location.barcode,
+            "name": location.name,
+            "group": group(location),
+            "physical": str(quantity_int(physical[location.pk])) if location.pk in physical else "",
+        }
+        for location in rows[:limit]
+    ]
+    return {"results": results, "total": len(rows), "truncated": len(rows) > limit}
+
+
 def assign_location(session, line_id: str, *, location_id=None, location_code="") -> str:
     queue = load_queue(session)
     line = queue["lines"].get(line_id)
     if line is None:
-        raise ReceivingQueueError("Строка очереди не найдена.")
+        raise QueueLineNotFound("Строка очереди не найдена.")
     candidate = resolve_queue_reference(line)
     selected_by_id = (
         StorageLocation.objects.filter(pk=location_id).first()
@@ -491,7 +596,7 @@ def assign_location(session, line_id: str, *, location_id=None, location_code=""
         line.pop("location_change_previous", None)
     queue["group_tokens"] = {}
     save_queue(session, queue)
-    return location.code
+    return location.short_code
 
 
 def unassign_location(session, line_id: str) -> None:
@@ -541,12 +646,16 @@ def cancel_location_change(session, line_id: str) -> str:
     line.pop("location_change_previous", None)
     queue["group_tokens"] = {}
     save_queue(session, queue)
-    return location.code
+    return location.short_code
 
 
 def _line_context(line: dict) -> dict:
     row = dict(line)
     row["unit_price_decimal"] = Decimal(line.get("unit_price") or "0")
+    preferred_id = (line.get("preferred_location") or {}).get("id")
+    row["preferred_is_choice"] = any(
+        choice.get("id") == preferred_id for choice in line.get("location_choices") or []
+    )
     row["total_price"] = row["unit_price_decimal"] * Decimal(line["quantity"])
     return row
 

@@ -63,6 +63,7 @@ from apps.warehouse.services import (
 from .models import UnresolvedScan
 from .part_lookup import MatchSource, clean_lookup_value, part_not_found_message
 from .receiving_queue import (
+    QueueLineNotFound,
     ReceivingQueueError,
     _location_guidance,
     add_candidate,
@@ -75,6 +76,7 @@ from .receiving_queue import (
     pending_context,
     pop_pending_candidate,
     queue_context,
+    receiving_location_options,
     remove_line,
     remove_posted_group,
     store_pending_candidates,
@@ -218,6 +220,24 @@ def scanner_receiving_location_guidance(request: HttpRequest) -> JsonResponse:
                 else None
             ),
         }
+    )
+
+
+@login_required
+@require_GET
+def scanner_receiving_locations(request: HttpRequest) -> JsonResponse:
+    """Read-only cell list for the receiving picker; nothing is assigned here.
+
+    Cells where the part already lies come first, then its preferred cell, then
+    the rest. Assignment still goes through the POST queue_assign action.
+    """
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    locations = _search_locations(
+        _move_destination_queryset(request.user), request.GET.get("q", "")
+    )
+    return JsonResponse(
+        receiving_location_options(locations, _int(request.GET.get("part")))
     )
 
 
@@ -583,6 +603,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
     kind, obj, location = "", None, None
     candidates: list = []
     error = ""
+    error_line_id = ""
 
     if request.method == "POST":
         action = request.POST.get("action", "")
@@ -607,12 +628,22 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
                 messages.success(request, "Количество в очереди обновлено.")
                 return redirect("scanner_receiving")
             if action == "queue_assign":
-                code = assign_location(
-                    request.session,
-                    request.POST.get("line_id", ""),
-                    location_id=_int(request.POST.get("location_id")),
-                    location_code=request.POST.get("location_code", ""),
-                )
+                try:
+                    code = assign_location(
+                        request.session,
+                        request.POST.get("line_id", ""),
+                        location_id=_int(request.POST.get("location_id")),
+                        location_code=request.POST.get("location_code", ""),
+                    )
+                except QueueLineNotFound:
+                    # A repeated click, another tab, or a merge already consumed
+                    # this line: show the current queue instead of a stale form.
+                    messages.warning(
+                        request,
+                        "Эта строка уже изменена в другой вкладке или объединена. "
+                        "Показано актуальное состояние приёмки.",
+                    )
+                    return redirect("scanner_receiving")
                 messages.success(request, f"Деталь будет добавлена в {code}.")
                 return redirect("scanner_receiving")
             if action == "queue_unassign":
@@ -641,6 +672,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
                     return redirect("scanner_receiving")
         except ReceivingQueueError as exc:
             error = str(exc)
+            error_line_id = request.POST.get("line_id", "")
 
         kind, obj, location = _load_operation(request)
 
@@ -776,6 +808,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
         "catalog_choice": pending_context(request.session),
         "receiving_queue": queue_context(request.session),
         "error": error,
+        "error_line_id": error_line_id,
         "receiving_lots": receiving_lots,
         "history": history,
         "found_history": found_history,
@@ -848,6 +881,24 @@ def _resolve_move_destination(raw):
     return location, ""
 
 
+def _search_locations(locations, raw_query):
+    """Filter cells by operator 1-1-1, stored S01-D01-C01, barcode or active alias."""
+    query = clean_lookup_value(raw_query)
+    if not query:
+        return locations
+    # Поиск принимает и операторский 1-1-1, и хранимый S01-D01-C01.
+    from apps.warehouse.addresses import normalize_address_input
+
+    terms = {query, normalize_address_input(query)}
+    code_match = Q()
+    for term in terms:
+        code_match |= Q(code__icontains=term) | Q(barcode__icontains=term)
+    alias_location_ids = StorageLocationAlias.objects.filter(
+        code_match, is_active=True
+    ).values("location_id")
+    return locations.filter(code_match | Q(pk__in=alias_location_ids))
+
+
 def _move_object_totals(kind, obj):
     if obj is None:
         return None, None
@@ -888,23 +939,11 @@ def _move_destination_from_post(request):
 def scanner_move_locations(request: HttpRequest) -> JsonResponse:
     if not request.user.can_manage_inventory:
         raise PermissionDenied
-    query = clean_lookup_value(request.GET.get("q", ""))
     exclude_id = _int(request.GET.get("exclude"))
     locations = _move_destination_queryset(request.user)
     if exclude_id is not None:
         locations = locations.exclude(pk=exclude_id)
-    if query:
-        # Поиск принимает и операторский 1-1-1, и хранимый S01-D01-C01.
-        from apps.warehouse.addresses import normalize_address_input
-
-        terms = {query, normalize_address_input(query)}
-        code_match = Q()
-        for term in terms:
-            code_match |= Q(code__icontains=term) | Q(barcode__icontains=term)
-        alias_location_ids = StorageLocationAlias.objects.filter(
-            code_match, is_active=True
-        ).values("location_id")
-        locations = locations.filter(code_match | Q(pk__in=alias_location_ids))
+    locations = _search_locations(locations, request.GET.get("q", ""))
     rows = locations.order_by("code", "pk")[:50]
     return JsonResponse(
         {
