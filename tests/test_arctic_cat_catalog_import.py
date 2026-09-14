@@ -89,7 +89,8 @@ def test_valid_usprice_is_dry_run_then_creates_private_source_facts_only(boss):
     assert entry.source_description == "KEY, TORQUE BRK"
     assert entry.package_quantity == "5"
     assert entry.dealer_price_usd == Decimal("1.61")
-    assert entry.part.recommended_price is None
+    assert entry.part.recommended_price is not None
+    assert entry.part.price_provenance == PartType.PriceProvenance.FORMULA_CERTIFIED
     assert not entry.part.is_public
     assert entry.part.numbers.get(kind=PartNumber.Kind.ARTICLE).value == "0101-045"
     assert _stock_snapshot() == before
@@ -140,13 +141,12 @@ def test_unavailable_reimport_never_erases_a_known_positive_supplier_price(boss)
     assert entry.dealer_price_state == "known"
 
 
-def test_exact_replacement_is_stored_without_creating_missing_target(boss):
-    _apply(boss, [["0101-058", "R/B 0101-055", "1", "0"]])
-    entry = ArcticCatCatalogPart.objects.get()
-    assert entry.replacement_article == "0101-055"
-    assert entry.normalized_replacement_article == "0101055"
-    assert ArcticCatCatalogPart.objects.count() == 1
-    assert not ArcticCatCatalogPart.objects.filter(supplier_article="0101-055").exists()
+def test_exact_replacement_is_skipped_without_creating_any_record(boss):
+    _send(boss, [["0101-058", "R/B 0101-055", "1", "0"]])
+    batch = CatalogImportBatch.objects.get()
+    assert batch.summary["skipped_rb"] == 1
+    assert batch.summary["valid"] == 0
+    assert not ArcticCatCatalogPart.objects.exists()
 
 
 def test_malformed_replacement_is_a_warning_and_stays_plain_description(boss):
@@ -161,11 +161,10 @@ def test_malformed_replacement_is_a_warning_and_stays_plain_description(boss):
     assert entry.replacement_article == ""
 
 
-def test_real_style_alphanumeric_replacement_is_exactly_recognized(boss):
-    _apply(boss, [["0409-200", "R/B H680507", "1", "348.58"]])
-    entry = ArcticCatCatalogPart.objects.get()
-    assert entry.replacement_article == "H680507"
-    assert entry.normalized_replacement_article == "H680507"
+def test_real_style_alphanumeric_replacement_is_skipped(boss):
+    _send(boss, [["0409-200", "R/B H680507", "1", "348.58"]])
+    assert CatalogImportBatch.objects.get().summary["skipped_rb"] == 1
+    assert not ArcticCatCatalogPart.objects.exists()
 
 
 def test_invalid_package_quantity_is_a_warning_and_never_stock(boss):
@@ -194,15 +193,8 @@ def test_duplicates_are_reported_and_conflicts_are_never_arbitrarily_applied(bos
 
 def test_changes_are_classified_and_repeated_file_is_idempotent(boss):
     _apply(boss, [["0101-045", "OLD", "5", "1.61"]])
-    changed = _apply(boss, [["0101-045", "R/B 0101-055", "10", "2.00"]])
-    assert changed.apply_summary["existing"] == 1
-    assert changed.apply_summary["description_changed"] == 1
-    assert changed.apply_summary["package_quantity_changed"] == 1
-    assert changed.apply_summary["price_changed"] == 1
-    assert changed.apply_summary["replacement_changed"] == 1
-
-    repeat = _apply(boss, [["0101-045", "R/B 0101-055", "10", "2.00"]])
-    assert repeat.apply_summary["unchanged"] == 1
+    _send(boss, [["0101-045", "R/B 0101-055", "10", "2.00"]])
+    assert CatalogImportBatch.objects.latest("pk").summary["skipped_rb"] == 1
     assert ArcticCatCatalogPart.objects.count() == 1
 
 
