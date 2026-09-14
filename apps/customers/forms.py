@@ -13,17 +13,17 @@ class CustomerForm(PhoneFormMixin, forms.ModelForm):
 
     class Meta:
         model = Customer
-        fields = ["name", "phone", "comment"]
-        # Заметка о клиенте у оператора называется описанием и живёт в
-        # существующем поле comment: заводить рядом второе поле того же смысла
-        # незачем. Видно оно только в карточке и её правке.
-        labels = {"comment": "Описание клиента"}
+        fields = ["name", "phone", "city", "equipment", "vin", "mileage_at_arrival", "comment"]
         help_texts = {"phone": PHONE_HELP_TEXT}
         widgets = {
             "name": forms.TextInput(attrs={"placeholder": "Иванов Иван", "autofocus": True}),
             "phone": PhoneInput(),
+            "city": forms.TextInput(attrs={"autocomplete": "address-level2"}),
+            "equipment": forms.TextInput(attrs={"placeholder": "Например, BRP Ski-Doo Summit"}),
+            "vin": forms.TextInput(attrs={"autocomplete": "off"}),
+            "mileage_at_arrival": forms.NumberInput(attrs={"min": 0, "step": 1}),
             "comment": forms.Textarea(
-                attrs={"rows": 3, "placeholder": "Чем занимается, какая техника, особенности"}
+                attrs={"rows": 3, "placeholder": "Дополнительная информация о клиенте"}
             ),
         }
 

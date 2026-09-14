@@ -37,7 +37,31 @@
           </span>
         </p>
         <p>
-          <label for="{{ form.comment.id_for_label }}">Описание клиента</label>
+          <label for="{{ form.city.id_for_label }}">Город</label>
+          <br>
+          {{ form.city }}
+          {{ form.city.errors }}
+        </p>
+        <p>
+          <label for="{{ form.equipment.id_for_label }}">Техника</label>
+          <br>
+          {{ form.equipment }}
+          {{ form.equipment.errors }}
+        </p>
+        <p>
+          <label for="{{ form.vin.id_for_label }}">VIN</label>
+          <br>
+          {{ form.vin }}
+          {{ form.vin.errors }}
+        </p>
+        <p>
+          <label for="{{ form.mileage_at_arrival.id_for_label }}">Пробег</label>
+          <br>
+          {{ form.mileage_at_arrival }}
+          {{ form.mileage_at_arrival.errors }}
+        </p>
+        <p>
+          <label for="{{ form.comment.id_for_label }}">Комментарий</label>
           <br>
           {{ form.comment }}
           {{ form.comment.errors }}
