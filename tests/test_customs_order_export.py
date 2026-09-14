@@ -1,5 +1,6 @@
 """Сохранённый заказ выгружается целиком с неизменными данными и оформлением."""
 
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import openpyxl
@@ -46,6 +47,18 @@ def _article_rows(sheet):
     return [row for row in range(10, sheet.max_row) if sheet[f"B{row}"].value is not None]
 
 
+def _export_rows(order, sheet_name="Оригиналы"):
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))[sheet_name]
+    return [
+        tuple(sheet[f"{column}{row}"].value for column in "BCDEFGHIJKLM")
+        for row in _article_rows(sheet)
+    ]
+
+
+def _occurred(day, hour=12):
+    return datetime(2026, 9, day, hour, tzinfo=UTC)
+
+
 def test_order_export_aggregates_identical_snapshots_and_keeps_analog_split(order):
     _line(order)
     _line(
@@ -55,13 +68,13 @@ def test_order_export_aggregates_identical_snapshots_and_keeps_analog_split(orde
     _line(
         order, 2, article="SM-01357", manufacturer="SPI", is_analog=True,
         name_ru="СТАТОР SKI-DOO", name_en="SPI STATOR SKI-DOO", country="",
-        quantity=Decimal("1.000"), wholesale_usd=Decimal("203.2600"),
+        quantity=Decimal("1.000"), wholesale_usd=Decimal("203.2600"), occurred_at=_occurred(7),
     )
     _line(
         order, source=CustomsOrderLine.Source.REPAIR, article="SM-09374",
         manufacturer="SPI", is_analog=True, country="", quantity=Decimal("2.000"),
         name_ru="ЩЕКА КОЛЕНЧАТОГО ВАЛА", name_en="SPI PTO CRANK WEB",
-        wholesale_usd=Decimal("127.2100"),
+        wholesale_usd=Decimal("127.2100"), occurred_at=_occurred(9),
     )
     other_order = CustomsOrder.objects.create(number=126, fx_rate=Decimal("98"))
     _line(other_order, 999, article="NOT-IN-125")
@@ -129,6 +142,97 @@ def test_order_export_never_aggregates_lines_without_a_canonical_article(order):
 
     sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
     assert [sheet[f"J{row}"].value for row in (10, 11)] == [1, 2]
+
+
+def test_order_export_orders_each_section_by_frozen_history_chronology(order):
+    # Insert deliberately out of source-operation order.  Query/PK order must
+    # have no effect on the XLSX sequence.
+    _line(order, 30, article="LATE", occurred_at=_occurred(12))
+    _line(order, 10, article="EARLY", occurred_at=_occurred(7))
+    _line(order, 20, article="MIDDLE", occurred_at=_occurred(9))
+    _line(order, 40, article="ANALOG-LATE", is_analog=True, occurred_at=_occurred(12))
+    _line(order, 11, article="ANALOG-EARLY", is_analog=True, occurred_at=_occurred(7))
+
+    assert [row[0] for row in _export_rows(order)] == ["EARLY", "MIDDLE", "LATE"]
+    assert [row[0] for row in _export_rows(order, "Аналоги")] == [
+        "ANALOG-EARLY", "ANALOG-LATE",
+    ]
+
+
+def test_order_export_aggregated_row_uses_earliest_member_chronology(order):
+    _line(order, 30, article="MERGED", quantity=Decimal("2"), occurred_at=_occurred(12))
+    _line(order, 10, article="MERGED", quantity=Decimal("3"), occurred_at=_occurred(7))
+    _line(order, 20, article="BETWEEN", occurred_at=_occurred(9))
+
+    rows = _export_rows(order)
+    assert [row[0] for row in rows] == ["MERGED", "BETWEEN"]
+    assert rows[0][8] == 5
+
+
+def test_order_export_merged_article_sorts_by_its_first_operation_date(order):
+    # Y is inserted first, so a PK/first-seen order would put it on top.
+    _line(order, 30, article="Y", quantity=Decimal("1"), occurred_at=_occurred(8))
+    _line(order, 20, article="X", quantity=Decimal("2"), occurred_at=_occurred(10))
+    _line(order, 10, article="X", quantity=Decimal("1"), occurred_at=_occurred(7))
+
+    rows = _export_rows(order)
+    assert [(row[0], row[8]) for row in rows] == [("X", 3), ("Y", 1)]
+
+
+def test_order_export_keeps_price_and_metadata_conflicts_in_chronological_order(order):
+    _line(
+        order, 30, article="CONFLICT", country="JAPAN", wholesale_usd=Decimal("12"),
+        occurred_at=_occurred(12),
+    )
+    _line(order, 20, article="BETWEEN", occurred_at=_occurred(9))
+    _line(
+        order, 10, article="CONFLICT", country="CANADA", wholesale_usd=Decimal("10"),
+        occurred_at=_occurred(7),
+    )
+
+    rows = _export_rows(order)
+    assert [(row[0], row[4], row[9]) for row in rows] == [
+        ("CONFLICT", "CANADA", 10),
+        ("BETWEEN", "CANADA", 10.25),
+        ("CONFLICT", "JAPAN", 12),
+    ]
+
+
+def test_order_export_different_price_rows_each_take_their_own_first_date(order):
+    _line(order, 40, article="PRICED", wholesale_usd=Decimal("12"), occurred_at=_occurred(8))
+    _line(order, 30, article="PRICED", wholesale_usd=Decimal("10"), occurred_at=_occurred(11))
+    _line(order, 20, article="OTHER", occurred_at=_occurred(9))
+    _line(order, 10, article="PRICED", wholesale_usd=Decimal("12"), occurred_at=_occurred(12))
+
+    rows = _export_rows(order)
+    assert [(row[0], row[8], row[9]) for row in rows] == [
+        ("PRICED", 5, 12), ("OTHER", 2.5, 10.25), ("PRICED", 2.5, 10),
+    ]
+
+
+def test_order_export_same_price_metadata_conflict_rows_keep_chronology(order):
+    _line(order, 30, article="META", country="JAPAN", occurred_at=_occurred(7))
+    _line(order, 20, article="OTHER", occurred_at=_occurred(8))
+    _line(order, 10, article="META", country="CANADA", occurred_at=_occurred(9))
+
+    rows = _export_rows(order)
+    assert [(row[0], row[4]) for row in rows] == [
+        ("META", "JAPAN"), ("OTHER", "CANADA"), ("META", "CANADA"),
+    ]
+
+
+def test_order_export_breaks_same_datetime_ties_like_customs_history(order):
+    occurred_at = _occurred(7)
+    _line(order, 30, article="SALE-LATE-ID", occurred_at=occurred_at)
+    _line(order, 10, article="SALE-EARLY-ID", occurred_at=occurred_at)
+    _line(
+        order, 1, source=CustomsOrderLine.Source.REPAIR, article="REPAIR-FIRST",
+        occurred_at=occurred_at,
+    )
+
+    assert [row[0] for row in _export_rows(order)] == [
+        "REPAIR-FIRST", "SALE-EARLY-ID", "SALE-LATE-ID",
+    ]
 
 
 @pytest.mark.parametrize("classification", [None, False, True])
