@@ -18,6 +18,7 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 
+from apps.brp.pricing import current_customer_price_rub
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit, normalize_number
 
 from .models import ArcticCatCatalogPart
@@ -95,6 +96,7 @@ class Plan:
     duplicate_part_numbers: int = 0
     warnings: int = 0
     errors: int = 0
+    skipped_rb: int = 0
     problems: list[Problem] = field(default_factory=list)
 
     def problem(self, row: int, reason: str, detail: str = "", *, error: bool) -> None:
@@ -128,6 +130,7 @@ class Plan:
             "duplicate_part_numbers": self.duplicate_part_numbers,
             "warnings": self.warnings,
             "errors": self.errors,
+            "skipped_rb": self.skipped_rb,
             "currency": "USD",
             "price_policy": "raw_supplier_only",
             "stock_changes": False,
@@ -296,6 +299,11 @@ def _read(path: Path) -> tuple[list[IncomingRow], Plan]:
             replacement_article, normalized_replacement, replacement_warning = _replacement(
                 description
             )
+            if replacement_article:
+                # Owner-confirmed: an exact R/B source row is not a saleable
+                # article and must not create an identity or price fact.
+                plan.skipped_rb += 1
+                continue
             if replacement_warning:
                 plan.problem(
                     row_number,
@@ -429,8 +437,13 @@ def apply_file(path) -> dict:
             manufacturer=manufacturer,
             unit=unit,
             tracking_mode=PartType.TrackingMode.BULK,
-            # Supplier dealer price is deliberately not a customer-price policy.
-            recommended_price=None,
+            recommended_price=current_customer_price_rub(record.dealer_price_usd),
+            certified_price_rub=current_customer_price_rub(record.dealer_price_usd),
+            price_provenance=(
+                PartType.PriceProvenance.FORMULA_CERTIFIED
+                if record.dealer_price_usd is not None and record.dealer_price_usd > 0
+                else PartType.PriceProvenance.SOURCE_MISSING
+            ),
             # Public exposure remains a separate explicit eligibility decision.
             is_public=False,
         )
