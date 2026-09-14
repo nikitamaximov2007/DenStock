@@ -84,6 +84,40 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Started only with `--profile telegram-bot`. Long polling: no port, no
+  # webhook route. Exactly ONE replica per bot token: the worker holds a
+  # PostgreSQL advisory lock plus a lease and exits if another consumer runs.
+  # The token lives only in .env.telegram (mode 600), so web and catalog-web
+  # never receive it.
+  telegram-bot:
+    profiles: ["telegram-bot"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    # Plain manage.py: migrations and collectstatic belong to the web release.
+    entrypoint: ["python", "manage.py"]
+    command: ["run_telegram_bot"]
+    env_file:
+      - path: .env
+      - path: .env.telegram
+        required: false
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 40s
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,sys,time; p=os.environ.get('TELEGRAM_BOT_HEARTBEAT_FILE','/tmp/denstock-telegram-bot.heartbeat'); sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 90 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   proxy:
     image: caddy:2
     depends_on:

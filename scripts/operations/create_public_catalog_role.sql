@@ -86,9 +86,15 @@ BEGIN
     -- submission key hash); names, phones and comments stay unreadable, so a
     -- compromised public process cannot list earlier requests. Identity
     -- columns need no sequence privilege.
+    -- A Telegram-preference request also stores, in the same transaction, its
+    -- waiting conversation, the operators' notification (outbox) and the
+    -- customer's one-time link token (hash only). INSERT only here as well:
+    -- the bot runs with the internal role and alone reads or updates them.
     EXECUTE format(
         'GRANT INSERT ON TABLE customer_requests_customerrequest, '
-        'customer_requests_customerrequestline TO %I',
+        'customer_requests_customerrequestline, '
+        'customer_requests_telegramconversation, customer_requests_telegramoutboxevent, '
+        'customer_requests_customerrequestmessengerlinktoken TO %I',
         role_name
     );
     EXECUTE format(
@@ -96,7 +102,12 @@ BEGIN
         'ON TABLE customer_requests_customerrequest TO %I',
         role_name
     );
-    EXECUTE format('GRANT SELECT (id) ON TABLE customer_requests_customerrequestline TO %I', role_name);
+    EXECUTE format(
+        'GRANT SELECT (id) ON TABLE customer_requests_customerrequestline, '
+        'customer_requests_telegramconversation, customer_requests_telegramoutboxevent, '
+        'customer_requests_customerrequestmessengerlinktoken TO %I',
+        role_name
+    );
 
     -- Customer requests are business data, so the global write guard wraps
     -- that INSERT: it checks the deployment write state (a frozen or failed-

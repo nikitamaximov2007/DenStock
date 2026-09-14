@@ -26,6 +26,40 @@
     <p>Отправьте клиенту эту одноразовую ссылку: <a href="{{ telegram_start_link }}" rel="noopener">Открыть Telegram</a></p>
   {% endif %}
   {% if customer_request.comment %}<p>Комментарий: {{ customer_request.comment }}</p>{% endif %}
+  {% if telegram_conversation %}
+    <section class="telegram-history" data-telegram-history>
+      <h2>Переписка Telegram</h2>
+      <p>
+        {{ telegram_conversation.get_status_display }}
+        {% if telegram_conversation.linked_at %}· подключён {{ telegram_conversation.linked_at|ru_dt }}{% endif %}
+        {% if telegram_conversation.customer_username %}· @{{ telegram_conversation.customer_username }}{% endif %}
+      </p>
+      {% if telegram_messages %}
+        <ol class="telegram-history__list">
+          {% for message in telegram_messages %}
+            <li class="telegram-history__item" data-direction="{{ message.direction }}">
+              <strong>
+                {% if message.direction == "customer_to_operator" %}
+                  Клиент
+                {% elif message.direction == "operator_to_customer" %}
+                  {{ message.operator_user.full_name|default:message.operator_user|default:"Сотрудник" }}
+                {% else %}
+                  Система
+                {% endif %}
+              </strong>
+              · {{ message.created_at|ru_dt }}
+              {% if message.direction != "customer_to_operator" and message.delivery_status != "sent" %}
+                · <span class="badge">{{ message.get_delivery_status_display }}</span>
+              {% endif %}
+              <div class="telegram-history__text">{{ message.text|linebreaksbr }}</div>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p>Сообщений пока нет.</p>
+      {% endif %}
+    </section>
+  {% endif %}
   <p class="page-subtitle">Цена и доступность ниже показаны для ориентира. Заявка не фиксирует цену и не резервирует складской остаток.</p>
   <table class="table">
     <thead>

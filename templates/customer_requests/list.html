@@ -3,6 +3,12 @@
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Заявки клиентов</h1>
+    {% if request.user.can_manage_users %}
+      <div class="page-actions">
+        <a class="btn btn--small btn--secondary"
+           href="{% url 'telegram_settings' %}">Telegram-бот</a>
+      </div>
+    {% endif %}
   </div>
   <p class="page-subtitle">Заявки из публичного каталога. Они не резервируют остатки и не являются оплатой или продажей.</p>
   {% if new_count %}<p><span class="badge">Новые: {{ new_count }}</span></p>{% endif %}

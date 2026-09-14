@@ -180,3 +180,33 @@ class RestoreJob(models.Model):
 
     def __str__(self) -> str:
         return f"{self.run_id} ({self.get_status_display()})"
+
+
+class TelegramBotRuntime(models.Model):
+    """Heartbeat, update offset and single-consumer lease of the request bot.
+
+    Operational state, deliberately outside the business apps: the heartbeat
+    moves every few seconds and must neither bump the business generation nor
+    change the backup fingerprint. Business rows (messages, deliveries) live in
+    ``customer_requests`` and stay guarded and fingerprinted.
+    """
+
+    SINGLETON_PK = 1
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=SINGLETON_PK, editable=False)
+    last_update_id = models.BigIntegerField("Последнее обработанное обновление", default=0)
+    worker_id = models.CharField("Экземпляр бота", max_length=64, blank=True)
+    lease_expires_at = models.DateTimeField("Аренда до", null=True, blank=True)
+    started_at = models.DateTimeField("Запущен", null=True, blank=True)
+    heartbeat_at = models.DateTimeField("Последний сигнал", null=True, blank=True)
+    last_update_at = models.DateTimeField("Последнее обновление Telegram", null=True, blank=True)
+    bot_username = models.CharField("Имя бота", max_length=64, blank=True)
+    last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
+    last_error_at = models.DateTimeField("Время ошибки", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Состояние Telegram-бота"
+        verbose_name_plural = "Состояние Telegram-бота"
+
+    def __str__(self) -> str:
+        return f"Telegram-бот {self.bot_username or ''}".strip()

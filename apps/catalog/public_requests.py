@@ -31,6 +31,11 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import connection, transaction
 
+from apps.customer_requests.messengers import (
+    MessengerLinkError,
+    issue_initial_telegram_link,
+    telegram_start_url,
+)
 from apps.customer_requests.models import CustomerRequest
 from apps.customer_requests.policies import current_consent_versions
 from apps.customer_requests.services import (
@@ -42,6 +47,10 @@ from apps.customer_requests.services import (
 from .public_cart import CART_SESSION_KEY, LINE_INQUIRY, CartView
 
 SUBMISSION_SESSION_KEY = "public_catalog_request_submission"
+# The one-time Telegram start token of the request this browser just sent. It
+# lives only in the customer's own signed cookie, next to the submission key,
+# and authorizes nothing beyond linking that one request to a Telegram chat.
+TELEGRAM_SESSION_KEY = "public_catalog_request_telegram"
 HONEYPOT_FIELD = "website"
 FORM_FIELDS = ("customer_name", "customer_phone", "preferred_messenger", "comment")
 
@@ -202,9 +211,38 @@ def send_cart(request, cart: CartView, submission: Submission, values) -> tuple[
             personal_data_consent_version=consent_version,
             submission_key=submission.token,
         )
+        telegram_token = ""
+        # `created` first: a retried request is read back with only its id and
+        # key, and the public role cannot read its other columns.
+        if created and customer_request.preferred_messenger == CustomerRequest.Messenger.TELEGRAM:
+            telegram_token = issue_initial_telegram_link(customer_request)
     public_id = str(customer_request.public_id)
     if created:
         _count(request)
+        request.session[TELEGRAM_SESSION_KEY] = {
+            "request": public_id,
+            "messenger": customer_request.preferred_messenger,
+            "token": telegram_token,
+        }
     request.session.pop(CART_SESSION_KEY, None)
     _store(request.session, Submission(submission.token, submission.cart, public_id))
     return public_id, created
+
+
+def telegram_success(session, public_id) -> dict:
+    """What the success page says about Telegram, from this browser's cookie only."""
+    stored = session.get(TELEGRAM_SESSION_KEY)
+    if (
+        not isinstance(stored, dict)
+        or stored.get("request") != str(public_id)
+        or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
+    ):
+        return {"telegram_selected": False, "telegram_link": None}
+    link = None
+    token = stored.get("token")
+    if isinstance(token, str) and token:
+        try:
+            link = telegram_start_url(token)
+        except MessengerLinkError:
+            link = None
+    return {"telegram_selected": True, "telegram_link": link}

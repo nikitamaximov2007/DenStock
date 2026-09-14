@@ -9,9 +9,30 @@
     <p class="request-done__number">
       Номер заявки <strong>{{ reference }}</strong>
     </p>
-    <p class="empty__text">
-      Менеджер свяжется с вами по телефону или в выбранном мессенджере и подтвердит наличие, цену и срок. Номер пригодится, если захотите уточнить заявку.
-    </p>
+    {% if telegram_selected %}
+      {% if telegram_link %}
+        <p class="empty__text">
+          Заявка создана. Чтобы менеджер мог ответить вам в Telegram, подключите Telegram к заявке.
+        </p>
+        <p>
+          <a class="btn btn--large"
+             href="{{ telegram_link }}"
+             rel="noopener noreferrer"
+             data-telegram-link>Продолжить в Telegram</a>
+        </p>
+        <p class="empty__text">
+          Откроется бот PRO-STOR: нажмите в нём «Запустить». Если не получится, менеджер свяжется с вами по телефону из заявки.
+        </p>
+      {% else %}
+        <p class="empty__text" data-telegram-unavailable>
+          Заявка создана. Telegram сейчас недоступен, мы сохранили заявку: менеджер свяжется с вами по телефону.
+        </p>
+      {% endif %}
+    {% else %}
+      <p class="empty__text">
+        Менеджер свяжется с вами по телефону или в выбранном мессенджере и подтвердит наличие, цену и срок. Номер пригодится, если захотите уточнить заявку.
+      </p>
+    {% endif %}
     <p class="empty__text">Заявка не резервирует детали и не является оплатой.</p>
     <a class="btn" href="{% url 'public_catalog_root' %}">Вернуться в каталог</a>
   </div>
