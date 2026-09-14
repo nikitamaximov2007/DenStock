@@ -46,7 +46,7 @@ def _article_rows(sheet):
     return [row for row in range(10, sheet.max_row) if sheet[f"B{row}"].value is not None]
 
 
-def test_order_export_keeps_exact_source_composition_and_analog_split(order):
+def test_order_export_aggregates_identical_snapshots_and_keeps_analog_split(order):
     _line(order)
     _line(
         order, source=CustomsOrderLine.Source.ORDERED, is_ordered=True,
@@ -69,14 +69,11 @@ def test_order_export_keeps_exact_source_composition_and_analog_split(order):
     book = openpyxl.load_workbook(export_customs_order_xlsx(order))
     assert book.sheetnames == ["Оригиналы", "Аналоги"]
     originals, analogs = book.worksheets
-    assert [originals[f"B{row}"].value for row in _article_rows(originals)] == [
-        "420001234", "420001234",
-    ]
+    assert [originals[f"B{row}"].value for row in _article_rows(originals)] == ["420001234"]
     assert [analogs[f"B{row}"].value for row in _article_rows(analogs)] == [
         "SM-01357", "SM-09374",
     ]
-    assert originals["B10"].fill.fgColor.rgb != "FFC6EFCE"
-    assert originals["B11"].fill.fgColor.rgb == "FFC6EFCE"
+    assert originals["B10"].fill.fgColor.rgb == "FFC6EFCE"
     assert analogs["B10"].fill.fgColor.rgb != "FFC6EFCE"
     assert analogs["B11"].fill.fgColor.rgb != "FFC6EFCE"
     assert analogs["K10"].value == 203.26
@@ -86,7 +83,52 @@ def test_order_export_keeps_exact_source_composition_and_analog_split(order):
         for sheet in book for row in _article_rows(sheet)
     )
     assert exported_quantity == Decimal("6.500")
-    assert sum(len(_article_rows(sheet)) for sheet in book) == order.lines.count()
+    assert originals["J10"].value == 3.5
+    assert sum(len(_article_rows(sheet)) for sheet in book) == 3
+
+
+def test_order_export_splits_same_article_when_unit_price_conflicts(order):
+    _line(order, wholesale_usd=Decimal("10.2500"), quantity=Decimal("2"))
+    _line(order, 2, wholesale_usd=Decimal("12.5000"), quantity=Decimal("3"))
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert [sheet[f"J{row}"].value for row in _article_rows(sheet)] == [2, 3]
+    assert [sheet[f"K{row}"].value for row in _article_rows(sheet)] == [10.25, 12.5]
+
+
+def test_order_export_promotes_one_unambiguous_populated_metadata_value(order):
+    _line(order, application_area="", gross_weight_kg=None, net_weight_kg=None)
+    _line(
+        order, 2, application_area="КВАДРОЦИКЛ", gross_weight_kg=Decimal("0.456"),
+        net_weight_kg=Decimal("0.321"),
+    )
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert _article_rows(sheet) == [10]
+    assert sheet["J10"].value == 5
+    assert sheet["G10"].value == 0.456
+    assert sheet["H10"].value == 0.321
+    assert sheet["M10"].value == "КВАДРОЦИКЛ"
+
+
+def test_order_export_does_not_silently_merge_conflicting_metadata(order):
+    _line(order, country="CANADA", application_area="СНЕГОХОД")
+    _line(order, 2, country="JAPAN", application_area="КВАДРОЦИКЛ")
+    _line(order, 3, country="", application_area="")
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert [sheet[f"F{row}"].value for row in _article_rows(sheet)] == ["CANADA", "JAPAN", None]
+    assert [sheet[f"M{row}"].value for row in _article_rows(sheet)] == [
+        "СНЕГОХОД", "КВАДРОЦИКЛ", None,
+    ]
+
+
+def test_order_export_never_aggregates_lines_without_a_canonical_article(order):
+    _line(order, article="", quantity=Decimal("1"))
+    _line(order, 2, article="", quantity=Decimal("2"))
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert [sheet[f"J{row}"].value for row in (10, 11)] == [1, 2]
 
 
 @pytest.mark.parametrize("classification", [None, False, True])
