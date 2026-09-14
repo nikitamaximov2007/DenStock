@@ -5,11 +5,10 @@ from io import BytesIO
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.urls import reverse
-from openpyxl import Workbook
-
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
+from openpyxl import Workbook
 
 from apps.brp.models import BrpPricingSettings
 from apps.brp.pricing import customer_price_rub
@@ -21,10 +20,10 @@ from apps.catalog.services import (
     plan_linked_part_price_refresh,
     refresh_linked_part_prices,
 )
-from apps.warehouse.models import ValuationSettings
 from apps.catalog_import.models import ArcticCatCatalogPart, CatalogImportBatch
 from apps.catalog_import.services import CatalogImportError, apply_batch, run_check, save_upload
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
+from apps.warehouse.models import ValuationSettings
 
 HEADERS = ["P/N", "Description", "Pkg Qty", "DEALER PRICE"]
 PASSWORD = "arctic-test-password"
