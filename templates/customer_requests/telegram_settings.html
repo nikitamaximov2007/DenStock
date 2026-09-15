@@ -92,7 +92,8 @@
                 {% csrf_token %}
                 <select name="role" aria-label="Роль">
                   {% for value, label in roles %}
-                    <option value="{{ value }}" {% if operator.role == value %}selected{% endif %}>{{ label }}</option>
+                    <option value="{{ value }}"
+                            {% if operator.role == value %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
                 </select>
                 <button type="submit">Сохранить</button>

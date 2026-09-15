@@ -37,7 +37,8 @@
       {% if telegram_messages %}
         <ol class="telegram-history__list">
           {% for message in telegram_messages %}
-            <li class="telegram-history__item" data-direction="{{ message.direction }}">
+            <li class="telegram-history__item"
+                data-direction="{{ message.direction }}">
               <strong>
                 {% if message.direction == "customer_to_operator" %}
                   Клиент
