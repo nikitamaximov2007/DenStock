@@ -211,6 +211,19 @@ PUBLIC_REQUEST_RATE_WINDOW_SECONDS = env.int("PUBLIC_REQUEST_RATE_WINDOW_SECONDS
 TELEGRAM_BOT_USERNAME = env("TELEGRAM_BOT_USERNAME", default="").strip().lstrip("@")
 TELEGRAM_WEBHOOK_SECRET = env("TELEGRAM_WEBHOOK_SECRET", default="").strip()
 TELEGRAM_REQUEST_LINK_TTL_SECONDS = env.int("TELEGRAM_REQUEST_LINK_TTL_SECONDS", default=86400)
+# Telegram request bot (long polling service `telegram-bot`). The token is a
+# secret: it is read only from the environment of that service and never
+# stored, rendered or logged. Empty means "not configured".
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="").strip()
+TELEGRAM_API_BASE_URL = env(
+    "TELEGRAM_API_BASE_URL", default="https://api.telegram.org"
+).strip().rstrip("/")
+TELEGRAM_POLL_TIMEOUT_SECONDS = env.int("TELEGRAM_POLL_TIMEOUT_SECONDS", default=10)
+# Absolute internal DenisStock address for the operators' «Открыть заявку» button.
+TELEGRAM_INTERNAL_BASE_URL = env("TELEGRAM_INTERNAL_BASE_URL", default="").strip().rstrip("/")
+TELEGRAM_BOT_HEARTBEAT_FILE = env(
+    "TELEGRAM_BOT_HEARTBEAT_FILE", default="/tmp/denstock-telegram-bot.heartbeat"
+).strip()
 MAX_REQUEST_LINK_TTL_SECONDS = env.int("MAX_REQUEST_LINK_TTL_SECONDS", default=86400)
 AI_SUPPORT_ATTACHMENT_RETENTION_DAYS = env.int(
     "AI_SUPPORT_ATTACHMENT_RETENTION_DAYS", default=30

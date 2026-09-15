@@ -405,12 +405,19 @@ def test_request_form_and_submit_query_counts_are_flat(
         for query in submit_queries.captured_queries
         if query["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
     ]
-    assert len(writes) == 2, "one request row and one bulk insert of its lines"
+    # The form chooses Telegram, so the same transaction also stores the
+    # waiting conversation and the operators' notification. The one-time link
+    # is generated only after the customer's local POST, never in page HTML.
+    # still a constant, independent of the number of lines.
+    assert len(writes) == 4, "request, bulk lines, conversation, outbox event"
     record_property(f"public_request_form_queries_{lines}", len(form_queries.captured_queries))
     record_property(f"public_request_submit_queries_{lines}", len(submit_queries.captured_queries))
     assert len(form_queries.captured_queries) <= 14
-    # Rebuilds the cart view, then the service re-reads parts and stock once.
-    assert len(submit_queries.captured_queries) <= 30
+    # Rebuilds the cart view, then the service re-reads parts and stock once;
+    # the three Telegram inserts are constant too.
+    # PostgreSQL adds two constant statements: setting and clearing the request
+    # proof that the Telegram insert guard checks (migration 0006).
+    assert len(submit_queries.captured_queries) <= 35
 
 
 @pytest.mark.parametrize(

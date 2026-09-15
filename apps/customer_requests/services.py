@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
@@ -17,6 +18,7 @@ from apps.inventory.presentation import part_exact_number, with_part_identity
 from .models import (
     CustomerRequest,
     CustomerRequestLine,
+    CustomerRequestMessengerContact,
     CustomerRequestPrivacyEvent,
     CustomerRequestStatusEvent,
 )
@@ -24,6 +26,7 @@ from .policies import PUBLIC_REQUEST_CONSENT_PURPOSE
 
 ZERO = Decimal("0")
 MAX_REQUEST_LINES = 50
+logger = logging.getLogger(__name__)
 
 
 class CustomerRequestError(ValueError):
@@ -246,6 +249,19 @@ def create_customer_request(
             for line, part, price in prepared_lines
         ]
     )
+    if request.preferred_messenger == CustomerRequest.Messenger.TELEGRAM:
+        # Telegram is an optional integration.  Keep its rows behind a
+        # savepoint: a broken Telegram table, constraint or model validation
+        # must never roll back the canonical request and its line snapshots.
+        from .telegram_service import request_insert_proof, start_request_conversation
+
+        try:
+            with transaction.atomic(), request_insert_proof(submission_key):
+                start_request_conversation(request)
+        except Exception as exc:  # noqa: BLE001 - this boundary must fail open
+            logger.warning(
+                "Telegram setup unavailable for request %s: %s", request.pk, type(exc).__name__
+            )
     return request, True
 
 
@@ -309,4 +325,9 @@ def anonymize_request(*, request_id: int, by=None) -> CustomerRequest:
         event_type=CustomerRequestPrivacyEvent.EventType.ANONYMIZED,
         performed_by=by,
     )
+    # The messenger contact stores the raw chat identifier of the customer.
+    CustomerRequestMessengerContact.objects.filter(request=request).delete()
+    from .telegram_service import anonymize_conversation
+
+    anonymize_conversation(request)
     return request

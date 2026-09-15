@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Telegram-бот заявок · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Telegram-бот заявок</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'customer_request_list' %}">Заявки клиентов</a>
+    </div>
+  </div>
+  <p class="page-subtitle">
+    Сотрудники отвечают клиентам через бота PRO-STOR. Клиент видит сообщения от бота, а не от личного аккаунта сотрудника.
+  </p>
+  <h2>Состояние</h2>
+  <table class="table table--compact">
+    <tbody>
+      <tr>
+        <th>Бот</th>
+        <td data-telegram-running>
+          {% if status.running %}
+            Работает{% if status.runtime.bot_username %} · @{{ status.runtime.bot_username }}{% endif %}
+          {% elif status.runtime and status.runtime.heartbeat_at %}
+            Не отвечает с {{ status.runtime.heartbeat_at|ru_dt }}
+          {% else %}
+            Не запущен или не настроен
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Имя бота для ссылок клиентов</th>
+        <td>
+          {% if status.username %}
+            @{{ status.username }}
+          {% else %}
+            не задано (TELEGRAM_BOT_USERNAME): клиенты не увидят кнопку Telegram
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>Последнее обновление Telegram</th>
+        <td>
+          {% if status.runtime.last_update_at %}
+            {{ status.runtime.last_update_at|ru_dt }}
+          {% else %}
+            ·
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>В очереди</th>
+        <td data-telegram-pending>
+          событий {{ status.pending_events }} · клиентам {{ status.pending_customer }} · сотрудникам {{ status.pending_operator }}
+        </td>
+      </tr>
+      <tr>
+        <th>Не доставлено или неизвестно</th>
+        <td data-telegram-failed>клиентам {{ status.failed_customer }} · сотрудникам {{ status.failed_operator }}</td>
+      </tr>
+      <tr>
+        <th>Переписки</th>
+        <td>подключено {{ status.linked }} · ожидают подключения {{ status.awaiting }}</td>
+      </tr>
+      {% if status.runtime.last_error %}
+        <tr>
+          <th>Последняя ошибка</th>
+          <td>{{ status.runtime.last_error }} · {{ status.runtime.last_error_at|ru_dt }}</td>
+        </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  <h2>Сотрудники</h2>
+  {% if operators %}
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Пользователь</th>
+          <th>Telegram ID</th>
+          <th>Роль</th>
+          <th>Статус</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for operator in operators %}
+          <tr>
+            <td>{{ operator.user }}</td>
+            <td>{{ operator.telegram_user_id }}</td>
+            <td>
+              <form method="post"
+                    action="{% url 'telegram_operator_role' operator.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <select name="role" aria-label="Роль">
+                  {% for value, label in roles %}
+                    <option value="{{ value }}" {% if operator.role == value %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit">Сохранить</button>
+              </form>
+            </td>
+            <td>
+              {% if operator.is_active %}
+                Доступ есть
+              {% else %}
+                Отключён
+              {% endif %}
+            </td>
+            <td>
+              <form method="post"
+                    action="{% url 'telegram_operator_toggle' operator.pk %}"
+                    class="inline-form">
+                {% csrf_token %}
+                <button type="submit">
+                  {% if operator.is_active %}
+                    Отключить
+                  {% else %}
+                    Включить
+                  {% endif %}
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>Сотрудников пока нет. Бот не показывает данные заявок никому, кроме добавленных здесь.</p>
+  {% endif %}
+  <h2>Добавить сотрудника</h2>
+  <p>
+    Сотрудник пишет боту команду /whoami и присылает вам число. Выберите его пользователя DenisStock и введите это число.
+  </p>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button class="btn btn--primary" type="submit">Добавить</button>
+  </form>
+{% endblock %}
