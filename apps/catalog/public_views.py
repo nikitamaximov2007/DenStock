@@ -353,10 +353,29 @@ def public_request_success(request, public_id):
         request,
         "public_catalog/request_success.html",
         {
+            "public_id": public_id,
             "reference": public_requests.request_reference(public_id),
             **public_requests.telegram_success(request.session, public_id),
         },
     )
+
+
+@require_POST
+@never_cache
+def public_telegram_continue(request, public_id):
+    """Generate a one-time Telegram link without rendering its secret."""
+    submission = public_requests.stored_submission(request.session)
+    if submission is None or submission.request != str(public_id):
+        raise Http404
+    token = public_requests.issue_success_telegram_link(request.session, public_id)
+    if token:
+        try:
+            start_url = public_requests.telegram_start_url(token)
+        except public_requests.MessengerLinkError:
+            start_url = None
+        if start_url:
+            return redirect(start_url)
+    return redirect("public_catalog_request_success", public_id=public_id)
 
 
 @require_safe

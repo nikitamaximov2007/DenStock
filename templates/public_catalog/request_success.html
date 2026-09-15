@@ -10,16 +10,15 @@
       Номер заявки <strong>{{ reference }}</strong>
     </p>
     {% if telegram_selected %}
-      {% if telegram_link %}
-        <p class="empty__text">
-          Заявка создана. Чтобы менеджер мог ответить вам в Telegram, подключите Telegram к заявке.
-        </p>
-        <p>
-          <a class="btn btn--large"
-             href="{{ telegram_link }}"
-             rel="noopener noreferrer"
-             data-telegram-link>Продолжить в Telegram</a>
-        </p>
+      {% if telegram_ready %}
+        <p class="empty__text">Заявка создана. Чтобы менеджер мог ответить вам в Telegram, подключите Telegram к заявке.</p>
+        {% if not telegram_link_issued %}
+          <form method="post"
+                action="{% url 'public_catalog_telegram_continue' public_id %}">
+            {% csrf_token %}
+            <button class="btn btn--large" type="submit" data-telegram-link>Продолжить в Telegram</button>
+          </form>
+        {% endif %}
         <p class="empty__text">
           Откроется бот PRO-STOR: нажмите в нём «Запустить». Если не получится, менеджер свяжется с вами по телефону из заявки.
         </p>

@@ -288,6 +288,7 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
     missing = public_catalog.part("IMPELLER", article="IMP-1")
     public_catalog.stock(part, "5")
     settings.DENSTOCK_MODE = "public-catalog"
+    settings.TELEGRAM_BOT_USERNAME = "ProStorTestBot"
     _as(restricted_role)
     try:
         public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "2"})
@@ -306,6 +307,7 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
         )
         retry = public_client.post("/request/submit/", {"submission_key": token})
         success = public_client.get(response["Location"])
+        telegram_continue = public_client.post(response["Location"] + "telegram/")
     finally:
         settings.DENSTOCK_MODE = "test"
         _reset()
@@ -313,6 +315,8 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
 
     assert response.status_code == 302 and retry["Location"] == response["Location"]
     assert success.status_code == 200
+    assert telegram_continue.status_code == 302
+    assert telegram_continue["Location"].startswith("https://t.me/")
     request = CustomerRequest.objects.get()
     assert {(line.part_type_id, line.is_supply_inquiry) for line in request.lines.all()} == {
         (part.pk, False),
