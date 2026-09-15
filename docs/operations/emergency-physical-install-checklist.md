@@ -167,25 +167,19 @@ commit не совпадает с local application». Установщик, в 
 
 ```
 [ ] cd C:\DenisStock
-[ ] git rev-parse HEAD      → должен быть c8ad5a8c2aa343be1e3bf6bc6fcd634d3f80b080
+[ ] git rev-parse HEAD      → должен совпасть с <RELEASE_SHA>
 [ ] git status --porcelain  → пусто
 ```
 
-Сценарий исправления в этом выпуске ещё отсутствует, поэтому его нужно взять из
-комплекта установки:
+Сценарий уже входит в текущий release. Если проверка окончаний строк ниже
+покажет `True`, выполните его из того же чистого checkout:
 
 ```
-[ ] powershell -ExecutionPolicy Bypass -File C:\DenisStock-install\Repair-DenisStockShellLineEndings.ps1 -RepoRoot C:\DenisStock
+[ ] powershell -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operations\Repair-DenisStockShellLineEndings.ps1 -RepoRoot C:\DenisStock
 ```
 
-Сценарий сам находит нужные файлы, на время работы выключает перевод окончаний
-строк, возвращает файлы из репозитория и возвращает настройку обратно. Коммит
-не меняется, дерево остаётся чистым, рабочее состояние станции и любые ваши
-правки не затрагиваются. Повторный запуск безопасен.
-
-Проверено на воспроизведении: после этого шага `git rev-parse HEAD` по-прежнему
-`c8ad5a8...`, `git status --porcelain` пуст, все четыре сценария в формате
-Linux, метки UTF-8 у сценариев PowerShell на месте.
+Он не меняет commit, возвращает shell-скрипты в Linux line endings и сохраняет
+чистое рабочее дерево. Повторный запуск безопасен.
 
 ### Порядок B. Сначала обновить production
 
@@ -445,8 +439,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File C:\DenisStock\scripts\operat
 не трогает и восстановление базы не требуется. Откат - это возврат кода.
 
 ```
-[ ] ssh root@185.250.44.206 "cd /opt/denstock && git checkout --quiet 0fcae772eab1da13c1b7b59890827cf9984d3394 && git rev-parse HEAD"
-[ ] ssh root@185.250.44.206 "cd /opt/denstock && sed -i 's|^DENSTOCK_APP_COMMIT=.*|DENSTOCK_APP_COMMIT=0fcae772eab1da13c1b7b59890827cf9984d3394|' .env && grep '^DENSTOCK_APP_COMMIT=' .env"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && git checkout --quiet <PREVIOUS_PRODUCTION_SHA> && git rev-parse HEAD"
+[ ] ssh root@185.250.44.206 "cd /opt/denstock && sed -i 's|^DENSTOCK_APP_COMMIT=.*|DENSTOCK_APP_COMMIT=<PREVIOUS_PRODUCTION_SHA>|' .env && grep '^DENSTOCK_APP_COMMIT=' .env"
 [ ] ssh root@185.250.44.206 "cd /opt/denstock && docker compose up -d --build --no-deps web"
 [ ] ssh root@185.250.44.206 "curl -sk -o /dev/null -w '%{http_code}
 ' https://185-250-44-206.sslip.io/healthz/"

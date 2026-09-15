@@ -22,6 +22,7 @@ from apps.operations.write_guard import (
     BusinessWriteBlocked,
     BusinessWriteGuardMiddleware,
     _is_missing_deployment_state_table,
+    _migration_command_is_running,
 )
 from apps.suppliers.models import Supplier
 from tests.emergency_support import configure_test_trust
@@ -30,6 +31,14 @@ COMMIT = "a" * 40
 MIGRATION_HASH = "b" * 64
 DATA_HASH = "c" * 64
 DATABASE_ID = "52347a14-d939-45e6-a397-06c79ef257f2"
+
+
+def test_migration_command_exception_is_narrow(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["manage.py", "migrate", "--noinput"])
+    assert _migration_command_is_running()
+
+    monkeypatch.setattr("sys.argv", ["manage.py", "shell"])
+    assert not _migration_command_is_running()
 
 
 class _MissingTableCause(Exception):

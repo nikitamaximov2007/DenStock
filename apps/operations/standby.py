@@ -29,6 +29,7 @@ from .models import OfflineSession
 CONTROL_SCHEMA_VERSION = 1
 SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SAFE_SLOT = re.compile(r"^[0-9a-f]{12}$")
+PUBLIC_CATALOG_RESTORE_ROLE = "denstock_public"
 
 
 class StandbyError(RuntimeError):
@@ -267,6 +268,29 @@ def create_database(name: str, *, database_settings=None) -> None:
             cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
 
 
+def ensure_public_catalog_restore_role(*, database_settings=None) -> None:
+    """Create the inert local role referenced by production RLS policies.
+
+    A production logical dump contains ``TO denstock_public`` policies.  The
+    Emergency compose scope deliberately has no public-catalog service or
+    grants, yet PostgreSQL still requires that role to exist while restoring
+    those policy definitions.  This creates no login, password or privilege.
+    """
+    database_settings = database_settings or connection.settings_dict
+    with _admin_connection(database_settings) as database:
+        with database.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM pg_roles WHERE rolname = %s", [PUBLIC_CATALOG_RESTORE_ROLE]
+            )
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    sql.SQL("CREATE ROLE {} NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB "
+                            "NOCREATEROLE NOREPLICATION").format(
+                        sql.Identifier(PUBLIC_CATALOG_RESTORE_ROLE)
+                    )
+                )
+
+
 def drop_database(name: str, *, database_settings=None) -> None:
     prefix = settings.DENSTOCK_EMERGENCY_DB_PREFIX
     if not name.startswith(prefix) or not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_]{0,62}", name):
@@ -414,6 +438,7 @@ def _refresh_standby_locked(source: str, *, run_id=None, paths: EmergencyPaths) 
         slot_dir = paths.standbys / slot
         if slot_dir.exists():
             raise StandbyError("Такой standby slot уже существует.")
+        ensure_public_catalog_restore_role()
         create_database(database_name)
         candidate_settings = {**connection.settings_dict, "NAME": database_name}
         backup.restore_db(

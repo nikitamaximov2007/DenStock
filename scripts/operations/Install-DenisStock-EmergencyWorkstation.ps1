@@ -65,6 +65,22 @@ function Assert-WorkstationCapacity {
     if (($disk.FreeSpace / 1GB) -lt 30) { throw "Для Emergency Primary требуется не менее 30 GB свободного диска." }
 }
 
+function Assert-ListenPortAvailable {
+    param([int]$Port)
+    # Docker will bind this port later, after local secrets and the firewall
+    # rule have already been created.  Refuse early instead: a partial install
+    # must never look successful while another local service owns its URL.
+    $listeners = @(
+        Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
+    )
+    if ($listeners.Count -gt 0) {
+        $owners = $listeners | ForEach-Object {
+            "$($_.LocalAddress):$($_.LocalPort) (PID $($_.OwningProcess))"
+        }
+        throw "Порт $Port уже занят: $($owners -join ', '). Укажите свободный -Port или остановите конфликтующий local service."
+    }
+}
+
 function ConvertTo-WslPath {
     param([string]$Path)
     $full = [IO.Path]::GetFullPath($Path)
@@ -139,6 +155,7 @@ if ($Role -eq "primary") {
     Assert-PrimaryNetwork $PrimaryLanAddress
     Assert-WorkstationCapacity
 }
+Assert-ListenPortAvailable -Port $Port
 foreach ($item in @(
     @{ Name = "BackupSource"; Value = $BackupSource },
     @{ Name = "ReleaseSource"; Value = $ReleaseSource },

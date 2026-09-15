@@ -43,10 +43,10 @@ F:\DenisStockEmergency\scripts\operations\Install-DenisStock-EmergencyWorkstatio
   -BackupSource 'yandex-s3:denstock-backups-nikita' `
   -ReleaseSource 'origin' `
   -ProductionUrl 'https://185-250-44-206.sslip.io' `
-  -PrimaryLanAddress '192.168.100.10' `
-  -AppCommit '0fd18913234d344ea3ae44cbc84bb6dc411bc3ad' `
+  -PrimaryLanAddress '<PRIMARY_LAN_IPV4>' `
+  -AppCommit '<FULL_PRODUCTION_SHA>' `
   -ManifestPublicKeyPath 'F:\ApprovedSecrets\production-manifest-ed25519-public.pem' `
-  -ManifestSigningKeyId 'production-ed25519-2026-01' `
+  -ManifestSigningKeyId 'production-1' `
   -Role primary -ConfirmPrimary -InstallWslRuntime -CreateTasks
 ```
 

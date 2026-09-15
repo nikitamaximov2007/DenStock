@@ -19,12 +19,50 @@ from apps.operations.standby import (
     EmergencyPaths,
     StandbyError,
     active_standby_run_dir,
+    ensure_public_catalog_restore_role,
     load_control,
     refresh_standby,
 )
 from tests.emergency_support import configure_test_trust, sign_production_manifest
 
 COMMIT = "a" * 40
+
+
+def test_restore_role_is_inert_and_created_only_when_missing(monkeypatch):
+    statements = []
+
+    class Cursor:
+        def execute(self, statement, params=None):
+            statements.append((str(statement), params))
+
+        def fetchone(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class Database:
+        def cursor(self):
+            return Cursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("apps.operations.standby._admin_connection", lambda *_: Database())
+
+    ensure_public_catalog_restore_role(database_settings={})
+
+    rendered = "\n".join(statement for statement, _ in statements)
+    assert "SELECT 1 FROM pg_roles" in rendered
+    assert "CREATE ROLE" in rendered
+    assert "NOLOGIN" in rendered
+    assert "NOINHERIT" in rendered
 
 
 def _source_backup(
@@ -86,6 +124,9 @@ def standby_runtime(tmp_path, monkeypatch, settings):
     monkeypatch.setattr("apps.operations.standby.validate_database_target", lambda **kwargs: None)
     monkeypatch.setattr("apps.operations.standby.create_database", created.append)
     monkeypatch.setattr("apps.operations.standby.drop_database", dropped.append)
+    monkeypatch.setattr(
+        "apps.operations.standby.ensure_public_catalog_restore_role", lambda: None
+    )
     monkeypatch.setattr("apps.operations.standby.backup.restore_db", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         "apps.operations.standby.backup.restore_media", lambda *args, **kwargs: None

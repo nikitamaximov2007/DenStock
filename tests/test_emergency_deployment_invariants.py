@@ -81,6 +81,12 @@ def test_firewall_rule_opens_only_the_application_port(installer):
         assert "5432" not in rule, f"правило открывает порт PostgreSQL: {rule}"
 
 
+def test_installer_refuses_an_occupied_application_port_before_provisioning(installer):
+    assert "function Assert-ListenPortAvailable" in installer
+    assert "Get-NetTCPConnection -State Listen -LocalPort $Port" in installer
+    assert "Assert-ListenPortAvailable -Port $Port" in installer
+
+
 # --- Права на файлы ----------------------------------------------------------------------
 
 

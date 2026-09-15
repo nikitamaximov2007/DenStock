@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import re
+import sys
 from contextlib import contextmanager
 
 from django.apps import apps
@@ -83,6 +84,19 @@ def _state_allows_business_write(state: str) -> bool:
     return mode in {"development", "test"} and state == DeploymentState.WriteState.NORMAL
 
 
+def _migration_command_is_running() -> bool:
+    """Django data migrations are trusted release code, not operator writes.
+
+    A fresh emergency control database starts in the fail-closed ``normal``
+    state.  Django still has to apply historical data migrations before it can
+    create or restore a standby.  Blocking those migration statements makes a
+    clean workstation impossible to provision.  Limit the exception to the
+    management command itself; HTTP requests and all ordinary processes keep
+    the emergency write-state guard.
+    """
+    return len(sys.argv) > 1 and sys.argv[1] == "migrate"
+
+
 def assert_business_writes_allowed(*, using="default") -> None:
     state = _read_write_state(using)
     if not _state_allows_business_write(state):
@@ -124,6 +138,8 @@ def _deployment_state_schema_is_migrated(*, using: str) -> bool:
 
 def execute_guard(execute, sql, params, many, context):
     if _internal.get() or not _is_business_mutation(sql):
+        return execute(sql, params, many, context)
+    if _migration_command_is_running():
         return execute(sql, params, many, context)
     if settings.DENSTOCK_MODE == "test":
         return execute(sql, params, many, context)
