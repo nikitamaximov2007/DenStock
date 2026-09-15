@@ -385,3 +385,148 @@ def test_system_checks_need_no_migration_ledger(restricted_role):
         call_command("check", databases=["default"], verbosity=0)
     finally:
         _reset()
+
+
+# --- Telegram rows: the public role may only attach them to its own request ------------------
+
+TELEGRAM_REFUSED = "telegram row refused"
+
+
+def _victim_request(public_catalog, key, messenger="max"):
+    from apps.customer_requests.services import RequestLineInput, create_customer_request
+
+    from .test_customer_requests import POLICY
+
+    part = public_catalog.part("VICTIM PART", article=f"VIC-{key[:6]}")
+    request, _created = create_customer_request(
+        customer_name="Другой клиент",
+        customer_phone="+7 (912) 765-43-21",
+        preferred_messenger=messenger,
+        comment="",
+        lines=[RequestLineInput(part_id=part.pk, quantity="1", supply_inquiry=True)],
+        privacy_policy_version=POLICY,
+        personal_data_consent_version=POLICY,
+        submission_key=key,
+    )
+    return request
+
+
+def _insert(sql, params, *, proof=None, refused):
+    ctx = (
+        pytest.raises(ProgrammingError, match=TELEGRAM_REFUSED)
+        if refused
+        else __import__("contextlib").nullcontext()
+    )
+    with ctx, transaction.atomic():
+        with connection.cursor() as cursor:
+            if proof is not None:
+                cursor.execute(
+                    "SELECT set_config('denstock.telegram_request_proof', %s, true)", [proof]
+                )
+            cursor.execute(sql, params)
+
+
+def _linked_conversation(request_id):
+    return (
+        "INSERT INTO customer_requests_telegramconversation (public_id, request_id, status, "
+        "customer_chat_id, customer_user_id, customer_username, created_at, updated_at) "
+        "VALUES (%s, %s, 'linked', 666, 666, 'attacker', now(), now())",
+        [str(uuid.uuid4()), request_id],
+    )
+
+
+def _waiting_conversation(request_id):
+    return (
+        "INSERT INTO customer_requests_telegramconversation (public_id, request_id, status, "
+        "customer_username, created_at, updated_at) "
+        "VALUES (%s, %s, 'awaiting_link', '', now(), now())",
+        [str(uuid.uuid4()), request_id],
+    )
+
+
+def _token(request_id, token_hash):
+    return (
+        "INSERT INTO customer_requests_customerrequestmessengerlinktoken "
+        "(request_id, channel, token_hash, created_at, expires_at) "
+        "VALUES (%s, 'telegram', %s, now(), now() + interval '1 hour')",
+        [request_id, token_hash],
+    )
+
+
+def _outbox(request_id, kind, dedupe_key):
+    return (
+        "INSERT INTO customer_requests_telegramoutboxevent "
+        "(kind, request_id, dedupe_key, status, attempts, created_at, next_attempt_at) "
+        "VALUES (%s, %s, %s, 'pending', 0, now(), now())",
+        [kind, request_id, dedupe_key],
+    )
+
+
+def test_public_role_cannot_attach_telegram_rows_to_another_customers_request(
+    restricted_role, public_catalog
+):
+    victim = _victim_request(public_catalog, "victim-key-" + "v" * 21)
+    forged = [
+        _linked_conversation(victim.pk),
+        _waiting_conversation(victim.pk),
+        _token(victim.pk, "a" * 64),
+        _outbox(victim.pk, "new_request", f"new_request:{victim.pk}"),
+    ]
+    _as(restricted_role)
+    try:
+        for sql, params in forged:
+            _insert(sql, params, refused=True)  # no proof at all
+            _insert(sql, params, proof="attacker-own-key-" + "x" * 15, refused=True)
+    finally:
+        _reset()
+    from apps.customer_requests.models import (
+        CustomerRequestMessengerLinkToken,
+        TelegramConversation,
+        TelegramOutboxEvent,
+    )
+
+    assert not TelegramConversation.objects.filter(request=victim).exists()
+    assert not CustomerRequestMessengerLinkToken.objects.filter(request=victim).exists()
+    assert not TelegramOutboxEvent.objects.filter(request=victim).exists()
+
+
+def test_even_with_its_own_proof_the_public_role_inserts_only_initial_shapes(
+    restricted_role, public_catalog
+):
+    key = "own-request-key-" + "o" * 16
+    own = _victim_request(public_catalog, key)
+    _as(restricted_role)
+    try:
+        _insert(*_linked_conversation(own.pk), proof=key, refused=True)
+        _insert(*_outbox(own.pk, "customer_message", "customer_message:1"), proof=key, refused=True)
+        _insert(*_outbox(own.pk, "new_request", "new_request:999999"), proof=key, refused=True)
+        _insert(
+            "INSERT INTO customer_requests_customerrequestmessengerlinktoken "
+            "(request_id, channel, token_hash, created_at, expires_at, used_at) "
+            "VALUES (%s, 'telegram', %s, now(), now() + interval '1 hour', now())",
+            [own.pk, "b" * 64],
+            proof=key,
+            refused=True,
+        )
+        _insert(
+            "INSERT INTO customer_requests_customerrequestmessengerlinktoken "
+            "(request_id, channel, token_hash, created_at, expires_at) "
+            "VALUES (%s, 'telegram', %s, now(), now() + interval '30 days')",
+            [own.pk, "c" * 64],
+            proof=key,
+            refused=True,
+        )
+        # The legitimate initial rows of its own request are accepted.
+        _insert(*_waiting_conversation(own.pk), proof=key, refused=False)
+        _insert(*_outbox(own.pk, "new_request", f"new_request:{own.pk}"), proof=key, refused=False)
+        _insert(*_token(own.pk, "d" * 64), proof=key, refused=False)
+    finally:
+        _reset()
+
+
+def test_internal_role_is_not_restricted_by_the_telegram_insert_guard(db, public_catalog):
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL trigger")
+    victim = _victim_request(public_catalog, "internal-key-" + "i" * 19)
+    _insert(*_linked_conversation(victim.pk), refused=False)
+    _insert(*_token(victim.pk, "e" * 64), refused=False)

@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import re
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.urls import reverse
 from django.utils import timezone
 
@@ -62,6 +63,9 @@ OPERATOR_HELP_TEXT = (
     "/whoami: ваш Telegram ID."
 )
 NOT_AVAILABLE_TEXT = "Недоступно."
+# Read by the PostgreSQL insert guard (migration 0006): a role that may only
+# INSERT Telegram rows must prove the raw submission key of the target request.
+REQUEST_PROOF_SETTING = "denstock.telegram_request_proof"
 
 
 class TelegramAccessDenied(Exception):
@@ -69,6 +73,24 @@ class TelegramAccessDenied(Exception):
 
 
 # --- Request creation and linking -------------------------------------------------------
+
+
+@contextmanager
+def request_insert_proof(submission_key: str):
+    """Prove ownership of a request to the database for the public role's inserts.
+
+    Use inside the Telegram savepoint: the setting is transaction-local and a
+    savepoint rollback reverts it, so it is reset only on success. The raw key
+    is the customer's own idempotency key and is never stored.
+    """
+    if connection.vendor != "postgresql":
+        yield
+        return
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT set_config(%s, %s, true)", [REQUEST_PROOF_SETTING, submission_key])
+    yield
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT set_config(%s, '', true)", [REQUEST_PROOF_SETTING])
 
 
 def start_request_conversation(request: CustomerRequest) -> TelegramConversation:
@@ -142,6 +164,17 @@ def anonymize_conversation(request: CustomerRequest) -> None:
     TelegramCustomerChat.objects.filter(active_conversation=conversation).update(
         active_conversation=None
     )
+    chat_id = conversation.customer_chat_id
+    if chat_id is not None and not (
+        TelegramConversation.objects.filter(
+            customer_chat_id=chat_id, status=TelegramConversation.Status.LINKED
+        )
+        .exclude(pk=conversation.pk)
+        .exists()
+    ):
+        # The routing row is keyed by the raw chat id: keep no identity for a
+        # customer whose only remaining link is the anonymized request.
+        TelegramCustomerChat.objects.filter(chat_id=chat_id).delete()
     conversation.customer_chat_id = None
     conversation.customer_user_id = None
     conversation.customer_username = ""

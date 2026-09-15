@@ -224,10 +224,14 @@ class TelegramBotWorker:
             settings.TELEGRAM_BOT_HEARTBEAT_FILE if heartbeat_file is None else heartbeat_file
         )
         self._holds_lock = False
+        self._needs_recovery = False
 
     # Single instance -------------------------------------------------------------------
 
     def acquire(self) -> None:
+        # The advisory lock first: a refused second instance must never touch
+        # the lease row, or its exit would clear the running worker's lease.
+        self._lock_database()
         now = timezone.now()
         with transaction.atomic():
             runtime, _ = TelegramBotRuntime.objects.select_for_update().get_or_create(
@@ -246,7 +250,6 @@ class TelegramBotWorker:
             runtime.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
             runtime.started_at = runtime.heartbeat_at = now
             runtime.save()
-        self._lock_database()
 
     def _lock_database(self) -> None:
         if connection.vendor != "postgresql":
@@ -517,6 +520,14 @@ class TelegramBotWorker:
 
     def iterate(self, poll_timeout: int | None = None) -> None:
         self.renew()
+        if self._needs_recovery:
+            # A database error interrupted a cycle. This single worker has no
+            # send in flight now, so every row still marked ``sending`` stopped
+            # between the claim and its result: never resend, show it.
+            recovered = self.recover_interrupted_sends()
+            self._needs_recovery = False
+            if recovered:
+                logger.warning("marked %s interrupted sends as uncertain", recovered)
         timeout = self.poll_timeout if poll_timeout is None else poll_timeout
         self.poll_once(0 if self.has_due_work() else timeout)
         self.drain_outbox()
@@ -549,6 +560,7 @@ class TelegramBotWorker:
                 except DatabaseError as exc:
                     failures += 1
                     logger.error("database error: %s", type(exc).__name__)
+                    self._needs_recovery = True
                     connection.close()
                     self.stop.wait(min(60, 2**failures))
                 if once:

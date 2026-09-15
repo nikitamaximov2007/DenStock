@@ -8,6 +8,7 @@ no real token exists anywhere in these tests.
 import itertools
 import logging
 import re
+import threading
 import urllib.error
 from datetime import timedelta
 from decimal import Decimal
@@ -17,7 +18,7 @@ import pytest
 from django.contrib.auth.models import Group
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import connection
+from django.db import DatabaseError, connection, connections
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
@@ -34,6 +35,7 @@ from apps.customer_requests.messengers import (
 from apps.customer_requests.models import (
     CustomerRequest,
     CustomerRequestLine,
+    CustomerRequestMessengerContact,
     TelegramConversation,
     TelegramCustomerChat,
     TelegramDelivery,
@@ -781,6 +783,40 @@ def test_withdrawn_consent_blocks_replies_and_anonymization_erases_texts(
     assert conversation.customer_chat_id is None
     assert conversation.status == TelegramConversation.Status.CLOSED
     assert set(conversation.messages.values_list("text", flat=True)) == {""}
+    # No hidden identity survives: neither the routing row nor the contact.
+    assert not TelegramCustomerChat.objects.filter(chat_id=CUSTOMER).exists()
+    assert not CustomerRequestMessengerContact.objects.filter(request=request).exists()
+    assert not TelegramConversation.objects.filter(customer_user_id=CUSTOMER).exists()
+
+
+def test_anonymizing_one_request_keeps_routing_for_the_customers_other_request(
+    part, worker, api, operators
+):
+    first = _request(part, key="7" * 32)
+    second = _request(part, key="8" * 32)
+    link(worker, api, first)
+    link(worker, api, second)
+    withdraw_consent(request_id=first.pk)
+    anonymize_request(request_id=first.pk)
+
+    assert TelegramCustomerChat.objects.filter(chat_id=CUSTOMER).exists()
+    assert TelegramConversation.objects.get(request=second).customer_chat_id == CUSTOMER
+    assert not CustomerRequestMessengerContact.objects.filter(request=first).exists()
+
+
+def test_no_link_can_be_issued_or_consumed_after_withdrawal_or_anonymization(part, worker, api):
+    request = _request(part, key="6" * 32)
+    token = issue_telegram_link(request_id=request.pk).token
+    withdraw_consent(request_id=request.pk)
+    with pytest.raises(MessengerLinkError):
+        issue_telegram_link(request_id=request.pk)
+    with pytest.raises(MessengerLinkError):
+        consume_telegram_start(token=token, chat_id=CUSTOMER, user_id=CUSTOMER)
+    anonymize_request(request_id=request.pk)
+    with pytest.raises(MessengerLinkError):
+        issue_telegram_link(request_id=request.pk)
+    assert not TelegramConversation.objects.filter(customer_chat_id=CUSTOMER).exists()
+    assert not CustomerRequestMessengerContact.objects.exists()
 
 
 # --- W: secrets --------------------------------------------------------------------------
@@ -1026,3 +1062,132 @@ def test_status_page_never_renders_the_token(client, django_user_model, db):
     html = client.get(reverse("telegram_settings")).content.decode()
     assert "Работает" in html and "@ProStorTestBot" in html
     assert FAKE_TOKEN not in html and "AAFake" not in html
+
+
+# --- Independent review regressions ---------------------------------------------------------
+
+
+def test_refused_second_instance_never_touches_the_running_workers_lease(db, api, monkeypatch):
+    first = TelegramBotWorker(api, worker_id="first", poll_timeout=0, heartbeat_file="")
+    first.acquire()
+    # The first worker is alive but stalled past its lease; its lock is still held.
+    TelegramBotRuntime.objects.update(lease_expires_at=timezone.now() - timedelta(seconds=1))
+    second = TelegramBotWorker(api, worker_id="second", poll_timeout=0, heartbeat_file="")
+
+    def lock_held():
+        raise SingleInstanceError("Другой экземпляр Telegram-бота держит блокировку.")
+
+    monkeypatch.setattr(second, "_lock_database", lock_held)
+    with pytest.raises(SingleInstanceError):
+        second.run(once=True)
+
+    assert TelegramBotRuntime.objects.get().worker_id == "first"
+    first.renew()  # the running worker keeps its lease and continues
+
+
+def test_database_error_mid_send_never_leaves_a_message_invisible_or_resent(
+    part, worker, api, operators, monkeypatch
+):
+    request = _request(part, key="5" * 32)
+    link(worker, api, request)
+    conversation = TelegramConversation.objects.get()
+    row = TelegramMessage.objects.create(
+        conversation=conversation,
+        direction=TelegramMessage.Direction.OPERATOR,
+        text="ответ при сбое базы",
+        delivery_status=TelegramDeliveryStatus.PENDING,
+        next_attempt_at=timezone.now(),
+    )
+    real_finish = worker._finish
+
+    def database_down(*args, **kwargs):
+        raise DatabaseError("connection lost")
+
+    monkeypatch.setattr(worker, "_finish", database_down)
+    monkeypatch.setattr(worker.stop, "wait", lambda seconds: None)
+    monkeypatch.setattr(connection, "close", lambda: None)
+    worker.run(once=True)
+    row.refresh_from_db()
+    assert row.delivery_status == TelegramDeliveryStatus.SENDING
+    sent_during_failure = api.texts_to(CUSTOMER).count("ответ при сбое базы")
+
+    monkeypatch.setattr(worker, "_finish", real_finish)
+    worker.acquire()
+    worker.iterate(poll_timeout=0)
+    worker.iterate(poll_timeout=0)
+    row.refresh_from_db()
+    assert row.delivery_status == TelegramDeliveryStatus.UNCERTAIN
+    assert row.last_error
+    assert api.texts_to(CUSTOMER).count("ответ при сбое базы") == sent_during_failure == 1
+
+
+@pytest.mark.parametrize(
+    ("body", "method", "ambiguous"),
+    [
+        (b'{"ok":false,"error_code":"boom","description":"x"}', "get_me", False),
+        (b'{"ok":false,"error_code":true}', "get_me", False),
+        (b'{"ok":"yes","result":{}}', "get_me", False),
+        (b'{"ok":true,"result":[1]}', "send", True),
+        (b'{"ok":true,"result":{"update_id":1}}', "updates", False),
+        (b"[]", "get_me", False),
+    ],
+)
+def test_malformed_telegram_answers_are_network_errors_not_crashes(body, method, ambiguous):
+    api = TelegramBotApi(FAKE_TOKEN, opener=lambda request, timeout: _Response(body))
+    with pytest.raises(TelegramNetworkError) as error:
+        if method == "get_me":
+            api.get_me()
+        elif method == "send":
+            api.send_message(chat_id=CUSTOMER, text="x")
+        else:
+            api.get_updates(offset=1, timeout=0)
+    assert error.value.ambiguous is ambiguous
+    assert FAKE_TOKEN not in str(error.value)
+
+
+def test_retry_after_from_telegram_is_bounded(db):
+    body = (
+        b'{"ok":false,"error_code":429,"description":"Too Many",'
+        b'"parameters":{"retry_after":999999}}'
+    )
+    api = TelegramBotApi(FAKE_TOKEN, opener=lambda request, timeout: _Response(body))
+    with pytest.raises(TelegramApiError) as error:
+        api.get_me()
+    assert error.value.error_code == 429 and error.value.retry_after is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_postgresql_second_worker_never_takes_the_lock_or_lease_of_a_live_worker(api):
+    if connection.vendor != "postgresql":
+        pytest.skip("The advisory lock needs PostgreSQL")
+    live = TelegramBotWorker(api, worker_id="live", poll_timeout=0, heartbeat_file="")
+    live.acquire()
+    # Stalled past its lease, but its database session and lock are alive.
+    TelegramBotRuntime.objects.update(lease_expires_at=timezone.now() - timedelta(seconds=5))
+    outcome = {}
+
+    def second_container():
+        try:
+            TelegramBotWorker(
+                FakeBotApi(), worker_id="second", poll_timeout=0, heartbeat_file=""
+            ).run(once=True)
+            outcome["result"] = "ran"
+        except SingleInstanceError as exc:
+            outcome["result"] = str(exc)
+        finally:
+            connections.close_all()
+
+    thread = threading.Thread(target=second_container)
+    thread.start()
+    thread.join(30)
+    assert "блокировку" in outcome["result"]
+    assert TelegramBotRuntime.objects.get().worker_id == "live"
+    live.renew()
+
+    # SIGKILL of the live worker: its session ends and PostgreSQL drops the lock.
+    connection.close()
+    TelegramBotRuntime.objects.update(lease_expires_at=timezone.now() - timedelta(seconds=1))
+    successor = TelegramBotWorker(api, worker_id="successor", poll_timeout=0, heartbeat_file="")
+    successor.acquire()
+    assert TelegramBotRuntime.objects.get().worker_id == "successor"
+    successor.release()

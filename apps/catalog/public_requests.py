@@ -44,6 +44,7 @@ from apps.customer_requests.services import (
     create_customer_request,
     submission_key_hash,
 )
+from apps.customer_requests.telegram_service import request_insert_proof
 
 from .public_cart import CART_SESSION_KEY, LINE_INQUIRY, CartView
 
@@ -257,11 +258,14 @@ def issue_success_telegram_link(session, public_id) -> str:
     is never put in the HTML page or the signed (but readable) session cookie.
     """
     stored = session.get(TELEGRAM_SESSION_KEY)
+    submission = stored_submission(session)
     if (
         not isinstance(stored, dict)
         or stored.get("request") != str(public_id)
         or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
         or stored.get("link_issued")
+        or submission is None
+        or submission.request != str(public_id)
     ):
         return ""
     try:
@@ -273,7 +277,7 @@ def issue_success_telegram_link(session, public_id) -> str:
             )
             # This remains optional to the request.  A Telegram-only database
             # fault must be contained by this savepoint.
-            with transaction.atomic():
+            with transaction.atomic(), request_insert_proof(submission.token):
                 token = issue_initial_telegram_link(customer_request)
     except Exception as exc:  # noqa: BLE001 - do not leak optional faults to the customer
         logger.warning(

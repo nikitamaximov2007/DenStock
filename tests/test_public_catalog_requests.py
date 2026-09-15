@@ -415,7 +415,9 @@ def test_request_form_and_submit_query_counts_are_flat(
     assert len(form_queries.captured_queries) <= 14
     # Rebuilds the cart view, then the service re-reads parts and stock once;
     # the three Telegram inserts are constant too.
-    assert len(submit_queries.captured_queries) <= 33
+    # PostgreSQL adds two constant statements: setting and clearing the request
+    # proof that the Telegram insert guard checks (migration 0006).
+    assert len(submit_queries.captured_queries) <= 35
 
 
 @pytest.mark.parametrize(

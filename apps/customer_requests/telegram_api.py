@@ -116,13 +116,19 @@ class TelegramBotApi:
             raise TelegramNetworkError("invalid response", ambiguous=may_duplicate) from None
         if not isinstance(data, dict):
             raise TelegramNetworkError("invalid response", ambiguous=may_duplicate)
-        if not data.get("ok"):
+        if data.get("ok") is not True:
             parameters = data.get("parameters") or {}
             retry_after = parameters.get("retry_after") if isinstance(parameters, dict) else None
+            error_code = data.get("error_code")
+            if not isinstance(error_code, int) or isinstance(error_code, bool):
+                raise TelegramNetworkError("invalid response", ambiguous=may_duplicate)
             raise TelegramApiError(
-                int(data.get("error_code") or 0),
+                error_code,
                 _scrub(data.get("description"), self._token),
-                int(retry_after) if isinstance(retry_after, int) else None,
+                retry_after
+                if isinstance(retry_after, int) and not isinstance(retry_after, bool)
+                and 0 < retry_after <= 3600
+                else None,
             )
         return data.get("result")
 
@@ -136,7 +142,7 @@ class TelegramBotApi:
 
     def get_updates(self, *, offset: int, timeout: int) -> list:
         # getUpdates is read-only for Telegram; the offset makes it safe to repeat.
-        return self.call(
+        result = self.call(
             "getUpdates",
             {
                 "offset": offset,
@@ -144,13 +150,22 @@ class TelegramBotApi:
                 "allowed_updates": ["message", "callback_query"],
             },
             timeout=timeout + 10,
-        ) or []
+        )
+        if result is None:
+            return []
+        if not isinstance(result, list):
+            raise TelegramNetworkError("invalid response", ambiguous=False)
+        return result
 
     def send_message(self, *, chat_id: int, text: str, reply_markup: dict | None = None) -> dict:
         payload = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        return self.call("sendMessage", payload, may_duplicate=True)
+        result = self.call("sendMessage", payload, may_duplicate=True)
+        if not isinstance(result, dict):
+            # Telegram said ok but the answer is unusable: it may have been delivered.
+            raise TelegramNetworkError("invalid response", ambiguous=True)
+        return result
 
     def answer_callback_query(self, *, callback_query_id: str, text: str = "") -> None:
         payload = {"callback_query_id": callback_query_id}
