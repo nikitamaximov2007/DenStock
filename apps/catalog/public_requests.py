@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import secrets
 from dataclasses import dataclass
 
@@ -53,6 +54,7 @@ SUBMISSION_SESSION_KEY = "public_catalog_request_submission"
 TELEGRAM_SESSION_KEY = "public_catalog_request_telegram"
 HONEYPOT_FIELD = "website"
 FORM_FIELDS = ("customer_name", "customer_phone", "preferred_messenger", "comment")
+logger = logging.getLogger(__name__)
 
 
 class RequestRefused(ValueError):
@@ -211,18 +213,17 @@ def send_cart(request, cart: CartView, submission: Submission, values) -> tuple[
             personal_data_consent_version=consent_version,
             submission_key=submission.token,
         )
-        telegram_token = ""
-        # `created` first: a retried request is read back with only its id and
-        # key, and the public role cannot read its other columns.
-        if created and customer_request.preferred_messenger == CustomerRequest.Messenger.TELEGRAM:
-            telegram_token = issue_initial_telegram_link(customer_request)
     public_id = str(customer_request.public_id)
     if created:
         _count(request)
         request.session[TELEGRAM_SESSION_KEY] = {
             "request": public_id,
             "messenger": customer_request.preferred_messenger,
-            "token": telegram_token,
+            # A signed-cookie session authenticates its contents but does not
+            # encrypt them.  Keep only non-secret state here: the raw Telegram
+            # token is generated after the customer clicks the local POST form.
+            "link_issued": False,
+            "link_unavailable": False,
         }
     request.session.pop(CART_SESSION_KEY, None)
     _store(request.session, Submission(submission.token, submission.cart, public_id))
@@ -237,12 +238,54 @@ def telegram_success(session, public_id) -> dict:
         or stored.get("request") != str(public_id)
         or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
     ):
-        return {"telegram_selected": False, "telegram_link": None}
-    link = None
-    token = stored.get("token")
-    if isinstance(token, str) and token:
-        try:
-            link = telegram_start_url(token)
-        except MessengerLinkError:
-            link = None
-    return {"telegram_selected": True, "telegram_link": link}
+        return {"telegram_selected": False, "telegram_ready": False}
+    try:
+        ready = telegram_start_url("a" * 43) is not None
+    except MessengerLinkError:
+        ready = False
+    return {
+        "telegram_selected": True,
+        "telegram_ready": ready and not stored.get("link_unavailable", False),
+        "telegram_link_issued": bool(stored.get("link_issued", False)),
+    }
+
+
+def issue_success_telegram_link(session, public_id) -> str:
+    """Create the first deep link only after the customer's local POST.
+
+    The raw token exists only long enough to form the redirect to Telegram. It
+    is never put in the HTML page or the signed (but readable) session cookie.
+    """
+    stored = session.get(TELEGRAM_SESSION_KEY)
+    if (
+        not isinstance(stored, dict)
+        or stored.get("request") != str(public_id)
+        or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
+        or stored.get("link_issued")
+    ):
+        return ""
+    try:
+        with transaction.atomic():
+            _read_write_transaction()
+            # The public role may read only this harmless identity pair.
+            customer_request = CustomerRequest.objects.only("pk", "public_id").get(
+                public_id=public_id
+            )
+            # This remains optional to the request.  A Telegram-only database
+            # fault must be contained by this savepoint.
+            with transaction.atomic():
+                token = issue_initial_telegram_link(customer_request)
+    except Exception as exc:  # noqa: BLE001 - do not leak optional faults to the customer
+        logger.warning(
+            "Telegram link setup unavailable for request %s: %s", public_id, type(exc).__name__
+        )
+        stored["link_unavailable"] = True
+        session[TELEGRAM_SESSION_KEY] = stored
+        return ""
+    if not token:
+        stored["link_unavailable"] = True
+        session[TELEGRAM_SESSION_KEY] = stored
+        return ""
+    stored["link_issued"] = True
+    session[TELEGRAM_SESSION_KEY] = stored
+    return token

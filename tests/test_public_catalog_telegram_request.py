@@ -6,8 +6,9 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from django.core.cache import cache
+from django.db import IntegrityError
+from django.urls import reverse
 
-from apps.catalog.public_requests import TELEGRAM_SESSION_KEY
 from apps.customer_requests.messengers import consume_telegram_start
 from apps.customer_requests.models import (
     CustomerRequest,
@@ -89,10 +90,16 @@ def test_telegram_request_exists_first_and_success_page_offers_the_bot(
     page = public_client.get(response["Location"]).content.decode()
     assert request.reference in page
     assert "Продолжить в Telegram" in page
-    link = LINK_RE.search(page).group(1)
+    assert LINK_RE.search(page) is None
+    continue_response = public_client.post(
+        reverse("public_catalog_telegram_continue", args=[request.public_id])
+    )
+    assert continue_response.status_code == 302
+    link = continue_response["Location"]
     start = parse_qs(urlparse(link).query)["start"][0]
     assert link.startswith("https://t.me/ProStorTestBot?start=")
     assert start not in {str(request.pk), request.reference, str(request.public_id)}
+    assert start not in page
     assert "912" not in link
     stored = CustomerRequestMessengerLinkToken.objects.get()
     assert stored.token_hash == hashlib.sha256(start.encode()).hexdigest()
@@ -128,7 +135,38 @@ def test_misconfigured_link_lifetime_never_costs_the_request(
     assert CustomerRequest.objects.count() == 1
     assert not CustomerRequestMessengerLinkToken.objects.exists()
     assert TelegramOutboxEvent.objects.count() == 1
+    request = CustomerRequest.objects.get()
+    continued = public_client.post(
+        reverse("public_catalog_telegram_continue", args=[request.public_id])
+    )
+    assert continued["Location"] == response["Location"]
     assert "Telegram сейчас недоступен" in public_client.get(response["Location"]).content.decode()
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "apps.customer_requests.telegram_service.TelegramConversation.objects.create",
+        "apps.customer_requests.telegram_service.TelegramOutboxEvent.objects.create",
+        "apps.customer_requests.messengers.CustomerRequestMessengerLinkToken.objects.create",
+    ],
+)
+def test_telegram_persistence_fault_never_rolls_back_the_customer_request(
+    public_client, public_catalog, settings, monkeypatch, target
+):
+    """Conversation, outbox and token writes are optional to the request itself."""
+    settings.TELEGRAM_BOT_USERNAME = "ProStorTestBot"
+
+    def fail(*args, **kwargs):
+        raise IntegrityError("telegram persistence unavailable")
+
+    monkeypatch.setattr(target, fail)
+    response, _token, _part = _send(public_client, public_catalog)
+    request = CustomerRequest.objects.get()
+    public_client.post(reverse("public_catalog_telegram_continue", args=[request.public_id]))
+
+    assert CustomerRequest.objects.count() == 1
+    assert response.status_code == 302
 
 
 def test_max_request_flow_is_unchanged(public_client, public_catalog, settings):
@@ -151,6 +189,11 @@ def test_retry_of_a_sent_form_keeps_one_request_one_link_and_one_notification(
     settings.TELEGRAM_BOT_USERNAME = "ProStorTestBot"
     response, token, _part = _send(public_client, public_catalog)
     first_page = public_client.get(response["Location"]).content.decode()
+    request = CustomerRequest.objects.get()
+    continued = public_client.post(
+        reverse("public_catalog_telegram_continue", args=[request.public_id])
+    )
+    assert continued.status_code == 302
 
     retry = public_client.post(
         "/request/submit/",
@@ -167,14 +210,21 @@ def test_retry_of_a_sent_form_keeps_one_request_one_link_and_one_notification(
     assert CustomerRequest.objects.count() == 1
     assert TelegramOutboxEvent.objects.count() == 1
     assert CustomerRequestMessengerLinkToken.objects.count() == 1
-    assert LINK_RE.search(first_page).group(1) == LINK_RE.search(second_page).group(1)
+    assert LINK_RE.search(first_page) is None
+    assert LINK_RE.search(second_page) is None
 
 
 def test_another_browser_never_sees_the_link(public_client, public_catalog, settings, client):
     settings.TELEGRAM_BOT_USERNAME = "ProStorTestBot"
     response, _token, _part = _send(public_client, public_catalog)
+    request = CustomerRequest.objects.get()
+    continued = public_client.post(
+        reverse("public_catalog_telegram_continue", args=[request.public_id])
+    )
+    start = parse_qs(urlparse(continued["Location"]).query)["start"][0]
     session = public_client.session
-    assert session[TELEGRAM_SESSION_KEY]["token"]
+    assert start not in str(dict(session.items()))
+    assert start not in public_client.get(response["Location"]).content.decode()
 
     public_client.cookies.clear()
     assert public_client.get(response["Location"]).status_code == 404

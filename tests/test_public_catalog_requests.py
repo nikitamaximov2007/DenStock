@@ -406,9 +406,10 @@ def test_request_form_and_submit_query_counts_are_flat(
         if query["sql"].lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
     ]
     # The form chooses Telegram, so the same transaction also stores the
-    # waiting conversation, the operators' notification and the one-time link:
+    # waiting conversation and the operators' notification. The one-time link
+    # is generated only after the customer's local POST, never in page HTML.
     # still a constant, independent of the number of lines.
-    assert len(writes) == 5, "request, bulk lines, conversation, outbox event, link token"
+    assert len(writes) == 4, "request, bulk lines, conversation, outbox event"
     record_property(f"public_request_form_queries_{lines}", len(form_queries.captured_queries))
     record_property(f"public_request_submit_queries_{lines}", len(submit_queries.captured_queries))
     assert len(form_queries.captured_queries) <= 14

@@ -90,6 +90,7 @@ def test_public_resolver_has_only_catalog_routes():
         "public_catalog_request_form",
         "public_catalog_request_submit",
         "public_catalog_request_success",
+        "public_catalog_telegram_continue",
         "public_catalog_robots",
         "public_catalog_sitemap",
         "public_catalog_sitemap_parts",
