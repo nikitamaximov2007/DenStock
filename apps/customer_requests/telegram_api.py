@@ -16,6 +16,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 MAX_ERROR_TEXT = 200
 
@@ -62,6 +63,36 @@ def _scrub(text: object, token: str) -> str:
     return value[:MAX_ERROR_TEXT]
 
 
+def validated_proxy_url(value: str) -> str:
+    """An explicit HTTP CONNECT proxy for the Bot API, or "" for a direct connection.
+
+    Only ``http://host:port`` is accepted: no credentials, path or query. The
+    proxy only tunnels, so TLS to api.telegram.org (and the token inside the
+    request path) stays end to end. The rejected value is never echoed.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except ValueError:
+        raise ValueError("Telegram proxy URL is invalid.") from None
+    if (
+        parts.scheme != "http"
+        or not parts.hostname
+        or port is None
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError("Telegram proxy URL is invalid.")
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return f"http://{host}:{port}"
+
+
 class TelegramBotApi:
     def __init__(
         self,
@@ -70,16 +101,27 @@ class TelegramBotApi:
         base_url: str = "https://api.telegram.org",
         timeout: float = 15.0,
         opener=None,
+        proxy_url: str = "",
     ):
         if not token:
             raise ValueError("Telegram bot token is not configured.")
         self._token = token
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-        self._opener = opener or urllib.request.urlopen
+        self._proxy_url = validated_proxy_url(proxy_url)
+        if opener is not None:
+            self._opener = opener
+        elif self._proxy_url:
+            # Only this client's Bot API calls use the proxy (CONNECT tunnel);
+            # certificate verification of api.telegram.org stays in urllib.
+            self._opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({"https": self._proxy_url, "http": self._proxy_url})
+            ).open
+        else:
+            self._opener = urllib.request.urlopen
 
     def __repr__(self) -> str:  # never render the token, even in a debugger dump
-        return f"TelegramBotApi(base_url={self._base_url!r})"
+        return f"TelegramBotApi(base_url={self._base_url!r}, proxy={bool(self._proxy_url)})"
 
     def call(self, method: str, payload: dict | None = None, *, timeout: float | None = None,
              may_duplicate: bool = False):
@@ -135,10 +177,17 @@ class TelegramBotApi:
     # --- The methods the bot uses -------------------------------------------------------
 
     def get_me(self) -> dict:
-        return self.call("getMe")
+        return self._object_result("getMe")
 
     def get_webhook_info(self) -> dict:
-        return self.call("getWebhookInfo")
+        return self._object_result("getWebhookInfo")
+
+    def _object_result(self, method: str) -> dict:
+        result = self.call(method)
+        if not isinstance(result, dict):
+            # An unusable answer at startup is an outage, not a crash.
+            raise TelegramNetworkError("invalid response", ambiguous=False)
+        return result
 
     def get_updates(self, *, offset: int, timeout: int) -> list:
         # getUpdates is read-only for Telegram; the offset makes it safe to repeat.

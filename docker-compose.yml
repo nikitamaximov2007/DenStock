@@ -101,6 +101,18 @@ services:
       - path: .env
       - path: .env.telegram
         required: false
+    environment:
+      # The bot never uses AI support and has none of its mounts; the shared
+      # .env enables AI support for web only.
+      AI_SUPPORT_ENABLED: "false"
+      # Telegram is reached only through the dedicated egress proxy on the
+      # internal telegram-egress bridge (deploy/telegram-egress). An empty
+      # TELEGRAM_API_PROXY_URL in the invoking shell means a direct connection.
+      TELEGRAM_API_PROXY_URL: "${TELEGRAM_API_PROXY_URL-http://10.231.0.1:2081}"
+    networks:
+      default: {}
+      telegram-egress:
+        ipv4_address: 10.231.0.2
     depends_on:
       db:
         condition: service_healthy
@@ -146,3 +158,17 @@ volumes:
   private_media:
   caddy_data:
   caddy_config:
+
+networks:
+  # Only telegram-bot joins it. Internal: no route to the outside through this
+  # bridge; it exists so the bot, and nothing else, can reach the Telegram egress
+  # proxy listening on its gateway (see deploy/telegram-egress).
+  telegram-egress:
+    driver: bridge
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: br-tg-egress
+    ipam:
+      config:
+        - subnet: 10.231.0.0/29
+          gateway: 10.231.0.1

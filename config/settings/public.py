@@ -17,6 +17,7 @@ DENSTOCK_MODE = "public-catalog"
 # The public process only shows a t.me deep link; it never talks to the Bot
 # API, so it must not hold the bot secret even if an env file carries one.
 TELEGRAM_BOT_TOKEN = ""
+TELEGRAM_API_PROXY_URL = ""
 DENSTOCK_INSTANCE_ID = env("DENSTOCK_INSTANCE_ID", default="public-catalog").strip()
 DEBUG = False
 ALLOWED_HOSTS = env.list("DJANGO_PUBLIC_ALLOWED_HOSTS", default=[])

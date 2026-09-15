@@ -47,6 +47,11 @@ MAX_ATTEMPTS = 8
 EVENT_MAX_AGE = timedelta(days=7)
 NO_OPERATOR_RETRY = timedelta(minutes=5)
 BATCH = 20
+# Startup while Telegram is unreachable: wait in-process instead of exiting, so
+# the container restart policy never turns an outage into a rapid loop.
+STARTUP_BACKOFF_BASE_SECONDS = 5
+STARTUP_BACKOFF_MAX_SECONDS = 300
+LEASE_RENEW_SLICE_SECONDS = 30
 
 
 class SingleInstanceError(RuntimeError):
@@ -66,6 +71,12 @@ class Outgoing:
 
 def backoff_seconds(attempts: int) -> int:
     return min(10 * 2 ** max(attempts - 1, 0), 900)
+
+
+def startup_backoff_seconds(attempt: int) -> int:
+    return min(
+        STARTUP_BACKOFF_BASE_SECONDS * 2 ** max(attempt - 1, 0), STARTUP_BACKOFF_MAX_SECONDS
+    )
 
 
 def _is_int(value) -> bool:
@@ -269,6 +280,7 @@ class TelegramBotWorker:
         self._holds_lock = True
 
     def renew(self) -> None:
+        """Keep the single-consumer lease. Says nothing about Telegram itself."""
         now = timezone.now()
         renewed = TelegramBotRuntime.objects.filter(
             pk=TelegramBotRuntime.SINGLETON_PK, worker_id=self.worker_id
@@ -276,6 +288,9 @@ class TelegramBotWorker:
         if not renewed:
             raise SingleInstanceError("Аренду Telegram-бота перехватил другой экземпляр.")
         self._lock_database()
+
+    def _touch_heartbeat(self) -> None:
+        """Container health: only after Telegram actually answered."""
         if self.heartbeat_file:
             try:
                 Path(self.heartbeat_file).touch()
@@ -517,6 +532,50 @@ class TelegramBotWorker:
         TelegramBotRuntime.objects.filter(pk=TelegramBotRuntime.SINGLETON_PK).update(
             bot_username=str(me.get("username") or "")[:64]
         )
+        self._touch_heartbeat()
+
+    def start_with_retry(self) -> bool:
+        """Start once Telegram answers; an outage waits here, holding the lease.
+
+        Returns False only when a stop was requested while waiting. Telegram
+        refusing the token or the request, a configured webhook and another
+        consumer are not outages: they raise ``SingleInstanceError`` at once.
+        """
+        attempt = 0
+        while not self.stop.is_set():
+            try:
+                self.start()
+                if attempt:
+                    logger.info("telegram reachable after %s startup attempts", attempt + 1)
+                return True
+            except TelegramApiError as exc:
+                if not exc.retryable:
+                    raise SingleInstanceError(str(exc)) from None
+                error = exc
+            except TelegramNetworkError as exc:
+                error = exc
+            attempt += 1
+            delay = startup_backoff_seconds(attempt)
+            retry_after = getattr(error, "retry_after", None)
+            if retry_after:
+                delay = min(max(delay, retry_after), STARTUP_BACKOFF_MAX_SECONDS)
+            logger.warning(
+                "telegram unavailable at startup (attempt %s): %s; next try in %ss",
+                attempt, error, delay,
+            )
+            self.record_error(f"Старт: {error}")
+            self._wait_holding_lease(delay)
+        return False
+
+    def _wait_holding_lease(self, seconds: float) -> None:
+        """Sleep without giving up the single-consumer lease; a stop ends it at once."""
+        remaining = float(seconds)
+        while remaining > 0 and not self.stop.is_set():
+            chunk = min(remaining, LEASE_RENEW_SLICE_SECONDS)
+            if self.stop.wait(chunk):
+                return
+            remaining -= chunk
+            self.renew()
 
     def iterate(self, poll_timeout: int | None = None) -> None:
         self.renew()
@@ -531,13 +590,15 @@ class TelegramBotWorker:
         timeout = self.poll_timeout if poll_timeout is None else poll_timeout
         self.poll_once(0 if self.has_due_work() else timeout)
         self.drain_outbox()
+        self._touch_heartbeat()
 
     def run(self, *, once: bool = False) -> None:
         failures = 0
         try:
             # Inside try: a refused start (webhook set, bad token) must release
             # the lease at once, or a restart would wait for it to expire.
-            self.start()
+            if not self.start_with_retry():
+                return
             while not self.stop.is_set():
                 try:
                     self.iterate()

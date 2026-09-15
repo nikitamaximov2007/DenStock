@@ -5,6 +5,8 @@ import pytest
 
 NETWORK_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts" / "ai-support"
 sys.path.insert(0, str(NETWORK_SCRIPTS))
+EGRESS_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts" / "telegram-egress"
+sys.path.insert(0, str(EGRESS_SCRIPTS))
 
 
 @pytest.fixture

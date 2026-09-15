@@ -219,6 +219,9 @@ TELEGRAM_API_BASE_URL = env(
     "TELEGRAM_API_BASE_URL", default="https://api.telegram.org"
 ).strip().rstrip("/")
 TELEGRAM_POLL_TIMEOUT_SECONDS = env.int("TELEGRAM_POLL_TIMEOUT_SECONDS", default=10)
+# Explicit HTTP CONNECT proxy for Bot API calls of the telegram-bot service only
+# (docker-compose.yml sets it for that service). Empty means a direct connection.
+TELEGRAM_API_PROXY_URL = env("TELEGRAM_API_PROXY_URL", default="").strip()
 # Absolute internal DenisStock address for the operators' «Открыть заявку» button.
 TELEGRAM_INTERNAL_BASE_URL = env("TELEGRAM_INTERNAL_BASE_URL", default="").strip().rstrip("/")
 TELEGRAM_BOT_HEARTBEAT_FILE = env(

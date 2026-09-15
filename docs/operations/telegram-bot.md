@@ -67,8 +67,52 @@ docker compose --profile telegram-bot logs --tail 50 telegram-bot
 Проверка: страница DenisStock «Заявки клиентов» → «Telegram-бот» показывает
 «Работает · @username», время последнего обновления и очереди.
 
-Здоровье контейнера: бот обновляет файл-сигнал каждый цикл; healthcheck
-считает контейнер нездоровым, если сигнала нет больше 90 секунд.
+Здоровье контейнера: бот обновляет файл-сигнал только после ответа Telegram
+(успешный старт или успешный опрос); healthcheck считает контейнер нездоровым,
+если сигнала нет больше 90 секунд. Живая база без Telegram здоровьем не считается.
+
+### Если Telegram недоступен при старте
+
+Бот не завершается: он ждёт внутри процесса и повторяет попытку через 5, 10,
+20 … секунд, но не реже раза в 5 минут, удерживая аренду (второй экземпляр не
+запустится). SIGTERM прерывает ожидание сразу. Отказ Telegram (401/403/404,
+настроенный webhook, 409) это не сбой сети: бот пишет причину, ждёт 60 секунд и
+завершается, чтобы перезапуск контейнера не превратился в частый цикл.
+
+### 3a. Выход в Telegram через прокси
+
+С production-сервера `api.telegram.org` напрямую недоступен. Бот ходит в
+Telegram через отдельный процесс `denstock-telegram-egress.service`:
+
+- тот же установленный sing-box и тот же пользователь `denstock-ai-proxy`, что у
+  прокси AI-поддержки, и тот же выход MAXINIK; сам прокси AI-поддержки, его
+  `127.0.0.1:2080`, таблица `denstock_ai` и его проверка здоровья не меняются;
+- слушает только `10.231.0.1:2081`, шлюз внутренней сети `telegram-egress`
+  (мост `br-tg-egress`), в которую входит только `telegram-bot` (`10.231.0.2`);
+- пропускает только `CONNECT api.telegram.org:443`, остальное отклоняет;
+- отдельная таблица nftables `denstock_telegram_egress` пускает к порту 2081
+  только адрес бота на этом мосту; ставится перед запуском и снимается после
+  остановки;
+- TLS не расшифровывается: токен остаётся внутри TLS до Telegram.
+
+`web`, `catalog-web` и `db` в эту сеть не входят и прокси не получают.
+`TELEGRAM_API_PROXY_URL` задан в `docker-compose.yml` только для `telegram-bot`.
+
+Установка на сервере (из каталога выпуска, от root):
+
+```
+python3 scripts/telegram-egress/telegram_egress.py render --env-file /etc/denstock-ai/maxinik.env --check --show-redacted
+python3 scripts/telegram-egress/telegram_egress.py render --env-file /etc/denstock-ai/maxinik.env --apply
+python3 scripts/telegram-egress/telegram_egress.py install-unit --apply
+docker compose --profile telegram-bot create --no-recreate telegram-bot   # создаёт сеть telegram-egress
+systemctl enable --now denstock-telegram-egress.service
+```
+
+Проверка без токена (из одноразового контейнера с сетью бота):
+
+```
+docker compose --profile telegram-bot run --rm --no-deps --entrypoint python telegram-bot -c "import urllib.request as u; o=u.build_opener(u.ProxyHandler({'https':'http://10.231.0.1:2081'})); print(o.open('https://api.telegram.org/', timeout=15).status)"
+```
 
 **Только один экземпляр.** Никогда не запускайте второй `telegram-bot` с тем же
 токеном (второй сервер, `docker compose run`, локальный запуск с боевым
