@@ -18,6 +18,7 @@ from apps.inventory.presentation import part_exact_number, with_part_identity
 from .models import (
     CustomerRequest,
     CustomerRequestLine,
+    CustomerRequestMessengerContact,
     CustomerRequestPrivacyEvent,
     CustomerRequestStatusEvent,
 )
@@ -252,10 +253,10 @@ def create_customer_request(
         # Telegram is an optional integration.  Keep its rows behind a
         # savepoint: a broken Telegram table, constraint or model validation
         # must never roll back the canonical request and its line snapshots.
-        from .telegram_service import start_request_conversation
+        from .telegram_service import request_insert_proof, start_request_conversation
 
         try:
-            with transaction.atomic():
+            with transaction.atomic(), request_insert_proof(submission_key):
                 start_request_conversation(request)
         except Exception as exc:  # noqa: BLE001 - this boundary must fail open
             logger.warning(
@@ -324,6 +325,8 @@ def anonymize_request(*, request_id: int, by=None) -> CustomerRequest:
         event_type=CustomerRequestPrivacyEvent.EventType.ANONYMIZED,
         performed_by=by,
     )
+    # The messenger contact stores the raw chat identifier of the customer.
+    CustomerRequestMessengerContact.objects.filter(request=request).delete()
     from .telegram_service import anonymize_conversation
 
     anonymize_conversation(request)
