@@ -13,6 +13,7 @@ import urllib.error
 from datetime import timedelta
 from decimal import Decimal
 from io import BytesIO
+from types import SimpleNamespace
 
 import pytest
 from django.contrib.auth.models import Group
@@ -61,6 +62,7 @@ from apps.customer_requests.telegram_bot import (
     TelegramBotWorker,
     handle_update,
 )
+from apps.customer_requests.telegram_service import CUSTOMER_ACK_TEXT, request_summary_messages
 from apps.inventory.models import StockBalance, StockMovement
 from apps.operations.models import TelegramBotRuntime
 from apps.receipts.models import Receipt
@@ -382,10 +384,11 @@ def test_deep_link_binds_numeric_chat_and_confirms_once(part, worker, api, opera
     assert conversation.customer_chat_id == CUSTOMER
     assert conversation.customer_user_id == CUSTOMER
     confirmations = api.texts_to(CUSTOMER)
-    assert confirmations == [
-        f"Готово. Telegram подключён к заявке {request.reference}.\n"
-        "Менеджер PRO-STOR ответит вам здесь. Можете написать вопрос прямо сейчас."
-    ]
+    assert len(confirmations) == 1
+    assert f"Готово. Telegram подключён к заявке {request.reference}." in confirmations[0]
+    assert "Ваш заказ:" in confirmations[0]
+    assert "Итого: 20 000 ₽" in confirmations[0]
+    assert "Менеджер PRO-STOR ответит вам здесь." in confirmations[0]
     for operator in operators:
         assert any(
             f"Клиент подключил Telegram к заявке {request.reference}" in text
@@ -474,6 +477,97 @@ def test_customer_starts_after_a_delay_within_the_link_lifetime(part, worker, ap
     )
     run(worker, api, message_update(CUSTOMER, f"/start {issued.token}"))
     assert TelegramConversation.objects.get(request=request).is_linked
+
+
+def test_start_summary_uses_immutable_request_line_snapshots(part, worker, api):
+    request = _request(part, key="s" * 32)
+    line = request.lines.get()
+    part.recommended_price = Decimal("999999.00")
+    part.save(update_fields=["recommended_price"])
+
+    link(worker, api, request)
+
+    summary = "\n".join(api.texts_to(CUSTOMER))
+    assert request.reference in summary
+    assert "448 — РЕМЕНЬ ПРИВОДНОЙ" in summary
+    assert "2 шт. × 10 000 ₽ = 20 000 ₽" in summary
+    assert "Итого: 20 000 ₽" in summary
+    assert str(line.price_seen) not in summary  # never Decimal(...) presentation
+    assert "999 999" not in summary
+
+
+def test_start_summary_is_honest_for_unknown_and_mixed_prices(part, worker, api):
+    request = _request(part, key="u" * 32)
+    first = request.lines.get()
+    CustomerRequestLine.objects.filter(pk=first.pk).update(price_seen=None)
+    second = PartType.objects.create(
+        name="ВТОРАЯ ДЕТАЛЬ",
+        category=part.category,
+        unit=part.unit,
+        manufacturer=part.manufacturer,
+        tracking_mode=part.tracking_mode,
+        recommended_price=Decimal("45000"),
+        certified_price_rub=Decimal("45000"),
+        price_provenance=part.price_provenance,
+    )
+    CustomerRequestLine.objects.create(
+        request=request,
+        part_type=second,
+        quantity_requested=Decimal("2"),
+        unit_name=part.unit.name,
+        unit_short_name=part.unit.short_name,
+        price_seen=Decimal("45000"),
+        article="421000667",
+        part_name="ВТОРАЯ ДЕТАЛЬ",
+    )
+
+    link(worker, api, request)
+
+    summary = "\n".join(api.texts_to(CUSTOMER))
+    assert "448 — РЕМЕНЬ ПРИВОДНОЙ\n2 шт. — цена уточняется" in summary
+    assert "421000667 — ВТОРАЯ ДЕТАЛЬ" in summary
+    assert "2 шт. × 45 000 ₽ = 90 000 ₽" in summary
+    assert "Итого по позициям с известной ценой: 90 000 ₽" in summary
+    assert "Есть позиции, цена которых уточняется." in summary
+    assert "Итого: 0 ₽" not in summary
+
+
+def test_start_summary_without_any_known_price_has_no_zero_total(part, worker, api):
+    request = _request(part, key="n" * 32)
+    CustomerRequestLine.objects.filter(request=request).update(price_seen=None)
+
+    link(worker, api, request)
+
+    summary = "\n".join(api.texts_to(CUSTOMER))
+    assert "цена уточняется" in summary
+    assert "Итого:" not in summary
+    assert "0 ₽" not in summary
+
+
+def test_long_start_summary_splits_only_between_complete_lines(monkeypatch):
+    from apps.customer_requests import telegram_service
+
+    lines = [
+        SimpleNamespace(
+            article=f"A{i:02d}",
+            part_name="ДЕТАЛЬ " + ("X" * 90),
+            quantity_requested=Decimal("1"),
+            unit_short_name="шт.",
+            price_seen=Decimal("88"),
+        )
+        for i in range(12)
+    ]
+    request = SimpleNamespace(
+        reference="ABCD1234", lines=SimpleNamespace(order_by=lambda *_: lines)
+    )
+    monkeypatch.setattr(telegram_service, "MAX_MESSAGE_CHARS", 420)
+
+    messages = request_summary_messages(request)
+
+    assert len(messages) > 1
+    assert all(len(message) <= 420 for message in messages)
+    assert all(sum(f"A{i:02d}" in message for message in messages) == 1 for i in range(12))
+    assert messages[-1].endswith("Можете написать вопрос прямо сейчас.")
 
 
 def test_customer_who_never_starts_keeps_a_valid_request(part, worker, api, operators):
@@ -653,6 +747,63 @@ def test_duplicate_update_is_stored_once(part, worker, api, operators):
         TelegramOutboxEvent.objects.filter(kind=TelegramOutboxEvent.Kind.CUSTOMER_MESSAGE).count()
         == 1
     )
+
+
+def test_customer_ack_is_once_per_conversation_without_suppressing_messages(
+    part, worker, api, operators
+):
+    request = _request(part, key="ack" * 10 + "12")
+    link(worker, api, request)
+
+    run(worker, api, message_update(CUSTOMER, "первое"))
+    run(worker, api, message_update(CUSTOMER, "второе"))
+    run(worker, api, message_update(CUSTOMER, "третье"))
+
+    assert api.texts_to(CUSTOMER).count(CUSTOMER_ACK_TEXT) == 1
+    messages = TelegramMessage.objects.filter(direction=TelegramMessage.Direction.CUSTOMER)
+    assert list(messages.values_list("text", flat=True)) == ["первое", "второе", "третье"]
+    assert TelegramOutboxEvent.objects.filter(
+        kind=TelegramOutboxEvent.Kind.CUSTOMER_MESSAGE
+    ).count() == 3
+    for operator in operators:
+        delivered = "\n".join(api.texts_to(operator.telegram_user_id))
+        assert all(text in delivered for text in ("первое", "второе", "третье"))
+
+
+def test_ack_replay_is_silent_and_next_request_gets_its_own_ack(part, worker, api, operators):
+    first = _request(part, key="a" * 31 + "1")
+    link(worker, api, first)
+    update = message_update(CUSTOMER, "первое", update_id=444001)
+    assert [item.text for item in handle_update(update)] == [CUSTOMER_ACK_TEXT]
+    assert handle_update(update) == []
+
+    second = _request(part, key="a" * 31 + "2")
+    link(worker, api, second)
+    assert [item.text for item in handle_update(message_update(CUSTOMER, "новая заявка"))] == [
+        CUSTOMER_ACK_TEXT
+    ]
+    assert TelegramMessage.objects.filter(
+        direction=TelegramMessage.Direction.CUSTOMER, conversation__request=first
+    ).count() == 1
+    assert TelegramMessage.objects.filter(
+        direction=TelegramMessage.Direction.CUSTOMER, conversation__request=second
+    ).count() == 1
+
+
+def test_worker_restart_does_not_reset_the_durable_first_message_ack(part, worker, api, operators):
+    request = _request(part, key="r" * 32)
+    link(worker, api, request)
+    run(worker, api, message_update(CUSTOMER, "первое"))
+    worker.release()
+    restarted = TelegramBotWorker(
+        api, worker_id="worker-restarted", poll_timeout=0, heartbeat_file=""
+    )
+    restarted.start()
+
+    run(restarted, api, message_update(CUSTOMER, "второе"))
+
+    assert api.texts_to(CUSTOMER).count(CUSTOMER_ACK_TEXT) == 1
+    assert TelegramMessage.objects.filter(direction=TelegramMessage.Direction.CUSTOMER).count() == 2
 
 
 def test_two_operators_get_one_copy_and_customer_one_confirmation(part, worker, api, operators):

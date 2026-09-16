@@ -37,10 +37,7 @@ LIST_PAGE_SIZE = 8
 REPLY_WINDOW = timedelta(minutes=30)
 HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 
-LINKED_TEXT = (
-    "Готово. Telegram подключён к заявке {reference}.\n"
-    "Менеджер PRO-STOR ответит вам здесь. Можете написать вопрос прямо сейчас."
-)
+LINKED_TEXT = "Готово. Telegram подключён к заявке {reference}."
 LINK_INVALID_TEXT = (
     "Ссылка недействительна или устарела. Откройте ссылку со страницы заявки ещё раз. "
     "Если ссылки нет, менеджер свяжется с вами по телефону."
@@ -137,12 +134,17 @@ def bind_customer_chat(
     TelegramCustomerChat.objects.update_or_create(
         chat_id=chat_id, defaults={"active_conversation": conversation}
     )
-    TelegramMessage.objects.create(
-        conversation=conversation,
-        direction=TelegramMessage.Direction.SYSTEM,
-        text=LINKED_TEXT.format(reference=request.reference),
-        delivery_status=TelegramDeliveryStatus.PENDING,
-        next_attempt_at=now,
+    TelegramMessage.objects.bulk_create(
+        [
+            TelegramMessage(
+                conversation=conversation,
+                direction=TelegramMessage.Direction.SYSTEM,
+                text=text,
+                delivery_status=TelegramDeliveryStatus.PENDING,
+                next_attempt_at=now,
+            )
+            for text in request_summary_messages(request)
+        ]
     )
     TelegramOutboxEvent.objects.get_or_create(
         dedupe_key=f"customer_linked:{link_token_id}",
@@ -153,6 +155,75 @@ def bind_customer_chat(
         },
     )
     return conversation
+
+
+def _summary_line(line) -> tuple[str, Decimal | None]:
+    """One complete customer-request line, using only its immutable snapshots."""
+    article = line.article or "Артикул уточняется"
+    name = line.part_name or "Название уточняется"
+    unit = (line.unit_short_name or "").strip()
+    if unit == "шт":
+        unit = "шт."
+    quantity = f"{quantity_int(line.quantity_requested)} {unit}".strip()
+    if line.price_seen is None:
+        return f"{article} — {name}\n{quantity} — цена уточняется", None
+    total = line.quantity_requested * line.price_seen
+    return (
+        f"{article} — {name}\n"
+        f"{quantity} × {money_int(line.price_seen)} ₽ = {money_int(total)} ₽",
+        total,
+    )
+
+
+def request_summary_messages(request: CustomerRequest) -> list[str]:
+    """Render an immutable request snapshot into safely sized Telegram messages.
+
+    Complete order lines are never truncated or split.  A request can therefore
+    span several durable system messages, which are sent by the normal customer
+    outbox and retain its retry/idempotency guarantees.
+    """
+    lines = list(request.lines.order_by("pk"))
+    heading = LINKED_TEXT.format(reference=request.reference) + "\n\nВаш заказ:"
+    messages: list[str] = []
+    current = heading
+    known_total = Decimal("0")
+    known_price_count = 0
+    has_unknown = False
+
+    for line in lines:
+        rendered, total = _summary_line(line)
+        if total is None:
+            has_unknown = True
+        else:
+            known_total += total
+            known_price_count += 1
+        candidate = f"{current}\n\n{rendered}"
+        if len(candidate) <= MAX_MESSAGE_CHARS:
+            current = candidate
+            continue
+        messages.append(current)
+        current = f"Ваш заказ (продолжение):\n\n{rendered}"
+
+    if has_unknown:
+        total_text = (
+            f"Итого по позициям с известной ценой: {money_int(known_total)} ₽\n"
+            "Есть позиции, цена которых уточняется."
+            if known_price_count
+            else "Есть позиции, цена которых уточняется."
+        )
+    else:
+        total_text = f"Итого: {money_int(known_total)} ₽"
+    closing = (
+        f"{total_text}\n\n"
+        "Менеджер PRO-STOR ответит вам здесь.\n"
+        "Можете написать вопрос прямо сейчас."
+    )
+    candidate = f"{current}\n\n{closing}"
+    if len(candidate) <= MAX_MESSAGE_CHARS:
+        messages.append(candidate)
+    else:
+        messages.extend([current, closing])
+    return messages
 
 
 def anonymize_conversation(request: CustomerRequest) -> None:
@@ -571,6 +642,13 @@ def record_customer_message(*, chat_id: int, update_id: int, text: str) -> Custo
         active = conversations[0]
     if not customer_contact_allowed(active.request):
         return CustomerResult("Переписка по этой заявке закрыта.")
+    # ``state`` is locked above.  All normal messages for this chat therefore
+    # serialize here, and the persisted first message is the durable ACK marker.
+    # A worker restart, outbox retry, or replay cannot turn a later message into
+    # a first one.
+    first_customer_message = not TelegramMessage.objects.filter(
+        conversation=active, direction=TelegramMessage.Direction.CUSTOMER
+    ).exists()
     now = timezone.now()
     message = TelegramMessage.objects.create(
         conversation=active,
@@ -588,4 +666,4 @@ def record_customer_message(*, chat_id: int, update_id: int, text: str) -> Custo
         dedupe_key=f"customer_message:{message.pk}",
         next_attempt_at=now,
     )
-    return CustomerResult(CUSTOMER_ACK_TEXT)
+    return CustomerResult(CUSTOMER_ACK_TEXT if first_customer_message else "")
