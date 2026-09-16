@@ -1,0 +1,37 @@
+# Локально: слушаем :80 и проксируем на Django.
+# На VPS: задайте CADDY_SITE_ADDRESS=ваш-домен — Caddy включит авто-HTTPS.
+{$CADDY_SITE_ADDRESS::80} {
+	encode gzip
+
+	# Слой 25: статичная отдача загруженных media-файлов из общего тома (read-only).
+	# /media/part-items/… → /srv/media/part-items/…
+	handle_path /media/* {
+		root * /srv/media
+		file_server
+	}
+
+	# Остальное — в Django.
+	handle {
+		reverse_proxy web:8000
+	}
+}
+
+# Private, isolated catalog preview. This host is intentionally separate from
+# the production site and exposes only catalog-web-preview.
+catalog.185-250-44-206.sslip.io {
+	encode gzip
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy catalog-web:8000
+}
+# Canonical public catalog domain. This host never reaches internal web.
+pro-brp.ru {
+	encode gzip
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy catalog-web:8000
+}
+
+# Canonicalize the public www hostname before any application routing.
+www.pro-brp.ru {
+	header X-Robots-Tag "noindex, nofollow"
+	redir https://pro-brp.ru{uri} permanent
+}
