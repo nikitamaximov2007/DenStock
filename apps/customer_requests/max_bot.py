@@ -279,6 +279,8 @@ def build_api() -> MaxBotApi:
         settings.MAX_BOT_TOKEN,
         base_url=settings.MAX_API_BASE_URL,
         timeout=settings.MAX_API_TIMEOUT_SECONDS,
+        ca_file=settings.MAX_API_CA_FILE,
+        ca_sha256=settings.MAX_API_CA_SHA256,
     )
 
 

@@ -177,7 +177,8 @@ class FakeMaxServer:
         self._thread = None
 
     # lifecycle
-    def start(self, port: int = 0) -> str:
+    def start(self, port: int = 0, tls_context=None) -> str:
+        """Serve on 127.0.0.1; with ``tls_context`` over HTTPS like the real MAX."""
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -195,6 +196,10 @@ class FakeMaxServer:
 
         self._server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         self._server.daemon_threads = True
+        self._scheme = "http"
+        if tls_context is not None:
+            self._server.socket = tls_context.wrap_socket(self._server.socket, server_side=True)
+            self._scheme = "https"
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return self.base_url
@@ -207,7 +212,7 @@ class FakeMaxServer:
     @property
     def base_url(self) -> str:
         host, port = self._server.server_address[:2]
-        return f"http://{host}:{port}"
+        return f"{getattr(self, '_scheme', 'http')}://{host}:{port}"
 
     def script(self, path: str, *behaviours) -> None:
         with self.lock:

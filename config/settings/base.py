@@ -248,6 +248,12 @@ MAX_API_BASE_URL = env(
     "MAX_API_BASE_URL", default="https://platform-api2.max.ru"
 ).strip().rstrip("/")
 MAX_API_TIMEOUT_SECONDS = env.int("MAX_API_TIMEOUT_SECONDS", default=15)
+# MAX's certificate chains to the Russian Trusted Root CA (Минцифры), absent
+# from standard trust stores. The MAX client alone trusts this PEM file, and
+# its SHA-256 pins it; verification is never disabled. Empty means the system
+# trust store, which production MAX does not pass.
+MAX_API_CA_FILE = env("MAX_API_CA_FILE", default="").strip()
+MAX_API_CA_SHA256 = env("MAX_API_CA_SHA256", default="").strip()
 MAX_WEBHOOK_ENABLED = env.bool("MAX_WEBHOOK_ENABLED", default=False)
 MAX_WEBHOOK_SECRET = env("MAX_WEBHOOK_SECRET", default="").strip()
 # The public HTTPS address MAX delivers to (port 443, trusted certificate). Used
