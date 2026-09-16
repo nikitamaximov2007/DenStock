@@ -20,6 +20,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST, require_safe
 
+from apps.customer_requests.messengers import telegram_deep_link_origin
 from apps.customer_requests.services import CustomerRequestError
 from apps.operations.write_guard import BusinessWriteBlocked
 
@@ -44,6 +45,7 @@ from .public_catalog import (
     search_catalog,
 )
 from .public_photos import part_photos, rendition_for
+from .public_settings import content_security_policy
 from .search import MAX_QUERY_LENGTH
 
 PHOTO_MAX_AGE = 24 * 60 * 60
@@ -349,15 +351,24 @@ def public_request_success(request, public_id):
     submission = public_requests.stored_submission(request.session)
     if submission is None or submission.request != str(public_id):
         raise Http404
-    return _render(
+    telegram = public_requests.telegram_success(request.session, public_id)
+    response = _render(
         request,
         "public_catalog/request_success.html",
         {
             "public_id": public_id,
             "reference": public_requests.request_reference(public_id),
-            **public_requests.telegram_success(request.session, public_id),
+            **telegram,
         },
     )
+    origin = telegram_deep_link_origin() if telegram.get("telegram_can_continue") else ""
+    if origin:
+        # Only this page may hand the customer over to Telegram. A browser
+        # applies form-action to every hop of a form POST's redirect chain, so
+        # without the deep-link origin here the handoff is blocked silently and
+        # the customer stays on this page.
+        response["Content-Security-Policy"] = content_security_policy(extra_form_action=origin)
+    return response
 
 
 @require_POST
@@ -374,7 +385,11 @@ def public_telegram_continue(request, public_id):
         except public_requests.MessengerLinkError:
             start_url = None
         if start_url:
-            return redirect(start_url)
+            # 303: the browser must leave this POST with a GET navigation to
+            # Telegram. The raw token lives only in this Location header.
+            response = redirect(start_url)
+            response.status_code = 303
+            return response
     return redirect("public_catalog_request_success", public_id=public_id)
 
 

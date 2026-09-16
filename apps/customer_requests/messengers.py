@@ -18,6 +18,10 @@ from .models import (
 )
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{20,64}$")
+# https://host[:port] for production; a local origin only for tests and previews.
+DEEP_LINK_ORIGIN_RE = re.compile(
+    r"^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?$|^http://(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?$"
+)
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 
 
@@ -129,14 +133,26 @@ def issue_max_link(*, request_id: int, by=None) -> IssuedMessengerLink:
     )
 
 
+def telegram_deep_link_origin() -> str:
+    """Origin of the customer's deep link, or "" when it is not usable.
+
+    The success page needs it verbatim for its Content-Security-Policy: a
+    browser blocks the POST -> redirect handoff unless the target origin is an
+    allowed form-action source.
+    """
+    origin = str(settings.TELEGRAM_DEEP_LINK_BASE_URL or "").strip().rstrip("/")
+    return origin if DEEP_LINK_ORIGIN_RE.fullmatch(origin) else ""
+
+
 def telegram_start_url(token: str) -> str | None:
     """Return the documented Bot API deep-link representation, if configured."""
     username = settings.TELEGRAM_BOT_USERNAME
-    if not TELEGRAM_USERNAME_RE.fullmatch(username):
+    origin = telegram_deep_link_origin()
+    if not origin or not TELEGRAM_USERNAME_RE.fullmatch(username):
         return None
     if not TOKEN_RE.fullmatch(token):
         raise MessengerLinkError("Некорректная ссылка Telegram.")
-    return f"https://t.me/{username}?start={token}"
+    return f"{origin}/{username}?start={token}"
 
 
 @transaction.atomic
@@ -193,6 +209,11 @@ def consume_messenger_start(
         raise MessengerLinkError("Этот чат уже связан с другой заявкой.") from exc
     row.used_at = now
     row.save(update_fields=["used_at"])
+    # A retried handoff may have left earlier links unused. Once one of them
+    # binds the chat, the rest must never bind this request again.
+    CustomerRequestMessengerLinkToken.objects.filter(
+        request=row.request, channel=channel, used_at__isnull=True, revoked_at__isnull=True
+    ).exclude(pk=row.pk).update(revoked_at=now)
     if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM:
         from .telegram_service import bind_customer_chat
 

@@ -51,15 +51,28 @@ PUBLIC_SETTINGS = {
 # и `unsafe-eval`: встроенный код, внешние домены, аналитика и реклама
 # по-прежнему запрещены, а `default-src 'none'` закрывает всё остальное
 # (fetch, websocket, шрифты, медиа, фреймы).
-CONTENT_SECURITY_POLICY = "; ".join(
-    (
-        "default-src 'none'",
-        "img-src 'self'",
-        "style-src 'self'",
-        "script-src 'self'",
-        "form-action 'self'",
-        "frame-ancestors 'none'",
-        "base-uri 'none'",
+def content_security_policy(*, extra_form_action: str = "") -> str:
+    """The public policy, optionally allowing one extra form-action origin.
+
+    Only the request success page needs that: its «Продолжить в Telegram» POST
+    answers with a redirect to the deep-link origin, and a browser applies
+    form-action to every hop of that redirect chain.
+    """
+    form_action = "form-action 'self'"
+    if extra_form_action:
+        form_action = f"{form_action} {extra_form_action}"
+    return "; ".join(
+        (
+            "default-src 'none'",
+            "img-src 'self'",
+            "style-src 'self'",
+            "script-src 'self'",
+            form_action,
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+        )
     )
-)
+
+
+CONTENT_SECURITY_POLICY = content_security_policy()
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"

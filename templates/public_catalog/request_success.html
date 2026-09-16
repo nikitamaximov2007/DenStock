@@ -12,12 +12,19 @@
     {% if telegram_selected %}
       {% if telegram_ready %}
         <p class="empty__text">Заявка создана. Чтобы менеджер мог ответить вам в Telegram, подключите Telegram к заявке.</p>
-        {% if not telegram_link_issued %}
+        {% if telegram_can_continue %}
           <form method="post"
                 action="{% url 'public_catalog_telegram_continue' public_id %}">
             {% csrf_token %}
             <button class="btn btn--large" type="submit" data-telegram-link>Продолжить в Telegram</button>
           </form>
+          {% if telegram_retry %}
+            <p class="empty__text" data-telegram-retry>Если Telegram не открылся, нажмите кнопку ещё раз.</p>
+          {% endif %}
+        {% else %}
+          <p class="empty__text" data-telegram-exhausted>
+            Не удалось открыть Telegram. Менеджер свяжется с вами по телефону из заявки.
+          </p>
         {% endif %}
         <p class="empty__text">
           Откроется бот PRO-STOR: нажмите в нём «Запустить». Если не получится, менеджер свяжется с вами по телефону из заявки.

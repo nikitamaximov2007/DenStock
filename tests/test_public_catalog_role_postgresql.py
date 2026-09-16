@@ -258,6 +258,8 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         ("customer_requests_telegramconversation", "id", "SELECT"),
         ("customer_requests_telegramoutboxevent", "id", "SELECT"),
         ("customer_requests_customerrequestmessengerlinktoken", "id", "SELECT"),
+        # The insert guard counts a request's links to cap handoff retries.
+        ("customer_requests_customerrequestmessengerlinktoken", "request_id", "SELECT"),
         ("operations_deploymentstate", "id", "SELECT"),
         ("operations_deploymentstate", "write_state", "SELECT"),
         ("operations_deploymentstate", "business_generation", "SELECT"),
@@ -315,7 +317,7 @@ def test_a_public_request_is_inserted_under_the_restricted_role(
 
     assert response.status_code == 302 and retry["Location"] == response["Location"]
     assert success.status_code == 200
-    assert telegram_continue.status_code == 302
+    assert telegram_continue.status_code == 303
     assert telegram_continue["Location"].startswith("https://t.me/")
     request = CustomerRequest.objects.get()
     assert {(line.part_type_id, line.is_supply_inquiry) for line in request.lines.all()} == {
@@ -522,6 +524,31 @@ def test_even_with_its_own_proof_the_public_role_inserts_only_initial_shapes(
         _insert(*_token(own.pk, "d" * 64), proof=key, refused=False)
     finally:
         _reset()
+
+
+def test_public_role_cannot_mint_unlimited_links_for_its_own_request(
+    restricted_role, public_catalog
+):
+    """A replayed session cookie must not turn retries into unlimited links."""
+    key = "retry-cap-key-" + "r" * 18
+    own = _victim_request(public_catalog, key)
+    _as(restricted_role)
+    try:
+        for index in range(3):
+            _insert(*_token(own.pk, chr(97 + index) * 64), proof=key, refused=False)
+        with pytest.raises(ProgrammingError, match="telegram link limit reached"):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT set_config('denstock.telegram_request_proof', %s, true)", [key]
+                    )
+                    sql, params = _token(own.pk, "z" * 64)
+                    cursor.execute(sql, params)
+    finally:
+        _reset()
+    from apps.customer_requests.models import CustomerRequestMessengerLinkToken
+
+    assert CustomerRequestMessengerLinkToken.objects.filter(request=own).count() == 3
 
 
 def test_internal_role_is_not_restricted_by_the_telegram_insert_guard(db, public_catalog):

@@ -104,8 +104,15 @@ BEGIN
     );
     EXECUTE format(
         'GRANT SELECT (id) ON TABLE customer_requests_customerrequestline, '
-        'customer_requests_telegramconversation, customer_requests_telegramoutboxevent, '
-        'customer_requests_customerrequestmessengerlinktoken TO %I',
+        'customer_requests_telegramconversation, customer_requests_telegramoutboxevent TO %I',
+        role_name
+    );
+    -- The link-token guard counts a request's existing links to cap retries of
+    -- the Telegram handoff, so it reads that column as the inserting role.
+    -- Identifiers only: the token hash and every request column stay unreadable.
+    EXECUTE format(
+        'GRANT SELECT (id, request_id) '
+        'ON TABLE customer_requests_customerrequestmessengerlinktoken TO %I',
         role_name
     );
 

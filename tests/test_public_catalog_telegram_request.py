@@ -94,7 +94,7 @@ def test_telegram_request_exists_first_and_success_page_offers_the_bot(
     continue_response = public_client.post(
         reverse("public_catalog_telegram_continue", args=[request.public_id])
     )
-    assert continue_response.status_code == 302
+    assert continue_response.status_code == 303
     link = continue_response["Location"]
     start = parse_qs(urlparse(link).query)["start"][0]
     assert link.startswith("https://t.me/ProStorTestBot?start=")
@@ -193,7 +193,7 @@ def test_retry_of_a_sent_form_keeps_one_request_one_link_and_one_notification(
     continued = public_client.post(
         reverse("public_catalog_telegram_continue", args=[request.public_id])
     )
-    assert continued.status_code == 302
+    assert continued.status_code == 303
 
     retry = public_client.post(
         "/request/submit/",

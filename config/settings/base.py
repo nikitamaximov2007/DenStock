@@ -211,6 +211,11 @@ PUBLIC_REQUEST_RATE_WINDOW_SECONDS = env.int("PUBLIC_REQUEST_RATE_WINDOW_SECONDS
 TELEGRAM_BOT_USERNAME = env("TELEGRAM_BOT_USERNAME", default="").strip().lstrip("@")
 TELEGRAM_WEBHOOK_SECRET = env("TELEGRAM_WEBHOOK_SECRET", default="").strip()
 TELEGRAM_REQUEST_LINK_TTL_SECONDS = env.int("TELEGRAM_REQUEST_LINK_TTL_SECONDS", default=86400)
+# Where the customer's deep link points. Production keeps Telegram's own domain;
+# a local origin is allowed so browser tests never touch the real t.me. The
+# public success page also derives its CSP form-action source from this value:
+# Chromium applies form-action to the whole redirect chain of a form POST.
+TELEGRAM_DEEP_LINK_BASE_URL = env("TELEGRAM_DEEP_LINK_BASE_URL", default="https://t.me").strip()
 # Telegram request bot (long polling service `telegram-bot`). The token is a
 # secret: it is read only from the environment of that service and never
 # stored, rendered or logged. Empty means "not configured".

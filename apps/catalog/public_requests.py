@@ -55,6 +55,10 @@ SUBMISSION_SESSION_KEY = "public_catalog_request_submission"
 TELEGRAM_SESSION_KEY = "public_catalog_request_telegram"
 HONEYPOT_FIELD = "website"
 FORM_FIELDS = ("customer_name", "customer_phone", "preferred_messenger", "comment")
+# A browser can fail to leave the page (an extension, a blocked handoff, a
+# closed Telegram). The customer may ask for a fresh link a few times; the
+# database caps it too, so a replayed cookie cannot mint links without end.
+MAX_TELEGRAM_LINK_ATTEMPTS = 3
 logger = logging.getLogger(__name__)
 
 
@@ -223,12 +227,20 @@ def send_cart(request, cart: CartView, submission: Submission, values) -> tuple[
             # A signed-cookie session authenticates its contents but does not
             # encrypt them.  Keep only non-secret state here: the raw Telegram
             # token is generated after the customer clicks the local POST form.
-            "link_issued": False,
+            "link_attempts": 0,
             "link_unavailable": False,
         }
     request.session.pop(CART_SESSION_KEY, None)
     _store(request.session, Submission(submission.token, submission.cart, public_id))
     return public_id, created
+
+
+def _link_attempts(stored: dict) -> int:
+    """Attempts made by this browser, tolerating a session from the old flow."""
+    attempts = stored.get("link_attempts")
+    if isinstance(attempts, int) and attempts >= 0:
+        return attempts
+    return 1 if stored.get("link_issued") else 0
 
 
 def telegram_success(session, public_id) -> dict:
@@ -244,18 +256,28 @@ def telegram_success(session, public_id) -> dict:
         ready = telegram_start_url("a" * 43) is not None
     except MessengerLinkError:
         ready = False
+    ready = ready and not stored.get("link_unavailable", False)
+    attempts = _link_attempts(stored)
+    attempts_left = max(MAX_TELEGRAM_LINK_ATTEMPTS - attempts, 0)
     return {
         "telegram_selected": True,
-        "telegram_ready": ready and not stored.get("link_unavailable", False),
-        "telegram_link_issued": bool(stored.get("link_issued", False)),
+        "telegram_ready": ready,
+        # The handoff is a redirect to another origin: the browser may refuse
+        # it or the customer may come back. Keep offering it until the cap.
+        "telegram_can_continue": ready and attempts_left > 0,
+        "telegram_retry": ready and attempts_left > 0 and attempts > 0,
+        "telegram_attempts_left": attempts_left,
     }
 
 
 def issue_success_telegram_link(session, public_id) -> str:
-    """Create the first deep link only after the customer's local POST.
+    """Create a deep link only after the customer's local POST.
 
     The raw token exists only long enough to form the redirect to Telegram. It
     is never put in the HTML page or the signed (but readable) session cookie.
+    A handoff the browser did not complete may be retried up to
+    ``MAX_TELEGRAM_LINK_ATTEMPTS`` times; the database enforces the same cap,
+    and consuming one link revokes the request's other unused ones.
     """
     stored = session.get(TELEGRAM_SESSION_KEY)
     submission = stored_submission(session)
@@ -263,7 +285,7 @@ def issue_success_telegram_link(session, public_id) -> str:
         not isinstance(stored, dict)
         or stored.get("request") != str(public_id)
         or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
-        or stored.get("link_issued")
+        or _link_attempts(stored) >= MAX_TELEGRAM_LINK_ATTEMPTS
         or submission is None
         or submission.request != str(public_id)
     ):
@@ -290,6 +312,6 @@ def issue_success_telegram_link(session, public_id) -> str:
         stored["link_unavailable"] = True
         session[TELEGRAM_SESSION_KEY] = stored
         return ""
-    stored["link_issued"] = True
+    stored["link_attempts"] = _link_attempts(stored) + 1
     session[TELEGRAM_SESSION_KEY] = stored
     return token
