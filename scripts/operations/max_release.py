@@ -71,21 +71,24 @@ class Context:
     run: object = None
     prompt: object = None
     sleep: object = time.sleep
+    # Rehearsal only (local simulation): alternate Caddyfiles standing for the
+    # production pair, e.g. the same files switched to plain HTTP.
+    pre_max_caddyfile: Path | None = None
+    candidate_caddyfile: Path | None = None
 
     def say(self, text: str) -> None:
         self.out.append(text)
         print(text, flush=True)
 
     def sh(self, argv, *, input_text=None, check=True):
-        runner = self.run or _run
-        result = runner(list(argv), input_text)
+        if self.run is not None:
+            result = self.run(list(argv), input_text)
+        else:
+            result = subprocess.run(argv, input=input_text, capture_output=True, text=True,
+                                    cwd=self.root)
         if check and result.returncode != 0:
             raise ReleaseError(f"command failed ({result.returncode}): {' '.join(argv[:6])}")
         return result
-
-
-def _run(argv, input_text=None):
-    return subprocess.run(argv, input=input_text, capture_output=True, text=True, cwd=ROOT)
 
 
 def compose(*args):
@@ -200,8 +203,8 @@ def preflight(ctx: Context, *, expect_head: str, candidate: str = "") -> dict:
     if ctx.caddyfile.is_file():
         live = sha256_file(ctx.caddyfile)
         report["caddyfile"] = (
-            "pre-max" if live == PRE_MAX_CADDY_SHA256
-            else "candidate" if live == sha256_file(ctx.root / "deploy/caddy/Caddyfile.production")
+            "pre-max" if live == _pre_max_sha(ctx)
+            else "candidate" if live == sha256_file(_candidate_path(ctx))
             else "unknown"
         )
         if report["caddyfile"] == "unknown":
@@ -253,7 +256,9 @@ def install_secrets(ctx: Context, *, ca_sha256: str, public_url: str = PUBLIC_WE
     token = prompt("MAX bot token (input hidden): ").strip()
     if not token or len(token) > 512 or any(char.isspace() for char in token):
         raise ReleaseError("token is empty or malformed; nothing written")
-    if token != prompt("Repeat the token (input hidden): ").strip():
+    if ctx.prompt is not _stdin_token and token != prompt(
+        "Repeat the token (input hidden): "
+    ).strip():
         raise ReleaseError("the two entries differ; nothing written")
     webhook_secret = secrets.token_urlsafe(48)
     assert SECRET_RE.fullmatch(webhook_secret)
@@ -269,6 +274,11 @@ def install_secrets(ctx: Context, *, ca_sha256: str, public_url: str = PUBLIC_WE
     )
     del token, webhook_secret
     ctx.say(f"wrote {max_file.name} (4 keys) and {hook_file.name} (2 keys), mode 600")
+
+
+def _stdin_token(_label: str) -> str:
+    """Rehearsal only: one line from stdin, never echoed."""
+    return sys.stdin.readline()
 
 
 def set_username(ctx: Context, *, username: str) -> None:
@@ -340,16 +350,30 @@ def _swap_caddyfile(ctx: Context, *, text: str, expect_live: set[str], label: st
     ctx.say(f"Caddyfile is {label}; previous copy {backup.name}")
 
 
+def _candidate_path(ctx: Context) -> Path:
+    return ctx.candidate_caddyfile or ctx.root / "deploy/caddy/Caddyfile.production"
+
+
+def _pre_max_path(ctx: Context) -> Path:
+    return ctx.pre_max_caddyfile or ctx.root / "deploy/caddy/Caddyfile.production.pre-max"
+
+
+def _pre_max_sha(ctx: Context) -> str:
+    if ctx.pre_max_caddyfile is not None:
+        return sha256_file(ctx.pre_max_caddyfile)
+    return PRE_MAX_CADDY_SHA256
+
+
 def edge_install(ctx: Context) -> None:
-    text = (ctx.root / "deploy/caddy/Caddyfile.production").read_text(encoding="utf-8")
-    _swap_caddyfile(ctx, text=text, expect_live={PRE_MAX_CADDY_SHA256}, label="max")
+    text = _candidate_path(ctx).read_text(encoding="utf-8")
+    _swap_caddyfile(ctx, text=text, expect_live={_pre_max_sha(ctx)}, label="max")
 
 
 def edge_rollback(ctx: Context) -> None:
-    text = (ctx.root / "deploy/caddy/Caddyfile.production.pre-max").read_text(encoding="utf-8")
-    if hashlib.sha256(text.encode("utf-8")).hexdigest() != PRE_MAX_CADDY_SHA256:
+    text = _pre_max_path(ctx).read_text(encoding="utf-8")
+    if hashlib.sha256(text.encode("utf-8")).hexdigest() != _pre_max_sha(ctx):
         raise ReleaseError("repository pre-max copy is not the recorded production file")
-    candidate = sha256_file(ctx.root / "deploy/caddy/Caddyfile.production")
+    candidate = sha256_file(_candidate_path(ctx))
     _swap_caddyfile(ctx, text=text, expect_live={candidate}, label="pre-max")
 
 
@@ -464,6 +488,13 @@ def main(argv=None) -> int:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--caddyfile", type=Path, default=LIVE_CADDYFILE)
     parser.add_argument("--ca-dir", type=Path, default=CA_DIR)
+    parser.add_argument(
+        "--rehearsal", action="store_true",
+        help="local simulation only: no root check, alternate Caddyfiles, token on stdin",
+    )
+    parser.add_argument("--pre-max-caddyfile", type=Path)
+    parser.add_argument("--candidate-caddyfile", type=Path)
+    parser.add_argument("--token-from-stdin", action="store_true")
     commands = parser.add_subparsers(dest="command", required=True)
     pre = commands.add_parser("preflight")
     pre.add_argument("--expect-head", required=True)
@@ -491,8 +522,18 @@ def main(argv=None) -> int:
     plan.add_argument("--base", required=True)
     plan.add_argument("--candidate", required=True)
     args = parser.parse_args(argv)
+    rehearsal_only = [
+        name for name in ("pre_max_caddyfile", "candidate_caddyfile", "token_from_stdin")
+        if getattr(args, name)
+    ]
+    if rehearsal_only and not args.rehearsal:
+        print(f"STOP: {rehearsal_only} are rehearsal-only options", file=sys.stderr)
+        return 1
     ctx = Context(root=args.root, caddyfile=args.caddyfile, ca_dir=args.ca_dir,
-                  execute=getattr(args, "execute", False))
+                  execute=getattr(args, "execute", False), require_root=not args.rehearsal,
+                  pre_max_caddyfile=args.pre_max_caddyfile,
+                  candidate_caddyfile=args.candidate_caddyfile,
+                  prompt=_stdin_token if args.token_from_stdin else None)
     try:
         if args.command == "preflight":
             preflight(ctx, expect_head=args.expect_head, candidate=args.candidate)

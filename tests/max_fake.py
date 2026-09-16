@@ -194,7 +194,7 @@ class FakeMaxServer:
             def do_DELETE(self):
                 server._handle(self, "DELETE")
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        self._server = ThreadingHTTPServer((getattr(self, "bind", "127.0.0.1"), port), Handler)
         self._server.daemon_threads = True
         self._scheme = "http"
         if tls_context is not None:
@@ -399,10 +399,13 @@ def _send_update(args) -> int:  # pragma: no cover - manual local helper
         update = message_created(args.user, args.chat, args.text, mid=args.mid)
     else:
         update = message_callback(args.user, args.chat, args.payload)
+    headers = {"Content-Type": "application/json", "X-Max-Bot-Api-Secret": secret}
+    if args.host:
+        headers["Host"] = args.host
     request = urllib.request.Request(
         args.url,
         data=json.dumps(update, ensure_ascii=False).encode(),
-        headers={"Content-Type": "application/json", "X-Max-Bot-Api-Secret": secret},
+        headers=headers,
         method="POST",
     )
     try:
@@ -420,6 +423,9 @@ def main() -> None:  # pragma: no cover - manual acceptance helper
     serve = commands.add_parser("serve")
     serve.add_argument("--api-port", type=int, default=18780)
     serve.add_argument("--deep-link-port", type=int, default=18781)
+    serve.add_argument("--tls-cert", help="serve the API over HTTPS with this chain")
+    serve.add_argument("--tls-key")
+    serve.add_argument("--bind", default="127.0.0.1")
     send = commands.add_parser("send")
     send.add_argument("--url", required=True)
     send.add_argument("kind", choices=["bot_started", "message_created", "message_callback"])
@@ -428,13 +434,21 @@ def main() -> None:  # pragma: no cover - manual acceptance helper
     send.add_argument("--payload")
     send.add_argument("--text")
     send.add_argument("--mid")
+    send.add_argument("--host", help="Host header, e.g. the public catalog domain")
     args = parser.parse_args()
     if args.command == "send":
         sys.exit(_send_update(args))
     api = FakeMaxServer(token=os.environ.get("FAKE_MAX_TOKEN", FAKE_MAX_TOKEN))
+    api.bind = args.bind
     link = FakeDeepLinkServer()
     print("deep link origin:", link.start(args.deep_link_port), flush=True)
-    print("api:", api.start(args.api_port), flush=True)
+    tls = None
+    if args.tls_cert:
+        import ssl
+
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(args.tls_cert, args.tls_key)
+    print("api:", api.start(args.api_port, tls_context=tls), flush=True)
     try:
         while True:
             time.sleep(3600)

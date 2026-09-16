@@ -35,7 +35,9 @@ def _name(common_name: str) -> x509.Name:
     )
 
 
-def make_local_ca(directory: Path, *, label: str = "Fake Trusted Root CA") -> LocalCa:
+def make_local_ca(
+    directory: Path, *, label: str = "Fake Trusted Root CA", hostnames=("localhost",)
+) -> LocalCa:
     now = datetime.datetime.now(datetime.UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_cert = (
@@ -68,7 +70,8 @@ def make_local_ca(directory: Path, *, label: str = "Fake Trusted Root CA") -> Lo
         .not_valid_after(now + datetime.timedelta(days=1))
         .add_extension(
             x509.SubjectAlternativeName(
-                [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                [x509.DNSName(name) for name in hostnames]
+                + [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
             ),
             critical=False,
         )
