@@ -26,6 +26,10 @@ Companion documents:
 - Production server path: `/opt/denstock` (Docker Compose).
 - `main` must stay stable: only tested, deployable code. WIP goes to
   `wip/*` or feature branches (see the collaboration protocol).
+- `main` is the recovery truth: once a production release is accepted, the
+  deployed SHA must be fast-forwarded into `main` (no force, no squash, no
+  rebase of deployed history). A release may deploy from a qualified
+  candidate branch, but it must not stay outside `main`.
 - Never commit: secrets, `.env*` files, backups, database dumps, media
   dumps, `*.xlsx`/`*.xls` price files, `rclone.conf`, or `.claude/`.
   These are gitignored on purpose; do not force-add them.

@@ -22,8 +22,10 @@
   ruff/djlint/check чистые.
 - Незавершённая работа (WIP) коммитится на ветке `wip/*` или feature-ветке,
   никогда напрямую в `main`.
-- Продакшен-деплой выполняется только из `origin/main` после успешных
-  проверок (см. раздел H).
+- Релиз деплоится с квалифицированной ветки-кандидата, а не обязательно из
+  `origin/main`: на сервере стоит конкретный проверенный SHA. Но принятый
+  релиз обязан затем попасть в `main` (см. раздел H). `main` остаётся
+  истиной для восстановления.
 
 ## C. Два разрешённых режима
 
@@ -138,15 +140,25 @@ python manage.py makemigrations --check
 
 ## H. Правило продакшен-деплоя
 
-Деплой только после того, как финальный коммит оказался в `origin/main`.
-Полный порядок: [production-deploy-runbook.md](../operations/production-deploy-runbook.md).
+Пишет в продакшен только один агент за раз. Порядок: квалификация
+кандидата, приёмка на продакшене, затем `main`.
+
+1. Кандидат квалифицируется на своей ветке: полный прогон тестов, ruff,
+   djlint, `check`, `makemigrations --check`.
+2. Продакшен переводится на конкретный SHA этой ветки. Сервер живёт на
+   detached HEAD, `DENSTOCK_APP_COMMIT` в `.env` держится в ногу с ним.
+   Полный порядок: [production-deploy-runbook.md](../operations/production-deploy-runbook.md).
+3. После приёмки релиза `main` продвигается на тот же SHA обычным
+   fast-forward: `git push origin <SHA>:main`. Без force, без squash и без
+   rebase уже задеплоенной истории.
+
 Краткая последовательность на сервере (`/opt/denstock`):
 
 ```
 docker compose exec web python manage.py backup_all
 docker compose exec web python manage.py ops_check
 git fetch
-git pull --ff-only
+git checkout <SHA>
 docker compose up -d --build
 docker compose exec web python manage.py migrate
 docker compose exec web python manage.py check
@@ -155,5 +167,12 @@ docker compose exec web python manage.py ops_check
 docker compose exec web python manage.py backup_all
 ```
 
-Бэкап до и после; `--ff-only` гарантирует, что на сервере нет локальных
-расхождений с `origin/main`.
+Бэкап до и после.
+
+Инвариант: принятый продакшен-релиз обязан быть представлен в `main`. Пока
+`main` отстаёт от продакшена, восстановление из `main` откатывает продукт
+назад. Проверка одной командой:
+
+```
+git merge-base --is-ancestor <PROD_SHA> origin/main
+```
