@@ -13,17 +13,27 @@ Nothing here reaches the internet and no real credential exists. Three parts:
 * ``FakeDeepLinkServer`` - answers ``/<bot>?start=<payload>`` with a page, so
   a real browser can prove the success-page redirect chain lands there.
 
-Run standalone for a browser session::
+Run standalone for a live local session (real processes, still no internet)::
 
-    python -m tests.max_fake --api-port 18780 --deep-link-port 18781
+    python -m tests.max_fake serve --api-port 18780 --deep-link-port 18781
+    MAX_WEBHOOK_SECRET=... python -m tests.max_fake send \
+        --url http://127.0.0.1:8000/customer-requests/max/webhook/ \
+        bot_started --user 1001 --chat 2001 --payload <token>
+
+``send`` reads the secret from the environment only and never prints it.
+``GET /_fake/sent`` on the API port lists what the bot sent, for inspection.
 """
 from __future__ import annotations
 
 import argparse
 import itertools
 import json
+import os
+import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from collections import defaultdict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -34,7 +44,8 @@ FAKE_WEBHOOK_SECRET = "fake_max_webhook_secret_local_only"
 FAKE_BOT_USERNAME = "id0000000000_bot"
 FAKE_BOT_USER_ID = 900000001
 
-_numbers = itertools.count(1)
+# Unique across processes too: the ``send`` command runs once per update.
+_numbers = itertools.count(int(time.time() * 1000) % 10**9 * 1000)
 
 
 def _next() -> int:
@@ -231,6 +242,9 @@ class FakeMaxServer:
             body = json.loads(raw.decode()) if raw else None
         except ValueError:
             body = None
+        if method == "GET" and parts.path == "/_fake/sent":
+            with self.lock:
+                return self._reply(handler, 200, {"sent": self.sent, "answers": self.answers})
         with self.lock:
             self.requests.append(
                 {
@@ -372,12 +386,47 @@ class FakeDeepLinkServer:
             self._server.server_close()
 
 
-def main() -> None:  # pragma: no cover - manual browser acceptance helper
+def _send_update(args) -> int:  # pragma: no cover - manual local helper
+    secret = os.environ.get("MAX_WEBHOOK_SECRET", "")
+    if args.kind == "bot_started":
+        update = bot_started(args.user, args.chat, args.payload)
+    elif args.kind == "message_created":
+        update = message_created(args.user, args.chat, args.text, mid=args.mid)
+    else:
+        update = message_callback(args.user, args.chat, args.payload)
+    request = urllib.request.Request(
+        args.url,
+        data=json.dumps(update, ensure_ascii=False).encode(),
+        headers={"Content-Type": "application/json", "X-Max-Bot-Api-Secret": secret},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            print(response.status, response.read().decode())
+            return 0
+    except urllib.error.HTTPError as exc:
+        print(exc.code)
+        return 1
+
+
+def main() -> None:  # pragma: no cover - manual acceptance helper
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--api-port", type=int, default=18780)
-    parser.add_argument("--deep-link-port", type=int, default=18781)
+    commands = parser.add_subparsers(dest="command", required=True)
+    serve = commands.add_parser("serve")
+    serve.add_argument("--api-port", type=int, default=18780)
+    serve.add_argument("--deep-link-port", type=int, default=18781)
+    send = commands.add_parser("send")
+    send.add_argument("--url", required=True)
+    send.add_argument("kind", choices=["bot_started", "message_created", "message_callback"])
+    send.add_argument("--user", type=int, required=True)
+    send.add_argument("--chat", type=int, required=True)
+    send.add_argument("--payload")
+    send.add_argument("--text")
+    send.add_argument("--mid")
     args = parser.parse_args()
-    api = FakeMaxServer()
+    if args.command == "send":
+        sys.exit(_send_update(args))
+    api = FakeMaxServer(token=os.environ.get("FAKE_MAX_TOKEN", FAKE_MAX_TOKEN))
     link = FakeDeepLinkServer()
     print("deep link origin:", link.start(args.deep_link_port), flush=True)
     print("api:", api.start(args.api_port), flush=True)
