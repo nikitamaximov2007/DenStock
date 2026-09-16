@@ -604,10 +604,10 @@ TELEGRAM_BOT_USERNAME=sim_telegram_bot
         self.check(True, "images built for web, catalog-web, telegram-bot, max-bot")
         self.step("D. CA, secrets and identity (no database change yet)")
         self.tool_run(
+            "--token-from-stdin",  # a global option: before the subcommand
             "install-secrets",
             "--ca-sha256",
             self.ca_sha256,
-            "--token-from-stdin",
             "--execute",
             input_text=FAKE_MAX_TOKEN + "\n",
         )
