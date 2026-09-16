@@ -34,8 +34,9 @@ from django.db import connection, transaction
 
 from apps.customer_requests.messengers import (
     MessengerLinkError,
-    issue_initial_telegram_link,
-    telegram_start_url,
+    issue_initial_messenger_link,
+    messenger_start_url,
+    telegram_start_url,  # noqa: F401 - the success view reads it from here
 )
 from apps.customer_requests.models import CustomerRequest
 from apps.customer_requests.policies import current_consent_versions
@@ -49,16 +50,19 @@ from apps.customer_requests.telegram_service import request_insert_proof
 from .public_cart import CART_SESSION_KEY, LINE_INQUIRY, CartView
 
 SUBMISSION_SESSION_KEY = "public_catalog_request_submission"
-# The one-time Telegram start token of the request this browser just sent. It
-# lives only in the customer's own signed cookie, next to the submission key,
-# and authorizes nothing beyond linking that one request to a Telegram chat.
+# Messenger handoff state of the request this browser just sent: which
+# messenger it chose and how many links it asked for. Never a token. The key
+# keeps its original Telegram name so sessions issued before MAX still work;
+# the ``messenger`` inside says which channel it is for.
 TELEGRAM_SESSION_KEY = "public_catalog_request_telegram"
+MESSENGER_SESSION_KEY = TELEGRAM_SESSION_KEY
 HONEYPOT_FIELD = "website"
 FORM_FIELDS = ("customer_name", "customer_phone", "preferred_messenger", "comment")
 # A browser can fail to leave the page (an extension, a blocked handoff, a
-# closed Telegram). The customer may ask for a fresh link a few times; the
-# database caps it too, so a replayed cookie cannot mint links without end.
+# closed Telegram or MAX). The customer may ask for a fresh link a few times;
+# the database caps it too, so a replayed cookie cannot mint links without end.
 MAX_TELEGRAM_LINK_ATTEMPTS = 3
+MAX_MESSENGER_LINK_ATTEMPTS = MAX_TELEGRAM_LINK_ATTEMPTS
 logger = logging.getLogger(__name__)
 
 
@@ -243,34 +247,56 @@ def _link_attempts(stored: dict) -> int:
     return 1 if stored.get("link_issued") else 0
 
 
-def telegram_success(session, public_id) -> dict:
-    """What the success page says about Telegram, from this browser's cookie only."""
-    stored = session.get(TELEGRAM_SESSION_KEY)
+def messenger_success(session, public_id, channel: str) -> dict:
+    """What the success page says about one messenger, from this browser's cookie only.
+
+    Keys are prefixed with the channel (``telegram_*``, ``max_*``).
+    """
+    prefix = f"{channel}_"
+    stored = session.get(MESSENGER_SESSION_KEY)
     if (
         not isinstance(stored, dict)
         or stored.get("request") != str(public_id)
-        or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
+        or stored.get("messenger") != channel
     ):
-        return {"telegram_selected": False, "telegram_ready": False}
+        return {f"{prefix}selected": False, f"{prefix}ready": False}
     try:
-        ready = telegram_start_url("a" * 43) is not None
+        ready = messenger_start_url(channel, "a" * 43) is not None
     except MessengerLinkError:
         ready = False
     ready = ready and not stored.get("link_unavailable", False)
     attempts = _link_attempts(stored)
-    attempts_left = max(MAX_TELEGRAM_LINK_ATTEMPTS - attempts, 0)
+    attempts_left = max(MAX_MESSENGER_LINK_ATTEMPTS - attempts, 0)
     return {
-        "telegram_selected": True,
-        "telegram_ready": ready,
+        f"{prefix}selected": True,
+        f"{prefix}ready": ready,
         # The handoff is a redirect to another origin: the browser may refuse
         # it or the customer may come back. Keep offering it until the cap.
-        "telegram_can_continue": ready and attempts_left > 0,
-        "telegram_retry": ready and attempts_left > 0 and attempts > 0,
-        "telegram_attempts_left": attempts_left,
+        f"{prefix}can_continue": ready and attempts_left > 0,
+        f"{prefix}retry": ready and attempts_left > 0 and attempts > 0,
+        f"{prefix}attempts_left": attempts_left,
     }
 
 
+def telegram_success(session, public_id) -> dict:
+    """What the success page says about Telegram, from this browser's cookie only."""
+    return messenger_success(session, public_id, CustomerRequest.Messenger.TELEGRAM)
+
+
+def max_success(session, public_id) -> dict:
+    """What the success page says about MAX, from this browser's cookie only."""
+    return messenger_success(session, public_id, CustomerRequest.Messenger.MAX)
+
+
 def issue_success_telegram_link(session, public_id) -> str:
+    return issue_success_link(session, public_id, CustomerRequest.Messenger.TELEGRAM)
+
+
+def issue_success_max_link(session, public_id) -> str:
+    return issue_success_link(session, public_id, CustomerRequest.Messenger.MAX)
+
+
+def issue_success_link(session, public_id, channel: str) -> str:
     """Create a deep link only after the customer's local POST.
 
     The raw token exists only long enough to form the redirect to Telegram. It
@@ -279,13 +305,13 @@ def issue_success_telegram_link(session, public_id) -> str:
     ``MAX_TELEGRAM_LINK_ATTEMPTS`` times; the database enforces the same cap,
     and consuming one link revokes the request's other unused ones.
     """
-    stored = session.get(TELEGRAM_SESSION_KEY)
+    stored = session.get(MESSENGER_SESSION_KEY)
     submission = stored_submission(session)
     if (
         not isinstance(stored, dict)
         or stored.get("request") != str(public_id)
-        or stored.get("messenger") != CustomerRequest.Messenger.TELEGRAM
-        or _link_attempts(stored) >= MAX_TELEGRAM_LINK_ATTEMPTS
+        or stored.get("messenger") != channel
+        or _link_attempts(stored) >= MAX_MESSENGER_LINK_ATTEMPTS
         or submission is None
         or submission.request != str(public_id)
     ):
@@ -297,21 +323,22 @@ def issue_success_telegram_link(session, public_id) -> str:
             customer_request = CustomerRequest.objects.only("pk", "public_id").get(
                 public_id=public_id
             )
-            # This remains optional to the request.  A Telegram-only database
+            # This remains optional to the request.  A messenger-only database
             # fault must be contained by this savepoint.
             with transaction.atomic(), request_insert_proof(submission.token):
-                token = issue_initial_telegram_link(customer_request)
+                token = issue_initial_messenger_link(customer_request, channel)
     except Exception as exc:  # noqa: BLE001 - do not leak optional faults to the customer
         logger.warning(
-            "Telegram link setup unavailable for request %s: %s", public_id, type(exc).__name__
+            "%s link setup unavailable for request %s: %s",
+            channel, public_id, type(exc).__name__,
         )
         stored["link_unavailable"] = True
-        session[TELEGRAM_SESSION_KEY] = stored
+        session[MESSENGER_SESSION_KEY] = stored
         return ""
     if not token:
         stored["link_unavailable"] = True
-        session[TELEGRAM_SESSION_KEY] = stored
+        session[MESSENGER_SESSION_KEY] = stored
         return ""
     stored["link_attempts"] = _link_attempts(stored) + 1
-    session[TELEGRAM_SESSION_KEY] = stored
+    session[MESSENGER_SESSION_KEY] = stored
     return token

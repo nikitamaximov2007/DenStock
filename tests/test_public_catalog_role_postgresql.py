@@ -195,6 +195,18 @@ def test_other_roles_still_see_every_photo_row(restricted_role, seeded):
         "SELECT * FROM customer_requests_telegramdelivery",
         "DELETE FROM customer_requests_telegramoutboxevent",
         "SELECT * FROM operations_telegrambotruntime",
+        # MAX rows: no grant at all; the internal runtime writes every one of them.
+        "SELECT * FROM customer_requests_maxconversation",
+        "INSERT INTO customer_requests_maxconversation (request_id) VALUES (1)",
+        "SELECT * FROM customer_requests_maxcustomerchat",
+        "INSERT INTO customer_requests_maxcustomerchat (user_id, chat_id) VALUES (1, 1)",
+        "SELECT * FROM customer_requests_maxmessage",
+        "INSERT INTO customer_requests_maxmessage (direction) VALUES ('system')",
+        "SELECT * FROM customer_requests_maxoutboxevent",
+        "INSERT INTO customer_requests_maxoutboxevent (kind) VALUES ('new_request')",
+        "SELECT * FROM customer_requests_maxoperatordelivery",
+        "SELECT * FROM operations_maxbotruntime",
+        "UPDATE operations_maxbotruntime SET worker_id = 'x'",
         # The write guard's row: only the generation counter moves.
         "UPDATE operations_deploymentstate SET write_state = 'normal'",
         "SELECT database_identity FROM operations_deploymentstate",
@@ -557,3 +569,91 @@ def test_internal_role_is_not_restricted_by_the_telegram_insert_guard(db, public
     victim = _victim_request(public_catalog, "internal-key-" + "i" * 19)
     _insert(*_linked_conversation(victim.pk), refused=False)
     _insert(*_token(victim.pk, "e" * 64), refused=False)
+
+
+# --- MAX: one proof-bound link token, and nothing else ------------------------------------
+
+
+def _max_token(request_id, token_hash, *, extra_columns="", extra_values=""):
+    return (
+        "INSERT INTO customer_requests_customerrequestmessengerlinktoken "
+        f"(request_id, channel, token_hash, created_at, expires_at{extra_columns}) "
+        f"VALUES (%s, 'max', %s, now(), now() + interval '1 hour'{extra_values})",
+        [request_id, token_hash],
+    )
+
+
+def test_public_role_inserts_a_max_link_only_for_its_own_request_and_within_the_cap(
+    restricted_role, public_catalog
+):
+    key = "max-own-key-" + "m" * 20
+    own = _victim_request(public_catalog, key)
+    victim = _victim_request(public_catalog, "max-victim-key-" + "v" * 17)
+    _as(restricted_role)
+    try:
+        _insert(*_max_token(victim.pk, "1" * 64), refused=True)
+        _insert(*_max_token(victim.pk, "2" * 64), proof=key, refused=True)
+        _insert(
+            *_max_token(own.pk, "3" * 64, extra_columns=", used_at", extra_values=", now()"),
+            proof=key,
+            refused=True,
+        )
+        _insert(
+            "INSERT INTO customer_requests_customerrequestmessengerlinktoken "
+            "(request_id, channel, token_hash, created_at, expires_at) "
+            "VALUES (%s, 'whatsapp', %s, now(), now() + interval '1 hour')",
+            [own.pk, "4" * 64],
+            proof=key,
+            refused=True,
+        )
+        for index in range(3):
+            _insert(*_max_token(own.pk, str(5 + index) * 64), proof=key, refused=False)
+        with pytest.raises(ProgrammingError, match="telegram link limit reached"):
+            _insert(*_max_token(own.pk, "9" * 64), proof=key, refused=False)
+    finally:
+        _reset()
+    from apps.customer_requests.models import CustomerRequestMessengerLinkToken
+
+    assert CustomerRequestMessengerLinkToken.objects.filter(request=own, channel="max").count() == 3
+    assert not CustomerRequestMessengerLinkToken.objects.filter(request=victim).exists()
+
+
+def test_a_public_max_request_hands_off_under_the_restricted_role(
+    restricted_role, public_catalog, public_client, settings
+):
+    part = public_catalog.part("BELT", article="BE-1", price="900")
+    public_catalog.stock(part, "2")
+    settings.DENSTOCK_MODE = "public-catalog"
+    settings.MAX_BOT_USERNAME = "id0000000000_bot"
+    settings.MAX_DEEP_LINK_BASE_URL = "https://max.ru"
+    _as(restricted_role)
+    try:
+        public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "1"})
+        form = public_client.get("/request/").content.decode()
+        token = re.search(r'name="submission_key" value="([^"]+)"', form).group(1)
+        response = public_client.post(
+            "/request/submit/",
+            {
+                "submission_key": token,
+                "customer_name": "Ольга",
+                "customer_phone": "+7 912 555-44-33",
+                "preferred_messenger": "max",
+                "consent": "1",
+            },
+        )
+        success = public_client.get(response["Location"])
+        handoff = public_client.post(response["Location"] + "max/")
+    finally:
+        settings.DENSTOCK_MODE = "test"
+        _reset()
+    from apps.customer_requests.models import (
+        CustomerRequestMessengerLinkToken,
+        MaxConversation,
+        MaxOutboxEvent,
+    )
+
+    assert "form-action 'self' https://max.ru;" in success["Content-Security-Policy"]
+    assert handoff.status_code == 303
+    assert handoff["Location"].startswith("https://max.ru/id0000000000_bot?start=")
+    assert CustomerRequestMessengerLinkToken.objects.get().channel == "max"
+    assert not MaxConversation.objects.exists() and not MaxOutboxEvent.objects.exists()

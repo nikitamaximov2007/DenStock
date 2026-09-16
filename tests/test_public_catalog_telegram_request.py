@@ -169,8 +169,9 @@ def test_telegram_persistence_fault_never_rolls_back_the_customer_request(
     assert response.status_code == 302
 
 
-def test_max_request_flow_is_unchanged(public_client, public_catalog, settings):
+def test_max_request_creates_no_telegram_rows(public_client, public_catalog, settings):
     settings.TELEGRAM_BOT_USERNAME = "ProStorTestBot"
+    settings.MAX_BOT_USERNAME = ""  # MAX not configured on this runtime
 
     response, _token, _part = _send(public_client, public_catalog, messenger="max")
 
@@ -180,7 +181,9 @@ def test_max_request_flow_is_unchanged(public_client, public_catalog, settings):
     assert not TelegramOutboxEvent.objects.exists()
     assert not CustomerRequestMessengerLinkToken.objects.exists()
     assert "Продолжить в Telegram" not in page
-    assert "в выбранном мессенджере" in page
+    # An unconfigured MAX bot is said plainly, and the request is kept.
+    assert "Продолжить в MAX" not in page
+    assert "data-max-unavailable" in page
 
 
 def test_retry_of_a_sent_form_keeps_one_request_one_link_and_one_notification(

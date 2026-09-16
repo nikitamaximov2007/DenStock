@@ -34,6 +34,29 @@
           Заявка создана. Telegram сейчас недоступен, мы сохранили заявку: менеджер свяжется с вами по телефону.
         </p>
       {% endif %}
+    {% elif max_selected %}
+      {% if max_ready %}
+        <p class="empty__text">Заявка создана. Чтобы менеджер мог ответить вам в MAX, подключите MAX к заявке.</p>
+        {% if max_can_continue %}
+          <form method="post"
+                action="{% url 'public_catalog_max_continue' public_id %}">
+            {% csrf_token %}
+            <button class="btn btn--large" type="submit" data-max-link>Продолжить в MAX</button>
+          </form>
+          {% if max_retry %}
+            <p class="empty__text" data-max-retry>Если MAX не открылся, нажмите кнопку ещё раз.</p>
+          {% endif %}
+        {% else %}
+          <p class="empty__text" data-max-exhausted>Не удалось открыть MAX. Менеджер свяжется с вами по телефону из заявки.</p>
+        {% endif %}
+        <p class="empty__text">
+          Откроется бот PRO-STOR в MAX: нажмите в нём «Начать». Если не получится, менеджер свяжется с вами по телефону из заявки.
+        </p>
+      {% else %}
+        <p class="empty__text" data-max-unavailable>
+          Заявка создана. MAX сейчас недоступен, мы сохранили заявку: менеджер свяжется с вами по телефону.
+        </p>
+      {% endif %}
     {% else %}
       <p class="empty__text">
         Менеджер свяжется с вами по телефону или в выбранном мессенджере и подтвердит наличие, цену и срок. Номер пригодится, если захотите уточнить заявку.

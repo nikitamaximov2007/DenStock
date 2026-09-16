@@ -20,7 +20,11 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST, require_safe
 
-from apps.customer_requests.messengers import telegram_deep_link_origin
+from apps.customer_requests.messengers import (
+    max_deep_link_origin,
+    max_start_url,
+    telegram_deep_link_origin,
+)
 from apps.customer_requests.services import CustomerRequestError
 from apps.operations.write_guard import BusinessWriteBlocked
 
@@ -352,6 +356,7 @@ def public_request_success(request, public_id):
     if submission is None or submission.request != str(public_id):
         raise Http404
     telegram = public_requests.telegram_success(request.session, public_id)
+    max_state = public_requests.max_success(request.session, public_id)
     response = _render(
         request,
         "public_catalog/request_success.html",
@@ -359,11 +364,17 @@ def public_request_success(request, public_id):
             "public_id": public_id,
             "reference": public_requests.request_reference(public_id),
             **telegram,
+            **max_state,
         },
     )
-    origin = telegram_deep_link_origin() if telegram.get("telegram_can_continue") else ""
+    # A request has one messenger, so at most one origin is ever added.
+    origin = ""
+    if telegram.get("telegram_can_continue"):
+        origin = telegram_deep_link_origin()
+    elif max_state.get("max_can_continue"):
+        origin = max_deep_link_origin()
     if origin:
-        # Only this page may hand the customer over to Telegram. A browser
+        # Only this page may hand the customer over to the messenger. A browser
         # applies form-action to every hop of a form POST's redirect chain, so
         # without the deep-link origin here the handoff is blocked silently and
         # the customer stays on this page.
@@ -387,6 +398,27 @@ def public_telegram_continue(request, public_id):
         if start_url:
             # 303: the browser must leave this POST with a GET navigation to
             # Telegram. The raw token lives only in this Location header.
+            response = redirect(start_url)
+            response.status_code = 303
+            return response
+    return redirect("public_catalog_request_success", public_id=public_id)
+
+
+@require_POST
+@never_cache
+def public_max_continue(request, public_id):
+    """Generate a one-time MAX link without rendering its secret."""
+    submission = public_requests.stored_submission(request.session)
+    if submission is None or submission.request != str(public_id):
+        raise Http404
+    token = public_requests.issue_success_max_link(request.session, public_id)
+    if token:
+        try:
+            start_url = max_start_url(token)
+        except public_requests.MessengerLinkError:
+            start_url = None
+        if start_url:
+            # 303 to https://max.ru/<bot>?start=<token>; the token lives only here.
             response = redirect(start_url)
             response.status_code = 303
             return response

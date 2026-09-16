@@ -18,6 +18,11 @@ DENSTOCK_MODE = "public-catalog"
 # API, so it must not hold the bot secret even if an env file carries one.
 TELEGRAM_BOT_TOKEN = ""
 TELEGRAM_API_PROXY_URL = ""
+# The same for MAX: the public process builds the max.ru deep link and nothing
+# else. It never receives the webhook and never calls the API.
+MAX_BOT_TOKEN = ""
+MAX_WEBHOOK_SECRET = ""
+MAX_WEBHOOK_ENABLED = False
 DENSTOCK_INSTANCE_ID = env("DENSTOCK_INSTANCE_ID", default="public-catalog").strip()
 DEBUG = False
 ALLOWED_HOSTS = env.list("DJANGO_PUBLIC_ALLOWED_HOSTS", default=[])

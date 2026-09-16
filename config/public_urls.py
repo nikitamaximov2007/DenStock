@@ -36,6 +36,11 @@ urlpatterns = [
         name="public_catalog_telegram_continue",
     ),
     path(
+        "request/success/<uuid:public_id>/max/",
+        public_views.public_max_continue,
+        name="public_catalog_max_continue",
+    ),
+    path(
         "cart/<uuid:public_id>/add/", public_views.public_cart_add, name="public_catalog_cart_add"
     ),
     path(
