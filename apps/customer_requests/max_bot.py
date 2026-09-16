@@ -30,7 +30,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.db import DatabaseError, connection, transaction
-from django.db.models import F, Min
+from django.db.models import F
 from django.utils import timezone
 
 from apps.operations.models import MaxBotRuntime
@@ -441,16 +441,23 @@ class MaxBotWorker:
                 .values_list("pk", "recipient_chat_id")[: limit * 3]
             )
             chats = {chat for _pk, chat in candidates}
-            waiting = dict(
+            waiting = list(
                 MaxMessage.objects.filter(
                     delivery_status=MaxDeliveryStatus.PENDING,
                     next_attempt_at__gt=now,
                     recipient_chat_id__in=chats,
-                )
-                .values_list("recipient_chat_id")
-                .annotate(first=Min("pk"))
+                ).values_list("pk", "recipient_chat_id", "next_attempt_at")
             )
-            ids = [pk for pk, chat in candidates if pk < waiting.get(chat, float("inf"))][:limit]
+            ids = []
+            for pk, chat in candidates:
+                earlier = [due for other, other_chat, due in waiting
+                           if other_chat == chat and other < pk]
+                if earlier:
+                    # Held behind an earlier message of its dialog: it waits
+                    # with it rather than staying due, or the loop would spin.
+                    MaxMessage.objects.filter(pk=pk).update(next_attempt_at=min(earlier))
+                elif len(ids) < limit:
+                    ids.append(pk)
             MaxMessage.objects.filter(pk__in=ids).update(
                 delivery_status=MaxDeliveryStatus.SENDING, attempts=F("attempts") + 1
             )

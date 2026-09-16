@@ -945,7 +945,12 @@ def test_a_later_message_never_overtakes_one_waiting_to_retry(client, part, work
     reply = MaxMessage.objects.get(direction="operator_to_customer")
     assert ack.delivery_status == MaxDeliveryStatus.PENDING
     assert reply.delivery_status == MaxDeliveryStatus.PENDING
-    MaxMessage.objects.filter(pk=ack.pk).update(next_attempt_at=timezone.now())
+    # The held reply waits with the acknowledgement instead of staying due:
+    # a due row nobody may send would spin the worker loop without a pause.
+    assert reply.next_attempt_at == ack.next_attempt_at
+    assert not worker.has_due_work()
+    # The retry time arrives for both.
+    MaxMessage.objects.filter(pk__in=[ack.pk, reply.pk]).update(next_attempt_at=timezone.now())
     worker.iterate()
     texts = server.texts_to(CUSTOMER_CHAT)
     assert texts[-2:] == [messaging.CUSTOMER_ACK_TEXT, "Ответ после подтверждения"]
