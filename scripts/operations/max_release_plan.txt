@@ -1,0 +1,59 @@
+MAX V1 release plan (base {base}, candidate {candidate})
+Every step stops the release on failure. Commands run in /opt/denstock as root.
+R = /root/max_release.py (the candidate's copy of scripts/operations/max_release.py).
+
+A. Gates (read-only)
+  1. git fetch origin; for f in max_release.py max_release_plan.txt; do
+       git show {candidate}:scripts/operations/$f > /root/$f; done
+  2. python3 R preflight --expect-head {base} --candidate {candidate}
+  3. docker compose exec -T web python manage.py shell < scripts/operations/release_baseline.py > /root/max-before.txt
+
+B. Signed PRE backup: the first production write. NO DEPLOY unless every item passes.
+  4. /usr/local/sbin/denstock-backup-capped
+  5. verify_backup <RUN> PASS; Ed25519 production-1 PASS; tampered-manifest control REJECTED;
+     rclone check -> 0 differences; manifest app_commit == {base}
+
+C. Code and images (running containers keep their images until recreated)
+  6. git checkout --detach {candidate}; sed -i 's/^DENSTOCK_APP_COMMIT=.*/DENSTOCK_APP_COMMIT={candidate}/' .env
+  7. docker compose {c} build web catalog-web telegram-bot max-bot
+
+D. Secrets and identity, before any database change
+  8. install /etc/denstock/max/{CA_NAME} (official Минцифры root; its SHA-256 from the official source)
+  9. python3 R install-secrets --ca-sha256 <official sha256> --execute     # hidden token prompt
+ 10. docker compose --profile max-bot run --rm --no-deps max-bot max_bot_identity   # is_bot, user_id, username
+     Any failure here: rollback R6 needs no database step.
+
+E. Schema, grants and the services MAX depends on (MAX still unreachable: no route, no subscription)
+ 11. docker compose up -d --no-deps --wait web        # applies 0008, 0009, operations 0006; loads .env.max-webhook
+ 12. python3 R public-role --execute
+ 13. docker compose --profile telegram-bot up -d --no-deps --wait telegram-bot   # delivers MAX operator notifications
+ 14. python3 R verify --candidate {candidate} --services web,telegram-bot
+
+F. MAX live, the customer entry point last
+ 15. docker compose --profile max-bot up -d --no-deps --wait max-bot
+ 16. python3 R edge-install --execute
+ 17. curl -s -o /dev/null -w '%{{http_code}}\n' -X POST {PUBLIC_WEBHOOK_URL}     # 404: no secret
+ 18. docker compose --profile max-bot run --rm --no-deps -v /opt/denstock/.env.max-webhook:/run/max-webhook.env:ro max-bot max_webhook subscribe --confirm --secret-file /run/max-webhook.env
+ 19. docker compose --profile max-bot run --rm --no-deps max-bot max_webhook status --require-subscribed
+ 20. python3 R set-username "$(docker compose --profile max-bot run --rm --no-deps max-bot max_bot_identity --env-line)" --execute
+ 21. docker compose --profile public-catalog up -d --no-deps --wait catalog-web   # «Продолжить в MAX» appears
+ 22. python3 R verify --candidate {candidate} --services web,telegram-bot,max-bot,catalog-web --require-subscribed
+ 23. docker compose exec -T web python manage.py shell < scripts/operations/release_baseline.py > /root/max-after.txt; diff
+
+G. Acceptance (docs/operations/max-bot.md): first-time, returning, Telegram regression, forensics; cancel test requests.
+H. Signed POST backup (app_commit == {candidate}); then fast-forward main to {candidate}, no force.
+
+ROLLBACK: stop MAX traffic first, then decide A (code) or B (database)
+ R1. docker compose --profile max-bot run --rm --no-deps max-bot max_webhook unsubscribe --confirm
+ R2. docker compose --profile max-bot stop max-bot
+ R3. python3 R unset-username --execute; docker compose --profile public-catalog up -d --no-deps --wait catalog-web
+ R4. python3 R edge-rollback --execute
+ R5. mv .env.max-webhook /root/max-webhook.env.disabled; mv .env.max /root/max.env.disabled
+ R6. A, code: git checkout --detach {base}; DENSTOCK_APP_COMMIT={base};
+     docker compose {c} build web catalog-web telegram-bot;
+     docker compose up -d --no-deps --wait web;
+     docker compose --profile telegram-bot up -d --no-deps --wait telegram-bot;
+     docker compose --profile public-catalog up -d --no-deps --wait catalog-web
+     Migrations stay applied (additive; the base code runs on the newer schema, proven locally).
+ R7. B, database: only if business data is damaged or a migration left the schema unusable:
+     stop web, catalog-web, telegram-bot; restore the signed PRE backup by the restore runbook; then R6.
