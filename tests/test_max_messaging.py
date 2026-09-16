@@ -1132,6 +1132,55 @@ def test_a_redelivered_callback_confirms_once(client, part, worker, server):
     assert server.texts_to(CUSTOMER_CHAT).count(selected) == 1
 
 
+def test_presses_on_one_keyboard_are_distinct_even_with_a_shared_callback_id(
+    client, part, worker, server
+):
+    """MAX documents callback_id as the keyboard's identifier, not the press's.
+
+    Found in the live local run: keyed by callback_id alone, the second press
+    on the same selector looked like a redelivery of the first, the selection
+    never moved and the next message went to the previous request.
+    """
+    request_a = _request(part, key="S" * 32)
+    request_b = _request(part, key="U" * 32)
+    bind(client, worker, request_a)
+    say(client, worker, f"/start {issue_max_link(request_id=request_b.pk).token}")
+    conversation_a = MaxConversation.objects.get(request=request_a)
+    conversation_b = MaxConversation.objects.get(request=request_b)
+    keyboard = "cb.keyboard-1"
+
+    press_a = message_callback(
+        CUSTOMER, CUSTOMER_CHAT, f"s:{conversation_a.public_id.hex}", callback_id=keyboard
+    )
+    for _ in range(2):  # a redelivery of the very same press
+        deliver(client, press_a)
+    drain(worker)
+    say(client, worker, "Для A")
+    deliver(
+        client,
+        message_callback(
+            CUSTOMER, CUSTOMER_CHAT, f"s:{conversation_b.public_id.hex}", callback_id=keyboard
+        ),
+    )
+    drain(worker)
+    say(client, worker, "Для B")
+    deliver(
+        client,
+        message_callback(
+            OTHER, OTHER_CHAT, f"s:{conversation_a.public_id.hex}", callback_id=keyboard
+        ),
+    )
+    drain(worker)
+
+    assert customer_messages(request_a) == ["Для A"]
+    assert customer_messages(request_b) == ["Для B"]
+    texts = server.texts_to(CUSTOMER_CHAT)
+    assert texts.count(max_service.SELECTED_TEXT.format(reference=request_a.reference)) == 1
+    assert texts.count(max_service.SELECTED_TEXT.format(reference=request_b.reference)) == 1
+    assert server.texts_to(OTHER_CHAT) == [max_service.SELECTION_UNAVAILABLE_TEXT]
+    assert MaxCustomerChat.objects.get(user_id=CUSTOMER).active_conversation == conversation_b
+
+
 def test_a_callback_whose_keyboard_message_was_deleted_still_works(client, part, worker, server):
     request = _request(part, key="I" * 32)
     bind(client, worker, request)

@@ -5,7 +5,7 @@ id. ``handle_update`` therefore runs inside the webhook's own transaction and
 only stores things, each under a key a redelivery would find:
 
 * a customer message by its string ``body.mid`` (unique);
-* a bot answer by ``dedupe_key`` (``reply:<mid>``, ``callback:<callback_id>``,
+* a bot answer by ``dedupe_key`` (``reply:<mid>``, ``callback:<press digest>``,
   ``start:<event digest>``, ``summary:<link token>:<n>``, ``ack:<conversation>``);
 * a start by the link token it consumed: a repeated ``bot_started`` for a
   token this user already used is recognised and answered with silence.
@@ -219,8 +219,17 @@ def _message_callback(update) -> str:
         if state is None:
             return "ignored"
         chat_id = state.chat_id
+    # MAX calls callback_id the keyboard's identifier: a second press on the
+    # same keyboard may repeat it. The press is what MAX redelivers verbatim.
+    press_key = _event_digest(
+        "message_callback", callback_id, user_id, payload, callback.get("timestamp")
+    )
     conversation = service.select_customer_conversation(
-        user_id=user_id, chat_id=chat_id, payload=payload, callback_id=callback_id
+        user_id=user_id,
+        chat_id=chat_id,
+        payload=payload,
+        callback_id=callback_id,
+        press_key=press_key,
     )
     return "selected" if conversation is not None else "denied"
 

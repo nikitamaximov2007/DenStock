@@ -253,9 +253,15 @@ def queue_selector(*, user_id: int, chat_id: int, dedupe_key: str) -> None:
 
 
 def select_customer_conversation(
-    *, user_id: int, chat_id: int, payload: str, callback_id: str
+    *, user_id: int, chat_id: int, payload: str, callback_id: str, press_key: str
 ) -> MaxConversation | None:
-    """Only a request already bound to this very MAX user can be selected."""
+    """Only a request already bound to this very MAX user can be selected.
+
+    ``callback_id`` is only what MAX needs to stop the button's spinner. MAX
+    documents it as the identifier of the keyboard, so two presses on one
+    keyboard may share it; ``press_key`` identifies this press and is what a
+    redelivery repeats.
+    """
     value = payload[len(SELECT_PAYLOAD_PREFIX):] if isinstance(payload, str) else ""
     conversation = None
     if (
@@ -272,7 +278,7 @@ def select_customer_conversation(
             )
             .first()
         )
-    dedupe_key = f"callback:{callback_id}"
+    dedupe_key = f"callback:{press_key}"
     if conversation is None:
         queue_message(
             chat_id=chat_id,
