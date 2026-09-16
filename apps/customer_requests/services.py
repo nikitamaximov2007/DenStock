@@ -327,7 +327,9 @@ def anonymize_request(*, request_id: int, by=None) -> CustomerRequest:
     )
     # The messenger contact stores the raw chat identifier of the customer.
     CustomerRequestMessengerContact.objects.filter(request=request).delete()
+    from .max_service import anonymize_conversation as anonymize_max_conversation
     from .telegram_service import anonymize_conversation
 
     anonymize_conversation(request)
+    anonymize_max_conversation(request)
     return request

@@ -249,8 +249,8 @@ def operator_display_name(user) -> str:
 # --- Cards -------------------------------------------------------------------------------
 
 
-def _link_state(conversation: TelegramConversation) -> str:
-    return "Telegram подключён" if conversation.is_linked else "ожидает подключения"
+def _link_state(conversation, channel: str = "Telegram") -> str:
+    return f"{channel} подключён" if conversation.is_linked else "ожидает подключения"
 
 
 def _conversation_queryset():
@@ -265,8 +265,14 @@ def conversation_by_hex(value: str) -> TelegramConversation | None:
     return _conversation_queryset().filter(public_id=uuid.UUID(hex=value)).first()
 
 
-def request_card_text(conversation: TelegramConversation, *, heading: str = "ЗАЯВКА") -> str:
-    """Operator card built only from the stored request and its line snapshots."""
+def request_card_text(
+    conversation, *, heading: str = "ЗАЯВКА", channel: str = "Telegram"
+) -> str:
+    """Operator card built only from the stored request and its line snapshots.
+
+    ``conversation`` is any transport conversation with ``request`` and
+    ``is_linked``; ``channel`` names that transport on the card.
+    """
     request = conversation.request
     lines = list(request.lines.all())
     out = [f"{heading} {request.reference}", f"Статус: {request.get_status_display()}"]
@@ -275,7 +281,7 @@ def request_card_text(conversation: TelegramConversation, *, heading: str = "З�
     else:
         out.append(f"Клиент: {request.customer_name}")
         out.append(f"Телефон: {request.customer_phone}")
-    out.append(f"Связь: Telegram, {_link_state(conversation)}")
+    out.append(f"Связь: {channel}, {_link_state(conversation, channel)}")
     if request.consent_withdrawn_at:
         out.append("Клиент отозвал согласие на связь")
     out.append("Позиции:")

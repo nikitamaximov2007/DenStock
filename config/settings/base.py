@@ -233,6 +233,29 @@ TELEGRAM_BOT_HEARTBEAT_FILE = env(
     "TELEGRAM_BOT_HEARTBEAT_FILE", default="/tmp/denstock-telegram-bot.heartbeat"
 ).strip()
 MAX_REQUEST_LINK_TTL_SECONDS = env.int("MAX_REQUEST_LINK_TTL_SECONDS", default=86400)
+# MAX request bot. Three processes, three different needs:
+# * catalog-web builds the deep link: MAX_BOT_USERNAME and MAX_DEEP_LINK_BASE_URL
+#   only, never a secret;
+# * web receives the webhook: MAX_WEBHOOK_ENABLED and MAX_WEBHOOK_SECRET, never
+#   the bot token (receiving needs no API call);
+# * max-bot sends: MAX_BOT_TOKEN (from its own env file), never the webhook
+#   secret except for the explicit `max_webhook subscribe` command.
+# Every default is "off": no token, no secret, webhook disabled.
+MAX_BOT_USERNAME = env("MAX_BOT_USERNAME", default="").strip().lstrip("@")
+MAX_DEEP_LINK_BASE_URL = env("MAX_DEEP_LINK_BASE_URL", default="https://max.ru").strip()
+MAX_BOT_TOKEN = env("MAX_BOT_TOKEN", default="").strip()
+MAX_API_BASE_URL = env(
+    "MAX_API_BASE_URL", default="https://platform-api2.max.ru"
+).strip().rstrip("/")
+MAX_API_TIMEOUT_SECONDS = env.int("MAX_API_TIMEOUT_SECONDS", default=15)
+MAX_WEBHOOK_ENABLED = env.bool("MAX_WEBHOOK_ENABLED", default=False)
+MAX_WEBHOOK_SECRET = env("MAX_WEBHOOK_SECRET", default="").strip()
+# The public HTTPS address MAX delivers to (port 443, trusted certificate). Used
+# only by `manage.py max_webhook`; nothing registers a subscription on its own.
+MAX_PUBLIC_WEBHOOK_URL = env("MAX_PUBLIC_WEBHOOK_URL", default="").strip()
+MAX_BOT_HEARTBEAT_FILE = env(
+    "MAX_BOT_HEARTBEAT_FILE", default="/tmp/denstock-max-bot.heartbeat"
+).strip()
 AI_SUPPORT_ATTACHMENT_RETENTION_DAYS = env.int(
     "AI_SUPPORT_ATTACHMENT_RETENTION_DAYS", default=30
 )

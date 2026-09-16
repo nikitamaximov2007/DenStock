@@ -385,8 +385,8 @@ def test_the_card_shows_everything_the_manager_needs(client, part, admin):
         assert expected in html, expected
 
 
-def test_a_max_request_says_plainly_that_the_channel_is_not_wired(client, part, admin):
-    """Никаких обещаний, которых код не выполняет: MAX отправлять нечем."""
+def test_a_max_request_offers_the_max_link_and_not_the_telegram_one(client, part, admin):
+    """Канал заявки один: у MAX-заявки ссылка MAX, а ссылки Telegram нет."""
     customer_request, _ = create_customer_request(
         customer_name="Иван Петров",
         customer_phone="+7 912 123-45-67",
@@ -402,5 +402,6 @@ def test_a_max_request_says_plainly_that_the_channel_is_not_wired(client, part, 
         reverse("customer_request_detail", args=[customer_request.pk])
     ).content.decode()
 
-    assert "Связь с MAX из DenisStock пока не настроена" in html
+    assert "MAX: не связан" in html
+    assert "Создать ссылку MAX" in html
     assert "Создать ссылку Telegram" not in html

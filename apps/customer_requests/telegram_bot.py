@@ -33,6 +33,8 @@ from . import messaging
 from . import telegram_service as service
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
+    MaxDeliveryStatus,
+    MaxOperatorDelivery,
     TelegramDelivery,
     TelegramDeliveryStatus,
     TelegramMessage,
@@ -322,7 +324,10 @@ class TelegramBotWorker:
         deliveries = TelegramDelivery.objects.filter(
             status=TelegramDeliveryStatus.SENDING
         ).update(status=TelegramDeliveryStatus.UNCERTAIN, last_error=note)
-        return messages + deliveries
+        max_deliveries = MaxOperatorDelivery.objects.filter(
+            status=MaxDeliveryStatus.SENDING
+        ).update(status=MaxDeliveryStatus.UNCERTAIN, last_error=note)
+        return messages + deliveries + max_deliveries
 
     # Updates -----------------------------------------------------------------------------
 
@@ -518,6 +523,39 @@ class TelegramBotWorker:
             )
         return len(ids)
 
+    def send_max_operator_deliveries(self, limit: int = BATCH) -> int:
+        """Employees hear about MAX requests through this same operators' bot.
+
+        The rows belong to MAX (``MaxOperatorDelivery``) and name a DenisStock
+        user; this bot is only the way to reach that employee. Status values
+        are shared with Telegram's, so the claim and retry rules are identical.
+        """
+        from . import max_service
+
+        ids = self._claim(MaxOperatorDelivery, "status", Q(), limit)
+        rows = MaxOperatorDelivery.objects.select_related(
+            "recipient__telegram_operator__user", "event__request", "event__message__operator_user"
+        ).filter(pk__in=ids)
+        for row in rows.order_by("pk"):
+            operator = max_service.notification_operator(row.recipient)
+            if operator is None:
+                self._finish(row, "status", TelegramDeliveryStatus.FAILED,
+                             error="Сотрудник отключён")
+                continue
+            text, markup = max_service.delivery_content(row.event)
+            try:
+                result = self.api.send_message(
+                    chat_id=operator.telegram_user_id, text=text, reply_markup=markup
+                )
+            except TelegramError as exc:
+                self._fail(row, "status", exc)
+                continue
+            self._finish(
+                row, "status", TelegramDeliveryStatus.SENT,
+                message_id=(result or {}).get("message_id"),
+            )
+        return len(ids)
+
     def has_due_work(self) -> bool:
         now = timezone.now()
         pending = TelegramDeliveryStatus.PENDING
@@ -529,12 +567,16 @@ class TelegramBotWorker:
                 delivery_status=pending, next_attempt_at__lte=now
             ).exists()
             or TelegramDelivery.objects.filter(status=pending, next_attempt_at__lte=now).exists()
+            or MaxOperatorDelivery.objects.filter(
+                status=pending, next_attempt_at__lte=now
+            ).exists()
         )
 
     def drain_outbox(self) -> None:
         self.dispatch_events()
         self.send_customer_messages()
         self.send_operator_deliveries()
+        self.send_max_operator_deliveries()
 
     # Main loop ---------------------------------------------------------------------------
 

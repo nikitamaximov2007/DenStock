@@ -13,7 +13,7 @@
   {% elif customer_request.preferred_messenger == "telegram" %}
     <p>Telegram: не связан. Пока связи нет, звоните по телефону из заявки.</p>
   {% else %}
-    <p>Связь с MAX из DenisStock пока не настроена: звоните по телефону из заявки.</p>
+    <p>MAX: не связан. Пока связи нет, звоните по телефону из заявки.</p>
   {% endif %}
   {% if not customer_request.messenger_contact and customer_request.preferred_messenger == "telegram" %}
     <form method="post"
@@ -21,6 +21,16 @@
       {% csrf_token %}
       <button class="btn btn--secondary" type="submit">Создать ссылку Telegram</button>
     </form>
+  {% endif %}
+  {% if not customer_request.messenger_contact and customer_request.preferred_messenger == "max" %}
+    <form method="post"
+          action="{% url 'customer_request_max_link' customer_request.pk %}">
+      {% csrf_token %}
+      <button class="btn btn--secondary" type="submit">Создать ссылку MAX</button>
+    </form>
+  {% endif %}
+  {% if max_start_link %}
+    <p>Отправьте клиенту эту одноразовую ссылку: <a href="{{ max_start_link }}" rel="noopener">Открыть MAX</a></p>
   {% endif %}
   {% if telegram_start_link %}
     <p>Отправьте клиенту эту одноразовую ссылку: <a href="{{ telegram_start_link }}" rel="noopener">Открыть Telegram</a></p>
@@ -58,6 +68,57 @@
         </ol>
       {% else %}
         <p>Сообщений пока нет.</p>
+      {% endif %}
+    </section>
+  {% endif %}
+  {% if max_conversation %}
+    <section class="telegram-history" data-max-history>
+      <h2>Переписка MAX</h2>
+      <p>
+        {{ max_conversation.get_status_display }}
+        {% if max_conversation.linked_at %}· подключён {{ max_conversation.linked_at|ru_dt }}{% endif %}
+      </p>
+      {% if max_messages %}
+        <ol class="telegram-history__list">
+          {% for message in max_messages %}
+            <li class="telegram-history__item"
+                data-direction="{{ message.direction }}">
+              <strong>
+                {% if message.direction == "customer_to_operator" %}
+                  Клиент
+                {% elif message.direction == "operator_to_customer" %}
+                  {{ message.operator_user.full_name|default:message.operator_user|default:"Сотрудник" }}
+                {% else %}
+                  Система
+                {% endif %}
+              </strong>
+              · {{ message.created_at|ru_dt }}
+              {% if message.direction != "customer_to_operator" and message.delivery_status != "sent" %}
+                · <span class="badge">{{ message.get_delivery_status_display }}</span>
+              {% endif %}
+              <div class="telegram-history__text">{{ message.text|linebreaksbr }}</div>
+            </li>
+          {% endfor %}
+        </ol>
+      {% else %}
+        <p>Сообщений пока нет.</p>
+      {% endif %}
+      {% if max_conversation.is_linked and not customer_request.consent_withdrawn_at %}
+        <form method="post"
+              action="{% url 'customer_request_max_reply' customer_request.pk %}"
+              data-max-reply>
+          {% csrf_token %}
+          <input type="hidden" name="submission_key" value="{{ max_reply_key }}">
+          <label class="field__label" for="max-reply-text">Ответ клиенту в MAX</label>
+          <textarea class="form-control"
+                    id="max-reply-text"
+                    name="text"
+                    rows="3"
+                    maxlength="4000"
+                    required></textarea>
+          <p class="form-help">Клиент увидит сообщение от имени бота PRO-STOR.</p>
+          <button class="btn btn--primary" type="submit">Отправить в MAX</button>
+        </form>
       {% endif %}
     </section>
   {% endif %}

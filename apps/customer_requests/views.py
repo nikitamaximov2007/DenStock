@@ -1,5 +1,8 @@
-"""Internal operator screens and the narrow Telegram webhook endpoint."""
+"""Internal operator screens and the narrow Telegram and MAX webhook endpoints."""
+import hmac
 import json
+import logging
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
@@ -7,8 +10,9 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import DatabaseError, transaction
 from django.db.models import Count
-from django.http import Http404, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -18,11 +22,21 @@ from apps.catalog.public_contracts import resolve_current_customer_price
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import with_part_identity
 from apps.operations.models import TelegramBotRuntime
+from apps.operations.write_guard import BusinessWriteBlocked
 
+from . import max_bot, max_service
 from .forms import TelegramOperatorForm
-from .messengers import MessengerLinkError, issue_telegram_link, telegram_start_url
+from .max_api import webhook_secret_is_well_formed
+from .messengers import (
+    MessengerLinkError,
+    issue_max_link,
+    issue_telegram_link,
+    max_start_url,
+    telegram_start_url,
+)
 from .models import (
     CustomerRequest,
+    MaxConversation,
     TelegramConversation,
     TelegramDelivery,
     TelegramDeliveryStatus,
@@ -35,6 +49,9 @@ from .telegram import handle_update, webhook_secret_is_valid
 
 PAGE_SIZE = 50
 TELEGRAM_HISTORY_LIMIT = 200
+MAX_HISTORY_LIMIT = 200
+MAX_WEBHOOK_BODY_BYTES = 64 * 1024
+logger = logging.getLogger(__name__)
 BOT_ALIVE_WINDOW = timedelta(seconds=120)
 
 
@@ -144,7 +161,7 @@ def customer_request_list(request):
     )
 
 
-def _detail_context(customer_request, *, telegram_start_link=None):
+def _detail_context(customer_request, *, telegram_start_link=None, max_start_link=None):
     lines = list(
         with_part_identity(
             customer_request.lines.select_related("part_type", "part_type__unit"),
@@ -165,6 +182,14 @@ def _detail_context(customer_request, *, telegram_start_link=None):
                 :TELEGRAM_HISTORY_LIMIT
             ]
         )[::-1]
+    max_conversation = MaxConversation.objects.filter(request=customer_request).first()
+    max_messages = []
+    if max_conversation is not None:
+        max_messages = list(
+            max_conversation.messages.select_related("operator_user").order_by(
+                "-created_at", "-pk"
+            )[:MAX_HISTORY_LIMIT]
+        )[::-1]
     return {
         "customer_request": customer_request,
         "lines": lines,
@@ -172,6 +197,11 @@ def _detail_context(customer_request, *, telegram_start_link=None):
         "telegram_start_link": telegram_start_link,
         "telegram_conversation": conversation,
         "telegram_messages": telegram_messages,
+        "max_start_link": max_start_link,
+        "max_conversation": max_conversation,
+        "max_messages": max_messages,
+        # A fresh key per rendered form: a double submit queues one reply.
+        "max_reply_key": uuid.uuid4().hex,
     }
 
 
@@ -222,6 +252,91 @@ def customer_request_telegram_link(request, pk):
         "customer_requests/detail.html",
         _detail_context(customer_request, telegram_start_link=start_link),
     )
+
+
+@login_required
+@require_POST
+def customer_request_max_link(request, pk):
+    _require_access(request)
+    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    try:
+        issued = issue_max_link(request_id=customer_request.pk, by=request.user)
+        start_link = max_start_url(issued.token)
+    except MessengerLinkError as exc:
+        messages.error(request, str(exc))
+        return redirect("customer_request_detail", pk=customer_request.pk)
+    if start_link is None:
+        messages.error(request, "MAX-бот ещё не настроен.")
+        return redirect("customer_request_detail", pk=customer_request.pk)
+    return render(
+        request,
+        "customer_requests/detail.html",
+        _detail_context(customer_request, max_start_link=start_link),
+    )
+
+
+@login_required
+@require_POST
+def customer_request_max_reply(request, pk):
+    """An employee answers a MAX customer from DenisStock, as the PRO-STOR bot."""
+    _require_access(request)
+    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    try:
+        max_service.submit_operator_reply(
+            request_id=customer_request.pk,
+            user=request.user,
+            text=request.POST.get("text", ""),
+            submission_key=request.POST.get("submission_key", ""),
+        )
+    except max_service.OperatorReplyError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Ответ поставлен в отправку клиенту в MAX.")
+    return redirect("customer_request_detail", pk=customer_request.pk)
+
+
+def max_webhook_secret_is_valid(value: str | None) -> bool:
+    configured = settings.MAX_WEBHOOK_SECRET
+    return (
+        bool(settings.MAX_WEBHOOK_ENABLED)
+        and webhook_secret_is_well_formed(configured)
+        and hmac.compare_digest((value or "").encode(), configured.encode())
+    )
+
+
+@csrf_exempt
+@require_POST
+def max_webhook(request):
+    """Receive one MAX update: authenticate, store, answer 200 quickly.
+
+    Nothing about requests or customers is ever in a response: every accepted
+    update, whatever it did, answers the same ``{"ok": true}``. The payload
+    and the secret header are never logged. A database fault answers 503 so
+    MAX delivers again; everything stored is idempotent, so that is safe.
+    """
+    if not max_webhook_secret_is_valid(request.headers.get("X-Max-Bot-Api-Secret")):
+        raise Http404
+    if len(request.body) > MAX_WEBHOOK_BODY_BYTES:
+        return HttpResponseBadRequest()
+    try:
+        update = json.loads(request.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return HttpResponseBadRequest()
+    if not isinstance(update, dict) or not isinstance(update.get("update_type"), str):
+        return HttpResponseBadRequest()
+    try:
+        with transaction.atomic():
+            max_bot.handle_update(update)
+    except BusinessWriteBlocked:
+        return HttpResponse(status=503)
+    except DatabaseError as exc:
+        logger.warning("max webhook storage failed: %s", type(exc).__name__)
+        return HttpResponse(status=503)
+    except Exception as exc:  # noqa: BLE001 - one poisoned update must not be retried forever
+        logger.error(
+            "max webhook update %s failed: %s", update.get("update_type")[:32], type(exc).__name__
+        )
+    return JsonResponse({"ok": True})
 
 
 @csrf_exempt

@@ -23,6 +23,10 @@ DEEP_LINK_ORIGIN_RE = re.compile(
     r"^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?$|^http://(?:127\.0\.0\.1|localhost)(?::[0-9]{1,5})?$"
 )
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+# MAX generates the bot nickname itself (``id<INN>_bot``); it cannot be chosen.
+MAX_USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_]{2,63}$")
+# A MAX user or dialog identifier: a positive or negative int64.
+MAX_ID_RE = re.compile(r"^-?[0-9]{1,19}$")
 
 
 class MessengerLinkError(ValueError):
@@ -71,6 +75,10 @@ def issue_messenger_link(*, request_id: int, channel: str, by=None) -> IssuedMes
 
         # Requests created before Telegram messaging get their conversation here.
         TelegramConversation.objects.get_or_create(request=request)
+    if channel == CustomerRequestMessengerLinkToken.Channel.MAX:
+        from .models import MaxConversation
+
+        MaxConversation.objects.get_or_create(request=request)
     now = timezone.now()
     CustomerRequestMessengerLinkToken.objects.filter(
         request=request,
@@ -103,14 +111,21 @@ def issue_telegram_link(*, request_id: int, by=None) -> IssuedMessengerLink:
 
 
 def issue_initial_telegram_link(request: CustomerRequest) -> str:
-    """The first link of a request created a moment ago, in the same transaction.
+    return issue_initial_messenger_link(
+        request, CustomerRequestMessengerLinkToken.Channel.TELEGRAM
+    )
 
-    INSERT only: the public database role cannot lock or update requests, and a
-    brand-new request has no earlier link to revoke. Returns the raw token for
-    the customer's success page, or "" when the lifetime is misconfigured, so
-    a Telegram setting can never cost the customer the request itself.
+
+def issue_initial_messenger_link(request: CustomerRequest, channel: str) -> str:
+    """A link of a request created a moment ago, issued from the public success page.
+
+    INSERT only: the public database role cannot lock or update requests (the
+    database guard caps how many it may insert). Returns the raw token for the
+    redirect, or "" when the lifetime is misconfigured, so a messenger setting
+    can never cost the customer the request itself.
     """
-    channel = CustomerRequestMessengerLinkToken.Channel.TELEGRAM
+    if channel not in CustomerRequestMessengerLinkToken.Channel.values:
+        return ""
     try:
         ttl = _link_ttl(channel)
     except MessengerLinkError:
@@ -155,6 +170,47 @@ def telegram_start_url(token: str) -> str | None:
     return f"{origin}/{username}?start={token}"
 
 
+def max_deep_link_origin() -> str:
+    """Origin of the MAX deep link, or "" when it is not usable (see Telegram's)."""
+    origin = str(settings.MAX_DEEP_LINK_BASE_URL or "").strip().rstrip("/")
+    return origin if DEEP_LINK_ORIGIN_RE.fullmatch(origin) else ""
+
+
+def max_start_url(token: str) -> str | None:
+    """``https://max.ru/<botName>?start=<payload>``, if the bot is configured.
+
+    The payload limit is 128 characters; the 43-character token fits as is.
+    """
+    username = str(settings.MAX_BOT_USERNAME or "")
+    origin = max_deep_link_origin()
+    if not origin or not MAX_USERNAME_RE.fullmatch(username):
+        return None
+    if not TOKEN_RE.fullmatch(token):
+        raise MessengerLinkError("Некорректная ссылка MAX.")
+    return f"{origin}/{username}?start={token}"
+
+
+def messenger_start_url(channel: str, token: str) -> str | None:
+    if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM:
+        return telegram_start_url(token)
+    if channel == CustomerRequestMessengerLinkToken.Channel.MAX:
+        return max_start_url(token)
+    return None
+
+
+def messenger_deep_link_origin(channel: str) -> str:
+    if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM:
+        return telegram_deep_link_origin()
+    if channel == CustomerRequestMessengerLinkToken.Channel.MAX:
+        return max_deep_link_origin()
+    return ""
+
+
+def token_hash(token: str) -> str:
+    """SHA-256 of a raw link token, for callers that must recognise a replay."""
+    return _token_hash(token)
+
+
 @transaction.atomic
 def consume_messenger_start(
     *,
@@ -175,6 +231,13 @@ def consume_messenger_start(
     if channel == CustomerRequestMessengerLinkToken.Channel.TELEGRAM and not re.fullmatch(
         r"-?[0-9]{1,20}", chat_id
     ):
+        raise MessengerLinkError("Ссылка недействительна или уже использована.")
+    if channel == CustomerRequestMessengerLinkToken.Channel.MAX and (
+        not MAX_ID_RE.fullmatch(chat_id)
+        or not isinstance(user_id, int)
+        or isinstance(user_id, bool)
+    ):
+        # A MAX binding without the numeric user is a binding nobody could own.
         raise MessengerLinkError("Ссылка недействительна или уже использована.")
     now = timezone.now()
     try:
@@ -224,6 +287,15 @@ def consume_messenger_start(
             username=username,
             link_token_id=row.pk,
         )
+    if channel == CustomerRequestMessengerLinkToken.Channel.MAX:
+        from .max_service import bind_customer_chat as bind_max_chat
+
+        bind_max_chat(
+            request=row.request,
+            chat_id=int(chat_id),
+            user_id=user_id,
+            link_token_id=row.pk,
+        )
     return row.request
 
 
@@ -239,9 +311,10 @@ def consume_telegram_start(
     )
 
 
-def consume_max_start(*, token: str, chat_id: int | str) -> CustomerRequest:
+def consume_max_start(*, token: str, chat_id: int, user_id: int) -> CustomerRequest:
     return consume_messenger_start(
         channel=CustomerRequestMessengerLinkToken.Channel.MAX,
         token=token,
         chat_id=chat_id,
+        user_id=user_id,
     )
