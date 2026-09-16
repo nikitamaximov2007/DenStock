@@ -566,3 +566,299 @@ class TelegramDelivery(models.Model):
 
     def __str__(self) -> str:
         return f"Уведомление {self.event_id} для {self.operator_id}"
+
+
+# --- MAX messaging -----------------------------------------------------------------------
+#
+# The MAX transport keeps its own rows, next to Telegram's rather than inside
+# them: Telegram's proven tables and history stay untouched. The rules a
+# customer notices are shared (``messaging``); what differs is identity. MAX
+# numbers users and dialogs, but identifies a message only by the opaque
+# string ``body.mid`` and has no update id at all.
+
+
+class MaxDeliveryStatus(models.TextChoices):
+    RECEIVED = "received", "Получено"
+    PENDING = "pending", "В очереди"
+    SENDING = "sending", "Отправляется"
+    SENT = "sent", "Отправлено"
+    FAILED = "failed", "Не доставлено"
+    # MAX may or may not have delivered it. Never resent automatically.
+    UNCERTAIN = "uncertain", "Неизвестно, доставлено ли"
+
+
+# A MAX ``mid`` is stored whole. A longer one is refused, never truncated:
+# two different messages must never collapse into one identity.
+MAX_EXTERNAL_ID_LENGTH = 512
+
+
+class MaxConversation(models.Model):
+    class Status(models.TextChoices):
+        AWAITING_LINK = "awaiting_link", "Ожидает подключения"
+        LINKED = "linked", "MAX подключён"
+        CLOSED = "closed", "Закрыта"
+
+    # Opaque identifier for bot buttons; the primary key is never exposed.
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    request = models.OneToOneField(
+        CustomerRequest,
+        verbose_name="Заявка",
+        on_delete=models.CASCADE,
+        related_name="max_conversation",
+    )
+    status = models.CharField(
+        "Состояние", max_length=20, choices=Status.choices, default=Status.AWAITING_LINK
+    )
+    # The MAX user is the security identity; the dialog is only where to send.
+    customer_user_id = models.BigIntegerField(
+        "MAX ID клиента", null=True, blank=True, db_index=True
+    )
+    customer_chat_id = models.BigIntegerField("Диалог клиента", null=True, blank=True)
+    linked_at = models.DateTimeField("Подключён", null=True, blank=True)
+    last_message_at = models.DateTimeField("Последнее сообщение", null=True, blank=True)
+    created_at = models.DateTimeField("Создана", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлена", auto_now=True)
+
+    class Meta:
+        verbose_name = "Переписка MAX"
+        verbose_name_plural = "Переписки MAX"
+        ordering = ["-created_at", "-pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(status="linked")
+                | (
+                    models.Q(customer_user_id__isnull=False)
+                    & models.Q(customer_chat_id__isnull=False)
+                ),
+                name="max_conversation_linked_identity",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"MAX по заявке {self.request_id}"
+
+    @property
+    def is_linked(self) -> bool:
+        return (
+            self.status == self.Status.LINKED
+            and self.customer_user_id is not None
+            and self.customer_chat_id is not None
+        )
+
+
+class MaxCustomerChat(models.Model):
+    """One MAX user: their dialog with the bot and the request plain text goes to."""
+
+    user_id = models.BigIntegerField("MAX ID клиента", unique=True)
+    chat_id = models.BigIntegerField("Диалог клиента")
+    active_conversation = models.ForeignKey(
+        MaxConversation,
+        verbose_name="Активная переписка",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    updated_at = models.DateTimeField("Обновлён", auto_now=True)
+
+    class Meta:
+        verbose_name = "Клиент MAX"
+        verbose_name_plural = "Клиенты MAX"
+
+    def __str__(self) -> str:
+        return f"Клиент MAX {self.user_id}"
+
+
+class MaxMessage(models.Model):
+    class Direction(models.TextChoices):
+        CUSTOMER = "customer_to_operator", "Клиент"
+        OPERATOR = "operator_to_customer", "Сотрудник"
+        SYSTEM = "system", "Система"
+
+    # Empty only for a bot answer that belongs to no request yet: a greeting,
+    # an invalid link, or the question which request a message is for.
+    conversation = models.ForeignKey(
+        MaxConversation,
+        verbose_name="Переписка",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="messages",
+    )
+    direction = models.CharField("Направление", max_length=24, choices=Direction.choices)
+    text = models.TextField("Текст", max_length=4000, blank=True)
+    # Callback buttons of a bot message: [[{"text": ..., "payload": ...}], ...].
+    buttons = models.JSONField("Кнопки", null=True, blank=True)
+    delivery_status = models.CharField(
+        "Доставка",
+        max_length=12,
+        choices=MaxDeliveryStatus.choices,
+        default=MaxDeliveryStatus.RECEIVED,
+    )
+    # Where an outgoing message goes. Incoming messages keep none.
+    recipient_chat_id = models.BigIntegerField("Диалог получателя", null=True, blank=True)
+    # MAX ``body.mid``: of the customer's message when received, of ours when sent.
+    external_message_id = models.CharField(
+        "Сообщение MAX", max_length=MAX_EXTERNAL_ID_LENGTH, blank=True
+    )
+    # One outgoing message per fact (a summary part, an acknowledgement, a
+    # reply form submission): a replayed webhook or a double click finds it.
+    dedupe_key = models.CharField("Ключ сообщения", max_length=160, blank=True)
+    # The button press this message answers, acknowledged to MAX when sent.
+    callback_id = models.CharField("Нажатие кнопки", max_length=256, blank=True)
+    operator_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Сотрудник",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    attempts = models.PositiveSmallIntegerField("Попыток", default=0)
+    next_attempt_at = models.DateTimeField("Следующая попытка", null=True, blank=True)
+    last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    sent_at = models.DateTimeField("Отправлено", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Сообщение MAX"
+        verbose_name_plural = "Сообщения MAX"
+        ordering = ["created_at", "pk"]
+        constraints = [
+            # A redelivered webhook can never store a customer message twice.
+            models.UniqueConstraint(
+                fields=["external_message_id"],
+                condition=models.Q(direction="customer_to_operator"),
+                name="max_message_inbound_mid_unique",
+            ),
+            models.UniqueConstraint(
+                fields=["dedupe_key"],
+                condition=~models.Q(dedupe_key=""),
+                name="max_message_dedupe_unique",
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(direction="customer_to_operator")
+                | (models.Q(conversation__isnull=False) & ~models.Q(external_message_id="")),
+                name="max_message_inbound_has_identity",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(direction="customer_to_operator")
+                | models.Q(recipient_chat_id__isnull=False),
+                name="max_message_outbound_has_recipient",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["delivery_status", "next_attempt_at"], name="max_message_delivery_idx"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_direction_display()} MAX {self.pk}"
+
+
+class MaxOutboxEvent(models.Model):
+    """Something operators must hear about, stored in the same transaction."""
+
+    class Kind(models.TextChoices):
+        NEW_REQUEST = "new_request", "Новая заявка"
+        CUSTOMER_LINKED = "customer_linked", "Клиент подключил MAX"
+        CUSTOMER_MESSAGE = "customer_message", "Сообщение клиента"
+        OPERATOR_REPLY = "operator_reply", "Ответ сотрудника"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает рассылки"
+        DISPATCHED = "dispatched", "Разослано сотрудникам"
+        EXPIRED = "expired", "Истекло без сотрудников"
+
+    kind = models.CharField("Событие", max_length=24, choices=Kind.choices)
+    request = models.ForeignKey(
+        CustomerRequest,
+        verbose_name="Заявка",
+        on_delete=models.CASCADE,
+        related_name="max_events",
+    )
+    message = models.ForeignKey(
+        MaxMessage,
+        verbose_name="Сообщение",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="events",
+    )
+    # The DenisStock employee whose own action this is: never told about it.
+    exclude_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Не уведомлять",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    dedupe_key = models.CharField("Ключ события", max_length=120, unique=True)
+    status = models.CharField(
+        "Состояние", max_length=12, choices=Status.choices, default=Status.PENDING
+    )
+    attempts = models.PositiveSmallIntegerField("Попыток", default=0)
+    next_attempt_at = models.DateTimeField("Следующая попытка", null=True, blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    dispatched_at = models.DateTimeField("Разослано", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Событие MAX для сотрудников"
+        verbose_name_plural = "События MAX для сотрудников"
+        ordering = ["pk"]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="max_event_status_idx")
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_kind_display()} по заявке {self.request_id}"
+
+
+class MaxOperatorDelivery(models.Model):
+    """One employee's copy of one MAX event.
+
+    The recipient is the DenisStock user, not a messenger account: employees
+    work from DenisStock and are reached through the operators' existing
+    notification bot. Unique, so a restart cannot notify twice.
+    """
+
+    event = models.ForeignKey(
+        MaxOutboxEvent,
+        verbose_name="Событие",
+        on_delete=models.CASCADE,
+        related_name="deliveries",
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Сотрудник",
+        on_delete=models.CASCADE,
+        related_name="+",
+    )
+    status = models.CharField(
+        "Доставка",
+        max_length=12,
+        choices=MaxDeliveryStatus.choices,
+        default=MaxDeliveryStatus.PENDING,
+    )
+    attempts = models.PositiveSmallIntegerField("Попыток", default=0)
+    next_attempt_at = models.DateTimeField("Следующая попытка", null=True, blank=True)
+    telegram_message_id = models.BigIntegerField("Сообщение в боте", null=True, blank=True)
+    last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    sent_at = models.DateTimeField("Отправлено", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Уведомление сотрудника о MAX"
+        verbose_name_plural = "Уведомления сотрудников о MAX"
+        ordering = ["pk"]
+        constraints = [
+            models.UniqueConstraint(fields=["event", "recipient"], name="max_delivery_unique")
+        ]
+        indexes = [
+            models.Index(fields=["status", "next_attempt_at"], name="max_delivery_status_idx")
+        ]
+
+    def __str__(self) -> str:
+        return f"Уведомление {self.event_id} для {self.recipient_id}"

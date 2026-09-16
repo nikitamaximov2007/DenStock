@@ -210,3 +210,34 @@ class TelegramBotRuntime(models.Model):
 
     def __str__(self) -> str:
         return f"Telegram-бот {self.bot_username or ''}".strip()
+
+
+class MaxBotRuntime(models.Model):
+    """Heartbeat and single-worker lease of the MAX request bot.
+
+    Operational state next to ``TelegramBotRuntime`` for the same reason: the
+    heartbeat moves constantly and must not count as a business change.
+    """
+
+    SINGLETON_PK = 1
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=SINGLETON_PK, editable=False)
+    worker_id = models.CharField("Экземпляр бота", max_length=64, blank=True)
+    lease_expires_at = models.DateTimeField("Аренда до", null=True, blank=True)
+    started_at = models.DateTimeField("Запущен", null=True, blank=True)
+    heartbeat_at = models.DateTimeField("Последний сигнал", null=True, blank=True)
+    # Requests sent before MAX first went live were never promised a MAX
+    # conversation; only later ones are announced to operators.
+    announce_requests_since = models.DateTimeField(
+        "Объявлять заявки начиная с", null=True, blank=True
+    )
+    bot_username = models.CharField("Имя бота", max_length=64, blank=True)
+    last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
+    last_error_at = models.DateTimeField("Время ошибки", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Состояние MAX-бота"
+        verbose_name_plural = "Состояние MAX-бота"
+
+    def __str__(self) -> str:
+        return f"MAX-бот {self.bot_username or ''}".strip()
