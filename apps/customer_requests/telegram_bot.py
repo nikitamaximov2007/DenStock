@@ -389,6 +389,17 @@ class TelegramBotWorker:
             for event in events:
                 operators = service.active_operators(exclude_id=event.exclude_operator_id)
                 if not operators:
+                    # An event that excludes its own author has no audience left
+                    # once that author is the only eligible operator: nobody needs
+                    # to hear about their own reply. Waiting cannot change that, so
+                    # the event is complete with no delivery of its own, and stops
+                    # being due work. Only an event nobody can receive *yet* keeps
+                    # waiting for an operator to appear.
+                    if event.exclude_operator_id is not None and service.active_operators():
+                        event.status = TelegramOutboxEvent.Status.DISPATCHED
+                        event.dispatched_at = now
+                        event.save(update_fields=["status", "dispatched_at"])
+                        continue
                     if now - event.created_at > EVENT_MAX_AGE:
                         event.status = TelegramOutboxEvent.Status.EXPIRED
                     event.attempts += 1

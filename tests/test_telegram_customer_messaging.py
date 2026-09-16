@@ -48,6 +48,7 @@ from apps.customer_requests.models import (
 from apps.customer_requests.services import (
     RequestLineInput,
     anonymize_request,
+    change_request_status,
     create_customer_request,
     withdraw_consent,
 )
@@ -1342,3 +1343,232 @@ def test_postgresql_second_worker_never_takes_the_lock_or_lease_of_a_live_worker
     successor.acquire()
     assert TelegramBotRuntime.objects.get().worker_id == "successor"
     successor.release()
+
+
+# --- Zero-recipient operator_reply events ------------------------------------------------
+
+
+@pytest.fixture
+def solo_operator(db, django_user_model):
+    """The real production shape: exactly one person answers customers."""
+    return _operator(django_user_model, OPERATOR_A, username="solo")
+
+
+def _replied_event(worker, api, part, *, key):
+    request = _request(part, key=key)
+    link(worker, api, request)
+    conversation = TelegramConversation.objects.get(request=request)
+    run(worker, api, message_update(CUSTOMER, "первое тестовое сообщение"))
+    _reply(worker, api, conversation, "тестовый ответ менеджера")
+    worker.drain_outbox()
+    return request, conversation
+
+
+def test_reply_by_the_only_operator_needs_no_notification_and_completes(
+    part, worker, api, solo_operator
+):
+    _replied_event(worker, api, part, key="z1" * 16)
+
+    event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
+    assert event.exclude_operator_id == solo_operator.pk
+    assert event.status == TelegramOutboxEvent.Status.DISPATCHED
+    assert event.dispatched_at is not None
+    assert not TelegramDelivery.objects.filter(event=event).exists()
+    assert event.attempts == 0
+
+
+def test_zero_recipient_reply_event_stops_being_due_work(part, worker, api, solo_operator):
+    _replied_event(worker, api, part, key="z2" * 16)
+
+    assert not TelegramOutboxEvent.objects.filter(
+        status=TelegramOutboxEvent.Status.PENDING
+    ).exists()
+    assert not worker.has_due_work()
+
+
+def test_redispatching_a_zero_recipient_reply_event_is_idempotent(part, worker, api, solo_operator):
+    _replied_event(worker, api, part, key="z3" * 16)
+    event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
+    dispatched_at, attempts = event.dispatched_at, event.attempts
+
+    worker.dispatch_events()
+    worker.dispatch_events()
+
+    event.refresh_from_db()
+    assert event.status == TelegramOutboxEvent.Status.DISPATCHED
+    assert event.dispatched_at == dispatched_at
+    assert event.attempts == attempts
+    assert not TelegramDelivery.objects.filter(event=event).exists()
+
+
+def test_worker_restart_does_not_reopen_a_completed_zero_recipient_event(
+    part, worker, api, solo_operator
+):
+    _replied_event(worker, api, part, key="z4" * 16)
+    worker.release()
+    successor = TelegramBotWorker(api, worker_id="successor", poll_timeout=0, heartbeat_file="")
+    successor.start()
+
+    successor.drain_outbox()
+
+    event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
+    assert event.status == TelegramOutboxEvent.Status.DISPATCHED
+    assert not TelegramDelivery.objects.filter(event=event).exists()
+    successor.release()
+
+
+def test_an_operator_hired_later_never_hears_an_old_self_notification(
+    part, worker, api, solo_operator, django_user_model
+):
+    _replied_event(worker, api, part, key="z5" * 16)
+    event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
+
+    latecomer = _operator(django_user_model, OPERATOR_B, username="latecomer")
+    worker.drain_outbox()
+
+    assert not TelegramDelivery.objects.filter(event=event).exists()
+    assert not api.texts_to(latecomer.telegram_user_id)
+
+
+def test_the_customer_still_receives_the_reply_of_the_only_operator(
+    part, worker, api, solo_operator
+):
+    _replied_event(worker, api, part, key="z6" * 16)
+
+    assert api.texts_to(CUSTOMER).count("тестовый ответ менеджера") == 1
+    reply = TelegramMessage.objects.get(direction=TelegramMessage.Direction.OPERATOR)
+    assert reply.operator_user == solo_operator.user
+    assert reply.delivery_status == TelegramDeliveryStatus.SENT
+    assert "solo" not in "\n".join(api.texts_to(CUSTOMER))
+
+
+def test_a_second_operator_still_hears_about_a_colleagues_reply(part, worker, api, operators):
+    request = _request(part, key="z7" * 16)
+    link(worker, api, request)
+    conversation = TelegramConversation.objects.get(request=request)
+
+    _reply(worker, api, conversation, "ответ первого сотрудника")
+    worker.drain_outbox()
+
+    event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
+    assert event.status == TelegramOutboxEvent.Status.DISPATCHED
+    deliveries = TelegramDelivery.objects.filter(event=event)
+    assert [row.operator_id for row in deliveries] == [operators[1].pk]
+    assert any("ответ первого сотрудника" in text for text in api.texts_to(OPERATOR_B))
+
+
+def test_customer_message_fan_out_is_unchanged_for_a_single_operator(
+    part, worker, api, solo_operator
+):
+    request = _request(part, key="z8" * 16)
+    link(worker, api, request)
+
+    run(worker, api, message_update(CUSTOMER, "первое тестовое сообщение"))
+    run(worker, api, message_update(CUSTOMER, "второе тестовое сообщение"))
+    worker.drain_outbox()
+
+    events = TelegramOutboxEvent.objects.filter(kind=TelegramOutboxEvent.Kind.CUSTOMER_MESSAGE)
+    assert events.count() == 2
+    assert {event.status for event in events} == {TelegramOutboxEvent.Status.DISPATCHED}
+    for event in events:
+        assert [row.operator_id for row in event.deliveries.all()] == [solo_operator.pk]
+    delivered = "\n".join(api.texts_to(OPERATOR_A))
+    assert "первое тестовое сообщение" in delivered
+    assert "второе тестовое сообщение" in delivered
+    assert api.texts_to(CUSTOMER).count(CUSTOMER_ACK_TEXT) == 1
+
+
+def test_new_request_without_any_operator_still_waits_instead_of_completing(part, worker, api):
+    _request(part, key="z9" * 16)
+
+    worker.dispatch_events()
+
+    event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.NEW_REQUEST)
+    assert event.exclude_operator_id is None
+    assert event.status == TelegramOutboxEvent.Status.PENDING
+    assert event.dispatched_at is None
+    assert event.attempts == 1
+
+
+def test_cancelling_the_request_keeps_the_completed_reply_history(part, worker, api, solo_operator):
+    request, conversation = _replied_event(worker, api, part, key="za" * 16)
+
+    change_request_status(
+        request_id=request.pk,
+        target_status=CustomerRequest.Status.CANCELED,
+        by=solo_operator.user,
+    )
+
+    request.refresh_from_db()
+    assert request.status == CustomerRequest.Status.CANCELED
+    history = list(conversation.messages.values_list("direction", flat=True))
+    assert history == [
+        TelegramMessage.Direction.SYSTEM,
+        TelegramMessage.Direction.CUSTOMER,
+        TelegramMessage.Direction.OPERATOR,
+    ]
+    assert TelegramOutboxEvent.objects.get(
+        kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY
+    ).status == TelegramOutboxEvent.Status.DISPATCHED
+
+
+def test_a_replayed_first_customer_message_cannot_produce_a_second_ack(
+    part, worker, api, solo_operator
+):
+    request = _request(part, key="zb" * 16)
+    link(worker, api, request)
+    update = message_update(CUSTOMER, "первое тестовое сообщение", update_id=555001)
+
+    # The worker delivers the acknowledgement the customer actually sees.
+    run(worker, api, update)
+    # Every later delivery of the same update is silent, however it arrives.
+    assert handle_update(update) == []
+    assert handle_update(update) == []
+    run(worker, api, update)
+
+    assert api.texts_to(CUSTOMER).count(CUSTOMER_ACK_TEXT) == 1
+    assert TelegramMessage.objects.filter(direction=TelegramMessage.Direction.CUSTOMER).count() == 1
+    assert (
+        TelegramOutboxEvent.objects.filter(kind=TelegramOutboxEvent.Kind.CUSTOMER_MESSAGE).count()
+        == 1
+    )
+
+
+def test_serialized_first_messages_ack_once_and_all_of_them_reach_the_operator(
+    part, worker, api, solo_operator
+):
+    request = _request(part, key="zc" * 16)
+    link(worker, api, request)
+
+    acks = []
+    for text in ("первое", "второе", "третье"):
+        acks.extend(
+            item.text for item in handle_update(message_update(CUSTOMER, text)) if item.text
+        )
+    worker.drain_outbox()
+
+    assert acks == [CUSTOMER_ACK_TEXT]
+    assert list(
+        TelegramMessage.objects.filter(direction=TelegramMessage.Direction.CUSTOMER).values_list(
+            "text", flat=True
+        )
+    ) == ["первое", "второе", "третье"]
+    delivered = "\n".join(api.texts_to(OPERATOR_A))
+    assert all(text in delivered for text in ("первое", "второе", "третье"))
+
+
+def test_replaying_start_does_not_duplicate_the_order_summary(part, worker, api, solo_operator):
+    request = _request(part, key="zd" * 16)
+    token = link(worker, api, request)
+
+    run(worker, api, message_update(CUSTOMER, f"/start {token}"))
+    worker.drain_outbox()
+
+    summaries = [text for text in api.texts_to(CUSTOMER) if "Ваш заказ" in text]
+    assert len(summaries) == 1
+    assert (
+        TelegramMessage.objects.filter(
+            conversation__request=request, direction=TelegramMessage.Direction.SYSTEM
+        ).count()
+        == 1
+    )
