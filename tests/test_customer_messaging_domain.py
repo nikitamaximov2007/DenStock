@@ -256,3 +256,31 @@ def test_a_cancelled_request_still_renders_its_order_for_history(part, db):
 
     assert "448 — РЕМЕНЬ ПРИВОДНОЙ" in summary
     assert CustomerRequestLine.objects.filter(request=request).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("has_recipients", "excludes_author", "anyone_eligible", "expired", "outcome"),
+    [
+        (True, False, True, False, messaging.EVENT_DELIVER),
+        (True, True, True, True, messaging.EVENT_DELIVER),
+        # The author of a reply is the only eligible employee: done, no rows.
+        (False, True, True, False, messaging.EVENT_COMPLETE),
+        (False, True, True, True, messaging.EVENT_COMPLETE),
+        # Nobody can receive it yet: wait, then give up.
+        (False, False, False, False, messaging.EVENT_WAIT),
+        (False, True, False, False, messaging.EVENT_WAIT),
+        (False, False, False, True, messaging.EVENT_EXPIRE),
+    ],
+)
+def test_operator_event_outcome_is_one_rule_for_every_transport(
+    has_recipients, excludes_author, anyone_eligible, expired, outcome
+):
+    assert (
+        messaging.operator_event_outcome(
+            has_recipients=has_recipients,
+            excludes_author=excludes_author,
+            anyone_eligible=anyone_eligible,
+            expired=expired,
+        )
+        == outcome
+    )

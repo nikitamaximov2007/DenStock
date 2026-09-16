@@ -165,3 +165,29 @@ def external_message_key(channel: str, external_id) -> str:
     if not value:
         raise ValueError("External message id is required.")
     return f"{channel}:{value}"
+
+
+# What to do with one operator notification event. Production proved the zero
+# recipient case for Telegram (an operator reply seen by nobody else); MAX
+# notifies the same employees and must end such an event the same way.
+EVENT_DELIVER = "deliver"
+EVENT_COMPLETE = "complete"
+EVENT_WAIT = "wait"
+EVENT_EXPIRE = "expire"
+
+
+def operator_event_outcome(
+    *, has_recipients: bool, excludes_author: bool, anyone_eligible: bool, expired: bool
+) -> str:
+    """Deliver, finish with nobody to tell, keep waiting, or give up.
+
+    An event that excludes its own author has no audience once that author is
+    the only eligible employee: nobody needs to hear about their own reply,
+    and waiting cannot change that, so it completes with no delivery rows.
+    Only an event nobody can receive *yet* waits, until it is too old.
+    """
+    if has_recipients:
+        return EVENT_DELIVER
+    if excludes_author and anyone_eligible:
+        return EVENT_COMPLETE
+    return EVENT_EXPIRE if expired else EVENT_WAIT

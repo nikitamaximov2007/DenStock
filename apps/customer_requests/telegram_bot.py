@@ -29,6 +29,7 @@ from django.utils import timezone
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
+from . import messaging
 from . import telegram_service as service
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
@@ -388,19 +389,27 @@ class TelegramBotWorker:
             )
             for event in events:
                 operators = service.active_operators(exclude_id=event.exclude_operator_id)
-                if not operators:
-                    # An event that excludes its own author has no audience left
-                    # once that author is the only eligible operator: nobody needs
-                    # to hear about their own reply. Waiting cannot change that, so
-                    # the event is complete with no delivery of its own, and stops
-                    # being due work. Only an event nobody can receive *yet* keeps
-                    # waiting for an operator to appear.
-                    if event.exclude_operator_id is not None and service.active_operators():
+                outcome = messaging.operator_event_outcome(
+                    has_recipients=bool(operators),
+                    excludes_author=event.exclude_operator_id is not None,
+                    anyone_eligible=bool(operators)
+                    or (
+                        event.exclude_operator_id is not None
+                        and bool(service.active_operators())
+                    ),
+                    expired=now - event.created_at > EVENT_MAX_AGE,
+                )
+                if outcome != messaging.EVENT_DELIVER:
+                    # The shared rule (``messaging.operator_event_outcome``): an
+                    # operator's own reply with nobody else to tell is complete
+                    # with no delivery of its own; an event nobody can receive
+                    # *yet* keeps waiting for an operator to appear.
+                    if outcome == messaging.EVENT_COMPLETE:
                         event.status = TelegramOutboxEvent.Status.DISPATCHED
                         event.dispatched_at = now
                         event.save(update_fields=["status", "dispatched_at"])
                         continue
-                    if now - event.created_at > EVENT_MAX_AGE:
+                    if outcome == messaging.EVENT_EXPIRE:
                         event.status = TelegramOutboxEvent.Status.EXPIRED
                     event.attempts += 1
                     event.next_attempt_at = now + NO_OPERATOR_RETRY
