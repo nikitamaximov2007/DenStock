@@ -17,17 +17,20 @@ settings, not secrets.
   the webhook on the INTERNAL host, `/customer-requests/telegram/webhook/`,
   and the request records the chat id. Wrong or missing secret: 404. Bad
   JSON: 400. Unknown, expired or used token: accepted = false.
-* Outgoing Telegram messages are NOT implemented. `TelegramProvider` is an
-  interface and the runtime uses `NoopTelegramProvider`: the bot does not
-  answer the customer and staff cannot message the chat through DenisStock.
-  Enabling Telegram today records the link, nothing more.
-* A chat can be linked to one request only (unique channel and chat id). A
-  returning customer's second request cannot be linked to the same chat:
-  the webhook answers accepted = false. Whether a chat may serve several
-  requests is a product decision to take before going live.
-* MAX: only the domain boundary exists (`max_provider.py`, `NoopMaxProvider`).
-  There is no webhook route and no deep-link format, on purpose: none is
-  invented without the official MAX bot documentation and credentials.
+* Telegram messaging is live in production: the bot sends the request summary
+  after Start, carries customer messages to operators and operator replies
+  back, and records every message with the real DenisStock operator behind it.
+* One chat serves several requests. The chat's active conversation decides
+  where a plain message goes; `/requests` lets the customer switch. When more
+  than one request is possible and none is active, the bot asks instead of
+  guessing.
+* A deep link binds a request on the customer's *first* start. A returning
+  customer who already has the chat selects the request instead of opening a
+  new link — the platform delivers no start payload into an existing dialog.
+* MAX: the domain boundary exists (`max_provider.py`) and the official API
+  contract is verified and written down in
+  `docs/design/customer-request-max.md`. The live transport, webhook route and
+  credentials are staged work, not yet in the runtime.
 
 ## Telegram: switch on (internal runtime only)
 
@@ -67,7 +70,14 @@ settings, not secrets.
 
 ## MAX
 
-Not switchable today. Before any work: the official MAX bot API
-documentation, a bot and its credentials, and a decision on the same
-one-chat-one-request question. Until then customers who choose MAX are
-contacted by phone or from the staff member's own MAX account.
+Not switchable yet, but no longer unknown: the official contract is verified
+and recorded in `docs/design/customer-request-max.md` (host
+`platform-api2.max.ru`, `Authorization` header, webhook-only in production via
+`POST /subscriptions` with `X-Max-Bot-Api-Secret`, deep link
+`https://max.ru/<botName>?start=<payload>` with a 128-character payload).
+
+Still missing before MAX can be switched on: the live transport client, the
+webhook route, and the bot token installed on production the same way the
+Telegram one is — root-owned, mode 600, never in Git and never printed. Until
+then customers who choose MAX are contacted by phone or from the staff
+member's own MAX account.

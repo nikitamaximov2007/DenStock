@@ -1,4 +1,10 @@
-"""MAX domain boundary. No live endpoint is assumed without official credentials."""
+"""MAX domain boundary.
+
+The official API contract is verified and written down in
+``docs/design/customer-request-max.md``; what is still absent here is the live
+transport, not the knowledge of it. ``MaxProvider`` stays the seam a real
+client will implement, so the domain keeps working against a fake until then.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
