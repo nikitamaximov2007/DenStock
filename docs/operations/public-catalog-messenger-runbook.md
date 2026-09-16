@@ -27,10 +27,11 @@ settings, not secrets.
 * A deep link binds a request on the customer's *first* start. A returning
   customer who already has the chat selects the request instead of opening a
   new link — the platform delivers no start payload into an existing dialog.
-* MAX: the domain boundary exists (`max_provider.py`) and the official API
-  contract is verified and written down in
-  `docs/design/customer-request-max.md`. The live transport, webhook route and
-  credentials are staged work, not yet in the runtime.
+* MAX: the transport is implemented and accepted locally against a fake MAX
+  (webhook, worker, returning customers, operator replies from DenisStock,
+  success-page handoff). It is **not deployed**: no token, no subscription, no
+  `max-bot` service on production yet. Design and guarantees:
+  `docs/design/customer-request-max.md`.
 
 ## Telegram: switch on (internal runtime only)
 
@@ -70,14 +71,50 @@ settings, not secrets.
 
 ## MAX
 
-Not switchable yet, but no longer unknown: the official contract is verified
-and recorded in `docs/design/customer-request-max.md` (host
-`platform-api2.max.ru`, `Authorization` header, webhook-only in production via
-`POST /subscriptions` with `X-Max-Bot-Api-Secret`, deep link
-`https://max.ru/<botName>?start=<payload>` with a 128-character payload).
+Implemented, not switched on. Until Stage C switches it on, catalog-web has
+no `MAX_BOT_USERNAME`, so a customer who chooses MAX sees that MAX is
+unavailable and is called back by phone; the request itself is always kept.
 
-Still missing before MAX can be switched on: the live transport client, the
-webhook route, and the bot token installed on production the same way the
-Telegram one is — root-owned, mode 600, never in Git and never printed. Until
-then customers who choose MAX are contacted by phone or from the staff
-member's own MAX account.
+### Services and secrets (target for Stage C)
+
+* `catalog-web`: `MAX_BOT_USERNAME` (the platform-generated nickname) and
+  optionally `MAX_DEEP_LINK_BASE_URL` (default `https://max.ru`). No secret;
+  `config/settings/public.py` empties any that leak in.
+* `web`: `MAX_WEBHOOK_ENABLED=true`, `MAX_WEBHOOK_SECRET` (5 to 256 characters
+  `[A-Za-z0-9_-]`). No bot token.
+* `max-bot` (runs `manage.py run_max_bot`, one instance): `MAX_BOT_TOKEN` from
+  its own root-owned mode 600 env file, never in Git and never printed;
+  `TELEGRAM_INTERNAL_BASE_URL` for the «Открыть заявку» button.
+* `telegram-bot` delivers the employees' notifications about MAX requests, so
+  it must run the same release.
+
+### Switch on (Stage C, production)
+
+1. Standard release with backups; migrations `customer_requests 0008, 0009`
+   and `operations 0006`; re-run `create_public_catalog_role.sql` (idempotent).
+2. Publish exactly `https://<host>/customer-requests/max/webhook/` on port 443
+   with a trusted certificate, proxied to `web`. Nothing else of `web`.
+3. Set the variables above; recreate `web`, `catalog-web`, `telegram-bot`;
+   start `max-bot`.
+4. `manage.py max_webhook status`, then
+   `manage.py max_webhook subscribe --confirm` with `MAX_PUBLIC_WEBHOOK_URL`,
+   `MAX_WEBHOOK_SECRET` and `MAX_BOT_TOKEN` in that one-off environment.
+
+### Acceptance
+
+* `curl -s -o /dev/null -w '%{http_code}' -X POST https://<host>/customer-requests/max/webhook/`
+  answers 404 (no secret).
+* A real MAX account: request with MAX, «Продолжить в MAX» opens the bot,
+  «Начать» sends the summary; first message gets one acknowledgement, the
+  second none; an employee answers from the request page and the customer
+  receives it once; a second request is bound in the same dialog and chosen
+  with the buttons; a cancelled request cannot be bound.
+* Locally the same flows run against `tests/max_fake.py`
+  (`python -m tests.max_fake serve` / `send`).
+
+### Roll back
+
+1. `manage.py max_webhook unsubscribe --confirm`.
+2. `MAX_WEBHOOK_ENABLED=false` on `web` (the webhook answers 404), stop
+   `max-bot`, empty `MAX_BOT_USERNAME` on `catalog-web`.
+3. Stored conversations and messages stay; the migrations are additive.
