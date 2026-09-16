@@ -366,9 +366,13 @@ class MaxBotWorker:
         )
 
     def _touch_heartbeat(self) -> None:
+        """Record this worker's id: the healthcheck matches it against the lease."""
         if self.heartbeat_file:
+            path = Path(self.heartbeat_file)
             try:
-                Path(self.heartbeat_file).touch()
+                partial = path.with_name(path.name + ".tmp")
+                partial.write_text(self.worker_id, encoding="ascii")
+                partial.replace(path)
             except OSError:
                 logger.warning("heartbeat file is not writable")
 
@@ -666,4 +670,47 @@ class MaxBotWorker:
                 self.release()
             except DatabaseError:
                 logger.warning("lease not released cleanly")
+
+
+# --- Health ------------------------------------------------------------------------------
+
+HEALTH_MAX_AGE_SECONDS = 90
+
+
+def health_problems(heartbeat_file: str, *, now=None) -> list[str]:
+    """Why this container's MAX worker is not healthy; empty means healthy.
+
+    Three facts must agree: the process wrote its heartbeat recently, that
+    heartbeat names a worker, and the database lease belongs to that worker and
+    has not expired. Nothing here calls MAX or reads a secret.
+    """
+    import re
+    import time
+
+    path = Path(heartbeat_file or "")
+    if not heartbeat_file or not path.is_file():
+        return ["heartbeat file missing"]
+    age = time.time() - path.stat().st_mtime
+    if age > HEALTH_MAX_AGE_SECONDS:
+        return [f"heartbeat stale ({int(age)} s)"]
+    try:
+        worker_id = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        worker_id = ""
+    if not re.fullmatch(r"[0-9a-f]{32}", worker_id):
+        return ["heartbeat names no worker"]
+    now = now or timezone.now()
+    runtime = MaxBotRuntime.objects.filter(pk=MaxBotRuntime.SINGLETON_PK).first()
+    if runtime is None:
+        return ["runtime row missing"]
+    problems = []
+    if runtime.worker_id != worker_id:
+        problems.append("lease belongs to another worker")
+    if runtime.lease_expires_at is None or runtime.lease_expires_at <= now:
+        problems.append("lease expired")
+    if runtime.heartbeat_at is None or (now - runtime.heartbeat_at).total_seconds() > (
+        HEALTH_MAX_AGE_SECONDS
+    ):
+        problems.append("runtime heartbeat stale")
+    return problems
 
