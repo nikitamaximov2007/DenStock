@@ -23,7 +23,16 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    env_file: .env
+    # .env.max-webhook (root, mode 600) carries only MAX_WEBHOOK_ENABLED and
+    # MAX_WEBHOOK_SECRET: web authenticates MAX's webhook and needs nothing more.
+    # Absent file means the webhook answers 404 to everything.
+    env_file:
+      - path: .env
+      - path: .env.max-webhook
+        required: false
+    environment:
+      # Receiving a webhook needs no API call: web never holds the MAX token.
+      MAX_BOT_TOKEN: ""
     depends_on:
       db:
         condition: service_healthy
@@ -70,6 +79,10 @@ services:
     env_file: .env.public
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.public
+      # The deep link needs only MAX_BOT_USERNAME (in .env.public). Never a secret;
+      # config/settings/public.py empties these again as a second line.
+      MAX_BOT_TOKEN: ""
+      MAX_WEBHOOK_SECRET: ""
     expose:
       - "8000"
     healthcheck:
@@ -105,6 +118,10 @@ services:
       # The bot never uses AI support and has none of its mounts; the shared
       # .env enables AI support for web only.
       AI_SUPPORT_ENABLED: "false"
+      # It delivers employees' notifications about MAX requests through Telegram,
+      # which needs the MAX tables but never the MAX token or webhook secret.
+      MAX_BOT_TOKEN: ""
+      MAX_WEBHOOK_SECRET: ""
       # Telegram is reached only through the dedicated egress proxy on the
       # internal telegram-egress bridge (deploy/telegram-egress). An empty
       # TELEGRAM_API_PROXY_URL in the invoking shell means a direct connection.
@@ -123,6 +140,60 @@ services:
       timeout: 5s
       retries: 3
       start_period: 60s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Started only with `--profile max-bot`. Sends the MAX outbox and fans out
+  # operator events; MAX updates arrive at web's webhook, so no port. Exactly
+  # ONE replica: the worker holds a PostgreSQL advisory lock plus a lease.
+  # The token lives only in .env.max (root, mode 600), with MAX_API_CA_FILE and
+  # MAX_API_CA_SHA256: MAX's certificate chains to the Russian Trusted Root CA,
+  # which only this service trusts, from the read-only public certificate
+  # directory mounted below. MAX is reached directly: no Telegram egress
+  # network, no AI proxy, no proxy environment.
+  max-bot:
+    profiles: ["max-bot"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    entrypoint: ["python", "manage.py"]
+    command: ["run_max_bot"]
+    env_file:
+      - path: .env
+      - path: .env.max
+        required: false
+    environment:
+      AI_SUPPORT_ENABLED: "false"
+      # The webhook secret belongs to web; the Telegram secret to telegram-bot.
+      MAX_WEBHOOK_ENABLED: "false"
+      MAX_WEBHOOK_SECRET: ""
+      TELEGRAM_BOT_TOKEN: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      ALL_PROXY: ""
+      MAX_BOT_HEARTBEAT_FILE: /tmp/denstock-max-bot.heartbeat
+    volumes:
+      - type: bind
+        source: ${DENSTOCK_MAX_CA_DIR:-/etc/denstock/max}
+        target: /etc/denstock/max
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 40s
+    healthcheck:
+      # Heartbeat fresh, naming a worker, and the database lease is that worker's.
+      test: ["CMD", "python", "manage.py", "max_bot_health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 90s
     restart: unless-stopped
     logging:
       driver: json-file
