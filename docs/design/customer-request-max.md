@@ -186,38 +186,46 @@ PRO-STOR; личный аккаунт сотрудника в MAX не нуже�
 только токен ссылки `max` со своим доказательством и не имеет прав ни на одну
 таблицу MAX.
 
-### Разделение сервисов для Stage C
+### Разделение сервисов (упаковано в Stage C0)
 
 | Сервис | Получает | Не получает |
 | --- | --- | --- |
-| `catalog-web` | `MAX_BOT_USERNAME`, `MAX_DEEP_LINK_BASE_URL` | токен, секрет webhook (обнуляются в `config/settings/public.py`) |
-| `web` | `MAX_WEBHOOK_ENABLED=true`, `MAX_WEBHOOK_SECRET` | `MAX_BOT_TOKEN` (приёму webhook API не нужен) |
-| `max-bot` (новый сервис, `run_max_bot`) | `MAX_BOT_TOKEN`, `MAX_API_BASE_URL`, `TELEGRAM_INTERNAL_BASE_URL` | секрет webhook |
-| разовый `max_webhook subscribe --confirm` | токен, секрет, `MAX_PUBLIC_WEBHOOK_URL` | выполняется вручную и сразу завершается |
-| `telegram-bot` | без новых переменных | отправляет уведомления сотрудникам о MAX, поэтому выкатывается тем же выпуском |
+| `catalog-web` | `MAX_BOT_USERNAME` из `.env.public` | токен и секрет webhook: пусто в compose и в `config/settings/public.py` |
+| `web` | `.env.max-webhook`: `MAX_WEBHOOK_ENABLED`, `MAX_WEBHOOK_SECRET` | `MAX_BOT_TOKEN`: пусто в compose (приёму webhook API не нужен) |
+| `max-bot` (сервис с профилем, `run_max_bot`) | `.env.max`: `MAX_BOT_TOKEN`, `MAX_PUBLIC_WEBHOOK_URL`, `MAX_API_CA_FILE`, `MAX_API_CA_SHA256`; сертификат из `/etc/denstock/max` только для чтения | секрет webhook, токен Telegram, прокси |
+| разовый `max_webhook subscribe --confirm` | запуск в контейнере `max-bot` с файлом секрета web, смонтированным только на эту команду | выполняется вручную и сразу завершается |
+| `telegram-bot` | без новых переменных; токен и секрет MAX пусты | доставляет сотрудникам уведомления о MAX, поэтому выкатывается тем же выпуском |
 
-Webhook должен быть доступен MAX по HTTPS на порту 443 с доверенным
-сертификатом. Наружу публикуется только путь
-`/customer-requests/max/webhook/`, остальной внутренний `web` снаружи не
-открывается.
+Кнопку «Открыть заявку» в уведомлениях о MAX строит `telegram-bot` из своего
+`TELEGRAM_INTERNAL_BASE_URL`; `max-bot` этот адрес не нужен.
 
-### Что остаётся на Stage C
+### Сертификат API MAX
 
-1. Настоящий бот MAX (владелец), токен на сервере: root, режим 600, отдельный
-   env-файл только для `max-bot`, никогда в Git и в выводе.
-2. На настоящем MAX проверить: что приходит при повторном переходе по ссылке
-   в существующий диалог (`/start <payload>` или ничего); стабильность
-   `callback_id` между нажатиями; длину `mid`; есть ли `Retry-After` у 429;
-   нужен ли ответ `/answers` на каждое нажатие.
-3. Сервис `max-bot` в `docker-compose.yml` (профиль, healthcheck по heartbeat),
-   переменные `web` и `catalog-web`, публичный HTTPS-маршрут только для пути
-   webhook.
-4. Выпуск по обычной процедуре: резервные копии, миграции, повторный запуск
-   скрипта прав публичной роли, перезапуск `web`, `catalog-web`,
-   `telegram-bot`, запуск `max-bot`.
-5. `manage.py max_webhook subscribe --confirm`, затем `status`.
-6. Приёмка на проде настоящим аккаунтом MAX: первый клиент, возвращающийся
-   клиент, ответ сотрудника, отмена; регрессия Telegram.
-7. Откат: `max_webhook unsubscribe --confirm`, `MAX_WEBHOOK_ENABLED=false`,
-   остановить `max-bot`, пустой `MAX_BOT_USERNAME` в `catalog-web` (страница
-   честно говорит, что MAX недоступен). Миграции только добавляют и остаются.
+Проверка с production (Stage C0): `platform-api2.max.ru` доступен напрямую,
+но сертификат выдан «Russian Trusted Sub CA», корень «Russian Trusted Root CA»
+Министерства цифрового развития, которого нет в стандартных хранилищах. Клиент
+MAX доверяет ровно файлу `MAX_API_CA_FILE` с закреплённым SHA-256; проверка
+не отключается, системное хранилище и остальные клиенты не меняются,
+переменные окружения прокси клиентом не читаются.
+
+### Публичный маршрут webhook
+
+Production обслуживает не Caddyfile из репозитория, а
+`/etc/denstock/caddy/Caddyfile` (подключается неотслеживаемым overlay).
+Его точная копия лежит в `deploy/caddy/Caddyfile.production.pre-max`,
+кандидат в `deploy/caddy/Caddyfile.production`: на `pro-brp.ru` в `web` уходит
+только `POST /customer-requests/max/webhook/` (тело до 64 КБ, `Host` web),
+всё остальное по-прежнему в `catalog-web`. MAX подписывается на
+`https://pro-brp.ru/customer-requests/max/webhook/` (порт 443, сертификат
+Let's Encrypt этого хоста).
+
+### Выпуск
+
+Порядок, инструменты, приёмка, резервные копии и откат:
+[docs/operations/max-bot.md](../operations/max-bot.md) и
+`scripts/operations/max_release.py plan`. Локальная репетиция всего выпуска:
+`scripts/qualification/max_release_rehearsal.py`.
+
+Что проверить на настоящем MAX при приёмке: что приходит при повторном
+переходе по ссылке в существующий диалог; повторяется ли `callback_id` между
+нажатиями; длины `mid`; `Retry-After`, только если 429 случится сам.

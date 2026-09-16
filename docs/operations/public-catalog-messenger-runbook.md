@@ -75,46 +75,19 @@ Implemented, not switched on. Until Stage C switches it on, catalog-web has
 no `MAX_BOT_USERNAME`, so a customer who chooses MAX sees that MAX is
 unavailable and is called back by phone; the request itself is always kept.
 
-### Services and secrets (target for Stage C)
+### Release, services, secrets, acceptance and rollback
 
-* `catalog-web`: `MAX_BOT_USERNAME` (the platform-generated nickname) and
-  optionally `MAX_DEEP_LINK_BASE_URL` (default `https://max.ru`). No secret;
-  `config/settings/public.py` empties any that leak in.
-* `web`: `MAX_WEBHOOK_ENABLED=true`, `MAX_WEBHOOK_SECRET` (5 to 256 characters
-  `[A-Za-z0-9_-]`). No bot token.
-* `max-bot` (runs `manage.py run_max_bot`, one instance): `MAX_BOT_TOKEN` from
-  its own root-owned mode 600 env file, never in Git and never printed;
-  `TELEGRAM_INTERNAL_BASE_URL` for the «Открыть заявку» button.
-* `telegram-bot` delivers the employees' notifications about MAX requests, so
-  it must run the same release.
+Packaged in Stage C0; the full procedure is
+[docs/operations/max-bot.md](max-bot.md), and the exact command order is
+printed by `python3 scripts/operations/max_release.py plan --base <SHA>
+--candidate <SHA>`. In short:
 
-### Switch on (Stage C, production)
-
-1. Standard release with backups; migrations `customer_requests 0008, 0009`
-   and `operations 0006`; re-run `create_public_catalog_role.sql` (idempotent).
-2. Publish exactly `https://<host>/customer-requests/max/webhook/` on port 443
-   with a trusted certificate, proxied to `web`. Nothing else of `web`.
-3. Set the variables above; recreate `web`, `catalog-web`, `telegram-bot`;
-   start `max-bot`.
-4. `manage.py max_webhook status`, then
-   `manage.py max_webhook subscribe --confirm` with `MAX_PUBLIC_WEBHOOK_URL`,
-   `MAX_WEBHOOK_SECRET` and `MAX_BOT_TOKEN` in that one-off environment.
-
-### Acceptance
-
-* `curl -s -o /dev/null -w '%{http_code}' -X POST https://<host>/customer-requests/max/webhook/`
-  answers 404 (no secret).
-* A real MAX account: request with MAX, «Продолжить в MAX» opens the bot,
-  «Начать» sends the summary; first message gets one acknowledgement, the
-  second none; an employee answers from the request page and the customer
-  receives it once; a second request is bound in the same dialog and chosen
-  with the buttons; a cancelled request cannot be bound.
-* Locally the same flows run against `tests/max_fake.py`
-  (`python -m tests.max_fake serve` / `send`).
-
-### Roll back
-
-1. `manage.py max_webhook unsubscribe --confirm`.
-2. `MAX_WEBHOOK_ENABLED=false` on `web` (the webhook answers 404), stop
-   `max-bot`, empty `MAX_BOT_USERNAME` on `catalog-web`.
-3. Stored conversations and messages stay; the migrations are additive.
+* `max-bot` alone holds the bot token (`.env.max`, root 600) and trusts MAX's
+  certificate authority (Russian Trusted Root CA, `/etc/denstock/max`).
+* `web` alone holds the webhook secret (`.env.max-webhook`, root 600).
+* `catalog-web` gets only `MAX_BOT_USERNAME`, taken from GET /me.
+* `telegram-bot` delivers employees' MAX notifications, so it ships in the
+  same release; it holds no MAX secret.
+* Only `POST https://pro-brp.ru/customer-requests/max/webhook/` reaches `web`.
+* Rollback starts by unsubscribing and stopping `max-bot`; the migrations are
+  additive and stay applied.
