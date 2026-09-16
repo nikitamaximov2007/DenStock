@@ -29,6 +29,7 @@ import http.cookiejar
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,11 @@ class Rehearsal:
         self.failures = 0
         self.log = open(workdir / "rehearsal.log", "a", encoding="utf-8")  # noqa: SIM115
         self.tool = workdir / "tool" / "max_release.py"
+        # Fake credentials, random per run: never literal values in this file.
+        self.db_password = secrets.token_urlsafe(18)
+        self.public_password = secrets.token_urlsafe(18)
+        self.django_secret = secrets.token_urlsafe(40)
+        self.public_django_secret = secrets.token_urlsafe(40)
 
     # --- plumbing ------------------------------------------------------------------------
 
@@ -167,7 +173,7 @@ class Rehearsal:
         shutil.copy(self.etc / "caddy/Caddyfile.pre-max.http", self.etc / "caddy/Caddyfile")
         (self.opt / ".env").write_text(f"""COMPOSE_PROJECT_NAME={PROJECT}
 COMPOSE_FILE=docker-compose.yml:docker-compose.signing.yml
-DJANGO_SECRET_KEY=rehearsal-only-not-a-secret-{uuid.uuid4().hex}
+DJANGO_SECRET_KEY={self.django_secret}
 DJANGO_SETTINGS_MODULE=config.settings.prod
 DJANGO_DEBUG=false
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1,{INTERNAL_HOST}
@@ -175,8 +181,8 @@ DJANGO_CSRF_TRUSTED_ORIGINS=http://{INTERNAL_HOST}
 DJANGO_SECURE_COOKIES=false
 POSTGRES_DB=denstock
 POSTGRES_USER=denstock
-POSTGRES_PASSWORD=rehearsal_db_pw
-DATABASE_URL=postgres://denstock:rehearsal_db_pw@db:5432/denstock
+POSTGRES_PASSWORD={self.db_password}
+DATABASE_URL=postgres://denstock:{self.db_password}@db:5432/denstock
 CADDY_SITE_ADDRESS=http://{INTERNAL_HOST}
 DENSTOCK_APP_COMMIT={self.base}
 AI_SUPPORT_ENABLED=false
@@ -187,11 +193,11 @@ DENSTOCK_MAX_CA_DIR={self.etc / "max"}
 """)
         (
             self.opt / ".env.public"
-        ).write_text(f"""DJANGO_SECRET_KEY=rehearsal-public-{uuid.uuid4().hex}
+        ).write_text(f"""DJANGO_SECRET_KEY={self.public_django_secret}
 DJANGO_PUBLIC_ALLOWED_HOSTS={PUBLIC_HOST},localhost
 DJANGO_ALLOWED_HOSTS={PUBLIC_HOST},localhost
-PUBLIC_DATABASE_URL=postgres://denstock_public:rehearsal_public_pw@db:5432/denstock
-DATABASE_URL=postgres://denstock_public:rehearsal_public_pw@db:5432/denstock
+PUBLIC_DATABASE_URL=postgres://denstock_public:{self.public_password}@db:5432/denstock
+DATABASE_URL=postgres://denstock_public:{self.public_password}@db:5432/denstock
 DJANGO_SECURE_COOKIES=false
 PUBLIC_CATALOG_BASE_URL=https://{PUBLIC_HOST}
 PUBLIC_CATALOG_INDEXING=false
@@ -493,7 +499,7 @@ TELEGRAM_BOT_USERNAME=sim_telegram_bot
             "-d",
             "denstock",
             "-qc",
-            "CREATE ROLE denstock_public LOGIN PASSWORD 'rehearsal_public_pw'",
+            f"CREATE ROLE denstock_public LOGIN PASSWORD '{self.public_password}'",
             quiet=True,
         )
         script = (self.opt / "scripts/operations/create_public_catalog_role.sql").read_text()
@@ -517,6 +523,10 @@ TELEGRAM_BOT_USERNAME=sim_telegram_bot
         self.compose(
             "exec",
             "-T",
+            # The seed refuses a production runtime; this one command in the
+            # rehearsal database runs in development mode.
+            "-e",
+            "DENSTOCK_MODE=development",
             "web",
             "python",
             "manage.py",
