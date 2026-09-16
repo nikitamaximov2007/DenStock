@@ -1,0 +1,255 @@
+"""Minimal synchronous MAX Bot API client.
+
+Only the official methods the request bot needs: ``GET /me``,
+``POST /messages``, ``POST /answers`` and the ``/subscriptions`` trio for the
+webhook tooling. Standard library only, like the Telegram client, so the whole
+network surface is one opener that tests replace with a fake server.
+
+The token travels only in the ``Authorization`` header, never in a URL, and no
+text leaving this module can contain it: every message goes through ``_scrub``.
+
+Failures are split the way a sender must act on them:
+
+* ``MaxApiError`` - MAX answered and refused. Nothing was delivered.
+  ``retryable`` for 429 and 5xx, final for everything else (401, validation).
+* ``MaxNetworkError(ambiguous=False)`` - the call certainly did not take
+  effect (connection refused, DNS, a read call that timed out).
+* ``MaxNetworkError(ambiguous=True)`` - a send may have reached MAX and the
+  answer was lost (timeout after sending, gateway timeout, an unusable success
+  body). The caller must not resend it automatically.
+"""
+from __future__ import annotations
+
+import json
+import re
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from urllib.parse import urlencode
+
+MAX_ERROR_TEXT = 200
+MAX_TEXT_CHARS = 4000
+MAX_CALLBACK_PAYLOAD = 256
+MAX_BUTTON_TEXT = 128
+SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{5,256}$")
+# A gateway answering for MAX cannot tell whether MAX itself processed a send.
+AMBIGUOUS_GATEWAY_STATUSES = frozenset({502, 504})
+
+
+class MaxError(Exception):
+    """Base class; ``str()`` is always safe to log and to store."""
+
+
+@dataclass
+class MaxApiError(MaxError):
+    status: int
+    code: str
+    description: str
+    retry_after: int | None = None
+
+    def __str__(self) -> str:
+        code = f" {self.code}" if self.code else ""
+        return f"MAX API {self.status}{code}: {self.description}"
+
+    @property
+    def retryable(self) -> bool:
+        return self.status == 429 or self.status >= 500
+
+
+@dataclass
+class MaxNetworkError(MaxError):
+    reason: str
+    ambiguous: bool
+
+    def __str__(self) -> str:
+        return f"MAX network error: {self.reason}"
+
+
+def _scrub(text: object, token: str) -> str:
+    value = str(text or "")
+    if token:
+        value = value.replace(token, "<redacted>")
+    return value[:MAX_ERROR_TEXT]
+
+
+def _retry_after(headers) -> int | None:
+    raw = (headers.get("Retry-After") if headers is not None else None) or ""
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return None
+    return value if 0 < value <= 3600 else None
+
+
+def webhook_secret_is_well_formed(value: str) -> bool:
+    return bool(SECRET_RE.fullmatch(value or ""))
+
+
+def inline_keyboard(buttons) -> list[dict]:
+    """``[[{"text", "payload"}]]`` rows as the MAX inline keyboard attachment."""
+    rows = []
+    for row in buttons or []:
+        rows.append(
+            [
+                {
+                    "type": "callback",
+                    "text": str(button["text"])[:MAX_BUTTON_TEXT],
+                    "payload": str(button["payload"]),
+                }
+                for button in row
+            ]
+        )
+    if not rows:
+        return []
+    return [{"type": "inline_keyboard", "payload": {"buttons": rows}}]
+
+
+class MaxBotApi:
+    def __init__(
+        self,
+        token: str,
+        *,
+        base_url: str = "https://platform-api2.max.ru",
+        timeout: float = 15.0,
+        opener=None,
+    ):
+        if not token:
+            raise ValueError("MAX bot token is not configured.")
+        self._token = token
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
+        self._opener = opener or urllib.request.urlopen
+
+    def __repr__(self) -> str:  # never render the token, even in a debugger dump
+        return f"MaxBotApi(base_url={self._base_url!r})"
+
+    def call(self, http_method: str, path: str, *, query: dict | None = None,
+             payload: dict | None = None, may_duplicate: bool = False,
+             timeout: float | None = None):
+        url = f"{self._base_url}{path}"
+        if query:
+            url = f"{url}?{urlencode(query)}"
+        data = None
+        headers = {"Authorization": self._token}
+        if payload is not None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=data, headers=headers, method=http_method)
+        try:
+            with self._opener(request, timeout=timeout or self._timeout) as response:
+                body = response.read()
+        except urllib.error.HTTPError as exc:
+            raise self._http_error(exc, may_duplicate) from None
+        except TimeoutError:
+            raise MaxNetworkError("timeout", ambiguous=may_duplicate) from None
+        except urllib.error.URLError as exc:
+            reason = exc.reason
+            timed_out = isinstance(reason, TimeoutError)
+            name = reason if isinstance(reason, str) else type(reason).__name__
+            raise MaxNetworkError(
+                _scrub(name, self._token), ambiguous=may_duplicate and timed_out
+            ) from None
+        except OSError as exc:
+            # Reset or broken pipe mid-exchange: the request may have been read.
+            raise MaxNetworkError(
+                _scrub(type(exc).__name__, self._token), ambiguous=may_duplicate
+            ) from None
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise MaxNetworkError("invalid response", ambiguous=may_duplicate) from None
+        if not isinstance(data, dict):
+            raise MaxNetworkError("invalid response", ambiguous=may_duplicate)
+        return data
+
+    def _http_error(self, exc: urllib.error.HTTPError, may_duplicate: bool) -> MaxError:
+        try:
+            body = exc.read() or b""
+        except OSError:
+            body = b""
+        if may_duplicate and exc.code in AMBIGUOUS_GATEWAY_STATUSES:
+            return MaxNetworkError(f"gateway {exc.code}", ambiguous=True)
+        code, description = "", str(exc.reason or "")
+        try:
+            data = json.loads(body.decode("utf-8")) if body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            data = {}
+        if isinstance(data, dict):
+            code = str(data.get("code") or "")
+            description = str(data.get("message") or data.get("error") or description)
+        return MaxApiError(
+            exc.code,
+            _scrub(code, self._token)[:60],
+            _scrub(description, self._token),
+            _retry_after(exc.headers) if exc.code == 429 or exc.code >= 500 else None,
+        )
+
+    # --- The methods the bot uses -------------------------------------------------------
+
+    def get_me(self) -> dict:
+        result = self.call("GET", "/me")
+        if not isinstance(result.get("user_id"), int):
+            raise MaxNetworkError("invalid response", ambiguous=False)
+        return result
+
+    def send_message(self, *, chat_id: int, text: str, buttons=None) -> dict:
+        """Send one text; returns the created message. Never retried here."""
+        if not text or len(text) > MAX_TEXT_CHARS:
+            raise MaxApiError(400, "local.validation", "text length is out of bounds")
+        payload = {"text": text, "notify": True}
+        attachments = inline_keyboard(buttons)
+        if attachments:
+            payload["attachments"] = attachments
+        result = self.call(
+            "POST",
+            "/messages",
+            query={"chat_id": chat_id, "disable_link_preview": "true"},
+            payload=payload,
+            may_duplicate=True,
+        )
+        message = result.get("message")
+        body = message.get("body") if isinstance(message, dict) else None
+        mid = body.get("mid") if isinstance(body, dict) else None
+        if not isinstance(mid, str) or not mid:
+            # MAX said 200 but the answer is unusable: it may have been delivered.
+            raise MaxNetworkError("invalid response", ambiguous=True)
+        return message
+
+    def answer_callback(self, *, callback_id: str, notification: str) -> None:
+        self._simple(
+            self.call(
+                "POST",
+                "/answers",
+                query={"callback_id": callback_id},
+                payload={"notification": notification[:200]},
+            )
+        )
+
+    def list_subscriptions(self) -> list[dict]:
+        result = self.call("GET", "/subscriptions")
+        subscriptions = result.get("subscriptions")
+        if not isinstance(subscriptions, list):
+            raise MaxNetworkError("invalid response", ambiguous=False)
+        return [item for item in subscriptions if isinstance(item, dict)]
+
+    def subscribe(self, *, url: str, secret: str, update_types) -> None:
+        if not url.startswith("https://"):
+            raise ValueError("MAX webhook URL must be HTTPS.")
+        if not webhook_secret_is_well_formed(secret):
+            raise ValueError("MAX webhook secret must be 5-256 characters [A-Za-z0-9_-].")
+        self._simple(
+            self.call(
+                "POST",
+                "/subscriptions",
+                payload={"url": url, "secret": secret, "update_types": list(update_types)},
+            )
+        )
+
+    def unsubscribe(self, *, url: str) -> None:
+        self._simple(self.call("DELETE", "/subscriptions", query={"url": url}))
+
+    def _simple(self, result: dict) -> None:
+        if result.get("success") is not True:
+            raise MaxApiError(
+                400, "", _scrub(result.get("message") or "request was not successful", self._token)
+            )
