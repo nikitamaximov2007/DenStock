@@ -21,6 +21,7 @@ from django.utils import timezone
 
 from apps.core.templatetags.number_format import money_int, quantity_int
 
+from . import messaging
 from .models import (
     CustomerRequest,
     TelegramConversation,
@@ -54,7 +55,7 @@ MEDIA_NOT_SUPPORTED_TEXT = (
     "Пока бот принимает только текст. Опишите деталь словами или отправьте фото менеджеру, "
     "когда он ответит."
 )
-CUSTOMER_ACK_TEXT = "Сообщение передано менеджеру PRO-STOR."
+CUSTOMER_ACK_TEXT = messaging.CUSTOMER_ACK_TEXT
 OPERATOR_HELP_TEXT = (
     "Команды: /requests: открытые заявки с Telegram, /cancel: отменить ответ, "
     "/whoami: ваш Telegram ID."
@@ -157,73 +158,18 @@ def bind_customer_chat(
     return conversation
 
 
-def _summary_line(line) -> tuple[str, Decimal | None]:
-    """One complete customer-request line, using only its immutable snapshots."""
-    article = line.article or "Артикул уточняется"
-    name = line.part_name or "Название уточняется"
-    unit = (line.unit_short_name or "").strip()
-    if unit == "шт":
-        unit = "шт."
-    quantity = f"{quantity_int(line.quantity_requested)} {unit}".strip()
-    if line.price_seen is None:
-        return f"{article} — {name}\n{quantity} — цена уточняется", None
-    total = line.quantity_requested * line.price_seen
-    return (
-        f"{article} — {name}\n"
-        f"{quantity} × {money_int(line.price_seen)} ₽ = {money_int(total)} ₽",
-        total,
-    )
+def _summary_policy() -> messaging.SummaryPolicy:
+    """Telegram's own limit, read now rather than bound at import.
+
+    The size a transport can carry is the transport's business, and a test
+    that narrows it must be able to narrow it here.
+    """
+    return messaging.SummaryPolicy(linked_text=LINKED_TEXT, message_limit=MAX_MESSAGE_CHARS)
 
 
 def request_summary_messages(request: CustomerRequest) -> list[str]:
-    """Render an immutable request snapshot into safely sized Telegram messages.
-
-    Complete order lines are never truncated or split.  A request can therefore
-    span several durable system messages, which are sent by the normal customer
-    outbox and retain its retry/idempotency guarantees.
-    """
-    lines = list(request.lines.order_by("pk"))
-    heading = LINKED_TEXT.format(reference=request.reference) + "\n\nВаш заказ:"
-    messages: list[str] = []
-    current = heading
-    known_total = Decimal("0")
-    known_price_count = 0
-    has_unknown = False
-
-    for line in lines:
-        rendered, total = _summary_line(line)
-        if total is None:
-            has_unknown = True
-        else:
-            known_total += total
-            known_price_count += 1
-        candidate = f"{current}\n\n{rendered}"
-        if len(candidate) <= MAX_MESSAGE_CHARS:
-            current = candidate
-            continue
-        messages.append(current)
-        current = f"Ваш заказ (продолжение):\n\n{rendered}"
-
-    if has_unknown:
-        total_text = (
-            f"Итого по позициям с известной ценой: {money_int(known_total)} ₽\n"
-            "Есть позиции, цена которых уточняется."
-            if known_price_count
-            else "Есть позиции, цена которых уточняется."
-        )
-    else:
-        total_text = f"Итого: {money_int(known_total)} ₽"
-    closing = (
-        f"{total_text}\n\n"
-        "Менеджер PRO-STOR ответит вам здесь.\n"
-        "Можете написать вопрос прямо сейчас."
-    )
-    candidate = f"{current}\n\n{closing}"
-    if len(candidate) <= MAX_MESSAGE_CHARS:
-        messages.append(candidate)
-    else:
-        messages.extend([current, closing])
-    return messages
+    """The shared order summary, sized for Telegram."""
+    return messaging.request_summary_messages(request, _summary_policy())
 
 
 def anonymize_conversation(request: CustomerRequest) -> None:
@@ -254,7 +200,7 @@ def anonymize_conversation(request: CustomerRequest) -> None:
 
 
 def customer_contact_allowed(request: CustomerRequest) -> bool:
-    return request.consent_withdrawn_at is None and request.data_anonymized_at is None
+    return messaging.customer_contact_allowed(request)
 
 
 # --- Operators ---------------------------------------------------------------------------
@@ -628,18 +574,17 @@ def record_customer_message(*, chat_id: int, update_id: int, text: str) -> Custo
     if not conversations:
         return CustomerResult(UNLINKED_GREETING)
     state = TelegramCustomerChat.objects.select_for_update().filter(chat_id=chat_id).first()
-    active = next(
-        (c for c in conversations if state and c.pk == state.active_conversation_id), None
+    routing = messaging.route_customer_message(
+        conversations, active_id=state.active_conversation_id if state else None
     )
-    if active is None:
-        if len(conversations) != 1:
-            # Never guess: an ambiguous message is not stored until the
-            # customer says which request it belongs to.
-            return CustomerResult(
-                "У вас несколько заявок. Выберите нужную и отправьте сообщение ещё раз.",
-                _selector(conversations),
-            )
-        active = conversations[0]
+    if routing.ambiguous:
+        # Never guess: an ambiguous message is not stored until the
+        # customer says which request it belongs to.
+        return CustomerResult(
+            "У вас несколько заявок. Выберите нужную и отправьте сообщение ещё раз.",
+            _selector(conversations),
+        )
+    active = routing.conversation
     if not customer_contact_allowed(active.request):
         return CustomerResult("Переписка по этой заявке закрыта.")
     # ``state`` is locked above.  All normal messages for this chat therefore
@@ -666,4 +611,6 @@ def record_customer_message(*, chat_id: int, update_id: int, text: str) -> Custo
         dedupe_key=f"customer_message:{message.pk}",
         next_attempt_at=now,
     )
-    return CustomerResult(CUSTOMER_ACK_TEXT if first_customer_message else "")
+    return CustomerResult(
+        messaging.acknowledgement_for(is_first_customer_message=first_customer_message)
+    )
