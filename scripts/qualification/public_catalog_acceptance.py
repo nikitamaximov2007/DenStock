@@ -56,6 +56,7 @@ INTERNAL_PATHS = (
     "/ai-support/",
     "/customer-requests/",
     "/customer-requests/telegram/webhook/",
+    "/customer-requests/max/webhook/",
     "/media/part-types/1/x.jpg",
     "/private_media/x.png",
     "/static/css/app.css",
