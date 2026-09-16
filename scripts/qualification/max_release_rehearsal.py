@@ -31,6 +31,7 @@ import os
 import re
 import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -423,8 +424,11 @@ TELEGRAM_BOT_USERNAME=sim_telegram_bot
         return result.stdout.strip().split()[0] if result.stdout.strip() else "?"
 
     def max_sent(self, chat=MAX_CHAT):
-        with urllib.request.urlopen(f"http://127.0.0.1:{MAX_API_PORT}/_fake/sent", timeout=5) as r:
-            data = json.loads(r.read())
+        """What the fake MAX received, read over its own HTTPS with the throwaway CA."""
+        context = ssl.create_default_context(cafile=str(self.etc / "max-src/ca.pem"))
+        url = f"https://127.0.0.1:{MAX_API_PORT}/_fake/sent"
+        with urllib.request.urlopen(url, timeout=5, context=context) as response:
+            data = json.loads(response.read())
         return [item["text"] for item in data["sent"] if item["chat_id"] == chat], data
 
     def wait_max_texts(self, count, chat=MAX_CHAT, timeout=60):
