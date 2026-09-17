@@ -24,14 +24,21 @@ settings, not secrets.
   where a plain message goes; `/requests` lets the customer switch. When more
   than one request is possible and none is active, the bot asks instead of
   guessing.
-* A deep link binds a request on the customer's *first* start. A returning
-  customer who already has the chat selects the request instead of opening a
-  new link — the platform delivers no start payload into an existing dialog.
-* MAX: the transport is implemented and accepted locally against a fake MAX
-  (webhook, worker, returning customers, operator replies from DenisStock,
-  success-page handoff). It is **not deployed**: no token, no subscription, no
-  `max-bot` service on production yet. Design and guarantees:
-  `docs/design/customer-request-max.md`.
+* A deep link binds a request on the customer's first start. **Correction
+  (2026-09-17):** this runbook used to say the platform delivers no start
+  payload into an existing dialog. Production showed the opposite on MAX: a
+  new request's link opened in the customer's existing MAX dialog bound that
+  request, made it current and sent its summary, with no second account. A
+  returning customer can also still pick a request with buttons. For Telegram
+  the official Bot API says opening `t.me/<bot>?start=<param>` sends
+  `/start <param>`; confirm it on production before relying on it.
+* MAX is **deployed** (release `aa63ab8`): `max-bot` service, webhook
+  `https://pro-brp.ru/customer-requests/max/webhook/` subscribed, public
+  handoff live. Design, guarantees and the production observations:
+  `docs/design/customer-request-max.md`. Operations: `docs/operations/max-bot.md`.
+* Known limitation, both channels: cancelling or completing a request does not
+  close its conversation, so the customer can still select it and write into
+  it, and operators are notified. History is unaffected. A fix is planned.
 
 ## Telegram: switch on (internal runtime only)
 
