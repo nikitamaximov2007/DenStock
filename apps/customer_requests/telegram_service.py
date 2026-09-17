@@ -12,18 +12,14 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Decimal
 
-from django.conf import settings
 from django.db import connection, transaction
-from django.urls import reverse
 from django.utils import timezone
 
-from apps.core.templatetags.number_format import money_int, quantity_int
-
-from . import messaging
+from . import messaging, operator_bot, operator_replies, workspace
 from .models import (
     CustomerRequest,
+    MaxMessage,
     TelegramConversation,
     TelegramCustomerChat,
     TelegramDeliveryStatus,
@@ -33,8 +29,6 @@ from .models import (
 )
 
 MAX_MESSAGE_CHARS = 4000
-CARD_TEXT_LIMIT = 3600
-LIST_PAGE_SIZE = 8
 REPLY_WINDOW = timedelta(minutes=30)
 HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -57,7 +51,7 @@ MEDIA_NOT_SUPPORTED_TEXT = (
 )
 CUSTOMER_ACK_TEXT = messaging.CUSTOMER_ACK_TEXT
 OPERATOR_HELP_TEXT = (
-    "Команды: /requests: открытые заявки с Telegram, /cancel: отменить ответ, "
+    "Команды: /requests: активные заявки (Telegram и MAX), /cancel: отменить ответ, "
     "/whoami: ваш Telegram ID."
 )
 NOT_AVAILABLE_TEXT = "Недоступно."
@@ -240,17 +234,10 @@ def active_operators(*, exclude_id=None) -> list[TelegramOperator]:
 
 
 def operator_display_name(user) -> str:
-    if user is None:
-        return "сотрудник"
-    full_name = getattr(user, "full_name", "") or user.get_full_name()
-    return full_name or user.get_username()
+    return operator_bot.display_name(user)
 
 
 # --- Cards -------------------------------------------------------------------------------
-
-
-def _link_state(conversation, channel: str = "Telegram") -> str:
-    return f"{channel} подключён" if conversation.is_linked else "ожидает подключения"
 
 
 def _conversation_queryset():
@@ -265,174 +252,92 @@ def conversation_by_hex(value: str) -> TelegramConversation | None:
     return _conversation_queryset().filter(public_id=uuid.UUID(hex=value)).first()
 
 
-def request_card_text(
-    conversation, *, heading: str = "ЗАЯВКА", channel: str = "Telegram"
-) -> str:
-    """Operator card built only from the stored request and its line snapshots.
+def _target_of(request_or_conversation):
+    """The reply target, without re-reading a conversation the caller already has."""
+    request = getattr(request_or_conversation, "request", None)
+    if request is None:
+        return request_or_conversation, None
+    return request, operator_replies.ReplyTarget(
+        request=request,
+        channel=request.preferred_messenger,
+        conversation=request_or_conversation,
+    )
 
-    ``conversation`` is any transport conversation with ``request`` and
-    ``is_linked``; ``channel`` names that transport on the card.
-    """
-    request = conversation.request
-    lines = list(request.lines.all())
-    out = [f"{heading} {request.reference}", f"Статус: {request.get_status_display()}"]
-    if request.data_anonymized_at:
-        out.append("Клиент: данные обезличены")
-    else:
-        out.append(f"Клиент: {request.customer_name}")
-        out.append(f"Телефон: {request.customer_phone}")
-    out.append(f"Связь: {channel}, {_link_state(conversation, channel)}")
-    if request.consent_withdrawn_at:
-        out.append("Клиент отозвал согласие на связь")
-    out.append("Позиции:")
-    total = Decimal("0")
-    priced = False
-    rendered = []
-    for number, line in enumerate(lines, start=1):
-        quantity = f"{quantity_int(line.quantity_requested)} {line.unit_short_name}".strip()
-        head = f"{number}. {line.article or 'без артикула'} · {line.part_name}"
-        if line.is_supply_inquiry:
-            head += " · запрос о поставке"
-        if line.price_seen is None:
-            detail = f"   {quantity} · цена уточняется"
-        else:
-            detail = f"   {quantity} × {money_int(line.price_seen)} ₽"
-            if not line.is_supply_inquiry:
-                line_total = line.price_seen * line.quantity_requested
-                total += line_total
-                priced = True
-                detail += f" = {money_int(line_total)} ₽"
-        rendered.append(f"{head}\n{detail}")
-    used = sum(len(part) + 1 for part in out)
-    for index, item in enumerate(rendered):
-        if used + len(item) > CARD_TEXT_LIMIT:
-            out.append(f"… и ещё позиций: {len(rendered) - index}. Полностью в DenisStock.")
-            break
-        out.append(item)
-        used += len(item) + 1
-    if priced:
-        out.append(f"Сумма по деталям в наличии (цены на момент заявки): {money_int(total)} ₽")
-    if request.comment and not request.data_anonymized_at:
-        out.append(f"Комментарий: {request.comment[:500]}")
-    return "\n".join(out)
+
+def request_card_text(request_or_conversation, *, heading: str = "ЗАЯВКА") -> str:
+    """Operator card of a request (or of the request of a conversation)."""
+    request, target = _target_of(request_or_conversation)
+    return operator_bot.card_text(request, heading=heading, target=target)
 
 
 def internal_request_url(request: CustomerRequest) -> str | None:
-    base = settings.TELEGRAM_INTERNAL_BASE_URL
-    if not base.startswith(("https://", "http://")):
-        return None
-    return f"{base}{reverse('customer_request_detail', args=[request.pk])}"
+    return operator_bot.internal_request_url(request)
 
 
-def operator_buttons(conversation: TelegramConversation) -> dict:
-    token = conversation.public_id.hex
-    first_row = [{"text": "Ответить", "callback_data": f"r:{token}"}]
-    url = internal_request_url(conversation.request)
-    if url:
-        first_row.append({"text": "Открыть заявку", "url": url})
-    return {
-        "inline_keyboard": [
-            first_row,
-            [{"text": "Обновить", "callback_data": f"c:{token}"}],
-        ]
-    }
+def operator_buttons(request_or_conversation) -> dict:
+    request, target = _target_of(request_or_conversation)
+    return operator_bot.request_buttons(request, target=target)
 
 
 def operator_menu() -> tuple[str, dict]:
-    return (
-        "Бот заявок PRO-STOR. Здесь приходят новые заявки и сообщения клиентов.",
-        {"inline_keyboard": [[{"text": "Открытые заявки", "callback_data": "l:1"}]]},
-    )
+    return operator_bot.menu()
 
 
 def operator_request_page(page: int) -> tuple[str, dict | None]:
-    queryset = (
-        TelegramConversation.objects.select_related("request")
-        .filter(
-            request__status__in=[
-                CustomerRequest.Status.NEW,
-                CustomerRequest.Status.IN_PROGRESS,
-            ]
-        )
-        .order_by("-request__created_at", "-pk")
-    )
-    total = queryset.count()
-    if not total:
-        return "Открытых заявок с Telegram нет.", None
-    pages = (total + LIST_PAGE_SIZE - 1) // LIST_PAGE_SIZE
-    page = min(max(1, page), pages)
-    start = (page - 1) * LIST_PAGE_SIZE
-    rows = []
-    for conversation in queryset[start : start + LIST_PAGE_SIZE]:
-        request = conversation.request
-        name = "данные обезличены" if request.data_anonymized_at else request.customer_name
-        state = "подключён" if conversation.is_linked else "ожидает"
-        rows.append(
-            [
-                {
-                    "text": f"{request.reference} · {name[:24]} · {state}",
-                    "callback_data": f"c:{conversation.public_id.hex}",
-                }
-            ]
-        )
-    navigation = []
-    if page > 1:
-        navigation.append({"text": "Назад", "callback_data": f"l:{page - 1}"})
-    if page < pages:
-        navigation.append({"text": "Дальше", "callback_data": f"l:{page + 1}"})
-    if navigation:
-        rows.append(navigation)
-    return f"Открытые заявки с Telegram, страница {page} из {pages}:", {"inline_keyboard": rows}
+    return operator_bot.request_page(page)
 
 
 def delivery_content(event: TelegramOutboxEvent) -> tuple[str, dict | None]:
     """Text and buttons of one operator notification, rendered at send time."""
-    conversation = (
-        _conversation_queryset().filter(request_id=event.request_id).first()
-    )
-    if conversation is None:
-        return f"Заявка {event.request.reference}: переписка недоступна.", None
-    reference = conversation.request.reference
-    buttons = operator_buttons(conversation)
-    if event.kind == TelegramOutboxEvent.Kind.NEW_REQUEST:
-        return request_card_text(conversation, heading="НОВАЯ ЗАЯВКА"), buttons
-    if event.kind == TelegramOutboxEvent.Kind.CUSTOMER_LINKED:
-        return f"Клиент подключил Telegram к заявке {reference}.", buttons
-    message = event.message
-    text = message.text if message else ""
-    if event.kind == TelegramOutboxEvent.Kind.CUSTOMER_MESSAGE:
-        return f"Заявка {reference} · сообщение клиента:\n{text}", buttons
-    author = operator_display_name(message.operator_user if message else None)
-    return f"Заявка {reference} · ответ клиенту отправлен.\nСотрудник: {author}\n{text}", buttons
+    conversation = _conversation_queryset().filter(request_id=event.request_id).first()
+    request = conversation.request if conversation is not None else event.request
+    return operator_bot.notification(event.kind, request, event.message)
 
 
 # --- Operator actions --------------------------------------------------------------------
+#
+# Reply mode is the one piece of state behind the operators' bot: the request an
+# employee's next plain text goes to. Only that employee's own press of
+# [Ответить] sets it. Notifications, lists and cards never touch it, so a
+# message about request B arriving while the employee answers A changes nothing.
+
+
+def _clear_reply_mode(operator: TelegramOperator) -> None:
+    operator.reply_request = None
+    operator.reply_conversation = None
+    operator.reply_started_at = None
+    operator.save(
+        update_fields=["reply_request", "reply_conversation", "reply_started_at", "updated_at"]
+    )
 
 
 @transaction.atomic
 def begin_reply(*, telegram_user_id: int, conversation_hex: str) -> tuple[str, dict | None]:
+    """Enter reply mode for the request a button names, if it can be answered now.
+
+    ``conversation_hex`` is the hex a button carries: a request's own id, or a
+    Telegram conversation's id on a button sent before this release.
+    """
     operator = authorized_operator(telegram_user_id, lock=True)
     if operator is None:
         raise TelegramAccessDenied
-    conversation = conversation_by_hex(conversation_hex)
-    if conversation is None:
-        return "Заявка не найдена.", None
-    reference = conversation.request.reference
-    if not customer_contact_allowed(conversation.request):
-        return f"По заявке {reference} клиент отозвал согласие на связь.", None
-    if not conversation.is_linked:
-        return (
-            f"Клиент ещё не подключил Telegram к заявке {reference}. "
-            "Ответить через бота пока нельзя, свяжитесь по телефону.",
-            None,
-        )
-    operator.reply_conversation = conversation
+    request = operator_bot.request_by_hex(conversation_hex)
+    if request is None:
+        return "Заявка не найдена.", operator_bot.back_to_list()
+    target = operator_replies.reply_target(request)
+    reason = target.blocked_reason()
+    if reason:
+        # Server state decides, not the age of the button. An operator already
+        # answering another request keeps that target.
+        return reason, operator_bot.request_buttons(request, target=target)
+    operator.reply_request = request
+    operator.reply_conversation = None
     operator.reply_started_at = timezone.now()
-    operator.save(update_fields=["reply_conversation", "reply_started_at", "updated_at"])
-    return (
-        f"Ответ на заявку {reference}\n"
-        "Напишите сообщение одним текстом. Клиент увидит его от имени бота PRO-STOR.",
-        {"inline_keyboard": [[{"text": "Отмена", "callback_data": "x"}]]},
+    operator.save(
+        update_fields=["reply_request", "reply_conversation", "reply_started_at", "updated_at"]
+    )
+    return operator_bot.reply_prompt(
+        request, target=target, last_message=workspace.latest_customer_message(request)
     )
 
 
@@ -441,64 +346,58 @@ def cancel_reply(*, telegram_user_id: int) -> str:
     operator = authorized_operator(telegram_user_id, lock=True)
     if operator is None:
         raise TelegramAccessDenied
-    operator.reply_conversation = None
-    operator.reply_started_at = None
-    operator.save(update_fields=["reply_conversation", "reply_started_at", "updated_at"])
+    _clear_reply_mode(operator)
     return "Ответ отменён."
 
 
-@transaction.atomic
-def submit_operator_reply(*, telegram_user_id: int, update_id: int, text: str) -> str:
-    """Store the reply as a pending customer message; the worker delivers it."""
-    if TelegramMessage.objects.filter(telegram_update_id=update_id).exists():
-        return ""
-    operator = authorized_operator(telegram_user_id, lock=True)
-    if operator is None:
-        raise TelegramAccessDenied
-    conversation = operator.reply_conversation
-    started = operator.reply_started_at
-    if conversation is None or started is None:
-        return "Чтобы ответить клиенту, откройте заявку и нажмите «Ответить». " + OPERATOR_HELP_TEXT
-    operator.reply_conversation = None
-    operator.reply_started_at = None
-    operator.save(update_fields=["reply_conversation", "reply_started_at", "updated_at"])
-    if timezone.now() - started > REPLY_WINDOW:
-        return "Режим ответа истёк. Нажмите «Ответить» ещё раз."
-    conversation = TelegramConversation.objects.select_for_update().select_related(
-        "request"
-    ).get(pk=conversation.pk)
-    reference = conversation.request.reference
-    if not customer_contact_allowed(conversation.request):
-        return f"По заявке {reference} клиент отозвал согласие на связь. Сообщение не отправлено."
-    if not conversation.is_linked:
-        return f"Клиент ещё не подключил Telegram к заявке {reference}. Сообщение не отправлено."
-    text = (text or "").strip()
-    if not text:
-        return "Пустое сообщение не отправлено."
-    if len(text) > MAX_MESSAGE_CHARS:
-        return f"Сообщение длиннее {MAX_MESSAGE_CHARS} символов. Сократите его."
-    now = timezone.now()
-    message = TelegramMessage.objects.create(
-        conversation=conversation,
-        direction=TelegramMessage.Direction.OPERATOR,
-        text=text,
-        delivery_status=TelegramDeliveryStatus.PENDING,
-        next_attempt_at=now,
-        telegram_update_id=update_id,
-        operator=operator,
-        operator_user=operator.user,
+def _stored_bot_reply(update_id: int) -> bool:
+    return (
+        TelegramMessage.objects.filter(telegram_update_id=update_id).exists()
+        or MaxMessage.objects.filter(dedupe_key=f"operator_reply:tg:{update_id}").exists()
     )
-    conversation.last_message_at = now
-    conversation.save(update_fields=["last_message_at", "updated_at"])
-    TelegramOutboxEvent.objects.create(
-        kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY,
-        request=conversation.request,
-        message=message,
-        exclude_operator=operator,
-        dedupe_key=f"operator_reply:{message.pk}",
-        next_attempt_at=now,
+
+
+def submit_operator_reply(
+    *, telegram_user_id: int, update_id: int, text: str
+) -> str | tuple[str, dict | None]:
+    """Queue the operator's text for the request in reply mode; the worker delivers it.
+
+    Returns the confirmation, with buttons when there is somewhere to go next.
+    Reply mode ends with this message whatever happens: the next text needs a
+    new, explicit [Ответить].
+    """
+    with transaction.atomic():
+        if _stored_bot_reply(update_id):
+            return ""
+        operator = authorized_operator(telegram_user_id, lock=True)
+        if operator is None:
+            raise TelegramAccessDenied
+        request = operator.reply_request
+        started = operator.reply_started_at
+        if request is None or started is None:
+            return (
+                "Чтобы ответить клиенту, откройте заявку и нажмите «Ответить». "
+                + OPERATOR_HELP_TEXT,
+                operator_bot.back_to_list(),
+            )
+        _clear_reply_mode(operator)
+        if timezone.now() - started > REPLY_WINDOW:
+            return "Режим ответа истёк. Нажмите «Ответить» ещё раз.", operator_bot.back_to_list()
+    try:
+        result = operator_replies.submit_reply(
+            request_id=request.pk,
+            user=operator.user,
+            text=text,
+            key=f"tg:{update_id}",
+            telegram_operator=operator,
+            telegram_update_id=update_id,
+        )
+    except operator_replies.OperatorReplyError as exc:
+        return str(exc), operator_bot.back_to_list()
+    return (
+        f"Ответ по заявке №{request.reference} поставлен в отправку клиенту в {result.label}.",
+        operator_bot.after_reply_buttons(request),
     )
-    return f"Ответ по заявке {reference} поставлен в отправку клиенту."
 
 
 # --- Customer actions --------------------------------------------------------------------

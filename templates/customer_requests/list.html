@@ -10,45 +10,129 @@
       </div>
     {% endif %}
   </div>
-  <p class="page-subtitle">Заявки из публичного каталога. Они не резервируют остатки и не являются оплатой или продажей.</p>
-  {% if new_count %}<p><span class="badge">Новые: {{ new_count }}</span></p>{% endif %}
+  {% if waiting_count %}
+    <p class="cr-alert" data-waiting-alert>
+      <strong>Ждут ответа: {{ waiting_count }}</strong>
+      {% if params.tab != "waiting" %}
+        <a class="btn btn--small btn--primary"
+           href="?{% if params.messenger %}messenger={{ params.messenger|urlencode }}&amp;{% endif %}tab=waiting">Показать</a>
+      {% endif %}
+    </p>
+  {% endif %}
+  <form method="get" class="cr-search" role="search">
+    {% if params.tab != "active" %}<input type="hidden" name="tab" value="{{ params.tab }}">{% endif %}
+    {% if params.messenger %}<input type="hidden" name="messenger" value="{{ params.messenger }}">{% endif %}
+    <label class="visually-hidden" for="cr-search-input">Поиск заявки</label>
+    <input id="cr-search-input"
+           class="cr-search__input"
+           type="search"
+           name="q"
+           value="{{ params.q }}"
+           maxlength="100"
+           placeholder="Номер заявки, имя, телефон или артикул"
+           autocomplete="off">
+    <button class="btn btn--secondary" type="submit">Найти</button>
+    {% if params.q %}
+      <a class="btn btn--ghost"
+         href="?{% if params.tab != 'active' %}tab={{ params.tab }}&amp;{% endif %}{% if params.messenger %}messenger={{ params.messenger|urlencode }}{% endif %}">Сбросить</a>
+    {% endif %}
+  </form>
+  <nav class="section-tabs cr-tabs" aria-label="Фильтр заявок">
+    {% for tab in tabs %}
+      <a class="section-tabs__link{% if tab.active %} is-active{% endif %}{% if tab.value == 'waiting' and tab.count %} cr-tabs__link--waiting{% endif %}"
+         href="?{{ tab.query }}"
+         data-tab="{{ tab.value }}"
+         {% if tab.active %}aria-current="page"{% endif %}>{{ tab.label }} <span class="cr-tabs__count">{{ tab.count }}</span></a>
+    {% endfor %}
+  </nav>
+  <div class="segmented cr-messengers" role="group" aria-label="Мессенджер">
+    {% for item in messengers %}
+      <a class="{% if item.active %}is-active{% endif %}"
+         href="?{{ item.query }}"
+         data-messenger="{{ item.value|default:'all' }}"
+         {% if item.active %}aria-current="true"{% endif %}>{{ item.label }}</a>
+    {% endfor %}
+  </div>
   {% if page_obj.object_list %}
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Номер</th>
-          <th>Создана</th>
-          <th>Статус</th>
-          <th>Имя</th>
-          <th>Телефон</th>
-          <th>Мессенджер</th>
-          <th>Позиций</th>
-          <th>Обновлена</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for customer_request in page_obj.object_list %}
-          <tr>
-            <td><a href="{% url 'customer_request_detail' customer_request.pk %}">{{ customer_request.reference }}</a></td>
-            <td>{{ customer_request.created_at|ru_dt }}</td>
-            <td>
-              {% if customer_request.status == "new" %}
-                <span class="badge">{{ customer_request.get_status_display }}</span>
-              {% else %}
-                {{ customer_request.get_status_display }}
+    <ol class="cr-list" data-request-list>
+      {% for item in page_obj.object_list %}
+        <li class="cr-row{% if item.needs_reply %} cr-row--waiting{% endif %}{% if item.priority == 3 %} cr-row--closed{% endif %}"
+            data-request-row="{{ item.reference }}"
+            data-attention="{{ item.attention|default:'none' }}">
+          <div class="cr-row__main">
+            <div class="cr-row__head">
+              <a class="cr-row__number"
+                 href="{% url 'customer_request_detail' item.pk %}{% if list_query %}?{{ list_query }}{% endif %}">№{{ item.reference }}</a>
+              {% if item.attention == "reply_failed" %}
+                <span class="pill pill--danger" data-attention-badge>Ответ не доставлен</span>
+              {% elif item.attention == "reply_sending" %}
+                <span class="pill pill--info" data-attention-badge>Ответ отправляется</span>
+              {% elif item.needs_reply %}
+                <span class="pill pill--warning" data-attention-badge>Ждёт ответа</span>
               {% endif %}
-            </td>
-            <td>{{ customer_request.customer_name }}</td>
-            <td>{{ customer_request.customer_phone }}</td>
-            <td>{{ customer_request.get_preferred_messenger_display }}</td>
-            <td>{{ customer_request.line_count }}</td>
-            <td>{{ customer_request.updated_at|ru_dt }}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+              {% include "customer_requests/_status_pill.html" with status=item.status label=item.get_status_display %}
+              <span class="cr-messenger cr-messenger--{{ item.preferred_messenger }}"
+                    data-messenger-badge="{{ item.preferred_messenger }}">{{ item.get_preferred_messenger_display }}</span>
+              {% if not item.is_linked and item.priority != 3 %}<span class="muted cr-row__hint">не подключён</span>{% endif %}
+            </div>
+            <p class="cr-row__customer">
+              {% if item.data_anonymized_at %}
+                <span class="muted">Данные обезличены</span>
+              {% else %}
+                <strong>{{ item.customer_name }}</strong>
+                <span class="cr-row__phone">{{ item.customer_phone }}</span>
+              {% endif %}
+            </p>
+            {% if item.customer_preview %}
+              <p class="cr-row__preview" data-preview>«{{ item.customer_preview|truncatechars:140 }}»</p>
+            {% endif %}
+          </div>
+          <dl class="cr-row__facts">
+            <div>
+              <dt>Позиций</dt>
+              <dd>{{ item.line_count }}</dd>
+            </div>
+            <div>
+              <dt>Сумма</dt>
+              <dd data-total>
+                {% if item.total.complete %}
+                  {{ item.total.known|money_int }} ₽
+                {% elif item.total.partial %}
+                  {{ item.total.known|money_int }} ₽ + уточняется
+                {% else %}
+                  Уточняется
+                {% endif %}
+              </dd>
+            </div>
+            <div>
+              <dt>Создана</dt>
+              <dd>{{ item.created_at|ru_dt }}</dd>
+            </div>
+            <div>
+              <dt>{% if item.needs_reply %}Клиент написал{% else %}Активность{% endif %}</dt>
+              <dd>
+                {% if item.needs_reply %}
+                  {{ item.last_customer_at|ru_dt }}
+                {% else %}
+                  {{ item.activity_at|ru_dt }}
+                {% endif %}
+              </dd>
+            </div>
+          </dl>
+          <div class="cr-row__action">
+            <a class="btn {% if item.needs_reply %}btn--primary{% else %}btn--secondary{% endif %}"
+               href="{% url 'customer_request_detail' item.pk %}{% if list_query %}?{{ list_query }}{% endif %}">Открыть заявку</a>
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% elif params.q %}
+    {% include "partials/_empty_state.html" with icon="search" title="Ничего не нашлось" text="Проверьте номер заявки, имя или телефон. Поиск идёт внутри выбранного фильтра." compact=1 %}
   {% else %}
-    {% include "partials/_empty_state.html" with icon="message" title="Заявок пока нет" text="Новые заявки из публичного каталога появятся здесь." compact=1 %}
+    {% include "partials/_empty_state.html" with icon="message" title="Здесь пусто" text="Новые заявки из публичного каталога появятся в «Активных»." compact=1 %}
   {% endif %}
   {% include "partials/_pagination.html" %}
+  <p class="page-subtitle cr-footnote">
+    Заявки из публичного каталога не резервируют остатки и не являются оплатой или продажей.
+  </p>
 {% endblock %}

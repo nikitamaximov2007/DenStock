@@ -16,6 +16,7 @@ urlpatterns = [
         views.customer_request_max_link,
         name="customer_request_max_link",
     ),
+    path("<int:pk>/reply/", views.customer_request_reply, name="customer_request_reply"),
     path(
         "<int:pk>/max-reply/",
         views.customer_request_max_reply,

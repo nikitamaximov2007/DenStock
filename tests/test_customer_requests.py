@@ -359,8 +359,8 @@ def test_the_list_marks_only_a_request_nobody_has_taken(client, part, admin):
 
     html = client.get(reverse("customer_request_list")).content.decode()
 
-    assert html.count('<span class="badge">Новая</span>') == 1
-    assert "В работе" in html
+    assert html.count('data-status="new"') == 1
+    assert html.count('data-status="in_progress"') == 1
 
 
 def test_the_card_shows_everything_the_manager_needs(client, part, admin):
@@ -402,6 +402,6 @@ def test_a_max_request_offers_the_max_link_and_not_the_telegram_one(client, part
         reverse("customer_request_detail", args=[customer_request.pk])
     ).content.decode()
 
-    assert "MAX: не связан" in html
+    assert "Клиент ещё не подключил MAX" in html
     assert "Создать ссылку MAX" in html
     assert "Создать ссылку Telegram" not in html

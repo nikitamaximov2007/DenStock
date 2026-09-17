@@ -697,12 +697,12 @@ def test_customer_messages_reach_every_operator_through_the_operators_bot(
     for operator in operators:
         texts = tg.texts_to(operator.telegram_user_id)
         assert any("НОВАЯ ЗАЯВКА" in text and "Связь: MAX" in text for text in texts)
-        assert any(f"Клиент подключил MAX к заявке {request.reference}" in t for t in texts)
+        assert any(f"Клиент подключил MAX к заявке №{request.reference}" in t for t in texts)
         message = tg.last_with(operator.telegram_user_id, "сообщение клиента")
         assert "Можно доставку?" in message["text"]
-        assert message["reply_markup"]["inline_keyboard"][0][0]["url"].endswith(
-            reverse("customer_request_detail", args=[request.pk])
-        )
+        first_row = message["reply_markup"]["inline_keyboard"][0]
+        assert first_row[0] == {"text": "Ответить", "callback_data": f"r:{request.public_id.hex}"}
+        assert first_row[1]["url"].endswith(reverse("customer_request_detail", args=[request.pk]))
     assert MaxOperatorDelivery.objects.exclude(status="sent").count() == 0
     # Re-running both workers notifies nobody twice.
     before = len(tg.sent)
@@ -721,7 +721,7 @@ def test_operator_reply_from_denisstock_reaches_the_customer_once_with_audit(
     denis, masha = operators
     client.force_login(denis.user)
     page = client.get(reverse("customer_request_detail", args=[request.pk])).content.decode()
-    assert "data-max-reply" in page and "Есть в наличии?" in page
+    assert "data-reply-form" in page and "Есть в наличии?" in page
     key = "0123456789abcdef0123456789abcdef"
 
     for _ in range(2):  # a double click
@@ -743,8 +743,8 @@ def test_operator_reply_from_denisstock_reaches_the_customer_once_with_audit(
     for secret in ("denis", "Denis", str(OPERATOR_A_TG)):
         assert secret not in customer_view
     # The other operator hears about it, the author does not.
-    assert any("ответ клиенту отправлен" in t for t in tg.texts_to(masha.telegram_user_id))
-    assert not any("ответ клиенту отправлен" in t for t in tg.texts_to(denis.telegram_user_id))
+    assert any("Ответ клиенту отправлен" in t for t in tg.texts_to(masha.telegram_user_id))
+    assert not any("Ответ клиенту отправлен" in t for t in tg.texts_to(denis.telegram_user_id))
 
 
 def test_operator_reply_is_refused_without_rights_link_or_consent(
@@ -1233,7 +1233,7 @@ def test_cancellation_keeps_history_and_never_rebinds(
         issue_max_link(request_id=request.pk)
     client.force_login(admin_user)
     page = client.get(reverse("customer_request_detail", args=[request.pk])).content.decode()
-    assert "Передумал" in page and "data-max-history" in page
+    assert "Передумал" in page and "data-timeline" in page
 
 
 def test_withdrawn_consent_closes_the_conversation_and_stops_queued_sends(

@@ -21,7 +21,7 @@ from datetime import timedelta
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from . import messaging, telegram_service
+from . import messaging, operator_bot, operator_replies, telegram_service
 from .max_api import MAX_TEXT_CHARS
 from .messengers import token_hash
 from .models import (
@@ -440,62 +440,22 @@ def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str) 
 # --- Operator side ---------------------------------------------------------------------
 
 
-class OperatorReplyError(ValueError):
-    """A reply that was not queued, with a reason safe to show the employee."""
+OperatorReplyError = operator_replies.OperatorReplyError
 
 
-@transaction.atomic
 def submit_operator_reply(*, request_id: int, user, text: str, submission_key: str) -> MaxMessage:
-    """Queue an employee's reply from DenisStock; the customer sees the PRO-STOR bot.
+    """Queue an employee's reply to a MAX customer; the customer sees the PRO-STOR bot.
 
-    The author is the DenisStock user, recorded on the message. A repeated form
-    submission (same ``submission_key``) returns the reply already queued.
+    The shared ``operator_replies.submit_reply`` does the work, limited to MAX:
+    a request of the other messenger is refused, never answered there.
     """
-    if not (user and user.is_active and getattr(user, "can_manage_sales", False)):
-        raise OperatorReplyError("Недостаточно прав для ответа клиенту.")
-    key = str(submission_key or "").strip()
-    if not re.fullmatch(r"[0-9a-f]{32}", key):
-        raise OperatorReplyError("Форма устарела. Обновите страницу и повторите.")
-    existing = MaxMessage.objects.filter(dedupe_key=f"operator_reply:{key}").first()
-    if existing is not None:
-        return existing
-    conversation = (
-        MaxConversation.objects.select_for_update()
-        .select_related("request")
-        .filter(request_id=request_id)
-        .first()
-    )
-    if conversation is None or not conversation.is_linked:
-        raise OperatorReplyError("Клиент ещё не подключил MAX к заявке. Свяжитесь по телефону.")
-    if not messaging.customer_contact_allowed(conversation.request):
-        raise OperatorReplyError("Клиент отозвал согласие на связь. Сообщение не отправлено.")
-    text = (text or "").strip()
-    if not text:
-        raise OperatorReplyError("Пустое сообщение не отправлено.")
-    if len(text) > MAX_TEXT_CHARS:
-        raise OperatorReplyError(f"Сообщение длиннее {MAX_TEXT_CHARS} символов. Сократите его.")
-    message, _created = queue_message(
-        chat_id=conversation.customer_chat_id,
+    return operator_replies.submit_reply(
+        request_id=request_id,
+        user=user,
         text=text,
-        dedupe_key=f"operator_reply:{key}",
-        conversation=conversation,
-        direction=MaxMessage.Direction.OPERATOR,
-        operator_user=user,
-    )
-    now = timezone.now()
-    conversation.last_message_at = now
-    conversation.save(update_fields=["last_message_at", "updated_at"])
-    MaxOutboxEvent.objects.get_or_create(
-        dedupe_key=f"operator_reply:{message.pk}",
-        defaults={
-            "kind": MaxOutboxEvent.Kind.OPERATOR_REPLY,
-            "request": conversation.request,
-            "message": message,
-            "exclude_user": user,
-            "next_attempt_at": now,
-        },
-    )
-    return message
+        key=submission_key,
+        channel=CustomerRequest.Messenger.MAX,
+    ).message
 
 
 def announce_new_requests(*, since, limit: int = 50) -> int:
@@ -553,37 +513,12 @@ def _conversation_for(event: MaxOutboxEvent) -> MaxConversation | None:
 
 
 def delivery_content(event: MaxOutboxEvent) -> tuple[str, dict | None]:
-    """Text of one operator notification about MAX, rendered at send time.
+    """Text and buttons of one operator notification about MAX, rendered at send time.
 
-    The reply itself is written in DenisStock, so the only button opens the
-    request there. The employee's own messenger account is never involved.
+    The same notification as Telegram's (``operator_bot``): the employee can
+    answer a MAX customer from the bot too. Their own account is never shown
+    to the customer.
     """
-    request = event.request
-    url = telegram_service.internal_request_url(request)
-    markup = {"inline_keyboard": [[{"text": "Открыть заявку", "url": url}]]} if url else None
     conversation = _conversation_for(event)
-    reference = request.reference
-    if event.kind == MaxOutboxEvent.Kind.NEW_REQUEST and conversation is not None:
-        return (
-            telegram_service.request_card_text(
-                conversation, heading="НОВАЯ ЗАЯВКА", channel="MAX"
-            ),
-            markup,
-        )
-    if event.kind == MaxOutboxEvent.Kind.CUSTOMER_LINKED:
-        return f"Клиент подключил MAX к заявке {reference}.", markup
-    message = event.message
-    text = message.text if message else ""
-    if event.kind == MaxOutboxEvent.Kind.CUSTOMER_MESSAGE:
-        return (
-            f"Заявка {reference} · MAX · сообщение клиента:\n{text}\n"
-            "Ответить можно в DenisStock.",
-            markup,
-        )
-    if event.kind == MaxOutboxEvent.Kind.OPERATOR_REPLY:
-        author = telegram_service.operator_display_name(message.operator_user if message else None)
-        return (
-            f"Заявка {reference} · MAX · ответ клиенту отправлен.\nСотрудник: {author}\n{text}",
-            markup,
-        )
-    return f"Заявка {reference}: переписка MAX недоступна.", markup
+    request = conversation.request if conversation is not None else event.request
+    return operator_bot.notification(event.kind, request, event.message)

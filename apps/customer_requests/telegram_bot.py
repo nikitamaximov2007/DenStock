@@ -29,7 +29,7 @@ from django.utils import timezone
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
-from . import messaging
+from . import messaging, operator_bot
 from . import telegram_service as service
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
@@ -80,6 +80,10 @@ def startup_backoff_seconds(attempt: int) -> int:
     return min(
         STARTUP_BACKOFF_BASE_SECONDS * 2 ** max(attempt - 1, 0), STARTUP_BACKOFF_MAX_SECONDS
     )
+
+
+def back_to_list() -> dict:
+    return operator_bot.back_to_list()
 
 
 def _is_int(value) -> bool:
@@ -142,14 +146,13 @@ def handle_update(update) -> list[Outgoing]:
             if command == "/requests":
                 return reply(*service.operator_request_page(1))
             if command == "/cancel":
-                return reply(service.cancel_reply(telegram_user_id=user_id))
+                return reply(service.cancel_reply(telegram_user_id=user_id), back_to_list())
             if command:
-                return reply(service.OPERATOR_HELP_TEXT)
-            return reply(
-                service.submit_operator_reply(
-                    telegram_user_id=user_id, update_id=update_id, text=text
-                )
+                return reply(service.OPERATOR_HELP_TEXT, back_to_list())
+            answer = service.submit_operator_reply(
+                telegram_user_id=user_id, update_id=update_id, text=text
             )
+            return reply(*answer) if isinstance(answer, tuple) else reply(answer)
         except service.TelegramAccessDenied:
             return reply(service.NOT_AVAILABLE_TEXT)
 
@@ -208,22 +211,25 @@ def _handle_callback(callback) -> list[Outgoing]:
             page = int(value) if value.isdigit() and len(value) < 6 else 1
             return [answered, Outgoing(user_id, *service.operator_request_page(page))]
         if kind == "c":
-            conversation = service.conversation_by_hex(value)
-            if conversation is None:
+            request = operator_bot.request_by_hex(value)
+            if request is None:
                 return denied
             return [
                 answered,
                 Outgoing(
                     user_id,
-                    service.request_card_text(conversation),
-                    service.operator_buttons(conversation),
+                    service.request_card_text(request),
+                    service.operator_buttons(request),
                 ),
             ]
         if kind == "r":
             text, markup = service.begin_reply(telegram_user_id=user_id, conversation_hex=value)
             return [answered, Outgoing(user_id, text, markup)]
         if kind == "x":
-            return [answered, Outgoing(user_id, service.cancel_reply(telegram_user_id=user_id))]
+            return [
+                answered,
+                Outgoing(user_id, service.cancel_reply(telegram_user_id=user_id), back_to_list()),
+            ]
     except service.TelegramAccessDenied:
         return denied
     return denied

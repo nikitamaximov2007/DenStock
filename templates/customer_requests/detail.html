@@ -1,165 +1,297 @@
 {% extends "base.html" %}
-{% block title %}Заявка клиента · DenisStock{% endblock %}
+{% block title %}Заявка №{{ customer_request.reference }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Заявка {{ customer_request.reference }}</h1>
-    <div class="page-actions"><a class="btn btn--small btn--secondary"
-   href="{% url 'customer_request_list' %}">Все заявки</a></div>
+    <h1 class="page-title">Заявка №{{ customer_request.reference }}</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary" href="{{ back_url }}">← К заявкам</a>
+    </div>
   </div>
-  <p>Статус: <strong>{{ customer_request.get_status_display }}</strong> · Создана: {{ customer_request.created_at|ru_dt }} · Обновлена: {{ customer_request.updated_at|ru_dt }}</p>
-  <p>{{ customer_request.customer_name }} · {{ customer_request.customer_phone }} · Предпочтительный канал: {{ customer_request.get_preferred_messenger_display }}</p>
-  {% if customer_request.messenger_contact %}
-    <p>{{ customer_request.messenger_contact.get_channel_display }}: связан {{ customer_request.messenger_contact.linked_at|ru_dt }}</p>
-  {% elif customer_request.preferred_messenger == "telegram" %}
-    <p>Telegram: не связан. Пока связи нет, звоните по телефону из заявки.</p>
-  {% else %}
-    <p>MAX: не связан. Пока связи нет, звоните по телефону из заявки.</p>
-  {% endif %}
-  {% if not customer_request.messenger_contact and customer_request.preferred_messenger == "telegram" %}
-    <form method="post"
-          action="{% url 'customer_request_telegram_link' customer_request.pk %}">
-      {% csrf_token %}
-      <button class="btn btn--secondary" type="submit">Создать ссылку Telegram</button>
-    </form>
-  {% endif %}
-  {% if not customer_request.messenger_contact and customer_request.preferred_messenger == "max" %}
-    <form method="post"
-          action="{% url 'customer_request_max_link' customer_request.pk %}">
-      {% csrf_token %}
-      <button class="btn btn--secondary" type="submit">Создать ссылку MAX</button>
-    </form>
-  {% endif %}
-  {% if max_start_link %}
-    <p>Отправьте клиенту эту одноразовую ссылку: <a href="{{ max_start_link }}" rel="noopener">Открыть MAX</a></p>
-  {% endif %}
-  {% if telegram_start_link %}
-    <p>Отправьте клиенту эту одноразовую ссылку: <a href="{{ telegram_start_link }}" rel="noopener">Открыть Telegram</a></p>
-  {% endif %}
-  {% if customer_request.comment %}<p>Комментарий: {{ customer_request.comment }}</p>{% endif %}
-  {% if telegram_conversation %}
-    <section class="telegram-history" data-telegram-history>
-      <h2>Переписка Telegram</h2>
-      <p>
-        {{ telegram_conversation.get_status_display }}
-        {% if telegram_conversation.linked_at %}· подключён {{ telegram_conversation.linked_at|ru_dt }}{% endif %}
-        {% if telegram_conversation.customer_username %}· @{{ telegram_conversation.customer_username }}{% endif %}
-      </p>
-      {% if telegram_messages %}
-        <ol class="telegram-history__list">
-          {% for message in telegram_messages %}
-            <li class="telegram-history__item"
-                data-direction="{{ message.direction }}">
-              <strong>
-                {% if message.direction == "customer_to_operator" %}
-                  Клиент
-                {% elif message.direction == "operator_to_customer" %}
-                  {{ message.operator_user.full_name|default:message.operator_user|default:"Сотрудник" }}
+  <section class="card cr-head" data-request-header>
+    <div class="card__body cr-head__body">
+      <div class="cr-head__who">
+        <div class="cr-head__badges">
+          {% if customer_request.attention == "reply_failed" %}
+            <span class="pill pill--danger" data-attention-badge>Ответ не доставлен</span>
+          {% elif customer_request.attention == "reply_sending" %}
+            <span class="pill pill--info" data-attention-badge>Ответ отправляется</span>
+          {% elif customer_request.needs_reply %}
+            <span class="pill pill--warning" data-attention-badge>Ждёт ответа</span>
+          {% endif %}
+          {% include "customer_requests/_status_pill.html" with status=customer_request.status label=customer_request.get_status_display %}
+          <span class="cr-messenger cr-messenger--{{ customer_request.preferred_messenger }}"
+                data-messenger-badge="{{ customer_request.preferred_messenger }}">{{ customer_request.get_preferred_messenger_display }}</span>
+          <span class="muted">
+            {% if reply_target.linked %}
+              подключён
+            {% else %}
+              не подключён
+            {% endif %}
+          </span>
+        </div>
+        {% if customer_request.data_anonymized_at %}
+          <p class="cr-head__name muted">Данные клиента обезличены</p>
+        {% else %}
+          <p class="cr-head__name">{{ customer_request.customer_name }}</p>
+          <p class="cr-head__phone">
+            <a href="tel:{{ customer_request.customer_phone_normalized|default:customer_request.customer_phone }}">{{ customer_request.customer_phone }}</a>
+          </p>
+        {% endif %}
+        <p class="muted cr-head__times">
+          Создана {{ customer_request.created_at|ru_dt }} · активность {{ customer_request.activity_at|ru_dt }}
+        </p>
+      </div>
+      {% if customer_request.status == "new" or customer_request.status == "in_progress" %}
+        <div class="cr-head__actions" data-status-actions>
+          {% if customer_request.status == "new" %}
+            <form method="post"
+                  action="{% url 'customer_request_status' customer_request.pk %}{{ action_query }}"
+                  data-idempotent-form>
+              {% csrf_token %}
+              <input type="hidden" name="status" value="in_progress">
+              <button class="btn btn--small btn--secondary" type="submit">Взять в работу</button>
+            </form>
+          {% else %}
+            <form method="post"
+                  action="{% url 'customer_request_status' customer_request.pk %}{{ action_query }}"
+                  data-idempotent-form>
+              {% csrf_token %}
+              <input type="hidden" name="status" value="completed">
+              <button class="btn btn--small btn--secondary" type="submit">Отметить выполненной</button>
+            </form>
+          {% endif %}
+          <form method="post"
+                action="{% url 'customer_request_status' customer_request.pk %}{{ action_query }}"
+                data-idempotent-form>
+            {% csrf_token %}
+            <input type="hidden" name="status" value="canceled">
+            <button class="btn btn--small btn--danger-outline" type="submit">Отменить заявку</button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+  </section>
+  <div class="cr-workspace">
+    <section class="card cr-chat" data-conversation>
+      <div class="card__header">
+        <h2 class="card__title">Переписка</h2>
+        <span class="muted">{{ reply_target.label }}</span>
+      </div>
+      <div class="card__body">
+        {% if timeline %}
+          <ol class="cr-chat__list" data-timeline>
+            {% for entry in timeline %}
+              <li class="cr-msg cr-msg--{{ entry.role }}" data-role="{{ entry.role }}">
+                {% if entry.role == "bot" %}
+                  <details class="cr-msg__bot">
+                    <summary>
+                      <span class="cr-msg__author">{{ entry.author }}</span> · {{ entry.created_at|ru_dt }}
+                      {% if entry.not_delivered %}· <span class="cr-msg__status cr-msg__status--bad">{{ entry.delivery_label }}</span>{% endif %}
+                      <span class="cr-msg__peek">{{ entry.text|truncatechars:60 }}</span>
+                    </summary>
+                    <div class="cr-msg__text">{{ entry.text|linebreaksbr }}</div>
+                  </details>
                 {% else %}
-                  Система
+                  <div class="cr-msg__bubble">
+                    <div class="cr-msg__meta">
+                      <span class="cr-msg__author">{{ entry.author }}</span>
+                      <time>{{ entry.created_at|ru_dt }}</time>
+                    </div>
+                    <div class="cr-msg__text">
+                      {% if entry.text %}
+                        {{ entry.text|linebreaksbr }}
+                      {% else %}
+                        <span class="muted">Текст удалён</span>
+                      {% endif %}
+                    </div>
+                    {% if entry.role == "operator" %}
+                      <div class="cr-msg__delivery" data-delivery="{{ entry.delivery_status }}">
+                        {% if entry.delivered %}
+                          Доставлено
+                        {% elif entry.in_flight %}
+                          Отправляется…
+                        {% else %}
+                          <span class="cr-msg__status cr-msg__status--bad">{{ entry.delivery_label }}</span>
+                        {% endif %}
+                      </div>
+                    {% endif %}
+                  </div>
                 {% endif %}
-              </strong>
-              · {{ message.created_at|ru_dt }}
-              {% if message.direction != "customer_to_operator" and message.delivery_status != "sent" %}
-                · <span class="badge">{{ message.get_delivery_status_display }}</span>
+              </li>
+            {% endfor %}
+          </ol>
+        {% else %}
+          <p class="muted">Сообщений пока нет.</p>
+        {% endif %}
+        {% if reply_blocked %}
+          <div class="cr-reply cr-reply--blocked" data-reply-blocked>
+            <p>{{ reply_blocked }}</p>
+            {% if reply_text %}
+              <p class="field__hint">Ответ не отправлен. Ваш текст остался здесь:</p>
+              <textarea class="cr-reply__text" rows="3" readonly data-unsent-text>{{ reply_text }}</textarea>
+            {% endif %}
+            {% if can_issue_link %}
+              {% if customer_request.preferred_messenger == "telegram" %}
+                <form method="post"
+                      action="{% url 'customer_request_telegram_link' customer_request.pk %}{{ action_query }}">
+                  {% csrf_token %}
+                  <button class="btn btn--small btn--secondary" type="submit">Создать ссылку Telegram</button>
+                </form>
+              {% else %}
+                <form method="post"
+                      action="{% url 'customer_request_max_link' customer_request.pk %}{{ action_query }}">
+                  {% csrf_token %}
+                  <button class="btn btn--small btn--secondary" type="submit">Создать ссылку MAX</button>
+                </form>
               {% endif %}
-              <div class="telegram-history__text">{{ message.text|linebreaksbr }}</div>
+            {% endif %}
+            {% if max_start_link %}
+              <p>
+                Отправьте клиенту эту одноразовую ссылку: <a href="{{ max_start_link }}" rel="noopener">Открыть MAX</a>
+              </p>
+            {% endif %}
+            {% if telegram_start_link %}
+              <p>
+                Отправьте клиенту эту одноразовую ссылку: <a href="{{ telegram_start_link }}" rel="noopener">Открыть Telegram</a>
+              </p>
+            {% endif %}
+          </div>
+        {% else %}
+          <form class="cr-reply"
+                method="post"
+                action="{% url 'customer_request_reply' customer_request.pk %}{{ action_query }}"
+                data-reply-form
+                data-idempotent-form>
+            {% csrf_token %}
+            <input type="hidden" name="submission_key" value="{{ reply_key }}">
+            <label class="field__label" for="reply-text">Ответ клиенту</label>
+            <textarea class="cr-reply__text"
+                      id="reply-text"
+                      name="text"
+                      rows="4"
+                      maxlength="4000"
+                      required>{{ reply_text }}</textarea>
+            <div class="cr-reply__bar">
+              <span class="field__hint">Клиент получит ответ в {{ reply_target.label }} от бота PRO-STOR.</span>
+              <button class="btn btn--primary"
+                      type="submit"
+                      data-progress-label="Отправляем…">Отправить</button>
+            </div>
+          </form>
+        {% endif %}
+      </div>
+    </section>
+    <section class="card cr-order" data-order>
+      <div class="card__header">
+        <h2 class="card__title">Заказ</h2>
+        <span class="muted">{{ lines|length }} поз.</span>
+      </div>
+      <div class="cr-order__table-wrap">
+        <table class="table table--compact cr-order__table">
+          <thead>
+            <tr>
+              <th>Деталь</th>
+              <th class="num--qty">Кол-во</th>
+              <th class="num--money">Цена</th>
+              <th class="num--money">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line in lines %}
+              <tr data-line>
+                <td>
+                  <span class="code-pill">{{ line.article|default:"без артикула" }}</span>
+                  <div>{{ line.part_name }}</div>
+                  {% if line.is_supply_inquiry %}<div class="muted">Запрос о поставке</div>{% endif %}
+                  <div class="muted cr-order__now">
+                    Сейчас:
+                    {% if line.current_price is not None %}
+                      {{ line.current_price|money_int }} ₽
+                    {% else %}
+                      цена уточняется
+                    {% endif %}
+                    · доступно {{ line.current_available|quantity_int }} {{ line.unit_short_name }}
+                  </div>
+                </td>
+                <td class="num--qty">{{ line.quantity_requested|quantity_int }} {{ line.unit_short_name }}</td>
+                <td class="num--money" data-price-seen>
+                  {% if line.price_seen is not None %}
+                    {{ line.price_seen|money_int }} ₽
+                  {% else %}
+                    Уточняется
+                  {% endif %}
+                </td>
+                <td class="num--money" data-line-total>
+                  {% if line.line_total is not None %}
+                    {{ line.line_total|money_int }} ₽
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th colspan="3">Итого</th>
+              <th class="num--money" data-request-total>
+                {% if total.complete %}
+                  {{ total.known|money_int }} ₽
+                {% elif total.partial %}
+                  {{ total.known|money_int }} ₽ + уточняется
+                {% else %}
+                  Уточняется
+                {% endif %}
+              </th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <div class="card__body">
+        <p class="muted">
+          Цена — та, что клиент видел при заявке. Заявка не фиксирует цену и не резервирует остаток.
+        </p>
+        {% if customer_request.comment and not customer_request.data_anonymized_at %}
+          <p class="cr-order__comment">
+            <strong>Комментарий клиента:</strong> {{ customer_request.comment }}
+          </p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+  <details class="card cr-service" data-service-info>
+    <summary class="card__header">
+      <span class="card__title">Служебная информация</span>
+    </summary>
+    <div class="card__body">
+      <h3>История статусов</h3>
+      {% if events %}
+        <ul>
+          {% for event in events %}
+            <li>
+              {{ event.changed_at|ru_dt }}: {{ event.get_from_status_display }} → {{ event.get_to_status_display }} · {{ event.changed_by|default:"Система" }}
             </li>
           {% endfor %}
-        </ol>
+        </ul>
       {% else %}
-        <p>Сообщений пока нет.</p>
+        <p>Статус ещё не менялся.</p>
       {% endif %}
-    </section>
-  {% endif %}
-  {% if max_conversation %}
-    <section class="telegram-history" data-max-history>
-      <h2>Переписка MAX</h2>
+      <h3>Связь</h3>
       <p>
-        {{ max_conversation.get_status_display }}
-        {% if max_conversation.linked_at %}· подключён {{ max_conversation.linked_at|ru_dt }}{% endif %}
+        Предпочтительный мессенджер: {{ customer_request.get_preferred_messenger_display }}.
+        {% if customer_request.messenger_contact %}
+          Связан {{ customer_request.messenger_contact.linked_at|ru_dt }}.
+        {% else %}
+          Пока не связан: звоните по телефону из заявки.
+        {% endif %}
       </p>
-      {% if max_messages %}
-        <ol class="telegram-history__list">
-          {% for message in max_messages %}
-            <li class="telegram-history__item"
-                data-direction="{{ message.direction }}">
-              <strong>
-                {% if message.direction == "customer_to_operator" %}
-                  Клиент
-                {% elif message.direction == "operator_to_customer" %}
-                  {{ message.operator_user.full_name|default:message.operator_user|default:"Сотрудник" }}
-                {% else %}
-                  Система
-                {% endif %}
-              </strong>
-              · {{ message.created_at|ru_dt }}
-              {% if message.direction != "customer_to_operator" and message.delivery_status != "sent" %}
-                · <span class="badge">{{ message.get_delivery_status_display }}</span>
-              {% endif %}
-              <div class="telegram-history__text">{{ message.text|linebreaksbr }}</div>
-            </li>
-          {% endfor %}
-        </ol>
-      {% else %}
-        <p>Сообщений пока нет.</p>
+      <h3>Согласие и хранение</h3>
+      <p>
+        Политика: {{ customer_request.privacy_policy_version }} · Согласие: {{ customer_request.personal_data_consent_version }} · Цель: {{ customer_request.consent_purpose }} · Принято: {{ customer_request.consent_accepted_at|ru_dt }}
+      </p>
+      {% if customer_request.consent_withdrawn_at %}
+        <p>Согласие отозвано: {{ customer_request.consent_withdrawn_at|ru_dt }}</p>
       {% endif %}
-      {% if max_conversation.is_linked and not customer_request.consent_withdrawn_at %}
-        <form method="post"
-              action="{% url 'customer_request_max_reply' customer_request.pk %}"
-              data-max-reply>
-          {% csrf_token %}
-          <input type="hidden" name="submission_key" value="{{ max_reply_key }}">
-          <label class="field__label" for="max-reply-text">Ответ клиенту в MAX</label>
-          <textarea class="form-control"
-                    id="max-reply-text"
-                    name="text"
-                    rows="3"
-                    maxlength="4000"
-                    required></textarea>
-          <p class="form-help">Клиент увидит сообщение от имени бота PRO-STOR.</p>
-          <button class="btn btn--primary" type="submit">Отправить в MAX</button>
-        </form>
-      {% endif %}
-    </section>
-  {% endif %}
-  <p class="page-subtitle">Цена и доступность ниже показаны для ориентира. Заявка не фиксирует цену и не резервирует складской остаток.</p>
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Артикул</th>
-        <th>Деталь</th>
-        <th>Запрошено</th>
-        <th>Цена при заявке</th>
-        <th>Текущая цена</th>
-        <th>Доступно сейчас</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for line in lines %}
-        <tr>
-          <td>{{ line.article|default:"·" }}</td><td>{{ line.part_name }}{% if line.is_supply_inquiry %} · Запрос о поставке{% endif %}</td>
-          <td>{{ line.quantity_requested|quantity_int }} {{ line.unit_short_name }}</td>
-          <td>{% if line.price_seen is not None %}{{ line.price_seen|money_int }} ₽{% else %}Уточняется{% endif %}</td>
-          <td>{% if line.current_price is not None %}{{ line.current_price|money_int }} ₽{% else %}Уточняется{% endif %}</td>
-          <td>{{ line.current_available|quantity_int }} {{ line.unit_short_name }}</td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% if customer_request.status == "new" %}
-    <form method="post"
-          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="in_progress"><button class="btn btn--primary" type="submit">Взять в работу</button></form>
-    <form method="post"
-          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="canceled"><button class="btn btn--secondary" type="submit">Отменить</button></form>
-  {% elif customer_request.status == "in_progress" %}
-    <form method="post"
-          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="completed"><button class="btn btn--primary" type="submit">Отметить выполненной</button></form>
-    <form method="post"
-          action="{% url 'customer_request_status' customer_request.pk %}">{% csrf_token %}<input type="hidden" name="status" value="canceled"><button class="btn btn--secondary" type="submit">Отменить</button></form>
-  {% endif %}
-  <h2>История статусов</h2>
-  {% if events %}<ul>{% for event in events %}<li>{{ event.changed_at|ru_dt }}: {{ event.get_from_status_display }} → {{ event.get_to_status_display }} · {{ event.changed_by|default:"Система" }}</li>{% endfor %}</ul>{% else %}<p>Статус ещё не менялся.</p>{% endif %}
-  <h2>Согласие и хранение</h2>
-  <p>Политика: {{ customer_request.privacy_policy_version }} · Согласие: {{ customer_request.personal_data_consent_version }} · Цель: {{ customer_request.consent_purpose }} · Принято: {{ customer_request.consent_accepted_at|ru_dt }}</p>
-  {% if customer_request.consent_withdrawn_at %}<p>Согласие отозвано: {{ customer_request.consent_withdrawn_at|ru_dt }}</p>{% endif %}
+    </div>
+  </details>
 {% endblock %}

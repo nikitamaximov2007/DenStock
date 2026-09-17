@@ -11,10 +11,11 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import DatabaseError, transaction
-from django.db.models import Count
 from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
@@ -24,7 +25,7 @@ from apps.inventory.presentation import with_part_identity
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
-from . import max_bot, max_service
+from . import max_bot, messaging, operator_replies, workspace
 from .forms import TelegramOperatorForm
 from .max_api import webhook_secret_is_well_formed
 from .messengers import (
@@ -36,7 +37,6 @@ from .messengers import (
 )
 from .models import (
     CustomerRequest,
-    MaxConversation,
     TelegramConversation,
     TelegramDelivery,
     TelegramDeliveryStatus,
@@ -47,9 +47,7 @@ from .models import (
 from .services import CustomerRequestError, change_request_status
 from .telegram import handle_update, webhook_secret_is_valid
 
-PAGE_SIZE = 50
-TELEGRAM_HISTORY_LIMIT = 200
-MAX_HISTORY_LIMIT = 200
+PAGE_SIZE = 30
 MAX_WEBHOOK_BODY_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
 BOT_ALIVE_WINDOW = timedelta(seconds=120)
@@ -124,6 +122,7 @@ def telegram_operator_toggle(request, pk):
     operator = get_object_or_404(TelegramOperator, pk=pk)
     operator.is_active = not operator.is_active
     if not operator.is_active:
+        operator.reply_request = None
         operator.reply_conversation = None
         operator.reply_started_at = None
     operator.save()
@@ -147,21 +146,86 @@ def telegram_operator_role(request, pk):
     return redirect("telegram_settings")
 
 
+def _list_params(source) -> dict:
+    """The list's own filters, cleaned: anything else in a query string is dropped."""
+    return {
+        "tab": workspace.clean_tab(source.get("tab")),
+        "messenger": workspace.clean_messenger(source.get("messenger")),
+        "q": workspace.clean_query(source.get("q")),
+    }
+
+
+def _list_query(params: dict, **changes) -> str:
+    """The filters as a query string; the defaults stay out of the URL."""
+    values = {**params, **changes}
+    if values.get("tab") == workspace.TAB_ACTIVE:
+        values.pop("tab")
+    return urlencode({key: value for key, value in values.items() if value})
+
+
+def _detail_url(pk, params: dict) -> str:
+    query = _list_query(params)
+    url = reverse("customer_request_detail", args=[pk])
+    return f"{url}?{query}" if query else url
+
+
 @login_required
 def customer_request_list(request):
     _require_access(request)
-    queryset = CustomerRequest.objects.annotate(line_count=Count("lines")).order_by(
-        "-created_at", "-pk"
+    params = _list_params(request.GET)
+    queryset = workspace.filtered_requests(
+        tab=params["tab"], messenger=params["messenger"], query=params["q"]
     )
-    page_obj = Paginator(queryset, PAGE_SIZE).get_page(request.GET.get("page"))
+    paginator = Paginator(queryset, PAGE_SIZE)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    for item in page_obj.object_list:
+        item.total = workspace.request_total(
+            known_total=item.known_total, unknown_price_count=item.unknown_price_count
+        )
+    counts = workspace.tab_counts(messenger=params["messenger"], query=params["q"])
+    tabs = [
+        {
+            "value": value,
+            "label": label,
+            "count": counts[value],
+            "active": value == params["tab"],
+            "query": _list_query(params, tab=value),
+        }
+        for value, label in workspace.TABS
+    ]
+    messengers = [
+        {
+            "value": value,
+            "label": label,
+            "active": value == params["messenger"],
+            "query": _list_query(params, messenger=value),
+        }
+        for value, label in workspace.MESSENGERS
+    ]
     return render(
         request,
         "customer_requests/list.html",
-        {"page_obj": page_obj, "new_count": CustomerRequest.objects.filter(status="new").count()},
+        {
+            "page_obj": page_obj,
+            "is_paginated": page_obj.has_other_pages(),
+            "params": params,
+            "list_query": _list_query(params),
+            "tabs": tabs,
+            "messengers": messengers,
+            "waiting_count": counts[workspace.TAB_WAITING],
+            "active_tab_label": dict(workspace.TABS)[params["tab"]],
+        },
     )
 
 
-def _detail_context(customer_request, *, telegram_start_link=None, max_start_link=None):
+def _detail_context(
+    customer_request,
+    *,
+    params: dict,
+    telegram_start_link=None,
+    max_start_link=None,
+    reply_text="",
+):
     lines = list(
         with_part_identity(
             customer_request.lines.select_related("part_type", "part_type__unit"),
@@ -172,44 +236,52 @@ def _detail_context(customer_request, *, telegram_start_link=None, max_start_lin
     for line in lines:
         line.current_available = availability[line.part_type_id]
         line.current_price = resolve_current_customer_price(line.part_type).price_rub
-    events = customer_request.status_events.select_related("changed_by")
-    conversation = TelegramConversation.objects.filter(request=customer_request).first()
-    telegram_messages = []
-    if conversation is not None:
-        # The newest 200, shown oldest first.
-        telegram_messages = list(
-            conversation.messages.select_related("operator_user").order_by("-created_at", "-pk")[
-                :TELEGRAM_HISTORY_LIMIT
-            ]
-        )[::-1]
-    max_conversation = MaxConversation.objects.filter(request=customer_request).first()
-    max_messages = []
-    if max_conversation is not None:
-        max_messages = list(
-            max_conversation.messages.select_related("operator_user").order_by(
-                "-created_at", "-pk"
-            )[:MAX_HISTORY_LIMIT]
-        )[::-1]
+        line.line_total = (
+            None if line.price_seen is None else line.price_seen * line.quantity_requested
+        )
+    target = operator_replies.reply_target(customer_request)
+    list_query = _list_query(params)
     return {
         "customer_request": customer_request,
         "lines": lines,
-        "events": events,
-        "telegram_start_link": telegram_start_link,
-        "telegram_conversation": conversation,
-        "telegram_messages": telegram_messages,
-        "max_start_link": max_start_link,
-        "max_conversation": max_conversation,
-        "max_messages": max_messages,
+        "total": workspace.lines_total(lines),
+        "events": customer_request.status_events.select_related("changed_by"),
+        "timeline": workspace.timeline(customer_request),
+        "reply_target": target,
+        "reply_blocked": target.blocked_reason(),
+        # A link is offered only while there is nobody to answer yet.
+        "can_issue_link": (
+            not target.linked
+            and customer_request.status in workspace.OPEN_STATUSES
+            and messaging.customer_contact_allowed(customer_request)
+        ),
+        "reply_text": reply_text,
         # A fresh key per rendered form: a double submit queues one reply.
-        "max_reply_key": uuid.uuid4().hex,
+        "reply_key": uuid.uuid4().hex,
+        "telegram_start_link": telegram_start_link,
+        "max_start_link": max_start_link,
+        "list_query": list_query,
+        "back_url": reverse("customer_request_list") + (f"?{list_query}" if list_query else ""),
+        "action_query": f"?{list_query}" if list_query else "",
     }
+
+
+def _annotated_or_404(pk) -> CustomerRequest:
+    customer_request = workspace.annotated_request(pk)
+    if customer_request is None:
+        raise Http404
+    return customer_request
 
 
 @login_required
 def customer_request_detail(request, pk):
     _require_access(request)
-    customer_request = get_object_or_404(CustomerRequest, pk=pk)
-    return render(request, "customer_requests/detail.html", _detail_context(customer_request))
+    customer_request = _annotated_or_404(pk)
+    return render(
+        request,
+        "customer_requests/detail.html",
+        _detail_context(customer_request, params=_list_params(request.GET)),
+    )
 
 
 @login_required
@@ -230,27 +302,28 @@ def customer_request_status(request, pk):
     else:
         if changed:
             messages.success(request, "Статус заявки обновлён.")
-    return redirect("customer_request_detail", pk=pk)
+    return redirect(_detail_url(pk, _list_params(request.GET)))
 
 
 @login_required
 @require_POST
 def customer_request_telegram_link(request, pk):
     _require_access(request)
-    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    customer_request = _annotated_or_404(pk)
+    params = _list_params(request.GET)
     try:
         issued = issue_telegram_link(request_id=customer_request.pk, by=request.user)
         start_link = telegram_start_url(issued.token)
     except MessengerLinkError as exc:
         messages.error(request, str(exc))
-        return redirect("customer_request_detail", pk=customer_request.pk)
+        return redirect(_detail_url(customer_request.pk, params))
     if start_link is None:
         messages.error(request, "Telegram-бот ещё не настроен.")
-        return redirect("customer_request_detail", pk=customer_request.pk)
+        return redirect(_detail_url(customer_request.pk, params))
     return render(
         request,
         "customer_requests/detail.html",
-        _detail_context(customer_request, telegram_start_link=start_link),
+        _detail_context(customer_request, params=params, telegram_start_link=start_link),
     )
 
 
@@ -258,41 +331,58 @@ def customer_request_telegram_link(request, pk):
 @require_POST
 def customer_request_max_link(request, pk):
     _require_access(request)
-    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    customer_request = _annotated_or_404(pk)
+    params = _list_params(request.GET)
     try:
         issued = issue_max_link(request_id=customer_request.pk, by=request.user)
         start_link = max_start_url(issued.token)
     except MessengerLinkError as exc:
         messages.error(request, str(exc))
-        return redirect("customer_request_detail", pk=customer_request.pk)
+        return redirect(_detail_url(customer_request.pk, params))
     if start_link is None:
         messages.error(request, "MAX-бот ещё не настроен.")
-        return redirect("customer_request_detail", pk=customer_request.pk)
+        return redirect(_detail_url(customer_request.pk, params))
     return render(
         request,
         "customer_requests/detail.html",
-        _detail_context(customer_request, max_start_link=start_link),
+        _detail_context(customer_request, params=params, max_start_link=start_link),
     )
 
 
 @login_required
 @require_POST
-def customer_request_max_reply(request, pk):
-    """An employee answers a MAX customer from DenisStock, as the PRO-STOR bot."""
+def customer_request_reply(request, pk):
+    """An employee answers the customer from DenisStock, as the PRO-STOR bot.
+
+    One form for both messengers: the request's own messenger is chosen here,
+    never by the page. A refused reply keeps the typed text on the page.
+    """
     _require_access(request)
-    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    customer_request = _annotated_or_404(pk)
+    params = _list_params(request.GET)
+    text = request.POST.get("text", "")
     try:
-        max_service.submit_operator_reply(
+        result = operator_replies.submit_reply(
             request_id=customer_request.pk,
             user=request.user,
-            text=request.POST.get("text", ""),
-            submission_key=request.POST.get("submission_key", ""),
+            text=text,
+            key=request.POST.get("submission_key", ""),
         )
-    except max_service.OperatorReplyError as exc:
+    except operator_replies.OperatorReplyError as exc:
         messages.error(request, str(exc))
-    else:
-        messages.success(request, "Ответ поставлен в отправку клиенту в MAX.")
-    return redirect("customer_request_detail", pk=customer_request.pk)
+        customer_request = _annotated_or_404(pk)
+        return render(
+            request,
+            "customer_requests/detail.html",
+            _detail_context(customer_request, params=params, reply_text=text),
+        )
+    if result.created:
+        messages.success(request, f"Ответ поставлен в отправку клиенту в {result.label}.")
+    return redirect(_detail_url(customer_request.pk, params))
+
+
+# The MAX-only reply of the previous release posts here; it is the same reply now.
+customer_request_max_reply = customer_request_reply
 
 
 def max_webhook_secret_is_valid(value: str | None) -> bool:

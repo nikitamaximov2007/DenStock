@@ -11,6 +11,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Value
 
 from apps.core.phones import normalize_phone
 
@@ -357,10 +358,21 @@ class TelegramOperator(models.Model):
     telegram_user_id = models.BigIntegerField("Telegram ID", unique=True)
     role = models.CharField("Роль", max_length=12, choices=Role.choices, default=Role.OPERATOR)
     is_active = models.BooleanField("Активен", default=True)
-    # The conversation the operator's next plain text answers, if any.
+    # Superseded by ``reply_request``, which names a request of either
+    # transport. Kept, unused, so the previous release can still be rolled back to.
     reply_conversation = models.ForeignKey(
         TelegramConversation,
-        verbose_name="Отвечает на",
+        verbose_name="Отвечает на (Telegram, прежнее поле)",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # The request the operator's next plain text answers, whatever messenger
+    # its customer uses. Only the operator's own explicit choice sets it.
+    reply_request = models.ForeignKey(
+        CustomerRequest,
+        verbose_name="Отвечает на заявку",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -429,6 +441,13 @@ class TelegramMessage(models.Model):
     telegram_update_id = models.BigIntegerField(
         "Обновление Telegram", null=True, blank=True, unique=True
     )
+    # One employee reply per submission of the DenisStock reply form. A reply
+    # typed in the bot is already unique by its update id and keeps this empty.
+    # ``db_default`` keeps inserts by the previous release valid, so this
+    # migration can be deployed before its code and rolled back after it.
+    dedupe_key = models.CharField(
+        "Ключ сообщения", max_length=160, blank=True, default="", db_default=Value("")
+    )
     operator = models.ForeignKey(
         TelegramOperator,
         verbose_name="Сотрудник в боте",
@@ -456,6 +475,13 @@ class TelegramMessage(models.Model):
         verbose_name = "Сообщение Telegram"
         verbose_name_plural = "Сообщения Telegram"
         ordering = ["created_at", "pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dedupe_key"],
+                condition=~models.Q(dedupe_key=""),
+                name="tg_message_dedupe_unique",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["delivery_status", "next_attempt_at"], name="tg_message_delivery_idx"

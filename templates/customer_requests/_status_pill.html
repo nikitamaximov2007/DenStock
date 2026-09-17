@@ -1,0 +1,7 @@
+{% if status == "new" %}
+  <span class="pill pill--info" data-status="new">{{ label }}</span>
+{% elif status == "in_progress" %}
+  <span class="pill pill--success" data-status="in_progress">{{ label }}</span>
+{% else %}
+  <span class="pill pill--muted" data-status="{{ status }}">{{ label }}</span>
+{% endif %}

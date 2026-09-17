@@ -82,8 +82,8 @@ STRANGER = 900001
 _ids = itertools.count(10_000)
 
 
-@pytest.fixture
-def part(db):
+def build_part():
+    """The one catalogue card these suites order; shared with the operator suite."""
     from apps.catalog.models import Category, Manufacturer, Unit
 
     category, _ = Category.objects.get_or_create(name="Двигатель", parent=None)
@@ -99,6 +99,11 @@ def part(db):
     )
     PartNumber.objects.create(part=result, value="448", is_primary=True)
     return result
+
+
+@pytest.fixture
+def part(db):
+    return build_part()
 
 
 class FakeBotApi:
@@ -313,7 +318,7 @@ def test_operator_card_matches_the_stored_request_without_n_plus_one(part, worke
     run(worker, api)
 
     card = api.texts_to(OPERATOR_A)[0]
-    assert "НОВАЯ ЗАЯВКА " + request.reference in card
+    assert f"НОВАЯ ЗАЯВКА №{request.reference} · Telegram" in card
     assert "Клиент: Иван Петров" in card
     assert "Телефон: +7 912 123-45-67" in card
     assert "448 · РЕМЕНЬ ПРИВОДНОЙ" in card
@@ -322,8 +327,9 @@ def test_operator_card_matches_the_stored_request_without_n_plus_one(part, worke
     assert "= 20" in card
     assert "Комментарий: Нужна деталь до пятницы." in card
     assert "ожидает подключения" in card
-    buttons = api.sent[0]["reply_markup"]["inline_keyboard"][0]
-    assert buttons[0]["text"] == "Ответить"
+    # Nobody to answer yet: no [Ответить] that could only say "not linked".
+    buttons = [b["text"] for row in api.sent[0]["reply_markup"]["inline_keyboard"] for b in row]
+    assert "Ответить" not in buttons and "Активные заявки" in buttons
 
     from apps.customer_requests import telegram_service as service
 
@@ -393,7 +399,7 @@ def test_deep_link_binds_numeric_chat_and_confirms_once(part, worker, api, opera
     assert "Менеджер PRO-STOR ответит вам здесь." in confirmations[0]
     for operator in operators:
         assert any(
-            f"Клиент подключил Telegram к заявке {request.reference}" in text
+            f"Клиент подключил Telegram к заявке №{request.reference}" in text
             for text in api.texts_to(operator.telegram_user_id)
         )
     # Nothing about the request (phone, comment) is sent to the customer.
@@ -648,14 +654,15 @@ def test_authorized_operator_lists_and_opens_requests(part, worker, api, operato
     conversation = TelegramConversation.objects.get()
 
     run(worker, api, message_update(OPERATOR_A, "/requests"))
-    listing = api.last_with(OPERATOR_A, "Открытые заявки с Telegram")
+    listing = api.last_with(OPERATOR_A, "Активные заявки")
     button = listing["reply_markup"]["inline_keyboard"][0][0]
-    assert request.reference in button["text"]
-    assert button["callback_data"] == f"c:{conversation.public_id.hex}"
+    assert request.reference in button["text"] and "Telegram" in button["text"]
+    assert button["callback_data"] == f"c:{request.public_id.hex}"
+    assert conversation.public_id.hex not in button["callback_data"]
     assert re.fullmatch(r"c:[0-9a-f]{32}", button["callback_data"])  # opaque, no pk
 
     run(worker, api, callback_update(OPERATOR_A, button["callback_data"]))
-    assert any(text.startswith(f"ЗАЯВКА {request.reference}") for text in api.texts_to(OPERATOR_A))
+    assert any(text.startswith(f"ЗАЯВКА №{request.reference}") for text in api.texts_to(OPERATOR_A))
 
 
 @pytest.mark.parametrize("data", ["c:zzz", "c:", "r:" + "0" * 32, "l:-1", "q:1", "c:" + "A" * 32])
@@ -665,10 +672,10 @@ def test_forged_callback_data_is_refused_server_side(part, worker, api, operator
     if data == "r:" + "0" * 32:
         assert "Заявка не найдена." in api.texts_to(OPERATOR_A)
     elif data == "l:-1":
-        assert api.last_with(OPERATOR_A, "Открытые заявки")
+        assert api.last_with(OPERATOR_A, "Активные заявки")
     else:
         assert api.answers[-1][1] == "Недоступно."
-    assert not TelegramOperator.objects.exclude(reply_conversation=None).exists()
+    assert not TelegramOperator.objects.exclude(reply_request=None).exists()
 
 
 # --- M, N, O, P: messaging ---------------------------------------------------------------
@@ -901,7 +908,7 @@ def test_request_page_shows_chronological_history_with_employee(
 
     html = client.get(reverse("customer_request_detail", args=[request.pk])).content.decode()
 
-    assert "Переписка Telegram" in html
+    assert "Переписка" in html and "data-timeline" in html
     first = html.index("Здравствуйте, когда можно забрать?")
     second = html.index("Добрый день. Деталь есть, можно забрать сегодня.")
     assert html.index("Готово. Telegram подключён") < first < second
