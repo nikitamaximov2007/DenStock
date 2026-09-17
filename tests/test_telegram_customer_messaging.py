@@ -28,6 +28,7 @@ from django.utils import timezone
 from apps.accounts import roles
 from apps.catalog.models import PartNumber, PartType
 from apps.core.observability import RedactingFormatter, redact
+from apps.customer_requests import messaging
 from apps.customer_requests.messengers import (
     MessengerLinkError,
     consume_telegram_start,
@@ -1572,3 +1573,139 @@ def test_replaying_start_does_not_duplicate_the_order_summary(part, worker, api,
         ).count()
         == 1
     )
+
+
+# --- Stage 0: a closed request never takes customer messages -------------------------------
+
+
+def _telegram_customer_message_events():
+    return TelegramOutboxEvent.objects.filter(
+        kind=TelegramOutboxEvent.Kind.CUSTOMER_MESSAGE
+    ).count()
+
+
+def test_telegram_cancelled_current_request_refuses_the_message_and_offers_the_open_ones(
+    part, worker, api, operators
+):
+    first = _request(part, key="t0" * 16)
+    second = _request(part, key="t1" * 16)
+    link(worker, api, first)
+    link(worker, api, second)
+    first_conversation = TelegramConversation.objects.get(request=first)
+    second_conversation = TelegramConversation.objects.get(request=second)
+    run(worker, api, message_update(CUSTOMER, "про вторую"))
+    events = _telegram_customer_message_events()
+
+    change_request_status(
+        request_id=second.pk,
+        target_status=CustomerRequest.Status.CANCELED,
+        by=operators[0].user,
+    )
+    run(worker, api, message_update(CUSTOMER, "ещё про вторую"))
+
+    assert not TelegramMessage.objects.filter(text="ещё про вторую").exists()
+    assert _telegram_customer_message_events() == events
+    assert "ещё про вторую" not in "\n".join(api.texts_to(OPERATOR_A))
+    reply = api.last_with(CUSTOMER, "уже закрыта")
+    assert reply["text"] == messaging.closed_request_text(second.reference, other_open=True)
+    assert {row[0]["callback_data"] for row in reply["reply_markup"]["inline_keyboard"]} == {
+        f"s:{first_conversation.public_id.hex}"
+    }
+    # Never silently moved to the other request; the choice and history stay.
+    assert TelegramCustomerChat.objects.get(chat_id=CUSTOMER).active_conversation == (
+        second_conversation
+    )
+    assert list(
+        TelegramMessage.objects.filter(
+            conversation=second_conversation, direction=TelegramMessage.Direction.CUSTOMER
+        ).values_list("text", flat=True)
+    ) == ["про вторую"]
+
+    run(worker, api, callback_update(CUSTOMER, f"s:{first_conversation.public_id.hex}"))
+    run(worker, api, message_update(CUSTOMER, "теперь про первую"))
+    assert TelegramMessage.objects.get(text="теперь про первую").conversation == first_conversation
+
+
+def test_telegram_completed_only_request_refuses_messages_and_offers_nothing(
+    part, worker, api, operators
+):
+    request = _request(part, key="t2" * 16)
+    link(worker, api, request)
+    run(worker, api, message_update(CUSTOMER, "спасибо"))
+    change_request_status(
+        request_id=request.pk,
+        target_status=CustomerRequest.Status.IN_PROGRESS,
+        by=operators[0].user,
+    )
+    change_request_status(
+        request_id=request.pk, target_status=CustomerRequest.Status.COMPLETED, by=operators[0].user
+    )
+    events = _telegram_customer_message_events()
+
+    run(worker, api, message_update(CUSTOMER, "а ещё вопрос"))
+
+    assert not TelegramMessage.objects.filter(text="а ещё вопрос").exists()
+    assert _telegram_customer_message_events() == events
+    reply = api.last_with(CUSTOMER, "уже закрыта")
+    assert reply["text"] == messaging.closed_request_text(request.reference, other_open=False)
+    assert not reply["reply_markup"]
+
+
+def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothing(
+    part, worker, api, operators
+):
+    first = _request(part, key="t3" * 16)
+    second = _request(part, key="t4" * 16)
+    link(worker, api, first)
+    link(worker, api, second)
+    first_conversation = TelegramConversation.objects.get(request=first)
+    second_conversation = TelegramConversation.objects.get(request=second)
+    change_request_status(
+        request_id=first.pk, target_status=CustomerRequest.Status.CANCELED, by=operators[0].user
+    )
+
+    run(worker, api, message_update(CUSTOMER, "/requests"))
+    listing = api.last_with(CUSTOMER, "Выберите заявку")["reply_markup"]["inline_keyboard"]
+    assert {row[0]["callback_data"] for row in listing} == {
+        f"s:{second_conversation.public_id.hex}"
+    }
+
+    stale = callback_update(CUSTOMER, f"s:{first_conversation.public_id.hex}")
+    run(worker, api, stale)
+    run(worker, api, stale)  # the same callback delivered again
+
+    closed_text = messaging.closed_request_text(first.reference, other_open=True)
+    assert api.texts_to(CUSTOMER).count(closed_text) == 1
+    assert TelegramCustomerChat.objects.get(chat_id=CUSTOMER).active_conversation == (
+        second_conversation
+    )
+    run(worker, api, message_update(CUSTOMER, "про вторую"))
+    assert TelegramMessage.objects.get(text="про вторую").conversation == second_conversation
+
+    # Another customer's press on this closed request learns nothing about it.
+    theirs = _request(part, key="t5" * 16)
+    link(worker, api, theirs, chat_id=OTHER_CUSTOMER)
+    run(worker, api, callback_update(OTHER_CUSTOMER, f"s:{first_conversation.public_id.hex}"))
+    assert api.answers[-1][1] == "Недоступно."
+    assert first.reference not in "\n".join(api.texts_to(OTHER_CUSTOMER))
+
+
+def test_telegram_completed_request_can_neither_issue_nor_consume_a_link(
+    part, worker, api, operators
+):
+    request = _request(part, key="t6" * 16)
+    token = issue_telegram_link(request_id=request.pk).token
+    change_request_status(
+        request_id=request.pk,
+        target_status=CustomerRequest.Status.IN_PROGRESS,
+        by=operators[0].user,
+    )
+    change_request_status(
+        request_id=request.pk, target_status=CustomerRequest.Status.COMPLETED, by=operators[0].user
+    )
+
+    with pytest.raises(MessengerLinkError):
+        issue_telegram_link(request_id=request.pk)
+    run(worker, api, message_update(CUSTOMER, f"/start {token}"))
+
+    assert not TelegramConversation.objects.get(request=request).is_linked

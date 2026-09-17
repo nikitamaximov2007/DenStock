@@ -154,6 +154,76 @@ def customer_contact_allowed(request: CustomerRequest) -> bool:
     return request.consent_withdrawn_at is None and request.data_anonymized_at is None
 
 
+# The statuses a customer may still write about. Completed and cancelled have no
+# transition out of them, so a request that reaches one is closed for good.
+MESSAGEABLE_STATUSES = frozenset(
+    {CustomerRequest.Status.NEW, CustomerRequest.Status.IN_PROGRESS}
+)
+
+CLOSED_REQUEST_TEXT = "Заявка №{reference} уже закрыта.\nВыберите другую активную заявку."
+CLOSED_REQUEST_NO_OTHER_TEXT = (
+    "Заявка №{reference} уже закрыта.\n"
+    "Других открытых заявок у вас сейчас нет. Оформите новую заявку на сайте "
+    "PRO-STOR, и менеджер ответит вам здесь."
+)
+NO_OPEN_REQUESTS_TEXT = (
+    "Открытых заявок у вас сейчас нет. Оформите новую заявку на сайте PRO-STOR, "
+    "и менеджер ответит вам здесь."
+)
+
+
+def customer_can_message(request: CustomerRequest) -> bool:
+    """Whether the customer may still write about this request.
+
+    Contact must be allowed and the request still open. The request is read as
+    it is now, never as it was when the conversation was linked.
+    """
+    return request.status in MESSAGEABLE_STATUSES and customer_contact_allowed(request)
+
+
+def open_conversations(conversations) -> list:
+    """Only the conversations whose request the customer may still write about."""
+    return [c for c in conversations if customer_can_message(c.request)]
+
+
+def closed_request_text(reference: str, *, other_open: bool) -> str:
+    template = CLOSED_REQUEST_TEXT if other_open else CLOSED_REQUEST_NO_OTHER_TEXT
+    return template.format(reference=reference)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenRouting:
+    """Where a plain customer message goes, given that requests can close."""
+
+    conversation: object | None
+    ambiguous: bool
+    # The customer's current request, when it has closed since it was chosen.
+    closed: object | None
+    open: list
+
+    @property
+    def resolved(self) -> bool:
+        return self.conversation is not None
+
+
+def route_open_request(conversations, *, active_id) -> OpenRouting:
+    """Route among open requests, and say so when the current one has closed.
+
+    A closed current request is reported, never replaced: switching the
+    customer to another request they did not choose would put their words on
+    the wrong order. Nothing is stored until they pick one themselves.
+    """
+    conversations = list(conversations)
+    still_open = open_conversations(conversations)
+    current = next((c for c in conversations if active_id and c.pk == active_id), None)
+    if current is not None and not customer_can_message(current.request):
+        return OpenRouting(None, ambiguous=False, closed=current, open=still_open)
+    routing = route_customer_message(still_open, active_id=active_id)
+    return OpenRouting(
+        routing.conversation, ambiguous=routing.ambiguous, closed=None, open=still_open
+    )
+
+
 def external_message_key(channel: str, external_id) -> str:
     """A transport-scoped identity for one inbound event.
 

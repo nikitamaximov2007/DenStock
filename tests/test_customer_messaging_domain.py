@@ -284,3 +284,71 @@ def test_operator_event_outcome_is_one_rule_for_every_transport(
         )
         == outcome
     )
+
+
+# --- Which requests a customer may still write about ------------------------------------
+
+
+def _open_or_closed(status, *, withdrawn=False, anonymized=False, reference="95CE168E"):
+    return SimpleNamespace(
+        status=status,
+        consent_withdrawn_at=object() if withdrawn else None,
+        data_anonymized_at=object() if anonymized else None,
+        reference=reference,
+    )
+
+
+@pytest.mark.parametrize(
+    "status, expected",
+    [("new", True), ("in_progress", True), ("completed", False), ("canceled", False)],
+)
+def test_only_new_and_in_progress_requests_take_customer_messages(status, expected):
+    assert messaging.customer_can_message(_open_or_closed(status)) is expected
+
+
+def test_every_status_is_classified_so_a_new_one_cannot_slip_in_as_messageable():
+    assert messaging.MESSAGEABLE_STATUSES == {"new", "in_progress"}
+    assert set(CustomerRequest.Status.values) - messaging.MESSAGEABLE_STATUSES == {
+        "completed",
+        "canceled",
+    }
+
+
+def test_an_open_request_without_consent_or_anonymized_takes_no_messages():
+    assert messaging.customer_can_message(_open_or_closed("new", withdrawn=True)) is False
+    assert messaging.customer_can_message(_open_or_closed("in_progress", anonymized=True)) is False
+
+
+def test_a_closed_current_request_is_reported_and_never_replaced():
+    open_one = SimpleNamespace(pk=1, request=_open_or_closed("new"))
+    closed_current = SimpleNamespace(pk=2, request=_open_or_closed("canceled"))
+
+    routing = messaging.route_open_request([open_one, closed_current], active_id=2)
+
+    assert routing.closed is closed_current
+    assert routing.conversation is None
+    assert routing.resolved is False
+    assert routing.open == [open_one]
+
+
+def test_closed_requests_are_left_out_of_routing():
+    first = SimpleNamespace(pk=1, request=_open_or_closed("new"))
+    done = SimpleNamespace(pk=2, request=_open_or_closed("completed"))
+    third = SimpleNamespace(pk=3, request=_open_or_closed("in_progress"))
+
+    with_one_open = messaging.route_open_request([first, done], active_id=None)
+    assert with_one_open.conversation is first
+    assert with_one_open.closed is None
+
+    with_two_open = messaging.route_open_request([first, done, third], active_id=None)
+    assert with_two_open.ambiguous is True
+    assert with_two_open.open == [first, third]
+
+
+def test_the_closed_request_text_offers_a_choice_only_when_one_exists():
+    assert messaging.closed_request_text("95CE168E", other_open=True) == (
+        "Заявка №95CE168E уже закрыта.\nВыберите другую активную заявку."
+    )
+    alone = messaging.closed_request_text("95CE168E", other_open=False)
+    assert alone.startswith("Заявка №95CE168E уже закрыта.")
+    assert "Выберите другую" not in alone

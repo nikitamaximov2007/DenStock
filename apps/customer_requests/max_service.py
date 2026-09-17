@@ -230,15 +230,37 @@ def selector_buttons(conversations) -> list[list[dict]]:
     ]
 
 
+def _closed_reply(request: CustomerRequest, still_open) -> tuple[str, list | None]:
+    """What to say about a request the customer can no longer write about.
+
+    A closed status gets the closed-request text and the requests still open.
+    Withdrawn consent or anonymization leaves the request itself open, so it
+    keeps its own wording and offers nothing to switch to.
+    """
+    if request.status in messaging.MESSAGEABLE_STATUSES:
+        return CLOSED_TEXT, None
+    text = messaging.closed_request_text(request.reference, other_open=bool(still_open))
+    return text, selector_buttons(still_open) or None
+
+
 def queue_greeting(*, user_id: int, chat_id: int, dedupe_key: str) -> None:
-    text = LINKED_GREETING if linked_conversations(user_id) else UNLINKED_GREETING
+    linked = linked_conversations(user_id)
+    if messaging.open_conversations(linked):
+        text = LINKED_GREETING
+    elif linked:
+        text = messaging.NO_OPEN_REQUESTS_TEXT
+    else:
+        text = UNLINKED_GREETING
     queue_message(chat_id=chat_id, text=text, dedupe_key=dedupe_key)
 
 
 def queue_selector(*, user_id: int, chat_id: int, dedupe_key: str) -> None:
-    conversations = linked_conversations(user_id)
+    linked = linked_conversations(user_id)
+    # A closed request is never offered, whatever an older keyboard still shows.
+    conversations = messaging.open_conversations(linked)
     if not conversations:
-        queue_message(chat_id=chat_id, text=UNLINKED_GREETING, dedupe_key=dedupe_key)
+        text = messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING
+        queue_message(chat_id=chat_id, text=text, dedupe_key=dedupe_key)
         return
     state = MaxCustomerChat.objects.filter(user_id=user_id).first()
     current = next(
@@ -285,6 +307,20 @@ def select_customer_conversation(
             text=SELECTION_UNAVAILABLE_TEXT,
             dedupe_key=dedupe_key,
             callback_id=callback_id,
+        )
+        return None
+    if not messaging.customer_can_message(conversation.request):
+        # An old button of a request that has closed since. The customer's
+        # current choice stays exactly as it was; they pick an open one.
+        text, buttons = _closed_reply(
+            conversation.request, messaging.open_conversations(linked_conversations(user_id))
+        )
+        queue_message(
+            chat_id=chat_id,
+            text=text,
+            dedupe_key=dedupe_key,
+            callback_id=callback_id,
+            buttons=buttons,
         )
         return None
     if MaxMessage.objects.filter(dedupe_key=dedupe_key).exists():
@@ -344,22 +380,30 @@ def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str) 
     if state.chat_id != chat_id:
         state.chat_id = chat_id
         state.save(update_fields=["chat_id", "updated_at"])
-    routing = messaging.route_customer_message(
+    routing = messaging.route_open_request(
         conversations, active_id=state.active_conversation_id
     )
+    if routing.closed is not None:
+        # The request the customer is writing to has closed. Nothing is stored,
+        # nobody is notified, and no other request is chosen for them.
+        text, buttons = _closed_reply(routing.closed.request, routing.open)
+        queue_message(chat_id=chat_id, text=text, dedupe_key=f"reply:{mid}", buttons=buttons)
+        return CLOSED
+    if not routing.open:
+        queue_message(
+            chat_id=chat_id, text=messaging.NO_OPEN_REQUESTS_TEXT, dedupe_key=f"reply:{mid}"
+        )
+        return CLOSED
     if routing.ambiguous:
         # Never guess: nothing is stored until the customer picks the request.
         queue_message(
             chat_id=chat_id,
             text=AMBIGUOUS_TEXT,
             dedupe_key=f"reply:{mid}",
-            buttons=selector_buttons(conversations),
+            buttons=selector_buttons(routing.open),
         )
         return AMBIGUOUS
     active = routing.conversation
-    if not messaging.customer_contact_allowed(active.request):
-        queue_message(chat_id=chat_id, text=CLOSED_TEXT, dedupe_key=f"reply:{mid}")
-        return CLOSED
     first_customer_message = not MaxMessage.objects.filter(
         conversation=active, direction=MaxMessage.Direction.CUSTOMER
     ).exists()

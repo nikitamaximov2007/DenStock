@@ -182,7 +182,14 @@ def _handle_callback(callback) -> list[Outgoing]:
             chat_id=user_id, conversation_hex=value
         )
         if conversation is None:
-            return denied
+            closed = service.closed_selection(chat_id=user_id, conversation_hex=value)
+            if closed is None:
+                return denied
+            # The customer's own request has closed since this button was sent.
+            return [
+                answered,
+                Outgoing(chat_id=user_id, text=closed.reply, reply_markup=closed.keyboard),
+            ]
         return [
             answered,
             Outgoing(

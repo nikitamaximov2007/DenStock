@@ -233,7 +233,8 @@
               {% endfor %}
             </select>
             <br>
-            <a href="{% url 'customer_create' %}?next={% url 'actions_scan' %}%3Fkind%3D{{ panel.kind|urlencode }}">Создать клиента</a>
+            <a class="btn btn--secondary btn--small"
+               href="{% url 'customer_create' %}?next={% url 'actions_scan' %}%3Fkind%3D{{ panel.kind|urlencode }}">Создать клиента</a>
           </p>
           <div class="form-actions">
             <button type="submit" class="btn btn--primary">Провести {{ panel.title|lower }}</button>

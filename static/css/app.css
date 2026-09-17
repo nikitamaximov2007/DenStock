@@ -377,6 +377,10 @@ select:focus-visible, textarea:focus-visible {
 .btn--secondary:hover { background: var(--bg); }
 .btn--danger { background: var(--danger); border-color: var(--danger); color: #fff; }
 .btn--danger:hover { filter: brightness(0.94); }
+/* Visible but quieter than a solid danger button: for actions that change stock. */
+.btn--danger-outline { background: var(--surface); border-color: var(--danger); color: var(--danger); }
+.btn--danger-outline:hover { background: var(--err-bg); }
+.search-row-actions { margin: 12px 0; }
 .btn--ghost { background: transparent; border-color: transparent; color: var(--accent); }
 .btn--ghost:hover { background: var(--bg); }
 .btn--small { padding: 6px 12px; font-size: 14px; border-radius: var(--radius-sm); }

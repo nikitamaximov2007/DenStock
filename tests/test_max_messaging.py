@@ -1287,3 +1287,112 @@ def test_max_rows_never_touch_telegram_tables_or_stock(client, part, worker):
     say(client, worker, "Вопрос")
     assert not TelegramConversation.objects.exists()
     assert (StockMovement.objects.count(), StockBalance.objects.count()) == before
+
+
+# --- Stage 0: a closed request never takes customer messages -------------------------------
+
+
+def _customer_message_events():
+    return MaxOutboxEvent.objects.filter(kind=MaxOutboxEvent.Kind.CUSTOMER_MESSAGE).count()
+
+
+def test_a_cancelled_current_request_refuses_the_message_and_offers_the_open_ones(
+    client, part, worker, server, admin_user
+):
+    request_a = _request(part, key="sa" * 16)
+    request_b = _request(part, key="sb" * 16)
+    bind(client, worker, request_a)
+    say(client, worker, "Про A")
+    bind(client, worker, request_b)
+    say(client, worker, "Про B")
+    conversation_a = MaxConversation.objects.get(request=request_a)
+    conversation_b = MaxConversation.objects.get(request=request_b)
+    history_b = MaxMessage.objects.filter(conversation=conversation_b).count()
+    events = _customer_message_events()
+
+    change_request_status(request_id=request_b.pk, target_status="canceled", by=admin_user)
+    say(client, worker, "Ещё про B")
+
+    assert customer_messages(request_b) == ["Про B"]
+    assert customer_messages(request_a) == ["Про A"]  # never silently moved to A
+    assert _customer_message_events() == events  # nobody is notified
+    prompt = server.sent[-1]
+    assert prompt["text"] == messaging.closed_request_text(request_b.reference, other_open=True)
+    buttons = prompt["attachments"][0]["payload"]["buttons"]
+    assert {row[0]["payload"] for row in buttons} == {f"s:{conversation_a.public_id.hex}"}
+    # The customer's choice is left as it was, and nothing of B's history is lost.
+    assert MaxCustomerChat.objects.get(user_id=CUSTOMER).active_conversation == conversation_b
+    assert MaxMessage.objects.filter(conversation=conversation_b).count() >= history_b
+    request_b.refresh_from_db()
+    assert request_b.status == "canceled"
+
+    press(client, worker, conversation_a)
+    say(client, worker, "Теперь про A")
+    assert customer_messages(request_a) == ["Про A", "Теперь про A"]
+    assert customer_messages(request_b) == ["Про B"]
+
+
+def test_a_completed_only_request_refuses_messages_and_offers_nothing(
+    client, part, worker, server, admin_user
+):
+    request = _request(part, key="sc" * 16)
+    bind(client, worker, request)
+    say(client, worker, "Спасибо")
+    change_request_status(request_id=request.pk, target_status="in_progress", by=admin_user)
+    change_request_status(request_id=request.pk, target_status="completed", by=admin_user)
+    events = _customer_message_events()
+
+    say(client, worker, "А ещё вопрос")
+
+    assert customer_messages(request) == ["Спасибо"]
+    assert _customer_message_events() == events
+    prompt = server.sent[-1]
+    assert prompt["text"] == messaging.closed_request_text(request.reference, other_open=False)
+    assert not prompt.get("attachments")
+
+
+def test_requests_hide_closed_requests_and_a_stale_button_changes_nothing(
+    client, part, worker, server, admin_user
+):
+    request_a = _request(part, key="sd" * 16)
+    request_b = _request(part, key="se" * 16)
+    bind(client, worker, request_a)
+    bind(client, worker, request_b)
+    conversation_a = MaxConversation.objects.get(request=request_a)
+    conversation_b = MaxConversation.objects.get(request=request_b)
+    change_request_status(request_id=request_a.pk, target_status="canceled", by=admin_user)
+
+    say(client, worker, "/requests")
+    buttons = server.sent[-1]["attachments"][0]["payload"]["buttons"]
+    assert {row[0]["payload"] for row in buttons} == {f"s:{conversation_b.public_id.hex}"}
+
+    stale = message_callback(CUSTOMER, CUSTOMER_CHAT, f"s:{conversation_a.public_id.hex}")
+    assert deliver(client, stale).status_code == 200
+    assert deliver(client, stale).status_code == 200  # MAX delivers the same press again
+    drain(worker)
+
+    closed_text = messaging.closed_request_text(request_a.reference, other_open=True)
+    assert server.texts_to(CUSTOMER_CHAT).count(closed_text) == 1
+    assert MaxCustomerChat.objects.get(user_id=CUSTOMER).active_conversation == conversation_b
+    say(client, worker, "Про B")
+    assert customer_messages(request_b) == ["Про B"]
+    assert customer_messages(request_a) == []
+
+
+def test_a_completed_request_can_neither_issue_nor_consume_a_max_link(
+    client, part, worker, server, admin_user
+):
+    request = _request(part, key="sf" * 16)
+    token = issue_max_link(request_id=request.pk).token
+    change_request_status(request_id=request.pk, target_status="in_progress", by=admin_user)
+    change_request_status(request_id=request.pk, target_status="completed", by=admin_user)
+
+    with pytest.raises(MessengerLinkError):
+        issue_max_link(request_id=request.pk)
+    assert deliver(client, bot_started(CUSTOMER, CUSTOMER_CHAT, token)).status_code == 200
+    drain(worker)
+
+    assert not MaxConversation.objects.filter(
+        request=request, status=MaxConversation.Status.LINKED
+    ).exists()
+    assert server.texts_to(CUSTOMER_CHAT) == [max_service.LINK_INVALID_TEXT]

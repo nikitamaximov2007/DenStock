@@ -532,14 +532,35 @@ def _selector(conversations) -> dict:
     }
 
 
+CONTACT_CLOSED_TEXT = "Переписка по этой заявке закрыта."
+
+
+def _closed_reply(request: CustomerRequest, still_open) -> CustomerResult:
+    """What to say about a request the customer can no longer write about.
+
+    A closed status gets the closed-request text and the requests still open.
+    Withdrawn consent or anonymization leaves the request itself open, so it
+    keeps its own wording and offers nothing to switch to.
+    """
+    if request.status in messaging.MESSAGEABLE_STATUSES:
+        return CustomerResult(CONTACT_CLOSED_TEXT)
+    text = messaging.closed_request_text(request.reference, other_open=bool(still_open))
+    return CustomerResult(text, _selector(still_open) if still_open else None)
+
+
 def customer_greeting(chat_id: int) -> str:
-    return LINKED_GREETING if _linked_conversations(chat_id) else UNLINKED_GREETING
+    linked = _linked_conversations(chat_id)
+    if messaging.open_conversations(linked):
+        return LINKED_GREETING
+    return messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING
 
 
 def customer_conversations_prompt(chat_id: int) -> CustomerResult:
-    conversations = _linked_conversations(chat_id)
+    linked = _linked_conversations(chat_id)
+    # A closed request is never offered, whatever an older keyboard still shows.
+    conversations = messaging.open_conversations(linked)
     if not conversations:
-        return CustomerResult(UNLINKED_GREETING)
+        return CustomerResult(messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING)
     state = TelegramCustomerChat.objects.filter(chat_id=chat_id).first()
     current = next(
         (c for c in conversations if state and c.pk == state.active_conversation_id), None
@@ -564,12 +585,36 @@ def select_customer_conversation(*, chat_id: int, conversation_hex: str):
         )
         .first()
     )
-    if conversation is None:
+    if conversation is None or not messaging.customer_can_message(conversation.request):
+        # A closed request is never selected; the current choice is left as is.
         return None
     TelegramCustomerChat.objects.update_or_create(
         chat_id=chat_id, defaults={"active_conversation": conversation}
     )
     return conversation
+
+
+def closed_selection(*, chat_id: int, conversation_hex: str) -> CustomerResult | None:
+    """The answer to an old button of this chat's own request that has closed.
+
+    ``None`` means the button was not this chat's request at all, which the bot
+    refuses without saying anything about whose it might be.
+    """
+    if not isinstance(chat_id, int) or not HEX_RE.fullmatch(str(conversation_hex or "")):
+        return None
+    conversation = (
+        TelegramConversation.objects.select_related("request")
+        .filter(
+            public_id=uuid.UUID(hex=conversation_hex),
+            customer_chat_id=chat_id,
+            status=TelegramConversation.Status.LINKED,
+        )
+        .first()
+    )
+    if conversation is None or messaging.customer_can_message(conversation.request):
+        return None
+    still_open = messaging.open_conversations(_linked_conversations(chat_id))
+    return _closed_reply(conversation.request, still_open)
 
 
 @transaction.atomic
@@ -580,19 +625,23 @@ def record_customer_message(*, chat_id: int, update_id: int, text: str) -> Custo
     if not conversations:
         return CustomerResult(UNLINKED_GREETING)
     state = TelegramCustomerChat.objects.select_for_update().filter(chat_id=chat_id).first()
-    routing = messaging.route_customer_message(
+    routing = messaging.route_open_request(
         conversations, active_id=state.active_conversation_id if state else None
     )
+    if routing.closed is not None:
+        # The request the customer is writing to has closed. Nothing is stored,
+        # nobody is notified, and no other request is chosen for them.
+        return _closed_reply(routing.closed.request, routing.open)
+    if not routing.open:
+        return CustomerResult(messaging.NO_OPEN_REQUESTS_TEXT)
     if routing.ambiguous:
         # Never guess: an ambiguous message is not stored until the
         # customer says which request it belongs to.
         return CustomerResult(
             "У вас несколько заявок. Выберите нужную и отправьте сообщение ещё раз.",
-            _selector(conversations),
+            _selector(routing.open),
         )
     active = routing.conversation
-    if not customer_contact_allowed(active.request):
-        return CustomerResult("Переписка по этой заявке закрыта.")
     # ``state`` is locked above.  All normal messages for this chat therefore
     # serialize here, and the persisted first message is the durable ACK marker.
     # A worker restart, outbox retry, or replay cannot turn a later message into

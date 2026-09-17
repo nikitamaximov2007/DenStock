@@ -373,6 +373,25 @@ def test_search_hides_old_price_provenance_without_cost_permission(make_user, cl
     assert "14 919" not in html
 
 
+def test_search_actions_are_real_buttons_with_a_quiet_danger_write_off(make_user, client, data):
+    make_user("boss-buttons", role=roles.MANAGER)
+    client.login(username="boss-buttons", password=PASSWORD)
+    html = client.get(reverse("part_search"), {"q": "Насос-Поиск"}).content.decode()
+
+    actions = html.split("data-search-actions", 1)[1].split("</div>", 1)[0]
+    sell = actions.index("Продать")
+    repair = actions.index("Выдать в ремонт")
+    write_off = actions.index("Списать")
+    assert sell < repair < write_off
+    assert 'class="btn btn--primary"' in actions[:sell]
+    assert 'class="btn btn--secondary"' in actions[sell:repair]
+    assert 'class="btn btn--danger-outline"' in actions[repair:write_off]
+    # Write-off stays a link to its confirmation page, not a solid one-click form.
+    assert 'btn--danger"' not in actions
+    assert "<form" not in actions
+    assert f"{reverse('write_off_quick')}?q=" in actions
+
+
 def test_search_actions_open_canonical_quick_routes(make_user, client, data):
     make_user("boss-actions", role=roles.MANAGER)
     client.login(username="boss-actions", password=PASSWORD)

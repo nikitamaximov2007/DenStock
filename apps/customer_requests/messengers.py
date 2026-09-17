@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from . import messaging
 from .models import (
     CustomerRequest,
     CustomerRequestMessengerContact,
@@ -63,6 +64,8 @@ def issue_messenger_link(*, request_id: int, channel: str, by=None) -> IssuedMes
     request = CustomerRequest.objects.select_for_update().get(pk=request_id)
     if request.status == CustomerRequest.Status.CANCELED:
         raise MessengerLinkError("Для отменённой заявки нельзя создать ссылку.")
+    if request.status not in messaging.MESSAGEABLE_STATUSES:
+        raise MessengerLinkError("Для закрытой заявки нельзя создать ссылку.")
     if request.consent_withdrawn_at is not None or request.data_anonymized_at is not None:
         # A new link would store the customer's chat identity again.
         raise MessengerLinkError("Клиент отозвал согласие на связь: ссылку создать нельзя.")
@@ -255,7 +258,7 @@ def consume_messenger_start(
         row.used_at is not None
         or row.revoked_at is not None
         or row.expires_at <= now
-        or row.request.status == CustomerRequest.Status.CANCELED
+        or row.request.status not in messaging.MESSAGEABLE_STATUSES
         or row.request.consent_withdrawn_at is not None
         or row.request.data_anonymized_at is not None
     ):

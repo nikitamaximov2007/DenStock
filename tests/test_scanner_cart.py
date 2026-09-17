@@ -561,6 +561,8 @@ def test_quick_cart_page_requires_card_selector_not_customer_comment(client, mak
     assert "Выберите карточку клиента" in html
     assert "Клиент / комментарий" not in html
     assert "Создать клиента" in html
+    create_link = html.split("Создать клиента", 1)[0].rsplit("<a", 1)[1]
+    assert 'class="btn btn--secondary btn--small"' in create_link
 
 
 def test_completed_actions_keep_identity_snapshots(data):
