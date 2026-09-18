@@ -1451,3 +1451,20 @@ def test_a_selector_max_refuses_to_edit_still_reaches_the_customer(
     drain(worker)
 
     assert server.texts_to(CUSTOMER_CHAT)[-1].startswith("Ваша активная заявка:")
+
+
+def test_the_real_start_payload_delivers_my_requests_to_the_customer(client, part, worker, server):
+    """End to end: the button a MAX customer needs actually reaches MAX."""
+    request = _request(part, key="9" * 31 + "b")
+    token = issue_max_link(request_id=request.pk).token
+
+    deliver(client, bot_started(CUSTOMER, CUSTOMER_CHAT, token))
+    drain(worker)
+
+    texts = server.texts_to(CUSTOMER_CHAT)
+    sent = server.all_requests_text()
+
+    assert len(texts) == 1
+    assert texts[0].startswith(f"Добрый день! Ваша заявка №{request.reference} получена.")
+    assert max_service.MENU_PAYLOAD in sent
+    assert "Мои заявки" in sent

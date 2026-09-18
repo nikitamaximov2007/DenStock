@@ -150,12 +150,17 @@ def bind_customer_chat(
     MaxCustomerChat.objects.update_or_create(
         user_id=user_id, defaults={"chat_id": chat_id, "active_conversation": conversation}
     )
-    for index, text in enumerate(request_summary_messages(request)):
+    # MAX has no persistent keyboard, so the way in rides on the greeting itself:
+    # the last summary message carries «Мои заявки». Same deduplicated rows, so a
+    # redelivered handoff still greets exactly once.
+    summary = request_summary_messages(request)
+    for index, text in enumerate(summary):
         queue_message(
             chat_id=chat_id,
             text=text,
             dedupe_key=f"summary:{link_token_id}:{index}",
             conversation=conversation,
+            buttons=MENU_BUTTON if index == len(summary) - 1 else None,
         )
     MaxOutboxEvent.objects.get_or_create(
         dedupe_key=f"customer_linked:{link_token_id}",

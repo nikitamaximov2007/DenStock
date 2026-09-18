@@ -563,3 +563,82 @@ def test_commands_still_work_for_anyone_who_learned_them(part):
     assert f"№{request.reference}" in result.reply
     assert re.search(r"✓ №[0-9A-F]{8}", result.reply)
     assert timezone.now() is not None
+
+
+# --- MAX: the way in rides on the handoff greeting -----------------------------------------
+
+
+def _max_summary_rows(request):
+    return list(
+        MaxMessage.objects.filter(
+            conversation__request=request, dedupe_key__startswith="summary:"
+        ).order_by("pk")
+    )
+
+
+def test_the_max_handoff_greeting_itself_offers_my_requests(part):
+    """A MAX customer who followed the real deep link needs no command at all.
+
+    MAX has no persistent keyboard, so «Мои заявки» has to arrive attached to
+    something. It rides on the last summary message of the handoff.
+    """
+    request = make_request(part, messenger=CustomerRequest.Messenger.MAX)
+    link(request)
+
+    rows = _max_summary_rows(request)
+
+    assert rows, "the handoff must greet"
+    assert rows[-1].buttons == max_service.MENU_BUTTON
+    assert customer_ui.MY_REQUESTS_BUTTON in str(rows[-1].buttons)
+    assert [row.buttons for row in rows[:-1]] == [None] * (len(rows) - 1)
+
+
+def test_the_max_handoff_button_opens_the_selector_without_a_command(part):
+    request = make_request(part, messenger=CustomerRequest.Messenger.MAX)
+    link(request)
+    payload = _max_summary_rows(request)[-1].buttons[0][0]["payload"]
+
+    assert max_service.is_menu_payload(payload)
+
+    view, buttons = max_service.selector_view(MAX_USER)
+
+    assert f"№{request.reference}" in view.text
+    assert buttons and f"{customer_ui.CURRENT_MARK} №{request.reference}" == buttons[0][0]["text"]
+
+
+def test_a_returning_max_customer_gets_the_button_on_the_new_request_too(part):
+    first = make_request(part, messenger=CustomerRequest.Messenger.MAX)
+    link(first)
+    second = make_request(part, messenger=CustomerRequest.Messenger.MAX)
+    link(second)
+
+    assert _max_summary_rows(second)[-1].buttons == max_service.MENU_BUTTON
+    # The newly linked request is current; the older one stays reachable.
+    view, buttons = max_service.selector_view(MAX_USER)
+    labels = [button[0]["text"] for button in buttons]
+    assert f"{customer_ui.CURRENT_MARK} №{second.reference}" in labels
+    assert f"№{first.reference}" in labels
+
+
+def test_the_handoff_button_costs_no_extra_message_and_survives_a_replay(part):
+    request = make_request(part, messenger=CustomerRequest.Messenger.MAX)
+    link(request)
+    # The real token id, never a hard-coded one: ids only line up by accident.
+    token_row = CustomerRequestMessengerLinkToken.objects.get(request=request)
+    before = list(
+        MaxMessage.objects.filter(conversation__request=request).values_list("pk", "dedupe_key")
+    )
+
+    # A redelivered binding of the very same token adds nothing.
+    max_service.bind_customer_chat(
+        request=request, chat_id=MAX_CHAT, user_id=MAX_USER, link_token_id=token_row.pk
+    )
+
+    after = list(
+        MaxMessage.objects.filter(conversation__request=request).values_list("pk", "dedupe_key")
+    )
+    greetings = [row for row in after if "получена" in MaxMessage.objects.get(pk=row[0]).text]
+
+    assert after == before
+    assert len(greetings) == 1
+    assert _max_summary_rows(request)[-1].buttons == max_service.MENU_BUTTON
