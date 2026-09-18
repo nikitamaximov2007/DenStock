@@ -29,7 +29,7 @@ from django.utils import timezone
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
-from . import messaging, operator_bot
+from . import customer_ui, messaging, operator_bot
 from . import telegram_service as service
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
@@ -63,13 +63,29 @@ class SingleInstanceError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class Outgoing:
-    """A reply that may be lost harmlessly (menus, cards, hints)."""
+    """A reply that may be lost harmlessly (menus, cards, hints).
+
+    ``edit_message_id`` re-renders a message the bot already sent instead of
+    sending a new one: the selector's ✓ marker moves in place. The customer's
+    choice is already stored, so losing this changes nothing they rely on.
+    """
 
     chat_id: int | None = None
     text: str = ""
     reply_markup: dict | None = None
     callback_query_id: str = ""
     callback_text: str = ""
+    edit_message_id: int | None = None
+
+
+def _rerendered_selector(chat_id: int, message_id) -> Outgoing:
+    """The selector as it looks after the press, for the message that holds it."""
+    if not _is_int(message_id):
+        return Outgoing()
+    text, markup = service.selector_text_and_markup(chat_id)
+    return Outgoing(
+        chat_id=chat_id, text=text, reply_markup=markup, edit_message_id=message_id
+    )
 
 
 def backoff_seconds(attempts: int) -> int:
@@ -156,15 +172,19 @@ def handle_update(update) -> list[Outgoing]:
         except service.TelegramAccessDenied:
             return reply(service.NOT_AVAILABLE_TEXT)
 
-    if command in {"/start", "/help"}:
-        return reply(service.customer_greeting(chat_id))
-    if command == "/requests":
-        result = service.customer_conversations_prompt(chat_id)
+    def customer(result):
         return reply(result.reply, result.keyboard)
+
+    if text.strip().lower() in service.MY_REQUESTS_TEXTS:
+        # The persistent keyboard sends plain text, not a command.
+        return customer(service.customer_conversations_prompt(chat_id))
+    if command in {"/start", "/help"}:
+        return customer(service.customer_greeting(chat_id))
     if command:
-        return reply(service.customer_greeting(chat_id))
-    result = service.record_customer_message(chat_id=chat_id, update_id=update_id, text=text)
-    return reply(result.reply, result.keyboard)
+        return customer(service.customer_greeting(chat_id))
+    return customer(
+        service.record_customer_message(chat_id=chat_id, update_id=update_id, text=text)
+    )
 
 
 def _handle_callback(callback) -> list[Outgoing]:
@@ -181,6 +201,8 @@ def _handle_callback(callback) -> list[Outgoing]:
     if kind == "s":
         # Customer choosing among their own requests. In a private chat the
         # chat id equals the user id; the service re-checks ownership.
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        message_id = message.get("message_id")
         conversation = service.select_customer_conversation(
             chat_id=user_id, conversation_hex=value
         )
@@ -191,13 +213,15 @@ def _handle_callback(callback) -> list[Outgoing]:
             # The customer's own request has closed since this button was sent.
             return [
                 answered,
+                _rerendered_selector(user_id, message_id),
                 Outgoing(chat_id=user_id, text=closed.reply, reply_markup=closed.keyboard),
             ]
         return [
             answered,
+            _rerendered_selector(user_id, message_id),
             Outgoing(
                 chat_id=user_id,
-                text=f"Выбрана заявка {conversation.request.reference}. Напишите сообщение.",
+                text=customer_ui.selected_text(conversation.request.reference),
             ),
         ]
 
@@ -381,6 +405,13 @@ class TelegramBotWorker:
                     self.api.answer_callback_query(
                         callback_query_id=item.callback_query_id, text=item.callback_text
                     )
+                elif item.edit_message_id is not None and item.chat_id is not None and item.text:
+                    self.api.edit_message_text(
+                        chat_id=item.chat_id,
+                        message_id=item.edit_message_id,
+                        text=item.text,
+                        reply_markup=item.reply_markup,
+                    )
                 elif item.chat_id is not None and item.text:
                     self.api.send_message(
                         chat_id=item.chat_id, text=item.text, reply_markup=item.reply_markup
@@ -502,7 +533,11 @@ class TelegramBotWorker:
                 )
                 continue
             try:
-                result = self.api.send_message(chat_id=conversation.customer_chat_id, text=row.text)
+                result = self.api.send_message(
+                    chat_id=conversation.customer_chat_id,
+                    text=row.text,
+                    reply_markup=service.CUSTOMER_KEYBOARD,
+                )
             except TelegramError as exc:
                 self._fail(row, "delivery_status", exc)
                 continue

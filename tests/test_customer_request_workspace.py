@@ -406,7 +406,7 @@ def test_the_card_shows_one_chronological_conversation_with_roles(part, seller, 
 
     customer = html.index("Здравствуйте, когда забрать?")
     reply = html.index("Сегодня после 15:00.")
-    assert html.index("Готово. Telegram подключён") < customer < reply
+    assert html.index("Ваша заявка №") < customer < reply
     assert 'data-role="customer"' in html and 'data-role="operator"' in html
     assert "Доставлено" in html
     assert "denis" in html  # the employee is named to employees

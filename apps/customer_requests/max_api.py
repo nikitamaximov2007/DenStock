@@ -280,14 +280,30 @@ class MaxBotApi:
             raise MaxNetworkError("invalid response", ambiguous=True)
         return message
 
-    def answer_callback(self, *, callback_id: str, notification: str) -> None:
+    def answer_callback(
+        self, *, callback_id: str, notification: str = "", message: dict | None = None
+    ) -> None:
+        """Answer one button press: a toast, a replacement message, or both.
+
+        ``message`` is ``{"text": ..., "buttons": [[...]]}``; MAX replaces the
+        message the button belongs to with it, which is how the selector's mark
+        moves without adding anything to the conversation.
+        """
+        payload: dict = {}
+        if notification:
+            payload["notification"] = notification[:200]
+        if message is not None:
+            text = str(message.get("text") or "")
+            if not text or len(text) > MAX_TEXT_CHARS:
+                raise MaxApiError(400, "local.validation", "text length is out of bounds")
+            updated: dict = {"text": text}
+            attachments = inline_keyboard(message.get("buttons"))
+            if attachments:
+                updated["attachments"] = attachments
+            payload["message"] = updated
+            payload["disable_link_preview"] = True
         self._simple(
-            self.call(
-                "POST",
-                "/answers",
-                query={"callback_id": callback_id},
-                payload={"notification": notification[:200]},
-            )
+            self.call("POST", "/answers", query={"callback_id": callback_id}, payload=payload)
         )
 
     def list_subscriptions(self) -> list[dict]:

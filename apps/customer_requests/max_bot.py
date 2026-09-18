@@ -224,6 +224,15 @@ def _message_callback(update) -> str:
     press_key = _event_digest(
         "message_callback", callback_id, user_id, payload, callback.get("timestamp")
     )
+    if service.is_menu_payload(payload):
+        # «Мои заявки»: show what is open now, in the message that was pressed.
+        service.queue_selector(
+            user_id=user_id,
+            chat_id=chat_id,
+            dedupe_key=f"callback:{press_key}",
+            callback_id=callback_id,
+        )
+        return "selector"
     conversation = service.select_customer_conversation(
         user_id=user_id,
         chat_id=chat_id,
@@ -523,7 +532,12 @@ class MaxBotWorker:
                 self._finish(row, MaxDeliveryStatus.FAILED,
                              error="Клиент недоступен для сообщений")
                 continue
-            if row.callback_id:
+            if row.dedupe_key.startswith(service.SELECTOR_DEDUPE_PREFIX) and row.callback_id:
+                # A selector the customer pressed: re-render that same message.
+                if self._update_pressed_message(row):
+                    continue
+                # MAX refused the edit; fall through and send it as a message.
+            elif row.callback_id:
                 self._answer_callback(row)
             self.pacer.wait(chat_id)
             try:
@@ -546,6 +560,23 @@ class MaxBotWorker:
             body = (result or {}).get("body") or {}
             self._finish(row, MaxDeliveryStatus.SENT, mid=body.get("mid"))
         return len(ids)
+
+    def _update_pressed_message(self, row) -> bool:
+        """Draw the selector in place; ``False`` means "send it as a message".
+
+        Only the drawing can fail here: the customer's choice is already stored.
+        """
+        self.pacer.wait(None)
+        try:
+            self.api.answer_callback(
+                callback_id=row.callback_id,
+                message={"text": row.text, "buttons": row.buttons},
+            )
+        except MaxError as exc:
+            logger.info("selector not updated in place: %s", exc)
+            return False
+        self._finish(row, MaxDeliveryStatus.SENT)
+        return True
 
     def _answer_callback(self, row) -> None:
         """Stop the button's spinner. Harmless if lost: the message follows."""

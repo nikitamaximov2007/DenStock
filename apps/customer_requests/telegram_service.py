@@ -16,7 +16,7 @@ from datetime import timedelta
 from django.db import connection, transaction
 from django.utils import timezone
 
-from . import messaging, operator_bot, operator_replies, workspace
+from . import customer_ui, messaging, operator_bot, operator_replies, workspace
 from .models import (
     CustomerRequest,
     MaxMessage,
@@ -32,19 +32,13 @@ MAX_MESSAGE_CHARS = 4000
 REPLY_WINDOW = timedelta(minutes=30)
 HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 
-LINKED_TEXT = "Готово. Telegram подключён к заявке {reference}."
+LINKED_TEXT = customer_ui.GREETING_TEXT
 LINK_INVALID_TEXT = (
     "Ссылка недействительна или устарела. Откройте ссылку со страницы заявки ещё раз. "
     "Если ссылки нет, менеджер свяжется с вами по телефону."
 )
-UNLINKED_GREETING = (
-    "Это бот PRO-STOR для связи по заявкам. Чтобы написать менеджеру, откройте ссылку "
-    "«Продолжить в Telegram» со страницы вашей заявки."
-)
-LINKED_GREETING = (
-    "Напишите сообщение, менеджер PRO-STOR ответит здесь. Если у вас несколько заявок, "
-    "команда /requests поможет выбрать нужную."
-)
+UNLINKED_GREETING = customer_ui.UNLINKED_TEXT
+LINKED_GREETING = customer_ui.LINKED_HINT
 MEDIA_NOT_SUPPORTED_TEXT = (
     "Пока бот принимает только текст. Опишите деталь словами или отправьте фото менеджеру, "
     "когда он ответит."
@@ -412,23 +406,57 @@ class CustomerResult:
 def _linked_conversations(chat_id: int) -> list[TelegramConversation]:
     return list(
         TelegramConversation.objects.select_related("request")
+        .prefetch_related("request__lines")
         .filter(customer_chat_id=chat_id, status=TelegramConversation.Status.LINKED)
         .order_by("-linked_at", "-pk")[:20]
     )
 
 
-def _selector(conversations) -> dict:
+# The customer's one control, always under the text field. It is not a command
+# and does not get in the way of typing an ordinary message.
+CUSTOMER_KEYBOARD = {
+    "keyboard": [[{"text": customer_ui.MY_REQUESTS_BUTTON}]],
+    "resize_keyboard": True,
+    "is_persistent": True,
+}
+MY_REQUESTS_TEXTS = {
+    customer_ui.MY_REQUESTS_BUTTON.lower(),
+    "мои заявки",
+    "заявки",
+    "/requests",
+}
+
+
+def _selector(conversations, *, current_id=None) -> dict:
+    """One inline button per active request; the current one is marked."""
+    view = customer_ui.SelectorView(text="", conversations=list(conversations),
+                                    current_id=current_id)
     return {
         "inline_keyboard": [
-            [
-                {
-                    "text": f"Заявка {conversation.request.reference}",
-                    "callback_data": f"s:{conversation.public_id.hex}",
-                }
-            ]
-            for conversation in conversations
+            [{"text": label, "callback_data": payload}] for label, payload in view.buttons()
         ]
     }
+
+
+def selector_result(chat_id: int) -> CustomerResult:
+    """«Мои заявки»: what the customer has open now, and which one is chosen."""
+    linked = _linked_conversations(chat_id)
+    state = TelegramCustomerChat.objects.filter(chat_id=chat_id).first()
+    view = customer_ui.selector_view(
+        linked,
+        active_id=state.active_conversation_id if state else None,
+        linked_any=bool(linked),
+    )
+    if not view.has_choices:
+        return CustomerResult(view.text, CUSTOMER_KEYBOARD)
+    return CustomerResult(view.text, _selector(view.conversations, current_id=view.current_id))
+
+
+def selector_text_and_markup(chat_id: int) -> tuple[str, dict | None]:
+    """The selector as it should look now, for re-rendering an existing message."""
+    result = selector_result(chat_id)
+    keyboard = result.keyboard if result.keyboard != CUSTOMER_KEYBOARD else None
+    return result.reply, keyboard
 
 
 CONTACT_CLOSED_TEXT = "Переписка по этой заявке закрыта."
@@ -444,30 +472,20 @@ def _closed_reply(request: CustomerRequest, still_open) -> CustomerResult:
     if request.status in messaging.MESSAGEABLE_STATUSES:
         return CustomerResult(CONTACT_CLOSED_TEXT)
     text = messaging.closed_request_text(request.reference, other_open=bool(still_open))
-    return CustomerResult(text, _selector(still_open) if still_open else None)
+    return CustomerResult(text, _selector(still_open) if still_open else CUSTOMER_KEYBOARD)
 
 
-def customer_greeting(chat_id: int) -> str:
+def customer_greeting(chat_id: int) -> CustomerResult:
+    """A plain hello: the customer's control comes with it, not a command list."""
     linked = _linked_conversations(chat_id)
     if messaging.open_conversations(linked):
-        return LINKED_GREETING
-    return messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING
+        return CustomerResult(LINKED_GREETING, CUSTOMER_KEYBOARD)
+    text = messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING
+    return CustomerResult(text, CUSTOMER_KEYBOARD if linked else None)
 
 
 def customer_conversations_prompt(chat_id: int) -> CustomerResult:
-    linked = _linked_conversations(chat_id)
-    # A closed request is never offered, whatever an older keyboard still shows.
-    conversations = messaging.open_conversations(linked)
-    if not conversations:
-        return CustomerResult(messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING)
-    state = TelegramCustomerChat.objects.filter(chat_id=chat_id).first()
-    current = next(
-        (c for c in conversations if state and c.pk == state.active_conversation_id), None
-    )
-    text = "Выберите заявку, по которой хотите написать."
-    if current:
-        text += f" Сейчас выбрана заявка {current.request.reference}."
-    return CustomerResult(text, _selector(conversations))
+    return selector_result(chat_id)
 
 
 @transaction.atomic

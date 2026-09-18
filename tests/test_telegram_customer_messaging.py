@@ -29,6 +29,7 @@ from apps.accounts import roles
 from apps.catalog.models import PartNumber, PartType
 from apps.core.observability import RedactingFormatter, redact
 from apps.customer_requests import messaging
+from apps.customer_requests import telegram_service as service_module
 from apps.customer_requests.messengers import (
     MessengerLinkError,
     consume_telegram_start,
@@ -364,18 +365,23 @@ def test_open_request_button_goes_to_the_internal_page_for_operators_only(
 ):
     request = _request(part, key="u" * 32)
     link(worker, api, request)
+    inline = [
+        item for item in api.sent if (item["reply_markup"] or {}).get("inline_keyboard")
+    ]
     buttons = [
         button
-        for item in api.sent
-        if item["reply_markup"]
+        for item in inline
         for row in item["reply_markup"]["inline_keyboard"]
         for button in row
         if "url" in button
     ]
     assert buttons
-    assert all(
-        item["chat_id"] in {OPERATOR_A, OPERATOR_B} for item in api.sent if item["reply_markup"]
-    )
+    # Only employees get request buttons; the customer gets their own keyboard.
+    assert all(item["chat_id"] in {OPERATOR_A, OPERATOR_B} for item in inline)
+    customer_markups = [
+        item["reply_markup"] for item in api.sent if item["chat_id"] == CUSTOMER
+    ]
+    assert all(markup == service_module.CUSTOMER_KEYBOARD for markup in customer_markups)
     assert buttons[0]["url"] == f"https://denisstock.example/customer-requests/{request.pk}/"
     assert "denisstock.example" not in "".join(api.texts_to(CUSTOMER))
 
@@ -393,10 +399,12 @@ def test_deep_link_binds_numeric_chat_and_confirms_once(part, worker, api, opera
     assert conversation.customer_user_id == CUSTOMER
     confirmations = api.texts_to(CUSTOMER)
     assert len(confirmations) == 1
-    assert f"Готово. Telegram подключён к заявке {request.reference}." in confirmations[0]
+    assert confirmations[0].startswith(
+        f"Добрый день! Ваша заявка №{request.reference} получена."
+    )
     assert "Ваш заказ:" in confirmations[0]
     assert "Итого: 20 000 ₽" in confirmations[0]
-    assert "Менеджер PRO-STOR ответит вам здесь." in confirmations[0]
+    assert "Если у вас есть вопросы по заявке, напишите нам здесь" in confirmations[0]
     for operator in operators:
         assert any(
             f"Клиент подключил Telegram к заявке №{request.reference}" in text
@@ -575,7 +583,9 @@ def test_long_start_summary_splits_only_between_complete_lines(monkeypatch):
     assert len(messages) > 1
     assert all(len(message) <= 420 for message in messages)
     assert all(sum(f"A{i:02d}" in message for message in messages) == 1 for i in range(12))
-    assert messages[-1].endswith("Можете написать вопрос прямо сейчас.")
+    assert messages[-1].endswith(
+        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+    )
 
 
 def test_customer_who_never_starts_keeps_a_valid_request(part, worker, api, operators):
@@ -911,7 +921,7 @@ def test_request_page_shows_chronological_history_with_employee(
     assert "Переписка" in html and "data-timeline" in html
     first = html.index("Здравствуйте, когда можно забрать?")
     second = html.index("Добрый день. Деталь есть, можно забрать сегодня.")
-    assert html.index("Готово. Telegram подключён") < first < second
+    assert html.index("Ваша заявка №") < first < second
     assert "denis" in html
 
 
@@ -1655,7 +1665,9 @@ def test_telegram_completed_only_request_refuses_messages_and_offers_nothing(
     assert _telegram_customer_message_events() == events
     reply = api.last_with(CUSTOMER, "уже закрыта")
     assert reply["text"] == messaging.closed_request_text(request.reference, other_open=False)
-    assert not reply["reply_markup"]
+    # Nothing to switch to: no request buttons, only the customer's own keyboard.
+    assert not (reply["reply_markup"] or {}).get("inline_keyboard")
+    assert reply["reply_markup"] == service_module.CUSTOMER_KEYBOARD
 
 
 def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothing(
@@ -1671,8 +1683,8 @@ def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothi
         request_id=first.pk, target_status=CustomerRequest.Status.CANCELED, by=operators[0].user
     )
 
-    run(worker, api, message_update(CUSTOMER, "/requests"))
-    listing = api.last_with(CUSTOMER, "Выберите заявку")["reply_markup"]["inline_keyboard"]
+    run(worker, api, message_update(CUSTOMER, "Мои заявки"))  # the keyboard button
+    listing = api.last_with(CUSTOMER, "активная заявка")["reply_markup"]["inline_keyboard"]
     assert {row[0]["callback_data"] for row in listing} == {
         f"s:{second_conversation.public_id.hex}"
     }
@@ -1716,3 +1728,34 @@ def test_telegram_completed_request_can_neither_issue_nor_consume_a_link(
     run(worker, api, message_update(CUSTOMER, f"/start {token}"))
 
     assert not TelegramConversation.objects.get(request=request).is_linked
+
+
+def test_the_customer_keyboard_opens_my_requests_and_switching_is_one_line(
+    part, worker, api, operators
+):
+    """Release B: buttons, not commands, and a short confirmation on a switch."""
+    first = _request(part, key="kb1" * 10 + "12")
+    second = _request(part, key="kb2" * 10 + "12")
+    link(worker, api, first)
+    link(worker, api, second)
+
+    # The greeting already carries the customer's own keyboard.
+    run(worker, api, message_update(CUSTOMER, "/start"))
+    hello = api.last_with(CUSTOMER, "Напишите сообщение")
+    assert hello["reply_markup"]["keyboard"] == [[{"text": "Мои заявки"}]]
+
+    # Pressing it sends plain text, and the bot answers with the selector.
+    run(worker, api, message_update(CUSTOMER, "Мои заявки"))
+    selector = api.last_with(CUSTOMER, "Мои активные заявки:")
+    labels = [row[0]["text"] for row in selector["reply_markup"]["inline_keyboard"]]
+    assert labels == [f"✓ №{second.reference}", f"№{first.reference}"]
+    assert not TelegramMessage.objects.filter(text="Мои заявки").exists()
+
+    # Choosing the other request confirms in one line, without a second greeting.
+    first_conversation = TelegramConversation.objects.get(request=first)
+    run(worker, api, callback_update(CUSTOMER, f"s:{first_conversation.public_id.hex}"))
+    assert api.texts_to(CUSTOMER)[-1] == f"Выбрана заявка №{first.reference}."
+    assert sum(text.startswith("Добрый день!") for text in api.texts_to(CUSTOMER)) == 2
+
+    run(worker, api, message_update(CUSTOMER, "вопрос по первой"))
+    assert TelegramMessage.objects.get(text="вопрос по первой").conversation == first_conversation

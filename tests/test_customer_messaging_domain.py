@@ -78,10 +78,13 @@ def test_a_single_line_request_reads_as_one_priced_order():
     messages = messaging.request_summary_messages(_fake_request(_line()), FAKE_POLICY)
 
     assert len(messages) == 1
-    assert "Готово. FAKE подключён к заявке ABCD1234." in messages[0]
+    # The opening comes from the policy the transport passes in.
+    assert messages[0].startswith("Готово. FAKE подключён к заявке ABCD1234.")
     assert "A1 — ДЕТАЛЬ\n1 шт. × 88 ₽ = 88 ₽" in messages[0]
     assert "Итого: 88 ₽" in messages[0]
-    assert messages[0].endswith("Можете написать вопрос прямо сейчас.")
+    assert messages[0].endswith(
+        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+    )
 
 
 def test_every_line_of_a_multi_line_request_is_present_with_its_own_total():
@@ -138,7 +141,9 @@ def test_a_long_order_is_split_between_whole_lines_within_the_transports_limit()
     assert len(messages) > 1
     assert all(len(message) <= 420 for message in messages)
     assert all(sum(f"A{i:02d}" in message for message in messages) == 1 for i in range(12))
-    assert messages[-1].endswith("Можете написать вопрос прямо сейчас.")
+    assert messages[-1].endswith(
+        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+    )
 
 
 def test_the_same_request_is_one_message_for_a_roomier_transport():

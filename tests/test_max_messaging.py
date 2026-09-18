@@ -382,7 +382,7 @@ def test_start_binds_the_request_and_sends_the_summary_once(client, part, worker
     assert MaxCustomerChat.objects.get(user_id=CUSTOMER).active_conversation == conversation
     texts = server.texts_to(CUSTOMER_CHAT)
     assert len(texts) == 1
-    assert texts[0].startswith(f"Готово. MAX подключён к заявке {request.reference}.")
+    assert texts[0].startswith(f"Добрый день! Ваша заявка №{request.reference} получена.")
     assert max_service.LINK_INVALID_TEXT not in texts
     assert MaxOutboxEvent.objects.filter(kind="customer_linked").count() == 1
     assert CustomerRequestMessengerLinkToken.objects.get(request=request).used_at is not None
@@ -1042,7 +1042,7 @@ def test_returning_customer_selects_between_requests_and_messages_never_cross(
     conversation_b = MaxConversation.objects.get(request=request_b)
     assert conversation_b.customer_user_id == CUSTOMER
     assert server.texts_to(CUSTOMER_CHAT)[-1].startswith(
-        f"Готово. MAX подключён к заявке {request_b.reference}."
+        f"Добрый день! Ваша заявка №{request_b.reference} получена."
     )
     say(client, worker, "Про заявку B")
     assert customer_messages(request_b) == ["Про заявку B"]
@@ -1070,7 +1070,15 @@ def test_returning_customer_selects_between_requests_and_messages_never_cross(
     assert server.texts_to(CUSTOMER_CHAT)[-1] == max_service.SELECTED_TEXT.format(
         reference=request_b.reference
     )
-    assert server.answers and server.answers[-1]["body"] == {"notification": "Готово"}
+    updated = server.answers[-1]["body"]["message"]
+    assert updated["text"].startswith("Мои активные заявки:")
+    marked = [
+        button["text"]
+        for row in updated["attachments"][0]["payload"]["buttons"]
+        for button in row
+        if button["text"].startswith("✓")
+    ]
+    assert marked == [f"✓ №{request_b.reference}"]  # the ✓ moved to the chosen one
     say(client, worker, "Только для B")
     assert customer_messages(request_b) == ["Про заявку B", "Только для B"]
     assert customer_messages(request_a) == ["Про заявку A"]
@@ -1100,9 +1108,15 @@ def test_requests_command_and_repeat_start_offer_the_selector(client, part, work
 
     say(client, worker, "/requests")
     selector = server.sent[-1]
-    assert selector["text"].startswith(max_service.SELECT_TEXT)
-    assert f"Сейчас выбрана заявка {request_b.reference}" in selector["text"]
-    assert len(selector["attachments"][0]["payload"]["buttons"]) == 2
+    assert selector["text"].startswith("Мои активные заявки:")
+    assert max_service.SELECT_TEXT in selector["text"]
+    assert f"✓ №{request_b.reference}" in selector["text"]  # the current one is marked
+    assert f"№{request_a.reference}" in selector["text"]
+    buttons = selector["attachments"][0]["payload"]["buttons"]
+    assert [row[0]["text"] for row in buttons] == [
+        f"✓ №{request_b.reference}",
+        f"№{request_a.reference}",
+    ]
 
     deliver(client, bot_started(CUSTOMER, CUSTOMER_CHAT))  # started again after a stop
     drain(worker)
@@ -1192,7 +1206,9 @@ def test_a_callback_whose_keyboard_message_was_deleted_still_works(client, part,
     conversation = MaxConversation.objects.get(request=request)
     deliver(client, message_callback(CUSTOMER, None, f"s:{conversation.public_id.hex}"))
     drain(worker)
-    assert server.texts_to(CUSTOMER_CHAT)[-1].startswith("Выбрана заявка")
+    # The keyboard's message is gone, so only the short confirmation is sent.
+    assert server.texts_to(CUSTOMER_CHAT)[-1] == f"Выбрана заявка №{request.reference}."
+    assert MaxCustomerChat.objects.get(user_id=CUSTOMER).active_conversation == conversation
 
 
 def test_media_is_answered_with_a_hint_and_not_stored(client, part, worker, server):
@@ -1396,3 +1412,42 @@ def test_a_completed_request_can_neither_issue_nor_consume_a_max_link(
         request=request, status=MaxConversation.Status.LINKED
     ).exists()
     assert server.texts_to(CUSTOMER_CHAT) == [max_service.LINK_INVALID_TEXT]
+
+
+def test_my_requests_button_opens_the_selector_in_the_pressed_message(
+    client, part, worker, server
+):
+    """Release B: the customer's way in is a button, not a command."""
+    first = _request(part, key="R" * 32)
+    second = _request(part, key="S" * 32)
+    bind(client, worker, first)
+    say(client, worker, f"/start {issue_max_link(request_id=second.pk).token}")
+    sent_before = len(server.sent)
+
+    deliver(client, message_callback(CUSTOMER, CUSTOMER_CHAT, max_service.MENU_PAYLOAD))
+    drain(worker)
+
+    # Nothing was added to the conversation: the pressed message became the selector.
+    assert len(server.sent) == sent_before
+    answer = server.answers[-1]["body"]["message"]
+    assert answer["text"].startswith("Мои активные заявки:")
+    labels = [
+        button["text"]
+        for row in answer["attachments"][0]["payload"]["buttons"]
+        for button in row
+    ]
+    assert labels == [f"✓ №{second.reference}", f"№{first.reference}"]
+
+
+def test_a_selector_max_refuses_to_edit_still_reaches_the_customer(
+    client, part, worker, server
+):
+    """Drawing may fail; the choice is already stored and the text still arrives."""
+    request = _request(part, key="T" * 32)
+    bind(client, worker, request)
+    server.script("/answers", ("status", 400, {"code": "x", "message": "no edit"}))
+
+    deliver(client, message_callback(CUSTOMER, CUSTOMER_CHAT, max_service.MENU_PAYLOAD))
+    drain(worker)
+
+    assert server.texts_to(CUSTOMER_CHAT)[-1].startswith("Ваша активная заявка:")

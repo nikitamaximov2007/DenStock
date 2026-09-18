@@ -24,7 +24,9 @@ CUSTOMER_ACK_TEXT = "Сообщение передано менеджеру PRO-
 UNKNOWN_PRICE_TEXT = "цена уточняется"
 CONTINUATION_HEADING = "Ваш заказ (продолжение):"
 ORDER_HEADING = "Ваш заказ:"
-CLOSING_TEXT = "Менеджер PRO-STOR ответит вам здесь.\nМожете написать вопрос прямо сейчас."
+CLOSING_TEXT = (
+    "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+)
 
 
 @dataclass(frozen=True, slots=True)

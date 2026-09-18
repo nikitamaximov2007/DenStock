@@ -21,7 +21,7 @@ from datetime import timedelta
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from . import messaging, operator_bot, operator_replies, telegram_service
+from . import customer_ui, messaging, operator_bot, operator_replies, telegram_service
 from .max_api import MAX_TEXT_CHARS
 from .messengers import token_hash
 from .models import (
@@ -40,23 +40,22 @@ SELECT_PAYLOAD_PREFIX = "s:"
 SELECTOR_LIMIT = 20
 EPHEMERAL_RETENTION = timedelta(days=1)
 
-LINKED_TEXT = "Готово. MAX подключён к заявке {reference}."
+LINKED_TEXT = customer_ui.GREETING_TEXT
 LINK_INVALID_TEXT = (
     "Ссылка недействительна или устарела. Откройте ссылку со страницы заявки ещё раз. "
     "Если ссылки нет, менеджер свяжется с вами по телефону."
 )
-UNLINKED_GREETING = (
-    "Это бот PRO-STOR для связи по заявкам. Чтобы написать менеджеру, нажмите "
-    "«Продолжить в MAX» на странице вашей заявки."
-)
-LINKED_GREETING = (
-    "Напишите сообщение, менеджер PRO-STOR ответит здесь. Если у вас несколько заявок, "
-    "отправьте /requests, чтобы выбрать нужную."
-)
+UNLINKED_GREETING = customer_ui.UNLINKED_TEXT
+LINKED_GREETING = customer_ui.LINKED_HINT
 MEDIA_NOT_SUPPORTED_TEXT = telegram_service.MEDIA_NOT_SUPPORTED_TEXT
-SELECT_TEXT = "Выберите заявку, по которой хотите написать."
+SELECT_TEXT = customer_ui.SELECTOR_HINT
 AMBIGUOUS_TEXT = "У вас несколько заявок. Выберите нужную и отправьте сообщение ещё раз."
-SELECTED_TEXT = "Выбрана заявка {reference}. Напишите сообщение."
+SELECTED_TEXT = customer_ui.SELECTED_TEXT
+# MAX has no persistent keyboard, so the bot's own messages carry the entry point.
+MENU_PAYLOAD = customer_ui.MY_REQUESTS_PAYLOAD
+MENU_BUTTON = [[{"text": customer_ui.MY_REQUESTS_BUTTON, "payload": MENU_PAYLOAD}]]
+# A selector answer re-renders the pressed message instead of sending a new one.
+SELECTOR_DEDUPE_PREFIX = "selector:"
 SELECTION_UNAVAILABLE_TEXT = "Эта заявка недоступна. Отправьте /requests, чтобы выбрать другую."
 CLOSED_TEXT = "Переписка по этой заявке закрыта."
 
@@ -89,8 +88,17 @@ def queue_message(
     callback_id: str = "",
     direction: str = MaxMessage.Direction.SYSTEM,
     operator_user=None,
+    in_place: bool = False,
 ) -> tuple[MaxMessage, bool]:
-    """Store one outgoing message exactly once per ``dedupe_key``."""
+    """Store one outgoing message exactly once per ``dedupe_key``.
+
+    ``in_place`` marks a selector the worker should render by editing the
+    message the customer pressed, instead of adding one to the conversation.
+    The mark rides on the dedupe key, so no column is needed and a worker that
+    cannot edit still delivers the same text as an ordinary message.
+    """
+    if in_place:
+        dedupe_key = f"{SELECTOR_DEDUPE_PREFIX}{dedupe_key}"
     return MaxMessage.objects.get_or_create(
         dedupe_key=dedupe_key,
         defaults={
@@ -212,22 +220,31 @@ def anonymize_conversation(request: CustomerRequest) -> None:
 def linked_conversations(user_id: int) -> list[MaxConversation]:
     return list(
         MaxConversation.objects.select_related("request")
+        .prefetch_related("request__lines")
         .filter(customer_user_id=user_id, status=MaxConversation.Status.LINKED)
         .order_by("-linked_at", "-pk")[:SELECTOR_LIMIT]
     )
 
 
-def selector_buttons(conversations) -> list[list[dict]]:
-    """One button per request; the payload is the conversation's opaque id."""
-    return [
-        [
-            {
-                "text": f"Заявка {conversation.request.reference}",
-                "payload": f"{SELECT_PAYLOAD_PREFIX}{conversation.public_id.hex}",
-            }
-        ]
-        for conversation in conversations
-    ]
+def selector_buttons(conversations, *, current_id=None) -> list[list[dict]]:
+    """One button per request; the current one is marked, the payload is opaque."""
+    view = customer_ui.SelectorView(
+        text="", conversations=list(conversations), current_id=current_id
+    )
+    return [[{"text": label, "payload": payload}] for label, payload in view.buttons()]
+
+
+def selector_view(user_id: int) -> tuple[customer_ui.SelectorView, list[list[dict]]]:
+    """«Мои заявки» for this MAX user: the text and the buttons to draw."""
+    linked = linked_conversations(user_id)
+    state = MaxCustomerChat.objects.filter(user_id=user_id).first()
+    view = customer_ui.selector_view(
+        linked,
+        active_id=state.active_conversation_id if state else None,
+        linked_any=bool(linked),
+    )
+    buttons = selector_buttons(view.conversations, current_id=view.current_id) or None
+    return view, buttons
 
 
 def _closed_reply(request: CustomerRequest, still_open) -> tuple[str, list | None]:
@@ -244,34 +261,37 @@ def _closed_reply(request: CustomerRequest, still_open) -> tuple[str, list | Non
 
 
 def queue_greeting(*, user_id: int, chat_id: int, dedupe_key: str) -> None:
+    """A hello with the way in: «Мои заявки», never a command to memorise."""
     linked = linked_conversations(user_id)
-    if messaging.open_conversations(linked):
-        text = LINKED_GREETING
+    open_requests = messaging.open_conversations(linked)
+    if open_requests:
+        text, buttons = LINKED_GREETING, MENU_BUTTON
     elif linked:
-        text = messaging.NO_OPEN_REQUESTS_TEXT
+        text, buttons = messaging.NO_OPEN_REQUESTS_TEXT, None
     else:
-        text = UNLINKED_GREETING
-    queue_message(chat_id=chat_id, text=text, dedupe_key=dedupe_key)
+        text, buttons = UNLINKED_GREETING, None
+    queue_message(chat_id=chat_id, text=text, dedupe_key=dedupe_key, buttons=buttons)
 
 
-def queue_selector(*, user_id: int, chat_id: int, dedupe_key: str) -> None:
-    linked = linked_conversations(user_id)
-    # A closed request is never offered, whatever an older keyboard still shows.
-    conversations = messaging.open_conversations(linked)
-    if not conversations:
-        text = messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING
-        queue_message(chat_id=chat_id, text=text, dedupe_key=dedupe_key)
-        return
-    state = MaxCustomerChat.objects.filter(user_id=user_id).first()
-    current = next(
-        (c for c in conversations if state and c.pk == state.active_conversation_id), None
-    )
-    text = SELECT_TEXT
-    if current:
-        text += f" Сейчас выбрана заявка {current.request.reference}."
+def queue_selector(*, user_id: int, chat_id: int, dedupe_key: str, callback_id: str = "") -> None:
+    """«Мои заявки»: the customer's active requests with the current one marked.
+
+    A closed request is never offered, whatever an older keyboard still shows.
+    With ``callback_id`` the answer re-renders the pressed message in place.
+    """
+    view, buttons = selector_view(user_id)
     queue_message(
-        chat_id=chat_id, text=text, dedupe_key=dedupe_key, buttons=selector_buttons(conversations)
+        chat_id=chat_id,
+        text=view.text,
+        dedupe_key=dedupe_key,
+        buttons=buttons,
+        callback_id=callback_id,
+        in_place=bool(callback_id and buttons),
     )
+
+
+def is_menu_payload(payload) -> bool:
+    return isinstance(payload, str) and payload.strip() == MENU_PAYLOAD
 
 
 def select_customer_conversation(
@@ -323,17 +343,24 @@ def select_customer_conversation(
             buttons=buttons,
         )
         return None
-    if MaxMessage.objects.filter(dedupe_key=dedupe_key).exists():
+    if MaxMessage.objects.filter(
+        dedupe_key__in=[dedupe_key, f"{SELECTOR_DEDUPE_PREFIX}{dedupe_key}"]
+    ).exists():
         return conversation  # a redelivered press: already selected and confirmed
+    # The choice is written first; drawing it is a separate, losable step.
     MaxCustomerChat.objects.update_or_create(
         user_id=user_id, defaults={"chat_id": chat_id, "active_conversation": conversation}
     )
+    # The pressed selector is re-drawn in place, so the ✓ moves without adding
+    # anything, and the customer gets one short line saying what is chosen now.
+    queue_selector(
+        user_id=user_id, chat_id=chat_id, dedupe_key=dedupe_key, callback_id=callback_id
+    )
     queue_message(
         chat_id=chat_id,
-        text=SELECTED_TEXT.format(reference=conversation.request.reference),
+        text=customer_ui.selected_text(conversation.request.reference),
         dedupe_key=dedupe_key,
         conversation=conversation,
-        callback_id=callback_id,
     )
     return conversation
 

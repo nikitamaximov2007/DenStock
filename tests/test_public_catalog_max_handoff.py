@@ -365,7 +365,7 @@ def test_end_to_end_first_time_customer(e2e):
     assert conversation.is_linked and conversation.customer_user_id == CUSTOMER
     texts = server.texts_to(CUSTOMER_CHAT)
     assert len(texts) == 1
-    assert texts[0].startswith(f"Готово. MAX подключён к заявке {request.reference}.")
+    assert texts[0].startswith(f"Добрый день! Ваша заявка №{request.reference} получена.")
     assert "Итого:" in texts[0] or "уточняется" in texts[0]
 
     # 6-8: first message, exactly one ACK, operators get it.

@@ -216,6 +216,24 @@ class TelegramBotApi:
             raise TelegramNetworkError("invalid response", ambiguous=True)
         return result
 
+    def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str, reply_markup: dict | None = None
+    ) -> None:
+        """Re-render a message the bot already sent (the selector's ✓ marker).
+
+        Purely cosmetic: the customer's choice is already stored, so a refusal
+        here is logged by the caller and changes nothing.
+        """
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        self.call("editMessageText", payload)
+
     def answer_callback_query(self, *, callback_query_id: str, text: str = "") -> None:
         payload = {"callback_query_id": callback_query_id}
         if text:
