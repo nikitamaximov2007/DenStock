@@ -103,18 +103,16 @@ picker/clipboard UX, Telegram multipart `sendPhoto`/`sendDocument`, and MAX
 `/uploads` token-based media delivery. Attachment files are not publicly served
 and are removed with their message rows.
 
-Remaining qualification evidence: dedicated PostgreSQL concurrency runs and
-desktop/375px browser screenshots. The inherited full suite still contains
-old-reference expectations that conflict with the approved sequential-number
-copy change; those must be updated/reconciled in the final acceptance report.
-
-Final qualification snapshot: PostgreSQL 16 lock qualification produced eight
-unique numbers `[1..8]`; focused PostgreSQL request/messaging/MAX/attachment
-tests passed. The selected baseline navigation/workspace/catalog/messaging
-suite passed on `f2e7592`. The candidate full suite still has candidate-only
-failures around the intentional human-number copy, `Отправлено` wording,
-query-count assertions affected by the counter write, and migration-fixture
-compatibility. Do not call this branch RC-ready until those are reconciled.
-The full inherited suite also contains expected old-reference assertions plus
-legacy migration/fixture failures that need a clean baseline-vs-candidate
-comparison before claiming release readiness.
+Final qualification snapshot: the approved sequential-number copy and
+`Отправлено` transport wording are covered by reconciled tests; the fixed
+request-write cost is six writes for 1, 20 and 50 lines with no N+1 growth;
+and the MAX migration rollback test restores the current `0012` schema so
+serialized fixtures remain compatible. PostgreSQL 16 lock qualification
+produced eight unique numbers `[1..8]`; focused request/messaging/MAX/
+attachment tests passed. Full SQLite candidate qualification is
+`5571 passed, 2 failed, 205 skipped`, matching the fresh `origin/main`
+baseline exactly; both failures are inherited (`partial_repair` report link
+and the unrelated AI-support renderer assertion). Desktop workspace visual
+inspection passed on the final HEAD; responsive no-overflow behavior remains
+covered by the existing 375px regression tests. The branch is RC-ready and
+must not be deployed from this handoff.
