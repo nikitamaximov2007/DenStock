@@ -190,9 +190,7 @@ def submit_reply(
     if len(text) > limit:
         raise OperatorReplyError(f"Сообщение длиннее {limit} символов. Сократите его.")
     if is_max:
-        if validated is not None:
-            raise OperatorReplyError("Вложения пока недоступны в MAX.")
-        message = _queue_max_reply(target, user=user, text=text, key=key)
+        message = _queue_max_reply(target, user=user, text=text, key=key, attachment=validated)
     else:
         message = _queue_telegram_reply(
             target,
@@ -206,7 +204,9 @@ def submit_reply(
     return ReplyResult(message, target.channel, created=True)
 
 
-def _queue_max_reply(target: ReplyTarget, *, user, text: str, key: str) -> MaxMessage:
+def _queue_max_reply(
+    target: ReplyTarget, *, user, text: str, key: str, attachment=None
+) -> MaxMessage:
     conversation = MaxConversation.objects.select_for_update().get(pk=target.conversation.pk)
     now = timezone.now()
     message = MaxMessage.objects.create(
@@ -218,7 +218,12 @@ def _queue_max_reply(target: ReplyTarget, *, user, text: str, key: str) -> MaxMe
         next_attempt_at=now,
         dedupe_key=_dedupe_key(key),
         operator_user=user,
+        attachment_name=attachment.filename if attachment else "",
+        attachment_content_type=attachment.content_type if attachment else "",
     )
+    if attachment:
+        message.attachment.save(attachment.filename, ContentFile(attachment.content), save=False)
+        message.save(update_fields=["attachment"])
     conversation.last_message_at = now
     conversation.save(update_fields=["last_message_at", "updated_at"])
     MaxOutboxEvent.objects.create(

@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import ssl
 import urllib.error
 import urllib.request
@@ -279,6 +280,44 @@ class MaxBotApi:
             # MAX said 200 but the answer is unusable: it may have been delivered.
             raise MaxNetworkError("invalid response", ambiguous=True)
         return message
+
+    def send_file(
+        self, *, chat_id: int, content: bytes, filename: str, content_type: str, caption: str = ""
+    ) -> dict:
+        """Upload a file through MAX /uploads, then send its attachment token."""
+        kind = "image" if content_type.startswith("image/") else "file"
+        upload = self.call("POST", "/uploads", query={"type": kind})
+        url = upload.get("url") if isinstance(upload, dict) else None
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise MaxNetworkError("invalid upload response", ambiguous=False)
+        boundary = "----denstock-" + secrets.token_hex(12)
+        body = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"data\"; "
+            f"filename=\"{filename}\"\r\n"
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        request = urllib.request.Request(
+            url,
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with self._opener(request, timeout=self._timeout) as response:
+                uploaded = json.loads(response.read().decode("utf-8"))
+        except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise MaxNetworkError(type(exc).__name__, ambiguous=True) from None
+        token = uploaded.get("token") if isinstance(uploaded, dict) else None
+        if not isinstance(token, str) or not token:
+            raise MaxNetworkError("invalid upload token", ambiguous=True)
+        attachment_type = "image" if kind == "image" else "file"
+        result = self.call(
+            "POST", "/messages", query={"chat_id": chat_id, "disable_link_preview": "true"},
+            payload={"text": caption[:MAX_TEXT_CHARS] or " ", "notify": True,
+                     "attachments": [{"type": attachment_type, "payload": {"token": token}}]},
+            may_duplicate=True,
+        )
+        return result.get("message") or {}
 
     def answer_callback(
         self, *, callback_id: str, notification: str = "", message: dict | None = None

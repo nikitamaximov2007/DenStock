@@ -541,7 +541,18 @@ class MaxBotWorker:
                 self._answer_callback(row)
             self.pacer.wait(chat_id)
             try:
-                result = self.api.send_message(chat_id=chat_id, text=row.text, buttons=row.buttons)
+                if row.attachment:
+                    result = self.api.send_file(
+                        chat_id=chat_id,
+                        content=row.attachment.read(),
+                        filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
+                        content_type=row.attachment_content_type,
+                        caption=row.text,
+                    )
+                else:
+                    result = self.api.send_message(
+                        chat_id=chat_id, text=row.text, buttons=row.buttons
+                    )
             except MaxApiError as exc:
                 if exc.status == 401:
                     self._postpone(row, until=timezone.now(), error=exc, count_attempt=False)
@@ -744,4 +755,3 @@ def health_problems(heartbeat_file: str, *, now=None) -> list[str]:
     ):
         problems.append("runtime heartbeat stale")
     return problems
-
