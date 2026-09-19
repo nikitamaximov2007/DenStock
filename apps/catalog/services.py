@@ -8,6 +8,7 @@ from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_ru
 from apps.brp.pricing import customer_price_rub
 from apps.counting.services import find_brp_price_source
 from apps.inventory.presentation import EXACT_NUMBER_KINDS
+from apps.inventory.pricing import effective_part_customer_prices
 from apps.polaris.models import PolarisPartLink, PolarisPricingSettings
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
 from apps.polaris.services import find_polaris_price_source
@@ -710,6 +711,7 @@ def analog_rows(part: PartType, *, direction: str = "analogs") -> list[dict]:
     for row in live_stock_rows(part_ids=other_ids):
         stock.setdefault(row.part_type.pk, []).append(row)
 
+    prices = effective_part_customer_prices(by_id.values())
     zero = Decimal("0")
     rows = []
     for link, other_id in zip(links, other_ids, strict=True):
@@ -722,7 +724,7 @@ def analog_rows(part: PartType, *, direction: str = "analogs") -> list[dict]:
             "part": item,
             "exact_number": part_exact_number(item, default=""),
             "manufacturer": manufacturer_display(item),
-            "price": item.recommended_price,
+            "price": prices[other_id],
             "available": sum((row.available for row in locations), zero),
             "locations": [row.location.short_code for row in locations],
             "note": link.note,

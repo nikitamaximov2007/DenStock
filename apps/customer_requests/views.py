@@ -19,7 +19,7 @@ from django.utils.http import urlencode
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from apps.catalog.public_contracts import resolve_current_customer_price
+from apps.catalog.public_contracts import resolve_current_customer_prices
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import with_part_identity
 from apps.operations.models import TelegramBotRuntime
@@ -265,9 +265,10 @@ def _detail_context(
         )
     )
     availability = available_totals(line.part_type_id for line in lines)
+    prices = resolve_current_customer_prices({line.part_type for line in lines})
     for line in lines:
         line.current_available = availability[line.part_type_id]
-        line.current_price = resolve_current_customer_price(line.part_type).price_rub
+        line.current_price = prices[line.part_type_id].price_rub
         line.line_total = (
             None if line.price_seen is None else line.price_seen * line.quantity_requested
         )

@@ -24,6 +24,7 @@ from apps.core.forms import ImageUploadForm
 from apps.core.images import add_image, deactivate_image, set_primary
 from apps.core.part_lookup import resolve_part_lookup
 from apps.inventory.presentation import attach_part_identity, with_part_identity
+from apps.inventory.pricing import attach_effective_customer_price, effective_part_customer_prices
 
 from .forms import (
     ManualPartForm,
@@ -90,6 +91,7 @@ class PartTypeListView(LoginRequiredMixin, ListView):
         # логике: BRP material_no -> Polaris part_number -> primary OEM/ARTICLE
         # -> любой OEM/ARTICLE -> пусто. Аналог/INTERNAL_REF/лот сюда не попадают.
         attach_part_identity(ctx["object_list"], part_attr="")
+        attach_effective_customer_price(ctx["object_list"])
         ctx["q"] = self.request.GET.get("q", "")
         ctx["show"] = self.request.GET.get("show", "active")
         ctx["can_manage"] = self.request.user.can_manage_parts
@@ -109,6 +111,11 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         )
         ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["can_manage_images"] = self.request.user.can_manage_images
+        # «Цена» — каноническая цена клиента: старая цена партии, которая ещё
+        # лежит на складе, не даёт ей опуститься ниже.
+        ctx["effective_customer_price"] = effective_part_customer_prices([self.object])[
+            self.object.pk
+        ]
         ctx["numbers"] = self.object.numbers.all()
         ctx["barcodes"] = self.object.barcodes.all()
         ctx["compatibilities"] = self.object.compatibilities.select_related("vehicle_model")

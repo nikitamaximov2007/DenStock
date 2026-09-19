@@ -86,8 +86,8 @@
                 {% endfor %}
               </td>
               <td class="num--money">
-                {% if row.part.recommended_price is not None %}
-                  {{ row.part.recommended_price|money_int }}
+                {% if row.price is not None %}
+                  {{ row.price|money_int }}
                 {% else %}
                   ·
                 {% endif %}

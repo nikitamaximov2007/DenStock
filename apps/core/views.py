@@ -32,6 +32,7 @@ from apps.inventory.presentation import (
     identity_numbers_prefetch,
     with_part_identity,
 )
+from apps.inventory.pricing import effective_part_customer_prices
 from apps.inventory.services import (
     FOUND_ADDITION_DOC,
     ITEM_PHYSICAL_STATUSES,
@@ -788,9 +789,15 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
     )
     attach_movement_identity(history)
     attach_movement_identity(found_history)
+    found_prices = effective_part_customer_prices(m.part_type for m in found_history)
     for movement in found_history:
-        movement.customer_unit_price = movement.part_type.recommended_price or Decimal("0")
-        movement.customer_total_value = movement.customer_unit_price * movement.quantity
+        # Неизвестная цена остаётся неизвестной («—»), а не превращается в 0.
+        movement.customer_unit_price = found_prices[movement.part_type_id]
+        movement.customer_total_value = (
+            None
+            if movement.customer_unit_price is None
+            else movement.customer_unit_price * movement.quantity
+        )
     receiving_lots = list(
         with_part_identity(
             StockLot.objects.filter(status=StockLot.Status.RECEIVING)

@@ -16,6 +16,40 @@
 строки `final_customer_price_rub`. Экземпляры PartItem в этот механизм не
 входят.
 
+## Цена детали, пока источник не выбран
+
+Поиск, карточка детали, быстрые действия, PRO-STOR, корзина и снимок
+`CustomerRequestLine.price_seen` показывают цену ещё до выбора лота. Для них
+каноническая цена:
+
+```
+MAX(PartType.recommended_price, наибольший receipt_customer_price_snapshot_rub
+    среди лотов и экземпляров, которые ещё на складе)
+```
+
+«Ещё на складе» — лот в статусе receiving/available/quarantine с количеством
+больше нуля, экземпляр в статусе receiving/available/reserved/quarantine.
+Проданный, списанный или исчерпанный источник цену детали не держит. Снимок
+0 ₽ полом не считается, неизвестная цена остаётся неизвестной («—»), а не
+превращается в 0. Среднее не считается: при текущей 1 800 и лотах 2 000 и
+2 350 деталь стоит 2 350, а продажа по FIFO берёт каждый лот по его
+собственному MAX (2 000 и 2 350), как и раньше.
+
+Единая точка — `apps/inventory/pricing.py`:
+
+* `resolve_effective_inventory_customer_price(source, current)` — источник выбран;
+* `protected_customer_price_floors(part_ids)` — полы одним агрегатом на
+  лоты и одним на экземпляры, без N+1;
+* `effective_part_customer_prices(parts)` / `attach_effective_customer_price`
+  — внутренние экраны;
+* `apps.catalog.public_contracts.resolve_current_customer_price(s)` —
+  публичная цена: пол только поднимает сертифицированную текущую цену и
+  никогда не превращает «Уточнить цену» в число.
+
+Будущие потребители (личный кабинет, «Заказать ещё раз») берут цену только
+через `resolve_current_customer_prices`; сохранённые `price_seen`,
+`SaleLine.unit_price` и ремонтные строки не пересчитываются.
+
 Для исторической реконструкции предназначена явная команда, а не миграция:
 
 ```
