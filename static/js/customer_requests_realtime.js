@@ -24,16 +24,11 @@
     if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
     submitComposer(event, event.target);
   };
-  const submitBeforeLineBreak = (event) => {
-    if (event.inputType !== 'insertLineBreak' || event.shiftKey || composing || event.isComposing) return;
-    submitComposer(event, event.target);
-  };
   // Delegation keeps the shortcut working after partial navigation replaces
   // the detail form without re-running this bootstrap script.
   document.addEventListener('keydown', submitOnEnter, true);
   document.addEventListener('keypress', submitOnEnter, true);
   document.addEventListener('keyup', submitOnEnter, true);
-  document.addEventListener('beforeinput', submitBeforeLineBreak, true);
   if (!root) return;
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
   const fileInput = document.querySelector('[data-attachment-input]');
