@@ -120,6 +120,15 @@ class PartItem(models.Model):
             self.internal_barcode = f"ITEM:{self.internal_number}"
         super().save(*args, **kwargs)
 
+    @property
+    def effective_customer_price(self):
+        """Цена клиента для этого источника: та же, что подставит продажа."""
+        from .pricing import resolve_effective_inventory_customer_price
+
+        return resolve_effective_inventory_customer_price(
+            self, self.part_type.recommended_price
+        )
+
     def clean(self) -> None:
         if self.current_location_id and not self.current_location.can_hold_stock():
             raise ValidationError(
@@ -597,6 +606,15 @@ class StockLot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.part_type} × {self.quantity} @ {self.location.code}"
+
+    @property
+    def effective_customer_price(self):
+        """Цена клиента для этого источника: та же, что подставит продажа."""
+        from .pricing import resolve_effective_inventory_customer_price
+
+        return resolve_effective_inventory_customer_price(
+            self, self.part_type.recommended_price
+        )
 
     def clean(self) -> None:
         if self.location_id and not self.location.can_hold_stock():
