@@ -10,7 +10,7 @@
   document.addEventListener('pointerdown', () => { audioReady = true; }, { once: true });
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
   const submitOnEnter = (event) => {
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    if (event.key !== 'Enter' || event.shiftKey || (event.isComposing && event.keyCode === 229)) return;
     const composer = event.target;
     if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
     const replyForm = composer.closest('[data-reply-form]');
