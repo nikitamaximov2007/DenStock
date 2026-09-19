@@ -619,7 +619,7 @@ def test_random_user_sees_no_request_data_and_whoami_shows_only_own_id(
 
     stranger_text = "\n".join(api.texts_to(STRANGER))
     assert f"Ваш Telegram ID: {STRANGER}" in stranger_text
-    for secret in (request.reference, "Иван", "912", "448", "Нужна деталь"):
+    for secret in (f"№{request.human_number}", "Иван", "912", "448", "Нужна деталь"):
         assert secret not in stranger_text
     assert [text for _id, text in api.answers] == ["Недоступно."] * 3
     assert not TelegramOperator.objects.filter(telegram_user_id=STRANGER).exists()
@@ -898,7 +898,7 @@ def test_customer_cannot_select_or_reach_another_customers_request(part, worker,
 
     assert TelegramMessage.objects.get(text="моё сообщение").conversation.request == mine
     customer_text = "\n".join(api.texts_to(CUSTOMER))
-    assert theirs.reference not in customer_text
+    assert f"№{theirs.human_number}" not in customer_text
     assert [text for _id, text in api.answers[-3:]] == ["Недоступно."] * 3
     assert TelegramCustomerChat.objects.get(chat_id=CUSTOMER).active_conversation.request == mine
 
@@ -1706,7 +1706,7 @@ def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothi
     link(worker, api, theirs, chat_id=OTHER_CUSTOMER)
     run(worker, api, callback_update(OTHER_CUSTOMER, f"s:{first_conversation.public_id.hex}"))
     assert api.answers[-1][1] == "Недоступно."
-    assert first.reference not in "\n".join(api.texts_to(OTHER_CUSTOMER))
+    assert f"№{first.human_number}" not in "\n".join(api.texts_to(OTHER_CUSTOMER))
 
 
 def test_telegram_completed_request_can_neither_issue_nor_consume_a_link(

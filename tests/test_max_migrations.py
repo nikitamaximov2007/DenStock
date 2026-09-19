@@ -23,7 +23,10 @@ BEFORE = [
 ]
 AFTER_SCHEMA = [("customer_requests", "0008_max_messaging"), ("operations", "0006_max_messaging")]
 LATEST = [
-    ("customer_requests", "0009_max_public_link_guard"),
+    # Restore the current customer-request schema after exercising the
+    # historical MAX rollback.  Newer realtime/attachment migrations are
+    # additive and must be present before the serialized fixture is restored.
+    ("customer_requests", "0012_maxmessage_attachment_and_more"),
     ("operations", "0006_max_messaging"),
 ]
 

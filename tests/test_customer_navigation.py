@@ -408,7 +408,7 @@ def test_the_selector_never_offers_a_closed_request(part):
 
     view = telegram_service.selector_result(CHAT)
 
-    assert closed.reference not in view.reply
+    assert f"✓ №{closed.human_number}" not in view.reply
     assert f"№{open_one.reference}" in view.reply
     payloads = [row[0]["callback_data"] for row in view.keyboard["inline_keyboard"]]
     assert payloads == [f"s:{open_one.telegram_conversation.public_id.hex}"]
@@ -433,7 +433,7 @@ def test_another_customers_request_can_never_be_selected_or_written_to(part):
         chat_id=CHAT, conversation_hex=theirs.telegram_conversation.public_id.hex
     ) is None
     view = telegram_service.selector_result(CHAT)
-    assert theirs.reference not in view.reply
+    assert f"№{theirs.human_number}" not in view.reply
 
 
 def test_a_max_request_cannot_be_selected_by_a_different_max_user(part):
@@ -561,7 +561,7 @@ def test_commands_still_work_for_anyone_who_learned_them(part):
     result = telegram_service.customer_conversations_prompt(CHAT)
 
     assert f"№{request.reference}" in result.reply
-    assert re.search(r"✓ №[0-9A-F]{8}", result.reply)
+    assert re.search(r"✓ №\d+", result.reply)
     assert timezone.now() is not None
 
 

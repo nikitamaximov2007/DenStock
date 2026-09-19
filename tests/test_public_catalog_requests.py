@@ -409,12 +409,14 @@ def test_request_form_and_submit_query_counts_are_flat(
     # waiting conversation and the operators' notification. The one-time link
     # is generated only after the customer's local POST, never in page HTML.
     # still a constant, independent of the number of lines.
-    assert len(writes) == 4, "request, bulk lines, conversation, outbox event"
+    # Realtime event log and the locked human-number counter add two fixed
+    # writes; the total remains flat for 1, 20 and 50 line requests.
+    assert len(writes) == 6, "counter, request, workspace event, bulk lines, conversation, outbox event"
     record_property(f"public_request_form_queries_{lines}", len(form_queries.captured_queries))
     record_property(f"public_request_submit_queries_{lines}", len(submit_queries.captured_queries))
     assert len(form_queries.captured_queries) <= 14
     # Rebuilds the cart view, then the service re-reads parts and stock once;
-    # the three Telegram inserts are constant too.
+    # the counter/event writes and three Telegram inserts are constant too.
     # PostgreSQL adds two constant statements: setting and clearing the request
     # proof that the Telegram insert guard checks (migration 0006).
     assert len(submit_queries.captured_queries) <= 35
