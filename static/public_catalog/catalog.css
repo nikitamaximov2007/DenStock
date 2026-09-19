@@ -460,3 +460,33 @@ fieldset.field { border: 0; padding: 0; min-width: 0; }
   .request-layout { grid-template-columns: minmax(0, 1fr) 360px; align-items: start; gap: var(--space-5); }
   .request-form { padding: var(--space-5); }
 }
+
+/* --- Customer account (minimal; shares every token above) ---------------------------- */
+.account-link { color: var(--primary); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.account-link:hover { text-decoration: underline; }
+.account, .account-auth { max-width: var(--page); margin: 0 auto; display: grid; gap: var(--space-4); }
+.account-auth { max-width: 460px; }
+.account-auth__optional { border-top: 1px solid var(--line); padding-top: var(--space-4); display: grid; gap: var(--space-3); justify-items: start; }
+.account-auth__subtitle, .account-section__title { font-size: 1.05rem; margin: 0; }
+.account-nav { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; border-bottom: 1px solid var(--line); padding-bottom: var(--space-3); }
+.account-nav a { color: var(--ink); text-decoration: none; }
+.account-nav a[aria-current="page"] { color: var(--primary); font-weight: 700; }
+.account-nav__logout { margin-left: auto; }
+.account-section { display: grid; gap: var(--space-2); }
+.account-section p { margin: 0; }
+.account-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.account-row { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); }
+.account-row__main { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--ink); text-decoration: none; }
+.account-row__title { font-weight: 700; }
+.account-row__meta { color: var(--muted); margin: var(--space-1) 0 0; }
+.account-status { font-size: .85rem; border-radius: 999px; padding: 1px var(--space-2); background: var(--primary-soft); color: var(--primary); white-space: nowrap; }
+.account-status--completed { background: var(--ok-soft); color: var(--ok); }
+.account-status--canceled { background: var(--bg); color: var(--muted); }
+.account-table-wrap { overflow-x: auto; }
+.account-table { width: 100%; border-collapse: collapse; background: var(--surface); }
+.account-table th, .account-table td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--line); vertical-align: top; }
+.account-table__off td { color: var(--muted); }
+.account-flag { color: var(--warn); font-size: .85rem; }
+.account-steps { margin: 0; padding-left: var(--space-5); display: grid; gap: var(--space-3); }
+.account-code, .account-form { display: grid; gap: var(--space-2); }
+.account-code__input { font-size: 1.4rem; letter-spacing: .2em; }

@@ -1,0 +1,15 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Мои заявки · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Мои заявки</h1>
+    {% include "customer_accounts/_nav.html" with section="requests" %}
+    {% if requests %}
+      <ul class="account-list">
+        {% for req in requests %}{% include "customer_accounts/_request_row.html" %}{% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">Заявок пока нет.</p>
+    {% endif %}
+  </div>
+{% endblock %}

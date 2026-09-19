@@ -162,6 +162,11 @@ def bind_customer_chat(
             conversation=conversation,
             buttons=MENU_BUTTON if index == len(summary) - 1 else None,
         )
+    # The verified MAX identity's PRO-STOR account owns this request as well
+    # (created on first sight). Off until the account feature is enabled.
+    from apps.customer_accounts import messenger_hooks as account_hooks
+
+    account_hooks.max_handoff(request, user_id=user_id)
     MaxOutboxEvent.objects.get_or_create(
         dedupe_key=f"customer_linked:{link_token_id}",
         defaults={

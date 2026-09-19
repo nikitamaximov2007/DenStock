@@ -1,0 +1,38 @@
+{% extends "public_catalog/base.html" %}
+{% load public_catalog %}
+{% block title %}Мой кабинет · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Мой кабинет{% if account.display_name %} — {{ account.display_name }}{% endif %}</h1>
+    {% include "customer_accounts/_nav.html" with section="home" %}
+
+    <section class="account-section">
+      <h2 class="account-section__title">Активные заявки</h2>
+      {% if active_requests %}
+        <ul class="account-list">
+          {% for req in active_requests %}{% include "customer_accounts/_request_row.html" %}{% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">Активных заявок нет.
+          {% if recent_request %}Последняя — <a href="{% url 'customer_account_request' recent_request.public_id %}">№{{ recent_request.number }}</a>.{% endif %}
+        </p>
+      {% endif %}
+    </section>
+
+    <section class="account-section">
+      <h2 class="account-section__title">Последняя покупка</h2>
+      {% if recent_purchase %}
+        <p><a href="{% url 'customer_account_purchase' recent_purchase.number %}">Покупка №{{ recent_purchase.number }}</a>
+          · {{ recent_purchase.sold_at|ru_date }} · {{ recent_purchase.total|rub }}</p>
+      {% else %}
+        <p class="muted">Покупок пока нет. История покупок появится, когда менеджер свяжет кабинет с вашей карточкой клиента.</p>
+      {% endif %}
+    </section>
+
+    <section class="account-section">
+      <h2 class="account-section__title">Мессенджеры</h2>
+      <p>MAX: {% if max_identity %}подключён ✓{% else %}не подключён{% endif %}</p>
+      <p>Telegram: {% if telegram_identity %}подключён ✓{% else %}не подключён · <a href="{% url 'customer_account_messengers' %}">Подключить</a>{% endif %}</p>
+    </section>
+  </div>
+{% endblock %}

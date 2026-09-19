@@ -1,0 +1,29 @@
+{% extends "public_catalog/base.html" %}
+{% load public_catalog %}
+{% block title %}Заявка №{{ req.number }} · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Заявка №{{ req.number }}</h1>
+    {% include "customer_accounts/_nav.html" with section="requests" %}
+    <p class="account-row__meta">
+      <span class="account-status account-status--{{ req.status }}">{{ req.status_label }}</span>
+      · {{ req.created_at|ru_date }} · {{ req.messenger_label }}
+    </p>
+    <div class="account-table-wrap">
+      <table class="account-table">
+        <thead><tr><th>Артикул</th><th>Название</th><th>Кол-во</th><th>Цена</th></tr></thead>
+        <tbody>
+          {% for line in req.lines %}
+            <tr>
+              <td>{{ line.article|default:"—" }}</td>
+              <td>{{ line.name }}{% if line.is_supply_inquiry %} <span class="muted">(запрос о поставке)</span>{% endif %}</td>
+              <td>{{ line.quantity|whole_number }} {{ line.unit }}</td>
+              <td>{% if line.price_seen is not None %}{{ line.price_seen|rub }}{% else %}Цена уточняется{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted">Цена — та, что была на сайте при отправке заявки. Заявка не фиксирует цену и не резервирует товар.</p>
+  </div>
+{% endblock %}
