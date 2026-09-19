@@ -18,7 +18,7 @@
     if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
     event.preventDefault();
     replyForm.dataset.submitting = '1';
-    replyForm.requestSubmit();
+    replyForm.querySelector('button[type="submit"]')?.click();
   };
   const submitOnEnter = (event) => {
     const isEnter = event.key === 'Enter' || event.key === 'Return' || event.code === 'Enter' || event.code === 'NumpadEnter' || event.keyCode === 13 || event.which === 13;
