@@ -183,6 +183,14 @@ def _settings_tabs(user, path):
     return tabs
 
 
+def _settings_sidebar_tabs(user, path):
+    """Keep rare technical settings reachable without putting them in primary nav."""
+    hidden_sidebar_keys = {"directories", "unresolved"}
+    return [
+        tab for tab in _settings_tabs(user, path) if tab["sidebar_key"] not in hidden_sidebar_keys
+    ]
+
+
 def _section_key(request):
     explicit = getattr(request, "navigation_section", "")
     if explicit:
@@ -453,16 +461,6 @@ def _warehouse_tabs(user, path):
                 sidebar_key="history",
                 icon="swap",
                 active=path.startswith("/inventory/movements/") or path == reverse("return_list"),
-            )
-        )
-    if user.can_manage_write_offs:
-        tabs.append(
-            _tab(
-                "Списания",
-                reverse("write_off_list"),
-                sidebar_key="write-offs",
-                icon="trash",
-                active=path.startswith("/write-offs/"),
             )
         )
     return tabs
@@ -747,12 +745,7 @@ def _brand_catalog_tabs(user, path):
 
 
 def _sidebar_groups(request, section, user):
-    """Every destination the interface has, in the one place navigation lives.
-
-    The old horizontal row is gone, so anything that used to appear only there
-    — the brand catalogues, «Списания», sales and returns — is a sidebar entry
-    now. Items already shown by an earlier group are not repeated.
-    """
+    """Build the everyday primary sidebar from the existing destination config."""
     path = request.path
     source = (
         getattr(request, "navigation_source", "")
@@ -775,13 +768,6 @@ def _sidebar_groups(request, section, user):
             else None
         ),
         _group(
-            "catalog",
-            "Каталоги",
-            "book",
-            _brand_catalog_tabs(user, path),
-            active=section == "catalog",
-        ),
-        _group(
             "sales",
             "Продажи и возвраты",
             "cart",
@@ -799,7 +785,7 @@ def _sidebar_groups(request, section, user):
             "settings",
             "Настройки",
             "gauge",
-            _settings_tabs(user, path),
+            _settings_sidebar_tabs(user, path),
             active=section == "settings",
         ),
     ]
