@@ -111,9 +111,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Заявки клиентов",
             "Таможенные заказы",
             "История",
-            "Списания",
         ],
-        "catalog": ["BRP", "Polaris"],
         "sales": [
             "Продажи",
             "Резервы",
@@ -129,16 +127,14 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Статистика",
         ],
         "settings": [
-            "Справочники",
             "Импорт каталога",
             "Цены",
             "Пользователи",
-            "Инструменты / Нераспознанные",
             "Бэкапы",
         ],
     }
-    assert html.count('data-nav-group-toggle') == 5
-    assert html.count('aria-expanded="true"') >= 5
+    assert html.count('data-nav-group-toggle') == 4
+    assert html.count('aria-expanded="true"') >= 4
 
 
 @pytest.mark.parametrize(
@@ -157,9 +153,7 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Клиенты",
                     "Ремонты",
                     "История",
-                    "Списания",
                 ],
-                "catalog": ["Все детали", "BRP", "Polaris"],
                 "sales": ["Возвраты покупателей", "Возвраты из ремонта"],
                 "reports": [
                     "Сводка",
@@ -185,7 +179,6 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Запчасти на заказ",
                     "Заявки клиентов",
                 ],
-                "catalog": ["Все детали", "BRP", "Polaris"],
                 "sales": ["Продажи", "Резервы"],
                 "reports": ["Складские действия / Таможня"],
             },
@@ -213,11 +206,9 @@ def test_plain_user_has_no_empty_or_administrative_sections(client, make_nav_use
     _login(client, make_nav_user("plain"))
     html = _html(client, "dashboard")
     assert _primary_labels(html) == ["Поиск"]
-    # Каталоги марок открыты любому вошедшему (обе страницы отвечают 200), и
-    # раньше их давала горизонтальная строка разделов. Строки нет — значит
-    # единственное место для них боковое меню. Административных разделов у
-    # роли по-прежнему нет.
-    assert _sidebar_groups(html) == {"catalog": ["Все детали", "BRP", "Polaris"]}
+    # Для роли без складских и административных прав primary sidebar остаётся
+    # только ежедневным поиском.
+    assert _sidebar_groups(html) == {}
     assert "Настройки" not in html
     assert "Отчёты" not in html
 
@@ -248,26 +239,23 @@ def test_unified_search_replaces_general_scanner(client, make_nav_user, db):
 
 
 @pytest.mark.parametrize(
-    ("name", "active_label"),
+    "name",
     [
-        ("part_list", "Все детали"),
-        ("brp_search", "BRP"),
-        ("polaris_search", "Polaris"),
+        "part_list",
+        "brp_search",
+        "polaris_search",
     ],
 )
-def test_catalog_tabs_are_direct_without_restoring_catalog_sidebar(
+def test_catalog_routes_remain_direct_without_restoring_catalog_sidebar(
     client,
     make_nav_user,
     name,
-    active_label,
 ):
     _login(client, make_nav_user(f"catalog-{name}"))
-    html = _html(client, name)
-    assert active_label in _active_labels(html)
-    # Каталоги марок теперь пункты бокового меню, а не горизонтальной строки:
-    # строка удалена, и это единственное место, где они остались.
-    assert "Все детали" in html and "BRP" in html and "Polaris" in html
-    assert "BRP" in _sidebar_groups(html)["catalog"]
+    response = client.get(reverse(name))
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert "catalog" not in _sidebar_groups(html)
 
 
 def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
@@ -294,7 +282,6 @@ def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
         ("counting_list", "Инвентаризация"),
         ("actions_scan", "Быстрые действия"),
         ("movement_list", "История"),
-        ("write_off_list", "Списания"),
     ],
 )
 def test_warehouse_tabs_use_existing_direct_urls(
@@ -308,6 +295,16 @@ def test_warehouse_tabs_use_existing_direct_urls(
     assert label in _active_labels(html)
     assert ">Склад<" in html
     assert label in _sidebar_groups(html)["warehouse"]
+
+
+def test_write_offs_remain_authorized_and_direct_but_leave_primary_sidebar(
+    client,
+    make_nav_user,
+):
+    _login(client, make_nav_user("write-offs-hidden", role=roles.STOREKEEPER))
+    html = _html(client, "dashboard")
+    assert "Списания" not in _sidebar_labels(html)
+    assert client.get(reverse("write_off_list")).status_code == 200
 
 
 def test_receiving_and_inventory_modes_are_nested(client, make_nav_user):
@@ -377,7 +374,16 @@ def test_reports_and_settings_tabs_follow_permissions(client, make_nav_user):
         "Инструменты / Нераспознанные",
         "Бэкапы",
     ):
-        assert label in settings
+        if label in {"Справочники", "Инструменты / Нераспознанные"}:
+            assert label not in _sidebar_labels(settings)
+        else:
+            assert label in settings
+    assert _sidebar_groups(settings)["settings"] == [
+        "Импорт каталога",
+        "Цены",
+        "Пользователи",
+        "Бэкапы",
+    ]
 
     client.logout()
     _login(client, make_nav_user("storekeeper", role=roles.STOREKEEPER))
@@ -387,23 +393,28 @@ def test_reports_and_settings_tabs_follow_permissions(client, make_nav_user):
     assert client.get(reverse("statistics_dashboard")).status_code == 403
 
 
-def test_directories_are_reachable_from_the_sidebar(client, make_nav_user):
+def test_directories_and_unresolved_remain_reachable_without_primary_sidebar_entries(
+    client,
+    make_nav_user,
+):
     _login(client, make_nav_user("directory-admin", superuser=True))
     dashboard = _html(client, "dashboard")
     assert _sidebar_groups(dashboard)["settings"] == [
-        "Справочники",
         "Импорт каталога",
         "Цены",
         "Пользователи",
-        "Инструменты / Нераспознанные",
         "Бэкапы",
     ]
 
     directories = client.get(reverse("directory_index"))
     assert directories.status_code == 200
     html = directories.content.decode()
-    assert 'Справочники' in _active_labels(html)
-    assert "Справочники" in _sidebar_labels(html)
+    assert "Справочники" not in _sidebar_labels(html)
+
+    unresolved = client.get(reverse("unresolved_list"))
+    assert unresolved.status_code == 200
+    unresolved_html = unresolved.content.decode()
+    assert "Инструменты / Нераспознанные" not in _sidebar_labels(unresolved_html)
 
 
 def test_specialized_scanner_endpoints_remain_available(client, make_nav_user):
@@ -447,7 +458,6 @@ def test_navigation_context_has_constant_role_query_count(
     assert len(context["nav_items"]) == 2
     assert [group["key"] for group in context["nav_groups"]] == [
         "warehouse",
-        "catalog",
         "sales",
         "reports",
         "settings",
@@ -457,11 +467,15 @@ def test_navigation_context_has_constant_role_query_count(
 def test_sidebar_omits_hidden_and_duplicate_navigation_entries(client, make_nav_user):
     _login(client, make_nav_user("hidden-links", superuser=True))
     labels = _sidebar_labels(_html(client, "dashboard"))
-    # BRP, Polaris, «Справочники», «Инструменты», «Списания» переехали в
-    # боковое меню вместе с удалением горизонтальной строки: прятать их больше
-    # негде. Скрытым остаётся то, у чего своей страницы-раздела нет.
+    # Технические и редкие страницы остаются доступными напрямую или во
+    # внутренних вкладках, но не занимают место в primary sidebar.
     for hidden in (
         "Каталог",
+        "BRP",
+        "Polaris",
+        "Списания",
+        "Справочники",
+        "Инструменты / Нераспознанные",
         "Детали",
         "Партии",
         "Лоты",

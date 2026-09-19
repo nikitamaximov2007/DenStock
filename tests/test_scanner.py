@@ -257,8 +257,8 @@ def test_nav_scanner_visible_unresolved_gated(make_user, client):
     client.login(username="boss", password=PASSWORD)
     dash2 = client.get(reverse("dashboard")).content.decode()
     assert ">Настройки<" in dash2
-    tools = client.get(reverse("unresolved_list")).content.decode()
-    assert "Инструменты / Нераспознанные" in tools
+    assert 'href="/scanner/unresolved/"' not in dash2
+    assert client.get(reverse("unresolved_list")).status_code == 200
 
 
 # --- Граница: резолв НЕ выполняет складских действий -------------------------
