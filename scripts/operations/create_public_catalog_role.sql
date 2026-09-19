@@ -102,6 +102,12 @@ BEGIN
         'ON TABLE customer_requests_customerrequest TO %I',
         role_name
     );
+    -- The success page shows the request's human number (realtime release).
+    -- A sequential display number, not personal data; nothing else widens.
+    EXECUTE format(
+        'GRANT SELECT (human_number) ON TABLE customer_requests_customerrequest TO %I',
+        role_name
+    );
     EXECUTE format(
         'GRANT SELECT (id) ON TABLE customer_requests_customerrequestline, '
         'customer_requests_telegramconversation, customer_requests_telegramoutboxevent TO %I',

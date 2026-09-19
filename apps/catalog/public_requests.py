@@ -130,8 +130,11 @@ def matching_submission(session, submitted_token: str) -> Submission | None:
 
 def request_reference(public_id) -> str:
     """The short number a customer can read out on the phone."""
+    # ``order_by("pk")``: ``.first()`` would otherwise order by the model's
+    # default ``created_at``, a column the public role cannot read.
     number = (
         CustomerRequest.objects.filter(public_id=public_id)
+        .order_by("pk")
         .values_list("human_number", flat=True)
         .first()
     )

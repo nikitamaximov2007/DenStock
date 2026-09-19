@@ -251,7 +251,7 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         )
         sequence_grants = cursor.fetchone()[0]
 
-    assert {privilege for _table, privilege in grants} == {"SELECT", "INSERT", "UPDATE"}
+    assert {privilege for _table, privilege in grants} == {"SELECT", "INSERT"}
     grant_clause = ROLE_SCRIPT.read_text().split("'GRANT SELECT ON TABLE '", 1)[1]
     documented = set(re.findall(r"\b([a-z]+_[a-z_]+)\b", grant_clause.split("'TO %I'", 1)[0]))
     assert {table for table, privilege in grants if privilege == "SELECT"} == documented
@@ -268,6 +268,8 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         ("customer_requests_customerrequest", "id", "SELECT"),
         ("customer_requests_customerrequest", "public_id", "SELECT"),
         ("customer_requests_customerrequest", "submission_key_hash", "SELECT"),
+        # The success page reads the human number (realtime release).
+        ("customer_requests_customerrequest", "human_number", "SELECT"),
         ("customer_requests_customerrequestline", "id", "SELECT"),
         ("customer_requests_telegramconversation", "id", "SELECT"),
         ("customer_requests_telegramoutboxevent", "id", "SELECT"),
