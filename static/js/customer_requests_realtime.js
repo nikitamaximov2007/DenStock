@@ -11,9 +11,9 @@
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
   const submitOnEnter = (event) => {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-    const composer = event.target.closest('[data-reply-form] textarea[name="text"]');
-    if (!composer) return;
-    const replyForm = composer.form;
+    const composer = event.target;
+    if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
+    const replyForm = composer.closest('[data-reply-form]');
     if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
     event.preventDefault();
     replyForm.dataset.submitting = '1';
