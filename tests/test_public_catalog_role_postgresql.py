@@ -268,7 +268,9 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         "customer_accounts_customerloginattempt",
     }
     assert {
-        table for table, privilege in grants if privilege == "SELECT" and table not in account_tables
+        table
+        for table, privilege in grants
+        if privilege == "SELECT" and table not in account_tables
     } == documented
     assert {
         (table, privilege) for table, privilege in grants if table in account_tables
