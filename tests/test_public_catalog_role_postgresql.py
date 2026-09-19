@@ -251,10 +251,48 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         )
         sequence_grants = cursor.fetchone()[0]
 
-    assert {privilege for _table, privilege in grants} == {"SELECT", "INSERT"}
+    # Column-scoped UPDATE grants do not appear in information_schema's
+    # table-level view; they are checked through ``columns`` below.
+    assert {privilege for _table, privilege in grants} == {"SELECT", "INSERT", "DELETE"}
     grant_clause = ROLE_SCRIPT.read_text().split("'GRANT SELECT ON TABLE '", 1)[1]
     documented = set(re.findall(r"\b([a-z]+_[a-z_]+)\b", grant_clause.split("'TO %I'", 1)[0]))
-    assert {table for table, privilege in grants if privilege == "SELECT"} == documented
+    account_tables = {
+        "customer_account_requests",
+        "customer_account_request_lines",
+        "customer_account_sales",
+        "customer_account_sale_lines",
+        "customer_accounts_customeraccount",
+        "customer_accounts_customeridentity",
+        "customer_accounts_customerconsent",
+        "customer_accounts_customeraccountevent",
+        "customer_accounts_customerloginattempt",
+    }
+    assert {
+        table for table, privilege in grants if privilege == "SELECT" and table not in account_tables
+    } == documented
+    assert {
+        (table, privilege) for table, privilege in grants if table in account_tables
+    } == {
+        ("customer_account_requests", "SELECT"),
+        ("customer_account_request_lines", "SELECT"),
+        ("customer_account_sales", "SELECT"),
+        ("customer_account_sale_lines", "SELECT"),
+        ("customer_accounts_customeraccount", "SELECT"),
+        ("customer_accounts_customeridentity", "SELECT"),
+        ("customer_accounts_customeridentity", "DELETE"),
+        ("customer_accounts_customerconsent", "SELECT"),
+        ("customer_accounts_customerconsent", "INSERT"),
+        ("customer_accounts_customeraccountevent", "INSERT"),
+        ("customer_accounts_customerloginattempt", "INSERT"),
+    }
+    assert {
+        (table, column, privilege)
+        for table, column, privilege in columns
+        if table.startswith("customer_accounts_")
+    } >= {
+        ("customer_accounts_customeraccount", "display_name", "UPDATE"),
+        ("customer_accounts_customeraccount", "updated_at", "UPDATE"),
+    }
     assert {table for table, privilege in grants if privilege == "INSERT"} == {
         "customer_requests_customerrequest",
         "customer_requests_customerrequestline",
@@ -263,8 +301,12 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         "customer_requests_customerrequestmessengerlinktoken",
         # A saved request logs one operator-workspace event (realtime release).
         "customer_requests_workspaceevent",
+        "customer_accounts_customerconsent",
+        "customer_accounts_customeraccountevent",
+        "customer_accounts_customerloginattempt",
     }
-    assert columns == {
+    legacy_columns = {item for item in columns if not item[0].startswith("customer_account")}
+    assert legacy_columns == {
         ("customer_requests_customerrequest", "id", "SELECT"),
         ("customer_requests_customerrequest", "public_id", "SELECT"),
         ("customer_requests_customerrequest", "submission_key_hash", "SELECT"),
