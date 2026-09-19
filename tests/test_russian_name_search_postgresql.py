@@ -177,11 +177,14 @@ def _plans_for(query):
 
 @pytest.mark.parametrize("query", ["прокладка", "головки 00004"])
 def test_a_russian_query_can_be_served_by_the_folded_index(indexed_catalog, query):
-    plans = _plans_for(query)
+    # Equality and prefix tiers can now use the compact btree indexes rather
+    # than the older trigram index. Pin the property that matters for the
+    # production-sized catalog: every Russian-name lookup is index-backed.
+    plans = [plan for plan in _plans_for(query) if "actions_partcustomsinfo" in plan]
 
-    assert any("actions_partcustomsinfo_search_ru_trgm" in plan for plan in plans), (
-        "\n\n".join(plans)[:1500]
-    )
+    assert plans, "Russian-name lookups were not issued"
+    scanned = [plan for plan in plans if "Seq Scan on actions_partcustomsinfo" in plan]
+    assert not scanned, "\n\n".join(scanned)[:1500]
 
 
 def test_russian_search_writes_nothing(cat):
