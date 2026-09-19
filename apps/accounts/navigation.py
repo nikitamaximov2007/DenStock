@@ -709,10 +709,26 @@ def _local_tabs(request, section, user):
 
 
 def _brand_catalog_tabs(user, path):
-    """The brand catalogues, which used to exist only in the horizontal row."""
-    if not _can_open_warehouse(user):
-        return []
+    """The brand catalogues, which used to exist only in the horizontal row.
+
+    No capability gate: the row that used to carry them had none either, and
+    both pages answer any signed-in user. «Импорт каталога» deliberately is
+    NOT here — it needs the directories permission and keeps living in the
+    settings group, which checks it.
+
+    «Все детали» стоит здесь же и без проверки: страницу открывает любой
+    вошедший, а группа «Склад» требует складского доступа. Для пользователя
+    со складским доступом пункт всё равно останется в «Складе» — дедупликация
+    оставляет destination первой группе, которая его предлагает.
+    """
     return [
+        _tab(
+            "Все детали",
+            reverse("part_list"),
+            sidebar_key="all-parts",
+            icon="box",
+            active=path.startswith("/parts/"),
+        ),
         _tab(
             "BRP",
             reverse("brp_search"),

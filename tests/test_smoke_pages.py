@@ -94,7 +94,7 @@ def test_shell_present_on_pages(admin_client):
 def test_desktop_sidebar_has_clean_expandable_sections(admin_client):
     """Desktop sidebar показывает только ежедневные группы."""
     html = admin_client.get(reverse("dashboard")).content.decode()
-    assert html.count("data-nav-group-toggle") == 3
+    assert html.count("data-nav-group-toggle") == 5
     for label in ("Поиск", "ИИ-поддержка"):
         assert f'<span class="nav__label">{label}</span>' in html
     for label in ("Склад", "Отчёты", "Настройки"):

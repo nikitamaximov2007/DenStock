@@ -40,6 +40,32 @@ def _login(client, user):
     client.force_login(user)
 
 
+def _is_active_link(sidebar, url):
+    """Ссылка на `url` в боковом меню помечена как текущая страница.
+
+    Проверяется наличие атрибута, а не его соседство с href: между ними стоит
+    ещё `data-partial-link`, и закреплять порядок атрибутов в разметке
+    незачем.
+    """
+    pattern = rf'<a[^>]*href="{re.escape(url)}"[^>]*aria-current="page"'
+    return re.search(pattern, sidebar) is not None
+
+
+def _active_labels(html):
+    """Подписи ссылок бокового меню, помеченных как текущая страница.
+
+    Раньше активную страницу отмечала горизонтальная строка разделов, и её
+    разметка позволяла искать `aria-current="page">Подпись</a>` подстрокой.
+    Строки больше нет: единственная навигация — боковое меню, а там между
+    ссылкой и подписью стоит иконка, поэтому подпись достаётся разбором.
+    """
+    pattern = (
+        r'<a class="nav__link[^"]*"[^>]*aria-current="page"[^>]*>.*?'
+        r'<span class="nav__label">([^<]+)</span>'
+    )
+    return re.findall(pattern, _sidebar(html), flags=re.DOTALL)
+
+
 def _sidebar_labels(html):
     sidebar = _sidebar(html)
     return re.findall(r'<span class="nav__label">([^<]+)</span>', sidebar)
@@ -85,6 +111,14 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Заявки клиентов",
             "Таможенные заказы",
             "История",
+            "Списания",
+        ],
+        "catalog": ["BRP", "Polaris"],
+        "sales": [
+            "Продажи",
+            "Резервы",
+            "Возвраты покупателей",
+            "Возвраты из ремонта",
         ],
         "reports": [
             "Сводка",
@@ -94,10 +128,17 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
             "Складские действия / Таможня",
             "Статистика",
         ],
-        "settings": ["Импорт каталога", "Цены", "Пользователи", "Бэкапы"],
+        "settings": [
+            "Справочники",
+            "Импорт каталога",
+            "Цены",
+            "Пользователи",
+            "Инструменты / Нераспознанные",
+            "Бэкапы",
+        ],
     }
-    assert html.count('data-nav-group-toggle') == 3
-    assert html.count('aria-expanded="true"') >= 3
+    assert html.count('data-nav-group-toggle') == 5
+    assert html.count('aria-expanded="true"') >= 5
 
 
 @pytest.mark.parametrize(
@@ -116,7 +157,10 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Клиенты",
                     "Ремонты",
                     "История",
+                    "Списания",
                 ],
+                "catalog": ["Все детали", "BRP", "Polaris"],
+                "sales": ["Возвраты покупателей", "Возвраты из ремонта"],
                 "reports": [
                     "Сводка",
                     "Продажи и ремонты",
@@ -141,6 +185,8 @@ def test_admin_sidebar_has_clean_expandable_sections(client, make_nav_user):
                     "Запчасти на заказ",
                     "Заявки клиентов",
                 ],
+                "catalog": ["Все детали", "BRP", "Polaris"],
+                "sales": ["Продажи", "Резервы"],
                 "reports": ["Складские действия / Таможня"],
             },
         ),
@@ -167,9 +213,13 @@ def test_plain_user_has_no_empty_or_administrative_sections(client, make_nav_use
     _login(client, make_nav_user("plain"))
     html = _html(client, "dashboard")
     assert _primary_labels(html) == ["Поиск"]
-    assert _sidebar_groups(html) == {}
+    # Каталоги марок открыты любому вошедшему (обе страницы отвечают 200), и
+    # раньше их давала горизонтальная строка разделов. Строки нет — значит
+    # единственное место для них боковое меню. Административных разделов у
+    # роли по-прежнему нет.
+    assert _sidebar_groups(html) == {"catalog": ["Все детали", "BRP", "Polaris"]}
     assert "Настройки" not in html
-    assert "data-nav-group=" not in html
+    assert "Отчёты" not in html
 
 
 def test_unified_search_replaces_general_scanner(client, make_nav_user, db):
@@ -213,9 +263,11 @@ def test_catalog_tabs_are_direct_without_restoring_catalog_sidebar(
 ):
     _login(client, make_nav_user(f"catalog-{name}"))
     html = _html(client, name)
-    assert f'aria-current="page">{active_label}</a>' in html
+    assert active_label in _active_labels(html)
+    # Каталоги марок теперь пункты бокового меню, а не горизонтальной строки:
+    # строка удалена, и это единственное место, где они остались.
     assert "Все детали" in html and "BRP" in html and "Polaris" in html
-    assert "Каталог" not in _sidebar(html)
+    assert "BRP" in _sidebar_groups(html)["catalog"]
 
 
 def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
@@ -227,7 +279,7 @@ def test_parts_sidebar_entry_uses_the_canonical_route_and_is_active(
     sidebar = " ".join(_sidebar(html).split())
 
     assert _sidebar_groups(html)["warehouse"][0] == "Все детали"
-    assert f'href="{reverse("part_list")}" aria-current="page"' in sidebar
+    assert _is_active_link(sidebar, reverse("part_list"))
     assert 'class="nav__group is-active" data-nav-group="warehouse"' in sidebar
     assert 'href="/parts/new/"' in html
 
@@ -253,15 +305,9 @@ def test_warehouse_tabs_use_existing_direct_urls(
 ):
     _login(client, make_nav_user(f"warehouse-{name}", role=roles.STOREKEEPER))
     html = _html(client, name)
-    assert f'aria-current="page">{label}</a>' in html
+    assert label in _active_labels(html)
     assert ">Склад<" in html
-    if label == "Списания":
-        assert label not in _sidebar_labels(html)
-        assert 'data-nav-group="warehouse" data-nav-active="true"' in " ".join(
-            _sidebar(html).split()
-        )
-    else:
-        assert label in _sidebar_groups(html)["warehouse"]
+    assert label in _sidebar_groups(html)["warehouse"]
 
 
 def test_receiving_and_inventory_modes_are_nested(client, make_nav_user):
@@ -341,22 +387,23 @@ def test_reports_and_settings_tabs_follow_permissions(client, make_nav_user):
     assert client.get(reverse("statistics_dashboard")).status_code == 403
 
 
-def test_directories_stay_internal_without_sidebar_entry(client, make_nav_user):
+def test_directories_are_reachable_from_the_sidebar(client, make_nav_user):
     _login(client, make_nav_user("directory-admin", superuser=True))
     dashboard = _html(client, "dashboard")
     assert _sidebar_groups(dashboard)["settings"] == [
+        "Справочники",
         "Импорт каталога",
         "Цены",
         "Пользователи",
+        "Инструменты / Нераспознанные",
         "Бэкапы",
     ]
-    assert "Справочники" not in _sidebar_labels(dashboard)
 
     directories = client.get(reverse("directory_index"))
     assert directories.status_code == 200
     html = directories.content.decode()
-    assert 'aria-current="page">Справочники</a>' in html
-    assert "Справочники" not in _sidebar_labels(html)
+    assert 'Справочники' in _active_labels(html)
+    assert "Справочники" in _sidebar_labels(html)
 
 
 def test_specialized_scanner_endpoints_remain_available(client, make_nav_user):
@@ -400,6 +447,8 @@ def test_navigation_context_has_constant_role_query_count(
     assert len(context["nav_items"]) == 2
     assert [group["key"] for group in context["nav_groups"]] == [
         "warehouse",
+        "catalog",
+        "sales",
         "reports",
         "settings",
     ]
@@ -408,18 +457,16 @@ def test_navigation_context_has_constant_role_query_count(
 def test_sidebar_omits_hidden_and_duplicate_navigation_entries(client, make_nav_user):
     _login(client, make_nav_user("hidden-links", superuser=True))
     labels = _sidebar_labels(_html(client, "dashboard"))
+    # BRP, Polaris, «Справочники», «Инструменты», «Списания» переехали в
+    # боковое меню вместе с удалением горизонтальной строки: прятать их больше
+    # негде. Скрытым остаётся то, у чего своей страницы-раздела нет.
     for hidden in (
         "Каталог",
         "Детали",
-        "BRP",
-        "Polaris",
         "Партии",
         "Лоты",
         "Экземпляры",
         "Нераспознанные",
-        "Инструменты / Нераспознанные",
-        "Справочники",
-        "Списания",
         "Сканер",
         "Поиск детали",
     ):
@@ -433,7 +480,7 @@ def test_active_sidebar_group_is_server_rendered_open(client, make_nav_user):
     sidebar = " ".join(_sidebar(html).split())
     assert 'class="nav__group is-active" data-nav-group="warehouse"' in sidebar
     assert 'data-nav-active="true"' in sidebar
-    assert 'href="/scanner/move/" aria-current="page"' in sidebar
+    assert _is_active_link(sidebar, "/scanner/move/")
 
 
 def test_scanner_receiving_is_the_active_sidebar_entry_and_receipt_routes_remain_available(
@@ -446,7 +493,7 @@ def test_scanner_receiving_is_the_active_sidebar_entry_and_receipt_routes_remain
 
     assert "Поступление" not in _sidebar_labels(html)
     assert "Приёмка сканером" in _sidebar_groups(html)["warehouse"]
-    assert f'href="{reverse("scanner_receiving")}" aria-current="page"' in sidebar
+    assert _is_active_link(sidebar, reverse("scanner_receiving"))
     assert client.get(reverse("receipt_list")).status_code == 200
     assert client.get(reverse("receipt_create")).status_code == 200
 
@@ -466,9 +513,12 @@ def test_repairs_section_is_gone_but_repairs_keep_one_entry_inside_the_warehouse
     html = _html(client, "dashboard")
     groups = _sidebar_groups(html)
 
-    # Отдельной секции нет, отдельного пункта возвратов из ремонта тоже.
+    # Отдельной секции «Ремонты» по-прежнему нет: сами ремонты остаются одним
+    # пунктом внутри «Склада». Возвраты из ремонта переехали в «Продажи и
+    # возвраты» вместе с удалением горизонтальной строки — раньше они жили
+    # только там и иначе стали бы доступны лишь по прямому адресу.
     assert "repairs" not in groups
-    assert "Возвраты из ремонта" not in _sidebar_labels(html)
+    assert "Возвраты из ремонта" in groups["sales"]
 
     # Ровно один пункт «Ремонты», и он внутри «Склада».
     assert _sidebar_labels(html).count("Ремонты") == 1
@@ -485,7 +535,7 @@ def test_repairs_sidebar_entry_is_active_on_a_repair_page(client, make_nav_user)
     html = _html(client, "repair_order_list")
     sidebar = " ".join(_sidebar(html).split())
 
-    assert f'href="{reverse("repair_order_list")}" aria-current="page"' in sidebar
+    assert _is_active_link(sidebar, reverse("repair_order_list"))
     assert 'data-nav-group="warehouse"' in sidebar
 
 

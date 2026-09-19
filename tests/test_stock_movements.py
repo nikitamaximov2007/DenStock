@@ -483,5 +483,8 @@ def test_nav_section_visibility(make_user, client):
     dash = client.get(reverse("dashboard")).content.decode()
     assert ">Склад<" in dash
     history = client.get(reverse("movement_list")).content.decode()
-    assert 'aria-current="page">История</a>' in history
+    # Текущая страница отмечается в боковом меню, а там между ссылкой и
+    # подписью стоит иконка: горизонтальной строки разделов больше нет.
+    assert 'aria-current="page"' in history
+    assert '<span class="nav__label">История</span>' in history
     assert "Журнал возвратов" in history

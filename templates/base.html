@@ -90,6 +90,7 @@
               <li>
                 <a class="nav__link{% if item.active %} is-active{% endif %}"
                    href="{{ item.url }}"
+                   data-partial-link
                    {% if item.active %}aria-current="page"{% endif %}>
                   <svg class="nav__icon icon" aria-hidden="true">
                     <use href="#i-{{ item.icon }}"></use>
@@ -123,6 +124,7 @@
                   <li>
                     <a class="nav__link{% if item.active %} is-active{% endif %}"
                        href="{{ item.url }}"
+                       data-partial-link
                        {% if item.active %}aria-current="page"{% endif %}>
                       <svg class="nav__icon icon" aria-hidden="true">
                         <use href="#i-{{ item.icon }}"></use>
