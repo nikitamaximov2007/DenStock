@@ -34,5 +34,11 @@ def clear(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # Таблица большая (на production ~272k видов деталей). Одна транзакция на
+    # весь проход держала бы блокировки минутами, поэтому миграция неатомарна:
+    # каждый `bulk_update` коммитится сам. Операция идемпотентна — значение
+    # детерминированно считается из названия, — поэтому прерванный проход
+    # достаточно запустить заново.
+    atomic = False
     dependencies = [("catalog", "0013_parttype_search_name_compact_and_more")]
     operations = [migrations.RunPython(fill, clear)]

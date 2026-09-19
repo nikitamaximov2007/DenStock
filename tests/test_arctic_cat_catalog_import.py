@@ -479,4 +479,12 @@ def test_apply_query_count_does_not_grow_with_the_number_of_rows(boss, tmp_path)
         return len(ctx.captured_queries)
 
     run(1, 100)  # creates the shared category and manufacturer once
-    assert run(5, 1000) == run(60, 2000)
+    few, many = run(5, 1000), run(60, 2000)
+
+    # Свойство, которое здесь важно, — отсутствие запроса на строку: рост в
+    # двенадцать раз не должен давать роста числа запросов в двенадцать раз.
+    # Точного равенства требовать нельзя: `bulk_create` режет вставку на пачки
+    # по лимиту параметров SQLite, а он зависит ещё и от числа колонок, так что
+    # равенство держалось случайно — пока таблица не стала на колонку шире.
+    assert many - few <= 2, (few, many)
+    assert many < few * 2

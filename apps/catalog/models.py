@@ -4,6 +4,7 @@ import uuid
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Value
 
 from apps.core.models import BaseImage
 from apps.core.search_text import compact_search_text
@@ -184,7 +185,15 @@ class PartType(Dictionary):
     # остаётся ровно тем, что ввёл оператор. Считается в Python по тем же
     # причинам, что и `search_name_ru`: `UPPER()` зависит от локали кластера.
     search_name_compact = models.CharField(
-        "Название для поиска без разделителей", max_length=200, blank=True, editable=False
+        "Название для поиска без разделителей",
+        max_length=200,
+        blank=True,
+        editable=False,
+        # Значение по умолчанию живёт В БАЗЕ, а не только в Python: во время
+        # выката миграция уже применена, а старый контейнер ещё отвечает и
+        # вставляет строки без этой колонки. Без db_default такие INSERT'ы
+        # падали бы на NOT NULL (урок Release A).
+        db_default=Value(""),
     )
     category = models.ForeignKey(
         Category, verbose_name="Категория", on_delete=models.PROTECT, related_name="parts"

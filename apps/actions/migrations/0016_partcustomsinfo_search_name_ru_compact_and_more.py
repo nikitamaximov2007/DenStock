@@ -2,6 +2,7 @@
 
 from django.conf import settings
 from django.db import migrations, models
+from django.db.models import Value
 
 
 class Migration(migrations.Migration):
@@ -16,7 +17,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='partcustomsinfo',
             name='search_name_ru_compact',
-            field=models.CharField(blank=True, editable=False, max_length=255, verbose_name='Русское название для поиска без разделителей'),
+            field=models.CharField(blank=True, db_default=Value(''), editable=False, max_length=255, verbose_name='Русское название для поиска без разделителей'),
         ),
         migrations.AddIndex(
             model_name='partcustomsinfo',

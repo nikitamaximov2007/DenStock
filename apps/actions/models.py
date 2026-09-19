@@ -13,6 +13,7 @@ PartCustomsInfo — таможенная карточка детали для э
 """
 from django.conf import settings
 from django.db import models
+from django.db.models import Value
 
 from apps.core.search_text import compact_search_text, fold_search_text
 
@@ -205,6 +206,7 @@ class PartCustomsInfo(models.Model):
         max_length=255,
         blank=True,
         editable=False,
+        db_default=Value(""),
     )
     manufacturer = models.CharField("Производитель", max_length=80, default="BRP")
     country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)

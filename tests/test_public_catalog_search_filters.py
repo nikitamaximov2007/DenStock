@@ -22,7 +22,12 @@ from tests.public_catalog_support import assert_no_writes, capture
 # Search 2.0 issues up to 9 SELECTs on SQLite; on PostgreSQL inside a test
 # transaction its fuzzy tier adds a savepoint, the threshold read/restore and
 # the fuzzy query. The budget is fixed: it must not grow with the result size.
-_QUERY_BUDGET = {"sqlite": 26, "postgresql": 32}
+# Шесть запросов сверх прежнего бюджета — тиры поиска без разделителей
+# («O RING» находит «O-RING»): равенство, префикс и подстрока, каждый отдельно
+# по английской и по русской колонке. Существенно не само число, а то, что оно
+# не растёт вместе с числом совпадений: это проверяют тесты ниже, сравнивая
+# один и тот же счётчик для 1, 20 и 50 результатов.
+_QUERY_BUDGET = {"sqlite": 32, "postgresql": 38}
 
 
 def _ids(result):
