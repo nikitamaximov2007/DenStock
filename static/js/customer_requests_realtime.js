@@ -13,7 +13,7 @@
   document.addEventListener('compositionend', () => { composing = false; }, true);
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
   const submitOnEnter = (event) => {
-    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13;
+    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13 || event.which === 13;
     if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
     const composer = event.target;
     if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
@@ -26,6 +26,7 @@
   // Delegation keeps the shortcut working after partial navigation replaces
   // the detail form without re-running this bootstrap script.
   document.addEventListener('keydown', submitOnEnter, true);
+  document.addEventListener('keypress', submitOnEnter, true);
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
   const fileInput = document.querySelector('[data-attachment-input]');
   const fileName = document.querySelector('[data-attachment-name]');

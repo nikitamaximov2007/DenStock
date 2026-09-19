@@ -641,7 +641,11 @@ def test_realtime_composer_enter_contract_is_delegated_and_ime_safe():
     source = (settings.BASE_DIR / "static" / "js" / "customer_requests_realtime.js").read_text(
         encoding="utf-8"
     )
-    assert "event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13" in source
+    assert (
+        "event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13 || "
+        "event.which === 13"
+    ) in source
     assert "event.shiftKey || composing || event.isComposing || event.keyCode === 229" in source
     assert "document.addEventListener('keydown', submitOnEnter, true)" in source
+    assert "document.addEventListener('keypress', submitOnEnter, true)" in source
     assert "replyForm.requestSubmit()" in source
