@@ -427,6 +427,7 @@ def customer_request_reply(request, pk):
             user=request.user,
             text=text,
             key=request.POST.get("submission_key", ""),
+            attachment=request.FILES.get("attachment"),
         )
     except operator_replies.OperatorReplyError as exc:
         messages.error(request, str(exc))

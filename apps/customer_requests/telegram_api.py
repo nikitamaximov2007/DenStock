@@ -13,6 +13,7 @@ module goes through ``_scrub``.
 from __future__ import annotations
 
 import json
+import secrets
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -215,6 +216,49 @@ class TelegramBotApi:
             # Telegram said ok but the answer is unusable: it may have been delivered.
             raise TelegramNetworkError("invalid response", ambiguous=True)
         return result
+
+    def send_file(
+        self, *, chat_id: int, content: bytes, filename: str, content_type: str, caption: str = ""
+    ) -> dict:
+        """Send a validated document/photo using Telegram's multipart Bot API."""
+        method = "sendPhoto" if content_type.startswith("image/") else "sendDocument"
+        field = "photo" if method == "sendPhoto" else "document"
+        boundary = "----denstock-" + secrets.token_hex(12)
+        parts = []
+        for name, value in (("chat_id", str(chat_id)), ("caption", caption[:1024])):
+            parts.extend([
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n"
+                    f"{value}\r\n"
+                ).encode()
+            ])
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
+            f"filename=\"{filename}\"\r\n"
+            f"Content-Type: {content_type}\r\n\r\n".encode() + content + b"\r\n"
+        )
+        body = b"".join(parts) + f"--{boundary}--\r\n".encode()
+        request = urllib.request.Request(
+            f"{self._base_url}/bot{self._token}/{method}", data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST"
+        )
+        try:
+            with self._opener(request, timeout=self._timeout) as response:
+                raw = response.read()
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
+            raise TelegramNetworkError(
+                _scrub(type(exc).__name__, self._token), ambiguous=True
+            ) from None
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise TelegramNetworkError("invalid response", ambiguous=True) from None
+        if not isinstance(data, dict) or data.get("ok") is not True:
+            raise TelegramApiError(
+                int(data.get("error_code") or 400),
+                _scrub(data.get("description"), self._token),
+            )
+        return data.get("result") or {}
 
     def edit_message_text(
         self, *, chat_id: int, message_id: int, text: str, reply_markup: dict | None = None

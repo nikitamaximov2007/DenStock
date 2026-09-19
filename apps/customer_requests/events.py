@@ -82,6 +82,13 @@ def max_message_saved(sender, instance, created, **kwargs):
         _emit(event_type="operator_message_status_changed", instance=instance)
 
 
+@receiver(post_delete, sender=TelegramMessage)
+@receiver(post_delete, sender=MaxMessage)
+def attachment_deleted(sender, instance, **kwargs):
+    if instance.attachment:
+        instance.attachment.delete(save=False)
+
+
 @receiver(post_delete, sender=CustomerRequest)
 def request_deleted(sender, instance, **kwargs):
     WorkspaceEvent.objects.create(

@@ -21,6 +21,21 @@
       }
     });
   }
+  const fileInput = document.querySelector('[data-attachment-input]');
+  const fileName = document.querySelector('[data-attachment-name]');
+  const removeFile = document.querySelector('[data-attachment-remove]');
+  const setFile = (file) => {
+    if (!file || !fileInput) return;
+    const transfer = new DataTransfer(); transfer.items.add(file); fileInput.files = transfer.files;
+    if (fileName) fileName.textContent = `${file.name} (${Math.ceil(file.size / 1024)} КБ)`;
+    if (removeFile) removeFile.hidden = false;
+  };
+  if (fileInput) fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+  if (removeFile) removeFile.addEventListener('click', () => { fileInput.value = ''; fileName.textContent = ''; removeFile.hidden = true; });
+  if (composer) composer.addEventListener('paste', (event) => {
+    const image = Array.from(event.clipboardData.files || []).find((file) => file.type.startsWith('image/'));
+    if (image) { event.preventDefault(); setFile(image); }
+  });
   function beep(kind) {
     if (!sounds || !audioReady) return;
     try {

@@ -22,10 +22,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 
 from . import messaging
+from .attachments import AttachmentError, validate_attachment
 from .max_api import MAX_TEXT_CHARS
 from .models import (
     CustomerRequest,
@@ -138,6 +140,7 @@ def submit_reply(
     telegram_operator=None,
     telegram_update_id: int | None = None,
     channel: str | None = None,
+    attachment=None,
 ) -> ReplyResult:
     """Queue one reply for delivery by the request's own messenger worker.
 
@@ -174,13 +177,21 @@ def submit_reply(
     if reason:
         raise OperatorReplyError(f"{reason} Сообщение не отправлено.")
     text = (text or "").strip()
+    validated = None
+    if attachment is not None:
+        try:
+            validated = validate_attachment(attachment)
+        except AttachmentError as exc:
+            raise OperatorReplyError(str(exc)) from None
     is_max = target.channel == CustomerRequest.Messenger.MAX
     limit = MAX_TEXT_CHARS if is_max else TELEGRAM_TEXT_CHARS
-    if not text:
+    if not text and validated is None:
         raise OperatorReplyError("Пустое сообщение не отправлено.")
     if len(text) > limit:
         raise OperatorReplyError(f"Сообщение длиннее {limit} символов. Сократите его.")
     if is_max:
+        if validated is not None:
+            raise OperatorReplyError("Вложения пока недоступны в MAX.")
         message = _queue_max_reply(target, user=user, text=text, key=key)
     else:
         message = _queue_telegram_reply(
@@ -190,6 +201,7 @@ def submit_reply(
             key=key,
             telegram_operator=telegram_operator,
             telegram_update_id=telegram_update_id,
+            attachment=validated,
         )
     return ReplyResult(message, target.channel, created=True)
 
@@ -221,7 +233,8 @@ def _queue_max_reply(target: ReplyTarget, *, user, text: str, key: str) -> MaxMe
 
 
 def _queue_telegram_reply(
-    target: ReplyTarget, *, user, text: str, key: str, telegram_operator, telegram_update_id
+    target: ReplyTarget, *, user, text: str, key: str, telegram_operator, telegram_update_id,
+    attachment=None,
 ) -> TelegramMessage:
     conversation = TelegramConversation.objects.select_for_update().get(pk=target.conversation.pk)
     # The author's own bot account is never told about their own reply.
@@ -237,7 +250,12 @@ def _queue_telegram_reply(
         dedupe_key="" if telegram_update_id is not None else _dedupe_key(key),
         operator=operator,
         operator_user=user,
+        attachment_name=attachment.filename if attachment else "",
+        attachment_content_type=attachment.content_type if attachment else "",
     )
+    if attachment:
+        message.attachment.save(attachment.filename, ContentFile(attachment.content), save=False)
+        message.save(update_fields=["attachment"])
     conversation.last_message_at = now
     conversation.save(update_fields=["last_message_at", "updated_at"])
     TelegramOutboxEvent.objects.create(

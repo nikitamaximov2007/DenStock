@@ -533,11 +533,20 @@ class TelegramBotWorker:
                 )
                 continue
             try:
-                result = self.api.send_message(
-                    chat_id=conversation.customer_chat_id,
-                    text=row.text,
-                    reply_markup=service.CUSTOMER_KEYBOARD,
-                )
+                if row.attachment:
+                    result = self.api.send_file(
+                        chat_id=conversation.customer_chat_id,
+                        content=row.attachment.read(),
+                        filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
+                        content_type=row.attachment_content_type,
+                        caption=row.text,
+                    )
+                else:
+                    result = self.api.send_message(
+                        chat_id=conversation.customer_chat_id,
+                        text=row.text,
+                        reply_markup=service.CUSTOMER_KEYBOARD,
+                    )
             except TelegramError as exc:
                 self._fail(row, "delivery_status", exc)
                 continue

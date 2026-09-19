@@ -475,6 +475,9 @@ class TelegramMessage(models.Model):
     )
     direction = models.CharField("Направление", max_length=24, choices=Direction.choices)
     text = models.TextField("Текст", max_length=4096, blank=True)
+    attachment = models.FileField("Вложение", upload_to="customer_requests/", blank=True)
+    attachment_name = models.CharField("Имя вложения", max_length=180, blank=True)
+    attachment_content_type = models.CharField("Тип вложения", max_length=80, blank=True)
     delivery_status = models.CharField(
         "Доставка",
         max_length=12,
@@ -758,6 +761,9 @@ class MaxMessage(models.Model):
     )
     direction = models.CharField("Направление", max_length=24, choices=Direction.choices)
     text = models.TextField("Текст", max_length=4000, blank=True)
+    attachment = models.FileField("Вложение", upload_to="customer_requests/", blank=True)
+    attachment_name = models.CharField("Имя вложения", max_length=180, blank=True)
+    attachment_content_type = models.CharField("Тип вложения", max_length=80, blank=True)
     # Callback buttons of a bot message: [[{"text": ..., "payload": ...}], ...].
     buttons = models.JSONField("Кнопки", null=True, blank=True)
     delivery_status = models.CharField(

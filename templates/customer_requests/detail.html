@@ -165,6 +165,7 @@
         {% else %}
           <form class="cr-reply"
                 method="post"
+                enctype="multipart/form-data"
                 action="{% url 'customer_request_reply' customer_request.pk %}{{ action_query }}"
                 data-reply-form
                 data-idempotent-form>
@@ -175,8 +176,21 @@
                       id="reply-text"
                       name="text"
                       rows="4"
-                      maxlength="4000"
-                      required>{{ reply_text }}</textarea>
+                      maxlength="4000">{{ reply_text }}</textarea>
+            <div class="cr-attachment">
+              <label class="btn btn--small btn--secondary" for="reply-attachment">Прикрепить файл</label>
+              <input id="reply-attachment"
+                     name="attachment"
+                     type="file"
+                     accept="image/png,image/jpeg,image/webp,application/pdf"
+                     hidden
+                     data-attachment-input>
+              <span class="muted" data-attachment-name></span>
+              <button class="btn btn--small btn--ghost"
+                      type="button"
+                      hidden
+                      data-attachment-remove>Убрать</button>
+            </div>
             <div class="cr-reply__bar">
               <span class="field__hint">Клиент получит ответ в {{ reply_target.label }} от бота PRO-STOR.</span>
               <button class="btn btn--primary"
