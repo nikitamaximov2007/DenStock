@@ -107,6 +107,14 @@ Remaining qualification evidence: dedicated PostgreSQL concurrency runs and
 desktop/375px browser screenshots. The inherited full suite still contains
 old-reference expectations that conflict with the approved sequential-number
 copy change; those must be updated/reconciled in the final acceptance report.
+
+Final qualification snapshot: PostgreSQL 16 lock qualification produced eight
+unique numbers `[1..8]`; focused PostgreSQL request/messaging/MAX/attachment
+tests passed. The selected baseline navigation/workspace/catalog/messaging
+suite passed on `f2e7592`. The candidate full suite still has candidate-only
+failures around the intentional human-number copy, `Отправлено` wording,
+query-count assertions affected by the counter write, and migration-fixture
+compatibility. Do not call this branch RC-ready until those are reconciled.
 The full inherited suite also contains expected old-reference assertions plus
 legacy migration/fixture failures that need a clean baseline-vs-candidate
 comparison before claiming release readiness.
