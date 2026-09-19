@@ -83,3 +83,24 @@ Remaining release-gate work:
 3. Rerun H1-H6/S8-1/S9-1, complete static checks, and run the planned synthetic
    acceptance against the already-restored isolated PG16 snapshot. Production
    remains untouched.
+
+# Realtime request workspace — handoff
+
+Branch: `codex/realtime-request-workspace` at `5e8f67f` (based on accepted
+`origin/main` `f2e7592`). Production and `origin/main` were not changed.
+
+Completed: durable `WorkspaceEvent` cursor model and authenticated bounded
+replay endpoint; transactional request/message/status event emission; locked
+sequential human request numbering with deterministic migration backfill;
+polling client with reconnect cursor, visibility catch-up, two local sounds,
+Enter/Shift+Enter; Telegram-like date separators and customer-name fallback;
+central cancelled-request single/bulk deletion with status recheck; removal of
+the normal service-information block. Django check, migration check, ruff,
+djlint, targeted request tests, and migrations pass.
+
+Not yet RC-ready: outbound media/file transport (Telegram/MAX APIs currently
+only expose text send methods), attachment persistence/security UX, dedicated
+PostgreSQL concurrency qualification, and browser visual acceptance remain.
+The full inherited suite also contains expected old-reference assertions plus
+legacy migration/fixture failures that need a clean baseline-vs-candidate
+comparison before claiming release readiness.
