@@ -540,6 +540,7 @@ class TelegramBotWorker:
                         filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
                         content_type=row.attachment_content_type,
                         caption=row.text,
+                        reply_markup=service.CUSTOMER_KEYBOARD,
                     )
                 else:
                     result = self.api.send_message(

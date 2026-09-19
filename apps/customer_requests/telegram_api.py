@@ -218,7 +218,8 @@ class TelegramBotApi:
         return result
 
     def send_file(
-        self, *, chat_id: int, content: bytes, filename: str, content_type: str, caption: str = ""
+        self, *, chat_id: int, content: bytes, filename: str, content_type: str,
+        caption: str = "", reply_markup: dict | None = None
     ) -> dict:
         """Send a validated document/photo using Telegram's multipart Bot API."""
         method = "sendPhoto" if content_type.startswith("image/") else "sendDocument"
@@ -232,6 +233,11 @@ class TelegramBotApi:
                     f"{value}\r\n"
                 ).encode()
             ])
+        if reply_markup:
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"reply_markup\"\r\n\r\n"
+                f"{json.dumps(reply_markup, ensure_ascii=False)}\r\n".encode()
+            )
         parts.append(
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
             f"filename=\"{filename}\"\r\n"
