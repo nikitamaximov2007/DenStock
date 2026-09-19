@@ -98,9 +98,15 @@ central cancelled-request single/bulk deletion with status recheck; removal of
 the normal service-information block. Django check, migration check, ruff,
 djlint, targeted request tests, and migrations pass.
 
-Not yet RC-ready: outbound media/file transport (Telegram/MAX APIs currently
-only expose text send methods), attachment persistence/security UX, dedicated
-PostgreSQL concurrency qualification, and browser visual acceptance remain.
+Added after the initial handoff: validated PNG/JPEG/WEBP/PDF attachment storage,
+picker/clipboard UX, Telegram multipart `sendPhoto`/`sendDocument`, and MAX
+`/uploads` token-based media delivery. Attachment files are not publicly served
+and are removed with their message rows.
+
+Remaining qualification evidence: dedicated PostgreSQL concurrency runs and
+desktop/375px browser screenshots. The inherited full suite still contains
+old-reference expectations that conflict with the approved sequential-number
+copy change; those must be updated/reconciled in the final acceptance report.
 The full inherited suite also contains expected old-reference assertions plus
 legacy migration/fixture failures that need a clean baseline-vs-candidate
 comparison before claiming release readiness.
