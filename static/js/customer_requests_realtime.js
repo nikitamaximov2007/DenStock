@@ -12,10 +12,7 @@
   document.addEventListener('compositionstart', () => { composing = true; }, true);
   document.addEventListener('compositionend', () => { composing = false; }, true);
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
-  const submitOnEnter = (event) => {
-    const isEnter = event.key === 'Enter' || event.key === 'Return' || event.code === 'Enter' || event.code === 'NumpadEnter' || event.keyCode === 13 || event.which === 13;
-    if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
-    const composer = event.target;
+  const submitComposer = (event, composer) => {
     if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
     const replyForm = composer.closest('[data-reply-form]');
     if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
@@ -23,10 +20,20 @@
     replyForm.dataset.submitting = '1';
     replyForm.requestSubmit();
   };
+  const submitOnEnter = (event) => {
+    const isEnter = event.key === 'Enter' || event.key === 'Return' || event.code === 'Enter' || event.code === 'NumpadEnter' || event.keyCode === 13 || event.which === 13;
+    if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
+    submitComposer(event, event.target);
+  };
+  const submitBeforeLineBreak = (event) => {
+    if (event.inputType !== 'insertLineBreak' || event.shiftKey || composing || event.isComposing) return;
+    submitComposer(event, event.target);
+  };
   // Delegation keeps the shortcut working after partial navigation replaces
   // the detail form without re-running this bootstrap script.
   document.addEventListener('keydown', submitOnEnter, true);
   document.addEventListener('keypress', submitOnEnter, true);
+  document.addEventListener('beforeinput', submitBeforeLineBreak, true);
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
   const fileInput = document.querySelector('[data-attachment-input]');
   const fileName = document.querySelector('[data-attachment-name]');
