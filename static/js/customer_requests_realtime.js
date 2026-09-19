@@ -13,7 +13,7 @@
   document.addEventListener('compositionend', () => { composing = false; }, true);
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
   const submitOnEnter = (event) => {
-    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13 || event.which === 13;
+    const isEnter = event.key === 'Enter' || event.key === 'Return' || event.code === 'Enter' || event.code === 'NumpadEnter' || event.keyCode === 13 || event.which === 13;
     if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
     const composer = event.target;
     if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
