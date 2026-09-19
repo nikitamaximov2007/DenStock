@@ -13,7 +13,7 @@
   document.addEventListener('compositionend', () => { composing = false; }, true);
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
   const submitComposer = (event, composer) => {
-    if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
+    if (!composer || typeof composer.matches !== 'function' || !composer.matches('textarea[name="text"]')) return;
     const replyForm = composer.closest('[data-reply-form]');
     if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
     event.preventDefault();
@@ -33,6 +33,7 @@
   // the detail form without re-running this bootstrap script.
   document.addEventListener('keydown', submitOnEnter, true);
   document.addEventListener('keypress', submitOnEnter, true);
+  document.addEventListener('keyup', submitOnEnter, true);
   document.addEventListener('beforeinput', submitBeforeLineBreak, true);
   if (!root) return;
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
