@@ -17,7 +17,6 @@
     const replyForm = composer.closest('[data-reply-form]');
     if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
     event.preventDefault();
-    replyForm.dataset.submitting = '1';
     replyForm.querySelector('button[type="submit"]')?.click();
   };
   const submitOnEnter = (event) => {
