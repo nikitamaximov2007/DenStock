@@ -150,7 +150,9 @@ def test_detail_query_count_is_bounded_and_read_only(
     assert response.content.decode().count("part-card--compact") == relations
     assert_no_writes(queries)
     record_property(f"public_detail_queries_{relations}", len(queries.captured_queries))
-    assert len(queries.captured_queries) <= 24
+    # Two read-only aggregate lookups provide the protected receipt-price
+    # floor for the original and analog cards.
+    assert len(queries.captured_queries) <= 26
 
 
 # --- SEO ------------------------------------------------------------------------------
