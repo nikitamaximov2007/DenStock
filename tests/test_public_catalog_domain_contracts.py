@@ -142,7 +142,10 @@ def test_price_facade_returns_known_decimal_without_mutating_state(domain_env):
 
     assert result == CurrentCustomerPrice(price_rub=Decimal("1234.50"), status="known")
     assert isinstance(result.price_rub, Decimal)
-    assert not queries.captured_queries
+    # The canonical public price now also checks the protected receipt-price
+    # floor still present in stock.  That is intentionally a read-only lookup;
+    # the facade must not mutate pricing state.
+    _assert_read_only(queries)
     assert (
         PartType.objects.get(pk=part.pk).recommended_price,
         ValuationSettings.objects.count(),

@@ -290,8 +290,8 @@
             <strong>{{ overview.part.name }}</strong>
             · {{ overview.lookup.manufacturer }}
             · Цена:
-            {% if overview.part.recommended_price %}
-              {{ overview.part.recommended_price|money_int }} ₽
+            {% if overview.lookup.client_price %}
+              {{ overview.lookup.client_price|money_int }} ₽
             {% else %}
               не указана
             {% endif %}

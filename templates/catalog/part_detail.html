@@ -43,7 +43,15 @@
       </tr>
       <tr>
         <th>Цена</th>
-        <td>{{ part.recommended_price|money_int }}</td>
+        <td>
+          {{ effective_customer_price|money_int }}
+          {% if part.recommended_price is not None and effective_customer_price > part.recommended_price %}
+            <div class="muted">
+              Текущая по прайсу {{ part.recommended_price|money_int }} ₽; на складе есть партия
+              с более высокой старой ценой, цена не снижается.
+            </div>
+          {% endif %}
+        </td>
       </tr>
       {% if catalog_origin_label %}
         <tr>
