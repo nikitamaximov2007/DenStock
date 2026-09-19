@@ -176,7 +176,8 @@
                       id="reply-text"
                       name="text"
                       rows="4"
-                      maxlength="4000">{{ reply_text }}</textarea>
+                      maxlength="4000"
+                      onkeydown="if ((event.key === 'Enter' || event.key === 'Return') && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); this.form.querySelector('button[type=submit]').click(); }">{{ reply_text }}</textarea>
             <div class="cr-attachment">
               <label class="btn btn--small btn--secondary" for="reply-attachment">Прикрепить файл</label>
               <input id="reply-attachment"
