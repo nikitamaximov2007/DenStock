@@ -26,6 +26,7 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from apps.customer_accounts import messenger_hooks as account_hooks
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
@@ -145,6 +146,12 @@ def handle_update(update) -> list[Outgoing]:
             "Если вы сотрудник PRO-STOR, передайте этот номер администратору."
         )
     if command == "/start" and argument:
+        # A link from the website's «Подключить Telegram» is an account event.
+        account_reply = account_hooks.telegram_start(
+            argument=argument, user_id=user_id, chat_id=chat_id, user=sender
+        )
+        if account_reply is not None:
+            return reply(account_reply)
         try:
             consume_telegram_start(
                 token=argument,

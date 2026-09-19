@@ -5,11 +5,13 @@ reports, customs, internal APIs and uploaded media simply do not exist in this
 resolver, so they answer 404 rather than an internal login redirect.
 """
 
-from django.urls import path
+from django.urls import include, path
 
 from apps.catalog import public_views
 
 urlpatterns = [
+    # The customer account. 404 until CUSTOMER_ACCOUNT_ENABLED.
+    path("account/", include("apps.customer_accounts.urls")),
     path("", public_views.public_root, name="public_catalog_root"),
     path("search/", public_views.public_search, name="public_catalog_search"),
     path("parts/<uuid:public_id>/", public_views.public_part_detail, name="public_catalog_part"),

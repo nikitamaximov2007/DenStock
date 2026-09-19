@@ -1,0 +1,21 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Вход · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account-auth">
+    <h1 class="page-head__title">Войти в PRO-STOR</h1>
+    {% if max_enabled %}
+      <form method="post" action="{% url 'customer_account_login_max' %}">
+        {% csrf_token %}
+        <button class="btn btn--large btn--block" type="submit">Продолжить через MAX</button>
+      </form>
+      <p class="muted">Аккаунт создастся автоматически — без пароля и регистрации.</p>
+    {% else %}
+      <p class="notice">Вход сейчас недоступен.</p>
+    {% endif %}
+    <div class="account-auth__optional">
+      <h2 class="account-auth__subtitle">Можно и без аккаунта</h2>
+      <p>Можно оформить заявку и без аккаунта. После отправки продолжите общение с менеджером в MAX или Telegram.</p>
+      <a class="btn btn--secondary" href="{% url 'public_catalog_root' %}">К поиску запчастей</a>
+    </div>
+  </div>
+{% endblock %}

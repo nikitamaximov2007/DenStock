@@ -45,6 +45,13 @@
             <button class="btn header-search__button" type="submit">Найти</button>
           </form>
         {% endblock %}
+        {% if account_enabled %}
+          {% if account_signed_in %}
+            <a class="account-link" href="{% url 'customer_account_home' %}">Мой кабинет</a>
+          {% else %}
+            <a class="account-link" href="{% url 'customer_account_login' %}">Войти</a>
+          {% endif %}
+        {% endif %}
         <a class="cart-link" href="{% url 'public_catalog_cart' %}">
           Корзина
           {% if cart_lines %}

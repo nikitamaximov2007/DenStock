@@ -1,0 +1,11 @@
+<nav class="account-nav" aria-label="Кабинет">
+  <a href="{% url 'customer_account_home' %}"{% if section == "home" %} aria-current="page"{% endif %}>Обзор</a>
+  <a href="{% url 'customer_account_requests' %}"{% if section == "requests" %} aria-current="page"{% endif %}>Заявки</a>
+  <a href="{% url 'customer_account_purchases' %}"{% if section == "purchases" %} aria-current="page"{% endif %}>Покупки</a>
+  <a href="{% url 'customer_account_messengers' %}"{% if section == "messengers" %} aria-current="page"{% endif %}>Мессенджеры</a>
+  <a href="{% url 'customer_account_profile' %}"{% if section == "profile" %} aria-current="page"{% endif %}>Профиль</a>
+  <form method="post" action="{% url 'customer_account_logout' %}" class="account-nav__logout">
+    {% csrf_token %}
+    <button class="btn btn--link" type="submit">Выйти</button>
+  </form>
+</nav>

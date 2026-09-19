@@ -1,0 +1,24 @@
+{% extends "public_catalog/base.html" %}
+{% load public_catalog %}
+{% block title %}Мои покупки · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">История покупок</h1>
+    {% include "customer_accounts/_nav.html" with section="purchases" %}
+    {% if purchases %}
+      <ul class="account-list">
+        {% for purchase in purchases %}
+          <li class="account-row">
+            <a class="account-row__main" href="{% url 'customer_account_purchase' purchase.number %}">
+              <span class="account-row__title">Покупка №{{ purchase.number }}</span>
+              <span>{{ purchase.total|rub }}</span>
+            </a>
+            <p class="account-row__meta">{{ purchase.sold_at|ru_date }} · {{ purchase.lines|length }} поз.</p>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">Покупок пока нет. История покупок появится, когда менеджер свяжет кабинет с вашей карточкой клиента.</p>
+    {% endif %}
+  </div>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Код из MAX · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account-auth">
+    <h1 class="page-head__title">Вход через MAX</h1>
+    <ol class="account-steps">
+      <li>
+        Откройте бота PRO-STOR в MAX и нажмите «Начать».
+        {% if deep_link %}
+          <p><a class="btn btn--large" href="{{ deep_link }}" rel="noopener">Открыть MAX</a></p>
+        {% endif %}
+      </li>
+      <li>Бот пришлёт шестизначный код. Введите его здесь, в этой же вкладке.</li>
+    </ol>
+    <form method="post" class="account-code">
+      {% csrf_token %}
+      <label class="field__label" for="account-code">Код из MAX</label>
+      <input class="field account-code__input" id="account-code" name="code"
+             inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}"
+             maxlength="8" required>
+      {% if consent_required %}
+        <label class="check consent" for="consent-account">
+          <input type="checkbox" id="consent-account" name="consent_account" value="1" required>
+          <span>Даю согласие на обработку персональных данных для работы личного кабинета (версия {{ consent_version }}).</span>
+        </label>
+      {% endif %}
+      <button class="btn btn--large btn--block" type="submit">Войти</button>
+    </form>
+    <p class="muted">Код действует 10 минут. Никому его не сообщайте — сотрудники PRO-STOR его не спрашивают.</p>
+  </div>
+{% endblock %}

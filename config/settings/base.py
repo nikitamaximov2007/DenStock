@@ -50,6 +50,7 @@ LOCAL_APPS = [
     "apps.repairs",
     "apps.ordered_parts",
     "apps.customer_requests",
+    "apps.customer_accounts",
     "apps.customs_orders",
     "apps.returns",
     "apps.writeoffs",
@@ -387,3 +388,27 @@ LOGGING = {
         "apps": {"handlers": ["operational"], "level": "ERROR", "propagate": False},
     },
 }
+
+
+# --- PRO-STOR customer account (docs/customer_account/legal_auth_gate.md) ------------------
+# Every switch defaults to OFF. The code is complete behind them; turning any of
+# them on in production needs the owner's decision and the legal review listed
+# in that document. CUSTOMER_ACCOUNT_ENABLED gates the whole feature (pages,
+# account creation at messenger handoff, request ownership). The auth switches
+# gate individual ways in.
+CUSTOMER_ACCOUNT_ENABLED = env.bool("CUSTOMER_ACCOUNT_ENABLED", default=False)
+# MAX is the ONLY way to sign in and the only way an account is created (owner
+# decision for V1): a Russian-owned system, the candidate under 149-FZ art. 8
+# part 10. There is deliberately no Telegram, e-mail, password or SMS login.
+# Telegram stays a messaging channel that a MAX-signed-in customer may link.
+CUSTOMER_AUTH_MAX_ENABLED = env.bool("CUSTOMER_AUTH_MAX_ENABLED", default=False)
+# A login or link attempt lives this long, and the one-time code may be tried
+# this many times before the attempt is locked.
+CUSTOMER_LOGIN_ATTEMPT_SECONDS = env.int("CUSTOMER_LOGIN_ATTEMPT_SECONDS", default=600)
+CUSTOMER_LOGIN_CODE_TRIES = env.int("CUSTOMER_LOGIN_CODE_TRIES", default=5)
+CUSTOMER_LOGIN_RATE_LIMIT = env.int("CUSTOMER_LOGIN_RATE_LIMIT", default=10)
+CUSTOMER_LOGIN_RATE_WINDOW_SECONDS = env.int("CUSTOMER_LOGIN_RATE_WINDOW_SECONDS", default=900)
+CUSTOMER_SESSION_DAYS = env.int("CUSTOMER_SESSION_DAYS", default=30)
+# Versions of the texts a customer agrees to in the account. Evidence stores
+# the version; the wording itself is approved and published separately.
+CUSTOMER_ACCOUNT_CONSENT_VERSION = env("CUSTOMER_ACCOUNT_CONSENT_VERSION", default="").strip()
