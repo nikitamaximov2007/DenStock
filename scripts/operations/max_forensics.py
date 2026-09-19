@@ -172,7 +172,9 @@ def main():
             candidates = CustomerRequest.objects.filter(human_number=int(reference))
         else:
             candidates = CustomerRequest.objects.filter(public_id__istartswith=reference.lower())
-        matches = [r for r in candidates if r.reference == reference or str(r.human_number) == reference]
+        matches = [
+            r for r in candidates if r.reference == reference or str(r.human_number) == reference
+        ]
         if len(matches) != 1:
             report.line("FAIL", f"{reference} not found exactly once ({len(matches)})")
             continue

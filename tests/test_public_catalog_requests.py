@@ -411,7 +411,9 @@ def test_request_form_and_submit_query_counts_are_flat(
     # still a constant, independent of the number of lines.
     # Realtime event log and the locked human-number counter add two fixed
     # writes; the total remains flat for 1, 20 and 50 line requests.
-    assert len(writes) == 6, "counter, request, workspace event, bulk lines, conversation, outbox event"
+    assert len(writes) == 6, (
+        "counter, request, workspace event, bulk lines, conversation, outbox event"
+    )
     record_property(f"public_request_form_queries_{lines}", len(form_queries.captured_queries))
     record_property(f"public_request_submit_queries_{lines}", len(submit_queries.captured_queries))
     assert len(form_queries.captured_queries) <= 14
