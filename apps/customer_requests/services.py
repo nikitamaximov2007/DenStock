@@ -10,7 +10,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.catalog.models import PartType
-from apps.catalog.public_contracts import resolve_current_customer_price
+from apps.catalog.public_contracts import resolve_current_customer_prices
 from apps.core.phones import canonical_phone_text, normalize_phone
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number, with_part_identity
@@ -199,6 +199,8 @@ def create_customer_request(
     if len(parts) != len(part_ids):
         raise CustomerRequestError("Одна или несколько деталей больше недоступны.")
     availability = available_totals(part_ids)
+    # ``price_seen`` is the canonical effective price, protected floor included.
+    prices = resolve_current_customer_prices(parts.values())
     prepared_lines = []
     for line in line_inputs:
         part = parts[line.part_id]
@@ -215,7 +217,7 @@ def create_customer_request(
                 f"{label}: Сейчас доступно {_quantity_text(current_available)}."
                 " Измените количество или запросите поставку."
             )
-        price = resolve_current_customer_price(part).price_rub
+        price = prices[part.pk].price_rub
         prepared_lines.append((line, part, price))
 
     try:

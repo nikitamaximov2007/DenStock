@@ -30,10 +30,12 @@ def _warehouse_matches(q: str, norm: str) -> list:
         allow_partial=True,
         allow_name=True,
         allow_alias=True,
+        include_price=True,
     )
     return [
         {
             "part": candidate.part,
+            "price": candidate.client_price,
             "balances": candidate.location_rows,
             "available": candidate.available,
             "physical": candidate.physical,
