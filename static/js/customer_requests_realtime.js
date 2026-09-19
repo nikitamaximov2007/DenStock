@@ -1,6 +1,6 @@
 (function () {
   const root = document.querySelector('[data-workspace-realtime]');
-  if (!root || !window.fetch) return;
+  if (!window.fetch) return;
   let cursor = Number(root.dataset.cursor || 0);
   let composing = false;
   let audioReady = false;
@@ -34,6 +34,7 @@
   document.addEventListener('keydown', submitOnEnter, true);
   document.addEventListener('keypress', submitOnEnter, true);
   document.addEventListener('beforeinput', submitBeforeLineBreak, true);
+  if (!root) return;
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
   const fileInput = document.querySelector('[data-attachment-input]');
   const fileName = document.querySelector('[data-attachment-name]');
