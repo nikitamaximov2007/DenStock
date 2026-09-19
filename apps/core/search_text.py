@@ -47,3 +47,39 @@ def fold_search_text(value: str | None) -> str:
     сравнивать можно только одинаково свёрнутые строки.
     """
     return " ".join((value or "").split()).casefold().replace(YO, YE)
+
+
+# Разделители, которыми один и тот же артикул или название пишут по-разному:
+# «O-RING», «O RING», «ORING»; «420-931-410», «420 931 410», «420931410».
+# Для покупателя это одно и то же, поэтому в поисковой форме их нет. Список
+# закрытый и состоит только из пробельных символов и тире/дефисов Unicode:
+# точка и слэш здесь НЕ трогаются, иначе «1.5» и «15» слились бы в одно.
+_SEPARATORS = (
+    "-",       # ASCII hyphen-minus
+    "‐",  # hyphen
+    "‑",  # non-breaking hyphen
+    "‒",  # figure dash
+    "–",  # en dash
+    "—",  # em dash
+    "―",  # horizontal bar
+    "−",  # minus sign
+    "­",  # soft hyphen
+    "_",
+)
+
+
+def compact_search_text(value: str | None) -> str:
+    """Свёрнутая форма БЕЗ разделителей: «O-RING», «O RING» и «ORING» равны.
+
+    Поверх `fold_search_text` (регистр, «ё», лишние пробелы) убираются все
+    пробелы и варианты дефиса. Сравнивать можно только строки, свёрнутые этой
+    же функцией: она применяется и к сохранённому названию, и к запросу.
+
+    Хранится и ищется отдельно от `fold_search_text`, а не вместо неё: точное
+    совпадение исходного написания обязано оставаться сильнее, чем совпадение
+    после склейки.
+    """
+    folded = fold_search_text(value)
+    for separator in _SEPARATORS:
+        folded = folded.replace(separator, "")
+    return folded.replace(" ", "")

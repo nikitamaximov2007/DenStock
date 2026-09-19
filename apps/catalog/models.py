@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.core.models import BaseImage
+from apps.core.search_text import compact_search_text
 
 
 def normalize_number(value: str) -> str:
@@ -178,6 +179,13 @@ class PartType(Dictionary):
         NOT_APPLICABLE = "not_applicable", "Формула не применяется"
 
     name = models.CharField("Название", max_length=200)
+    # Поисковая форма названия без разделителей: «O-RING», «O RING» и «ORING»
+    # для покупателя одно и то же. Хранится рядом с названием, а само название
+    # остаётся ровно тем, что ввёл оператор. Считается в Python по тем же
+    # причинам, что и `search_name_ru`: `UPPER()` зависит от локали кластера.
+    search_name_compact = models.CharField(
+        "Название для поиска без разделителей", max_length=200, blank=True, editable=False
+    )
     category = models.ForeignKey(
         Category, verbose_name="Категория", on_delete=models.PROTECT, related_name="parts"
     )
@@ -239,9 +247,24 @@ class PartType(Dictionary):
         verbose_name = "Вид детали"
         verbose_name_plural = "Виды деталей"
         ordering = ["name"]
+        indexes = [
+            models.Index(fields=["search_name_compact"], name="parttype_name_compact_idx"),
+        ]
 
     def __str__(self) -> str:
         return self.name
+
+    def save(self, *args, **kwargs):
+        """Поисковая форма пересчитывается вместе с самим названием.
+
+        `update_fields` с одним `name` обязан тянуть её за собой, иначе форма
+        молча отстанет от видимого названия.
+        """
+        self.search_name_compact = compact_search_text(self.name)[:200]
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and "name" in set(update_fields):
+            kwargs["update_fields"] = sorted(set(update_fields) | {"search_name_compact"})
+        return super().save(*args, **kwargs)
 
     def clean(self) -> None:
         # Минимальная цена не может быть выше рекомендуемой, если заданы обе.

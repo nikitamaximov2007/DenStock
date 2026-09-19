@@ -312,7 +312,6 @@ def indexed_catalog(cat):
         ("0001300", "catalog_partnumber_normalized_trgm"),
         ("drive", "catalog_parttype_name_upper_trgm"),
         ("bearng", "catalog_parttype_name_upper_trgm"),
-        ("ПРОКЛАДКА", "actions_partcustomsinfo_search_ru_trgm"),
     ],
 )
 def test_search_can_be_served_by_the_intended_index(indexed_catalog, query, index):
@@ -325,3 +324,18 @@ def test_search_can_be_served_by_the_intended_index(indexed_catalog, query, inde
     """
     plans = _plans_for(query)
     assert any(index in plan for plan in plans), "\n\n".join(plans)[:1500]
+
+
+def test_every_russian_name_lookup_is_served_by_an_index(indexed_catalog):
+    """Русские тиры не сканируют таблицу целиком — ни один из них.
+
+    Раньше здесь был закреплён конкретный триграммный индекс. После появления
+    свёрнутой колонки без разделителей планировщик берёт для равенства и
+    префикса обычный btree: для этих предикатов он дешевле GIN. Это лучше, а
+    не хуже, поэтому проверяется само свойство — предикат обслуживает индекс,
+    — а не имя того индекса, который сегодня выбрал планировщик.
+    """
+    plans = [plan for plan in _plans_for("ПРОКЛАДКА") if "actions_partcustomsinfo" in plan]
+    assert plans, "русские тиры вообще не запрашивались"
+    scanned = [plan for plan in plans if "Seq Scan on actions_partcustomsinfo" in plan]
+    assert not scanned, "\n\n".join(scanned)[:1200]

@@ -14,7 +14,7 @@ PartCustomsInfo — таможенная карточка детали для э
 from django.conf import settings
 from django.db import models
 
-from apps.core.search_text import fold_search_text
+from apps.core.search_text import compact_search_text, fold_search_text
 
 
 class WarehouseAction(models.Model):
@@ -198,6 +198,14 @@ class PartCustomsInfo(models.Model):
     search_name_ru = models.CharField(
         "Русское название для поиска", max_length=255, blank=True, editable=False
     )
+    # Та же форма, но ещё и без разделителей: «уплотнительное-кольцо» и
+    # «уплотнительное кольцо» должны находиться одинаково.
+    search_name_ru_compact = models.CharField(
+        "Русское название для поиска без разделителей",
+        max_length=255,
+        blank=True,
+        editable=False,
+    )
     manufacturer = models.CharField("Производитель", max_length=80, default="BRP")
     country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)
     gross_weight_kg = models.DecimalField(
@@ -234,6 +242,9 @@ class PartCustomsInfo(models.Model):
         verbose_name_plural = "Таможенные данные деталей"
         indexes = [
             models.Index(fields=["search_name_ru"], name="customs_search_name_ru_idx"),
+            models.Index(
+                fields=["search_name_ru_compact"], name="customs_name_ru_compact_idx"
+            ),
         ]
 
     def __str__(self) -> str:
@@ -247,9 +258,12 @@ class PartCustomsInfo(models.Model):
         иначе она молча отстанет от видимого названия.
         """
         self.search_name_ru = fold_search_text(self.customs_name_ru)[:255]
+        self.search_name_ru_compact = compact_search_text(self.customs_name_ru)[:255]
         update_fields = kwargs.get("update_fields")
         if update_fields is not None and "customs_name_ru" in set(update_fields):
-            kwargs["update_fields"] = sorted(set(update_fields) | {"search_name_ru"})
+            kwargs["update_fields"] = sorted(
+                set(update_fields) | {"search_name_ru", "search_name_ru_compact"}
+            )
         super().save(*args, **kwargs)
 
 

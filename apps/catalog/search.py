@@ -34,7 +34,7 @@ from typing import Literal
 from django.db import connection, transaction
 
 from apps.actions.models import PartCustomsInfo
-from apps.core.search_text import fold_search_text
+from apps.core.search_text import compact_search_text, fold_search_text
 from apps.inventory.presentation import EXACT_NUMBER_KINDS
 
 from .models import PartNumber, PartType, normalize_number
@@ -45,6 +45,7 @@ MatchType = Literal[
     "article_prefix",
     "article_partial",
     "exact_name",
+    "normalized_exact_name",
     "name_prefix",
     "name_partial",
     "name_all_words",
@@ -58,15 +59,18 @@ MATCH_TYPE_RANKS: dict[str, int] = {
     "article_prefix": 3,
     "article_partial": 4,
     "exact_name": 5,
-    "name_prefix": 6,
-    "name_partial": 7,
+    # «O RING» находит «O-RING». Отдельным тиром НИЖЕ точного совпадения:
+    # исходное написание всегда сильнее, чем совпадение после склейки.
+    "normalized_exact_name": 6,
+    "name_prefix": 7,
+    "name_partial": 8,
     # Все слова запроса встречаются в названии, но не подряд: «масляный фильтр»
     # находит «Фильтр масляный». Порядок слов в русском названии свободный, и
     # запоминать, как его записал оператор, покупатель не обязан. Тир стоит
     # ниже подстроки (там слова идут подряд, совпадение сильнее) и выше
     # опечаток: это точное совпадение слов, а не догадка.
-    "name_all_words": 8,
-    "name_fuzzy": 9,
+    "name_all_words": 9,
+    "name_fuzzy": 10,
 }
 
 # --- Thresholds -------------------------------------------------------------
@@ -220,6 +224,26 @@ def _name_ids(query: str, lookup: str, limit: int) -> list[int]:
     return sorted(set(english) | set(russian))[:limit]
 
 
+def _compact_name_ids(query: str, lookup: str, limit: int) -> list[int]:
+    """Те же названия, но сравнение без разделителей.
+
+    Обе колонки свёрнуты той же функцией, что и запрос, поэтому сравнение
+    регистрозависимое и идёт по индексу: приводить регистр в базе нельзя —
+    `UPPER()` в локали `C` кириллицу не трогает.
+    """
+    compact = compact_search_text(query)
+    if not compact:
+        return []
+    english = PartType.objects.filter(**{f"search_name_compact__{lookup}": compact}).values_list(
+        "pk", flat=True
+    )[:limit]
+    russian = PartCustomsInfo.objects.filter(
+        customs_name_ru_confirmed=True,
+        **{f"search_name_ru_compact__{lookup}": compact},
+    ).values_list("part_type_id", flat=True)[:limit]
+    return sorted(set(english) | set(russian))[:limit]
+
+
 MAX_WORDS = 5
 MIN_WORD_LENGTH = 3
 
@@ -370,13 +394,23 @@ def search_part_ids(raw_query: str | None, *, limit: int = RESULT_CAP) -> list[P
     if not full() and len(normalized) >= MIN_PARTIAL_LENGTH:
         take(_article_ids(normalized, "contains", limit), "article_partial")
 
-    # 5-7. Name equality is a cheap comparison; prefix and substring get floors.
+    # 5-8. Name equality is a cheap comparison; prefix and substring get floors.
+    # Each broad tier is asked twice: once about the name as written, once
+    # about the same name with separators removed, so «o ring» reaches
+    # «O-RING» without letting it outrank a part actually called «O RING».
+    compact = compact_search_text(query)
     if not full():
         take(_name_ids(query, "iexact", limit), "exact_name")
+    if not full():
+        take(_compact_name_ids(query, "exact", limit), "normalized_exact_name")
     if not full() and len(query) >= MIN_PREFIX_LENGTH:
         take(_name_ids(query, "istartswith", limit), "name_prefix")
+        if len(compact) >= MIN_PREFIX_LENGTH:
+            take(_compact_name_ids(query, "startswith", limit), "name_prefix")
     if not full() and len(query) >= MIN_PARTIAL_LENGTH:
         take(_name_ids(query, "icontains", limit), "name_partial")
+        if len(compact) >= MIN_PARTIAL_LENGTH:
+            take(_compact_name_ids(query, "contains", limit), "name_partial")
 
     # 8. Every word of a multiword query, in any order.
     if not full():

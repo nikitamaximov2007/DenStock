@@ -241,7 +241,8 @@ def test_same_part_matching_english_and_russian_appears_once(cat):
 def test_ranking_contract_is_the_documented_tier_order():
     assert [t for t, _ in sorted(MATCH_TYPE_RANKS.items(), key=lambda kv: kv[1])] == [
         "exact_article", "normalized_exact_article", "article_prefix", "article_partial",
-        "exact_name", "name_prefix", "name_partial", "name_all_words", "name_fuzzy",
+        "exact_name", "normalized_exact_name", "name_prefix", "name_partial",
+        "name_all_words", "name_fuzzy",
     ]
 
 
@@ -399,7 +400,12 @@ def test_search_writes_nothing(cat):
 # Worst case: nine tier queries plus, for a name query on PostgreSQL inside an
 # outer transaction, SAVEPOINT / read setting / set setting / fuzzy / restore /
 # RELEASE. Production requests run in autocommit, where the same search is 13.
-MAX_SEARCH_QUERIES = 15
+# Шесть запросов из этого бюджета — тиры без разделителей («O RING» находит
+# «O-RING»): равенство, префикс и подстрока, каждый отдельно по английской и
+# по русской колонке (OR через join убил бы индекс на обеих сторонах). Важное
+# свойство — не абсолютное число, а то, что оно НЕ зависит от количества
+# совпадений: это проверяет сам тест ниже.
+MAX_SEARCH_QUERIES = 21
 
 
 def test_query_count_does_not_scale_with_matches(cat):
