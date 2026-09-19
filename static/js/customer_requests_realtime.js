@@ -2,15 +2,19 @@
   const root = document.querySelector('[data-workspace-realtime]');
   if (!root || !window.fetch) return;
   let cursor = Number(root.dataset.cursor || 0);
+  let composing = false;
   let audioReady = false;
   let sounds = localStorage.getItem('denstock-request-sounds') !== 'off';
   const control = document.querySelector('[data-sound-control]');
   const updateControl = () => { if (control) control.textContent = sounds ? '🔊 Звуки: вкл.' : '🔇 Звуки: выкл.'; };
   updateControl();
   document.addEventListener('pointerdown', () => { audioReady = true; }, { once: true });
+  document.addEventListener('compositionstart', () => { composing = true; }, true);
+  document.addEventListener('compositionend', () => { composing = false; }, true);
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
   const submitOnEnter = (event) => {
-    if (event.key !== 'Enter' || event.shiftKey || (event.isComposing && event.keyCode === 229)) return;
+    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13;
+    if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
     const composer = event.target;
     if (!(composer instanceof HTMLTextAreaElement) || !composer.matches('[name="text"]')) return;
     const replyForm = composer.closest('[data-reply-form]');
@@ -21,7 +25,7 @@
   };
   // Delegation keeps the shortcut working after partial navigation replaces
   // the detail form without re-running this bootstrap script.
-  document.addEventListener('keydown', submitOnEnter);
+  document.addEventListener('keydown', submitOnEnter, true);
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
   const fileInput = document.querySelector('[data-attachment-input]');
   const fileName = document.querySelector('[data-attachment-name]');

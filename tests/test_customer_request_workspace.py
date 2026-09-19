@@ -9,6 +9,7 @@ import uuid
 from decimal import Decimal
 
 import pytest
+from django.conf import settings
 from django.contrib.auth.models import Group
 from django.db import connection
 from django.urls import reverse
@@ -634,3 +635,13 @@ def test_two_clicks_at_the_same_moment_still_send_one_reply(part, seller, messen
     model, _states = reply_states(messenger)
     assert model.objects.filter(direction="operator_to_customer").count() == 1
     assert sorted(outcomes) == [False, True]  # one stored it, one found it
+
+
+def test_realtime_composer_enter_contract_is_delegated_and_ime_safe():
+    source = (settings.BASE_DIR / "static" / "js" / "customer_requests_realtime.js").read_text(
+        encoding="utf-8"
+    )
+    assert "event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13" in source
+    assert "event.shiftKey || composing || event.isComposing || event.keyCode === 229" in source
+    assert "document.addEventListener('keydown', submitOnEnter, true)" in source
+    assert "replyForm.requestSubmit()" in source
