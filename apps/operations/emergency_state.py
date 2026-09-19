@@ -36,6 +36,9 @@ BUSINESS_APP_LABELS = frozenset(
         # Public customer requests carry an operational commitment and must be
         # protected and fingerprinted with the rest of the business state.
         "customer_requests",
+        # Customer-account ownership, consent and session audit are customer
+        # business data and must be included in freeze/fingerprint checks.
+        "customer_accounts",
         # Сформированные таможенные заказы фиксируют историю включённых строк
         # и входят в тот же контур freeze/backup/failback, что продажи и ремонты.
         "customs_orders",
