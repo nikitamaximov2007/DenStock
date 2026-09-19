@@ -43,8 +43,14 @@ from .models import (
     TelegramMessage,
     TelegramOperator,
     TelegramOutboxEvent,
+    WorkspaceEvent,
 )
-from .services import CustomerRequestError, change_request_status
+from .services import (
+    CustomerRequestError,
+    change_request_status,
+    delete_all_cancelled_requests,
+    delete_cancelled_request,
+)
 from .telegram import handle_update, webhook_secret_is_valid
 
 PAGE_SIZE = 30
@@ -176,6 +182,7 @@ def customer_request_list(request):
     queryset = workspace.filtered_requests(
         tab=params["tab"], messenger=params["messenger"], query=params["q"]
     )
+
     paginator = Paginator(queryset, PAGE_SIZE)
     page_obj = paginator.get_page(request.GET.get("page"))
     for item in page_obj.object_list:
@@ -214,8 +221,33 @@ def customer_request_list(request):
             "messengers": messengers,
             "waiting_count": counts[workspace.TAB_WAITING],
             "active_tab_label": dict(workspace.TABS)[params["tab"]],
+            "workspace_cursor": (
+                WorkspaceEvent.objects.order_by("-event_id")
+                .values_list("event_id", flat=True)
+                .first()
+                or 0
+            ),
         },
     )
+
+
+@login_required
+def customer_request_events(request):
+    """Bounded replay endpoint for the polling workspace cursor."""
+    _require_access(request)
+    raw = request.GET.get("after", "0")
+    try:
+        after = int(raw)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Некорректный курсор."}, status=400)
+    if after < 0:
+        return JsonResponse({"error": "Некорректный курсор."}, status=400)
+    events = WorkspaceEvent.objects.filter(event_id__gt=after).order_by("event_id")[:100]
+    rows = [
+        {"id": event.event_id, "type": event.event_type, "payload": event.payload}
+        for event in events
+    ]
+    return JsonResponse({"events": rows, "cursor": rows[-1]["id"] if rows else after})
 
 
 def _detail_context(
@@ -263,6 +295,10 @@ def _detail_context(
         "list_query": list_query,
         "back_url": reverse("customer_request_list") + (f"?{list_query}" if list_query else ""),
         "action_query": f"?{list_query}" if list_query else "",
+        "workspace_cursor": (
+            WorkspaceEvent.objects.order_by("-event_id").values_list("event_id", flat=True).first()
+            or 0
+        ),
     }
 
 
@@ -303,6 +339,30 @@ def customer_request_status(request, pk):
         if changed:
             messages.success(request, "Статус заявки обновлён.")
     return redirect(_detail_url(pk, _list_params(request.GET)))
+
+
+@login_required
+@require_POST
+def customer_request_delete(request, pk):
+    _require_access(request)
+    try:
+        delete_cancelled_request(request_id=pk, by=request.user)
+    except CustomerRequest.DoesNotExist:
+        raise Http404 from None
+    except CustomerRequestError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Заявка удалена.")
+    return redirect(reverse("customer_request_list") + "?tab=canceled")
+
+
+@login_required
+@require_POST
+def customer_request_delete_all(request):
+    _require_access(request)
+    deleted = delete_all_cancelled_requests(by=request.user)
+    messages.success(request, f"Удалено отменённых заявок: {deleted}.")
+    return redirect(reverse("customer_request_list") + "?tab=canceled")
 
 
 @login_required

@@ -4,8 +4,11 @@ from . import views
 
 urlpatterns = [
     path("", views.customer_request_list, name="customer_request_list"),
+    path("events/", views.customer_request_events, name="customer_request_events"),
     path("<int:pk>/", views.customer_request_detail, name="customer_request_detail"),
     path("<int:pk>/status/", views.customer_request_status, name="customer_request_status"),
+    path("<int:pk>/delete/", views.customer_request_delete, name="customer_request_delete"),
+    path("delete-canceled/", views.customer_request_delete_all, name="customer_request_delete_all"),
     path(
         "<int:pk>/telegram-link/",
         views.customer_request_telegram_link,

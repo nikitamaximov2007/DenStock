@@ -130,7 +130,12 @@ def matching_submission(session, submitted_token: str) -> Submission | None:
 
 def request_reference(public_id) -> str:
     """The short number a customer can read out on the phone."""
-    return CustomerRequest.reference_for(public_id)
+    number = (
+        CustomerRequest.objects.filter(public_id=public_id)
+        .values_list("human_number", flat=True)
+        .first()
+    )
+    return str(number) if number is not None else CustomerRequest.reference_for(public_id)
 
 
 # --- Abuse limits ----------------------------------------------------------------------

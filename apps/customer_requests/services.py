@@ -19,6 +19,7 @@ from .models import (
     CustomerRequest,
     CustomerRequestLine,
     CustomerRequestMessengerContact,
+    CustomerRequestNumberSequence,
     CustomerRequestPrivacyEvent,
     CustomerRequestStatusEvent,
 )
@@ -27,6 +28,15 @@ from .policies import PUBLIC_REQUEST_CONSENT_PURPOSE
 ZERO = Decimal("0")
 MAX_REQUEST_LINES = 50
 logger = logging.getLogger(__name__)
+
+
+def _next_human_number() -> int:
+    """Allocate a never-reused display number under a database row lock."""
+    counter = CustomerRequestNumberSequence.objects.select_for_update().get(singleton=True)
+    number = counter.next_number
+    counter.next_number = number + 1
+    counter.save(update_fields=["next_number"])
+    return number
 
 
 class CustomerRequestError(ValueError):
@@ -214,6 +224,7 @@ def create_customer_request(
         # raised directly in the outer atomic block would be forbidden.
         with transaction.atomic():
             request = CustomerRequest.objects.create(
+                human_number=_next_human_number(),
                 source=source,
                 customer_name=customer_name,
                 customer_phone=customer_phone,
@@ -281,6 +292,39 @@ def change_request_status(
         request=request, from_status=previous, to_status=target_status, changed_by=by
     )
     return request, True
+
+
+@transaction.atomic
+def delete_cancelled_request(*, request_id: int, by=None) -> bool:
+    """Permanently remove one request only after locking and rechecking status."""
+    request = CustomerRequest.objects.select_for_update().get(pk=request_id)
+    if request.status != CustomerRequest.Status.CANCELED:
+        raise CustomerRequestError("Удалять можно только отменённые заявки.")
+    # Every request-owned relation uses CASCADE. Explicitly clear routing rows
+    # first so a selected request can never remain the active destination.
+    from .models import MaxCustomerChat, TelegramCustomerChat
+
+    TelegramCustomerChat.objects.filter(active_conversation__request=request).update(
+        active_conversation=None
+    )
+    MaxCustomerChat.objects.filter(active_conversation__request=request).update(
+        active_conversation=None
+    )
+    request.delete()
+    return True
+
+
+@transaction.atomic
+def delete_all_cancelled_requests(*, by=None) -> int:
+    """Lock and delete only rows still cancelled; status races are harmless."""
+    ids = list(
+        CustomerRequest.objects.select_for_update()
+        .filter(status=CustomerRequest.Status.CANCELED)
+        .values_list("pk", flat=True)
+    )
+    for request_id in ids:
+        delete_cancelled_request(request_id=request_id, by=by)
+    return len(ids)
 
 
 @transaction.atomic

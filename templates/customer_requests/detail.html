@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Заявка №{{ customer_request.reference }} · DenisStock{% endblock %}
 {% block content %}
+  <div hidden
+       data-workspace-realtime
+       data-cursor="{{ workspace_cursor }}"
+       data-endpoint="{% url 'customer_request_events' %}"
+       data-request-id="{{ customer_request.pk }}"></div>
   <div class="page-header">
     <h1 class="page-title">Заявка №{{ customer_request.reference }}</h1>
     <div class="page-actions">
@@ -81,11 +86,12 @@
         {% if timeline %}
           <ol class="cr-chat__list" data-timeline>
             {% for entry in timeline %}
+              {% if entry.date_separator %}<li class="cr-chat__date"><span>{{ entry.date_separator|ru_chat_date }}</span></li>{% endif %}
               <li class="cr-msg cr-msg--{{ entry.role }}" data-role="{{ entry.role }}">
                 {% if entry.role == "bot" %}
                   <details class="cr-msg__bot">
                     <summary>
-                      <span class="cr-msg__author">{{ entry.author }}</span> · {{ entry.created_at|ru_dt }}
+                      <span class="cr-msg__author">{{ entry.author }}</span> · {{ entry.created_at|ru_time }}
                       {% if entry.not_delivered %}· <span class="cr-msg__status cr-msg__status--bad">{{ entry.delivery_label }}</span>{% endif %}
                       <span class="cr-msg__peek">{{ entry.text|truncatechars:60 }}</span>
                     </summary>
@@ -95,7 +101,7 @@
                   <div class="cr-msg__bubble">
                     <div class="cr-msg__meta">
                       <span class="cr-msg__author">{{ entry.author }}</span>
-                      <time>{{ entry.created_at|ru_dt }}</time>
+                      <time>{{ entry.created_at|ru_time }}</time>
                     </div>
                     <div class="cr-msg__text">
                       {% if entry.text %}
@@ -107,7 +113,7 @@
                     {% if entry.role == "operator" %}
                       <div class="cr-msg__delivery" data-delivery="{{ entry.delivery_status }}">
                         {% if entry.delivered %}
-                          Доставлено
+                          Отправлено
                         {% elif entry.in_flight %}
                           Отправляется…
                         {% else %}
@@ -248,9 +254,7 @@
         </table>
       </div>
       <div class="card__body">
-        <p class="muted">
-          Цена — та, что клиент видел при заявке. Заявка не фиксирует цену и не резервирует остаток.
-        </p>
+        <p class="muted">Цена — та, что клиент видел при заявке. Заявка не фиксирует цену и не резервирует остаток.</p>
         {% if customer_request.comment and not customer_request.data_anonymized_at %}
           <p class="cr-order__comment">
             <strong>Комментарий клиента:</strong> {{ customer_request.comment }}
@@ -259,39 +263,4 @@
       </div>
     </section>
   </div>
-  <details class="card cr-service" data-service-info>
-    <summary class="card__header">
-      <span class="card__title">Служебная информация</span>
-    </summary>
-    <div class="card__body">
-      <h3>История статусов</h3>
-      {% if events %}
-        <ul>
-          {% for event in events %}
-            <li>
-              {{ event.changed_at|ru_dt }}: {{ event.get_from_status_display }} → {{ event.get_to_status_display }} · {{ event.changed_by|default:"Система" }}
-            </li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <p>Статус ещё не менялся.</p>
-      {% endif %}
-      <h3>Связь</h3>
-      <p>
-        Предпочтительный мессенджер: {{ customer_request.get_preferred_messenger_display }}.
-        {% if customer_request.messenger_contact %}
-          Связан {{ customer_request.messenger_contact.linked_at|ru_dt }}.
-        {% else %}
-          Пока не связан: звоните по телефону из заявки.
-        {% endif %}
-      </p>
-      <h3>Согласие и хранение</h3>
-      <p>
-        Политика: {{ customer_request.privacy_policy_version }} · Согласие: {{ customer_request.personal_data_consent_version }} · Цель: {{ customer_request.consent_purpose }} · Принято: {{ customer_request.consent_accepted_at|ru_dt }}
-      </p>
-      {% if customer_request.consent_withdrawn_at %}
-        <p>Согласие отозвано: {{ customer_request.consent_withdrawn_at|ru_dt }}</p>
-      {% endif %}
-    </div>
-  </details>
 {% endblock %}

@@ -68,3 +68,26 @@ def ru_dt(value):
 def ru_dts(value):
     """Дата и время с секундами: 03.07.2026 05:21:19."""
     return _format(value, "%d.%m.%Y %H:%M:%S")
+
+
+@register.filter
+def ru_time(value):
+    """Messenger bubble time only."""
+    return _format(value, "%H:%M")
+
+
+@register.filter
+def ru_chat_date(value):
+    """Telegram-like Russian date separator, without a leading zero."""
+    dt = _to_datetime(value)
+    if dt is None:
+        return "" if value in (None, "") else value
+    if timezone.is_aware(dt):
+        dt = timezone.localtime(dt)
+    months = (
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    )
+    current_year = timezone.localdate().year
+    suffix = f" {dt.year}" if dt.year != current_year else ""
+    return f"{dt.day} {months[dt.month - 1]}{suffix}"

@@ -49,6 +49,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 
 from apps.core.phones import normalize_phone
 
@@ -98,7 +99,7 @@ MESSENGERS = (
     (CustomerRequest.Messenger.MAX, "MAX"),
     (CustomerRequest.Messenger.TELEGRAM, "Telegram"),
 )
-REFERENCE_RE = re.compile(r"^№?\s*([0-9a-fA-F]{4,8})$")
+REFERENCE_RE = re.compile(r"^№?\s*(\d{1,12})$")
 SEARCH_MAX_CHARS = 100
 PREVIEW_CHARS = 140
 
@@ -317,7 +318,10 @@ def search_filter(query: str) -> Q:
     condition = _contains_any("customer_name", query)
     reference = REFERENCE_RE.fullmatch(query)
     if reference:
-        condition |= Q(public_id__istartswith=reference.group(1).lower())
+        condition |= Q(human_number=int(reference.group(1)))
+    legacy_reference = re.fullmatch(r"[0-9a-fA-F]{4,8}", query)
+    if legacy_reference:
+        condition |= Q(public_id__istartswith=query.lower())
     digits = normalize_phone(query)
     if len(re.sub(r"\D", "", query)) >= 4 and digits:
         condition |= Q(customer_phone_normalized__contains=digits)
@@ -405,6 +409,7 @@ class TimelineEntry:
     delivery_status: str
     delivery_label: str
     channel: str
+    date_separator: object = None
 
     @property
     def delivered(self) -> bool:
@@ -425,7 +430,8 @@ ROLE_BY_DIRECTION = {CUSTOMER: "customer", OPERATOR: "operator", "system": "bot"
 
 def _author(message) -> str:
     if message.direction == CUSTOMER:
-        return "Клиент"
+        request = getattr(getattr(message, "conversation", None), "request", None)
+        return (getattr(request, "customer_name", "") or "Клиент").strip()
     if message.direction == OPERATOR:
         user = message.operator_user
         if user is None:
@@ -447,7 +453,9 @@ def timeline(request: CustomerRequest) -> list[TimelineEntry]:
         ("MAX", MaxMessage.objects.filter(conversation__request=request)),
     )
     for channel, messages in sources:
-        newest = messages.select_related("operator_user").order_by("-created_at", "-pk")
+        newest = messages.select_related("operator_user", "conversation__request").order_by(
+            "-created_at", "-pk"
+        )
         for message in newest[:TIMELINE_LIMIT]:
             entries.append(
                 (
@@ -465,7 +473,25 @@ def timeline(request: CustomerRequest) -> list[TimelineEntry]:
                 )
             )
     entries.sort(key=lambda item: (item[0], item[1]))
-    return [entry for _created, _pk, entry in entries[-TIMELINE_LIMIT:]]
+    result = []
+    previous_day = None
+    for _created, _pk, entry in entries[-TIMELINE_LIMIT:]:
+        day = timezone.localtime(entry.created_at).date()
+        separator = day if day != previous_day else None
+        result.append(
+            TimelineEntry(
+                role=entry.role,
+                author=entry.author,
+                text=entry.text,
+                created_at=entry.created_at,
+                delivery_status=entry.delivery_status,
+                delivery_label=entry.delivery_label,
+                channel=entry.channel,
+                date_separator=separator,
+            )
+        )
+        previous_day = day
+    return result
 
 
 def latest_customer_message(request: CustomerRequest):

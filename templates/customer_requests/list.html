@@ -1,8 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Заявки клиентов · DenisStock{% endblock %}
 {% block content %}
+  <div hidden
+       data-workspace-realtime
+       data-cursor="{{ workspace_cursor }}"
+       data-endpoint="{% url 'customer_request_events' %}"></div>
   <div class="page-header">
     <h1 class="page-title">Заявки клиентов</h1>
+    <button class="btn btn--small btn--ghost"
+            type="button"
+            data-sound-control
+            aria-label="Настройки звуков"></button>
     {% if request.user.can_manage_users %}
       <div class="page-actions">
         <a class="btn btn--small btn--secondary"
@@ -45,6 +53,17 @@
          {% if tab.active %}aria-current="page"{% endif %}>{{ tab.label }} <span class="cr-tabs__count">{{ tab.count }}</span></a>
     {% endfor %}
   </nav>
+  {% if params.tab == "canceled" and tabs.0 %}
+    <form method="post"
+          action="{% url 'customer_request_delete_all' %}"
+          class="cr-bulk-delete"
+          data-idempotent-form>
+      {% csrf_token %}
+      <button class="btn btn--small btn--danger-outline"
+              type="submit"
+              onclick="return confirm('Удалить все отменённые заявки? Переписка будет удалена без возможности восстановления.')">Удалить все отменённые</button>
+    </form>
+  {% endif %}
   <div class="segmented cr-messengers" role="group" aria-label="Мессенджер">
     {% for item in messengers %}
       <a class="{% if item.active %}is-active{% endif %}"
@@ -90,7 +109,9 @@
           <dl class="cr-row__facts">
             <div>
               <dt>Позиций</dt>
-              <dd>{{ item.line_count }}</dd>
+              <dd>
+                {{ item.line_count }}
+              </dd>
             </div>
             <div>
               <dt>Сумма</dt>
@@ -106,7 +127,9 @@
             </div>
             <div>
               <dt>Создана</dt>
-              <dd>{{ item.created_at|ru_dt }}</dd>
+              <dd>
+                {{ item.created_at|ru_dt }}
+              </dd>
             </div>
             <div>
               <dt>{% if item.needs_reply %}Клиент написал{% else %}Активность{% endif %}</dt>
@@ -120,8 +143,19 @@
             </div>
           </dl>
           <div class="cr-row__action">
-            <a class="btn {% if item.needs_reply %}btn--primary{% else %}btn--secondary{% endif %}"
-               href="{% url 'customer_request_detail' item.pk %}{% if list_query %}?{{ list_query }}{% endif %}">Открыть заявку</a>
+            {% if item.status == "canceled" %}
+              <form method="post"
+                    action="{% url 'customer_request_delete' item.pk %}"
+                    data-idempotent-form>
+                {% csrf_token %}
+                <button class="btn btn--small btn--danger-outline"
+                        type="submit"
+                        onclick="return confirm('Удалить заявку №{{ item.reference }}? Заявка и её переписка будут удалены без возможности восстановления.')">Удалить</button>
+              </form>
+            {% else %}
+              <a class="btn {% if item.needs_reply %}btn--primary{% else %}btn--secondary{% endif %}"
+                 href="{% url 'customer_request_detail' item.pk %}{% if list_query %}?{{ list_query }}{% endif %}">Открыть заявку</a>
+            {% endif %}
           </div>
         </li>
       {% endfor %}

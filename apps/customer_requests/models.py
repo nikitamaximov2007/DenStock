@@ -31,6 +31,9 @@ class CustomerRequest(models.Model):
         PUBLIC_CATALOG = "public_catalog", "Публичный каталог"
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    human_number = models.PositiveBigIntegerField(
+        "Номер заявки", unique=True, null=True, editable=False
+    )
     status = models.CharField("Статус", max_length=20, choices=Status.choices, default=Status.NEW)
     source = models.CharField(
         "Источник", max_length=30, choices=Source.choices, default=Source.PUBLIC_CATALOG
@@ -76,7 +79,7 @@ class CustomerRequest(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"Заявка {self.public_id} ({self.customer_name})"
+        return f"Заявка №{self.reference} ({self.customer_name})"
 
     def save(self, *args, **kwargs):
         self.customer_name = (self.customer_name or "").strip()
@@ -94,7 +97,49 @@ class CustomerRequest(models.Model):
 
     @property
     def reference(self) -> str:
-        return self.reference_for(self.public_id)
+        return (
+            str(self.human_number)
+            if self.human_number is not None
+            else self.reference_for(self.public_id)
+        )
+
+
+class CustomerRequestNumberSequence(models.Model):
+    """A single locked counter; numbers are never derived from MAX()."""
+
+    singleton = models.BooleanField(default=True, unique=True, editable=False)
+    next_number = models.PositiveBigIntegerField(default=1)
+
+    class Meta:
+        verbose_name = "Последовательность номеров заявок"
+
+    def __str__(self):
+        return f"Следующий номер: {self.next_number}"
+
+
+class WorkspaceEvent(models.Model):
+    """Small durable cursor log for the operator request workspace."""
+
+    event_id = models.BigAutoField(primary_key=True)
+    event_type = models.CharField("Тип", max_length=64)
+    request = models.ForeignKey(
+        CustomerRequest,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="workspace_events",
+    )
+    entity_type = models.CharField("Тип объекта", max_length=64)
+    entity_id = models.CharField("Идентификатор объекта", max_length=128)
+    payload = models.JSONField("Данные", default=dict)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+
+    class Meta:
+        ordering = ["event_id"]
+        indexes = [models.Index(fields=["event_id"], name="workspace_event_cursor_idx")]
+
+    def __str__(self):
+        return f"{self.event_type} #{self.event_id}"
 
 
 class CustomerRequestLine(models.Model):
