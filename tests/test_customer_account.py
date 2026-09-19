@@ -17,7 +17,6 @@ from apps.customer_accounts.models import (
     Provider,
 )
 
-
 ACCOUNT_ON = {
     "CUSTOMER_ACCOUNT_ENABLED": True,
     "CUSTOMER_AUTH_MAX_ENABLED": True,
