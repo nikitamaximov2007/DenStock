@@ -499,7 +499,12 @@ class TelegramBotWorker:
         values = {status_field: status, "last_error": str(error)[:255]}
         if status == TelegramDeliveryStatus.SENT:
             values.update(sent_at=timezone.now(), telegram_message_id=message_id)
-        type(row).objects.filter(pk=row.pk).update(**values)
+        # Use save() so the post_save signal emits a WorkspaceEvent and an
+        # already-open operator workspace reconciles the delivery status.
+        for field, value in values.items():
+            setattr(row, field, value)
+        update_fields = [*values, "updated_at"] if hasattr(row, "updated_at") else list(values)
+        row.save(update_fields=update_fields)
 
     def _fail(self, row, status_field: str, exc: TelegramError) -> None:
         if isinstance(exc, TelegramNetworkError) and exc.ambiguous:
