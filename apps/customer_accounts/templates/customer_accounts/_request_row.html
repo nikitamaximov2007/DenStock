@@ -1,0 +1,16 @@
+{% load public_catalog %}
+<li class="account-row">
+  <a class="account-row__main" href="{% url 'customer_account_request' req.public_id %}">
+    <span class="account-row__title">Заявка №{{ req.number }}</span>
+    <span class="account-status account-status--{{ req.status }}">{{ req.status_label }}</span>
+  </a>
+  <p class="account-row__meta">
+    {{ req.created_at|ru_date }} · {{ req.lines|length }} поз. · {{ req.messenger_label }}
+    ·
+    {% if req.known_total is not None %}
+      {{ req.known_total|rub }}{% if req.has_unknown_price %} + цена уточняется{% endif %}
+    {% else %}
+      Цена уточняется
+    {% endif %}
+  </p>
+</li>

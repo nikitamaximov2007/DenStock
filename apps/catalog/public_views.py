@@ -10,6 +10,7 @@ and it never reserves, sells or moves stock.
 
 from uuid import UUID
 
+from django.conf import settings
 from django.contrib import messages
 from django.db import connection
 from django.http import Http404, HttpResponse, HttpResponseNotModified, JsonResponse
@@ -20,6 +21,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST, require_safe
 
+from apps.customer_accounts.web_session import looks_signed_in
 from apps.customer_requests.messengers import (
     max_deep_link_origin,
     max_start_url,
@@ -62,6 +64,10 @@ def _render(request, template, context=None, *, status=200):
         "cart_lines": cart_size(request.session),
         "indexing": public_seo.indexing_enabled(),
         "max_query_length": MAX_QUERY_LENGTH,
+        # Header only, and no database: the cookie's presence is a hint,
+        # the account pages re-check the session themselves.
+        "account_enabled": settings.CUSTOMER_ACCOUNT_ENABLED,
+        "account_signed_in": looks_signed_in(request),
     }
     base.update(context or {})
     return render(request, template, base, status=status)

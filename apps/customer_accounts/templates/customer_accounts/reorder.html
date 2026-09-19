@@ -1,0 +1,38 @@
+{% extends "public_catalog/base.html" %}
+{% load public_catalog %}
+{% block title %}Заказать ещё раз · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Заказать ещё раз — покупка №{{ purchase.number }}</h1>
+    {% include "customer_accounts/_nav.html" with section="purchases" %}
+    <p class="muted">Цены и наличие — сегодняшние. В корзине вы сможете изменить количество, а заявку отправите сами.</p>
+    <div class="account-table-wrap">
+      <table class="account-table">
+        <thead><tr><th>Позиция</th><th>Кол-во</th><th>Тогда</th><th>Сейчас</th><th></th></tr></thead>
+        <tbody>
+          {% for line in lines %}
+            <tr class="{% if not line.usable %}account-table__off{% endif %}">
+              <td>{{ line.name }}{% if line.article %}<br><span class="muted">{{ line.article }}</span>{% endif %}</td>
+              <td>{{ line.proposed_quantity }}</td>
+              <td>{{ line.historical_unit_price|rub }}</td>
+              <td>
+                {% if not line.usable %}—
+                {% elif line.current_price is not None %}{{ line.current_price|rub }}{% if line.price_changed %} <span class="account-flag">цена изменилась</span>{% endif %}
+                {% else %}Цена уточняется{% endif %}
+              </td>
+              <td>{{ line.note }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if usable %}
+      <form method="post">
+        {% csrf_token %}
+        <button class="btn btn--large" type="submit">Добавить в корзину</button>
+      </form>
+    {% else %}
+      <p class="notice">Ни одну позицию из этой покупки сейчас заказать нельзя.</p>
+    {% endif %}
+  </div>
+{% endblock %}

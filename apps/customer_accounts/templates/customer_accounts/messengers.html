@@ -1,0 +1,33 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Мессенджеры · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Мессенджеры</h1>
+    {% include "customer_accounts/_nav.html" with section="messengers" %}
+    <section class="account-section">
+      <h2 class="account-section__title">MAX</h2>
+      <p>{% if max_identity %}Подключён ✓{% else %}Не подключён{% endif %}</p>
+      <p class="muted">Основной способ входа в кабинет.</p>
+    </section>
+    <section class="account-section">
+      <h2 class="account-section__title">Telegram</h2>
+      {% if telegram_identity %}
+        <p>Подключён ✓</p>
+        <p class="muted">Для переписки с менеджером по заявкам. Входа через Telegram нет.</p>
+        <form method="post" action="{% url 'customer_account_telegram_unlink' %}">
+          {% csrf_token %}
+          <button class="btn btn--secondary" type="submit">Отключить Telegram</button>
+        </form>
+      {% else %}
+        <p>Не подключён</p>
+        <p class="muted">Подключите, чтобы заявки из Telegram тоже были в кабинете. Входа через Telegram нет.</p>
+        {% if telegram_linkable %}
+          <form method="post" action="{% url 'customer_account_telegram_link' %}">
+            {% csrf_token %}
+            <button class="btn" type="submit">Подключить Telegram</button>
+          </form>
+        {% endif %}
+      {% endif %}
+    </section>
+  </div>
+{% endblock %}

@@ -69,6 +69,18 @@ class CustomerRequest(models.Model):
         blank=True,
         related_name="+",
     )
+    # The PRO-STOR account the request belongs to: set from a signed-in
+    # customer's session, or at messenger handoff from the verified identity.
+    # It complements messenger ownership and never replaces it: routing and
+    # «Мои заявки» still check the conversation's own bound identity.
+    customer_account = models.ForeignKey(
+        "customer_accounts.CustomerAccount",
+        verbose_name="Кабинет клиента",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="requests",
+    )
 
     class Meta:
         verbose_name = "Заявка клиента"

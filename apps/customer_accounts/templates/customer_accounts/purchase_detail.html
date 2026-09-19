@@ -1,0 +1,29 @@
+{% extends "public_catalog/base.html" %}
+{% load public_catalog %}
+{% block title %}Покупка №{{ purchase.number }} · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Покупка №{{ purchase.number }}</h1>
+    {% include "customer_accounts/_nav.html" with section="purchases" %}
+    <p class="account-row__meta">{{ purchase.sold_at|ru_date }}</p>
+    <div class="account-table-wrap">
+      <table class="account-table">
+        <thead><tr><th>Артикул</th><th>Название</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr></thead>
+        <tbody>
+          {% for line in purchase.lines %}
+            <tr>
+              <td>{{ line.article|default:"—" }}</td>
+              <td>{{ line.name }}</td>
+              <td>{{ line.quantity|whole_number }}</td>
+              <td>{{ line.unit_price|rub }}</td>
+              <td>{{ line.total_price|rub }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot><tr><th colspan="4">Итого</th><th>{{ purchase.total|rub }}</th></tr></tfoot>
+      </table>
+    </div>
+    <p class="muted">Цены — те, по которым прошла покупка.</p>
+    <a class="btn" href="{% url 'customer_account_reorder' purchase.number %}">Заказать ещё раз</a>
+  </div>
+{% endblock %}

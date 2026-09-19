@@ -1,0 +1,36 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Профиль · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account">
+    <h1 class="page-head__title">Профиль</h1>
+    {% include "customer_accounts/_nav.html" with section="profile" %}
+    <section class="account-section">
+      <h2 class="account-section__title">Как к вам обращаться</h2>
+      <form method="post" class="account-form">
+        {% csrf_token %}
+        <label class="field__label" for="display-name">Имя</label>
+        <input class="field" id="display-name" name="display_name" maxlength="120"
+               value="{{ account.display_name }}" required>
+        <button class="btn" type="submit">Сохранить</button>
+      </form>
+      <p class="muted">Это имя видите только вы и менеджер. Оно не меняет данные мессенджеров.</p>
+    </section>
+    <section class="account-section">
+      <h2 class="account-section__title">Данные мессенджеров</h2>
+      <p>MAX: {% if max_identity %}{{ max_identity.display_name|default:"подключён" }}{% else %}не подключён{% endif %}</p>
+      <p>Telegram: {% if telegram_identity %}{{ telegram_identity.display_name|default:"подключён" }}{% else %}не подключён{% endif %}</p>
+      <p class="muted">Имена из мессенджеров — снимок на момент подключения, изменить их здесь нельзя.</p>
+    </section>
+    <section class="account-section">
+      <h2 class="account-section__title">Номер кабинета</h2>
+      <p><strong>{{ account.code }}</strong></p>
+      <p class="muted">Назовите этот номер менеджеру, чтобы в кабинете появилась история ваших покупок.</p>
+    </section>
+    {% if consent_version %}
+      <section class="account-section">
+        <h2 class="account-section__title">Согласие на обработку данных</h2>
+        <p>{% if consent_given %}Дано (версия {{ consent_version }}).{% else %}Не дано.{% endif %}</p>
+      </section>
+    {% endif %}
+  </div>
+{% endblock %}

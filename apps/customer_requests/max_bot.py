@@ -33,6 +33,7 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import F
 from django.utils import timezone
 
+from apps.customer_accounts import messenger_hooks as account_hooks
 from apps.operations.models import MaxBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
@@ -97,7 +98,12 @@ def _event_digest(*parts) -> str:
     return hashlib.sha256("\x1f".join(str(part) for part in parts).encode()).hexdigest()[:40]
 
 
-def _start(*, token: str, user_id: int, chat_id: int, reply_key: str) -> None:
+def _start(*, token: str, user_id: int, chat_id: int, reply_key: str, user=None) -> None:
+    # A website login link (``acc_…``) is an account event, not a request link.
+    if account_hooks.max_start(
+        payload=token, user_id=user_id, chat_id=chat_id, user=user, event_key=reply_key
+    ):
+        return
     try:
         # A savepoint: a refused link must leave the webhook transaction usable.
         with transaction.atomic():
@@ -144,7 +150,13 @@ def _bot_started(update) -> str:
     )
     reply_key = f"start:{digest}"
     if isinstance(payload, str) and payload.strip():
-        _start(token=payload.strip(), user_id=user_id, chat_id=chat_id, reply_key=reply_key)
+        _start(
+            token=payload.strip(),
+            user_id=user_id,
+            chat_id=chat_id,
+            reply_key=reply_key,
+            user=update.get("user"),
+        )
         return "start"
     if service.linked_conversations(user_id):
         # Started again after a stop: offer the requests this user already has.
@@ -183,7 +195,13 @@ def _message_created(update) -> str:
         if command == "/start" and argument:
             # A returning customer's deep link into an existing dialog arrives
             # as a message, not as ``bot_started``.
-            _start(token=argument, user_id=user_id, chat_id=chat_id, reply_key=reply_key)
+            _start(
+                token=argument,
+                user_id=user_id,
+                chat_id=chat_id,
+                reply_key=reply_key,
+                user=message.get("sender"),
+            )
             return "start"
         if command == "/requests":
             service.queue_selector(user_id=user_id, chat_id=chat_id, dedupe_key=reply_key)

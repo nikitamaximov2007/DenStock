@@ -155,6 +155,136 @@ BEGIN
         role_name
     );
 
+    -- PRO-STOR customer account (docs/customer_account/legal_auth_gate.md).
+    -- The rule: a compromised public process can see or change only the data
+    -- of a session whose token it actually holds. Every account-scoped check
+    -- goes through customer_account_current(), which resolves the session
+    -- digest the request bound to its transaction (prostor.session_hash).
+    --
+    -- Two steps would let a process mint access, so the role gets no table
+    -- privilege for them at all, only the SECURITY DEFINER functions that
+    -- check the one-time code / the session inside the database: completing
+    -- a login or link attempt, and logging out. Sessions, identities (except
+    -- deleting its own) and the employee's DenisStock link are unwritable.
+    EXECUTE format(
+        'GRANT EXECUTE ON FUNCTION customer_account_session_account(text), '
+        'customer_account_current(), customer_account_current_customer(), '
+        'customer_account_logout(text), '
+        'customer_account_complete_attempt(text, text, text, text, integer, integer) TO %I',
+        role_name
+    );
+    -- History: the session's own requests and completed purchases, through
+    -- views that select no cost, profit, supplier or employee column. The
+    -- underlying request and sale tables stay as unreadable as before.
+    EXECUTE format(
+        'GRANT SELECT ON customer_account_requests, customer_account_request_lines, '
+        'customer_account_sales, customer_account_sale_lines TO %I',
+        role_name
+    );
+    -- Account-owned rows: table privileges below, narrowed to the session's own
+    -- account by row-level security. Other roles see every row (permissive).
+    EXECUTE format(
+        'GRANT SELECT ON TABLE customer_accounts_customeraccount, '
+        'customer_accounts_customeridentity, customer_accounts_customerconsent TO %I',
+        role_name
+    );
+    EXECUTE format(
+        'GRANT UPDATE (display_name, updated_at) ON TABLE customer_accounts_customeraccount TO %I',
+        role_name
+    );
+    EXECUTE format(
+        'GRANT DELETE ON TABLE customer_accounts_customeridentity TO %I', role_name
+    );
+    EXECUTE format(
+        'GRANT INSERT ON TABLE customer_accounts_customerconsent, '
+        'customer_accounts_customeraccountevent, customer_accounts_customerloginattempt TO %I',
+        role_name
+    );
+    EXECUTE format(
+        'GRANT UPDATE (withdrawn_at) ON TABLE customer_accounts_customerconsent TO %I',
+        role_name
+    );
+    EXECUTE format(
+        'GRANT SELECT (id) ON TABLE customer_accounts_customeraccountevent, '
+        'customer_accounts_customerloginattempt TO %I',
+        role_name
+    );
+
+    EXECUTE 'ALTER TABLE customer_accounts_customeraccount ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE customer_accounts_customeridentity ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE customer_accounts_customerconsent ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE customer_accounts_customeraccountevent ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE customer_accounts_customerloginattempt ENABLE ROW LEVEL SECURITY';
+    EXECUTE 'ALTER TABLE customer_requests_customerrequest ENABLE ROW LEVEL SECURITY';
+
+    -- Everyone except the public role keeps seeing and writing every row.
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_all_rows ON customer_accounts_customeraccount';
+    EXECUTE 'CREATE POLICY customer_account_all_rows ON customer_accounts_customeraccount '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_all_rows ON customer_accounts_customeridentity';
+    EXECUTE 'CREATE POLICY customer_account_all_rows ON customer_accounts_customeridentity '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_all_rows ON customer_accounts_customerconsent';
+    EXECUTE 'CREATE POLICY customer_account_all_rows ON customer_accounts_customerconsent '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_all_rows ON customer_accounts_customeraccountevent';
+    EXECUTE 'CREATE POLICY customer_account_all_rows ON customer_accounts_customeraccountevent '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_all_rows ON customer_accounts_customerloginattempt';
+    EXECUTE 'CREATE POLICY customer_account_all_rows ON customer_accounts_customerloginattempt '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_all_rows ON customer_requests_customerrequest';
+    EXECUTE 'CREATE POLICY customer_account_all_rows ON customer_requests_customerrequest '
+        'AS PERMISSIVE FOR ALL TO PUBLIC USING (true) WITH CHECK (true)';
+
+    -- The public role: its own account only.
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_own ON customer_accounts_customeraccount';
+    EXECUTE format(
+        'CREATE POLICY customer_account_own ON customer_accounts_customeraccount '
+        'AS RESTRICTIVE FOR ALL TO %I '
+        'USING (id = customer_account_current()) WITH CHECK (id = customer_account_current())',
+        role_name
+    );
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_own ON customer_accounts_customeridentity';
+    EXECUTE format(
+        'CREATE POLICY customer_account_own ON customer_accounts_customeridentity '
+        'AS RESTRICTIVE FOR ALL TO %I USING (account_id = customer_account_current())',
+        role_name
+    );
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_own ON customer_accounts_customerconsent';
+    EXECUTE format(
+        'CREATE POLICY customer_account_own ON customer_accounts_customerconsent '
+        'AS RESTRICTIVE FOR ALL TO %I USING (account_id = customer_account_current()) '
+        'WITH CHECK (account_id = customer_account_current())',
+        role_name
+    );
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_own ON customer_accounts_customeraccountevent';
+    EXECUTE format(
+        'CREATE POLICY customer_account_own ON customer_accounts_customeraccountevent '
+        'AS RESTRICTIVE FOR ALL TO %I USING (account_id = customer_account_current()) '
+        'WITH CHECK (account_id = customer_account_current() AND actor_user_id IS NULL)',
+        role_name
+    );
+    -- A login attempt carries no account; a link attempt only the session's own.
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_own ON customer_accounts_customerloginattempt';
+    EXECUTE format(
+        'CREATE POLICY customer_account_own ON customer_accounts_customerloginattempt '
+        'AS RESTRICTIVE FOR ALL TO %I '
+        'USING (account_id IS NULL OR account_id = customer_account_current()) '
+        'WITH CHECK (status = %L AND provider_user_id IS NULL AND code_hash = %L '
+        'AND ((purpose = %L AND account_id IS NULL) '
+        'OR (purpose = %L AND account_id = customer_account_current())))',
+        role_name, 'pending', '', 'login', 'link'
+    );
+    -- A request the public role inserts is anonymous, or the session's own.
+    EXECUTE 'DROP POLICY IF EXISTS customer_account_own_request ON customer_requests_customerrequest';
+    EXECUTE format(
+        'CREATE POLICY customer_account_own_request ON customer_requests_customerrequest '
+        'AS RESTRICTIVE FOR INSERT TO %I WITH CHECK '
+        '(customer_account_id IS NULL OR customer_account_id = customer_account_current())',
+        role_name
+    );
+
     -- No grant on django_migrations: the runtime, `manage.py check` and
     -- `check --database default` never read it. Operators verify the schema
     -- with the owner role (`showmigrations`, `migrate --check`).

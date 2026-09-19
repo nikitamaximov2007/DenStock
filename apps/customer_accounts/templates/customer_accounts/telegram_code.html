@@ -1,0 +1,25 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}Подключить Telegram · PRO-STOR{% endblock %}
+{% block content %}
+  <div class="account-auth">
+    <h1 class="page-head__title">Подключить Telegram</h1>
+    <ol class="account-steps">
+      <li>
+        Откройте бота PRO-STOR в Telegram и нажмите «Запустить».
+        {% if deep_link %}
+          <p><a class="btn btn--large" href="{{ deep_link }}" rel="noopener">Открыть Telegram</a></p>
+        {% endif %}
+      </li>
+      <li>Бот пришлёт шестизначный код. Введите его здесь.</li>
+    </ol>
+    <form method="post" class="account-code">
+      {% csrf_token %}
+      <label class="field__label" for="account-code">Код из Telegram</label>
+      <input class="field account-code__input" id="account-code" name="code"
+             inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}"
+             maxlength="8" required>
+      <button class="btn btn--large btn--block" type="submit">Подключить</button>
+    </form>
+    <p><a href="{% url 'customer_account_messengers' %}">Отмена</a></p>
+  </div>
+{% endblock %}
