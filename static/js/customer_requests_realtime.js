@@ -9,18 +9,20 @@
   updateControl();
   document.addEventListener('pointerdown', () => { audioReady = true; }, { once: true });
   if (control) control.addEventListener('click', () => { sounds = !sounds; localStorage.setItem('denstock-request-sounds', sounds ? 'on' : 'off'); updateControl(); });
+  const submitOnEnter = (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    const composer = event.target.closest('[data-reply-form] textarea[name="text"]');
+    if (!composer) return;
+    const replyForm = composer.form;
+    if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
+    event.preventDefault();
+    replyForm.dataset.submitting = '1';
+    replyForm.requestSubmit();
+  };
+  // Delegation keeps the shortcut working after partial navigation replaces
+  // the detail form without re-running this bootstrap script.
+  document.addEventListener('keydown', submitOnEnter);
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
-  const replyForm = document.querySelector('[data-reply-form]');
-  if (composer && replyForm) {
-    composer.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
-      event.preventDefault();
-      if (composer.value.trim() && !replyForm.dataset.submitting) {
-        replyForm.dataset.submitting = '1';
-        replyForm.requestSubmit();
-      }
-    });
-  }
   const fileInput = document.querySelector('[data-attachment-input]');
   const fileName = document.querySelector('[data-attachment-name]');
   const removeFile = document.querySelector('[data-attachment-remove]');
