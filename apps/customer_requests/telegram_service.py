@@ -135,6 +135,11 @@ def bind_customer_chat(
             for text in request_summary_messages(request)
         ]
     )
+    # A Telegram identity joins an account only if a MAX-signed-in customer
+    # linked it explicitly; this never creates one. Off until enabled.
+    from apps.customer_accounts import messenger_hooks as account_hooks
+
+    account_hooks.telegram_handoff(request, user_id=user_id)
     TelegramOutboxEvent.objects.get_or_create(
         dedupe_key=f"customer_linked:{link_token_id}",
         defaults={
