@@ -70,6 +70,7 @@ def test_new_business_apps_are_listed():
     assert "customers" in BUSINESS_APP_LABELS
     assert "catalog_import" in BUSINESS_APP_LABELS
     assert "customs_orders" in BUSINESS_APP_LABELS
+    assert "customer_accounts" in BUSINESS_APP_LABELS
 
 
 def test_every_local_app_is_classified():

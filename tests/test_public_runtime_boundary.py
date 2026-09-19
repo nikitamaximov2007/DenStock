@@ -78,7 +78,14 @@ def test_internal_routes_are_absent_under_the_real_public_stack(public_client, p
 
 
 def test_public_resolver_has_only_catalog_routes():
-    names = {pattern.name for pattern in get_resolver("config.public_urls").url_patterns}
+    def route_names(patterns):
+        for pattern in patterns:
+            if getattr(pattern, "url_patterns", None) is not None:
+                yield from route_names(pattern.url_patterns)
+            elif pattern.name:
+                yield pattern.name
+
+    names = set(route_names(get_resolver("config.public_urls").url_patterns))
     assert names == {
         "public_catalog_root",
         "public_catalog_search",
@@ -96,6 +103,21 @@ def test_public_resolver_has_only_catalog_routes():
         "public_catalog_sitemap",
         "public_catalog_sitemap_parts",
         "public_catalog_healthz",
+        "customer_account_home",
+        "customer_account_login",
+        "customer_account_login_max",
+        "customer_account_login_code",
+        "customer_account_logout",
+        "customer_account_requests",
+        "customer_account_request",
+        "customer_account_purchases",
+        "customer_account_purchase",
+        "customer_account_reorder",
+        "customer_account_messengers",
+        "customer_account_telegram_link",
+        "customer_account_telegram_code",
+        "customer_account_telegram_unlink",
+        "customer_account_profile",
     }
 
 
