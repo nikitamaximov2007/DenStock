@@ -331,7 +331,11 @@ def test_the_requests_page_keeps_its_section_open_and_the_item_highlighted(clien
 
     assert response.context["active_section"] == "warehouse"
     assert _nav_item(response)["active"] is True
-    labels = [tab["label"] for tab in response.context["section_tabs"]]
+    labels = [
+        item["label"]
+        for group in response.context["nav_groups"]
+        for item in group["items"]
+    ]
     assert "Заявки клиентов" in labels
     html = response.content.decode()
     links = re.findall(r"<a\b[^>]*?/customer-requests/[^>]*?>", html)

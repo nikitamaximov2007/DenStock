@@ -125,6 +125,8 @@ def _settings_tabs(user, path):
             _tab(
                 "Справочники",
                 reverse("directory_index"),
+                sidebar_key="directories",
+                icon="book",
                 active=path.startswith("/directories/")
                 and not path.startswith("/directories/price-settings/"),
             )
@@ -163,6 +165,8 @@ def _settings_tabs(user, path):
             _tab(
                 "Инструменты / Нераспознанные",
                 reverse("unresolved_list"),
+                sidebar_key="unresolved",
+                icon="alert",
                 active=path.startswith("/scanner/unresolved/"),
             )
         )
@@ -266,7 +270,13 @@ def _primary_items(active_key, user):
 def _catalog_tabs(path):
     return [
         _tab("Все детали", reverse("part_list"), active=path.startswith("/parts/")),
-        _tab("BRP", reverse("brp_search"), active=path.startswith("/brp/")),
+        _tab(
+            "BRP",
+            reverse("brp_search"),
+            sidebar_key="brp",
+            icon="search",
+            active=path.startswith("/brp/"),
+        ),
         _tab(
             "Импорт каталога",
             reverse("catalog_import_list"),
@@ -274,7 +284,13 @@ def _catalog_tabs(path):
             icon="database",
             active=path.startswith("/directories/catalog-import/"),
         ),
-        _tab("Polaris", reverse("polaris_search"), active=path.startswith("/polaris/")),
+        _tab(
+            "Polaris",
+            reverse("polaris_search"),
+            sidebar_key="polaris",
+            icon="search",
+            active=path.startswith("/polaris/"),
+        ),
     ]
 
 
@@ -444,6 +460,8 @@ def _warehouse_tabs(user, path):
             _tab(
                 "Списания",
                 reverse("write_off_list"),
+                sidebar_key="write-offs",
+                icon="trash",
                 active=path.startswith("/write-offs/"),
             )
         )
@@ -690,8 +708,41 @@ def _local_tabs(request, section, user):
     return [], []
 
 
+def _brand_catalog_tabs(user, path):
+    """The brand catalogues, which used to exist only in the horizontal row."""
+    if not _can_open_warehouse(user):
+        return []
+    return [
+        _tab(
+            "BRP",
+            reverse("brp_search"),
+            sidebar_key="brp",
+            icon="search",
+            active=path.startswith("/brp/"),
+        ),
+        _tab(
+            "Polaris",
+            reverse("polaris_search"),
+            sidebar_key="polaris",
+            icon="search",
+            active=path.startswith("/polaris/"),
+        ),
+    ]
+
+
 def _sidebar_groups(request, section, user):
+    """Every destination the interface has, in the one place navigation lives.
+
+    The old horizontal row is gone, so anything that used to appear only there
+    — the brand catalogues, «Списания», sales and returns — is a sidebar entry
+    now. Items already shown by an earlier group are not repeated.
+    """
     path = request.path
+    source = (
+        getattr(request, "navigation_source", "")
+        or request.GET.get("source")
+        or request.GET.get("section")
+    )
     candidates = [
         (
             _group(
@@ -708,6 +759,20 @@ def _sidebar_groups(request, section, user):
             else None
         ),
         _group(
+            "catalog",
+            "Каталоги",
+            "book",
+            _brand_catalog_tabs(user, path),
+            active=section == "catalog",
+        ),
+        _group(
+            "sales",
+            "Продажи и возвраты",
+            "cart",
+            _sales_tabs(user, path, source) + _repairs_tabs(user, path, source),
+            active=section in {"sales", "repairs"},
+        ),
+        _group(
             "reports",
             "Отчёты",
             "chart",
@@ -722,7 +787,19 @@ def _sidebar_groups(request, section, user):
             active=section == "settings",
         ),
     ]
-    return [group for group in candidates if group]
+    groups, seen = [], set()
+    for group in candidates:
+        if not group:
+            continue
+        # A destination belongs to the first group that offers it; repeating
+        # «Клиенты» or «Все детали» further down would only add noise.
+        items = [item for item in group["items"] if item["sidebar_key"] not in seen]
+        if not items:
+            continue
+        seen.update(item["sidebar_key"] for item in items)
+        group["items"] = items
+        groups.append(group)
+    return groups
 
 
 def navigation(request):
@@ -731,18 +808,18 @@ def navigation(request):
         return {
             "nav_items": [],
             "nav_groups": [],
-            "section_tabs": [],
             "section_subtabs": [],
             "caps": set(),
         }
     access = _NavAccess(user)
     section = _section_key(request)
-    section_tabs, section_subtabs = _local_tabs(request, section, access)
+    # The sidebar is the only primary navigation; ``_local_tabs`` survives for
+    # the page-local «Режим» row, which is not a duplicate of anything.
+    _, section_subtabs = _local_tabs(request, section, access)
     nav_items = _primary_items(section, access)
     return {
         "nav_items": nav_items,
         "nav_groups": _sidebar_groups(request, section, access),
-        "section_tabs": section_tabs,
         "section_subtabs": section_subtabs,
         "active_section": section,
         "caps": access.capabilities,

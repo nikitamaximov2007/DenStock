@@ -138,9 +138,9 @@ def menu_addresses(user) -> list[str]:
         for item in context["nav_items"]:
             found.append(item["url"])
         for group in context["nav_groups"]:
-            for tab in group.get("tabs", []):
+            for tab in group.get("items", []):
                 found.append(tab["url"])
-        for tab in context["section_tabs"] + context["section_subtabs"]:
+        for tab in context["section_subtabs"]:
             found.append(tab["url"])
     unique = sorted({url for url in found if url and url.startswith("/")})
     return unique
