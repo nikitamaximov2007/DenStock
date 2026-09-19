@@ -251,7 +251,7 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         )
         sequence_grants = cursor.fetchone()[0]
 
-    assert {privilege for _table, privilege in grants} == {"SELECT", "INSERT"}
+    assert {privilege for _table, privilege in grants} == {"SELECT", "INSERT", "UPDATE"}
     grant_clause = ROLE_SCRIPT.read_text().split("'GRANT SELECT ON TABLE '", 1)[1]
     documented = set(re.findall(r"\b([a-z]+_[a-z_]+)\b", grant_clause.split("'TO %I'", 1)[0]))
     assert {table for table, privilege in grants if privilege == "SELECT"} == documented
@@ -261,6 +261,8 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         "customer_requests_telegramconversation",
         "customer_requests_telegramoutboxevent",
         "customer_requests_customerrequestmessengerlinktoken",
+        # A saved request logs one operator-workspace event (realtime release).
+        "customer_requests_workspaceevent",
     }
     assert columns == {
         ("customer_requests_customerrequest", "id", "SELECT"),
@@ -276,6 +278,12 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         ("operations_deploymentstate", "write_state", "SELECT"),
         ("operations_deploymentstate", "business_generation", "SELECT"),
         ("operations_deploymentstate", "business_generation", "UPDATE"),
+        # The human number counter: read the row, bump one column.
+        ("customer_requests_customerrequestnumbersequence", "id", "SELECT"),
+        ("customer_requests_customerrequestnumbersequence", "singleton", "SELECT"),
+        ("customer_requests_customerrequestnumbersequence", "next_number", "SELECT"),
+        ("customer_requests_customerrequestnumbersequence", "next_number", "UPDATE"),
+        ("customer_requests_workspaceevent", "event_id", "SELECT"),
     }
     assert session_defaults == {
         "default_transaction_read_only=on",

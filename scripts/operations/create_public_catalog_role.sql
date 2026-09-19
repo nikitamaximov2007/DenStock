@@ -116,6 +116,25 @@ BEGIN
         role_name
     );
 
+    -- The request's human number (№1, №2 …) is allocated from a single
+    -- locked counter in the same transaction as the INSERT. SELECT … FOR
+    -- UPDATE needs UPDATE on the row, so the role may bump exactly that one
+    -- column and read nothing else.
+    EXECUTE format(
+        'GRANT SELECT (id, singleton, next_number), UPDATE (next_number) '
+        'ON TABLE customer_requests_customerrequestnumbersequence TO %I',
+        role_name
+    );
+    -- Saving a request writes one operator-workspace event (a post_save
+    -- signal) in the same transaction. INSERT only, plus the key RETURNING
+    -- needs: the role cannot read the operator workspace's event log.
+    EXECUTE format(
+        'GRANT INSERT ON TABLE customer_requests_workspaceevent TO %I', role_name
+    );
+    EXECUTE format(
+        'GRANT SELECT (event_id) ON TABLE customer_requests_workspaceevent TO %I', role_name
+    );
+
     -- Customer requests are business data, so the global write guard wraps
     -- that INSERT: it checks the deployment write state (a frozen or failed-
     -- over database refuses requests) and bumps the business generation that
