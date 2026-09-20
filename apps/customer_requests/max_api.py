@@ -292,6 +292,15 @@ class MaxBotApi:
         self, *, chat_id: int, content: bytes, filename: str, content_type: str, caption: str = ""
     ) -> dict:
         """Upload a file through MAX /uploads, then send its attachment token."""
+        token = self.upload_file(
+            content=content, filename=filename, content_type=content_type
+        )
+        return self.send_file_token(
+            chat_id=chat_id, token=token, content_type=content_type, caption=caption
+        )
+
+    def upload_file(self, *, content: bytes, filename: str, content_type: str) -> str:
+        """Upload bytes and return the reusable MAX attachment token."""
         kind = "image" if content_type.startswith("image/") else "file"
         upload = self.call("POST", "/uploads", query={"type": kind})
         url = upload.get("url") if isinstance(upload, dict) else None
@@ -329,7 +338,15 @@ class MaxBotApi:
                     token = tokens[0]
         if not isinstance(token, str) or not token:
             raise MaxNetworkError("invalid upload token", ambiguous=True)
-        attachment_type = "image" if kind == "image" else "file"
+        return token
+
+    def send_file_token(
+        self, *, chat_id: int, token: str, content_type: str, caption: str = ""
+    ) -> dict:
+        """Send a previously uploaded MAX token without creating another upload."""
+        if not token:
+            raise ValueError("MAX attachment token is required.")
+        attachment_type = "image" if content_type.startswith("image/") else "file"
         result = self.call(
             "POST", "/messages", query={"chat_id": chat_id, "disable_link_preview": "true"},
             payload={"text": caption[:MAX_TEXT_CHARS] or " ", "notify": True,

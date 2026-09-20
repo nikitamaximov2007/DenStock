@@ -108,3 +108,20 @@ def test_max_attachment_uses_upload_token_then_message(content_type, kind):
 
     assert result["body"]["mid"] == "mid.test"
     assert len(requests) == 3
+
+
+def test_max_retry_reuses_an_existing_upload_token_without_reuploading():
+    requests = []
+
+    def opener(request, timeout):
+        requests.append(request)
+        assert request.full_url.endswith("/messages?chat_id=7&disable_link_preview=true")
+        assert b'"token": "upload-token"' in request.data
+        return _Response(b'{"message":{"body":{"mid":"mid.retry"}}}')
+
+    result = MaxBotApi("test-token", base_url="https://max.invalid", opener=opener).send_file_token(
+        chat_id=7, token="upload-token", content_type="application/pdf", caption="retry"
+    )
+
+    assert result["body"]["mid"] == "mid.retry"
+    assert len(requests) == 1

@@ -776,6 +776,9 @@ class MaxMessage(models.Model):
     )
     attachment_name = models.CharField("Имя вложения", max_length=180, blank=True)
     attachment_content_type = models.CharField("Тип вложения", max_length=80, blank=True)
+    # MAX processes uploaded files asynchronously. Keep the token so a retry
+    # can send the same upload instead of creating a fresh, not-yet-ready file.
+    max_attachment_token = models.CharField("Токен вложения MAX", max_length=512, blank=True)
     # Callback buttons of a bot message: [[{"text": ..., "payload": ...}], ...].
     buttons = models.JSONField("Кнопки", null=True, blank=True)
     delivery_status = models.CharField(

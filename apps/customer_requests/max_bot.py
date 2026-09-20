@@ -556,14 +556,31 @@ class MaxBotWorker:
             self.pacer.wait(chat_id)
             try:
                 if row.attachment:
-                    content = read_attachment(row.attachment)
-                    result = self.api.send_file(
-                        chat_id=chat_id,
-                        content=content,
-                        filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
-                        content_type=row.attachment_content_type,
-                        caption=row.text,
-                    )
+                    if row.max_attachment_token:
+                        result = self.api.send_file_token(
+                            chat_id=chat_id,
+                            token=row.max_attachment_token,
+                            content_type=row.attachment_content_type,
+                            caption=row.text,
+                        )
+                    else:
+                        content = read_attachment(row.attachment)
+                        token = self.api.upload_file(
+                            content=content,
+                            filename=(
+                                row.attachment_name
+                                or row.attachment.name.rsplit("/", 1)[-1]
+                            ),
+                            content_type=row.attachment_content_type,
+                        )
+                        row.max_attachment_token = token
+                        row.save(update_fields=["max_attachment_token"])
+                        result = self.api.send_file_token(
+                            chat_id=chat_id,
+                            token=token,
+                            content_type=row.attachment_content_type,
+                            caption=row.text,
+                        )
                 else:
                     result = self.api.send_message(
                         chat_id=chat_id, text=row.text, buttons=row.buttons
