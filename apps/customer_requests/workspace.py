@@ -15,7 +15,9 @@ The rule (``needs_reply``), for one request:
 
 Only a delivered employee reply answers. A reply still queued or being sent
 (``pending``/``sending``) does not clear the state yet: it is shown as «Ответ
-отправляется» until the worker delivers it. One the messenger refused
+отправляется» until the worker delivers it. The message-level status keeps the
+distinction: ``pending`` means queued for a retry and ``sending`` means the
+worker is currently attempting delivery. One the messenger refused
 (``failed``) or one whose fate is unknown (``uncertain``) never clears it: it is
 shown as «Ответ не доставлен», because the customer may never have seen it.
 Bot messages (``system``: summaries, acknowledgements, selectors) are not
@@ -421,7 +423,10 @@ class TimelineEntry:
 
     @property
     def in_flight(self) -> bool:
-        return self.delivery_status in IN_FLIGHT
+        # ``pending`` is a bounded retry wait, not an active network attempt.
+        # Keeping it separate prevents the UI from looking stuck on
+        # «Отправляется…» while MAX is waiting for attachment processing.
+        return self.delivery_status == "sending"
 
 
 TIMELINE_LIMIT = 300

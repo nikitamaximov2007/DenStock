@@ -17,10 +17,11 @@
     const replyForm = composer.closest('[data-reply-form]');
     if (!replyForm || !composer.value.trim() || replyForm.dataset.submitting) return;
     event.preventDefault();
-    replyForm.querySelector('button[type="submit"]')?.click();
+    if (typeof replyForm.requestSubmit === 'function') replyForm.requestSubmit();
+    else replyForm.querySelector('button[type="submit"]')?.click();
   };
   const submitOnEnter = (event) => {
-    const isEnter = event.key === 'Enter' || event.key === 'Return' || event.code === 'Enter' || event.code === 'NumpadEnter' || event.keyCode === 13 || event.which === 13;
+    const isEnter = event.key === 'Enter' || event.code === 'Enter' || event.keyCode === 13 || event.which === 13 || event.key === 'Return' || event.code === 'NumpadEnter';
     if (!isEnter || event.shiftKey || composing || event.isComposing || event.keyCode === 229) return;
     submitComposer(event, event.target);
   };

@@ -415,6 +415,22 @@ def test_the_card_shows_one_chronological_conversation_with_roles(part, seller, 
         assert debug not in html
 
 
+def test_retry_wait_is_shown_as_queued_not_eternal_sending(part, seller, staff_client):
+    request = make_request(part, messenger=CustomerRequest.Messenger.MAX)
+    link(request)
+    result = operator_answers(
+        request, seller, "Файл обрабатывается", status=MaxDeliveryStatus.PENDING
+    )
+
+    html = detail_html(staff_client, request)
+    delivery = re.search(r'data-delivery="pending">(.*?)</div>', html, re.S)
+
+    assert delivery is not None
+    assert "В очереди" in delivery.group(1)
+    assert "Отправляется" not in delivery.group(1)
+    assert result.message.delivery_status == MaxDeliveryStatus.PENDING
+
+
 def test_the_card_shows_immutable_line_prices_and_the_request_total(part, seller, staff_client):
     request = make_request(part)
     html = detail_html(staff_client, request)
