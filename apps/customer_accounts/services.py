@@ -45,6 +45,18 @@ logger = logging.getLogger(__name__)
 MAX_CODES_PER_ATTEMPT = 3
 
 
+def _verified_user_id(value) -> int | None:
+    """A provider identity, or None. ``bool`` is deliberately refused.
+
+    ``isinstance(True, int)`` is true in Python, so a JSON ``true`` in a
+    webhook payload would otherwise be read as MAX user 1 and could be
+    attached to an account as a real identity.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
 class AccountError(Exception):
     """A customer-facing refusal. The message is safe to show."""
 
@@ -156,7 +168,7 @@ def provider_confirmed(
     to THAT user. The first user to open a link owns it: a second user opening
     the same link is refused, so a forwarded link cannot be taken over.
     """
-    if not isinstance(provider_user_id, int) or provider_user_id <= 0:
+    if _verified_user_id(provider_user_id) is None:
         return ProviderReply(ATTEMPT_UNAVAILABLE_TEXT)
     token_hash = tokens.digest(token)
     now = timezone.now()
@@ -445,7 +457,7 @@ def identity_account(
 
     A deactivated account is returned as None: it gets no new requests.
     """
-    if not account_enabled() or not isinstance(provider_user_id, int) or provider_user_id <= 0:
+    if not account_enabled() or _verified_user_id(provider_user_id) is None:
         return None
     identity = (
         CustomerIdentity.objects.select_related("account")
