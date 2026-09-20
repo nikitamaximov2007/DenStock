@@ -237,12 +237,15 @@ def test_a_mixed_purchase_adds_only_the_usable_lines(public_catalog, bought):
 
 @pytest.mark.django_db
 def test_a_manually_created_part_follows_the_same_public_rules(public_catalog, bought):
-    """A manual PartType is ordinary: public and in stock decides, nothing else."""
-    manual = PartType.objects.create(
-        name="MANUAL PART", category=public_catalog.category, unit=public_catalog.unit,
-        tracking_mode=PartType.TrackingMode.BULK, is_active=True, is_public=True,
-        recommended_price=Decimal("450"), certified_price_rub=Decimal("450"),
-        price_provenance=PartType.PriceProvenance.FORMULA_CERTIFIED,
+    """A manual PartType is ordinary: public and in stock decides, nothing else.
+
+    Built through the canonical ``create_manual_part`` so this follows the
+    publication rules main owns, not a hand-made approximation of them.
+    """
+    from apps.catalog.services import create_manual_part
+
+    manual = create_manual_part(
+        name="MANUAL PART", article="MAN-1", price=Decimal("450")
     )
     public_catalog.stock(manual, "4")
     lot = bought["lot"]
@@ -253,7 +256,10 @@ def test_a_manually_created_part_follows_the_same_public_rules(public_catalog, b
     )
     with public_account_runtime():
         line = next(line for line in _lines(bought) if line.name == "MANUAL PART")
-        assert line.usable and line.current_price == Decimal("450")
+        assert line.usable and line.current_price == Decimal("450.00")
+        assert manual.is_public and manual.price_provenance == (
+            PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+        )
 
 
 # --- Quantities -------------------------------------------------------------------------------
