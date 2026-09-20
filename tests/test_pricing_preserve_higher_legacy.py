@@ -367,7 +367,7 @@ def test_bulk_resolution_has_a_constant_query_count(scene):
             prices = resolve_current_customer_prices(parts[:size])
         counts.append(len(captured))
         assert {price.price_rub for price in prices.values()} == {Decimal("1500")}
-    assert counts[0] == counts[1] == 2
+    assert counts[0] == counts[1] == 1
 
     counts = []
     for size in (1, 12):

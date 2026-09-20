@@ -20,7 +20,9 @@
 from collections.abc import Iterable
 from decimal import Decimal
 
-from django.db.models import Max
+from django.db.models import OuterRef, Subquery
+
+from apps.catalog.models import PartType
 
 from .models import PartItem, StockLot
 
@@ -70,24 +72,37 @@ def protected_customer_price_floors(part_ids: Iterable[int]) -> dict[int, Decima
     ids = list(dict.fromkeys(part_id for part_id in part_ids if part_id is not None))
     if not ids:
         return {}
-    floors: dict[int, Decimal] = {}
-    sources = (
+    # Keep both inventory sources in one SQL statement.  Public catalog pages
+    # already have a deliberately tight query budget; doing one aggregate per
+    # tracking model would add two queries to every page.  Correlated scalar
+    # subqueries let the database select each source's maximum while the outer
+    # PartType query combines the two values in Python.
+    lot_floor = (
         StockLot.objects.filter(
-            part_type_id__in=ids, status__in=PROTECTING_LOT_STATUSES, quantity__gt=0
-        ),
-        PartItem.objects.filter(part_type_id__in=ids, status__in=PROTECTING_ITEM_STATUSES),
-    )
-    for queryset in sources:
-        rows = (
-            queryset.filter(receipt_customer_price_snapshot_rub__gt=ZERO)
-            .order_by()
-            .values("part_type_id")
-            .annotate(floor=Max("receipt_customer_price_snapshot_rub"))
-            .values_list("part_type_id", "floor")
+            part_type_id=OuterRef("pk"),
+            status__in=PROTECTING_LOT_STATUSES,
+            quantity__gt=0,
         )
-        for part_id, floor in rows:
-            if part_id not in floors or floor > floors[part_id]:
-                floors[part_id] = floor
+        .filter(receipt_customer_price_snapshot_rub__gt=ZERO)
+        .order_by("-receipt_customer_price_snapshot_rub")
+        .values("receipt_customer_price_snapshot_rub")[:1]
+    )
+    item_floor = (
+        PartItem.objects.filter(
+            part_type_id=OuterRef("pk"), status__in=PROTECTING_ITEM_STATUSES
+        )
+        .filter(receipt_customer_price_snapshot_rub__gt=ZERO)
+        .order_by("-receipt_customer_price_snapshot_rub")
+        .values("receipt_customer_price_snapshot_rub")[:1]
+    )
+    rows = PartType.objects.filter(pk__in=ids).annotate(
+        lot_floor=Subquery(lot_floor), item_floor=Subquery(item_floor)
+    ).values_list("pk", "lot_floor", "item_floor")
+    floors: dict[int, Decimal] = {}
+    for part_id, lot_value, item_value in rows:
+        values = [value for value in (lot_value, item_value) if value is not None]
+        if values:
+            floors[part_id] = max(values)
     return floors
 
 
