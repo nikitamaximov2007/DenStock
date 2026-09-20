@@ -25,6 +25,35 @@ from uuid import UUID
 from django.db import connection
 
 ZERO = Decimal("0")
+
+
+class UnboundAccountRead(RuntimeError):
+    """A PostgreSQL read was asked for an account the transaction is not bound to.
+
+    On PostgreSQL the ``customer_account_*`` views answer for whatever session
+    ``account_transaction`` bound, and for nobody at all when nothing is bound.
+    Without this guard a caller that forgot to bind would silently receive an
+    empty list — "you have no purchases" — instead of an error, and a caller
+    that bound the WRONG session would receive someone else's rows. Both are
+    refused here, so the SQLite and PostgreSQL readers cannot drift apart.
+    """
+
+
+def _bound_account_id() -> int | None:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT customer_account_current()")
+        row = cursor.fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def _require_bound(account) -> None:
+    """PostgreSQL only: the bound session must be this account's own."""
+    bound = _bound_account_id()
+    if bound != account.pk:
+        raise UnboundAccountRead(
+            f"account {account.pk} read inside a transaction bound to {bound!r}"
+        )
+
 ACTIVE_STATUSES = {"new", "in_progress"}
 STATUS_LABELS = {
     "new": "Новая",
@@ -93,6 +122,7 @@ def _number(human_number, public_id) -> str:
 def account_requests(account) -> list[RequestSummary]:
     """Every request this account owns, newest first, with its line snapshots."""
     if connection.vendor == "postgresql":
+        _require_bound(account)
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT id, public_id, human_number, status, preferred_messenger, created_at "
@@ -215,6 +245,7 @@ def _purchases_from_rows(sales, lines) -> list[Purchase]:
 def account_purchases(account) -> list[Purchase]:
     """Completed sales of the employee-linked client card, newest first."""
     if connection.vendor == "postgresql":
+        _require_bound(account)
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT id, number, sold_at FROM customer_account_sales "

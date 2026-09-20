@@ -40,7 +40,7 @@ def _confirm(attempt, user_id=MAX_USER, *, provider=Provider.MAX, name="Пётр
     )
 
 
-# --- The only way in -----------------------------------------------------------------------
+# --- The only way in --------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -68,7 +68,7 @@ def test_max_login_disabled_by_its_own_switch_refuses_even_with_the_feature_on()
             start_login_attempt()
 
 
-# --- First login, returning login -----------------------------------------------------------
+# --- First login, returning login -------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -129,7 +129,7 @@ def test_identical_names_never_merge_two_accounts():
         assert {a.display_name for a in CustomerAccount.objects.all()} == {"Иван Иванов"}
 
 
-# --- Replay, nonce, expiry, lockout ---------------------------------------------------------
+# --- Replay, nonce, expiry, lockout -----------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -361,7 +361,7 @@ def test_concurrent_first_logins_of_one_max_user_create_one_account():
                 connection.close()
 
         with ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(finish, zip(attempts, codes)))
+            results = list(pool.map(finish, zip(attempts, codes, strict=True)))
 
         assert all(r.ok for r in results)
         assert CustomerAccount.objects.count() == 1
@@ -390,7 +390,7 @@ def test_an_account_can_never_hold_two_identities_of_one_provider():
             services._attach_identity(account, Provider.MAX, 222, "x")
 
 
-# --- Sessions -----------------------------------------------------------------------------------
+# --- Sessions ---------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db

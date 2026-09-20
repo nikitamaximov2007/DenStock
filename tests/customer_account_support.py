@@ -6,6 +6,7 @@ rather than the internal stack. ``account_on`` turns the feature flags on for
 one test; nothing here changes a default.
 """
 
+from contextlib import contextmanager
 from decimal import Decimal
 
 import pytest
@@ -13,6 +14,7 @@ from django.test import override_settings
 from django.utils import timezone
 
 from apps.customer_accounts import services, tokens, web_session
+from apps.customer_accounts.db_security import account_transaction
 from apps.customer_accounts.models import CustomerLoginAttempt, Provider
 from apps.customer_requests.models import (
     CustomerRequest,
@@ -73,6 +75,19 @@ def sign_in(user_id, *, name="Клиент MAX", chat_id=None):
     )
     assert completion.ok, completion.outcome
     return completion.session_token
+
+
+@contextmanager
+def bound(session_token):
+    """Read an account's own history the way a signed-in page does.
+
+    On PostgreSQL the history views answer only for the session bound to the
+    transaction; ``signed_in()`` does this for every real page, so a test that
+    calls ``history``/``reorder`` directly must do the same. On SQLite the
+    binding is a no-op and the filters are applied in Python.
+    """
+    with account_transaction(tokens.digest(session_token)):
+        yield
 
 
 def as_account(client, session_token):
@@ -190,6 +205,7 @@ __all__ = [
     "account_client",
     "account_on",
     "as_account",
+    "bound",
     "link_customer_card",
     "link_max_conversation",
     "link_telegram_conversation",

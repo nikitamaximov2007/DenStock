@@ -10,18 +10,20 @@ internal side: the PostgreSQL views do not select those columns, and on SQLite
 from decimal import Decimal
 
 import pytest
+from django.test import Client
 from django.urls import reverse
 
 from apps.customer_accounts import history
 from apps.customer_accounts.models import CustomerAccount
 from apps.sales.models import Sale
 from tests.customer_account_support import (
-    as_account,
-    link_customer_card,
-    make_customer,
     INTERNAL_COST,
     INTERNAL_PROFIT,
     INTERNAL_UNIT_COST,
+    as_account,
+    bound,
+    link_customer_card,
+    make_customer,
     make_sale,
     public_account_runtime,
     sign_in,
@@ -40,8 +42,6 @@ INTERNAL_NUMBERS = [
 
 @pytest.fixture
 def buyer(public_catalog):
-    from django.test import Client
-
     part = public_catalog.part("PISTON ASSY", article="420892388", price="1000")
     lot = public_catalog.stock(part, "20")
     with public_account_runtime():
@@ -56,14 +56,14 @@ def buyer(public_catalog):
         }
 
 
-# --- What counts as a purchase --------------------------------------------------------------
+# --- What counts as a purchase ----------------------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_a_completed_sale_appears_with_its_historical_line_price(buyer):
     sale = make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"],
                      quantity="3", unit_price="1200")
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         purchases = history.account_purchases(buyer["account"])
         assert len(purchases) == 1
         purchase = purchases[0]
@@ -76,7 +76,7 @@ def test_a_completed_sale_appears_with_its_historical_line_price(buyer):
 @pytest.mark.django_db
 def test_a_draft_sale_is_not_a_purchase(buyer):
     make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"], status=Sale.Status.DRAFT)
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         assert history.account_purchases(buyer["account"]) == []
 
 
@@ -84,10 +84,10 @@ def test_a_draft_sale_is_not_a_purchase(buyer):
 def test_a_canceled_sale_is_not_a_purchase(buyer):
     """Canceled follows the existing DenisStock rule: only 'completed' shows."""
     sale = make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"])
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         assert len(history.account_purchases(buyer["account"])) == 1
     Sale.objects.filter(pk=sale.pk).update(status=Sale.Status.CANCELED)
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         assert history.account_purchases(buyer["account"]) == []
 
 
@@ -99,7 +99,7 @@ def test_the_historical_price_never_moves_when_the_current_price_changes(buyer):
     PartType.objects.filter(pk=buyer["part"].pk).update(
         recommended_price=Decimal("9999"), certified_price_rub=Decimal("9999")
     )
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         purchase = history.account_purchases(buyer["account"])[0]
         assert purchase.lines[0].unit_price == Decimal("1000")
 
@@ -109,7 +109,7 @@ def test_purchases_are_newest_first(buyer):
     older = make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"], unit_price="100")
     newer = make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"], unit_price="200")
     Sale.objects.filter(pk=older.pk).update(sold_at=newer.sold_at.replace(year=2020))
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         numbers = [p.number for p in history.account_purchases(buyer["account"])]
         assert numbers == [newer.number, older.number]
 
@@ -120,12 +120,12 @@ def test_a_purchase_of_a_part_that_no_longer_exists_still_renders(buyer):
 
     sale = make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"])
     PartType.objects.filter(pk=buyer["part"].pk).update(is_public=False, is_active=False)
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         purchase = history.account_purchase(buyer["account"], sale.number)
         assert purchase is not None and purchase.lines[0].name
 
 
-# --- Nothing internal ever leaves ---------------------------------------------------------------
+# --- Nothing internal ever leaves -------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -159,7 +159,7 @@ def test_the_purchase_list_never_shows_internal_numbers(buyer):
 def test_the_purchase_dataclass_carries_no_internal_field(buyer):
     """A template cannot leak what the dataclass never received."""
     make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"])
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         line = history.account_purchases(buyer["account"])[0].lines[0]
         fields = set(vars(line))
         assert fields == {
@@ -173,7 +173,7 @@ def test_the_purchase_dataclass_carries_no_internal_field(buyer):
 @pytest.mark.django_db
 def test_the_purchase_header_carries_no_revenue_cost_or_profit_totals(buyer):
     make_sale(buyer["customer"], buyer["part"], lot=buyer["lot"])
-    with public_account_runtime():
+    with public_account_runtime(), bound(buyer["token"]):
         purchase = history.account_purchases(buyer["account"])[0]
         assert set(vars(purchase)) == {"id", "number", "sold_at", "lines"}
         for forbidden in ["cost_total", "profit_total", "revenue_total", "sold_by",
@@ -181,7 +181,7 @@ def test_the_purchase_header_carries_no_revenue_cost_or_profit_totals(buyer):
             assert not hasattr(purchase, forbidden), forbidden
 
 
-# --- Requests are not purchases -------------------------------------------------------------------
+# --- Requests are not purchases ---------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -189,4 +189,5 @@ def test_the_empty_purchase_list_renders_without_inventing_data(buyer):
     with public_account_runtime():
         response = buyer["client"].get(reverse("customer_account_purchases"))
         assert response.status_code == 200
-        assert history.account_purchases(buyer["account"]) == []
+        with bound(buyer["token"]):
+            assert history.account_purchases(buyer["account"]) == []

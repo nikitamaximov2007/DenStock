@@ -48,7 +48,7 @@ POST_ONLY_NAMES = [
 MAX_USER = 8600001
 
 
-# --- The default -----------------------------------------------------------------------------
+# --- The default ------------------------------------------------------------------------------
 
 
 def test_every_account_switch_defaults_to_off():
@@ -64,7 +64,7 @@ def test_the_services_refuse_while_the_flag_is_off():
         assert not services.link_enabled(Provider.TELEGRAM)
 
 
-# --- Disabled: the account does not exist ------------------------------------------------------
+# --- Disabled: the account does not exist -----------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -148,7 +148,7 @@ def test_the_anonymous_request_journey_is_untouched_while_disabled(public_catalo
         assert request.customer_account_id is None
 
 
-# --- Enabled: it exists, and nothing else changes ------------------------------------------------
+# --- Enabled: it exists, and nothing else changes ---------------------------------------------
 
 
 @pytest.mark.django_db

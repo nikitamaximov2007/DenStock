@@ -37,7 +37,7 @@ def _link(session_token, account, user_id=TG_USER):
     )
 
 
-# --- Never a login ---------------------------------------------------------------------------
+# --- Never a login ----------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -105,7 +105,7 @@ def test_a_deactivated_account_cannot_link_a_messenger():
             )
 
 
-# --- The happy path ----------------------------------------------------------------------------
+# --- The happy path ---------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -132,7 +132,7 @@ def test_a_linked_telegram_identity_then_resolves_at_handoff():
         assert services.identity_account(Provider.TELEGRAM, TG_USER).pk == account.pk
 
 
-# --- Conflicts and unlink ------------------------------------------------------------------------
+# --- Conflicts and unlink ---------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -212,7 +212,7 @@ def test_an_unlinked_telegram_can_be_linked_to_a_different_account_afterwards():
         assert CustomerIdentity.objects.get(provider=Provider.TELEGRAM).account_id == second.pk
 
 
-# --- The bot hooks ---------------------------------------------------------------------------------
+# --- The bot hooks ----------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
