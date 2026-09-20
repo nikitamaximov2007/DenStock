@@ -7,9 +7,13 @@ card.  No browser session, name, username or phone heuristic is consulted.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
+from django.db.models import Sum
+from django.utils import timezone
 
 from apps.catalog.models import PartType
 from apps.catalog.public_contracts import resolve_current_customer_prices
@@ -17,6 +21,7 @@ from apps.customer_accounts.models import CustomerIdentity, Provider
 from apps.customers.models import Customer
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number
+from apps.returns.models import StockReturn, StockReturnLine
 from apps.sales.models import Sale
 
 from .models import CustomerRequest
@@ -34,6 +39,11 @@ class PurchaseLine:
     quantity: Decimal
     unit_price: Decimal
     total_price: Decimal
+    returned_quantity: Decimal = ZERO
+
+    @property
+    def repeatable_quantity(self) -> Decimal:
+        return max(self.quantity - self.returned_quantity, ZERO)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +95,10 @@ class CabinetAccessError(ValueError):
     """A safe fail-closed customer-facing cabinet error."""
 
 
+def cabinet_enabled() -> bool:
+    return bool(settings.CUSTOMER_MESSENGER_CABINET_ENABLED)
+
+
 def _provider(value: str) -> str:
     if value not in Provider.values:
         raise CabinetAccessError("Неизвестный мессенджер.")
@@ -114,11 +128,17 @@ def linked_customer(*, provider: str, provider_user_id: int) -> Customer | None:
 
 
 def _purchase_queryset(*, provider: str, provider_user_id: int):
+    if not cabinet_enabled():
+        return Sale.objects.none(), None
     customer = linked_customer(provider=provider, provider_user_id=provider_user_id)
     if customer is None:
         return Customer.objects.none(), None
     return (
-        Sale.objects.filter(customer=customer, status=Sale.Status.COMPLETED)
+        Sale.objects.filter(
+            customer=customer,
+            status=Sale.Status.COMPLETED,
+            sold_at__gte=timezone.now() - timedelta(days=365),
+        )
         .prefetch_related("lines__part_type__numbers")
         .order_by("-sold_at", "-pk"),
         customer,
@@ -126,6 +146,7 @@ def _purchase_queryset(*, provider: str, provider_user_id: int):
 
 
 def _purchase_dto(sale: Sale) -> CustomerPurchase:
+    returned = _returned_quantities(sale)
     lines = tuple(
         PurchaseLine(
             part_id=line.part_type_id,
@@ -134,6 +155,7 @@ def _purchase_dto(sale: Sale) -> CustomerPurchase:
             quantity=line.quantity,
             unit_price=line.unit_price,
             total_price=line.total_price,
+            returned_quantity=returned.get(line.part_type_id, ZERO),
         )
         for line in sale.lines.all()
     )
@@ -199,14 +221,15 @@ def build_reorder_preview(
             )
             continue
         available = quantities.get(part.pk, ZERO)
-        requested = min(historical_line.quantity, available) if available > ZERO else ZERO
+        repeatable = historical_line.repeatable_quantity
+        requested = min(repeatable, available) if available > ZERO else ZERO
         price = prices[part.pk].price_rub
         result.append(
             ReorderLine(
                 part_id=part.pk,
                 name=part.name,
                 article=part_exact_number(part, default=""),
-                historical_quantity=historical_line.quantity,
+                historical_quantity=repeatable,
                 requested_quantity=requested,
                 historical_unit_price=historical_line.unit_price,
                 current_unit_price=price,
@@ -219,12 +242,29 @@ def build_reorder_preview(
     return ReorderPreview(purchase=purchase, lines=tuple(result))
 
 
+def _returned_quantities(sale: Sale) -> dict[int, Decimal]:
+    line_ids = list(sale.lines.values_list("pk", flat=True))
+    if not line_ids:
+        return {}
+    rows = (
+        StockReturnLine.objects.filter(
+            stock_return__status=StockReturn.Status.COMPLETED,
+            source_sale_line_id__in=line_ids,
+        )
+        .values("source_sale_line__part_type_id")
+        .annotate(total=Sum("quantity"))
+    )
+    return {row["source_sale_line__part_type_id"]: row["total"] for row in rows}
+
+
 @transaction.atomic
 def create_request_from_reorder_preview(
     *, provider: str, provider_user_id: int, sale_id: int, submission_key: str
 ) -> tuple[CustomerRequest, bool]:
     """Rebuild and revalidate the preview, then create a new request only."""
     provider = _provider(provider)
+    if not cabinet_enabled():
+        raise CabinetAccessError("Повтор покупки сейчас недоступен.")
     customer = linked_customer(provider=provider, provider_user_id=provider_user_id)
     preview = build_reorder_preview(
         provider=provider, provider_user_id=provider_user_id, sale_id=sale_id
@@ -242,7 +282,10 @@ def create_request_from_reorder_preview(
     ]
     if not lines:
         raise CabinetAccessError("Сейчас нет доступных позиций для заявки.")
-    privacy, consent = current_consent_versions()
+    privacy, _public_consent = current_consent_versions()
+    consent = settings.CUSTOMER_MESSENGER_REPEAT_CONSENT_VERSION
+    if not consent:
+        raise CabinetAccessError("Повтор покупки ещё не активирован.")
     request, created = create_customer_request(
         customer_name=customer.name,
         customer_phone=customer.phone,
@@ -252,6 +295,7 @@ def create_request_from_reorder_preview(
         privacy_policy_version=privacy,
         personal_data_consent_version=consent,
         submission_key=submission_key,
+        source=CustomerRequest.Source.MESSENGER_REPEAT,
         consent_purpose=PUBLIC_REQUEST_CONSENT_PURPOSE,
     )
     if created:

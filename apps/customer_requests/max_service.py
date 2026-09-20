@@ -53,10 +53,16 @@ AMBIGUOUS_TEXT = "У вас несколько заявок. Выберите н
 SELECTED_TEXT = customer_ui.SELECTED_TEXT
 # MAX has no persistent keyboard, so the bot's own messages carry the entry point.
 MENU_PAYLOAD = customer_ui.MY_REQUESTS_PAYLOAD
-MENU_BUTTON = [[
-    {"text": customer_ui.MY_REQUESTS_BUTTON, "payload": MENU_PAYLOAD},
-    {"text": customer_ui.MY_PURCHASES_BUTTON, "payload": customer_ui.MY_PURCHASES_PAYLOAD},
-]]
+def menu_button() -> list[list[dict]]:
+    buttons = [{"text": customer_ui.MY_REQUESTS_BUTTON, "payload": MENU_PAYLOAD}]
+    from .customer_cabinet import cabinet_enabled
+    if cabinet_enabled():
+        buttons.append({"text": customer_ui.MY_PURCHASES_BUTTON,
+                        "payload": customer_ui.MY_PURCHASES_PAYLOAD})
+    return [buttons]
+
+
+MENU_BUTTON = menu_button()
 # A selector answer re-renders the pressed message instead of sending a new one.
 SELECTOR_DEDUPE_PREFIX = "selector:"
 SELECTION_UNAVAILABLE_TEXT = "Эта заявка недоступна. Отправьте /requests, чтобы выбрать другую."
@@ -163,7 +169,7 @@ def bind_customer_chat(
             text=text,
             dedupe_key=f"summary:{link_token_id}:{index}",
             conversation=conversation,
-            buttons=MENU_BUTTON if index == len(summary) - 1 else None,
+            buttons=menu_button() if index == len(summary) - 1 else None,
         )
     # The verified MAX identity's PRO-STOR account owns this request as well
     # (created on first sight). Off until the account feature is enabled.
@@ -278,7 +284,7 @@ def queue_greeting(*, user_id: int, chat_id: int, dedupe_key: str) -> None:
     linked = linked_conversations(user_id)
     open_requests = messaging.open_conversations(linked)
     if open_requests:
-        text, buttons = LINKED_GREETING, MENU_BUTTON
+        text, buttons = LINKED_GREETING, menu_button()
     elif linked:
         text, buttons = messaging.NO_OPEN_REQUESTS_TEXT, None
     else:
@@ -308,7 +314,12 @@ def is_menu_payload(payload) -> bool:
 
 
 def is_purchases_payload(payload) -> bool:
-    return isinstance(payload, str) and payload.strip() == customer_ui.MY_PURCHASES_PAYLOAD
+    from .customer_cabinet import cabinet_enabled
+    return (
+        cabinet_enabled()
+        and isinstance(payload, str)
+        and payload.strip() == customer_ui.MY_PURCHASES_PAYLOAD
+    )
 
 
 def _purchase_buttons(purchases) -> list[list[dict]] | None:
@@ -322,19 +333,23 @@ def _purchase_buttons(purchases) -> list[list[dict]] | None:
 
 
 def purchase_selector_view(user_id: int) -> tuple[str, list[list[dict]] | None]:
-    from .customer_cabinet import list_customer_purchases
+    from .customer_cabinet import cabinet_enabled, list_customer_purchases
+    if not cabinet_enabled():
+        return "Недоступно.", menu_button()
 
     purchases = list_customer_purchases(provider="max", provider_user_id=user_id)
     if not purchases:
-        return "История покупок пока недоступна.", MENU_BUTTON
+        return "История покупок пока недоступна.", menu_button()
     text = "Мои покупки:\n\n" + "\n\n".join(
         customer_ui.purchase_summary_text(purchase) for purchase in purchases
     )
-    return text, _purchase_buttons(purchases) or MENU_BUTTON
+    return text, _purchase_buttons(purchases) or menu_button()
 
 
 def purchase_detail_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[dict]]]:
-    from .customer_cabinet import get_customer_purchase
+    from .customer_cabinet import cabinet_enabled, get_customer_purchase
+    if not cabinet_enabled():
+        return "Недоступно.", menu_button()
 
     try:
         sale_id_int = int(sale_id)
@@ -344,7 +359,7 @@ def purchase_detail_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[
         provider="max", provider_user_id=user_id, sale_id=sale_id_int
     )
     if purchase is None:
-        return "Покупка недоступна.", MENU_BUTTON
+        return "Покупка недоступна.", menu_button()
     return customer_ui.purchase_detail_text(purchase), [[
         {"text": "Повторить покупку",
          "payload": f"{customer_ui.REORDER_PAYLOAD_PREFIX}{purchase.sale_id}"},
@@ -353,7 +368,9 @@ def purchase_detail_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[
 
 
 def reorder_preview_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[dict]]]:
-    from .customer_cabinet import build_reorder_preview
+    from .customer_cabinet import build_reorder_preview, cabinet_enabled
+    if not cabinet_enabled():
+        return "Недоступно.", menu_button()
 
     try:
         sale_id_int = int(sale_id)
@@ -361,7 +378,7 @@ def reorder_preview_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[
         sale_id_int = -1
     preview = build_reorder_preview(provider="max", provider_user_id=user_id, sale_id=sale_id_int)
     if preview is None:
-        return "Покупка недоступна.", MENU_BUTTON
+        return "Покупка недоступна.", menu_button()
     return customer_ui.reorder_preview_text(preview), [[
         {"text": "Создать заявку",
          "payload": f"{customer_ui.REORDER_CONFIRM_PAYLOAD_PREFIX}{sale_id_int}"},
@@ -372,7 +389,14 @@ def reorder_preview_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[
 def confirm_reorder_view(
     *, user_id: int, sale_id: str, callback_key: str
 ) -> tuple[str, list[list[dict]]]:
-    from .customer_cabinet import CabinetAccessError, create_request_from_reorder_preview
+    from .customer_cabinet import (
+        CabinetAccessError,
+        cabinet_enabled,
+        create_request_from_reorder_preview,
+    )
+    from .services import CustomerRequestError
+    if not cabinet_enabled():
+        return "Недоступно.", menu_button()
 
     try:
         sale_id_int = int(sale_id)
@@ -385,10 +409,10 @@ def confirm_reorder_view(
             sale_id=sale_id_int,
             submission_key=f"messenger-reorder-max-{user_id}-{callback_key}",
         )
-    except CabinetAccessError as exc:
-        return str(exc), MENU_BUTTON
+    except (CabinetAccessError, CustomerRequestError) as exc:
+        return str(exc), menu_button()
     suffix = "создана" if created else "уже создана"
-    return f"Заявка №{request.reference} {suffix}.", MENU_BUTTON
+    return f"Заявка №{request.reference} {suffix}.", menu_button()
 
 
 def select_customer_conversation(

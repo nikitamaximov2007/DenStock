@@ -61,6 +61,11 @@ from .max_fake import (
 from .test_customer_requests import POLICY
 from .test_telegram_customer_messaging import FakeBotApi
 
+
+@pytest.fixture(autouse=True)
+def messenger_cabinet_enabled(settings):
+    settings.CUSTOMER_MESSENGER_CABINET_ENABLED = True
+
 CUSTOMER = 41_000_001
 CUSTOMER_CHAT = 51_000_001
 OTHER = 41_000_002

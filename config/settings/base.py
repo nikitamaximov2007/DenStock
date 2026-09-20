@@ -397,6 +397,9 @@ LOGGING = {
 # account creation at messenger handoff, request ownership). The auth switches
 # gate individual ways in.
 CUSTOMER_ACCOUNT_ENABLED = env.bool("CUSTOMER_ACCOUNT_ENABLED", default=False)
+CUSTOMER_MESSENGER_CABINET_ENABLED = env.bool(
+    "CUSTOMER_MESSENGER_CABINET_ENABLED", default=False
+)
 # MAX is the ONLY way to sign in and the only way an account is created (owner
 # decision for V1): a Russian-owned system, the candidate under 149-FZ art. 8
 # part 10. There is deliberately no Telegram, e-mail, password or SMS login.
@@ -412,3 +415,9 @@ CUSTOMER_SESSION_DAYS = env.int("CUSTOMER_SESSION_DAYS", default=30)
 # Versions of the texts a customer agrees to in the account. Evidence stores
 # the version; the wording itself is approved and published separately.
 CUSTOMER_ACCOUNT_CONSENT_VERSION = env("CUSTOMER_ACCOUNT_CONSENT_VERSION", default="").strip()
+# Repeat-purchase requests are a separate activation gate.  An empty value
+# keeps the technically complete cabinet dormant until the approved wording
+# has an explicit version.
+CUSTOMER_MESSENGER_REPEAT_CONSENT_VERSION = env(
+    "CUSTOMER_MESSENGER_REPEAT_CONSENT_VERSION", default=""
+).strip()

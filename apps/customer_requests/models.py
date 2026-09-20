@@ -31,6 +31,7 @@ class CustomerRequest(models.Model):
 
     class Source(models.TextChoices):
         PUBLIC_CATALOG = "public_catalog", "Публичный каталог"
+        MESSENGER_REPEAT = "messenger_repeat", "Повтор покупки через мессенджер"
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
     human_number = models.PositiveBigIntegerField(

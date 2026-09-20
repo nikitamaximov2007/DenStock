@@ -186,8 +186,8 @@ def handle_update(update) -> list[Outgoing]:
     if text.strip().lower() in service.MY_REQUESTS_TEXTS:
         # The persistent keyboard sends plain text, not a command.
         return customer(service.customer_conversations_prompt(chat_id))
-    if text.strip().lower() in service.MY_PURCHASES_TEXTS:
-        return customer(service.purchase_selector_result(chat_id))
+    if text.strip().lower() in service.MY_PURCHASES_TEXTS and service.customer_cabinet_enabled():
+        return customer(service.purchase_selector_result(chat_id, provider_user_id=user_id))
     if command in {"/start", "/help"}:
         return customer(service.customer_greeting(chat_id))
     if command:
@@ -235,11 +235,13 @@ def _handle_callback(callback) -> list[Outgoing]:
             ),
         ]
 
-    if data == service.customer_ui.MY_PURCHASES_PAYLOAD:
-        result = service.purchase_selector_result(user_id)
+    if data == service.customer_ui.MY_PURCHASES_PAYLOAD and service.customer_cabinet_enabled():
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        callback_chat_id = (message.get("chat") or {}).get("id", user_id)
+        result = service.purchase_selector_result(callback_chat_id, provider_user_id=user_id)
         return [
             answered,
-            Outgoing(chat_id=user_id, text=result.reply, reply_markup=result.keyboard),
+            Outgoing(chat_id=callback_chat_id, text=result.reply, reply_markup=result.keyboard),
         ]
 
     if kind in {"p", "rc"} or (
@@ -247,17 +249,23 @@ def _handle_callback(callback) -> list[Outgoing]:
     ):
         message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
         message_id = message.get("message_id")
+        callback_chat_id = (message.get("chat") or {}).get("id", user_id)
         if kind == "p":
-            result = service.purchase_detail_result(chat_id=user_id, sale_id=value)
+            result = service.purchase_detail_result(
+                chat_id=callback_chat_id, provider_user_id=user_id, sale_id=value
+            )
         elif kind == "r":
-            result = service.reorder_preview_result(chat_id=user_id, sale_id=value)
+            result = service.reorder_preview_result(
+                chat_id=callback_chat_id, provider_user_id=user_id, sale_id=value
+            )
         else:
             result = service.confirm_reorder_result(
-                chat_id=user_id, sale_id=value, callback_key=callback_id
+                chat_id=callback_chat_id, provider_user_id=user_id,
+                sale_id=value, callback_key=callback_id
             )
         return [
             answered,
-            Outgoing(chat_id=user_id, text=result.reply, reply_markup=result.keyboard),
+            Outgoing(chat_id=callback_chat_id, text=result.reply, reply_markup=result.keyboard),
         ]
 
     # Every operator button re-authorizes; a hidden button is not authorization.
@@ -583,13 +591,13 @@ class TelegramBotWorker:
                         filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
                         content_type=row.attachment_content_type,
                         caption=row.text,
-                        reply_markup=service.CUSTOMER_KEYBOARD,
+                        reply_markup=service.customer_keyboard(),
                     )
                 else:
                     result = self.api.send_message(
                         chat_id=conversation.customer_chat_id,
                         text=row.text,
-                        reply_markup=service.CUSTOMER_KEYBOARD,
+                        reply_markup=service.customer_keyboard(),
                     )
             except AttachmentStorageError as exc:
                 self._finish(row, "delivery_status", TelegramDeliveryStatus.FAILED, error=exc)

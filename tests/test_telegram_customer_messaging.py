@@ -74,6 +74,11 @@ from apps.sales.models import Reservation, Sale
 
 from .test_customer_requests import POLICY
 
+
+@pytest.fixture(autouse=True)
+def messenger_cabinet_enabled(settings):
+    settings.CUSTOMER_MESSENGER_CABINET_ENABLED = True
+
 FAKE_TOKEN = "123456789:AAFakeTokenForTestsOnly_abcdefghijklmnop"
 CUSTOMER = 700001
 OTHER_CUSTOMER = 700002
@@ -381,7 +386,7 @@ def test_open_request_button_goes_to_the_internal_page_for_operators_only(
     customer_markups = [
         item["reply_markup"] for item in api.sent if item["chat_id"] == CUSTOMER
     ]
-    assert all(markup == service_module.CUSTOMER_KEYBOARD for markup in customer_markups)
+    assert all(markup == service_module.customer_keyboard() for markup in customer_markups)
     assert buttons[0]["url"] == f"https://denisstock.example/customer-requests/{request.pk}/"
     assert "denisstock.example" not in "".join(api.texts_to(CUSTOMER))
 
@@ -1667,7 +1672,7 @@ def test_telegram_completed_only_request_refuses_messages_and_offers_nothing(
     assert reply["text"] == messaging.closed_request_text(request.reference, other_open=False)
     # Nothing to switch to: no request buttons, only the customer's own keyboard.
     assert not (reply["reply_markup"] or {}).get("inline_keyboard")
-    assert reply["reply_markup"] == service_module.CUSTOMER_KEYBOARD
+    assert reply["reply_markup"] == service_module.customer_keyboard()
 
 
 def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothing(

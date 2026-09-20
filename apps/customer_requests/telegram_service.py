@@ -49,6 +49,11 @@ OPERATOR_HELP_TEXT = (
     "/whoami: ваш Telegram ID."
 )
 NOT_AVAILABLE_TEXT = "Недоступно."
+
+
+def customer_cabinet_enabled() -> bool:
+    from .customer_cabinet import cabinet_enabled
+    return cabinet_enabled()
 # Read by the PostgreSQL insert guard (migration 0006): a role that may only
 # INSERT Telegram rows must prove the raw submission key of the target request.
 REQUEST_PROOF_SETTING = "denstock.telegram_request_proof"
@@ -419,14 +424,21 @@ def _linked_conversations(chat_id: int) -> list[TelegramConversation]:
 
 # The customer's one control, always under the text field. It is not a command
 # and does not get in the way of typing an ordinary message.
-CUSTOMER_KEYBOARD = {
-    "keyboard": [[
-        {"text": customer_ui.MY_REQUESTS_BUTTON},
-        {"text": customer_ui.MY_PURCHASES_BUTTON},
-    ]],
-    "resize_keyboard": True,
-    "is_persistent": True,
-}
+def customer_keyboard() -> dict:
+    buttons = [{"text": customer_ui.MY_REQUESTS_BUTTON}]
+    from .customer_cabinet import cabinet_enabled
+    if cabinet_enabled():
+        buttons.append({"text": customer_ui.MY_PURCHASES_BUTTON})
+    return {
+        "keyboard": [buttons],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+# Backward-compatible import for adapters/tests; callers that render a menu
+# use the function so runtime flag changes are respected.
+CUSTOMER_KEYBOARD = customer_keyboard()
 MY_REQUESTS_TEXTS = {
     customer_ui.MY_REQUESTS_BUTTON.lower(),
     "мои заявки",
@@ -448,54 +460,67 @@ def _purchase_buttons(purchases) -> dict | None:
     }
 
 
-def purchase_selector_result(chat_id: int) -> CustomerResult:
-    from .customer_cabinet import list_customer_purchases
+def purchase_selector_result(
+    chat_id: int, *, provider_user_id: int | None = None
+) -> CustomerResult:
+    from .customer_cabinet import cabinet_enabled, list_customer_purchases
+
+    if not cabinet_enabled():
+        return CustomerResult(NOT_AVAILABLE_TEXT, customer_keyboard())
 
     purchases = list_customer_purchases(
-        provider="telegram", provider_user_id=chat_id
+        provider="telegram", provider_user_id=provider_user_id or chat_id
     )
     if not purchases:
-        return CustomerResult("История покупок пока недоступна.", CUSTOMER_KEYBOARD)
+        return CustomerResult("История покупок пока недоступна.", customer_keyboard())
     text = "Мои покупки:\n\n" + "\n\n".join(
         customer_ui.purchase_summary_text(purchase) for purchase in purchases
     )
-    return CustomerResult(text, _purchase_buttons(purchases) or CUSTOMER_KEYBOARD)
+    return CustomerResult(text, _purchase_buttons(purchases) or customer_keyboard())
 
 
-def purchase_detail_result(*, chat_id: int, sale_id: str) -> CustomerResult:
-    from .customer_cabinet import get_customer_purchase
+def purchase_detail_result(
+    *, chat_id: int, sale_id: str, provider_user_id: int | None = None
+) -> CustomerResult:
+    from .customer_cabinet import cabinet_enabled, get_customer_purchase
+    if not cabinet_enabled():
+        return CustomerResult(NOT_AVAILABLE_TEXT, customer_keyboard())
 
     try:
         sale_id_int = int(sale_id)
     except (TypeError, ValueError):
         sale_id_int = -1
     purchase = get_customer_purchase(
-        provider="telegram", provider_user_id=chat_id, sale_id=sale_id_int
+        provider="telegram", provider_user_id=provider_user_id or chat_id, sale_id=sale_id_int
     )
     if purchase is None:
-        return CustomerResult("Покупка недоступна.", CUSTOMER_KEYBOARD)
+        return CustomerResult("Покупка недоступна.", customer_keyboard())
     return CustomerResult(
         customer_ui.purchase_detail_text(purchase),
         {"inline_keyboard": [[
             {"text": "Повторить покупку",
              "callback_data": f"{customer_ui.REORDER_PAYLOAD_PREFIX}{purchase.sale_id}"},
-            {"text": "Назад", "callback_data": customer_ui.MY_PURCHASES_PAYLOAD},
+             {"text": "Назад", "callback_data": customer_ui.MY_PURCHASES_PAYLOAD},
         ]]},
     )
 
 
-def reorder_preview_result(*, chat_id: int, sale_id: str) -> CustomerResult:
-    from .customer_cabinet import build_reorder_preview
+def reorder_preview_result(
+    *, chat_id: int, sale_id: str, provider_user_id: int | None = None
+) -> CustomerResult:
+    from .customer_cabinet import build_reorder_preview, cabinet_enabled
+    if not cabinet_enabled():
+        return CustomerResult(NOT_AVAILABLE_TEXT, customer_keyboard())
 
     try:
         sale_id_int = int(sale_id)
     except (TypeError, ValueError):
         sale_id_int = -1
     preview = build_reorder_preview(
-        provider="telegram", provider_user_id=chat_id, sale_id=sale_id_int
+        provider="telegram", provider_user_id=provider_user_id or chat_id, sale_id=sale_id_int
     )
     if preview is None:
-        return CustomerResult("Покупка недоступна.", CUSTOMER_KEYBOARD)
+        return CustomerResult("Покупка недоступна.", customer_keyboard())
     buttons = [[
         {"text": "Создать заявку",
          "callback_data": f"{customer_ui.REORDER_CONFIRM_PAYLOAD_PREFIX}{sale_id_int}"},
@@ -504,8 +529,16 @@ def reorder_preview_result(*, chat_id: int, sale_id: str) -> CustomerResult:
     return CustomerResult(customer_ui.reorder_preview_text(preview), {"inline_keyboard": buttons})
 
 
-def confirm_reorder_result(*, chat_id: int, sale_id: str, callback_key: str) -> CustomerResult:
-    from .customer_cabinet import CabinetAccessError, create_request_from_reorder_preview
+def confirm_reorder_result(*, chat_id: int, sale_id: str, callback_key: str,
+                           provider_user_id: int | None = None) -> CustomerResult:
+    from .customer_cabinet import (
+        CabinetAccessError,
+        cabinet_enabled,
+        create_request_from_reorder_preview,
+    )
+    from .services import CustomerRequestError
+    if not cabinet_enabled():
+        return CustomerResult(NOT_AVAILABLE_TEXT, customer_keyboard())
 
     try:
         sale_id_int = int(sale_id)
@@ -514,14 +547,14 @@ def confirm_reorder_result(*, chat_id: int, sale_id: str, callback_key: str) -> 
     try:
         request, created = create_request_from_reorder_preview(
             provider="telegram",
-            provider_user_id=chat_id,
+            provider_user_id=provider_user_id or chat_id,
             sale_id=sale_id_int,
             submission_key=f"messenger-reorder-tg-{chat_id}-{callback_key}",
         )
-    except CabinetAccessError as exc:
-        return CustomerResult(str(exc), CUSTOMER_KEYBOARD)
+    except (CabinetAccessError, CustomerRequestError) as exc:
+        return CustomerResult(str(exc), customer_keyboard())
     suffix = "создана" if created else "уже создана"
-    return CustomerResult(f"Заявка №{request.reference} {suffix}.", CUSTOMER_KEYBOARD)
+    return CustomerResult(f"Заявка №{request.reference} {suffix}.", customer_keyboard())
 
 
 def _selector(conversations, *, current_id=None) -> dict:
@@ -545,14 +578,14 @@ def selector_result(chat_id: int) -> CustomerResult:
         linked_any=bool(linked),
     )
     if not view.has_choices:
-        return CustomerResult(view.text, CUSTOMER_KEYBOARD)
+        return CustomerResult(view.text, customer_keyboard())
     return CustomerResult(view.text, _selector(view.conversations, current_id=view.current_id))
 
 
 def selector_text_and_markup(chat_id: int) -> tuple[str, dict | None]:
     """The selector as it should look now, for re-rendering an existing message."""
     result = selector_result(chat_id)
-    keyboard = result.keyboard if result.keyboard != CUSTOMER_KEYBOARD else None
+    keyboard = result.keyboard if result.keyboard != customer_keyboard() else None
     return result.reply, keyboard
 
 
@@ -569,16 +602,16 @@ def _closed_reply(request: CustomerRequest, still_open) -> CustomerResult:
     if request.status in messaging.MESSAGEABLE_STATUSES:
         return CustomerResult(CONTACT_CLOSED_TEXT)
     text = messaging.closed_request_text(request.reference, other_open=bool(still_open))
-    return CustomerResult(text, _selector(still_open) if still_open else CUSTOMER_KEYBOARD)
+    return CustomerResult(text, _selector(still_open) if still_open else customer_keyboard())
 
 
 def customer_greeting(chat_id: int) -> CustomerResult:
     """A plain hello: the customer's control comes with it, not a command list."""
     linked = _linked_conversations(chat_id)
     if messaging.open_conversations(linked):
-        return CustomerResult(LINKED_GREETING, CUSTOMER_KEYBOARD)
+        return CustomerResult(LINKED_GREETING, customer_keyboard())
     text = messaging.NO_OPEN_REQUESTS_TEXT if linked else UNLINKED_GREETING
-    return CustomerResult(text, CUSTOMER_KEYBOARD if linked else None)
+    return CustomerResult(text, customer_keyboard() if linked else None)
 
 
 def customer_conversations_prompt(chat_id: int) -> CustomerResult:

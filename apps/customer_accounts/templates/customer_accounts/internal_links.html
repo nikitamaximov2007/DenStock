@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+  <main class="page-content">
+    <h1>Связи кабинетов клиентов</h1>
+    <p>Связь выбирает сотрудник вручную. Имя и ID мессенджера не используются для авто-сопоставления.</p>
+    {% for row in rows %}
+      <section class="card">
+        <h2>{{ row.account.code }} · {{ row.account.display_name|default:"Без имени" }}</h2>
+        <p>{% for identity in row.account.identities.all %}{{ identity.get_provider_display }} · {{ identity.provider_user_id }}{% if not forloop.last %}; {% endif %}{% empty %}Нет подтверждённого мессенджера{% endfor %}</p>
+        {% if row.link %}<p>Связано: {{ row.link.customer.name }}</p>{% endif %}
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="account_id" value="{{ row.account.pk }}">
+          <label>
+            Карточка клиента
+            <select name="customer_id">
+              {% for customer in customers %}<option value="{{ customer.pk }}">{{ customer.name }} · #{{ customer.pk }}</option>{% endfor %}
+            </select>
+          </label>
+          <button type="submit">Привязать</button>
+        </form>
+        {% if row.link %}<form method="post"><input type="hidden" name="account_id" value="{{ row.account.pk }}"><input type="hidden" name="action" value="unlink">{% csrf_token %}<button type="submit">Отвязать</button></form>{% endif %}
+      </section>
+{% empty %}<p>Кабинетов пока нет.</p>{% endfor %}
+  </main>
+{% endblock %}

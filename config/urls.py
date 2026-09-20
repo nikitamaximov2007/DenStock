@@ -29,6 +29,7 @@ urlpatterns = [
     path("repairs/", include("apps.repairs.urls")),
     path("ordered-parts/", include("apps.ordered_parts.urls")),
     path("customer-requests/", include("apps.customer_requests.urls")),
+    path("customer-accounts/", include("apps.customer_accounts.internal_urls")),
     path("", include("apps.customs_orders.urls")),
     path("returns/", include("apps.returns.urls")),
     path("write-offs/", include("apps.writeoffs.urls")),
