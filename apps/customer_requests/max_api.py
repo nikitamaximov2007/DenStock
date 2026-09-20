@@ -184,7 +184,14 @@ class MaxBotApi:
         self._token = token
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-        self._opener = opener or direct_opener(tls_context(ca_file, ca_sha256))
+        if opener is not None:
+            self._opener = opener
+            self._upload_opener = opener
+        else:
+            # The Bot API endpoint uses the pinned MAX CA. The official upload
+            # URL is a separate iu.oneme.ru host with a public certificate.
+            self._opener = direct_opener(tls_context(ca_file, ca_sha256))
+            self._upload_opener = direct_opener(ssl.create_default_context())
 
     def __repr__(self) -> str:  # never render the token, even in a debugger dump
         return f"MaxBotApi(base_url={self._base_url!r})"
@@ -303,7 +310,7 @@ class MaxBotApi:
             method="POST",
         )
         try:
-            with self._opener(request, timeout=self._timeout) as response:
+            with self._upload_opener(request, timeout=self._timeout) as response:
                 uploaded = json.loads(response.read().decode("utf-8"))
         except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise MaxNetworkError(type(exc).__name__, ambiguous=True) from None
