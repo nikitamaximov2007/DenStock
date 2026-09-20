@@ -54,7 +54,16 @@ def validate_attachment(upload) -> ValidatedAttachment:
     extension = filename.rsplit(".", 1)[-1].lower()
     if extension not in EXTENSIONS:
         raise AttachmentError("Поддерживаются PNG, JPEG, WEBP и PDF.")
-    content = upload.read(MAX_ATTACHMENT_BYTES + 1)
+    try:
+        upload.seek(0)
+        content = upload.read(MAX_ATTACHMENT_BYTES + 1)
+    except (AttributeError, OSError):
+        raise AttachmentError("Не удалось прочитать вложение.") from None
+    finally:
+        try:
+            upload.seek(0)
+        except (AttributeError, OSError):
+            pass
     if len(content) > MAX_ATTACHMENT_BYTES:
         raise AttachmentError("Файл не должен быть больше 10 МБ.")
     if content.startswith(b"%PDF-"):
@@ -69,7 +78,11 @@ def validate_attachment(upload) -> ValidatedAttachment:
         raise AttachmentError("Содержимое файла не соответствует поддерживаемому типу.")
     if detected not in ALLOWED:
         raise AttachmentError("Тип файла запрещён.")
-    expected = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(extension, f"image/{extension}")
+    expected = {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "pdf": "application/pdf",
+    }.get(extension, f"image/{extension}")
     if expected != detected:
         raise AttachmentError("Расширение файла не соответствует его содержимому.")
     return ValidatedAttachment(content, filename, detected)
