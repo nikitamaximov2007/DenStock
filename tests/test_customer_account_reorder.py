@@ -14,6 +14,7 @@ a second copy of the rules.
 from decimal import Decimal
 
 import pytest
+from django.test import Client
 from django.urls import reverse
 
 from apps.catalog.models import PartType
@@ -24,6 +25,7 @@ from apps.inventory.models import StockLot, StockMovement
 from apps.sales.models import Reservation, Sale, SaleLine
 from tests.customer_account_support import (
     as_account,
+    bound,
     link_customer_card,
     make_customer,
     make_sale,
@@ -38,8 +40,6 @@ BUYER_MAX = 8500001
 @pytest.fixture
 def bought(public_catalog):
     """One completed purchase of one in-stock public part, at 1000 ₽."""
-    from django.test import Client
-
     part = public_catalog.part("PISTON ASSY", article="420892388", price="1000")
     lot = public_catalog.stock(part, "20")
     with public_account_runtime():
@@ -56,9 +56,11 @@ def bought(public_catalog):
 
 
 def _lines(bought):
-    purchase = history.account_purchase(bought["account"], bought["sale"].number)
-    assert purchase is not None
-    return reorder.preview(purchase)
+    """The preview a signed-in page would build, read inside its own session."""
+    with bound(bought["token"]):
+        purchase = history.account_purchase(bought["account"], bought["sale"].number)
+        assert purchase is not None
+        return reorder.preview(purchase)
 
 
 def _set_price(part, value):
@@ -73,7 +75,7 @@ def _set_price(part, value):
     )
 
 
-# --- The current price decides ---------------------------------------------------------------
+# --- The current price decides ----------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -151,7 +153,7 @@ def test_the_preview_reads_the_shared_public_catalog_price(bought):
         assert _lines(bought)[0].current_price == card.facts.price.price_rub
 
 
-# --- Availability and publication ---------------------------------------------------------------
+# --- Availability and publication -------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -191,7 +193,7 @@ def test_an_inactive_part_cannot_be_reordered(bought):
 @pytest.mark.django_db
 def test_a_missing_part_type_degrades_to_unavailable(bought):
     """The line still renders from its own snapshot; it just cannot be ordered."""
-    with public_account_runtime():
+    with public_account_runtime(), bound(bought["token"]):
         purchase = history.account_purchase(bought["account"], bought["sale"].number)
         gone_id = PartType.objects.order_by("-pk").first().pk + 10_000
         purchase.lines[0] = history.PurchaseLine(
@@ -228,8 +230,6 @@ def test_a_mixed_purchase_adds_only_the_usable_lines(public_catalog, bought):
             reverse("customer_account_reorder", args=[bought["sale"].number])
         )
         assert added.status_code == 302
-        from apps.catalog.public_cart import read_cart
-        from django.test import Client
         # Two usable lines reached the cart; the unpublished one did not.
         body = bought["client"].get(reverse("public_catalog_cart")).content.decode()
         assert "GONE" not in body
@@ -237,7 +237,7 @@ def test_a_mixed_purchase_adds_only_the_usable_lines(public_catalog, bought):
 
 @pytest.mark.django_db
 def test_a_manually_created_part_follows_the_same_public_rules(public_catalog, bought):
-    """A manual PartType is ordinary: public + in stock decides, nothing else."""
+    """A manual PartType is ordinary: public and in stock decides, nothing else."""
     manual = PartType.objects.create(
         name="MANUAL PART", category=public_catalog.category, unit=public_catalog.unit,
         tracking_mode=PartType.TrackingMode.BULK, is_active=True, is_public=True,
@@ -256,7 +256,7 @@ def test_a_manually_created_part_follows_the_same_public_rules(public_catalog, b
         assert line.usable and line.current_price == Decimal("450")
 
 
-# --- Quantities ------------------------------------------------------------------------------------
+# --- Quantities -------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -297,7 +297,7 @@ def test_a_reorder_never_shrinks_what_the_customer_already_chose(bought):
         assert 'value="9"' in body or ">9<" in body
 
 
-# --- It writes nothing but the cart ------------------------------------------------------------------
+# --- It writes nothing but the cart -----------------------------------------------------------
 
 
 @pytest.mark.django_db

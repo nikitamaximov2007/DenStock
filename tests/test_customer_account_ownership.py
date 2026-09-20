@@ -10,6 +10,7 @@ does not exist, so nothing is learned by probing.
 import uuid
 
 import pytest
+from django.test import Client
 from django.urls import reverse
 
 from apps.customer_accounts import history, services
@@ -17,6 +18,7 @@ from apps.customer_accounts.models import CustomerAccount, Provider
 from apps.customer_requests.models import CustomerRequest
 from tests.customer_account_support import (
     as_account,
+    bound,
     link_customer_card,
     link_max_conversation,
     link_telegram_conversation,
@@ -35,8 +37,6 @@ BOB_MAX = 8300002
 @pytest.fixture
 def two_customers(public_catalog):
     """Two signed-in accounts, each with one owned request and one purchase."""
-    from django.test import Client
-
     part = public_catalog.part("PISTON ASSY", article="420892388", price="1000")
     lot = public_catalog.stock(part, "10")
     with public_account_runtime():
@@ -72,7 +72,7 @@ def two_customers(public_catalog):
         }
 
 
-# --- Claiming ------------------------------------------------------------------------------
+# --- Claiming ---------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -125,12 +125,12 @@ def test_a_request_already_owned_is_never_taken_over(public_catalog, two_custome
     assert alice_request.customer_account_id == two_customers["alice"].pk
 
 
-# --- Request IDOR ---------------------------------------------------------------------------
+# --- Request IDOR -----------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_an_account_sees_only_its_own_requests(two_customers):
-    with public_account_runtime():
+    with public_account_runtime(), bound(two_customers["alice_token"]):
         mine = history.account_requests(two_customers["alice"])
         assert [r.id for r in mine] == [two_customers["alice_request"].pk]
 
@@ -138,9 +138,10 @@ def test_an_account_sees_only_its_own_requests(two_customers):
 @pytest.mark.django_db
 def test_another_accounts_request_is_not_found_by_its_opaque_id(two_customers):
     with public_account_runtime():
-        assert history.account_request(
-            two_customers["alice"], two_customers["bob_request"].public_id
-        ) is None
+        with bound(two_customers["alice_token"]):
+            assert history.account_request(
+                two_customers["alice"], two_customers["bob_request"].public_id
+            ) is None
         url = reverse(
             "customer_account_request", args=[two_customers["bob_request"].public_id]
         )
@@ -154,8 +155,10 @@ def test_a_human_request_number_opens_nothing(two_customers):
     bob_request = two_customers["bob_request"]
     bob_request.refresh_from_db()
     with public_account_runtime():
+        with bound(two_customers["alice_token"]):
+            for guess in [str(bob_request.human_number or 1), "1", "2", "000001"]:
+                assert history.account_request(two_customers["alice"], guess) is None
         for guess in [str(bob_request.human_number or 1), "1", "2", "000001"]:
-            assert history.account_request(two_customers["alice"], guess) is None
             assert two_customers["alice_client"].get(
                 f"/account/requests/{guess}/"
             ).status_code == 404
@@ -163,7 +166,7 @@ def test_a_human_request_number_opens_nothing(two_customers):
 
 @pytest.mark.django_db
 def test_sequential_and_random_id_guessing_finds_nothing(two_customers):
-    with public_account_runtime():
+    with public_account_runtime(), bound(two_customers["alice_token"]):
         for _ in range(20):
             assert history.account_request(two_customers["alice"], uuid.uuid4()) is None
         for junk in ["", None, "not-a-uuid", 0, -1, "../../etc/passwd", "1 OR 1=1"]:
@@ -176,11 +179,9 @@ def test_a_messenger_identity_mismatch_never_opens_a_request(public_catalog, two
     with public_account_runtime():
         stranger_token = sign_in(8300777, name="Чужой")
         stranger = CustomerAccount.objects.get(identities__provider_user_id=8300777)
-        assert history.account_requests(stranger) == []
-        client = as_account(
-            __import__("django.test", fromlist=["Client"]).Client(HTTP_HOST=PUBLIC_HOST),
-            stranger_token,
-        )
+        with bound(stranger_token):
+            assert history.account_requests(stranger) == []
+        client = as_account(Client(HTTP_HOST=PUBLIC_HOST), stranger_token)
         url = reverse(
             "customer_account_request", args=[two_customers["alice_request"].public_id]
         )
@@ -189,8 +190,6 @@ def test_a_messenger_identity_mismatch_never_opens_a_request(public_catalog, two
 
 @pytest.mark.django_db
 def test_account_pages_redirect_to_login_without_a_session(public_catalog):
-    from django.test import Client
-
     with public_account_runtime():
         client = Client(HTTP_HOST=PUBLIC_HOST)
         for name in [
@@ -207,7 +206,6 @@ def test_account_pages_redirect_to_login_without_a_session(public_catalog):
 
 @pytest.mark.django_db
 def test_a_forged_session_cookie_is_refused_and_cleared(public_catalog):
-    from django.test import Client
     from apps.customer_accounts import tokens, web_session
 
     with public_account_runtime():
@@ -231,7 +229,7 @@ def test_a_revoked_session_stops_opening_pages(two_customers):
 
 @pytest.mark.django_db
 def test_an_account_sees_only_the_sales_of_its_own_linked_card(two_customers):
-    with public_account_runtime():
+    with public_account_runtime(), bound(two_customers["alice_token"]):
         mine = history.account_purchases(two_customers["alice"])
         assert [p.id for p in mine] == [two_customers["alice_sale"].pk]
         assert history.account_purchase(
@@ -254,9 +252,10 @@ def test_a_foreign_sale_number_is_404_not_a_different_error(two_customers):
 @pytest.mark.django_db
 def test_an_account_with_no_linked_card_has_no_purchases(public_catalog, two_customers):
     with public_account_runtime():
-        sign_in(8300888, name="Без карточки")
+        token = sign_in(8300888, name="Без карточки")
         account = CustomerAccount.objects.get(identities__provider_user_id=8300888)
-        assert history.account_purchases(account) == []
+        with bound(token):
+            assert history.account_purchases(account) == []
         assert services.linked_customer_id(account) is None
 
 
@@ -264,9 +263,11 @@ def test_an_account_with_no_linked_card_has_no_purchases(public_catalog, two_cus
 def test_unlinking_the_card_hides_the_purchases_immediately(two_customers):
     with public_account_runtime():
         alice = two_customers["alice"]
-        assert history.account_purchases(alice)
+        with bound(two_customers["alice_token"]):
+            assert history.account_purchases(alice)
         services.unlink_customer(alice, by_user=None)
-        assert history.account_purchases(alice) == []
+        with bound(two_customers["alice_token"]):
+            assert history.account_purchases(alice) == []
 
 
 @pytest.mark.django_db
@@ -305,7 +306,8 @@ def test_a_request_is_never_a_purchase(two_customers):
     """A CustomerRequest is a wish; purchase history comes from Sale only."""
     with public_account_runtime():
         alice = two_customers["alice"]
-        assert len(history.account_requests(alice)) == 1
-        purchases = history.account_purchases(alice)
+        with bound(two_customers["alice_token"]):
+            assert len(history.account_requests(alice)) == 1
+            purchases = history.account_purchases(alice)
         assert [p.id for p in purchases] == [two_customers["alice_sale"].pk]
         assert CustomerRequest.objects.filter(customer_account=alice).count() == 1

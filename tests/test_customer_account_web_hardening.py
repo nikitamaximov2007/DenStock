@@ -93,7 +93,7 @@ def test_an_oversized_account_cookie_is_ignored(public_catalog):
         assert client.get(reverse("customer_account_home")).status_code == 302
 
 
-# --- CSRF -----------------------------------------------------------------------------------------
+# --- CSRF -------------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -144,7 +144,7 @@ def test_logout_cannot_be_triggered_by_a_get(public_catalog):
         assert services.session_account(token) is not None
 
 
-# --- Redirects ----------------------------------------------------------------------------------------
+# --- Redirects --------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -176,7 +176,7 @@ def test_the_login_redirect_target_is_always_the_local_login_page(public_catalog
         assert response["Location"] == reverse("customer_account_login")
 
 
-# --- Rate limit ------------------------------------------------------------------------------------------
+# --- Rate limit -------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -194,7 +194,7 @@ def test_login_attempts_are_rate_limited_per_client(public_catalog):
     cache.clear()
 
 
-# --- Consent evidence ---------------------------------------------------------------------------------------
+# --- Consent evidence -------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
@@ -254,7 +254,7 @@ def test_a_new_consent_version_invalidates_the_old_evidence(public_catalog):
         assert not services.has_consent(account, CustomerConsent.Purpose.ACCOUNT)
 
 
-# --- Profile -----------------------------------------------------------------------------------------------
+# --- Profile ----------------------------------------------------------------------------------
 
 
 @pytest.mark.django_db
