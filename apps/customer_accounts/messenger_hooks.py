@@ -82,5 +82,4 @@ def max_handoff(request_obj, *, user_id: int, name: str = "") -> None:
 
 def telegram_handoff(request_obj, *, user_id) -> None:
     """Same for Telegram: joins an EXISTING linked account only, never creates one."""
-    if isinstance(user_id, int):
-        services.attach_request_at_handoff(request_obj, Provider.TELEGRAM, user_id)
+    services.attach_request_at_handoff(request_obj, Provider.TELEGRAM, user_id)
