@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('customer_accounts', '0001_initial'),
-        ('customer_requests', '0012_maxmessage_attachment_and_more'),
+        ('customer_requests', '0014_maxmessage_attachment_token'),
     ]
 
     operations = [

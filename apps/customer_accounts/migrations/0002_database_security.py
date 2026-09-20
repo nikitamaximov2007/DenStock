@@ -349,7 +349,7 @@ def drop(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ("customer_accounts", "0001_initial"),
-        ("customer_requests", "0013_customerrequest_customer_account"),
+        ("customer_requests", "0015_customerrequest_customer_account"),
         ("sales", "0007_saleline_unmarked_price_snapshot"),
     ]
     operations = [migrations.RunPython(create, drop)]
