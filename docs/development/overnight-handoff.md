@@ -30,7 +30,18 @@
 - `manage.py makemigrations --check`: PASS.
 - compileall: PASS.
 - focused operator, Telegram and MAX suites: PASS after the final RC changes; four skipped attachment-related cases are inherited from the existing suite.
-- `ruff` и `djlint` должны быть повторно запущены после последнего изменения теста перед commit.
+- `ruff check .`: PASS; `djlint templates/customer_requests/staff_bindings.html --check`: PASS; `git diff --check`: PASS.
+- Full baseline/candidate smoke completed with the three known inherited failures listed below; the candidate added no new stable failure. The operator-focused run completed with zero failures.
+
+## Qualification caveats
+
+Fresh full-suite inherited failures:
+
+- `tests/test_partial_repair_line_cancellation.py::test_report_button_confirm_screen_and_redirect_keep_filters`
+- `tests/test_max_bot_compose.py::test_max_bot_mounts_only_the_public_ca_directory_read_only`
+- `tests/test_max_edge_route.py::test_only_the_public_catalog_block_changes`
+
+The random-token assertion in `tests/test_search.py::test_cost_hidden_for_storekeeper` passed when rerun and is not an RC regression.
 
 ## Утреннее включение
 
