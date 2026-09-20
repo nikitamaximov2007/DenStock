@@ -421,3 +421,8 @@ CUSTOMER_ACCOUNT_CONSENT_VERSION = env("CUSTOMER_ACCOUNT_CONSENT_VERSION", defau
 CUSTOMER_MESSENGER_REPEAT_CONSENT_VERSION = env(
     "CUSTOMER_MESSENGER_REPEAT_CONSENT_VERSION", default=""
 ).strip()
+# Separate product gate for staff mobile request handling. It stays OFF until
+# staff identities are paired and the owner approves activation.
+CUSTOMER_OPERATOR_CONSOLE_ENABLED = env.bool(
+    "CUSTOMER_OPERATOR_CONSOLE_ENABLED", default=False
+)

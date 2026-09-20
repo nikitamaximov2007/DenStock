@@ -183,6 +183,30 @@ class TelegramBotApi:
     def get_webhook_info(self) -> dict:
         return self._object_result("getWebhookInfo")
 
+    def get_file(self, file_id: str) -> dict:
+        result = self.call("getFile", {"file_id": str(file_id)})
+        if not isinstance(result, dict) or not isinstance(result.get("file_path"), str):
+            raise TelegramNetworkError("invalid file response", ambiguous=False)
+        return result
+
+    def download_file(self, file_path: str) -> bytes:
+        """Read a Telegram file into the worker's durable private storage path."""
+        if not file_path or ".." in file_path or file_path.startswith(("/", "\\")):
+            raise TelegramApiError(400, "invalid file path")
+        request = urllib.request.Request(
+            f"{self._base_url}/file/bot{self._token}/{file_path}", method="GET"
+        )
+        try:
+            with self._opener(request, timeout=self._timeout) as response:
+                content = response.read()
+        except (TimeoutError, urllib.error.URLError, OSError) as exc:
+            raise TelegramNetworkError(
+                _scrub(type(exc).__name__, self._token), ambiguous=False
+            ) from None
+        if not content:
+            raise TelegramNetworkError("empty file response", ambiguous=False)
+        return content
+
     def _object_result(self, method: str) -> dict:
         result = self.call(method)
         if not isinstance(result, dict):

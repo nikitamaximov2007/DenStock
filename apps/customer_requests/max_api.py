@@ -340,6 +340,20 @@ class MaxBotApi:
             raise MaxNetworkError("invalid upload token", ambiguous=True)
         return token
 
+    def download_url(self, url: str) -> bytes:
+        """Download one provider-supplied attachment URL without logging it."""
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise MaxApiError(400, "local.validation", "invalid attachment URL")
+        request = urllib.request.Request(url, method="GET")
+        try:
+            with self._upload_opener(request, timeout=self._timeout) as response:
+                content = response.read()
+        except (OSError, TimeoutError) as exc:
+            raise MaxNetworkError(type(exc).__name__, ambiguous=False) from None
+        if not content:
+            raise MaxNetworkError("empty attachment response", ambiguous=False)
+        return content
+
     def send_file_token(
         self, *, chat_id: int, token: str, content_type: str, caption: str = ""
     ) -> dict:

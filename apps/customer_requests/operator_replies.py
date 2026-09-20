@@ -141,6 +141,8 @@ def submit_reply(
     telegram_update_id: int | None = None,
     channel: str | None = None,
     attachment=None,
+    operator_control_source: str | None = None,
+    operator_author_label: str = "",
 ) -> ReplyResult:
     """Queue one reply for delivery by the request's own messenger worker.
 
@@ -154,7 +156,7 @@ def submit_reply(
     if telegram_update_id is not None:
         if key != f"tg:{telegram_update_id}":
             raise OperatorReplyError("Ответ не распознан. Повторите.")
-    elif not FORM_KEY_RE.fullmatch(key):
+    elif not (FORM_KEY_RE.fullmatch(key) or key.startswith("staff:")):
         raise OperatorReplyError("Форма устарела. Обновите страницу и повторите.")
     stored = _stored_reply(key, telegram_update_id)
     if stored is not None:
@@ -189,8 +191,26 @@ def submit_reply(
         raise OperatorReplyError("Пустое сообщение не отправлено.")
     if len(text) > limit:
         raise OperatorReplyError(f"Сообщение длиннее {limit} символов. Сократите его.")
+    if operator_control_source is None:
+        operator_control_source = "telegram" if telegram_update_id is not None else "web"
+    if not operator_author_label:
+        operator_author_label = "PRO-STORE" if operator_control_source == "web" else (
+            getattr(user, "full_name", "") or user.get_username()
+        )
+    if telegram_update_id is None and operator_control_source in {"telegram", "max"}:
+        _ensure_customer_visible_responder(
+            target,
+            user=user,
+            label=operator_author_label,
+            control_source=operator_control_source,
+            telegram_operator=telegram_operator,
+        )
     if is_max:
-        message = _queue_max_reply(target, user=user, text=text, key=key, attachment=validated)
+        message = _queue_max_reply(
+            target, user=user, text=text, key=key, attachment=validated,
+            operator_control_source=operator_control_source,
+            operator_author_label=operator_author_label,
+        )
     else:
         message = _queue_telegram_reply(
             target,
@@ -200,12 +220,56 @@ def submit_reply(
             telegram_operator=telegram_operator,
             telegram_update_id=telegram_update_id,
             attachment=validated,
+            operator_control_source=operator_control_source,
+            operator_author_label=operator_author_label,
         )
     return ReplyResult(message, target.channel, created=True)
 
 
+def _ensure_customer_visible_responder(
+    target: ReplyTarget, *, user, label: str, control_source: str, telegram_operator=None
+) -> None:
+    """Record one real introduction when the visible responder changes.
+
+    ``submit_reply`` already holds the request row lock, so two operators cannot
+    create competing introductions for the same transition.
+    """
+    request = target.request
+    previous = request.current_responder_label
+    if previous == label:
+        return
+    text = f"Вам отвечает {label}." if not previous else f"К диалогу подключился {label}."
+    key = f"intro:{request.pk}:{_dedupe_key(label)}"
+    if target.channel == CustomerRequest.Messenger.MAX:
+        _queue_max_reply(
+            target,
+            user=user,
+            text=text,
+            key=key,
+            attachment=None,
+            operator_control_source=control_source,
+            operator_author_label=label,
+        )
+    else:
+        _queue_telegram_reply(
+            target,
+            user=user,
+            text=text,
+            key=key,
+            telegram_operator=telegram_operator,
+            telegram_update_id=None,
+            attachment=None,
+            operator_control_source=control_source,
+            operator_author_label=label,
+        )
+    request.current_responder_label = label[:80]
+    request.current_responder_control_source = control_source[:12]
+    request.save(update_fields=["current_responder_label", "current_responder_control_source"])
+
+
 def _queue_max_reply(
-    target: ReplyTarget, *, user, text: str, key: str, attachment=None
+    target: ReplyTarget, *, user, text: str, key: str, attachment=None,
+    operator_control_source: str, operator_author_label: str,
 ) -> MaxMessage:
     conversation = MaxConversation.objects.select_for_update().get(pk=target.conversation.pk)
     now = timezone.now()
@@ -218,6 +282,8 @@ def _queue_max_reply(
         next_attempt_at=now,
         dedupe_key=_dedupe_key(key),
         operator_user=user,
+        operator_control_source=operator_control_source,
+        operator_author_label=operator_author_label[:80],
         attachment_name=attachment.filename if attachment else "",
         attachment_content_type=attachment.content_type if attachment else "",
     )
@@ -239,7 +305,7 @@ def _queue_max_reply(
 
 def _queue_telegram_reply(
     target: ReplyTarget, *, user, text: str, key: str, telegram_operator, telegram_update_id,
-    attachment=None,
+    attachment=None, operator_control_source: str, operator_author_label: str,
 ) -> TelegramMessage:
     conversation = TelegramConversation.objects.select_for_update().get(pk=target.conversation.pk)
     # The author's own bot account is never told about their own reply.
@@ -255,6 +321,8 @@ def _queue_telegram_reply(
         dedupe_key="" if telegram_update_id is not None else _dedupe_key(key),
         operator=operator,
         operator_user=user,
+        operator_control_source=operator_control_source,
+        operator_author_label=operator_author_label[:80],
         attachment_name=attachment.filename if attachment else "",
         attachment_content_type=attachment.content_type if attachment else "",
     )

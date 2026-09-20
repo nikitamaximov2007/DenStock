@@ -22,6 +22,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db import DatabaseError, connection, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -30,13 +31,20 @@ from apps.customer_accounts import messenger_hooks as account_hooks
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
-from . import customer_ui, messaging, operator_bot
+from . import customer_ui, messaging, operator_bot, operator_console
 from . import telegram_service as service
-from .attachments import AttachmentStorageError, cleanup_attachment, read_attachment
+from .attachments import (
+    AttachmentError,
+    AttachmentStorageError,
+    cleanup_attachment,
+    read_attachment,
+    validate_attachment,
+)
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
     MaxDeliveryStatus,
     MaxOperatorDelivery,
+    OperatorNotification,
     TelegramDelivery,
     TelegramDeliveryStatus,
     TelegramMessage,
@@ -108,10 +116,23 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _telegram_attachment_descriptor(message: dict) -> tuple[str, str] | None:
+    document = message.get("document")
+    if isinstance(document, dict) and document.get("file_id"):
+        return str(document["file_id"]), str(document.get("file_name") or "document.pdf")
+    photos = message.get("photo")
+    if isinstance(photos, list):
+        candidates = [item for item in photos if isinstance(item, dict) and item.get("file_id")]
+        if candidates:
+            photo = max(candidates, key=lambda item: int(item.get("file_size") or 0))
+            return str(photo["file_id"]), "photo.jpg"
+    return None
+
+
 # --- Update handling (runs inside the caller's transaction) -------------------------------
 
 
-def handle_update(update) -> list[Outgoing]:
+def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
     if not isinstance(update, dict):
         return []
     if isinstance(update.get("callback_query"), dict):
@@ -130,9 +151,32 @@ def handle_update(update) -> list[Outgoing]:
         return [Outgoing(chat_id=chat_id, text=text, reply_markup=markup)] if text else []
 
     text = message.get("text")
+    attachment = None
+    has_attachment = isinstance(message.get("document"), dict) or isinstance(
+        message.get("photo"), list
+    )
+    if has_attachment and operator_console.enabled() and operator_console.binding_for(
+        "telegram", user_id
+    ):
+        if attachment_loader is None:
+            return reply(service.MEDIA_NOT_SUPPORTED_TEXT)
+        try:
+            attachment = attachment_loader(message)
+        except (AttachmentError, TelegramError):
+            return reply("Не удалось прочитать вложение. Повторите отправку позже.")
+        text = message.get("caption", "")
     if not isinstance(text, str):
         return reply(service.MEDIA_NOT_SUPPORTED_TEXT)
     text = text.strip()
+    operator_reply = operator_console.handle_text(
+        provider="telegram",
+        provider_user_id=user_id,
+        external_id=str(update_id),
+        text=text,
+        attachment=attachment,
+    )
+    if operator_reply is not None:
+        return reply(*operator_reply)
     command, argument = "", ""
     if text.startswith("/"):
         head, _, argument = text.partition(" ")
@@ -207,6 +251,17 @@ def _handle_callback(callback) -> list[Outgoing]:
     denied = [Outgoing(callback_query_id=callback_id, callback_text=service.NOT_AVAILABLE_TEXT)]
     answered = Outgoing(callback_query_id=callback_id)
     kind, _, value = data.partition(":")
+
+    if data.startswith("op:"):
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        callback_chat_id = (message.get("chat") or {}).get("id", user_id)
+        result = operator_console.handle_callback(
+            provider="telegram", provider_user_id=user_id, payload=data
+        )
+        if result is None:
+            return denied
+        text, markup = result
+        return [answered, Outgoing(chat_id=callback_chat_id, text=text, reply_markup=markup)]
 
     if kind == "s":
         # Customer choosing among their own requests. In a private chat the
@@ -421,7 +476,9 @@ class TelegramBotWorker:
                 continue
             try:
                 with transaction.atomic():
-                    outgoing = handle_update(update)
+                    outgoing = handle_update(
+                        update, attachment_loader=self._load_operator_attachment
+                    )
                     self._advance(update_id)
             except BusinessWriteBlocked:
                 raise
@@ -440,6 +497,15 @@ class TelegramBotWorker:
         TelegramBotRuntime.objects.filter(pk=TelegramBotRuntime.SINGLETON_PK).update(
             last_update_id=update_id, last_update_at=timezone.now()
         )
+
+    def _load_operator_attachment(self, message: dict):
+        descriptor = _telegram_attachment_descriptor(message)
+        if descriptor is None:
+            raise AttachmentError("Вложение не распознано.")
+        file_id, filename = descriptor
+        metadata = self.api.get_file(file_id)
+        content = self.api.download_file(metadata["file_path"])
+        return validate_attachment(ContentFile(content, name=filename))
 
     def _send_ephemeral(self, outgoing: list[Outgoing]) -> None:
         for item in outgoing:
@@ -668,6 +734,34 @@ class TelegramBotWorker:
             )
         return len(ids)
 
+    def send_operator_console_notifications(self, limit: int = BATCH) -> int:
+        if not operator_console.enabled():
+            return 0
+        rows = operator_console.claim_notifications("telegram", limit)
+        for row in rows:
+            binding = operator_console.binding_for(
+                "telegram", row.binding.provider_user_id, lock=True
+            )
+            if binding is None:
+                operator_console.finish_notification(
+                    row, status=operator_console.OperatorNotification.Status.FAILED,
+                    error="Сотрудник отключён",
+                )
+                continue
+            text, markup = operator_console.notification_content(row)
+            try:
+                result = self.api.send_message(
+                    chat_id=binding.provider_user_id, text=text, reply_markup=markup
+                )
+            except TelegramError as exc:
+                operator_console.retry_notification(row, exc)
+                continue
+            operator_console.finish_notification(
+                row, status=operator_console.OperatorNotification.Status.SENT,
+                external_id=(result or {}).get("message_id", ""),
+            )
+        return len(rows)
+
     def has_due_work(self) -> bool:
         now = timezone.now()
         pending = TelegramDeliveryStatus.PENDING
@@ -682,6 +776,11 @@ class TelegramBotWorker:
             or MaxOperatorDelivery.objects.filter(
                 status=pending, next_attempt_at__lte=now
             ).exists()
+            or OperatorNotification.objects.filter(
+                binding__provider="telegram",
+                status=OperatorNotification.Status.PENDING,
+                next_attempt_at__lte=now,
+            ).exists()
         )
 
     def drain_outbox(self) -> None:
@@ -689,12 +788,19 @@ class TelegramBotWorker:
         self.send_customer_messages()
         self.send_operator_deliveries()
         self.send_max_operator_deliveries()
+        if operator_console.enabled():
+            runtime = operator_console.ensure_runtime()
+            operator_console.queue_operator_notifications(
+                since=runtime.announce_requests_since
+            )
+            self.send_operator_console_notifications()
 
     # Main loop ---------------------------------------------------------------------------
 
     def start(self) -> None:
         self.acquire()
         recovered = self.recover_interrupted_sends()
+        recovered += operator_console.recover_interrupted_notifications("telegram")
         if recovered:
             logger.warning("marked %s interrupted sends as uncertain", recovered)
         webhook = self.api.get_webhook_info() or {}

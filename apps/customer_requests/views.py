@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
@@ -25,7 +26,7 @@ from apps.inventory.presentation import with_part_identity
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
-from . import max_bot, messaging, operator_replies, workspace
+from . import max_bot, messaging, operator_console, operator_replies, workspace
 from .forms import TelegramOperatorForm
 from .max_api import webhook_secret_is_well_formed
 from .messengers import (
@@ -37,6 +38,7 @@ from .messengers import (
 )
 from .models import (
     CustomerRequest,
+    StaffMessengerBinding,
     TelegramConversation,
     TelegramDelivery,
     TelegramDeliveryStatus,
@@ -150,6 +152,49 @@ def telegram_operator_role(request, pk):
         operator.save(update_fields=["role", "updated_at"])
         messages.success(request, "Роль сотрудника в боте обновлена.")
     return redirect("telegram_settings")
+
+
+@login_required
+def staff_messenger_bindings(request):
+    _require_admin(request)
+    token = None
+    error = ""
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action == "pair":
+            user = get_object_or_404(get_user_model(), pk=request.POST.get("user_id"))
+            try:
+                token = operator_console.issue_pairing_token(
+                    user=user,
+                    provider=request.POST.get("provider", ""),
+                    label=request.POST.get("label", ""),
+                    created_by=request.user,
+                )
+            except ValueError as exc:
+                error = str(exc)
+        elif action == "toggle":
+            binding = get_object_or_404(StaffMessengerBinding, pk=request.POST.get("binding_id"))
+            binding.is_active = not binding.is_active
+            if not binding.is_active:
+                binding.operator_mode = False
+            binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
+            messages.success(request, "Привязка обновлена.")
+            return redirect("staff_messenger_bindings")
+    return render(
+        request,
+        "customer_requests/staff_bindings.html",
+        {
+            "bindings": StaffMessengerBinding.objects.select_related("user").order_by(
+                "provider", "user_id"
+            ),
+            "users": get_user_model()
+            .objects.filter(is_active=True)
+            .order_by("full_name", "username"),
+            "token": token,
+            "error": error,
+            "providers": StaffMessengerBinding.Provider.choices,
+        },
+    )
 
 
 def _list_params(source) -> dict:
@@ -478,7 +523,12 @@ def max_webhook(request):
         return HttpResponseBadRequest()
     try:
         with transaction.atomic():
-            max_bot.handle_update(update)
+            max_bot.handle_update(
+                update,
+                attachment_loader=lambda body: max_bot.load_operator_attachment(
+                    max_bot.build_api(), body
+                ),
+            )
     except BusinessWriteBlocked:
         return HttpResponse(status=503)
     except DatabaseError as exc:

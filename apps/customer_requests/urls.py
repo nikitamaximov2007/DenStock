@@ -38,4 +38,5 @@ urlpatterns = [
         views.telegram_operator_role,
         name="telegram_operator_role",
     ),
+    path("staff-bindings/", views.staff_messenger_bindings, name="staff_messenger_bindings"),
 ]

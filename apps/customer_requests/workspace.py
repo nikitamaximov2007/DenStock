@@ -438,6 +438,15 @@ def _author(message) -> str:
         request = getattr(getattr(message, "conversation", None), "request", None)
         return (getattr(request, "customer_name", "") or "Клиент").strip()
     if message.direction == OPERATOR:
+        snapshot = getattr(message, "operator_author_label", "")
+        source = getattr(message, "operator_control_source", "")
+        if snapshot:
+            source_label = {"telegram": "Telegram", "max": "MAX", "web": "PRO-STORE"}.get(
+                source, source
+            )
+            return snapshot if snapshot == "PRO-STORE" else (
+                f"{snapshot} · {source_label}" if source_label else snapshot
+            )
         user = message.operator_user
         if user is None:
             return "Сотрудник"

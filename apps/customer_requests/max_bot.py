@@ -25,10 +25,12 @@ import logging
 import threading
 import time
 import uuid
+from base64 import b64decode
 from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.db import DatabaseError, connection, transaction
 from django.db.models import F
 from django.utils import timezone
@@ -38,8 +40,14 @@ from apps.operations.models import MaxBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
 from . import max_service as service
-from . import messaging
-from .attachments import AttachmentStorageError, cleanup_attachment, read_attachment
+from . import messaging, operator_console
+from .attachments import (
+    AttachmentError,
+    AttachmentStorageError,
+    cleanup_attachment,
+    read_attachment,
+    validate_attachment,
+)
 from .max_api import MaxApiError, MaxBotApi, MaxError, MaxNetworkError
 from .messengers import MessengerLinkError, consume_max_start
 from .models import (
@@ -47,6 +55,7 @@ from .models import (
     MaxMessage,
     MaxOperatorDelivery,
     MaxOutboxEvent,
+    OperatorNotification,
 )
 
 logger = logging.getLogger("apps.customer_requests.max_bot")
@@ -116,7 +125,7 @@ def _start(*, token: str, user_id: int, chat_id: int, reply_key: str, user=None)
                               dedupe_key=reply_key)
 
 
-def handle_update(update) -> str:
+def handle_update(update, *, attachment_loader=None) -> str:
     """Apply one webhook update. Returns a short outcome label for logs and tests."""
     if not isinstance(update, dict):
         return "ignored"
@@ -124,7 +133,7 @@ def handle_update(update) -> str:
     if kind == "bot_started":
         return _bot_started(update)
     if kind == "message_created":
-        return _message_created(update)
+        return _message_created(update, attachment_loader=attachment_loader)
     if kind == "message_callback":
         return _message_callback(update)
     return "ignored"
@@ -167,7 +176,7 @@ def _bot_started(update) -> str:
     return "greeting"
 
 
-def _message_created(update) -> str:
+def _message_created(update, *, attachment_loader=None) -> str:
     message = update.get("message")
     if not isinstance(message, dict):
         return "ignored"
@@ -185,7 +194,42 @@ def _message_created(update) -> str:
         return "ignored"
     reply_key = f"reply:{mid}"
     text = body.get("text")
-    if not isinstance(text, str) or not text.strip():
+    attachment = None
+    has_attachment = isinstance(body.get("attachments"), list) and bool(body.get("attachments"))
+    if (
+        has_attachment
+        and operator_console.enabled()
+        and operator_console.binding_for("max", user_id)
+    ):
+        if attachment_loader is None:
+            service.queue_message(
+                chat_id=chat_id,
+                text="Не удалось прочитать вложение. Повторите отправку позже.",
+                dedupe_key=reply_key,
+            )
+            return "media"
+        try:
+            attachment = attachment_loader(body)
+        except (AttachmentError, MaxError):
+            service.queue_message(
+                chat_id=chat_id,
+                text="Не удалось прочитать вложение. Повторите отправку позже.",
+                dedupe_key=reply_key,
+            )
+            return "media"
+    operator_reply = operator_console.handle_text(
+        provider="max", provider_user_id=user_id, external_id=str(mid),
+        text=text if isinstance(text, str) else "",
+        attachment=attachment,
+    )
+    if operator_reply is not None:
+        reply_text, buttons = operator_reply
+        service.queue_message(
+            chat_id=chat_id, text=reply_text, buttons=buttons,
+            dedupe_key=f"operator:{mid}", callback_id="",
+        )
+        return "operator"
+    if (not isinstance(text, str) or not text.strip()) and attachment is None:
         service.queue_message(chat_id=chat_id, text=service.MEDIA_NOT_SUPPORTED_TEXT,
                               dedupe_key=reply_key)
         return "media"
@@ -210,6 +254,28 @@ def _message_created(update) -> str:
         service.queue_greeting(user_id=user_id, chat_id=chat_id, dedupe_key=reply_key)
         return "greeting"
     return service.record_customer_message(user_id=user_id, chat_id=chat_id, mid=mid, text=text)
+
+
+def load_operator_attachment(api: MaxBotApi, body: dict):
+    """Resolve the official MAX incoming attachment shape into private bytes."""
+    attachments = body.get("attachments") if isinstance(body, dict) else None
+    if not isinstance(attachments, list) or not attachments:
+        raise AttachmentError("Вложение не распознано.")
+    item = attachments[0] if isinstance(attachments[0], dict) else {}
+    payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
+    filename = str(
+        payload.get("filename") or payload.get("file_name") or payload.get("name") or "document.pdf"
+    )
+    encoded = payload.get("content_base64")
+    if isinstance(encoded, str) and encoded:
+        try:
+            content = b64decode(encoded, validate=True)
+        except (ValueError, TypeError):
+            raise AttachmentError("Вложение повреждено.") from None
+    else:
+        url = payload.get("url") or payload.get("download_url")
+        content = api.download_url(url)
+    return validate_attachment(ContentFile(content, name=filename))
 
 
 def _message_callback(update) -> str:
@@ -243,6 +309,18 @@ def _message_callback(update) -> str:
     press_key = _event_digest(
         "message_callback", callback_id, user_id, payload, callback.get("timestamp")
     )
+    if payload.startswith("op:"):
+        result = operator_console.handle_callback(
+            provider="max", provider_user_id=user_id, payload=payload
+        )
+        if result is None:
+            return "denied"
+        text, buttons = result
+        service.queue_message(
+            chat_id=chat_id, text=text, buttons=buttons, callback_id=callback_id,
+            dedupe_key=f"operator-callback:{press_key}", in_place=True,
+        )
+        return "operator"
     if service.is_menu_payload(payload):
         # «Мои заявки»: show what is open now, in the message that was pressed.
         service.queue_selector(
@@ -693,6 +771,34 @@ class MaxBotWorker:
         ).delete()
         return deleted
 
+    def send_operator_console_notifications(self, limit: int = BATCH) -> int:
+        if not operator_console.enabled():
+            return 0
+        rows = operator_console.claim_notifications("max", limit)
+        for row in rows:
+            binding = operator_console.binding_for("max", row.binding.provider_user_id, lock=True)
+            if binding is None:
+                operator_console.finish_notification(
+                    row, status=operator_console.OperatorNotification.Status.FAILED,
+                    error="Сотрудник отключён",
+                )
+                continue
+            text, buttons = operator_console.notification_content(row)
+            self.pacer.wait(binding.provider_user_id)
+            try:
+                result = self.api.send_message(
+                    chat_id=binding.provider_user_id, text=text, buttons=buttons
+                )
+            except MaxError as exc:
+                operator_console.retry_notification(row, exc)
+                continue
+            body = (result or {}).get("body") or {}
+            operator_console.finish_notification(
+                row, status=operator_console.OperatorNotification.Status.SENT,
+                external_id=body.get("mid", ""),
+            )
+        return len(rows)
+
     def has_due_work(self) -> bool:
         now = timezone.now()
         return (
@@ -702,6 +808,11 @@ class MaxBotWorker:
             or MaxMessage.objects.filter(
                 delivery_status=MaxDeliveryStatus.PENDING, next_attempt_at__lte=now
             ).exists()
+            or OperatorNotification.objects.filter(
+                binding__provider="max",
+                status=OperatorNotification.Status.PENDING,
+                next_attempt_at__lte=now,
+            ).exists()
         )
 
     # Main loop ---------------------------------------------------------------------------
@@ -709,6 +820,7 @@ class MaxBotWorker:
     def start(self) -> None:
         self.acquire()
         recovered = self.recover_interrupted_sends()
+        recovered += operator_console.recover_interrupted_notifications("max")
         if recovered:
             logger.warning("marked %s interrupted sends as uncertain", recovered)
         me = self.api.get_me()
@@ -758,8 +870,14 @@ class MaxBotWorker:
                 logger.warning("marked %s interrupted sends as uncertain", recovered)
         runtime = MaxBotRuntime.objects.get(pk=MaxBotRuntime.SINGLETON_PK)
         service.announce_new_requests(since=runtime.announce_requests_since)
+        if operator_console.enabled():
+            operator_runtime = operator_console.ensure_runtime()
+            operator_console.queue_operator_notifications(
+                since=operator_runtime.announce_requests_since
+            )
         self.dispatch_events()
         self.send_customer_messages()
+        self.send_operator_console_notifications()
         self.purge_ephemeral()
         self._touch_heartbeat()
 

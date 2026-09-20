@@ -84,6 +84,10 @@ class CustomerRequest(models.Model):
         blank=True,
         related_name="requests",
     )
+    current_responder_label = models.CharField("Текущий ответственный", max_length=80, blank=True)
+    current_responder_control_source = models.CharField(
+        "Канал текущего ответственного", max_length=12, blank=True
+    )
 
     class Meta:
         verbose_name = "Заявка клиента"
@@ -533,6 +537,8 @@ class TelegramMessage(models.Model):
         blank=True,
         related_name="+",
     )
+    operator_control_source = models.CharField("Канал управления", max_length=12, blank=True)
+    operator_author_label = models.CharField("Подпись сотрудника", max_length=80, blank=True)
     attempts = models.PositiveSmallIntegerField("Попыток", default=0)
     next_attempt_at = models.DateTimeField("Следующая попытка", null=True, blank=True)
     last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
@@ -819,6 +825,8 @@ class MaxMessage(models.Model):
         blank=True,
         related_name="+",
     )
+    operator_control_source = models.CharField("Канал управления", max_length=12, blank=True)
+    operator_author_label = models.CharField("Подпись сотрудника", max_length=80, blank=True)
     attempts = models.PositiveSmallIntegerField("Попыток", default=0)
     next_attempt_at = models.DateTimeField("Следующая попытка", null=True, blank=True)
     last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
@@ -967,3 +975,188 @@ class MaxOperatorDelivery(models.Model):
 
     def __str__(self) -> str:
         return f"Уведомление {self.event_id} для {self.recipient_id}"
+
+
+class StaffMessengerBinding(models.Model):
+    """Explicit, revocable binding of one provider identity to one employee."""
+
+    class Provider(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Сотрудник DenisStock",
+        on_delete=models.PROTECT,
+        related_name="staff_messenger_bindings",
+    )
+    provider = models.CharField("Мессенджер", max_length=12, choices=Provider.choices)
+    provider_user_id = models.BigIntegerField("ID пользователя мессенджера")
+    customer_visible_label = models.CharField("Подпись для клиента", max_length=80)
+    is_active = models.BooleanField("Активна", default=True)
+    operator_mode = models.BooleanField("Рабочий режим", default=False)
+    created_at = models.DateTimeField("Создана", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлена", auto_now=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто привязал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_staff_messenger_bindings",
+    )
+
+    class Meta:
+        verbose_name = "Привязка сотрудника к мессенджеру"
+        verbose_name_plural = "Привязки сотрудников к мессенджерам"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "provider_user_id"], name="staff_binding_provider_user_unique"
+            ),
+            models.UniqueConstraint(
+                fields=["user", "provider"], name="staff_binding_user_provider_unique"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(provider_user_id__gt=0),
+                name="staff_binding_provider_id_positive",
+            ),
+        ]
+        indexes = [models.Index(fields=["provider", "is_active"], name="staff_binding_active_idx")]
+
+    def __str__(self):
+        return f"{self.user} · {self.get_provider_display()}"
+
+
+class StaffMessengerPairingToken(models.Model):
+    """One-time, hashed pairing invitation started by an authenticated admin."""
+
+    class Provider(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
+
+    token_hash = models.CharField("Хеш токена", max_length=64, unique=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Сотрудник DenisStock",
+        on_delete=models.PROTECT,
+        related_name="staff_pairing_tokens",
+    )
+    provider = models.CharField("Мессенджер", max_length=12, choices=Provider.choices)
+    customer_visible_label = models.CharField("Подпись для клиента", max_length=80)
+    expires_at = models.DateTimeField("Истекает")
+    used_at = models.DateTimeField("Использован", null=True, blank=True)
+    revoked_at = models.DateTimeField("Отозван", null=True, blank=True)
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто создал",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_staff_pairing_tokens",
+    )
+
+    class Meta:
+        verbose_name = "Одноразовый код привязки сотрудника"
+        verbose_name_plural = "Одноразовые коды привязки сотрудников"
+        indexes = [models.Index(fields=["provider", "expires_at"], name="staff_pairing_exp_idx")]
+
+    def __str__(self):
+        return f"{self.get_provider_display()} · {self.user} · {self.expires_at:%Y-%m-%d %H:%M}"
+
+
+class OperatorConversationContext(models.Model):
+    """The request currently selected by one provider identity."""
+
+    binding = models.OneToOneField(
+        StaffMessengerBinding,
+        verbose_name="Привязка",
+        on_delete=models.CASCADE,
+        related_name="context",
+    )
+    request = models.ForeignKey(
+        CustomerRequest,
+        verbose_name="Активная заявка",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operator_contexts",
+    )
+    updated_at = models.DateTimeField("Обновлён", auto_now=True)
+
+    def __str__(self):
+        return f"{self.binding} · {self.request or 'без заявки'}"
+
+
+class OperatorNotification(models.Model):
+    """Durable, per-binding notification for the mobile operator workspace."""
+
+    class Kind(models.TextChoices):
+        NEW_REQUEST = "new_request", "Новая заявка"
+        CUSTOMER_MESSAGE = "customer_message", "Сообщение клиента"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "В очереди"
+        SENDING = "sending", "Отправляется"
+        SENT = "sent", "Отправлено"
+        FAILED = "failed", "Не доставлено"
+        UNCERTAIN = "uncertain", "Неизвестно, доставлено ли"
+
+    binding = models.ForeignKey(
+        StaffMessengerBinding,
+        verbose_name="Привязка",
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    request = models.ForeignKey(
+        CustomerRequest,
+        verbose_name="Заявка",
+        on_delete=models.CASCADE,
+        related_name="operator_notifications",
+    )
+    kind = models.CharField("Событие", max_length=24, choices=Kind.choices)
+    dedupe_key = models.CharField("Ключ идемпотентности", max_length=180, unique=True)
+    preview = models.CharField("Краткий текст", max_length=700, blank=True)
+    status = models.CharField(
+        "Состояние", max_length=12, choices=Status.choices, default=Status.PENDING
+    )
+    attempts = models.PositiveSmallIntegerField("Попыток", default=0)
+    next_attempt_at = models.DateTimeField("Следующая попытка", null=True, blank=True)
+    external_message_id = models.CharField("Внешний ID", max_length=512, blank=True)
+    last_error = models.CharField("Последняя ошибка", max_length=255, blank=True)
+    created_at = models.DateTimeField("Создано", auto_now_add=True)
+    sent_at = models.DateTimeField("Отправлено", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Уведомление мобильной консоли"
+        verbose_name_plural = "Уведомления мобильной консоли"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["binding", "request", "kind", "dedupe_key"],
+                name="operator_notification_identity_unique",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["binding", "status", "next_attempt_at"], name="operator_notif_due_idx"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.binding} · {self.request} · {self.get_kind_display()}"
+
+
+class OperatorConsoleRuntime(models.Model):
+    """Singleton cursor used by both bot workers to discover new requests."""
+
+    SINGLETON_PK = 1
+    singleton = models.BooleanField(default=True, unique=True, editable=False)
+    announce_requests_since = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Состояние мобильной консоли"
+        verbose_name_plural = "Состояние мобильной консоли"
+
+    def __str__(self):
+        return f"Консоль операторов · {self.updated_at:%Y-%m-%d %H:%M}"
