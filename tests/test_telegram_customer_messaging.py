@@ -1742,7 +1742,10 @@ def test_the_customer_keyboard_opens_my_requests_and_switching_is_one_line(
     # The greeting already carries the customer's own keyboard.
     run(worker, api, message_update(CUSTOMER, "/start"))
     hello = api.last_with(CUSTOMER, "Напишите сообщение")
-    assert hello["reply_markup"]["keyboard"] == [[{"text": "Мои заявки"}]]
+    assert hello["reply_markup"]["keyboard"] == [[
+        {"text": "Мои заявки"},
+        {"text": "Мои покупки"},
+    ]]
 
     # Pressing it sends plain text, and the bot answers with the selector.
     run(worker, api, message_update(CUSTOMER, "Мои заявки"))

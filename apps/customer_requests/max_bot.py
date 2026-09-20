@@ -252,6 +252,36 @@ def _message_callback(update) -> str:
             callback_id=callback_id,
         )
         return "selector"
+    if service.is_purchases_payload(payload):
+        text, buttons = service.purchase_selector_view(user_id)
+        service.queue_message(
+            chat_id=chat_id,
+            text=text,
+            buttons=buttons,
+            callback_id=callback_id,
+            dedupe_key=f"callback:{press_key}",
+            in_place=True,
+        )
+        return "purchases"
+    kind, _, value = payload.partition(":")
+    if kind in {"p", "r", "rc"}:
+        if kind == "p":
+            text, buttons = service.purchase_detail_view(user_id=user_id, sale_id=value)
+        elif kind == "r":
+            text, buttons = service.reorder_preview_view(user_id=user_id, sale_id=value)
+        else:
+            text, buttons = service.confirm_reorder_view(
+                user_id=user_id, sale_id=value, callback_key=press_key
+            )
+        service.queue_message(
+            chat_id=chat_id,
+            text=text,
+            buttons=buttons,
+            callback_id=callback_id,
+            dedupe_key=f"callback:{press_key}",
+            in_place=True,
+        )
+        return kind
     conversation = service.select_customer_conversation(
         user_id=user_id,
         chat_id=chat_id,

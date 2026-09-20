@@ -186,6 +186,8 @@ def handle_update(update) -> list[Outgoing]:
     if text.strip().lower() in service.MY_REQUESTS_TEXTS:
         # The persistent keyboard sends plain text, not a command.
         return customer(service.customer_conversations_prompt(chat_id))
+    if text.strip().lower() in service.MY_PURCHASES_TEXTS:
+        return customer(service.purchase_selector_result(chat_id))
     if command in {"/start", "/help"}:
         return customer(service.customer_greeting(chat_id))
     if command:
@@ -231,6 +233,31 @@ def _handle_callback(callback) -> list[Outgoing]:
                 chat_id=user_id,
                 text=customer_ui.selected_text(conversation.request.reference),
             ),
+        ]
+
+    if data == service.customer_ui.MY_PURCHASES_PAYLOAD:
+        result = service.purchase_selector_result(user_id)
+        return [
+            answered,
+            Outgoing(chat_id=user_id, text=result.reply, reply_markup=result.keyboard),
+        ]
+
+    if kind in {"p", "rc"} or (
+        kind == "r" and value.isdigit() and service.authorized_operator(user_id) is None
+    ):
+        message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        message_id = message.get("message_id")
+        if kind == "p":
+            result = service.purchase_detail_result(chat_id=user_id, sale_id=value)
+        elif kind == "r":
+            result = service.reorder_preview_result(chat_id=user_id, sale_id=value)
+        else:
+            result = service.confirm_reorder_result(
+                chat_id=user_id, sale_id=value, callback_key=callback_id
+            )
+        return [
+            answered,
+            Outgoing(chat_id=user_id, text=result.reply, reply_markup=result.keyboard),
         ]
 
     # Every operator button re-authorizes; a hidden button is not authorization.

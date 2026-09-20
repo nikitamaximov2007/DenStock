@@ -53,7 +53,10 @@ AMBIGUOUS_TEXT = "У вас несколько заявок. Выберите н
 SELECTED_TEXT = customer_ui.SELECTED_TEXT
 # MAX has no persistent keyboard, so the bot's own messages carry the entry point.
 MENU_PAYLOAD = customer_ui.MY_REQUESTS_PAYLOAD
-MENU_BUTTON = [[{"text": customer_ui.MY_REQUESTS_BUTTON, "payload": MENU_PAYLOAD}]]
+MENU_BUTTON = [[
+    {"text": customer_ui.MY_REQUESTS_BUTTON, "payload": MENU_PAYLOAD},
+    {"text": customer_ui.MY_PURCHASES_BUTTON, "payload": customer_ui.MY_PURCHASES_PAYLOAD},
+]]
 # A selector answer re-renders the pressed message instead of sending a new one.
 SELECTOR_DEDUPE_PREFIX = "selector:"
 SELECTION_UNAVAILABLE_TEXT = "Эта заявка недоступна. Отправьте /requests, чтобы выбрать другую."
@@ -302,6 +305,90 @@ def queue_selector(*, user_id: int, chat_id: int, dedupe_key: str, callback_id: 
 
 def is_menu_payload(payload) -> bool:
     return isinstance(payload, str) and payload.strip() == MENU_PAYLOAD
+
+
+def is_purchases_payload(payload) -> bool:
+    return isinstance(payload, str) and payload.strip() == customer_ui.MY_PURCHASES_PAYLOAD
+
+
+def _purchase_buttons(purchases) -> list[list[dict]] | None:
+    if not purchases:
+        return None
+    return [
+        [{"text": f"Открыть №{purchase.number}",
+          "payload": f"{customer_ui.PURCHASE_PAYLOAD_PREFIX}{purchase.sale_id}"}]
+        for purchase in purchases
+    ]
+
+
+def purchase_selector_view(user_id: int) -> tuple[str, list[list[dict]] | None]:
+    from .customer_cabinet import list_customer_purchases
+
+    purchases = list_customer_purchases(provider="max", provider_user_id=user_id)
+    if not purchases:
+        return "История покупок пока недоступна.", MENU_BUTTON
+    text = "Мои покупки:\n\n" + "\n\n".join(
+        customer_ui.purchase_summary_text(purchase) for purchase in purchases
+    )
+    return text, _purchase_buttons(purchases) or MENU_BUTTON
+
+
+def purchase_detail_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[dict]]]:
+    from .customer_cabinet import get_customer_purchase
+
+    try:
+        sale_id_int = int(sale_id)
+    except (TypeError, ValueError):
+        sale_id_int = -1
+    purchase = get_customer_purchase(
+        provider="max", provider_user_id=user_id, sale_id=sale_id_int
+    )
+    if purchase is None:
+        return "Покупка недоступна.", MENU_BUTTON
+    return customer_ui.purchase_detail_text(purchase), [[
+        {"text": "Повторить покупку",
+         "payload": f"{customer_ui.REORDER_PAYLOAD_PREFIX}{purchase.sale_id}"},
+        {"text": "Назад", "payload": customer_ui.MY_PURCHASES_PAYLOAD},
+    ]]
+
+
+def reorder_preview_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[dict]]]:
+    from .customer_cabinet import build_reorder_preview
+
+    try:
+        sale_id_int = int(sale_id)
+    except (TypeError, ValueError):
+        sale_id_int = -1
+    preview = build_reorder_preview(provider="max", provider_user_id=user_id, sale_id=sale_id_int)
+    if preview is None:
+        return "Покупка недоступна.", MENU_BUTTON
+    return customer_ui.reorder_preview_text(preview), [[
+        {"text": "Создать заявку",
+         "payload": f"{customer_ui.REORDER_CONFIRM_PAYLOAD_PREFIX}{sale_id_int}"},
+        {"text": "Отмена", "payload": customer_ui.MY_PURCHASES_PAYLOAD},
+    ]]
+
+
+def confirm_reorder_view(
+    *, user_id: int, sale_id: str, callback_key: str
+) -> tuple[str, list[list[dict]]]:
+    from .customer_cabinet import CabinetAccessError, create_request_from_reorder_preview
+
+    try:
+        sale_id_int = int(sale_id)
+    except (TypeError, ValueError):
+        sale_id_int = -1
+    try:
+        request, created = create_request_from_reorder_preview(
+            provider="max",
+            provider_user_id=user_id,
+            sale_id=sale_id_int,
+            submission_key=f"messenger-reorder-max-{user_id}-{callback_key}",
+        )
+    except CabinetAccessError as exc:
+        return str(exc), MENU_BUTTON
+    suffix = "создана" if created else "уже создана"
+    return f"Заявка №{request.reference} {suffix}.", MENU_BUTTON
 
 
 def select_customer_conversation(

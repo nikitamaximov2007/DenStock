@@ -31,7 +31,12 @@ from .models import CustomerRequest
 # keyboard, MAX as an inline button under the bot's own messages.
 MY_REQUESTS_BUTTON = "Мои заявки"
 MY_REQUESTS_PAYLOAD = "menu"
+MY_PURCHASES_BUTTON = "Мои покупки"
+MY_PURCHASES_PAYLOAD = "purchases"
 SELECT_PAYLOAD_PREFIX = "s:"
+PURCHASE_PAYLOAD_PREFIX = "p:"
+REORDER_PAYLOAD_PREFIX = "r:"
+REORDER_CONFIRM_PAYLOAD_PREFIX = "rc:"
 CURRENT_MARK = "✓"
 
 GREETING_TEXT = "Добрый день! Ваша заявка №{reference} получена."
@@ -60,6 +65,54 @@ def plural(number: int, one: str, few: str, many: str) -> str:
 
 def positions_text(count: int) -> str:
     return f"{count} {plural(count, 'позиция', 'позиции', 'позиций')}"
+
+
+def purchase_summary_text(purchase) -> str:
+    """Compact safe purchase row; ``purchase`` is a cabinet DTO."""
+    date = purchase.sold_at.strftime("%d.%m.%Y") if purchase.sold_at else "дата не указана"
+    return (
+        f"Покупка №{purchase.number}\n{date}\n"
+        f"{positions_text(len(purchase.lines))} · {money_int(purchase.total)} ₽"
+    )
+
+
+def purchase_detail_text(purchase) -> str:
+    rows = [f"Покупка №{purchase.number}"]
+    for line in purchase.lines:
+        rows.append(f"\n{line.name}")
+        rows.append(f"{_quantity_text(line.quantity)} × {money_int(line.unit_price)} ₽")
+    rows.append(f"\nИтого: {money_int(purchase.total)} ₽")
+    return "\n".join(rows)
+
+
+def _quantity_text(value: Decimal) -> str:
+    return format(value.normalize(), "f").replace(".", ",")
+
+
+def reorder_preview_text(preview) -> str:
+    rows = [f"Повтор покупки №{preview.purchase.number}"]
+    for line in preview.lines:
+        if not line.available:
+            rows.append(f"\n{line.name}\n{line.reason}")
+            continue
+        quantity = _quantity_text(line.requested_quantity)
+        if line.current_unit_price is None:
+            current = UNKNOWN_PRICE_TEXT
+        else:
+            current = f"{quantity} × {money_int(line.current_unit_price)} ₽"
+        stock = (
+            "Запрос о поставке"
+            if line.supply_inquiry
+            else f"В наличии: {_quantity_text(line.available_quantity)}"
+        )
+        rows.append(f"\n{line.name}\n{current}\n{stock}")
+    total = preview.total
+    rows.append(
+        f"\nИтого доступных позиций: {money_int(total)} ₽"
+        if total is not None
+        else "\nИтого: цена уточняется"
+    )
+    return "\n".join(rows)
 
 
 @dataclass(frozen=True, slots=True)

@@ -420,7 +420,10 @@ def _linked_conversations(chat_id: int) -> list[TelegramConversation]:
 # The customer's one control, always under the text field. It is not a command
 # and does not get in the way of typing an ordinary message.
 CUSTOMER_KEYBOARD = {
-    "keyboard": [[{"text": customer_ui.MY_REQUESTS_BUTTON}]],
+    "keyboard": [[
+        {"text": customer_ui.MY_REQUESTS_BUTTON},
+        {"text": customer_ui.MY_PURCHASES_BUTTON},
+    ]],
     "resize_keyboard": True,
     "is_persistent": True,
 }
@@ -430,6 +433,95 @@ MY_REQUESTS_TEXTS = {
     "заявки",
     "/requests",
 }
+MY_PURCHASES_TEXTS = {customer_ui.MY_PURCHASES_BUTTON.lower(), "покупки"}
+
+
+def _purchase_buttons(purchases) -> dict | None:
+    if not purchases:
+        return None
+    return {
+        "inline_keyboard": [
+            [{"text": f"Открыть №{purchase.number}",
+              "callback_data": f"{customer_ui.PURCHASE_PAYLOAD_PREFIX}{purchase.sale_id}"}]
+            for purchase in purchases
+        ]
+    }
+
+
+def purchase_selector_result(chat_id: int) -> CustomerResult:
+    from .customer_cabinet import list_customer_purchases
+
+    purchases = list_customer_purchases(
+        provider="telegram", provider_user_id=chat_id
+    )
+    if not purchases:
+        return CustomerResult("История покупок пока недоступна.", CUSTOMER_KEYBOARD)
+    text = "Мои покупки:\n\n" + "\n\n".join(
+        customer_ui.purchase_summary_text(purchase) for purchase in purchases
+    )
+    return CustomerResult(text, _purchase_buttons(purchases) or CUSTOMER_KEYBOARD)
+
+
+def purchase_detail_result(*, chat_id: int, sale_id: str) -> CustomerResult:
+    from .customer_cabinet import get_customer_purchase
+
+    try:
+        sale_id_int = int(sale_id)
+    except (TypeError, ValueError):
+        sale_id_int = -1
+    purchase = get_customer_purchase(
+        provider="telegram", provider_user_id=chat_id, sale_id=sale_id_int
+    )
+    if purchase is None:
+        return CustomerResult("Покупка недоступна.", CUSTOMER_KEYBOARD)
+    return CustomerResult(
+        customer_ui.purchase_detail_text(purchase),
+        {"inline_keyboard": [[
+            {"text": "Повторить покупку",
+             "callback_data": f"{customer_ui.REORDER_PAYLOAD_PREFIX}{purchase.sale_id}"},
+            {"text": "Назад", "callback_data": customer_ui.MY_PURCHASES_PAYLOAD},
+        ]]},
+    )
+
+
+def reorder_preview_result(*, chat_id: int, sale_id: str) -> CustomerResult:
+    from .customer_cabinet import build_reorder_preview
+
+    try:
+        sale_id_int = int(sale_id)
+    except (TypeError, ValueError):
+        sale_id_int = -1
+    preview = build_reorder_preview(
+        provider="telegram", provider_user_id=chat_id, sale_id=sale_id_int
+    )
+    if preview is None:
+        return CustomerResult("Покупка недоступна.", CUSTOMER_KEYBOARD)
+    buttons = [[
+        {"text": "Создать заявку",
+         "callback_data": f"{customer_ui.REORDER_CONFIRM_PAYLOAD_PREFIX}{sale_id_int}"},
+        {"text": "Отмена", "callback_data": customer_ui.MY_PURCHASES_PAYLOAD},
+    ]]
+    return CustomerResult(customer_ui.reorder_preview_text(preview), {"inline_keyboard": buttons})
+
+
+def confirm_reorder_result(*, chat_id: int, sale_id: str, callback_key: str) -> CustomerResult:
+    from .customer_cabinet import CabinetAccessError, create_request_from_reorder_preview
+
+    try:
+        sale_id_int = int(sale_id)
+    except (TypeError, ValueError):
+        sale_id_int = -1
+    try:
+        request, created = create_request_from_reorder_preview(
+            provider="telegram",
+            provider_user_id=chat_id,
+            sale_id=sale_id_int,
+            submission_key=f"messenger-reorder-tg-{chat_id}-{callback_key}",
+        )
+    except CabinetAccessError as exc:
+        return CustomerResult(str(exc), CUSTOMER_KEYBOARD)
+    suffix = "создана" if created else "уже создана"
+    return CustomerResult(f"Заявка №{request.reference} {suffix}.", CUSTOMER_KEYBOARD)
 
 
 def _selector(conversations, *, current_id=None) -> dict:

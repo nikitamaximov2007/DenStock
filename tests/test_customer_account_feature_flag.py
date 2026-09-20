@@ -117,7 +117,7 @@ def test_a_stale_account_cookie_changes_nothing_while_disabled(public_catalog):
 
 
 @pytest.mark.django_db
-def test_messenger_handoff_creates_no_account_while_disabled(public_catalog):
+def test_messenger_handoff_keeps_web_account_disabled_but_records_identity(public_catalog):
     part = public_catalog.part("PISTON ASSY", article="420892388", price="1000")
     public_catalog.stock(part, "5")
     with public_runtime_settings(**ACCOUNT_OFF):
@@ -126,9 +126,12 @@ def test_messenger_handoff_creates_no_account_while_disabled(public_catalog):
         services.attach_request_at_handoff(request, Provider.MAX, MAX_USER, "Клиент")
 
         request.refresh_from_db()
-        assert request.customer_account_id is None
-        assert not CustomerAccount.objects.exists()
-        assert not CustomerIdentity.objects.exists()
+        assert request.customer_account_id is not None
+        assert CustomerAccount.objects.count() == 1
+        assert CustomerIdentity.objects.filter(
+            provider=Provider.MAX, provider_user_id=MAX_USER
+        ).exists()
+        assert services.account_enabled() is False
 
 
 @pytest.mark.django_db

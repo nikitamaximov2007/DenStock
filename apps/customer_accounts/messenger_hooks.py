@@ -75,11 +75,19 @@ def telegram_start(*, argument: str, user_id: int, chat_id: int, user) -> str | 
 
 def max_handoff(request_obj, *, user_id: int, name: str = "") -> None:
     """A request's MAX deep link was opened by this verified MAX user."""
-    services.attach_request_at_handoff(
-        request_obj, Provider.MAX, user_id, name or request_obj.customer_name
+    account = services.ensure_messenger_identity(
+        Provider.MAX, user_id, name or request_obj.customer_name
     )
+    if account is not None:
+        request_obj.__class__.objects.filter(
+            pk=request_obj.pk, customer_account__isnull=True
+        ).update(customer_account=account)
 
 
 def telegram_handoff(request_obj, *, user_id) -> None:
-    """Same for Telegram: joins an EXISTING linked account only, never creates one."""
-    services.attach_request_at_handoff(request_obj, Provider.TELEGRAM, user_id)
+    """Persist the verified Telegram identity without enabling web login."""
+    account = services.ensure_messenger_identity(Provider.TELEGRAM, user_id)
+    if account is not None:
+        request_obj.__class__.objects.filter(
+            pk=request_obj.pk, customer_account__isnull=True
+        ).update(customer_account=account)

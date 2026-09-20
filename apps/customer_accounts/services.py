@@ -473,6 +473,30 @@ def identity_account(
     return account if account.is_active else None
 
 
+def ensure_messenger_identity(
+    provider: str, provider_user_id: int, display_name: str = ""
+) -> CustomerAccount | None:
+    """Persist a provider identity for the messenger cabinet.
+
+    This is deliberately independent from ``CUSTOMER_ACCOUNT_ENABLED``:
+    messenger identity is the V1 authentication boundary, while the web
+    account and its browser sessions remain disabled.  It never links a
+    DenisStock Customer by name, phone or username.
+    """
+    if _verified_user_id(provider_user_id) is None or provider not in Provider.values:
+        return None
+    identity = (
+        CustomerIdentity.objects.select_related("account")
+        .filter(provider=provider, provider_user_id=provider_user_id)
+        .first()
+    )
+    if identity is None:
+        account = _create_account_with_identity(provider, provider_user_id, display_name)
+    else:
+        account = identity.account
+    return account if account.is_active else None
+
+
 def claim_proven_requests(account, provider, provider_user_id) -> int:
     """Attach requests this identity PROVABLY owns, and nothing else.
 
@@ -511,7 +535,7 @@ def claim_proven_requests(account, provider, provider_user_id) -> int:
 
 def attach_request_at_handoff(request_obj, provider, provider_user_id, display_name="") -> None:
     """Handoff hook: the verified identity's account owns this request too."""
-    account = identity_account(provider, provider_user_id, display_name)
+    account = ensure_messenger_identity(provider, provider_user_id, display_name)
     if account is None:
         return
     from apps.customer_requests.models import CustomerRequest
