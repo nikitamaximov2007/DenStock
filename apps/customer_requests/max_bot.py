@@ -808,11 +808,14 @@ class MaxBotWorker:
             or MaxMessage.objects.filter(
                 delivery_status=MaxDeliveryStatus.PENDING, next_attempt_at__lte=now
             ).exists()
-            or OperatorNotification.objects.filter(
-                binding__provider="max",
-                status=OperatorNotification.Status.PENDING,
-                next_attempt_at__lte=now,
-            ).exists()
+            or (
+                operator_console.enabled()
+                and OperatorNotification.objects.filter(
+                    binding__provider="max",
+                    status=OperatorNotification.Status.PENDING,
+                    next_attempt_at__lte=now,
+                ).exists()
+            )
         )
 
     # Main loop ---------------------------------------------------------------------------
@@ -820,7 +823,8 @@ class MaxBotWorker:
     def start(self) -> None:
         self.acquire()
         recovered = self.recover_interrupted_sends()
-        recovered += operator_console.recover_interrupted_notifications("max")
+        if operator_console.enabled():
+            recovered += operator_console.recover_interrupted_notifications("max")
         if recovered:
             logger.warning("marked %s interrupted sends as uncertain", recovered)
         me = self.api.get_me()

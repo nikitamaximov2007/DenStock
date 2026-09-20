@@ -157,6 +157,10 @@ def telegram_operator_role(request, pk):
 @login_required
 def staff_messenger_bindings(request):
     _require_admin(request)
+    if not operator_console.enabled():
+        # Staging code must not expose a staff-facing control surface before
+        # the owner explicitly enables the independently reviewed feature.
+        raise Http404
     token = None
     error = ""
     if request.method == "POST":

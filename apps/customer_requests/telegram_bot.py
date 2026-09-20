@@ -776,11 +776,14 @@ class TelegramBotWorker:
             or MaxOperatorDelivery.objects.filter(
                 status=pending, next_attempt_at__lte=now
             ).exists()
-            or OperatorNotification.objects.filter(
-                binding__provider="telegram",
-                status=OperatorNotification.Status.PENDING,
-                next_attempt_at__lte=now,
-            ).exists()
+            or (
+                operator_console.enabled()
+                and OperatorNotification.objects.filter(
+                    binding__provider="telegram",
+                    status=OperatorNotification.Status.PENDING,
+                    next_attempt_at__lte=now,
+                ).exists()
+            )
         )
 
     def drain_outbox(self) -> None:
@@ -800,7 +803,8 @@ class TelegramBotWorker:
     def start(self) -> None:
         self.acquire()
         recovered = self.recover_interrupted_sends()
-        recovered += operator_console.recover_interrupted_notifications("telegram")
+        if operator_console.enabled():
+            recovered += operator_console.recover_interrupted_notifications("telegram")
         if recovered:
             logger.warning("marked %s interrupted sends as uncertain", recovered)
         webhook = self.api.get_webhook_info() or {}

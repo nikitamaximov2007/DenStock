@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
@@ -197,6 +198,12 @@ def submit_reply(
         operator_author_label = "PRO-STORE" if operator_control_source == "web" else (
             getattr(user, "full_name", "") or user.get_username()
         )
+    # The operator console is an independently staged feature. Its compact
+    # authorship metadata must not change the accepted workspace timeline
+    # until the owner deliberately enables that feature flag.
+    if not settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED:
+        operator_control_source = ""
+        operator_author_label = ""
     if telegram_update_id is None and operator_control_source in {"telegram", "max"}:
         _ensure_customer_visible_responder(
             target,
