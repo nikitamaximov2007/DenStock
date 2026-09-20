@@ -315,6 +315,18 @@ class MaxBotApi:
         except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise MaxNetworkError(type(exc).__name__, ambiguous=True) from None
         token = uploaded.get("token") if isinstance(uploaded, dict) else None
+        if not token and kind == "image" and isinstance(uploaded, dict):
+            # MAX returns image tokens nested under the opaque photo key,
+            # while file uploads return a top-level token.
+            photos = uploaded.get("photos")
+            if isinstance(photos, dict):
+                tokens = [
+                    value.get("token")
+                    for value in photos.values()
+                    if isinstance(value, dict) and isinstance(value.get("token"), str)
+                ]
+                if len(tokens) == 1:
+                    token = tokens[0]
         if not isinstance(token, str) or not token:
             raise MaxNetworkError("invalid upload token", ambiguous=True)
         attachment_type = "image" if kind == "image" else "file"

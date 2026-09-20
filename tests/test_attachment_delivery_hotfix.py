@@ -92,6 +92,8 @@ def test_max_attachment_uses_upload_token_then_message(content_type, kind):
             return _Response(b'{"url":"https://upload.invalid/file"}')
         if request.full_url == "https://upload.invalid/file":
             assert b"file-bytes" in request.data
+            if kind == "image":
+                return _Response(b'{"photos":{"opaque-photo":{"token":"upload-token"}}}')
             return _Response(b'{"token":"upload-token"}')
         assert request.full_url.endswith("/messages?chat_id=7&disable_link_preview=true")
         assert b'"token": "upload-token"' in request.data
