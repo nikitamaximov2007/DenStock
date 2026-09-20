@@ -64,7 +64,7 @@ class MaxApiError(MaxError):
 
     @property
     def retryable(self) -> bool:
-        return self.status == 429 or self.status >= 500
+        return self.status == 429 or self.status >= 500 or self.code == "attachment.not.ready"
 
 
 @dataclass

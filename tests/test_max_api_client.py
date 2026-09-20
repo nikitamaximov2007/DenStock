@@ -104,6 +104,22 @@ def test_validation_4xx_is_a_final_refusal(server, api):
     assert (caught.value.status, caught.value.retryable) == (400, False)
 
 
+def test_attachment_not_ready_is_retryable(server, api):
+    server.script(
+        "/messages", ("status", 400, {
+            "code": "attachment.not.ready",
+            "message": "Key: errors.process.attachment.file.not.processed",
+        }),
+    )
+    with pytest.raises(MaxApiError) as caught:
+        api.send_message(chat_id=5001, text="x")
+    assert (caught.value.status, caught.value.code, caught.value.retryable) == (
+        400,
+        "attachment.not.ready",
+        True,
+    )
+
+
 def test_429_is_retryable_and_carries_retry_after(server, api):
     server.script(
         "/messages",
