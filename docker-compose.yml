@@ -126,6 +126,9 @@ services:
       # internal telegram-egress bridge (deploy/telegram-egress). An empty
       # TELEGRAM_API_PROXY_URL in the invoking shell means a direct connection.
       TELEGRAM_API_PROXY_URL: "${TELEGRAM_API_PROXY_URL-http://10.231.0.1:2081}"
+    volumes:
+      - media:/app/mediafiles:ro
+      - private_media:/app/private_media:ro
     networks:
       default: {}
       telegram-egress:
@@ -177,6 +180,8 @@ services:
       ALL_PROXY: ""
       MAX_BOT_HEARTBEAT_FILE: /tmp/denstock-max-bot.heartbeat
     volumes:
+      - media:/app/mediafiles:ro
+      - private_media:/app/private_media:ro
       - type: bind
         source: ${DENSTOCK_MAX_CA_DIR:-/etc/denstock/max}
         target: /etc/denstock/max

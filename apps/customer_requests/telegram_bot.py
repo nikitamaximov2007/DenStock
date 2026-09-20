@@ -31,6 +31,7 @@ from apps.operations.write_guard import BusinessWriteBlocked
 
 from . import customer_ui, messaging, operator_bot
 from . import telegram_service as service
+from .attachments import AttachmentStorageError, cleanup_attachment, read_attachment
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
     MaxDeliveryStatus,
@@ -505,6 +506,8 @@ class TelegramBotWorker:
             setattr(row, field, value)
         update_fields = [*values, "updated_at"] if hasattr(row, "updated_at") else list(values)
         row.save(update_fields=update_fields)
+        if status in (TelegramDeliveryStatus.SENT, TelegramDeliveryStatus.FAILED):
+            cleanup_attachment(row)
 
     def _fail(self, row, status_field: str, exc: TelegramError) -> None:
         if isinstance(exc, TelegramNetworkError) and exc.ambiguous:
@@ -539,9 +542,10 @@ class TelegramBotWorker:
                 continue
             try:
                 if row.attachment:
+                    content = read_attachment(row.attachment)
                     result = self.api.send_file(
                         chat_id=conversation.customer_chat_id,
-                        content=row.attachment.read(),
+                        content=content,
                         filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
                         content_type=row.attachment_content_type,
                         caption=row.text,
@@ -553,6 +557,9 @@ class TelegramBotWorker:
                         text=row.text,
                         reply_markup=service.CUSTOMER_KEYBOARD,
                     )
+            except AttachmentStorageError as exc:
+                self._finish(row, "delivery_status", TelegramDeliveryStatus.FAILED, error=exc)
+                continue
             except TelegramError as exc:
                 self._fail(row, "delivery_status", exc)
                 continue

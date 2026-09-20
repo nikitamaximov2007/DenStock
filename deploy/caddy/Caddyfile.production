@@ -4,6 +4,10 @@
 	encode gzip
 
 	# Слой 25: статичная отдача загруженных media-файлов из общего тома (read-only).
+	@private_customer_media path /media/customer_requests/*
+	handle @private_customer_media {
+		respond 404
+	}
 	# /media/part-items/… → /srv/media/part-items/…
 	handle_path /media/* {
 		root * /srv/media

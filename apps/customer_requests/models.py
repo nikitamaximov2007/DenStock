@@ -15,6 +15,8 @@ from django.db.models import Value
 
 from apps.core.phones import normalize_phone
 
+from .storage import PrivateAttachmentStorage
+
 
 class CustomerRequest(models.Model):
     class Status(models.TextChoices):
@@ -475,7 +477,12 @@ class TelegramMessage(models.Model):
     )
     direction = models.CharField("Направление", max_length=24, choices=Direction.choices)
     text = models.TextField("Текст", max_length=4096, blank=True)
-    attachment = models.FileField("Вложение", upload_to="customer_requests/", blank=True)
+    attachment = models.FileField(
+        "Вложение",
+        upload_to="customer_requests/",
+        blank=True,
+        storage=PrivateAttachmentStorage(),
+    )
     attachment_name = models.CharField("Имя вложения", max_length=180, blank=True)
     attachment_content_type = models.CharField("Тип вложения", max_length=80, blank=True)
     delivery_status = models.CharField(
@@ -761,7 +768,12 @@ class MaxMessage(models.Model):
     )
     direction = models.CharField("Направление", max_length=24, choices=Direction.choices)
     text = models.TextField("Текст", max_length=4000, blank=True)
-    attachment = models.FileField("Вложение", upload_to="customer_requests/", blank=True)
+    attachment = models.FileField(
+        "Вложение",
+        upload_to="customer_requests/",
+        blank=True,
+        storage=PrivateAttachmentStorage(),
+    )
     attachment_name = models.CharField("Имя вложения", max_length=180, blank=True)
     attachment_content_type = models.CharField("Тип вложения", max_length=80, blank=True)
     # Callback buttons of a bot message: [[{"text": ..., "payload": ...}], ...].

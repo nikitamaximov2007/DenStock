@@ -38,6 +38,7 @@ from apps.operations.write_guard import BusinessWriteBlocked
 
 from . import max_service as service
 from . import messaging
+from .attachments import AttachmentStorageError, cleanup_attachment, read_attachment
 from .max_api import MaxApiError, MaxBotApi, MaxError, MaxNetworkError
 from .messengers import MessengerLinkError, consume_max_start
 from .models import (
@@ -491,6 +492,8 @@ class MaxBotWorker:
             setattr(row, field, value)
         update_fields = [*values, "updated_at"] if hasattr(row, "updated_at") else list(values)
         row.save(update_fields=update_fields)
+        if status in (MaxDeliveryStatus.SENT, MaxDeliveryStatus.FAILED):
+            cleanup_attachment(row)
 
     def _postpone(self, row, *, until, error="", count_attempt=True) -> None:
         MaxMessage.objects.filter(pk=row.pk).update(
@@ -547,9 +550,10 @@ class MaxBotWorker:
             self.pacer.wait(chat_id)
             try:
                 if row.attachment:
+                    content = read_attachment(row.attachment)
                     result = self.api.send_file(
                         chat_id=chat_id,
-                        content=row.attachment.read(),
+                        content=content,
                         filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
                         content_type=row.attachment_content_type,
                         caption=row.text,
@@ -558,6 +562,9 @@ class MaxBotWorker:
                     result = self.api.send_message(
                         chat_id=chat_id, text=row.text, buttons=row.buttons
                     )
+            except AttachmentStorageError as exc:
+                self._finish(row, MaxDeliveryStatus.FAILED, error=exc)
+                continue
             except MaxApiError as exc:
                 if exc.status == 401:
                     self._postpone(row, until=timezone.now(), error=exc, count_attempt=False)

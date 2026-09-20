@@ -14,6 +14,29 @@ class AttachmentError(ValueError):
     pass
 
 
+class AttachmentStorageError(AttachmentError):
+    """The durable attachment could not be opened by the messenger worker."""
+
+
+def read_attachment(field) -> bytes:
+    """Read bytes without leaking a local path into transport/status logs."""
+    try:
+        content = field.read()
+    except (OSError, ValueError) as exc:
+        raise AttachmentStorageError("Вложение недоступно для рабочего процесса.") from exc
+    if not content:
+        raise AttachmentStorageError("Вложение пустое.")
+    return content
+
+
+def cleanup_attachment(message) -> None:
+    """Remove bytes only after a terminal, non-retryable delivery outcome."""
+    if not hasattr(message, "attachment") or not message.attachment:
+        return
+    message.attachment.delete(save=False)
+    type(message).objects.filter(pk=message.pk).update(attachment="")
+
+
 @dataclass(frozen=True, slots=True)
 class ValidatedAttachment:
     content: bytes
