@@ -496,12 +496,18 @@ class MaxBotWorker:
             cleanup_attachment(row)
 
     def _postpone(self, row, *, until, error="", count_attempt=True) -> None:
-        MaxMessage.objects.filter(pk=row.pk).update(
-            delivery_status=MaxDeliveryStatus.PENDING,
-            next_attempt_at=until,
-            last_error=str(error)[:255],
-            **({} if count_attempt else {"attempts": F("attempts") - 1}),
-        )
+        updates = {
+            "delivery_status": MaxDeliveryStatus.PENDING,
+            "next_attempt_at": until,
+            "last_error": str(error)[:255],
+        }
+        if not count_attempt:
+            updates["attempts"] = F("attempts") - 1
+        MaxMessage.objects.filter(pk=row.pk).update(**updates)
+        # QuerySet.update() bypasses post_save, so the open workspace would
+        # otherwise keep displaying the optimistic "Отправляется..." state.
+        row.refresh_from_db(fields=["delivery_status", "next_attempt_at", "last_error", "attempts"])
+        row.save(update_fields=["delivery_status", "next_attempt_at", "last_error", "attempts"])
 
     def _fail(self, row, exc: MaxError):
         """Record a failed send; returns when the dialog may continue, or None."""
