@@ -583,6 +583,17 @@ def create_manual_part(
         unit=_manual_unit(),
         tracking_mode=PartType.TrackingMode.BULK,
         recommended_price=recommended,
+        # A positive price entered in the normal manual-creation workflow is
+        # an explicit commercial price for this warehouse part.  Record it
+        # through the same provenance understood by the canonical public
+        # resolver; do not create a manual-only pricing formula.  A blank
+        # price remains public but is deliberately rendered as "Цена
+        # уточняется" by that resolver.
+        price_provenance=(
+            PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+            if recommended is not None and recommended > 0
+            else PartType.PriceProvenance.UNVERIFIED
+        ),
     )
     if clean_article:
         # Вид «артикул» наравне с OEM считается точным номером, поэтому деталь
