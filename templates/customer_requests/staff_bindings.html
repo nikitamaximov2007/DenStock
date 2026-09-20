@@ -13,7 +13,7 @@
     {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
     <section class="card">
       <h2>Создать привязку</h2>
-      <form method="post">
+      <form method="post" class="staff-bindings-form">
         {% csrf_token %}
         <input type="hidden" name="action" value="pair">
         <label class="field__label" for="staff-user">Сотрудник</label>

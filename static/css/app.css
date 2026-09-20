@@ -270,6 +270,13 @@ body.app {
 .inline-form { display: inline; margin-left: 8px; }
 .inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
   border-radius: 6px; background: #fff; }
+.staff-bindings-form { display: grid; gap: 8px; }
+.staff-bindings-form .field__label { margin: 0; }
+.staff-bindings-form input, .staff-bindings-form select { min-width: 0; width: 100%; }
+.staff-bindings-form .btn { justify-self: start; max-width: 100%; }
+@media (max-width: 560px) {
+  .staff-bindings-form .btn { width: 100%; }
+}
 .return-complete-form { margin-left: 0; }
 .return-complete-form .return-complete-button {
   background: var(--accent); border-color: var(--accent); color: #fff;
