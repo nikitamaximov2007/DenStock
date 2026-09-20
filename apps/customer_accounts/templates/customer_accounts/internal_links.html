@@ -3,6 +3,13 @@
   <main class="page-content">
     <h1>Связи кабинетов клиентов</h1>
     <p>Связь выбирает сотрудник вручную. Имя и ID мессенджера не используются для авто-сопоставления.</p>
+    <form method="get">
+      <label>
+        Поиск
+        <input name="q" value="{{ query }}" maxlength="80">
+      </label>
+      <button type="submit">Найти</button>
+    </form>
     {% for row in rows %}
       <section class="card">
         <h2>{{ row.account.code }} · {{ row.account.display_name|default:"Без имени" }}</h2>
@@ -14,7 +21,7 @@
           <label>
             Карточка клиента
             <select name="customer_id">
-              {% for customer in customers %}<option value="{{ customer.pk }}">{{ customer.name }} · #{{ customer.pk }}</option>{% endfor %}
+              {% for customer in customer_page.object_list %}<option value="{{ customer.pk }}">{{ customer.name }} · #{{ customer.pk }}</option>{% endfor %}
             </select>
           </label>
           <button type="submit">Привязать</button>
@@ -22,5 +29,7 @@
         {% if row.link %}<form method="post"><input type="hidden" name="account_id" value="{{ row.account.pk }}"><input type="hidden" name="action" value="unlink">{% csrf_token %}<button type="submit">Отвязать</button></form>{% endif %}
       </section>
 {% empty %}<p>Кабинетов пока нет.</p>{% endfor %}
+{% if account_page.has_previous %}<a href="?q={{ query|urlencode }}&accounts_page={{ account_page.previous_page_number }}">Назад</a>{% endif %}
+{% if account_page.has_next %}<a href="?q={{ query|urlencode }}&accounts_page={{ account_page.next_page_number }}">Дальше</a>{% endif %}
   </main>
 {% endblock %}

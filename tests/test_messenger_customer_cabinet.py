@@ -18,7 +18,7 @@ from apps.customer_requests.customer_cabinet import (
     get_customer_purchase,
     list_customer_purchases,
 )
-from apps.customer_requests.models import MaxConversation, TelegramConversation
+from apps.customer_requests.models import CustomerRequest, MaxConversation, TelegramConversation
 from tests.customer_account_support import make_customer, make_sale
 
 
@@ -149,6 +149,34 @@ def test_reorder_quantity_excludes_completed_return(public_catalog):
 
 
 @pytest.mark.django_db
+def test_returns_are_keyed_by_sale_line_when_part_repeats(public_catalog):
+    customer = make_customer("Алиса")
+    part = public_catalog.part("Повторная деталь", article="DUP", price="1500")
+    lot = public_catalog.stock(part, "10")
+    sale = make_sale(customer, part, lot=lot, quantity="2", unit_price="1200")
+    from apps.sales.models import SaleLine
+    SaleLine.objects.create(
+        sale=sale, part_type=part, stock_lot=lot, batch=lot.batch_line.batch,
+        batch_line=lot.batch_line, quantity=Decimal("3"), unit_price=Decimal("1200"),
+        total_price=Decimal("3600"), unit_cost_rub=Decimal("1"),
+        total_cost_rub=Decimal("3"), profit_rub=Decimal("3597"),
+    )
+    _identity(customer, 4701, admin=public_catalog.user)
+    from apps.returns.models import StockReturnLine
+    from apps.returns.services import add_sale_line_return, complete_return, create_return
+    document = create_return(source=sale, by=public_catalog.user)
+    add_sale_line_return(
+        document, sale.lines.order_by("pk").first(), Decimal("1"),
+        to_location=lot.location, restock_status=StockReturnLine.RestockStatus.AVAILABLE,
+        by=public_catalog.user,
+    )
+    complete_return(document, by=public_catalog.user)
+    preview = build_reorder_preview(provider=Provider.MAX, provider_user_id=4701, sale_id=sale.pk)
+    assert [line.historical_quantity for line in preview.lines] == [Decimal("1"), Decimal("3")]
+    assert [line.requested_quantity for line in preview.lines] == [Decimal("1"), Decimal("3")]
+
+
+@pytest.mark.django_db
 def test_confirmation_creates_only_new_request_and_binds_messenger(public_catalog):
     customer = make_customer("Алиса",)
     customer.phone = "+7 900 000-00-01"
@@ -181,6 +209,27 @@ def test_confirmation_creates_only_new_request_and_binds_messenger(public_catalo
     )
     assert same.pk == request.pk
     assert created_again is False
+
+
+@pytest.mark.django_db
+def test_max_repeat_keeps_dialog_chat_id_distinct_from_provider_user_id(public_catalog):
+    customer = make_customer("Алиса")
+    customer.phone = "+7 900 000-00-01"
+    customer.save(update_fields=["phone"])
+    part = public_catalog.part("Фильтр", article="MAX-CHAT", price="1500")
+    lot = public_catalog.stock(part, "5")
+    sale = make_sale(customer, part, lot=lot, quantity="1", unit_price="1200")
+    _identity(customer, 94001, provider=Provider.MAX, admin=public_catalog.user)
+    text, _buttons = max_service.confirm_reorder_view(
+        user_id=94001, chat_id=777777777, sale_id=str(sale.pk), callback_key="press-1"
+    )
+    assert "создана" in text
+    request = CustomerRequest.objects.get(source=CustomerRequest.Source.MESSENGER_REPEAT)
+    conversation = MaxConversation.objects.get(request=request)
+    assert conversation.customer_user_id == 94001
+    assert conversation.customer_chat_id == 777777777
+    assert MaxConversation.objects.filter(customer_chat_id=94001).count() == 0
+    assert max_service.MaxCustomerChat.objects.get(user_id=94001).chat_id == 777777777
 
 
 @pytest.mark.django_db
@@ -227,6 +276,24 @@ def test_messenger_cabinet_menu_is_absent_when_flag_is_off(settings):
     settings.CUSTOMER_MESSENGER_CABINET_ENABLED = False
     assert customer_ui.MY_PURCHASES_BUTTON not in str(telegram_service.customer_keyboard())
     assert customer_ui.MY_PURCHASES_BUTTON not in str(max_service.menu_button())
+
+
+@pytest.mark.django_db
+def test_handoff_does_not_create_ownership_pii_when_cabinet_is_off(settings, public_catalog):
+    settings.CUSTOMER_MESSENGER_CABINET_ENABLED = False
+    from apps.customer_accounts.messenger_hooks import max_handoff
+    from apps.customer_requests.models import CustomerRequest
+
+    request = CustomerRequest.objects.create(
+        customer_name="Алиса", customer_phone="+7 900 000-00-01",
+        preferred_messenger=CustomerRequest.Messenger.MAX,
+        privacy_policy_version="pp", personal_data_consent_version="pd",
+        consent_purpose="public_request_contact",
+        consent_accepted_at=timezone.now(), submission_key_hash="a" * 64,
+    )
+    max_handoff(request, user_id=94001, name="Алиса")
+    assert not CustomerAccount.objects.exists()
+    assert not CustomerIdentity.objects.exists()
 
 
 @pytest.mark.django_db

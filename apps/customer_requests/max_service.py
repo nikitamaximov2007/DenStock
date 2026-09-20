@@ -62,7 +62,6 @@ def menu_button() -> list[list[dict]]:
     return [buttons]
 
 
-MENU_BUTTON = menu_button()
 # A selector answer re-renders the pressed message instead of sending a new one.
 SELECTOR_DEDUPE_PREFIX = "selector:"
 SELECTION_UNAVAILABLE_TEXT = "Эта заявка недоступна. Отправьте /requests, чтобы выбрать другую."
@@ -146,6 +145,14 @@ def bind_customer_chat(
         request=request
     )
     previous_user = conversation.customer_user_id
+    if (
+        conversation.customer_chat_id is not None
+        and previous_user == user_id
+        and chat_id == user_id
+    ):
+        # A provider user id is never a MAX dialog id. Preserve a known-good
+        # routing id if an old caller supplies the wrong value.
+        chat_id = conversation.customer_chat_id
     conversation.customer_user_id = user_id
     conversation.customer_chat_id = chat_id
     conversation.status = MaxConversation.Status.LINKED
@@ -387,7 +394,7 @@ def reorder_preview_view(*, user_id: int, sale_id: str) -> tuple[str, list[list[
 
 
 def confirm_reorder_view(
-    *, user_id: int, sale_id: str, callback_key: str
+    *, user_id: int, chat_id: int, sale_id: str, callback_key: str
 ) -> tuple[str, list[list[dict]]]:
     from .customer_cabinet import (
         CabinetAccessError,
@@ -408,6 +415,7 @@ def confirm_reorder_view(
             provider_user_id=user_id,
             sale_id=sale_id_int,
             submission_key=f"messenger-reorder-max-{user_id}-{callback_key}",
+            routing_chat_id=chat_id,
         )
     except (CabinetAccessError, CustomerRequestError) as exc:
         return str(exc), menu_button()

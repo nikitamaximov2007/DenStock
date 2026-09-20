@@ -438,7 +438,6 @@ def customer_keyboard() -> dict:
 
 # Backward-compatible import for adapters/tests; callers that render a menu
 # use the function so runtime flag changes are respected.
-CUSTOMER_KEYBOARD = customer_keyboard()
 MY_REQUESTS_TEXTS = {
     customer_ui.MY_REQUESTS_BUTTON.lower(),
     "мои заявки",

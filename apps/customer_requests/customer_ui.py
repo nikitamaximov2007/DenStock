@@ -79,7 +79,8 @@ def purchase_summary_text(purchase) -> str:
 def purchase_detail_text(purchase) -> str:
     rows = [f"Покупка №{purchase.number}"]
     for line in purchase.lines:
-        rows.append(f"\n{line.name}")
+        article = f" · {line.article}" if line.article else ""
+        rows.append(f"\n{line.name}{article}")
         rows.append(f"{_quantity_text(line.quantity)} × {money_int(line.unit_price)} ₽")
         if line.returned_quantity:
             rows.append(f"Возвращено: {_quantity_text(line.returned_quantity)}")

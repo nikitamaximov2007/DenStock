@@ -271,7 +271,7 @@ def _message_callback(update) -> str:
             text, buttons = service.reorder_preview_view(user_id=user_id, sale_id=value)
         else:
             text, buttons = service.confirm_reorder_view(
-                user_id=user_id, sale_id=value, callback_key=press_key
+                user_id=user_id, chat_id=chat_id, sale_id=value, callback_key=press_key
             )
         service.queue_message(
             chat_id=chat_id,

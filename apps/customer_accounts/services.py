@@ -483,7 +483,11 @@ def ensure_messenger_identity(
     account and its browser sessions remain disabled.  It never links a
     DenisStock Customer by name, phone or username.
     """
-    if _verified_user_id(provider_user_id) is None or provider not in Provider.values:
+    if (
+        not settings.CUSTOMER_MESSENGER_CABINET_ENABLED
+        or _verified_user_id(provider_user_id) is None
+        or provider not in Provider.values
+    ):
         return None
     identity = (
         CustomerIdentity.objects.select_related("account")

@@ -197,7 +197,7 @@ def test_the_telegram_keyboard_offers_my_requests_without_a_command(part):
 
     greeting = telegram_service.customer_greeting(CHAT)
 
-    assert greeting.keyboard == telegram_service.CUSTOMER_KEYBOARD
+    assert greeting.keyboard == telegram_service.customer_keyboard()
     assert greeting.keyboard["keyboard"][0][0]["text"] == "Мои заявки"
     assert greeting.keyboard["is_persistent"] is True
     assert "/requests" not in greeting.reply
@@ -588,7 +588,7 @@ def test_the_max_handoff_greeting_itself_offers_my_requests(part):
     rows = _max_summary_rows(request)
 
     assert rows, "the handoff must greet"
-    assert rows[-1].buttons == max_service.MENU_BUTTON
+    assert rows[-1].buttons == max_service.menu_button()
     assert customer_ui.MY_REQUESTS_BUTTON in str(rows[-1].buttons)
     assert [row.buttons for row in rows[:-1]] == [None] * (len(rows) - 1)
 
@@ -612,7 +612,7 @@ def test_a_returning_max_customer_gets_the_button_on_the_new_request_too(part):
     second = make_request(part, messenger=CustomerRequest.Messenger.MAX)
     link(second)
 
-    assert _max_summary_rows(second)[-1].buttons == max_service.MENU_BUTTON
+    assert _max_summary_rows(second)[-1].buttons == max_service.menu_button()
     # The newly linked request is current; the older one stays reachable.
     view, buttons = max_service.selector_view(MAX_USER)
     labels = [button[0]["text"] for button in buttons]
@@ -641,4 +641,4 @@ def test_the_handoff_button_costs_no_extra_message_and_survives_a_replay(part):
 
     assert after == before
     assert len(greetings) == 1
-    assert _max_summary_rows(request)[-1].buttons == max_service.MENU_BUTTON
+    assert _max_summary_rows(request)[-1].buttons == max_service.menu_button()

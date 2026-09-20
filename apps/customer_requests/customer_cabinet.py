@@ -33,6 +33,7 @@ ZERO = Decimal("0")
 
 @dataclass(frozen=True, slots=True)
 class PurchaseLine:
+    sale_line_id: int
     part_id: int
     name: str
     article: str
@@ -132,7 +133,7 @@ def _purchase_queryset(*, provider: str, provider_user_id: int):
         return Sale.objects.none(), None
     customer = linked_customer(provider=provider, provider_user_id=provider_user_id)
     if customer is None:
-        return Customer.objects.none(), None
+        return Sale.objects.none(), None
     return (
         Sale.objects.filter(
             customer=customer,
@@ -149,13 +150,14 @@ def _purchase_dto(sale: Sale) -> CustomerPurchase:
     returned = _returned_quantities(sale)
     lines = tuple(
         PurchaseLine(
+            sale_line_id=line.pk,
             part_id=line.part_type_id,
             name=line.part_type.name,
             article=part_exact_number(line.part_type, default=""),
             quantity=line.quantity,
             unit_price=line.unit_price,
             total_price=line.total_price,
-            returned_quantity=returned.get(line.part_type_id, ZERO),
+            returned_quantity=returned.get(line.pk, ZERO),
         )
         for line in sale.lines.all()
     )
@@ -192,8 +194,7 @@ def build_reorder_preview(
     if sale is None:
         return None
     purchase = _purchase_dto(sale)
-    historical = {line.part_id: line for line in purchase.lines}
-    part_ids = list(historical)
+    part_ids = list({line.part_id for line in purchase.lines})
     parts = {
         part.pk: part
         for part in PartType.objects.filter(pk__in=part_ids).prefetch_related("numbers")
@@ -251,15 +252,16 @@ def _returned_quantities(sale: Sale) -> dict[int, Decimal]:
             stock_return__status=StockReturn.Status.COMPLETED,
             source_sale_line_id__in=line_ids,
         )
-        .values("source_sale_line__part_type_id")
+        .values("source_sale_line_id")
         .annotate(total=Sum("quantity"))
     )
-    return {row["source_sale_line__part_type_id"]: row["total"] for row in rows}
+    return {row["source_sale_line_id"]: row["total"] for row in rows}
 
 
 @transaction.atomic
 def create_request_from_reorder_preview(
-    *, provider: str, provider_user_id: int, sale_id: int, submission_key: str
+    *, provider: str, provider_user_id: int, sale_id: int, submission_key: str,
+    routing_chat_id: int | None = None,
 ) -> tuple[CustomerRequest, bool]:
     """Rebuild and revalidate the preview, then create a new request only."""
     provider = _provider(provider)
@@ -307,7 +309,7 @@ def create_request_from_reorder_preview(
 
             bind_customer_chat(
                 request=request,
-                chat_id=provider_user_id,
+                chat_id=routing_chat_id or provider_user_id,
                 user_id=provider_user_id,
                 username="",
                 link_token_id=link_key,
@@ -317,7 +319,7 @@ def create_request_from_reorder_preview(
 
             bind_customer_chat(
                 request=request,
-                chat_id=provider_user_id,
+                chat_id=routing_chat_id or provider_user_id,
                 user_id=provider_user_id,
                 link_token_id=link_key,
             )
