@@ -146,6 +146,145 @@ def test_revoked_max_binding_can_only_repair_to_same_employee(db, django_user_mo
     assert "уже привязан" in message
 
 
+@pytest.mark.parametrize(
+    ("provider", "provider_user_id", "provider_chat_id"),
+    [("telegram", 99041, None), ("max", 94041, 777777741)],
+)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_revoke_and_repair_starts_clean_for_both_providers(
+    db, django_user_model, provider, provider_user_id, provider_chat_id
+):
+    request_a = _request(build_part(), key=f"R{provider_user_id}".ljust(32, "A"), messenger="max")
+    customer = issue_max_link(request_id=request_a.pk).token
+    consume_max_start(token=customer, chat_id=99841, user_id=99842)
+    user = _operator(django_user_model, provider_user_id, username=f"repair-{provider}").user
+    token = operator_console.issue_pairing_token(
+        user=user, provider=provider, label="Денис", created_by=user
+    )
+    binding, _ = operator_console.consume_pairing(
+        provider=provider,
+        provider_user_id=provider_user_id,
+        provider_chat_id=provider_chat_id,
+        raw_token=token,
+    )
+    chat_kwargs = {"provider_chat_id": provider_chat_id} if provider_chat_id else {}
+
+    operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="work-before-revoke", text="/work", **chat_kwargs
+    )
+    old_callback = operator_console._callback(binding, "c", request_a.public_id.hex)
+    operator_console.handle_callback(
+        provider=provider, provider_user_id=provider_user_id, payload=old_callback
+    )
+    operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="reply-before-revoke", text="исторический ответ", **chat_kwargs
+    )
+    intro = MaxMessage.objects.get(text="Вам отвечает Денис.")
+    intro.delivery_status = MaxDeliveryStatus.SENT
+    intro.save(update_fields=["delivery_status"])
+    operator_replies.confirm_responder_transition(intro)
+    historical = MaxMessage.objects.get(text="исторический ответ")
+    historical_identity = (
+        historical.operator_user_id,
+        historical.operator_control_source,
+        historical.operator_author_label,
+    )
+
+    operator_console.revoke_binding(binding=binding)
+    binding.refresh_from_db()
+    context = OperatorConversationContext.objects.get(binding=binding)
+    assert binding.is_active is False
+    assert binding.operator_mode is False
+    assert context.request_id is None
+
+    token = operator_console.issue_pairing_token(
+        user=user, provider=provider, label="Денис", created_by=user
+    )
+    repaired, _ = operator_console.consume_pairing(
+        provider=provider,
+        provider_user_id=provider_user_id,
+        provider_chat_id=provider_chat_id,
+        raw_token=token,
+    )
+    repaired.refresh_from_db()
+    context.refresh_from_db()
+    assert repaired.pk == binding.pk
+    assert repaired.is_active is True
+    assert repaired.operator_mode is False
+    assert context.request_id is None
+    assert (
+        MaxMessage.objects.get(pk=historical.pk).operator_user_id,
+        MaxMessage.objects.get(pk=historical.pk).operator_control_source,
+        MaxMessage.objects.get(pk=historical.pk).operator_author_label,
+    ) == historical_identity
+
+    operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="work-after-repair", text="/work", **chat_kwargs
+    )
+    stale = operator_console.handle_callback(
+        provider=provider, provider_user_id=provider_user_id, payload=old_callback
+    )
+    assert stale[0].startswith("Рабочая сессия устарела")
+    assert OperatorConversationContext.objects.get(binding=repaired).request_id is None
+
+    before = MaxMessage.objects.count()
+    refusal, _ = operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="before-selection", text="не отправляй", **chat_kwargs
+    )
+    assert refusal.startswith("Сначала выберите заявку")
+    refusal, _ = operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="before-file", text="",
+        attachment=SimpleUploadedFile("before.pdf", b"%PDF-1.7\nblocked"), **chat_kwargs
+    )
+    assert refusal.startswith("Сначала выберите заявку")
+    assert MaxMessage.objects.count() == before
+
+    fresh_a = operator_console._callback(repaired, "c", request_a.public_id.hex)
+    operator_console.handle_callback(
+        provider=provider, provider_user_id=provider_user_id, payload=fresh_a
+    )
+    result, _ = operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="after-selection", text="ответ A", **chat_kwargs
+    )
+    assert result.startswith("Ответ поставлен")
+    assert MaxMessage.objects.filter(text="ответ A", recipient_chat_id=99841).exists()
+
+    request_b = _request(build_part(), key=f"B{provider_user_id}".ljust(32, "B"), messenger="max")
+    customer = issue_max_link(request_id=request_b.pk).token
+    consume_max_start(token=customer, chat_id=99851, user_id=99852)
+    fresh_b = operator_console._callback(repaired, "c", request_b.public_id.hex)
+    operator_console.handle_callback(
+        provider=provider, provider_user_id=provider_user_id, payload=fresh_b
+    )
+    result, _ = operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="after-switch", text="ответ B", **chat_kwargs
+    )
+    assert result.startswith("Ответ поставлен")
+    assert MaxMessage.objects.filter(text="ответ B", recipient_chat_id=99851).exists()
+    assert not MaxMessage.objects.filter(text="ответ B", recipient_chat_id=99841).exists()
+
+    intro_b = MaxMessage.objects.get(conversation__request=request_b, text="Вам отвечает Денис.")
+    intro_b.delivery_status = MaxDeliveryStatus.SENT
+    intro_b.save(update_fields=["delivery_status"])
+    operator_replies.confirm_responder_transition(intro_b)
+    result, _ = operator_console.handle_text(
+        provider=provider, provider_user_id=provider_user_id,
+        external_id="after-file", text="",
+        attachment=SimpleUploadedFile("after.pdf", b"%PDF-1.7\naccepted"), **chat_kwargs
+    )
+    assert result.startswith("Ответ поставлен")
+    assert MaxMessage.objects.filter(
+        conversation__request=request_b, attachment_name="after.pdf"
+    ).exists()
+
+
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
 def test_telegram_operator_to_max_customer_uses_request_transport_and_dedupes(
     db, django_user_model
@@ -164,12 +303,12 @@ def test_telegram_operator_to_max_customer_uses_request_transport_and_dedupes(
     )
     result = operator_console.handle_callback(
         provider="telegram", provider_user_id=binding.provider_user_id,
-        payload=f"op:c:{request.public_id.hex}"
+        payload=operator_console._callback(binding, "c", request.public_id.hex)
     )
     assert result[0].startswith(f"Заявка №{request.reference}")
     operator_console.handle_callback(
         provider="telegram", provider_user_id=binding.provider_user_id,
-        payload=f"op:r:{request.public_id.hex}"
+        payload=operator_console._callback(binding, "r", request.public_id.hex)
     )
     first = operator_console.handle_text(
         provider="telegram", provider_user_id=binding.provider_user_id,
@@ -209,7 +348,10 @@ def test_responder_is_confirmed_only_after_intro_delivery(db, django_user_model)
         provider="telegram", provider_user_id=99036, external_id="work", text="/work"
     )
     operator_console.handle_callback(
-        provider="telegram", provider_user_id=99036, payload=f"op:r:{request.public_id.hex}"
+        provider="telegram", provider_user_id=99036,
+        payload=operator_console._callback(
+            StaffMessengerBinding.objects.get(user=user), "r", request.public_id.hex
+        )
     )
     operator_console.handle_text(
         provider="telegram", provider_user_id=99036, external_id="reply-1", text="первый"
@@ -400,7 +542,7 @@ def test_operator_attachment_uses_the_same_private_reply_pipeline(
     )
     operator_console.handle_callback(
         provider="telegram", provider_user_id=binding.provider_user_id,
-        payload=f"op:r:{request.public_id.hex}"
+        payload=operator_console._callback(binding, "r", request.public_id.hex)
     )
     result = operator_console.handle_text(
         provider="telegram", provider_user_id=binding.provider_user_id,

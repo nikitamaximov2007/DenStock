@@ -113,6 +113,7 @@ def consume_pairing(
         binding = existing
         binding.is_active = True
         binding.operator_mode = False
+        clear_context(binding=binding)
         binding.customer_visible_label = row.customer_visible_label
         binding.created_by = row.created_by
         if provider == StaffMessengerBinding.Provider.MAX and isinstance(provider_chat_id, int):
@@ -139,6 +140,18 @@ def _context_is_fresh(context) -> bool:
     return context.updated_at >= timezone.now() - timedelta(minutes=ttl)
 
 
+def _session_token(binding) -> str:
+    """Opaque token for the current binding session."""
+    context, _ = OperatorConversationContext.objects.get_or_create(binding=binding)
+    return _hash(f"operator-session:{binding.pk}:{context.updated_at.isoformat()}")[:16]
+
+
+def _callback(binding, kind: str, value: str = "") -> str:
+    token = _session_token(binding)
+    suffix = f":{value}" if value else ""
+    return f"op:{kind}:{token}{suffix}"
+
+
 def menu(binding=None) -> tuple[str, dict]:
     heading = "Рабочее меню PRO-STOR"
     if binding is not None:
@@ -152,8 +165,8 @@ def menu(binding=None) -> tuple[str, dict]:
                 f"{(request.customer_name or 'Клиент')[:80]}"
             )
     return heading, {"inline_keyboard": [
-        [{"text": "Все заявки", "callback_data": "op:l:1"}],
-        [{"text": "Новые заявки", "callback_data": "op:n:1"}],
+        [{"text": "Все заявки", "callback_data": _callback(binding, "l", "1")}],
+        [{"text": "Новые заявки", "callback_data": _callback(binding, "n", "1")}],
     ]}
 
 
@@ -174,18 +187,22 @@ def request_page(page: int = 1, *, new_only: bool = False, binding=None) -> tupl
     rows = []
     for request in query[(page - 1) * LIST_PAGE_SIZE : page * LIST_PAGE_SIZE]:
         rows.append([{"text": f"№{request.reference} — {(request.customer_name or 'Клиент')[:80]}",
-                      "callback_data": f"op:c:{request.public_id.hex}"}])
+                      "callback_data": _callback(binding, "c", request.public_id.hex)}])
     if not rows:
         return ("Новых заявок нет." if new_only else "Заявок нет."), menu(binding)[1]
     if page > 1 or page < pages:
         rows.append([
             *(
-                [{"text": "Назад", "callback_data": f"op:{'n' if new_only else 'l'}:{page - 1}"}]
+                [{"text": "Назад", "callback_data": _callback(
+                    binding, "n" if new_only else "l", str(page - 1)
+                )}]
                 if page > 1
                 else []
             ),
             *(
-                [{"text": "Дальше", "callback_data": f"op:{'n' if new_only else 'l'}:{page + 1}"}]
+                [{"text": "Дальше", "callback_data": _callback(
+                    binding, "n" if new_only else "l", str(page + 1)
+                )}]
                 if page < pages
                 else []
             ),
@@ -251,10 +268,23 @@ def invalidate_contexts(provider: str) -> int:
 
 
 def clear_context(*, binding):
-    OperatorConversationContext.objects.filter(binding=binding).update(request=None)
+    OperatorConversationContext.objects.filter(binding=binding).update(
+        request=None, updated_at=timezone.now()
+    )
 
 
-def card(request: CustomerRequest) -> tuple[str, dict]:
+@transaction.atomic
+def revoke_binding(*, binding):
+    """Disable one binding and destroy its active operator session."""
+    binding = StaffMessengerBinding.objects.select_for_update().get(pk=binding.pk)
+    binding.is_active = False
+    binding.operator_mode = False
+    binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
+    clear_context(binding=binding)
+    return binding
+
+
+def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
     lines = [
         f"Заявка №{request.reference} — {request.customer_name}",
         f"Телефон: {request.customer_phone}",
@@ -271,16 +301,18 @@ def card(request: CustomerRequest) -> tuple[str, dict]:
     lines.extend([f"Итого: {total:.0f} ₽" if total else "Итого: цена уточняется",
                   "", f"Статус: {request.get_status_display()}"])
     return "\n".join(lines), {"inline_keyboard": [
-        [{"text": "Ответить", "callback_data": f"op:r:{request.public_id.hex}"}],
-        [{"text": "К заявкам", "callback_data": "op:m"}],
+        [{"text": "Ответить", "callback_data": _callback(binding, "r", request.public_id.hex)}],
+        [{"text": "К заявкам", "callback_data": _callback(binding, "m")}],
     ]}
 
 
-def reply_prompt(request: CustomerRequest) -> tuple[str, dict]:
+def reply_prompt(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
     return (f"Активна заявка №{request.reference}. Напишите ответ клиенту.\n"
             "Получатель перепроверяется перед отправкой.",
-            {"inline_keyboard": [[{"text": "Отмена", "callback_data": "op:x"},
-                                   {"text": "К заявкам", "callback_data": "op:m"}]]})
+            {"inline_keyboard": [[
+                {"text": "Отмена", "callback_data": _callback(binding, "x")},
+                {"text": "К заявкам", "callback_data": _callback(binding, "m")},
+            ]]})
 
 
 def _key(provider: str, external_id: str) -> str:
@@ -339,6 +371,7 @@ def handle_text(
             binding.delivery_chat_id = provider_chat_id
             binding.save(update_fields=["delivery_chat_id", "updated_at"])
     if lower in {"/work", "рабочее меню"}:
+        clear_context(binding=binding)
         binding.operator_mode = True
         binding.save(update_fields=["operator_mode", "updated_at"])
         return menu(binding)
@@ -374,8 +407,13 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
         return "Недоступно.", None
     if not binding.operator_mode:
         return "Рабочий режим не активен. Откройте /work.", None
-    parts = payload.split(":", 2)
-    kind, value = parts[1], parts[2] if len(parts) == 3 else ""
+    parts = payload.split(":")
+    if len(parts) not in {3, 4}:
+        return "Рабочая сессия устарела. Откройте /work.", None
+    kind, token = parts[1], parts[2]
+    if token != _session_token(binding):
+        return "Рабочая сессия устарела. Откройте /work.", None
+    value = parts[3] if len(parts) == 4 else ""
     if kind == "m":
         return menu(binding)
     if kind in {"l", "n"}:
@@ -394,7 +432,10 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
         selected, error = set_context(binding=binding, request_id=request.pk)
         if error:
             return error, menu(binding)[1]
-        return card(selected) if kind == "c" else reply_prompt(selected)
+        binding = binding_for(provider, provider_user_id)
+        return card(selected, binding=binding) if kind == "c" else reply_prompt(
+            selected, binding=binding
+        )
     return "Недоступно.", None
 
 
@@ -466,14 +507,17 @@ def ensure_runtime():
 
 def notification_content(notification: OperatorNotification) -> tuple[str, dict]:
     request = notification.request
+    binding = notification.binding
     name = (request.customer_name or "Клиент")[:80]
     if notification.kind == OperatorNotification.Kind.CUSTOMER_MESSAGE and notification.preview:
         text = f"Новое сообщение по заявке №{request.reference}\n{name}\n{notification.preview}"
     else:
         text = f"Новая заявка №{request.reference}\n{name}\n{request.lines.count()} поз."
     return text, {"inline_keyboard": [
-        [{"text": "Открыть заявку", "callback_data": f"op:c:{request.public_id.hex}"}],
-        [{"text": "Все заявки", "callback_data": "op:l:1"}],
+        [{"text": "Открыть заявку", "callback_data": _callback(
+            binding, "c", request.public_id.hex
+        )}],
+        [{"text": "Все заявки", "callback_data": _callback(binding, "l", "1")}],
     ]}
 
 

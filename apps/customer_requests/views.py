@@ -178,10 +178,12 @@ def staff_messenger_bindings(request):
                 error = str(exc)
         elif action == "toggle":
             binding = get_object_or_404(StaffMessengerBinding, pk=request.POST.get("binding_id"))
-            binding.is_active = not binding.is_active
-            if not binding.is_active:
+            if binding.is_active:
+                operator_console.revoke_binding(binding=binding)
+            else:
+                binding.is_active = True
                 binding.operator_mode = False
-            binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
+                binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
             messages.success(request, "Привязка обновлена.")
             return redirect("staff_messenger_bindings")
     return render(
