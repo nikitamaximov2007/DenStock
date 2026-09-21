@@ -29,9 +29,29 @@
     </section>
     <section class="card">
       <h2>Статус привязок</h2>
-      <ul>{% for binding in bindings %}<li>{{ binding.user }} · {{ binding.get_provider_display }} · {{ binding.customer_visible_label }} · {% if binding.is_active %}подключена{% else %}отозвана{% endif %}
-        {% if binding.is_active %}<form method="post" class="inline-form">{% csrf_token %}<input type="hidden" name="action" value="toggle"><input type="hidden" name="binding_id" value="{{ binding.pk }}"><button class="btn btn--small btn--secondary" type="submit">Отозвать</button></form>{% endif %}
-      </li>{% empty %}<li class="muted">Привязок пока нет.</li>{% endfor %}</ul>
-  </section>
-</main>
+      <ul>
+        {% for employee in staff_statuses %}
+          <li>
+            <strong>{{ employee.label }}</strong>
+            <ul>
+              <li>Telegram - {% if employee.telegram_connected %}Подключён{% else %}Не подключён{% endif %}</li>
+              <li>MAX - {% if employee.max_connected %}Подключён{% else %}Не подключён{% endif %}</li>
+            </ul>
+            {% for binding in employee.bindings %}
+              {% if binding.is_active %}
+                <form method="post" class="inline-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="toggle">
+                  <input type="hidden" name="binding_id" value="{{ binding.pk }}">
+                  <button class="btn btn--small btn--secondary" type="submit">Отозвать {{ binding.get_provider_display }}</button>
+                </form>
+              {% endif %}
+            {% endfor %}
+          </li>
+        {% empty %}
+          <li class="muted">Сотрудников пока нет.</li>
+        {% endfor %}
+      </ul>
+    </section>
+  </main>
 {% endblock %}

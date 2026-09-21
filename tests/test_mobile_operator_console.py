@@ -640,6 +640,100 @@ def test_admin_generates_one_provider_neutral_code(client, db, django_user_model
     assert operator_console.is_pairing_code(code)
 
 
+@pytest.mark.parametrize(
+    ("providers", "expected"),
+    [
+        (set(), ("Telegram - Не подключён", "MAX - Не подключён")),
+        ({"telegram"}, ("Telegram - Подключён", "MAX - Не подключён")),
+        ({"max"}, ("Telegram - Не подключён", "MAX - Подключён")),
+        ({"telegram", "max"}, ("Telegram - Подключён", "MAX - Подключён")),
+    ],
+)
+def test_admin_status_shows_both_provider_states_for_each_employee(
+    client, db, django_user_model, providers, expected
+):
+    admin = django_user_model.objects.create_superuser(username="status-admin", password="x" * 12)
+    employee = django_user_model.objects.create_user(
+        username="status-employee", full_name="Денис", password="x" * 12
+    )
+    for index, provider in enumerate(sorted(providers), start=1):
+        StaffMessengerBinding.objects.create(
+            user=employee,
+            provider=provider,
+            provider_user_id=99100 + index,
+            delivery_chat_id=99200 + index if provider == "max" else None,
+            customer_visible_label="Денис",
+        )
+    client.force_login(admin)
+
+    response = client.get(reverse("staff_messenger_bindings"))
+
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert all(status in html for status in expected)
+
+
+def test_admin_status_ignores_revoked_bindings_and_keeps_employees_separate(
+    client, db, django_user_model
+):
+    admin = django_user_model.objects.create_superuser(username="status-admin-2", password="x" * 12)
+    denis = django_user_model.objects.create_user(
+        username="status-denis", full_name="Денис", password="x" * 12
+    )
+    rim = django_user_model.objects.create_user(
+        username="status-rim", full_name="Рим", password="x" * 12
+    )
+    StaffMessengerBinding.objects.create(
+        user=denis,
+        provider="telegram",
+        provider_user_id=99301,
+        customer_visible_label="Денис",
+        is_active=False,
+    )
+    StaffMessengerBinding.objects.create(
+        user=denis,
+        provider="max",
+        provider_user_id=99303,
+        delivery_chat_id=99403,
+        customer_visible_label="Денис",
+        is_active=False,
+    )
+    StaffMessengerBinding.objects.create(
+        user=rim,
+        provider="max",
+        provider_user_id=99302,
+        delivery_chat_id=99402,
+        customer_visible_label="Рим",
+    )
+    client.force_login(admin)
+
+    html = client.get(reverse("staff_messenger_bindings")).content.decode()
+
+    denis_card = html.split("<strong>Денис</strong>", 1)[1].split("</ul>", 1)[0]
+    rim_card = html.split("<strong>Рим</strong>", 1)[1].split("</ul>", 1)[0]
+    assert "Telegram - Не подключён" in denis_card
+    assert "MAX - Не подключён" in denis_card
+    assert "Telegram - Не подключён" in rim_card
+    assert "MAX - Подключён" in rim_card
+    assert "99301" not in html
+    assert "99302" not in html
+    assert "99303" not in html
+    assert "99402" not in html
+    assert "99403" not in html
+    assert "token_hash" not in html
+    assert "—" not in html
+    assert "–" not in html
+
+
+def test_admin_status_access_rules_remain_unchanged(client, db, django_user_model):
+    anonymous = client.get(reverse("staff_messenger_bindings"))
+    assert anonymous.status_code == 302
+
+    user = django_user_model.objects.create_user(username="status-user", password="x" * 12)
+    client.force_login(user)
+    assert client.get(reverse("staff_messenger_bindings")).status_code == 403
+
+
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
 def test_feature_off_worker_restart_ignores_console_notification_work(db, django_user_model):
     part = build_part()

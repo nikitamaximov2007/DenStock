@@ -180,16 +180,52 @@ def staff_messenger_bindings(request):
                     "Привязка отозвана. Для повторного подключения создайте новый код.",
                 )
             return redirect("staff_messenger_bindings")
+    users = list(
+        get_user_model()
+        .objects.filter(is_active=True)
+        .order_by("full_name", "username")
+    )
+    bindings = list(
+        StaffMessengerBinding.objects.select_related("user").order_by(
+            "provider", "user_id"
+        )
+    )
+    bindings_by_user = {}
+    for binding in bindings:
+        bindings_by_user.setdefault(binding.user_id, []).append(binding)
+    staff_statuses = []
+    for user in users:
+        user_bindings = bindings_by_user.get(user.pk, [])
+        active_by_provider = {
+            provider: any(
+                binding.is_active and binding.provider == provider
+                for binding in user_bindings
+            )
+            for provider in StaffMessengerBinding.Provider.values
+        }
+        label = next(
+            (
+                binding.customer_visible_label
+                for binding in user_bindings
+                if binding.customer_visible_label
+            ),
+            str(user),
+        ) or str(user)
+        staff_statuses.append(
+            {
+                "label": label,
+                "telegram_connected": active_by_provider[StaffMessengerBinding.Provider.TELEGRAM],
+                "max_connected": active_by_provider[StaffMessengerBinding.Provider.MAX],
+                "bindings": user_bindings,
+            }
+        )
     return render(
         request,
         "customer_requests/staff_bindings.html",
         {
-            "bindings": StaffMessengerBinding.objects.select_related("user").order_by(
-                "provider", "user_id"
-            ),
-            "users": get_user_model()
-            .objects.filter(is_active=True)
-            .order_by("full_name", "username"),
+            "bindings": bindings,
+            "staff_statuses": staff_statuses,
+            "users": users,
             "token": token,
             "error": error,
             "providers": StaffMessengerBinding.Provider.choices,
