@@ -15,18 +15,29 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
 from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
 from django.core.management import call_command
 from django.db import close_old_connections, connection
+from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
 from apps.core.phones import normalize_phone
-from apps.customers.models import Customer, CustomerPeriodPaymentAcknowledgement
-from apps.customers.services import customer_snapshot, search_customers
+from apps.customers.models import (
+    Customer,
+    CustomerCreateIdempotency,
+    CustomerPeriodPaymentAcknowledgement,
+)
+from apps.customers.services import (
+    create_customer_idempotently,
+    customer_snapshot,
+    search_customers,
+)
 from apps.repairs.models import RepairOrder
 from apps.repairs.services import create_repair_order
 from apps.sales.models import Reservation, Sale
@@ -519,6 +530,140 @@ def test_customer_create_returns_to_local_operator_flow_with_selected_card(clien
     customer = Customer.objects.get(name="Новый клиент")
     assert response.status_code == 302
     assert response["Location"] == f"{target}&customer_id={customer.pk}"
+
+
+def test_customer_create_replay_with_same_token_returns_one_customer(client, make_user, db):
+    _login(client, make_user)
+    form = client.get(reverse("customer_create"))
+    token = UUID(form.context["client_create_token"])
+    payload = {
+        "name": "Повторная отправка",
+        "phone": "+7 900 000-00-01",
+        "comment": "",
+        "client_create_token": token,
+    }
+
+    responses = [client.post(reverse("customer_create"), payload) for _ in range(3)]
+
+    assert all(response.status_code == 302 for response in responses)
+    assert Customer.objects.filter(name="Повторная отправка").count() == 1
+    assert CustomerCreateIdempotency.objects.filter(token=token).count() == 1
+    assert all(
+        response["Location"] == responses[0]["Location"] for response in responses
+    )
+
+
+def test_customer_create_different_tokens_create_independent_customers(client, make_user, db):
+    _login(client, make_user)
+    first = client.get(reverse("customer_create"))
+    second = client.get(reverse("customer_create"))
+    first_token = UUID(first.context["client_create_token"])
+    second_token = UUID(second.context["client_create_token"])
+    assert first_token != second_token
+    assert first_token.version == second_token.version == 4
+
+    base = {"name": "Допустимые тёзки", "phone": "+7 900 000-00-02", "comment": ""}
+    client.post(reverse("customer_create"), {**base, "client_create_token": first_token})
+    client.post(reverse("customer_create"), {**base, "client_create_token": second_token})
+
+    assert Customer.objects.filter(name="Допустимые тёзки").count() == 2
+
+
+def test_customer_create_invalid_form_does_not_consume_token(client, make_user, db):
+    _login(client, make_user)
+    response = client.get(reverse("customer_create"))
+    token = UUID(response.context["client_create_token"])
+    url = reverse("customer_create")
+
+    invalid = client.post(
+        url,
+        {"name": "   ", "phone": "", "comment": "", "client_create_token": token},
+    )
+    assert invalid.status_code == 200
+    assert not Customer.objects.exists()
+    assert not CustomerCreateIdempotency.objects.filter(token=token).exists()
+
+    client.post(
+        url,
+        {"name": "Исправленная форма", "phone": "", "comment": "", "client_create_token": token},
+    )
+    assert Customer.objects.filter(name="Исправленная форма").count() == 1
+
+
+def test_customer_create_token_is_not_business_data(client, make_user, db):
+    _login(client, make_user)
+    response = client.get(
+        reverse("customer_create"),
+        {"name": "Сергей Образцов", "phone": "+7 922 229-08-22"},
+    )
+    token = UUID(response.context["client_create_token"])
+    assert token.version == 4
+    assert str(token) in response.content.decode()
+    assert "Сергей" not in str(token) and "79222290822" not in str(token)
+
+
+def test_customer_create_form_has_retry_safe_ui(client, make_user, db):
+    _login(client, make_user)
+    html = client.get(reverse("customer_create")).content.decode()
+    script = (Path("static/js/customer_create.js")).read_text(encoding="utf-8")
+    assert 'name="client_create_token"' in html
+    assert 'data-client-create-submit' in html
+    assert "Создать" in html
+    assert 'button.disabled = true' in script
+    assert 'button.textContent = "Создание..."' in script
+    assert "form.checkValidity()" in script
+    assert "event.preventDefault()" in script
+
+
+@pytest.mark.postgresql
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_customer_create_concurrent_same_token_creates_one_customer(make_user):
+    if connection.vendor != "postgresql":
+        pytest.skip("Run against PostgreSQL with DENSTOCK_TEST_DATABASE_URL")
+
+    user = make_user("concurrent-customer-create", is_superuser=True)
+    token = uuid4()
+    payload = {
+        "name": "Параллельный клиент",
+        "phone": "+7 900 000-00-03",
+        "comment": "",
+        "client_create_token": str(token),
+    }
+
+    def post_in_separate_connection():
+        close_old_connections()
+        try:
+            local_client = Client()
+            local_client.force_login(user)
+            response = local_client.post(reverse("customer_create"), payload)
+            return response.status_code, response.get("Location"), response.content.decode()
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [
+            future.result(timeout=20)
+            for future in (
+                pool.submit(post_in_separate_connection),
+                pool.submit(post_in_separate_connection),
+            )
+        ]
+
+    assert all(status == 302 for status, _location, _body in results), results
+    assert Customer.objects.filter(name="Параллельный клиент").count() == 1
+    assert CustomerCreateIdempotency.objects.filter(token=token).count() == 1
+
+
+def test_customer_create_service_can_be_called_with_two_distinct_tokens(db):
+    from apps.customers.forms import CustomerForm
+
+    first_form = CustomerForm(data={"name": "Независимый клиент"})
+    second_form = CustomerForm(data={"name": "Независимый клиент"})
+    assert first_form.is_valid() and second_form.is_valid()
+    first, first_created = create_customer_idempotently(first_form, token=uuid4())
+    second, second_created = create_customer_idempotently(second_form, token=uuid4())
+    assert first_created and second_created
+    assert first.pk != second.pk
 
 
 def test_customer_create_rejects_external_return_target(client, make_user, db):

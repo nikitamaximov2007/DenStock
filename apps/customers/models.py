@@ -69,6 +69,28 @@ class Customer(models.Model):
         return {"customer_name": self.name, "customer_phone": self.phone}
 
 
+class CustomerCreateIdempotency(models.Model):
+    """Durable receipt for one rendered customer-create operation."""
+
+    token = models.UUIDField("Ключ создания", unique=True, editable=False)
+    customer = models.OneToOneField(
+        Customer,
+        verbose_name="Созданный клиент",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="create_idempotency_receipt",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Квитанция идемпотентности создания клиента"
+        verbose_name_plural = "Квитанции идемпотентности создания клиентов"
+
+    def __str__(self) -> str:
+        return f"{self.token} → {self.customer_id or 'pending'}"
+
+
 class CustomerPeriodPaymentAcknowledgement(models.Model):
     """Аудит ручного подтверждения полной оплаты клиентом за период.
 

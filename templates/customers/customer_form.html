@@ -15,8 +15,13 @@
   </div>
   <div class="card">
     <div class="card__body">
-      <form method="post" class="form">
+      <form method="post" class="form" data-client-create-form>
         {% csrf_token %}
+        {% if not customer %}
+          <input type="hidden"
+                 name="client_create_token"
+                 value="{{ client_create_token }}">
+        {% endif %}
         {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
         {{ form.non_field_errors }}
         <p>
@@ -67,7 +72,7 @@
           {{ form.comment.errors }}
         </p>
         <div class="form-actions">
-          <button type="submit" class="btn btn--primary">Сохранить</button>
+          <button type="submit" class="btn btn--primary" data-client-create-submit>{% if customer %}Сохранить{% else %}Создать{% endif %}</button>
         </div>
       </form>
     </div>

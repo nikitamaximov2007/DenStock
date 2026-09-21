@@ -4,20 +4,47 @@ from __future__ import annotations
 
 import datetime
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import DateTimeField, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
 
 from apps.core.phones import looks_like_phone, normalize_phone
 
-from .models import Customer, CustomerPeriodPaymentAcknowledgement
+from .models import Customer, CustomerCreateIdempotency, CustomerPeriodPaymentAcknowledgement
 
 SEARCH_LIMIT = 50
 # Пол для клиентов без завершённых документов. Значение самой ранней возможной
 # даты, а не NULL: NULL в GREATEST ведёт себя по-разному в PostgreSQL и SQLite,
 # и порядок «без истории - вниз» перестал бы быть одинаковым в проде и тестах.
 _NO_ACTIVITY = datetime.datetime(1, 1, 1, tzinfo=datetime.UTC)
+
+
+class CustomerCreateIdempotencyError(RuntimeError):
+    """A reserved create token has no completed customer to return."""
+
+
+def create_customer_idempotently(form, *, token):
+    """Create one customer for an operation, even when its POST is replayed."""
+    with transaction.atomic():
+        try:
+            with transaction.atomic():
+                receipt = CustomerCreateIdempotency.objects.create(token=token)
+        except IntegrityError:
+            receipt = (
+                CustomerCreateIdempotency.objects.select_for_update()
+                .get(token=token)
+            )
+            if receipt.customer_id is None:
+                raise CustomerCreateIdempotencyError(
+                    "Создание клиента по этому ключу ещё выполняется. Повторите отправку."
+                ) from None
+            return receipt.customer, False
+
+        customer = form.save()
+        receipt.customer = customer
+        receipt.save(update_fields=["customer"])
+        return customer, True
 
 
 def search_customers(query: str, *, limit: int = SEARCH_LIMIT):

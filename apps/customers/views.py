@@ -5,6 +5,7 @@
 """
 
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import UUID, uuid4
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -19,7 +20,7 @@ from apps.sales.models import Reservation, Sale
 from .forms import CustomerForm
 from .legacy_linking import legacy_group_summary, link_legacy_group, suggest_identity
 from .models import Customer
-from .services import search_customers
+from .services import create_customer_idempotently, search_customers
 
 PAGE_SIZE = 50
 
@@ -89,8 +90,14 @@ def customer_create(request):
     _require_edit(request)
     if request.method == "POST":
         form = CustomerForm(request.POST)
+        try:
+            create_token = UUID(request.POST.get("client_create_token", ""))
+        except (AttributeError, ValueError):
+            # Direct legacy POSTs remain compatible; rendered forms always
+            # carry a fresh UUID in the hidden field.
+            create_token = uuid4()
         if form.is_valid():
-            customer = form.save()
+            customer, _created = create_customer_idempotently(form, token=create_token)
             messages.success(request, f"Клиент {customer.name} создан.")
             target = _return_to_new_customer_flow(request, customer)
             if target:
@@ -98,6 +105,7 @@ def customer_create(request):
             return redirect("customer_detail", pk=customer.pk)
     else:
         form = CustomerForm(initial={"name": (request.GET.get("name") or "").strip()})
+        create_token = uuid4()
     return render(
         request,
         "customers/customer_form.html",
@@ -106,6 +114,7 @@ def customer_create(request):
             "title": "Новый клиент",
             "customer": None,
             "next": request.POST.get("next") or request.GET.get("next") or "",
+            "client_create_token": str(create_token),
         },
     )
 
