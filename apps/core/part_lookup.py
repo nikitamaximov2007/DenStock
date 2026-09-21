@@ -27,10 +27,6 @@ from apps.inventory.presentation import (
     part_exact_number,
     with_part_identity,
 )
-from apps.inventory.pricing import (
-    protected_customer_price_floors,
-    resolve_effective_part_customer_price,
-)
 
 DEC0 = Decimal("0")
 RESULT_LIMIT = 30
@@ -391,9 +387,6 @@ def _candidates(
         analog_for.setdefault(analog_id, []).append(original_name)
 
     aftermarket_ids = aftermarket_part_ids(part_pks)
-    # Canonical effective customer price: one aggregate for the whole result.
-    floors = protected_customer_price_floors(part_pks) if include_price else {}
-
     result = []
     for part in parts:
         try:
@@ -434,13 +427,7 @@ def _candidates(
                 quarantine=sum((row.quarantine for row in locations), DEC0),
                 receiving=sum((row.receiving for row in locations), DEC0),
                 batches=sorted({batch for row in locations for batch in row.batches}),
-                client_price=(
-                    resolve_effective_part_customer_price(
-                        part.recommended_price, floors.get(part.pk)
-                    )
-                    if include_price
-                    else None
-                ),
+                client_price=part.recommended_price if include_price else None,
                 analogs=[number.value for number in part.analog_numbers_for_display],
                 analog_for=analog_for.get(part.pk, []),
                 source="balance" if part.pk in balance_part_ids else "primary",

@@ -423,10 +423,10 @@ def test_request_form_and_submit_query_counts_are_flat(
     # the counter/event writes and three Telegram inserts are constant too.
     # PostgreSQL adds two constant statements: setting and clearing the request
     # proof that the Telegram insert guard checks (migration 0006).
-    # The canonical customer-price resolver performs two read-only aggregate
-    # lookups for protected receipt-price floors (lots and items).  The request
-    # path may also evaluate the same canonical price for the rendered request
-    # context; these are fixed-cost lookups independent of line count.
+    # The canonical customer-price resolver reads the current PartType price;
+    # the request path may also evaluate the same canonical price for the
+    # rendered request context. These are fixed-cost lookups independent of
+    # line count.
     assert len(submit_queries.captured_queries) <= 39
 
 

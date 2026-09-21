@@ -6,6 +6,7 @@ import pytest
 from django.utils import timezone
 
 from apps.actions.cart import cart_rows, open_cart, set_row_quantity
+from apps.actions.services import ActionError
 from apps.catalog.models import Category, PartType, Unit
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import create_stock_lot, receive_stock_lot
@@ -70,17 +71,18 @@ def price_scene(db, django_user_model):
     return user, part, location, received_lot
 
 
-def test_resolver_uses_only_current_canonical_and_source_snapshot(price_scene):
+def test_resolver_uses_only_current_canonical(price_scene):
     _user, part, _location, received_lot = price_scene
     lot = received_lot(quantity="1", snapshot="2500", cost="99999")
 
-    assert resolve_effective_inventory_customer_price(
-        lot, part.recommended_price
-    ) == Decimal("2500")
+    assert (
+        resolve_effective_inventory_customer_price(lot, part.recommended_price)
+        == Decimal("1000")
+    )
     assert resolve_effective_inventory_customer_price(lot, Decimal("3000")) == Decimal("3000")
 
 
-def test_cart_splits_fifo_lots_with_each_lots_protected_default(price_scene):
+def test_cart_uses_current_price_for_each_fifo_lot(price_scene):
     user, part, location, received_lot = price_scene
     first = received_lot(quantity="2", snapshot="1500")
     second = received_lot(quantity="2", snapshot="2500")
@@ -91,17 +93,15 @@ def test_cart_splits_fifo_lots_with_each_lots_protected_default(price_scene):
     set_row_quantity(cart, part, location, Decimal("4"), by=user)
 
     prices = list(cart.lines.order_by("stock_lot_id").values_list("stock_lot_id", "unit_price"))
-    assert prices == [(first.pk, Decimal("1500.00")), (second.pk, Decimal("2500.00"))]
-    # The compact UI never invents one price for several sources. Its known
-    # total is the sum of source lines, while the source-level lines stay
-    # authoritative for the document.
+    assert prices == [(first.pk, Decimal("1000.00")), (second.pk, Decimal("1000.00"))]
+    # The compact UI uses the current authoritative price for every source line.
     row = cart_rows(cart)[0]
     assert row.quantity == Decimal("4")
-    assert row.unit_price is None
-    assert row.total_price == Decimal("8000")
+    assert row.unit_price == Decimal("1000.00")
+    assert row.total_price == Decimal("4000")
 
 
-def test_repair_and_reservation_sale_use_the_selected_source_snapshot(price_scene):
+def test_repair_and_reservation_sale_use_the_current_price(price_scene):
     user, part, _location, received_lot = price_scene
     lot = received_lot(quantity="3", snapshot="2500")
     part.recommended_price = Decimal("1000")
@@ -109,7 +109,7 @@ def test_repair_and_reservation_sale_use_the_selected_source_snapshot(price_scen
 
     repair = create_repair_order(customer_name="Клиент", by=user)
     repair_line = add_stock_lot_to_repair_order(repair, lot, Decimal("1"), by=user)
-    assert repair_line.customer_unit_price_rub == Decimal("2500.00")
+    assert repair_line.customer_unit_price_rub == Decimal("1000.00")
     set_repair_line_customer_price(repair_line, Decimal("45000"), by=user)
     repair_line.refresh_from_db()
     assert repair_line.customer_unit_price_rub == Decimal("45000.00")
@@ -118,7 +118,7 @@ def test_repair_and_reservation_sale_use_the_selected_source_snapshot(price_scen
     add_stock_lot_to_reservation(reservation, lot, Decimal("1"), by=user)
     activate_reservation(reservation, by=user)
     sale = create_sale_from_reservation(reservation, by=user)
-    assert sale.lines.get().unit_price == Decimal("2500.00")
+    assert sale.lines.get().unit_price == Decimal("1000.00")
 
 
 def test_legacy_source_without_snapshot_is_not_backfilled(price_scene):
@@ -134,16 +134,16 @@ def test_legacy_source_without_snapshot_is_not_backfilled(price_scene):
     ) == Decimal("1000")
 
 
-def test_explicit_zero_receipt_snapshot_remains_a_valid_sale_price(price_scene):
+def test_missing_current_price_does_not_resurrect_a_zero_snapshot(price_scene):
     user, part, location, received_lot = price_scene
     received_lot(quantity="1", snapshot="0")
     part.recommended_price = None
     part.save(update_fields=["recommended_price"])
 
     cart = open_cart("sale", by=user)
-    set_row_quantity(cart, part, location, Decimal("1"), by=user)
-
-    assert cart.lines.get().unit_price == Decimal("0")
+    with pytest.raises(ActionError, match="цена не задана"):
+        set_row_quantity(cart, part, location, Decimal("1"), by=user)
+    assert not cart.lines.exists()
 
 
 def test_below_cost_audit_reports_sales_and_repairs_with_evidence(price_scene):

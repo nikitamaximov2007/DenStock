@@ -130,13 +130,13 @@ def _build_row(*, kind, document, line, article, customer_price, customer_total,
     source = line.part_item if line.part_item_id else line.stock_lot
     snapshot = source.receipt_customer_price_snapshot_rub
     current = line.part_type.recommended_price
-    protected_default = resolve_effective_inventory_customer_price(source, current)
+    current_default = resolve_effective_inventory_customer_price(source, current)
     cause, explanation = _classify(
         customer_price=customer_price,
         cost=line.unit_cost_rub,
         current=current,
         snapshot=snapshot,
-        protected_default=protected_default,
+        current_default=current_default,
         has_return=has_return,
     )
     delta = customer_total - line.total_cost_rub
@@ -168,7 +168,7 @@ def _build_row(*, kind, document, line, article, customer_price, customer_total,
     )
 
 
-def _classify(*, customer_price, cost, current, snapshot, protected_default, has_return):
+def _classify(*, customer_price, cost, current, snapshot, current_default, has_return):
     if has_return:
         return (
             "F. RETURNS/CANCELLATION_EFFECT",
@@ -190,13 +190,13 @@ def _classify(*, customer_price, cost, current, snapshot, protected_default, has
             "Снимок источника выше текущего прайса, а документ использовал текущую цену.",
         )
     if (
-        protected_default is not None
+        current_default is not None
         and customer_price is not None
-        and customer_price < protected_default
+        and customer_price < current_default
     ):
         return (
             "B. MANUAL_OVERRIDE",
-            "Документная цена ниже защищённого default; "
+            "Документная цена ниже текущего default; "
             "флаг ручного ввода исторически не записывался.",
         )
     if cost >= Decimal("1000000"):

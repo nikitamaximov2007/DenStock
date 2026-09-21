@@ -105,7 +105,7 @@ def test_formula_and_higher_customer_price_rule_are_distinct():
     assert resolve_effective_inventory_customer_price(
         type("Inventory", (), {"receipt_customer_price_snapshot_rub": Decimal("16000")})(),
         Decimal("14700"),
-    ) == Decimal("16000")
+    ) == Decimal("14700")
 
 
 def test_owner_approved_legacy_backfill_uses_105_without_rewriting_sale_price(priced_sale):

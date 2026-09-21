@@ -73,7 +73,7 @@ def _row_for(plan, lot):
     return next(row for row in plan.rows if row.lot_id == lot.id)
 
 
-def test_unique_immutable_evidence_backfills_snapshot_and_floor(scene):
+def test_unique_immutable_evidence_backfills_historical_snapshot(scene):
     part, receipt, lot = scene["received"]()
     scene["evidence"](receipt, part, price="2500")
 
@@ -82,7 +82,7 @@ def test_unique_immutable_evidence_backfills_snapshot_and_floor(scene):
 
     assert _row_for(plan, lot).outcome == "eligible"
     assert lot.receipt_customer_price_snapshot_rub == Decimal("2500.00")
-    assert resolve_effective_inventory_customer_price(lot, Decimal("1000")) == Decimal("2500")
+    assert resolve_effective_inventory_customer_price(lot, Decimal("1000")) == Decimal("1000")
 
 
 def test_no_evidence_remains_null_and_dry_run_writes_nothing(scene):
