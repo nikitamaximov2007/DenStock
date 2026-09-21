@@ -75,7 +75,9 @@ def issue_pairing_token(*, user, provider: str, label: str, created_by) -> str:
 
 
 @transaction.atomic
-def consume_pairing(*, provider: str, provider_user_id: int, raw_token: str):
+def consume_pairing(
+    *, provider: str, provider_user_id: int, raw_token: str, provider_chat_id: int | None = None
+):
     if not enabled():
         return None, "Мобильная консоль отключена."
     if provider not in StaffMessengerPairingToken.Provider.values:
@@ -96,26 +98,60 @@ def consume_pairing(*, provider: str, provider_user_id: int, raw_token: str):
     )
     if row is None or not row.user.is_active or not row.user.can_manage_sales:
         return None, "Код привязки недействителен или истёк."
-    if StaffMessengerBinding.objects.filter(
+    existing = StaffMessengerBinding.objects.filter(
         provider=provider, provider_user_id=provider_user_id
-    ).exists():
+    ).first()
+    if existing and existing.is_active:
         return None, "Этот аккаунт мессенджера уже привязан."
-    if StaffMessengerBinding.objects.filter(user=row.user, provider=provider).exists():
+    if existing and existing.user_id != row.user_id:
+        return None, "Этот аккаунт уже принадлежит другому сотруднику."
+    if existing is None and StaffMessengerBinding.objects.filter(
+        user=row.user, provider=provider
+    ).exists():
         return None, "У сотрудника уже есть привязка этого мессенджера."
-    binding = StaffMessengerBinding.objects.create(
-        user=row.user,
-        provider=provider,
-        provider_user_id=provider_user_id,
-        customer_visible_label=row.customer_visible_label,
-        created_by=row.created_by,
-    )
+    if existing is not None:
+        binding = existing
+        binding.is_active = True
+        binding.operator_mode = False
+        binding.customer_visible_label = row.customer_visible_label
+        binding.created_by = row.created_by
+        if provider == StaffMessengerBinding.Provider.MAX and isinstance(provider_chat_id, int):
+            binding.delivery_chat_id = provider_chat_id
+        binding.save()
+    else:
+        binding = StaffMessengerBinding.objects.create(
+            user=row.user,
+            provider=provider,
+            provider_user_id=provider_user_id,
+            delivery_chat_id=(
+                provider_chat_id if provider == StaffMessengerBinding.Provider.MAX else None
+            ),
+            customer_visible_label=row.customer_visible_label,
+            created_by=row.created_by,
+        )
     row.used_at = timezone.now()
     row.save(update_fields=["used_at"])
     return binding, f"Привязка завершена. Подпись для клиента: {binding.customer_visible_label}."
 
 
-def menu() -> tuple[str, dict]:
-    return "Рабочее меню PRO-STOR", {"inline_keyboard": [
+def _context_is_fresh(context) -> bool:
+    ttl = max(1, int(getattr(settings, "CUSTOMER_OPERATOR_CONTEXT_TTL_MINUTES", 30)))
+    return context.updated_at >= timezone.now() - timedelta(minutes=ttl)
+
+
+def menu(binding=None) -> tuple[str, dict]:
+    heading = "Рабочее меню PRO-STOR"
+    if binding is not None:
+        context = OperatorConversationContext.objects.select_related("request").filter(
+            binding=binding
+        ).first()
+        if context and context.request_id and _context_is_fresh(context):
+            request = context.request
+            heading += (
+                f"\nСейчас открыт диалог: №{request.reference} — "
+                f"{(request.customer_name or 'Клиент')[:80]}"
+            )
+    return heading, {"inline_keyboard": [
         [{"text": "Все заявки", "callback_data": "op:l:1"}],
         [{"text": "Новые заявки", "callback_data": "op:n:1"}],
     ]}
@@ -130,7 +166,7 @@ def _query(*, new_only: bool):
     return workspace.order_by_priority(workspace.annotate_workspace(query))
 
 
-def request_page(page: int = 1, *, new_only: bool = False) -> tuple[str, dict]:
+def request_page(page: int = 1, *, new_only: bool = False, binding=None) -> tuple[str, dict]:
     query = _query(new_only=new_only)
     total = query.count()
     pages = max(1, (total + LIST_PAGE_SIZE - 1) // LIST_PAGE_SIZE)
@@ -140,7 +176,7 @@ def request_page(page: int = 1, *, new_only: bool = False) -> tuple[str, dict]:
         rows.append([{"text": f"№{request.reference} — {(request.customer_name or 'Клиент')[:80]}",
                       "callback_data": f"op:c:{request.public_id.hex}"}])
     if not rows:
-        return ("Новых заявок нет." if new_only else "Заявок нет."), menu()[1]
+        return ("Новых заявок нет." if new_only else "Заявок нет."), menu(binding)[1]
     if page > 1 or page < pages:
         rows.append([
             *(
@@ -190,7 +226,28 @@ def current_request(binding):
     context = (
         OperatorConversationContext.objects.select_related("request").filter(binding=binding).first()
     )
-    return context.request if context else None
+    if not context or not context.request_id:
+        return None
+    if not _context_is_fresh(context):
+        context.request = None
+        context.save(update_fields=["request", "updated_at"])
+        return None
+    return context.request
+
+
+def touch_context(*, binding) -> None:
+    OperatorConversationContext.objects.filter(binding=binding, request__isnull=False).update(
+        updated_at=timezone.now()
+    )
+
+
+def invalidate_contexts(provider: str) -> int:
+    """Require explicit re-entry and request selection after this worker restarts."""
+    bindings = StaffMessengerBinding.objects.filter(provider=provider)
+    bindings.update(operator_mode=False, updated_at=timezone.now())
+    return OperatorConversationContext.objects.filter(binding__in=bindings).update(
+        request=None, updated_at=timezone.now()
+    )
 
 
 def clear_context(*, binding):
@@ -231,14 +288,19 @@ def _key(provider: str, external_id: str) -> str:
 
 
 def submit_text(
-    *, provider: str, provider_user_id: int, external_id: str, text: str, attachment=None
+    *, provider: str, provider_user_id: int, external_id: str, text: str, attachment=None,
+    provider_chat_id: int | None = None,
 ):
     binding = binding_for(provider, provider_user_id, lock=True)
     if binding is None:
         return "Недоступно.", None
+    if provider == StaffMessengerBinding.Provider.MAX and isinstance(provider_chat_id, int):
+        if binding.delivery_chat_id != provider_chat_id:
+            binding.delivery_chat_id = provider_chat_id
+            binding.save(update_fields=["delivery_chat_id", "updated_at"])
     request = current_request(binding)
     if request is None:
-        return "Сначала выберите заявку в разделе «Все заявки».", menu()[1]
+        return "Сначала выберите заявку в разделе «Все заявки».", menu(binding)[1]
     try:
         operator_replies.submit_reply(
             request_id=request.pk, user=binding.user, text=text,
@@ -248,12 +310,14 @@ def submit_text(
             operator_author_label=binding.customer_visible_label,
         )
     except operator_replies.OperatorReplyError as exc:
-        return str(exc), menu()[1]
-    return "Ответ поставлен в очередь доставки клиенту.", menu()[1]
+        return str(exc), menu(binding)[1]
+    touch_context(binding=binding)
+    return "Ответ поставлен в очередь доставки клиенту.", menu(binding)[1]
 
 
 def handle_text(
-    *, provider: str, provider_user_id: int, external_id: str, text: str, attachment=None
+    *, provider: str, provider_user_id: int, external_id: str, text: str, attachment=None,
+    provider_chat_id: int | None = None,
 ):
     """Return a staff reply, or ``None`` so ordinary customer mode continues."""
     if not enabled():
@@ -264,15 +328,20 @@ def handle_text(
     if lower.startswith("/pair ") or lower.startswith("pair_"):
         raw = value.split(maxsplit=1)[1] if lower.startswith("/pair ") else value
         _binding, reply = consume_pairing(
-            provider=provider, provider_user_id=provider_user_id, raw_token=raw
+            provider=provider, provider_user_id=provider_user_id, raw_token=raw,
+            provider_chat_id=provider_chat_id,
         )
-        return reply, menu()[1] if _binding else None
+        return reply, menu(_binding)[1] if _binding else None
     if binding is None:
         return None
+    if provider == StaffMessengerBinding.Provider.MAX and isinstance(provider_chat_id, int):
+        if binding.delivery_chat_id != provider_chat_id:
+            binding.delivery_chat_id = provider_chat_id
+            binding.save(update_fields=["delivery_chat_id", "updated_at"])
     if lower in {"/work", "рабочее меню"}:
         binding.operator_mode = True
         binding.save(update_fields=["operator_mode", "updated_at"])
-        return menu()
+        return menu(binding)
     if lower in {"/customer", "клиентский режим"}:
         clear_context(binding=binding)
         binding.operator_mode = False
@@ -281,16 +350,20 @@ def handle_text(
     if not binding.operator_mode:
         return None
     if lower in {"/menu", "меню", "рабочее меню"}:
-        return menu()
+        return menu(binding)
     if lower in {"/requests", "все заявки"}:
-        return request_page()
+        return request_page(binding=binding)
     if lower in {"/new", "новые заявки"}:
-        return request_page(new_only=True)
+        return request_page(new_only=True, binding=binding)
     if lower in {"/cancel", "отмена"}:
         clear_context(binding=binding)
-        return "Активная заявка закрыта для телефона. Клиенту ничего не отправлено.", menu()[1]
+        return (
+            "Активная заявка закрыта для телефона. Клиенту ничего не отправлено.",
+            menu(binding)[1],
+        )
     return submit_text(provider=provider, provider_user_id=provider_user_id,
-                       external_id=external_id, text=value, attachment=attachment)
+                       external_id=external_id, text=value, attachment=attachment,
+                       provider_chat_id=provider_chat_id)
 
 
 def handle_callback(*, provider: str, provider_user_id: int, payload: str):
@@ -300,25 +373,27 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     if binding is None:
         return "Недоступно.", None
     if not binding.operator_mode:
-        binding.operator_mode = True
-        binding.save(update_fields=["operator_mode", "updated_at"])
+        return "Рабочий режим не активен. Откройте /work.", None
     parts = payload.split(":", 2)
     kind, value = parts[1], parts[2] if len(parts) == 3 else ""
     if kind == "m":
-        return menu()
+        return menu(binding)
     if kind in {"l", "n"}:
         page = int(value) if value.isdigit() and len(value) < 6 else 1
-        return request_page(page, new_only=kind == "n")
+        return request_page(page, new_only=kind == "n", binding=binding)
     if kind == "x":
         clear_context(binding=binding)
-        return "Активная заявка закрыта для телефона. Клиенту ничего не отправлено.", menu()[1]
+        return (
+            "Активная заявка закрыта для телефона. Клиенту ничего не отправлено.",
+            menu(binding)[1],
+        )
     if kind in {"c", "r"}:
         request = request_by_hex(value)
         if request is None:
-            return "Заявка не найдена.", menu()[1]
+            return "Заявка не найдена.", menu(binding)[1]
         selected, error = set_context(binding=binding, request_id=request.pk)
         if error:
-            return error, menu()[1]
+            return error, menu(binding)[1]
         return card(selected) if kind == "c" else reply_prompt(selected)
     return "Недоступно.", None
 

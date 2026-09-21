@@ -38,6 +38,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
 
+from .attachments import MAX_ATTACHMENT_BYTES
+
 MAX_ERROR_TEXT = 200
 MAX_TEXT_CHARS = 4000
 MAX_CALLBACK_PAYLOAD = 256
@@ -347,7 +349,21 @@ class MaxBotApi:
         request = urllib.request.Request(url, method="GET")
         try:
             with self._upload_opener(request, timeout=self._timeout) as response:
-                content = response.read()
+                declared = response.headers.get("Content-Length")
+                try:
+                    if declared is not None and int(declared) > MAX_ATTACHMENT_BYTES:
+                        raise MaxApiError(413, "attachment.too_large", "attachment exceeds 10 MiB")
+                except ValueError:
+                    pass
+                content = bytearray()
+                while len(content) <= MAX_ATTACHMENT_BYTES:
+                    chunk = response.read(min(64 * 1024, MAX_ATTACHMENT_BYTES + 1 - len(content)))
+                    if not chunk:
+                        break
+                    content.extend(chunk)
+                if len(content) > MAX_ATTACHMENT_BYTES:
+                    raise MaxApiError(413, "attachment.too_large", "attachment exceeds 10 MiB")
+                content = bytes(content)
         except (OSError, TimeoutError) as exc:
             raise MaxNetworkError(type(exc).__name__, ambiguous=False) from None
         if not content:

@@ -40,7 +40,7 @@ from apps.operations.models import MaxBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
 from . import max_service as service
-from . import messaging, operator_console
+from . import messaging, operator_console, operator_replies
 from .attachments import (
     AttachmentError,
     AttachmentStorageError,
@@ -220,6 +220,7 @@ def _message_created(update, *, attachment_loader=None) -> str:
     operator_reply = operator_console.handle_text(
         provider="max", provider_user_id=user_id, external_id=str(mid),
         text=text if isinstance(text, str) else "",
+        provider_chat_id=chat_id,
         attachment=attachment,
     )
     if operator_reply is not None:
@@ -731,6 +732,7 @@ class MaxBotWorker:
                 continue
             body = (result or {}).get("body") or {}
             self._finish(row, MaxDeliveryStatus.SENT, mid=body.get("mid"))
+            operator_replies.confirm_responder_transition(row)
         return len(ids)
 
     def _update_pressed_message(self, row) -> bool:
@@ -783,11 +785,17 @@ class MaxBotWorker:
                     error="Сотрудник отключён",
                 )
                 continue
+            if not binding.delivery_chat_id:
+                operator_console.finish_notification(
+                    row, status=operator_console.OperatorNotification.Status.FAILED,
+                    error="Неизвестен диалог сотрудника MAX",
+                )
+                continue
             text, buttons = operator_console.notification_content(row)
-            self.pacer.wait(binding.provider_user_id)
+            self.pacer.wait(binding.delivery_chat_id)
             try:
                 result = self.api.send_message(
-                    chat_id=binding.provider_user_id, text=text, buttons=buttons
+                    chat_id=binding.delivery_chat_id, text=text, buttons=buttons
                 )
             except MaxError as exc:
                 operator_console.retry_notification(row, exc)
@@ -822,6 +830,7 @@ class MaxBotWorker:
 
     def start(self) -> None:
         self.acquire()
+        operator_console.invalidate_contexts("max")
         recovered = self.recover_interrupted_sends()
         if operator_console.enabled():
             recovered += operator_console.recover_interrupted_notifications("max")

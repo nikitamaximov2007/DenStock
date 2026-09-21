@@ -17,13 +17,9 @@
         {% csrf_token %}
         <input type="hidden" name="action" value="pair">
         <label class="field__label" for="staff-user">Сотрудник</label>
-        <select id="staff-user"
-                name="user_id"
-                required>{% for user in users %}<option value="{{ user.pk }}">{{ user }}</option>{% endfor %}</select>
+        <select id="staff-user" name="user_id" required>{% for user in users %}<option value="{{ user.pk }}">{{ user }}</option>{% endfor %}</select>
         <label class="field__label" for="staff-provider">Мессенджер</label>
-        <select id="staff-provider"
-                name="provider"
-                required>{% for value,label in providers %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+        <select id="staff-provider" name="provider" required>{% for value,label in providers %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
         <label class="field__label" for="staff-label">Подпись клиенту</label>
         <input id="staff-label"
                name="label"

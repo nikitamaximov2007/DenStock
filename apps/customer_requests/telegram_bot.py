@@ -31,7 +31,7 @@ from apps.customer_accounts import messenger_hooks as account_hooks
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
 
-from . import customer_ui, messaging, operator_bot, operator_console
+from . import customer_ui, messaging, operator_bot, operator_console, operator_replies
 from . import telegram_service as service
 from .attachments import (
     AttachmentError,
@@ -174,6 +174,7 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
         external_id=str(update_id),
         text=text,
         attachment=attachment,
+        provider_chat_id=chat_id,
     )
     if operator_reply is not None:
         return reply(*operator_reply)
@@ -675,6 +676,7 @@ class TelegramBotWorker:
                 row, "delivery_status", TelegramDeliveryStatus.SENT,
                 message_id=(result or {}).get("message_id"),
             )
+            operator_replies.confirm_responder_transition(row)
         return len(ids)
 
     def send_operator_deliveries(self, limit: int = BATCH) -> int:
@@ -802,6 +804,7 @@ class TelegramBotWorker:
 
     def start(self) -> None:
         self.acquire()
+        operator_console.invalidate_contexts("telegram")
         recovered = self.recover_interrupted_sends()
         if operator_console.enabled():
             recovered += operator_console.recover_interrupted_notifications("telegram")

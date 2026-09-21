@@ -12,6 +12,7 @@ import socket
 import pytest
 
 from apps.customer_requests.max_api import (
+    MAX_ATTACHMENT_BYTES,
     MaxApiError,
     MaxBotApi,
     MaxNetworkError,
@@ -21,6 +22,35 @@ from apps.customer_requests.max_api import (
 
 from .max_fake import FAKE_BOT_USERNAME, FAKE_MAX_TOKEN, FakeMaxServer
 
+
+class _DownloadResponse:
+    def __init__(self, body: bytes, declared: str | None = None, chunk: int = 65536):
+        self.body = body
+        self.offset = 0
+        self.chunk = chunk
+        self.headers = {"Content-Length": declared} if declared is not None else {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    def read(self, size=-1):
+        if self.offset >= len(self.body):
+            return b""
+        end = min(len(self.body), self.offset + (self.chunk if size < 0 else min(size, self.chunk)))
+        chunk = self.body[self.offset:end]
+        self.offset = end
+        return chunk
+
+
+def _download_api(response):
+    return MaxBotApi(
+        FAKE_MAX_TOKEN,
+        base_url="https://max.example",
+        opener=lambda _request, timeout: response,
+    )
 
 @pytest.fixture
 def server():
@@ -221,6 +251,29 @@ def test_oversized_text_is_refused_locally_without_a_call(server, api):
     with pytest.raises(MaxApiError):
         api.send_message(chat_id=5001, text="я" * 4001)
     assert server.requests == []
+
+
+def test_download_url_is_bounded_even_without_content_length():
+    response = _DownloadResponse(b"x" * (MAX_ATTACHMENT_BYTES + 1), declared=None, chunk=1024)
+    with pytest.raises(MaxApiError) as caught:
+        _download_api(response).download_url("https://files.max.example/a")
+    assert caught.value.status == 413
+    assert response.offset == MAX_ATTACHMENT_BYTES + 1
+
+
+def test_download_url_accepts_body_at_limit():
+    response = _DownloadResponse(b"x" * MAX_ATTACHMENT_BYTES, declared=None, chunk=1024 * 1024)
+    assert _download_api(response).download_url(
+        "https://files.max.example/a"
+    ) == b"x" * MAX_ATTACHMENT_BYTES
+
+
+def test_download_url_rejects_declared_oversize_before_reading():
+    response = _DownloadResponse(b"x", declared=str(MAX_ATTACHMENT_BYTES + 1))
+    with pytest.raises(MaxApiError) as caught:
+        _download_api(response).download_url("https://files.max.example/a")
+    assert caught.value.status == 413
+    assert response.offset == 0
 
 
 # Subscriptions and callbacks --------------------------------------------------------------

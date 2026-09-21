@@ -88,6 +88,10 @@ class CustomerRequest(models.Model):
     current_responder_control_source = models.CharField(
         "Канал текущего ответственного", max_length=12, blank=True
     )
+    pending_responder_label = models.CharField("Ожидаемый ответственный", max_length=80, blank=True)
+    pending_responder_control_source = models.CharField(
+        "Канал ожидаемого ответственного", max_length=12, blank=True
+    )
 
     class Meta:
         verbose_name = "Заявка клиента"
@@ -992,6 +996,9 @@ class StaffMessengerBinding(models.Model):
     )
     provider = models.CharField("Мессенджер", max_length=12, choices=Provider.choices)
     provider_user_id = models.BigIntegerField("ID пользователя мессенджера")
+    delivery_chat_id = models.BigIntegerField(
+        "Диалог для уведомлений", null=True, blank=True
+    )
     customer_visible_label = models.CharField("Подпись для клиента", max_length=80)
     is_active = models.BooleanField("Активна", default=True)
     operator_mode = models.BooleanField("Рабочий режим", default=False)

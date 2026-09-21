@@ -245,8 +245,33 @@ def _ensure_customer_visible_responder(
     previous = request.current_responder_label
     if previous == label:
         return
+    if request.pending_responder_label:
+        if request.pending_responder_label != label:
+            raise OperatorReplyError("Смена ответственного ещё не подтверждена доставкой.")
+        intro_key = f"intro:{request.pk}:{_dedupe_key(label)}"
+        model = MaxMessage if target.channel == CustomerRequest.Messenger.MAX else TelegramMessage
+        existing = model.objects.filter(dedupe_key=_dedupe_key(intro_key)).first()
+        if existing is not None and existing.delivery_status == (
+            MaxDeliveryStatus.UNCERTAIN if target.channel == CustomerRequest.Messenger.MAX
+            else TelegramDeliveryStatus.UNCERTAIN
+        ):
+            raise OperatorReplyError("Введение ожидает проверки доставки. Повтор не выполнен.")
+        if existing is None or existing.delivery_status != (
+            MaxDeliveryStatus.FAILED if target.channel == CustomerRequest.Messenger.MAX
+            else TelegramDeliveryStatus.FAILED
+        ):
+            raise OperatorReplyError("Введение ещё доставляется. Повторите после статуса доставки.")
+        request.pending_responder_label = ""
+        request.pending_responder_control_source = ""
+        request.save(update_fields=["pending_responder_label", "pending_responder_control_source"])
     text = f"Вам отвечает {label}." if not previous else f"К диалогу подключился {label}."
     key = f"intro:{request.pk}:{_dedupe_key(label)}"
+    if request.current_responder_label != label and request.pending_responder_label == "":
+        failed_model = (
+            MaxMessage if target.channel == CustomerRequest.Messenger.MAX else TelegramMessage
+        )
+        if failed_model.objects.filter(dedupe_key=_dedupe_key(key)).exists():
+            key = f"{key}:retry:{timezone.now().timestamp()}"
     if target.channel == CustomerRequest.Messenger.MAX:
         _queue_max_reply(
             target,
@@ -269,9 +294,33 @@ def _ensure_customer_visible_responder(
             operator_control_source=control_source,
             operator_author_label=label,
         )
-    request.current_responder_label = label[:80]
-    request.current_responder_control_source = control_source[:12]
-    request.save(update_fields=["current_responder_label", "current_responder_control_source"])
+    request.pending_responder_label = label[:80]
+    request.pending_responder_control_source = control_source[:12]
+    request.save(update_fields=["pending_responder_label", "pending_responder_control_source"])
+
+
+def confirm_responder_transition(message) -> None:
+    """Confirm an intro only after its transport reports SENT."""
+    if not str(message.dedupe_key or "").startswith("operator_reply:intro:"):
+        return
+    sent_status = (
+        MaxDeliveryStatus.SENT if isinstance(message, MaxMessage) else TelegramDeliveryStatus.SENT
+    )
+    if message.delivery_status != sent_status:
+        return
+    request = getattr(getattr(message, "conversation", None), "request", None)
+    if request is None or not request.pending_responder_label:
+        return
+    if request.pending_responder_label != message.operator_author_label:
+        return
+    request.current_responder_label = request.pending_responder_label
+    request.current_responder_control_source = request.pending_responder_control_source
+    request.pending_responder_label = ""
+    request.pending_responder_control_source = ""
+    request.save(update_fields=[
+        "current_responder_label", "current_responder_control_source",
+        "pending_responder_label", "pending_responder_control_source",
+    ])
 
 
 def _queue_max_reply(
