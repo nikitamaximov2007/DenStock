@@ -5,6 +5,10 @@ from apps.operations import backup
 
 class Command(BaseCommand):
     help = "Полный бэкап: БД + media + manifest.json в одном каталоге backups/<timestamp>/."
+    # A backup must remain available to recover from a separate optional
+    # integration misconfiguration. Its own integrity verification is run by
+    # the command and release wrapper.
+    requires_system_checks = []
 
     def add_arguments(self, parser):
         parser.add_argument(
