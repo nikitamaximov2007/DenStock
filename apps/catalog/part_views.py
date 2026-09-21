@@ -5,7 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -23,7 +23,11 @@ from apps.catalog_import.origin import (
 from apps.core.forms import ImageUploadForm
 from apps.core.images import add_image, deactivate_image, set_primary
 from apps.core.part_lookup import resolve_part_lookup
-from apps.inventory.presentation import attach_part_identity, with_part_identity
+from apps.inventory.presentation import (
+    attach_part_identity,
+    part_exact_number,
+    with_part_identity,
+)
 from apps.inventory.pricing import attach_effective_customer_price, effective_part_customer_prices
 
 from .forms import (
@@ -105,6 +109,7 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        ctx["part_exact_number"] = part_exact_number(self.object, default="")
         ctx["can_manage"] = self.request.user.can_manage_parts
         ctx["can_view_inventory"] = (
             self.request.user.can_manage_inventory or self.request.user.is_viewer
@@ -259,7 +264,20 @@ def number_add(request, pk):
 @require_POST
 def barcode_add(request, pk):
     _require_parts(request)
-    return _add_subrecord(request, get_object_or_404(PartType, pk=pk), PartBarcodeForm)
+    part = get_object_or_404(PartType, pk=pk)
+    form = PartBarcodeForm(request.POST)
+    if form.is_valid():
+        obj = form.save(commit=False)
+        obj.part = part
+        try:
+            obj.save()
+        except IntegrityError:
+            messages.error(request, "Этот штрихкод уже принадлежит другой детали.")
+        else:
+            messages.success(request, "Добавлено.")
+    else:
+        messages.error(request, "Не удалось добавить: проверьте значение (возможно, дубликат).")
+    return redirect("part_detail", pk=part.pk)
 
 
 @require_POST

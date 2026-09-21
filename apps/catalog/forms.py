@@ -14,6 +14,7 @@ from .models import (
     VehicleMake,
     VehicleModel,
     VehicleType,
+    normalize_barcode,
 )
 from .services import ManualPartError, assert_barcode_is_free, find_parts_by_article
 
@@ -135,6 +136,15 @@ class PartBarcodeForm(forms.ModelForm):
     class Meta:
         model = PartBarcode
         fields = ["value", "note"]
+
+    def clean_value(self):
+        value = normalize_barcode(self.cleaned_data["value"])
+        if value:
+            try:
+                assert_barcode_is_free(value)
+            except ManualPartError as exc:
+                raise ValidationError(str(exc)) from exc
+        return value
 
 
 class PartCompatibilityForm(forms.ModelForm):

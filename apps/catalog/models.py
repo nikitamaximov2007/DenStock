@@ -5,6 +5,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Value
+from django.db.models.functions import Lower
 
 from apps.core.models import BaseImage
 from apps.core.search_text import compact_search_text
@@ -13,6 +14,11 @@ from apps.core.search_text import compact_search_text
 def normalize_number(value: str) -> str:
     """Нормализация номера для поиска: без пробелов/дефисов/разделителей, в верхнем регистре."""
     return re.sub(r"[\s\-_./]", "", value or "").upper()
+
+
+def normalize_barcode(value: str) -> str:
+    """Remove scanner framing without changing barcode content."""
+    return str(value or "").replace("\r", "").replace("\n", "").strip()
 
 
 class Dictionary(models.Model):
@@ -338,9 +344,16 @@ class PartBarcode(models.Model):
         verbose_name = "Заводской штрихкод"
         verbose_name_plural = "Заводские штрихкоды"
         ordering = ["value"]
+        constraints = [
+            models.UniqueConstraint(Lower("value"), name="uniq_partbarcode_value_ci"),
+        ]
 
     def __str__(self) -> str:
         return self.value
+
+    def save(self, *args, **kwargs):
+        self.value = normalize_barcode(self.value)
+        return super().save(*args, **kwargs)
 
 
 class PartTypeImage(BaseImage):
