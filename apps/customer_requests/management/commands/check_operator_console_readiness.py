@@ -17,6 +17,8 @@ REQUIRED_MIGRATIONS = {
     "0017_operatorconsoleruntime_and_more",
     "0018_staffmessengerbinding_operator_mode",
     "0019_customerrequest_current_responder_control_source_and_more",
+    "0020_operator_context_safety",
+    "0021_two_provider_pairing_slots",
 }
 HEARTBEAT_MAX_AGE = timedelta(minutes=3)
 
@@ -50,10 +52,20 @@ class Command(BaseCommand):
             if missing:
                 blockers.append("не применены миграции: " + ", ".join(missing))
             else:
-                self.stdout.write("миграции 0017–0019: применены")
+                self.stdout.write("миграции 0017-0021: применены")
 
             active = StaffMessengerBinding.objects.select_related("user").filter(is_active=True)
             self.stdout.write(f"активных привязок: {active.count()}")
+            by_label = {}
+            for binding in active:
+                by_label.setdefault(binding.customer_visible_label, {})[binding.provider] = True
+            for label in ("Денис", "Рим", "Максим", "Владислав"):
+                status = by_label.get(label, {})
+                self.stdout.write(
+                    f"{label}: Telegram - "
+                    f"{'подключён' if status.get('telegram') else 'не подключён'}; "
+                    f"MAX - {'подключён' if status.get('max') else 'не подключён'}"
+                )
             for binding in active.order_by("customer_visible_label", "provider", "pk"):
                 state = "Telegram" if binding.provider == "telegram" else "MAX"
                 self.stdout.write(

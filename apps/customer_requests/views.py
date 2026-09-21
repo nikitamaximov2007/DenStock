@@ -157,10 +157,6 @@ def telegram_operator_role(request, pk):
 @login_required
 def staff_messenger_bindings(request):
     _require_admin(request)
-    if not operator_console.enabled():
-        # Staging code must not expose a staff-facing control surface before
-        # the owner explicitly enables the independently reviewed feature.
-        raise Http404
     token = None
     error = ""
     if request.method == "POST":
@@ -170,7 +166,6 @@ def staff_messenger_bindings(request):
             try:
                 token = operator_console.issue_pairing_token(
                     user=user,
-                    provider=request.POST.get("provider", ""),
                     label=request.POST.get("label", ""),
                     created_by=request.user,
                 )
@@ -180,11 +175,10 @@ def staff_messenger_bindings(request):
             binding = get_object_or_404(StaffMessengerBinding, pk=request.POST.get("binding_id"))
             if binding.is_active:
                 operator_console.revoke_binding(binding=binding)
-            else:
-                binding.is_active = True
-                binding.operator_mode = False
-                binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
-            messages.success(request, "Привязка обновлена.")
+                messages.success(
+                    request,
+                    "Привязка отозвана. Для повторного подключения создайте новый код.",
+                )
             return redirect("staff_messenger_bindings")
     return render(
         request,

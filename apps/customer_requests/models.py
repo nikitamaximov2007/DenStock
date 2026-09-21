@@ -1048,9 +1048,17 @@ class StaffMessengerPairingToken(models.Model):
         on_delete=models.PROTECT,
         related_name="staff_pairing_tokens",
     )
-    provider = models.CharField("Мессенджер", max_length=12, choices=Provider.choices)
+    provider = models.CharField(
+        "Мессенджер", max_length=12, choices=Provider.choices, blank=True, default=""
+    )
     customer_visible_label = models.CharField("Подпись для клиента", max_length=80)
     expires_at = models.DateTimeField("Истекает")
+    telegram_consumed_at = models.DateTimeField(
+        "Telegram подключён", null=True, blank=True
+    )
+    max_consumed_at = models.DateTimeField("MAX подключён", null=True, blank=True)
+    # Kept for backwards-compatible reading of tokens created by the original
+    # provider-specific implementation. New codes use the two slot fields.
     used_at = models.DateTimeField("Использован", null=True, blank=True)
     revoked_at = models.DateTimeField("Отозван", null=True, blank=True)
     created_at = models.DateTimeField("Создан", auto_now_add=True)

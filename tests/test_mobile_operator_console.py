@@ -1,9 +1,12 @@
+import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from io import StringIO
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.db import close_old_connections, connection, connections
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -18,6 +21,7 @@ from apps.customer_requests.models import (
     OperatorConversationContext,
     OperatorNotification,
     StaffMessengerBinding,
+    StaffMessengerPairingToken,
 )
 from apps.customer_requests.telegram_bot import TelegramBotWorker
 
@@ -25,22 +29,165 @@ from .test_telegram_customer_messaging import FakeBotApi, _operator, _request, b
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
-def test_pairing_is_one_time_and_provider_identity_is_explicit(db, django_user_model):
+def test_pairing_code_has_two_independent_provider_slots(db, django_user_model):
     user = _operator(django_user_model, 99001, username="mobile-denis").user
     token = operator_console.issue_pairing_token(
         user=user, provider="telegram", label="Денис", created_by=user
     )
+    row = StaffMessengerPairingToken.objects.get(user=user)
+    assert operator_console.is_pairing_code(token)
+    assert row.provider == ""
+    assert row.token_hash != token
+    assert row.telegram_consumed_at is None
+    assert row.max_consumed_at is None
 
     binding, message = operator_console.consume_pairing(
         provider="telegram", provider_user_id=99001, raw_token=token
     )
     assert binding.user_id == user.pk
     assert "Денис" in message
-    second, message = operator_console.consume_pairing(
-        provider="telegram", provider_user_id=99002, raw_token=token
+    row.refresh_from_db()
+    assert row.telegram_consumed_at is not None
+    assert row.max_consumed_at is None
+    max_binding, max_message = operator_console.consume_pairing(
+        provider="max", provider_user_id=99002, provider_chat_id=88002, raw_token=token
     )
-    assert second is None
-    assert "недействителен" in message
+    assert max_binding.user_id == user.pk
+    assert "Денис" in max_message
+    assert max_binding.delivery_chat_id == 88002
+    row.refresh_from_db()
+    assert row.max_consumed_at is not None
+    assert operator_console.consume_pairing(
+        provider="telegram", provider_user_id=99003, raw_token=token
+    ) == (None, None)
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
+def test_max_first_then_telegram_keeps_max_delivery_identity(db, django_user_model):
+    user = _operator(django_user_model, 99004, username="max-first").user
+    token = operator_console.issue_pairing_token(user=user, label="Максим", created_by=user)
+    max_binding, _ = operator_console.consume_pairing(
+        provider="max", provider_user_id=94004, provider_chat_id=88004, raw_token=token
+    )
+    telegram_binding, _ = operator_console.consume_pairing(
+        provider="telegram", provider_user_id=99005, raw_token=token
+    )
+    max_binding.refresh_from_db()
+    assert telegram_binding.user_id == user.pk
+    assert max_binding.provider_user_id == 94004
+    assert max_binding.delivery_chat_id == 88004
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
+def test_pairing_works_with_feature_off_but_operator_mode_does_not(db, django_user_model):
+    user = _operator(django_user_model, 99007, username="off-pair").user
+    token = operator_console.issue_pairing_token(user=user, label="Рим", created_by=user)
+    reply = operator_console.handle_text(
+        provider="telegram", provider_user_id=99007, external_id="pair-1", text=token
+    )
+    assert reply[0] == (
+        "Доступ сотрудника подключён.\n\nВы вошли как: Рим\n\n"
+        "Рабочий режим пока не активирован."
+    )
+    assert operator_console.handle_text(
+        provider="telegram", provider_user_id=99007, external_id="work", text="/work"
+    ) is None
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_invalid_expired_and_consumed_code_like_messages_are_silent(db, django_user_model):
+    user = _operator(django_user_model, 99008, username="silent-pair").user
+    token = operator_console.issue_pairing_token(user=user, label="Максим", created_by=user)
+    StaffMessengerPairingToken.objects.filter(user=user).update(
+        expires_at=timezone.now() - timedelta(minutes=1)
+    )
+    assert operator_console.handle_text(
+        provider="max", provider_user_id=94008, provider_chat_id=88008,
+        external_id="expired", text=token
+    ) is None
+    assert operator_console.handle_text(
+        provider="max", provider_user_id=94008, provider_chat_id=88008,
+        external_id="invalid", text="AAAA-BBBB-CCCC"
+    ) is None
+    assert operator_console.handle_text(
+        provider="max", provider_user_id=94008, provider_chat_id=88008,
+        external_id="normal", text="Здравствуйте"
+    ) is None
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_revoke_invalidates_unconsumed_slot_and_new_code_repairs(db, django_user_model):
+    user = _operator(django_user_model, 99009, username="revoke-pair").user
+    token = operator_console.issue_pairing_token(user=user, label="Владислав", created_by=user)
+    binding, _ = operator_console.consume_pairing(
+        provider="telegram", provider_user_id=99009, raw_token=token
+    )
+    operator_console.revoke_binding(binding=binding)
+    assert operator_console.consume_pairing(
+        provider="max", provider_user_id=94009, provider_chat_id=88009, raw_token=token
+    ) == (None, None)
+    replacement = operator_console.issue_pairing_token(
+        user=user, label="Владислав", created_by=user
+    )
+    repaired, _ = operator_console.consume_pairing(
+        provider="max", provider_user_id=94009, provider_chat_id=88009, raw_token=replacement
+    )
+    assert repaired.user_id == user.pk
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
+def test_telegram_and_max_slots_are_atomic_and_independent(django_user_model):
+    if connection.vendor != "postgresql":
+        pytest.skip("requires PostgreSQL row-lock semantics")
+    user = _operator(django_user_model, 99010, username="parallel-pair").user
+    token = operator_console.issue_pairing_token(user=user, label="Денис", created_by=user)
+
+    def consume(provider, provider_user_id, provider_chat_id=None):
+        close_old_connections()
+        try:
+            return operator_console.consume_pairing(
+                provider=provider,
+                provider_user_id=provider_user_id,
+                provider_chat_id=provider_chat_id,
+                raw_token=token,
+            )
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        telegram, max_result = list(
+            pool.map(
+                lambda args: consume(*args),
+                [("telegram", 99010, None), ("max", 94010, 88010)],
+            )
+        )
+    assert telegram[0] is not None
+    assert max_result[0] is not None
+
+    race_token = operator_console.issue_pairing_token(
+        user=_operator(django_user_model, 99013, username="parallel-race").user,
+        label="Денис",
+        created_by=user,
+    )
+
+    def consume_race(provider_id):
+        close_old_connections()
+        try:
+            return operator_console.consume_pairing(
+                provider="telegram", provider_user_id=provider_id, raw_token=race_token
+            )
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        attempts = list(
+            pool.map(
+                consume_race,
+                [99011, 99012],
+            )
+        )
+    assert sum(result[0] is not None for result in attempts) == 1
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
@@ -143,7 +290,7 @@ def test_revoked_max_binding_can_only_repair_to_same_employee(db, django_user_mo
         provider="max", provider_user_id=94001, provider_chat_id=999999999, raw_token=token
     )
     assert rejected is None
-    assert "уже привязан" in message
+    assert message is None
 
 
 @pytest.mark.parametrize(
@@ -458,13 +605,39 @@ def test_feature_off_does_not_create_console_state_or_author_metadata(db, django
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
-def test_feature_off_hides_staff_binding_control_surface(client, db, django_user_model):
+def test_feature_off_keeps_admin_pairing_control_surface_available(
+    client, db, django_user_model
+):
     admin = _operator(
         django_user_model, 99024, username="off-admin", superuser=True
     ).user
     client.force_login(admin)
 
-    assert client.get(reverse("staff_messenger_bindings")).status_code == 404
+    response = client.get(reverse("staff_messenger_bindings"))
+    assert response.status_code == 200
+    assert "Создать код привязки" in response.content.decode()
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_admin_generates_one_provider_neutral_code(client, db, django_user_model):
+    admin = _operator(
+        django_user_model, 99025, username="pair-admin", superuser=True
+    ).user
+    client.force_login(admin)
+    response = client.post(
+        reverse("staff_messenger_bindings"),
+        {"action": "pair", "user_id": admin.pk, "label": "Денис"},
+    )
+    assert response.status_code == 200
+    html = response.content.decode()
+    assert "Создать код привязки" in html
+    assert "staff-provider" not in html
+    token = StaffMessengerPairingToken.objects.get(user=admin)
+    assert token.provider == ""
+    assert token.telegram_consumed_at is None
+    assert token.max_consumed_at is None
+    code = re.search(r"[A-Z0-9]{4}(?:-[A-Z0-9]{4}){2}", html).group(0)
+    assert operator_console.is_pairing_code(code)
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)

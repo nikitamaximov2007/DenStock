@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import secrets
 from datetime import timedelta
 
@@ -24,6 +25,8 @@ from .models import (
 
 LIST_PAGE_SIZE = 8
 PAIRING_TTL = timedelta(minutes=10)
+PAIRING_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){2}$")
+PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 
 def enabled() -> bool:
@@ -55,60 +58,76 @@ def binding_for(provider: str, provider_user_id: int, *, lock: bool = False):
     return binding if binding and binding.user.can_manage_sales else None
 
 
-@transaction.atomic
-def issue_pairing_token(*, user, provider: str, label: str, created_by) -> str:
-    if provider not in StaffMessengerPairingToken.Provider.values:
-        raise ValueError("Неизвестный мессенджер.")
+def _new_pairing_code() -> str:
+    raw = "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(12))
+    return "-".join(raw[index : index + 4] for index in range(0, 12, 4))
+
+
+def is_pairing_code(value: str) -> bool:
+    return bool(PAIRING_CODE_RE.fullmatch((value or "").strip().upper()))
+
+
+def issue_pairing_token(*, user, provider: str | None = None, label: str, created_by) -> str:
+    # ``provider`` remains accepted for callers from the old admin UI, but a
+    # newly issued code is deliberately provider-neutral.
     label = (label or "").strip()
     if not label or len(label) > 80:
         raise ValueError("Укажите подпись сотрудника длиной до 80 символов.")
-    raw = secrets.token_urlsafe(32)
-    StaffMessengerPairingToken.objects.create(
-        token_hash=_hash(raw),
-        user=user,
-        provider=provider,
-        customer_visible_label=label,
-        expires_at=timezone.now() + PAIRING_TTL,
-        created_by=created_by,
-    )
-    return f"pair_{raw}"
+    raw = _new_pairing_code()
+    with transaction.atomic():
+        StaffMessengerPairingToken.objects.filter(
+            user=user, revoked_at__isnull=True
+        ).update(revoked_at=timezone.now())
+        StaffMessengerPairingToken.objects.create(
+            token_hash=_hash(raw),
+            user=user,
+            provider="",
+            customer_visible_label=label,
+            expires_at=timezone.now() + PAIRING_TTL,
+            created_by=created_by,
+        )
+    return raw
 
 
 @transaction.atomic
 def consume_pairing(
     *, provider: str, provider_user_id: int, raw_token: str, provider_chat_id: int | None = None
 ):
-    if not enabled():
-        return None, "Мобильная консоль отключена."
     if provider not in StaffMessengerPairingToken.Provider.values:
-        return None, "Код привязки недействителен."
+        return None, None
     token = (raw_token or "").strip()
-    token = token[5:] if token.startswith("pair_") else token
+    if not is_pairing_code(token):
+        return None, None
     row = (
         StaffMessengerPairingToken.objects.select_for_update()
         .select_related("user")
         .filter(
-            provider=provider,
             token_hash=_hash(token),
-            used_at__isnull=True,
             revoked_at__isnull=True,
             expires_at__gt=timezone.now(),
         )
         .first()
     )
-    if row is None or not row.user.is_active or not row.user.can_manage_sales:
-        return None, "Код привязки недействителен или истёк."
+    if (
+        row is None
+        or row.provider
+        or not row.user.is_active
+        or not row.user.can_manage_sales
+        or (provider == StaffMessengerBinding.Provider.TELEGRAM and row.telegram_consumed_at)
+        or (provider == StaffMessengerBinding.Provider.MAX and row.max_consumed_at)
+    ):
+        return None, None
     existing = StaffMessengerBinding.objects.filter(
         provider=provider, provider_user_id=provider_user_id
     ).first()
     if existing and existing.is_active:
-        return None, "Этот аккаунт мессенджера уже привязан."
+        return None, None
     if existing and existing.user_id != row.user_id:
-        return None, "Этот аккаунт уже принадлежит другому сотруднику."
+        return None, None
     if existing is None and StaffMessengerBinding.objects.filter(
         user=row.user, provider=provider
     ).exists():
-        return None, "У сотрудника уже есть привязка этого мессенджера."
+        return None, None
     if existing is not None:
         binding = existing
         binding.is_active = True
@@ -130,9 +149,25 @@ def consume_pairing(
             customer_visible_label=row.customer_visible_label,
             created_by=row.created_by,
         )
-    row.used_at = timezone.now()
-    row.save(update_fields=["used_at"])
-    return binding, f"Привязка завершена. Подпись для клиента: {binding.customer_visible_label}."
+    now = timezone.now()
+    slot = (
+        "telegram_consumed_at"
+        if provider == StaffMessengerBinding.Provider.TELEGRAM
+        else "max_consumed_at"
+    )
+    setattr(row, slot, now)
+    row.save(update_fields=[slot])
+    if enabled():
+        return binding, (
+            "Доступ сотрудника подключён.\n\n"
+            f"Вы вошли как: {binding.customer_visible_label}\n\n"
+            "Для перехода в рабочий режим используйте /work."
+        )
+    return binding, (
+        "Доступ сотрудника подключён.\n\n"
+        f"Вы вошли как: {binding.customer_visible_label}\n\n"
+        "Рабочий режим пока не активирован."
+    )
 
 
 def _context_is_fresh(context) -> bool:
@@ -281,6 +316,9 @@ def revoke_binding(*, binding):
     binding.operator_mode = False
     binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
     clear_context(binding=binding)
+    StaffMessengerPairingToken.objects.filter(
+        user=binding.user, revoked_at__isnull=True, used_at__isnull=True
+    ).update(revoked_at=timezone.now())
     return binding
 
 
@@ -352,18 +390,17 @@ def handle_text(
     provider_chat_id: int | None = None,
 ):
     """Return a staff reply, or ``None`` so ordinary customer mode continues."""
+    value = (text or "").strip()
+    if is_pairing_code(value):
+        _binding, reply = consume_pairing(
+            provider=provider, provider_user_id=provider_user_id, raw_token=value,
+            provider_chat_id=provider_chat_id,
+        )
+        return (reply, None) if reply else None
     if not enabled():
         return None
     binding = binding_for(provider, provider_user_id)
-    value = (text or "").strip()
     lower = value.lower()
-    if lower.startswith("/pair ") or lower.startswith("pair_"):
-        raw = value.split(maxsplit=1)[1] if lower.startswith("/pair ") else value
-        _binding, reply = consume_pairing(
-            provider=provider, provider_user_id=provider_user_id, raw_token=raw,
-            provider_chat_id=provider_chat_id,
-        )
-        return reply, menu(_binding)[1] if _binding else None
     if binding is None:
         return None
     if provider == StaffMessengerBinding.Provider.MAX and isinstance(provider_chat_id, int):

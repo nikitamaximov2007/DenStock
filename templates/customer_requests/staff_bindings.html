@@ -2,7 +2,7 @@
 {% block content %}
   <main class="page page--narrow">
     <h1>Мобильная консоль сотрудников</h1>
-    <p class="muted">Доступ включается только после явной одноразовой привязки Telegram или MAX.</p>
+    <p class="muted">Один код сотрудника можно использовать один раз в Telegram и один раз в MAX.</p>
     {% if token %}
       <div class="card">
         <strong>Одноразовый код (покажите сотруднику один раз):</strong>
@@ -12,27 +12,25 @@
     {% endif %}
     {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
     <section class="card">
-      <h2>Создать привязку</h2>
+      <h2>Создать код привязки</h2>
       <form method="post" class="staff-bindings-form">
         {% csrf_token %}
         <input type="hidden" name="action" value="pair">
         <label class="field__label" for="staff-user">Сотрудник</label>
         <select id="staff-user" name="user_id" required>{% for user in users %}<option value="{{ user.pk }}">{{ user }}</option>{% endfor %}</select>
-        <label class="field__label" for="staff-provider">Мессенджер</label>
-        <select id="staff-provider" name="provider" required>{% for value,label in providers %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
         <label class="field__label" for="staff-label">Подпись клиенту</label>
         <input id="staff-label"
                name="label"
                maxlength="80"
                placeholder="Денис"
                required>
-        <button class="btn btn--primary" type="submit">Создать одноразовый код</button>
+        <button class="btn btn--primary" type="submit">Создать код привязки</button>
       </form>
     </section>
     <section class="card">
-      <h2>Активные привязки</h2>
-      <ul>{% for binding in bindings %}<li>{{ binding.user }} · {{ binding.get_provider_display }} · {{ binding.customer_visible_label }} · {% if binding.is_active %}активна{% else %}отключена{% endif %}
-        <form method="post" class="inline-form">{% csrf_token %}<input type="hidden" name="action" value="toggle"><input type="hidden" name="binding_id" value="{{ binding.pk }}"><button class="btn btn--small btn--secondary" type="submit">{% if binding.is_active %}Отключить{% else %}Включить{% endif %}</button></form>
+      <h2>Статус привязок</h2>
+      <ul>{% for binding in bindings %}<li>{{ binding.user }} · {{ binding.get_provider_display }} · {{ binding.customer_visible_label }} · {% if binding.is_active %}подключена{% else %}отозвана{% endif %}
+        {% if binding.is_active %}<form method="post" class="inline-form">{% csrf_token %}<input type="hidden" name="action" value="toggle"><input type="hidden" name="binding_id" value="{{ binding.pk }}"><button class="btn btn--small btn--secondary" type="submit">Отозвать</button></form>{% endif %}
       </li>{% empty %}<li class="muted">Привязок пока нет.</li>{% endfor %}</ul>
   </section>
 </main>
