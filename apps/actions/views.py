@@ -330,7 +330,7 @@ def actions_perform(request):
         identity += f", артикул {action.part_number}"
     messages.success(
         request,
-        f"Действие проведено: {action.get_action_type_display()} — {identity}, "
+        f"Действие проведено: {action.get_action_type_display()} - {identity}, "
         f"{qty} шт, {location.short_code}",
     )
     return redirect(back)

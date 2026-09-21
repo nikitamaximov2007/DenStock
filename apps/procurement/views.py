@@ -118,7 +118,7 @@ class BatchUpdateView(ManageBatchesMixin, UpdateView):
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
         if not self.object.costs_editable:
-            messages.error(request, "Себестоимость зафиксирована — партию изменять нельзя.")
+            messages.error(request, "Себестоимость зафиксирована - партию изменять нельзя.")
             return redirect("batch_detail", pk=self.object.pk)
         return super().post(request, *args, **kwargs)
 

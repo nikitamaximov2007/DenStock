@@ -59,7 +59,7 @@ class StorageLocation(models.Model):
         ordering = ["sort_order", "code"]
 
     def __str__(self) -> str:
-        return f"{self.short_code} — {self.name}"
+        return f"{self.short_code} - {self.name}"
 
     def save(self, *args, **kwargs):
         if not self.barcode and self.code:

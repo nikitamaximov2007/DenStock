@@ -45,7 +45,7 @@ def create_inventory_count(*, scope_location=None, comment="", by=None) -> Inven
 
 def _ensure_draft(doc: InventoryCountDocument) -> None:
     if doc.status != InventoryCountDocument.Status.DRAFT:
-        raise StocktakingError("Документ уже проведён или отменён — изменять нельзя.")
+        raise StocktakingError("Документ уже проведён или отменён - изменять нельзя.")
 
 
 @transaction.atomic
@@ -113,7 +113,7 @@ def complete_inventory_count(doc, *, by=None) -> InventoryCountDocument:
     if not lines:
         raise StocktakingError("Нельзя провести пустую инвентаризацию.")
     if any(line.counted_quantity is None for line in lines):
-        raise StocktakingError("Не все строки сосчитаны — введите фактическое количество.")
+        raise StocktakingError("Не все строки сосчитаны - введите фактическое количество.")
 
     for line in lines:
         lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
@@ -123,7 +123,7 @@ def complete_inventory_count(doc, *, by=None) -> InventoryCountDocument:
         if delta < 0 and line.counted_quantity < active_reserved_for_lot(lot):
             raise StocktakingError(
                 f"Лот #{lot.pk}: факт {line.counted_quantity} меньше зарезервированного "
-                f"{active_reserved_for_lot(lot)} — сначала решите бронь."
+                f"{active_reserved_for_lot(lot)} - сначала решите бронь."
             )
         try:
             movement = adjust_stock_lot_quantity(

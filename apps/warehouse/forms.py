@@ -92,7 +92,7 @@ class StorageLocationForm(forms.ModelForm):
             "capacity",
         ]
         help_texts = {
-            "barcode": "Можно оставить пустым — будет создан автоматически как LOC:<код>.",
+            "barcode": "Можно оставить пустым - будет создан автоматически как LOC:<код>.",
         }
 
     def clean_code(self):

@@ -234,7 +234,7 @@ def return_create(request):
             except ReturnError as exc:
                 messages.error(request, str(exc))
             else:
-                messages.success(request, f"Возврат {ret.number} создан — добавьте позиции.")
+                messages.success(request, f"Возврат {ret.number} создан - добавьте позиции.")
                 return redirect("return_detail", pk=ret.pk)
     else:
         form = ReturnForm()
@@ -325,7 +325,7 @@ def return_complete(request, pk):
     except ReturnError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, f"Возврат {ret.number} проведён — остаток восстановлен.")
+        messages.success(request, f"Возврат {ret.number} проведён - остаток восстановлен.")
     return redirect("return_detail", pk=pk)
 
 

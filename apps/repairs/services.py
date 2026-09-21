@@ -100,7 +100,7 @@ def create_repair_order(
 
 def _ensure_draft(order: RepairOrder) -> None:
     if order.status != RepairOrder.Status.DRAFT:
-        raise RepairError("Заказ уже проведён или отменён — изменять состав нельзя.")
+        raise RepairError("Заказ уже проведён или отменён - изменять состав нельзя.")
 
 
 @transaction.atomic

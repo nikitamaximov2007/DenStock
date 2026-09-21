@@ -125,4 +125,4 @@ class CustomerPeriodPaymentAcknowledgement(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.customer}: {self.period_start}–{self.period_end}"
+        return f"{self.customer}: {self.period_start}-{self.period_end}"

@@ -846,14 +846,14 @@ def _move_block_reason(kind: str, obj) -> str:
     """
     if kind == "part_item":
         if obj.status == PartItem.Status.RECEIVING:
-            return "Экземпляр ещё не принят — используйте «Приёмку сканером»."
+            return "Экземпляр ещё не принят - используйте «Приёмку сканером»."
         if obj.status not in _MOVABLE_ITEM_STATUSES:
-            return f"Экземпляр в статусе «{obj.get_status_display()}» — перемещение недоступно."
+            return f"Экземпляр в статусе «{obj.get_status_display()}» - перемещение недоступно."
     elif kind == "stock_lot":
         if obj.status == StockLot.Status.RECEIVING:
-            return "Лот ещё не принят — используйте «Приёмку сканером»."
+            return "Лот ещё не принят - используйте «Приёмку сканером»."
         if obj.status not in _MOVABLE_LOT_STATUSES:
-            return f"Лот в статусе «{obj.get_status_display()}» — перемещение недоступно."
+            return f"Лот в статусе «{obj.get_status_display()}» - перемещение недоступно."
     return ""
 
 
@@ -1062,7 +1062,7 @@ def _confirm_move(request: HttpRequest, kind: str, obj, location) -> tuple[str, 
         return "error", reason
     # Та же ячейка — нейтральный no-op: сервис не вызываем, движение не создаётся.
     if _current_location_id(kind, obj) == location.pk:
-        return "info", "Объект уже в этой ячейке — перемещение не требуется."
+        return "info", "Объект уже в этой ячейке - перемещение не требуется."
     if not location.can_hold_stock():
         return "error", "Ячейка не предназначена для хранения остатка (неактивна или запрещена)."
     token = (request.POST.get("move_token") or "").strip() or secrets.token_urlsafe(24)

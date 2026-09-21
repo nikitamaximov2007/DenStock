@@ -101,11 +101,11 @@ def test_a_new_request_is_greeted_by_name_with_its_own_summary(part, messenger):
     greeting = texts[0]
     assert greeting.startswith(f"Добрый день! Ваша заявка №{request.reference} получена.")
     assert "Ваш заказ:" in greeting
-    assert "448 — РЕМЕНЬ ПРИВОДНОЙ" in greeting
+    assert "448 - РЕМЕНЬ ПРИВОДНОЙ" in greeting
     assert "2 шт. × 10 000 ₽ = 20 000 ₽" in greeting
     assert "Итого: 20 000 ₽" in greeting
     assert greeting.endswith(
-        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+        "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
     )
     # Nothing internal reaches the customer.
     conversation = getattr(request, f"{messenger}_conversation")

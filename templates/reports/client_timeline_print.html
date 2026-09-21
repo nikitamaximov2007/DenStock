@@ -14,7 +14,7 @@
   <body>
     <h1>PRO-STOR · История клиента</h1>
     <p><strong>Клиент:</strong> {{ customer_name }}</p>
-    <p><strong>Период:</strong> {% if period.all_time %}за всё время{% else %}{{ period.date_from|ru_date }} – {{ period.date_to|ru_date }}{% endif %}</p>
+    <p><strong>Период:</strong> {% if period.all_time %}за всё время{% else %}{{ period.date_from|ru_date }} - {{ period.date_to|ru_date }}{% endif %}</p>
     <p><strong>Итого с клиента:</strong> {{ total|money_int }} ₽</p>
     <table>
       <thead>

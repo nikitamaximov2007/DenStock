@@ -193,7 +193,7 @@ def create_reservation(
 
 def _ensure_open(reservation: Reservation) -> None:
     if reservation.status not in (Reservation.Status.DRAFT, Reservation.Status.ACTIVE):
-        raise ReservationError("Резерв закрыт — изменять состав нельзя.")
+        raise ReservationError("Резерв закрыт - изменять состав нельзя.")
 
 
 @transaction.atomic
@@ -327,7 +327,7 @@ def cancel_reservation(reservation, *, by=None, reason="") -> Reservation:
     if reservation.status in (Reservation.Status.CANCELED, Reservation.Status.EXPIRED):
         return reservation
     if reservation.status == Reservation.Status.CONVERTED:
-        raise ReservationError("Резерв уже продан — отмена недоступна.")
+        raise ReservationError("Резерв уже продан - отмена недоступна.")
     was_active = reservation.status == Reservation.Status.ACTIVE
     lines = list(reservation.lines.select_related("part_item", "stock_lot"))
     if was_active:
@@ -408,7 +408,7 @@ def create_sale(
 
 def _ensure_sale_draft(sale: Sale) -> None:
     if sale.status != Sale.Status.DRAFT:
-        raise SaleError("Продажа уже проведена — изменять нельзя.")
+        raise SaleError("Продажа уже проведена - изменять нельзя.")
 
 
 def _freeze_line_costs(line: SaleLine) -> None:

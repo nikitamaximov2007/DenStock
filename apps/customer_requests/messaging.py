@@ -19,13 +19,13 @@ from apps.core.templatetags.number_format import money_int, quantity_int
 from .models import CustomerRequest
 
 # The bot says this once per request conversation, never on later messages.
-CUSTOMER_ACK_TEXT = "Сообщение передано менеджеру PRO-STOR."
+CUSTOMER_ACK_TEXT = "Сообщение передано в сервис PRO-STOR."
 
 UNKNOWN_PRICE_TEXT = "цена уточняется"
 CONTINUATION_HEADING = "Ваш заказ (продолжение):"
 ORDER_HEADING = "Ваш заказ:"
 CLOSING_TEXT = (
-    "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+    "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
 )
 
 
@@ -56,10 +56,10 @@ def summary_line(line) -> tuple[str, Decimal | None]:
         unit = "шт."
     quantity = f"{quantity_int(line.quantity_requested)} {unit}".strip()
     if line.price_seen is None:
-        return f"{article} — {name}\n{quantity} — {UNKNOWN_PRICE_TEXT}", None
+        return f"{article} - {name}\n{quantity} - {UNKNOWN_PRICE_TEXT}", None
     total = line.quantity_requested * line.price_seen
     return (
-        f"{article} — {name}\n{quantity} × {money_int(line.price_seen)} ₽ = {money_int(total)} ₽",
+        f"{article} - {name}\n{quantity} × {money_int(line.price_seen)} ₽ = {money_int(total)} ₽",
         total,
     )
 
@@ -166,11 +166,11 @@ CLOSED_REQUEST_TEXT = "Заявка №{reference} уже закрыта.\nВы�
 CLOSED_REQUEST_NO_OTHER_TEXT = (
     "Заявка №{reference} уже закрыта.\n"
     "Других открытых заявок у вас сейчас нет. Оформите новую заявку на сайте "
-    "PRO-STOR, и менеджер ответит вам здесь."
+    "PRO-STOR, и сервис PRO-STOR ответит вам здесь."
 )
 NO_OPEN_REQUESTS_TEXT = (
     "Открытых заявок у вас сейчас нет. Оформите новую заявку на сайте PRO-STOR, "
-    "и менеджер ответит вам здесь."
+    "и сервис PRO-STOR ответит вам здесь."
 )
 
 

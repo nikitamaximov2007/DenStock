@@ -281,7 +281,7 @@ def write_off_complete(request, pk):
     except WriteOffError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, f"Документ {doc.number} проведён — детали списаны.")
+        messages.success(request, f"Документ {doc.number} проведён - детали списаны.")
     return redirect("write_off_detail", pk=pk)
 
 

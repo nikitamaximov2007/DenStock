@@ -246,7 +246,7 @@
                   {% if line.line_total is not None %}
                     {{ line.line_total|money_int }} ₽
                   {% else %}
-                    —
+                    -
                   {% endif %}
                 </td>
               </tr>
@@ -269,7 +269,7 @@
         </table>
       </div>
       <div class="card__body">
-        <p class="muted">Цена — та, что клиент видел при заявке. Заявка не фиксирует цену и не резервирует остаток.</p>
+        <p class="muted">Цена - та, что клиент видел при заявке. Заявка не фиксирует цену и не резервирует остаток.</p>
         {% if customer_request.comment and not customer_request.data_anonymized_at %}
           <p class="cr-order__comment">
             <strong>Комментарий клиента:</strong> {{ customer_request.comment }}

@@ -316,7 +316,7 @@ def test_analog_not_used_as_article(make_user, client, refs):
     PartNumber.objects.create(part=part, value="099-ANALOG", kind=KIND.ANALOG)
     cell = _article_cell(_list_html(client), "Только аналог")
     assert "099-ANALOG" not in cell
-    assert "—" in cell
+    assert "-" in cell
 
 
 def test_internal_ref_not_used_as_article(make_user, client, refs):
@@ -325,7 +325,7 @@ def test_internal_ref_not_used_as_article(make_user, client, refs):
     PartNumber.objects.create(part=part, value="INT-001", kind=KIND.INTERNAL_REF)
     cell = _article_cell(_list_html(client), "Только внутренний")
     assert "INT-001" not in cell
-    assert "—" in cell
+    assert "-" in cell
 
 
 def test_primary_internal_ref_does_not_beat_oem(make_user, client, refs):
@@ -342,7 +342,7 @@ def test_missing_article_shows_dash(make_user, client, refs):
     _admin(make_user, client)
     _make_part(refs, name="Совсем без номера")
     cell = _article_cell(_list_html(client), "Совсем без номера")
-    assert "—" in cell
+    assert "-" in cell
     assert "code-pill" not in cell
     assert "None" not in cell
 

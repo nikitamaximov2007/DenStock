@@ -578,4 +578,4 @@ class PartAnalog(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.analog} — аналог {self.original}"
+        return f"{self.analog} - аналог {self.original}"

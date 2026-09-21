@@ -43,7 +43,7 @@ EPHEMERAL_RETENTION = timedelta(days=1)
 LINKED_TEXT = customer_ui.GREETING_TEXT
 LINK_INVALID_TEXT = (
     "Ссылка недействительна или устарела. Откройте ссылку со страницы заявки ещё раз. "
-    "Если ссылки нет, менеджер свяжется с вами по телефону."
+    "Если ссылки нет, сервис PRO-STOR свяжется с Вами по телефону."
 )
 UNLINKED_GREETING = customer_ui.UNLINKED_TEXT
 LINKED_GREETING = customer_ui.LINKED_HINT

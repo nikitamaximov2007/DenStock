@@ -112,6 +112,6 @@ class AdjustLotForm(forms.Form):
 
     delta = forms.DecimalField(
         max_digits=12, decimal_places=3, label="Изменение (±)",
-        help_text="Положительное — приход, отрицательное — расход.",
+        help_text="Положительное - приход, отрицательное - расход.",
     )
     comment = forms.CharField(max_length=255, required=True, label="Причина")

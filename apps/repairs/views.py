@@ -339,7 +339,7 @@ def repair_order_complete(request, pk):
     except RepairError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, f"Заказ {order.number} проведён — детали выданы в ремонт.")
+        messages.success(request, f"Заказ {order.number} проведён - детали выданы в ремонт.")
     return redirect("repair_order_detail", pk=pk)
 
 

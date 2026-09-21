@@ -7,7 +7,7 @@
 {% block content %}
   <div class="page-head">
     <h1 class="page-head__title">Отправить заявку</h1>
-    <p class="page-head__meta">Оплата не нужна. Заявка не резервирует детали: менеджер свяжется с вами и подтвердит наличие, цену и срок.</p>
+    <p class="page-head__meta">Оплата не нужна. Заявка не резервирует детали: сервис PRO-STOR свяжется с Вами и подтвердит наличие, цену и срок.</p>
   </div>
   {% if error %}<p id="request-error" class="notice notice--error" role="alert">{{ error }}</p>{% endif %}
   <div class="request-layout">
@@ -120,7 +120,7 @@
           <strong>{{ cart.total|rub }}</strong>
         </p>
       {% endif %}
-      <p class="cart-summary__fine">Цена и наличие меняются вместе со складом. Окончательные цену и срок подтвердит менеджер.</p>
+      <p class="cart-summary__fine">Цена и наличие меняются вместе со складом. Окончательные цену и срок подтвердит сервис PRO-STOR.</p>
       <p>
         <a href="{% url 'public_catalog_cart' %}">Изменить корзину</a>
       </p>
