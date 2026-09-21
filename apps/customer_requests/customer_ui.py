@@ -41,7 +41,7 @@ CURRENT_MARK = "✓"
 
 GREETING_TEXT = "Добрый день! Ваша заявка №{reference} получена."
 GREETING_CLOSING = (
-    "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+    "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
 )
 SELECTED_TEXT = "Выбрана заявка №{reference}."
 SELECTOR_HEADING = "Мои активные заявки:"
@@ -50,7 +50,7 @@ SELECTOR_HINT = "Выберите заявку, по которой хотите
 NO_ACTIVE_REQUESTS_TEXT = messaging.NO_OPEN_REQUESTS_TEXT
 UNKNOWN_PRICE_TEXT = "Цена уточняется"
 PARTIAL_PRICE_SUFFIX = "цена части позиций уточняется"
-LINKED_HINT = "Напишите сообщение — менеджер PRO-STOR ответит вам здесь."
+LINKED_HINT = "Напишите сообщение - сервис PRO-STOR ответит Вам здесь."
 
 
 def plural(number: int, one: str, few: str, many: str) -> str:
@@ -234,7 +234,7 @@ def selector_view(conversations, *, active_id, linked_any: bool = True) -> Selec
 
 
 UNLINKED_TEXT = (
-    "Это бот PRO-STOR для связи по заявкам. Чтобы написать менеджеру, оформите заявку "
+    "Это бот PRO-STOR для связи по заявкам. Чтобы написать в сервис PRO-STOR, оформите заявку "
     "на сайте PRO-STOR и откройте ссылку из неё."
 )
 

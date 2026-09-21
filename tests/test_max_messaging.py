@@ -635,7 +635,7 @@ def test_summary_quotes_request_time_prices_and_the_total(client, part, worker, 
 
     summary = server.texts_to(CUSTOMER_CHAT)[0]
     assert "Ваш заказ:" in summary
-    assert "417300571 — РЕМЕНЬ ВАРИАТОРА" in summary
+    assert "417300571 - РЕМЕНЬ ВАРИАТОРА" in summary
     assert "2 шт. × 12 500 ₽ = 25 000 ₽" in summary
     assert "Итого: 25 000 ₽" in summary
     assert "99 999" not in summary

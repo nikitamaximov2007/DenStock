@@ -167,7 +167,7 @@
     {% for c in compatibilities %}
       <li>
         {{ c.vehicle_model }}
-        {% if c.year_from or c.year_to %}({{ c.year_from|default:"…" }}–{{ c.year_to|default:"…" }}){% endif %}
+        {% if c.year_from or c.year_to %}({{ c.year_from|default:"…" }}-{{ c.year_to|default:"…" }}){% endif %}
         {% if can_manage %}
           <form method="post"
                 action="{% url 'part_compat_delete' c.pk %}"

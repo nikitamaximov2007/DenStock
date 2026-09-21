@@ -234,7 +234,7 @@ OUTCOME_TEXT = {
     Outcome.WRONG_CODE: "Код не подошёл. Проверьте сообщение в мессенджере и попробуйте ещё раз.",
     Outcome.LOCKED: "Слишком много неверных кодов. Начните вход заново.",
     Outcome.EXPIRED: "Время на вход истекло. Начните заново.",
-    Outcome.NOT_READY: "Сначала откройте мессенджер по ссылке — туда придёт код.",
+    Outcome.NOT_READY: "Сначала откройте мессенджер по ссылке - туда придёт код.",
     Outcome.CONFLICT: "Этот мессенджер уже подключён к другому кабинету.",
     Outcome.DEACTIVATED: "Этот кабинет отключён. Обратитесь в PRO-STOR.",
     Outcome.INVALID: "Вход не начат или уже завершён. Начните заново.",
@@ -565,7 +565,7 @@ def unlink_identity(account, provider: str) -> None:
             return
         if provider in LOGIN_PROVIDERS:
             raise AccountError(
-                "MAX — единственный способ входа в кабинет, отключить его нельзя."
+                "MAX - единственный способ входа в кабинет, отключить его нельзя."
             )
         identity.delete()
         _event(account, CustomerAccountEvent.Kind.IDENTITY_UNLINKED, provider=provider)

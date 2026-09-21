@@ -415,7 +415,7 @@ def test_perform_via_view_and_success_message(client, make_user, data):
     )
     text = resp.content.decode()
     assert (
-        "Действие проведено: Продажа — Болт одноместный, артикул 700100, "
+        "Действие проведено: Продажа - Болт одноместный, артикул 700100, "
         "1 шт, S01-L02-D03-C08"
     ) in text
     data["single_lot"].refresh_from_db()

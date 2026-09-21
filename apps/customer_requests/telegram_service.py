@@ -35,13 +35,13 @@ HEX_RE = re.compile(r"^[0-9a-f]{32}$")
 LINKED_TEXT = customer_ui.GREETING_TEXT
 LINK_INVALID_TEXT = (
     "Ссылка недействительна или устарела. Откройте ссылку со страницы заявки ещё раз. "
-    "Если ссылки нет, менеджер свяжется с вами по телефону."
+    "Если ссылки нет, сервис PRO-STOR свяжется с Вами по телефону."
 )
 UNLINKED_GREETING = customer_ui.UNLINKED_TEXT
 LINKED_GREETING = customer_ui.LINKED_HINT
 MEDIA_NOT_SUPPORTED_TEXT = (
-    "Пока бот принимает только текст. Опишите деталь словами или отправьте фото менеджеру, "
-    "когда он ответит."
+    "Пока бот принимает только текст. Опишите деталь словами или отправьте фото в сервис PRO-STOR, "
+    "когда получите ответ."
 )
 CUSTOMER_ACK_TEXT = messaging.CUSTOMER_ACK_TEXT
 OPERATOR_HELP_TEXT = (

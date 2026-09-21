@@ -356,6 +356,8 @@ def test_the_cart_leads_to_the_form_and_the_form_is_accessible(public_client, pu
     assert 'class="hp" aria-hidden="true"' in body and 'tabindex="-1"' in body
     assert "юридической проверки" not in body
     assert "—" not in body
+    assert "–" not in body
+    assert "сервис PRO-STOR свяжется с Вами" in body
 
 
 def test_an_empty_cart_has_no_request_form(public_client, public_catalog):

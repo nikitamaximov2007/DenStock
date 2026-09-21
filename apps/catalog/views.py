@@ -254,9 +254,9 @@ class VehicleModelListView(DirectoryListView):
         return super().get_queryset().select_related("vehicle_make")
 
     def row_cells(self, obj):
-        years = "—"
+        years = "-"
         if obj.year_from or obj.year_to:
-            years = f"{obj.year_from or '…'}–{obj.year_to or '…'}"
+            years = f"{obj.year_from or '…'}-{obj.year_to or '…'}"
         return [obj.name, str(obj.vehicle_make), years]
 
 

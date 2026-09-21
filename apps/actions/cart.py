@@ -121,7 +121,7 @@ def _draft_status(cart):
 
 def _ensure_draft(cart) -> None:
     if cart.status != _draft_status(cart):
-        raise ActionError("Документ уже проведён или отменён — корзину менять нельзя.")
+        raise ActionError("Документ уже проведён или отменён - корзину менять нельзя.")
 
 
 def _lines(cart):
@@ -403,7 +403,7 @@ def complete_cart(
     if replay:
         return replay
     if locked.status != model.Status.DRAFT:
-        raise ActionError("Документ уже проведён или отменён — провести повторно нельзя.")
+        raise ActionError("Документ уже проведён или отменён - провести повторно нельзя.")
     customer_comment = (customer_comment or "").strip()
     customer = customer if customer is not None else locked.customer
     if customer is not None:

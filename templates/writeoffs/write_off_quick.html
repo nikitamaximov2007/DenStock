@@ -58,7 +58,7 @@
         {% for candidate in lookup_candidates %}
           <li>
             <a href="?q={{ q|urlencode }}&amp;part_id={{ candidate.part.pk }}">
-              {{ candidate.part.name }} · {{ candidate.russian_name|default:"—" }} · {{ candidate.exact_number|default:"—" }} · {{ candidate.manufacturer }} · доступно {{ candidate.available|quantity_int }}
+              {{ candidate.part.name }} · {{ candidate.russian_name|default:"-" }} · {{ candidate.exact_number|default:"-" }} · {{ candidate.manufacturer }} · доступно {{ candidate.available|quantity_int }}
             </a>
           </li>
         {% endfor %}

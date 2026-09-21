@@ -28,7 +28,7 @@ def compute_landed_cost(batch: Batch) -> dict:
     """
     lines = list(batch.lines.all())
     if not lines:
-        raise LandedCostError("В партии нет строк — нечего рассчитывать.")
+        raise LandedCostError("В партии нет строк - нечего рассчитывать.")
 
     extra = money(batch.total_extra_cost)
     method = batch.cost_allocation_method

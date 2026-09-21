@@ -12,7 +12,7 @@
       {% if result.total %}
         <p class="page-head__meta">
           Найдено: {{ result.total }}
-          {% if result.pages > 1 %}· показаны {{ result.first_index }}–{{ result.last_index }}{% endif %}
+          {% if result.pages > 1 %}· показаны {{ result.first_index }}-{{ result.last_index }}{% endif %}
         </p>
         {% if result.truncated %}
           <p class="page-head__meta">Совпадений очень много: показаны лучшие. Уточните запрос, чтобы увидеть остальные.</p>
@@ -32,7 +32,7 @@
       <p class="empty__title">По запросу «{{ query }}» ничего не нашлось</p>
       <ul class="empty__tips">
         <li>Проверьте артикул: цифры и буквы, без лишних символов.</li>
-        <li>Попробуйте часть артикула, например первые 4–6 символов.</li>
+        <li>Попробуйте часть артикула, например первые 4-6 символов.</li>
         <li>Название пишите так, как в каталоге производителя, обычно по-английски.</li>
       </ul>
     </div>

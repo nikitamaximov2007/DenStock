@@ -84,7 +84,7 @@ def _validate_line(line: BatchLine) -> None:
         raise InventoryError("Экземпляры создаются только для поштучных деталей.")
     if not line.batch.cost_finalized:
         raise InventoryError(
-            "Себестоимость партии не зафиксирована — создание экземпляров запрещено."
+            "Себестоимость партии не зафиксирована - создание экземпляров запрещено."
         )
     if line.quantity != line.quantity.to_integral_value():
         raise InventoryError("Для поштучной строки количество должно быть целым.")
@@ -172,7 +172,7 @@ def _validate_bulk_line(line: BatchLine) -> None:
         raise InventoryError("Лоты создаются только для количественных деталей.")
     if not line.batch.cost_finalized:
         raise InventoryError(
-            "Себестоимость партии не зафиксирована — создание лотов запрещено."
+            "Себестоимость партии не зафиксирована - создание лотов запрещено."
         )
 
 
@@ -478,7 +478,7 @@ def move_part_item(
             raise InventoryError("Зарезервированный экземпляр нельзя переместить.")
     from_location = item.current_location
     if from_location is None:
-        raise InventoryError("Экземпляр не размещён — сначала проведите приёмку.")
+        raise InventoryError("Экземпляр не размещён - сначала проведите приёмку.")
     if from_location.pk == to_location.pk:
         raise InventoryError("Экземпляр уже в этой ячейке.")
     item.current_location = to_location
@@ -517,7 +517,7 @@ def move_stock_lot(lot: StockLot, to_location, *, by=None, comment="") -> StockL
     )
     if clash:
         raise InventoryError(
-            "В этой ячейке уже есть лот этой строки; слияние лотов — будущий слой."
+            "В этой ячейке уже есть лот этой строки; слияние лотов - будущий слой."
         )
     lot.location = to_location
     lot.save(update_fields=["location", "updated_at"])
@@ -1452,7 +1452,7 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
         else:
             raise InventoryError(
                 f"В ячейке {to_location.code} лот этой строки в статусе "
-                f"«{lot.get_status_display()}» — возврат недоступен."
+                f"«{lot.get_status_display()}» - возврат недоступен."
             )
     _record_movement(
         lot, StockMovement.MovementType.RETURN_LOT, quantity,

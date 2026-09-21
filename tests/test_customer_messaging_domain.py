@@ -80,11 +80,14 @@ def test_a_single_line_request_reads_as_one_priced_order():
     assert len(messages) == 1
     # The opening comes from the policy the transport passes in.
     assert messages[0].startswith("Готово. FAKE подключён к заявке ABCD1234.")
-    assert "A1 — ДЕТАЛЬ\n1 шт. × 88 ₽ = 88 ₽" in messages[0]
+    assert "A1 - ДЕТАЛЬ\n1 шт. × 88 ₽ = 88 ₽" in messages[0]
     assert "Итого: 88 ₽" in messages[0]
     assert messages[0].endswith(
-        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+        "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
     )
+    assert "менеджер" not in messages[0].lower()
+    assert "—" not in messages[0]
+    assert "–" not in messages[0]
 
 
 def test_every_line_of_a_multi_line_request_is_present_with_its_own_total():
@@ -95,8 +98,8 @@ def test_every_line_of_a_multi_line_request_is_present_with_its_own_total():
 
     summary = "\n".join(messaging.request_summary_messages(request, FAKE_POLICY))
 
-    assert "390402300 — RIVET_POP\n1 шт. × 88 ₽ = 88 ₽" in summary
-    assert "421000667 — ВТОРАЯ\n2 шт. × 45 000 ₽ = 90 000 ₽" in summary
+    assert "390402300 - RIVET_POP\n1 шт. × 88 ₽ = 88 ₽" in summary
+    assert "421000667 - ВТОРАЯ\n2 шт. × 45 000 ₽ = 90 000 ₽" in summary
     assert "Итого: 90 088 ₽" in summary
 
 
@@ -107,7 +110,7 @@ def test_the_summary_quotes_the_price_the_customer_was_shown(part, db):
 
     summary = "\n".join(messaging.request_summary_messages(request, FAKE_POLICY))
 
-    assert "448 — РЕМЕНЬ ПРИВОДНОЙ" in summary
+    assert "448 - РЕМЕНЬ ПРИВОДНОЙ" in summary
     assert "2 шт. × 10 000 ₽ = 20 000 ₽" in summary
     assert "999 999" not in summary
 
@@ -117,7 +120,7 @@ def test_an_unknown_price_is_said_plainly_and_never_totalled_as_zero():
 
     summary = "\n".join(messaging.request_summary_messages(request, FAKE_POLICY))
 
-    assert "1 шт. — цена уточняется" in summary
+    assert "1 шт. - цена уточняется" in summary
     assert "Итого:" not in summary
     assert "0 ₽" not in summary
 
@@ -142,7 +145,7 @@ def test_a_long_order_is_split_between_whole_lines_within_the_transports_limit()
     assert all(len(message) <= 420 for message in messages)
     assert all(sum(f"A{i:02d}" in message for message in messages) == 1 for i in range(12))
     assert messages[-1].endswith(
-        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+        "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
     )
 
 
@@ -259,7 +262,7 @@ def test_a_cancelled_request_still_renders_its_order_for_history(part, db):
 
     summary = "\n".join(messaging.request_summary_messages(request, FAKE_POLICY))
 
-    assert "448 — РЕМЕНЬ ПРИВОДНОЙ" in summary
+    assert "448 - РЕМЕНЬ ПРИВОДНОЙ" in summary
     assert CustomerRequestLine.objects.filter(request=request).count() == 1
 
 

@@ -601,5 +601,5 @@ def sale_from_reservation(request, pk):
     except SaleError as exc:
         messages.error(request, str(exc))
         return redirect("reservation_detail", pk=pk)
-    messages.success(request, f"Создана продажа {sale.number} из резерва — проверьте цены.")
+        messages.success(request, f"Создана продажа {sale.number} из резерва - проверьте цены.")
     return redirect("sale_detail", pk=sale.pk)

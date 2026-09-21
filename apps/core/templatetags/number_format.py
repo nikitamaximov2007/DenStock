@@ -23,7 +23,7 @@ def money_int(value):
     """Display final ruble amounts as whole rubles using ROUND_HALF_UP."""
     decimal = _decimal(value)
     if decimal is None:
-        return "—"
+        return "-"
     if decimal is False:
         return value
     return _group(decimal.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
@@ -31,7 +31,7 @@ def money_int(value):
 
 @register.filter
 def money_rub(value):
-    return f"{money_int(value)} ₽" if value not in (None, "") else "—"
+    return f"{money_int(value)} ₽" if value not in (None, "") else "-"
 
 
 @register.filter
@@ -45,7 +45,7 @@ def quantity_int(value):
     """Display quantities compactly without changing fractional values."""
     decimal = _decimal(value)
     if decimal is None:
-        return "—"
+        return "-"
     if decimal is False:
         return value
     if decimal == decimal.to_integral_value():

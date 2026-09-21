@@ -157,14 +157,14 @@
                   {% if item.row.unit_price is not None %}
                     {{ item.row.unit_price|money_int }} ₽
                   {% else %}
-                    <span class="muted">—</span>
+                    <span class="muted">-</span>
                   {% endif %}
                 </td>
                 <td class="num--money">
                   {% if item.row.total_price is not None %}
                     {{ item.row.total_price|money_int }} ₽
                   {% else %}
-                    <span class="muted">—</span>
+                    <span class="muted">-</span>
                   {% endif %}
                 </td>
                 <td>
@@ -270,9 +270,9 @@
                       <button type="submit" class="btn btn--small btn--secondary">{{ row.candidate.part.name }}</button>
                     </form>
                   </td>
-                  <td>{{ row.candidate.russian_name|default:"—" }}</td>
-                  <td><span class="code-pill">{{ row.candidate.exact_number|default:"—" }}</span></td>
-                  <td>{{ row.candidate.manufacturer|default:"—" }}</td>
+                  <td>{{ row.candidate.russian_name|default:"-" }}</td>
+                  <td><span class="code-pill">{{ row.candidate.exact_number|default:"-" }}</span></td>
+                  <td>{{ row.candidate.manufacturer|default:"-" }}</td>
                   <td class="num--qty">{{ row.candidate.available|quantity_int }}</td>
                 </tr>
               {% endfor %}

@@ -200,7 +200,7 @@ def item_create(request, line_pk):
         form = PartItemCreateForm()
     return render(
         request, "inventory/item_form.html",
-        {"form": form, "line": line, "title": f"Экземпляр — {line.part_type}"},
+        {"form": form, "line": line, "title": f"Экземпляр - {line.part_type}"},
     )
 
 
@@ -227,7 +227,7 @@ def item_bulk_create(request, line_pk):
         form = PartItemBulkForm()
     return render(
         request, "inventory/item_bulk_form.html",
-        {"form": form, "line": line, "title": f"Массовое создание — {line.part_type}"},
+        {"form": form, "line": line, "title": f"Массовое создание - {line.part_type}"},
     )
 
 
@@ -381,7 +381,7 @@ def lot_create(request, line_pk):
     return render(
         request, "inventory/lot_form.html",
         {"form": form, "line": line, "remaining": remaining_qty(line),
-         "title": f"Лот — {line.part_type}"},
+         "title": f"Лот - {line.part_type}"},
     )
 
 
@@ -410,7 +410,7 @@ def lot_create_remaining(request, line_pk):
     return render(
         request, "inventory/lot_form.html",
         {"form": form, "line": line, "remaining": remaining_qty(line),
-         "title": f"Лот на остаток — {line.part_type}"},
+         "title": f"Лот на остаток - {line.part_type}"},
     )
 
 

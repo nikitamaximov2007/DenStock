@@ -409,7 +409,7 @@ def test_deep_link_binds_numeric_chat_and_confirms_once(part, worker, api, opera
     )
     assert "Ваш заказ:" in confirmations[0]
     assert "Итого: 20 000 ₽" in confirmations[0]
-    assert "Если у вас есть вопросы по заявке, напишите нам здесь" in confirmations[0]
+    assert "Если у Вас есть вопросы по заявке, напишите нам здесь" in confirmations[0]
     for operator in operators:
         assert any(
             f"Клиент подключил Telegram к заявке №{request.reference}" in text
@@ -510,7 +510,7 @@ def test_start_summary_uses_immutable_request_line_snapshots(part, worker, api):
 
     summary = "\n".join(api.texts_to(CUSTOMER))
     assert request.reference in summary
-    assert "448 — РЕМЕНЬ ПРИВОДНОЙ" in summary
+    assert "448 - РЕМЕНЬ ПРИВОДНОЙ" in summary
     assert "2 шт. × 10 000 ₽ = 20 000 ₽" in summary
     assert "Итого: 20 000 ₽" in summary
     assert str(line.price_seen) not in summary  # never Decimal(...) presentation
@@ -545,8 +545,8 @@ def test_start_summary_is_honest_for_unknown_and_mixed_prices(part, worker, api)
     link(worker, api, request)
 
     summary = "\n".join(api.texts_to(CUSTOMER))
-    assert "448 — РЕМЕНЬ ПРИВОДНОЙ\n2 шт. — цена уточняется" in summary
-    assert "421000667 — ВТОРАЯ ДЕТАЛЬ" in summary
+    assert "448 - РЕМЕНЬ ПРИВОДНОЙ\n2 шт. - цена уточняется" in summary
+    assert "421000667 - ВТОРАЯ ДЕТАЛЬ" in summary
     assert "2 шт. × 45 000 ₽ = 90 000 ₽" in summary
     assert "Итого по позициям с известной ценой: 90 000 ₽" in summary
     assert "Есть позиции, цена которых уточняется." in summary
@@ -589,7 +589,7 @@ def test_long_start_summary_splits_only_between_complete_lines(monkeypatch):
     assert all(len(message) <= 420 for message in messages)
     assert all(sum(f"A{i:02d}" in message for message in messages) == 1 for i in range(12))
     assert messages[-1].endswith(
-        "Если у вас есть вопросы по заявке, напишите нам здесь — менеджер ответит вам."
+        "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
     )
 
 

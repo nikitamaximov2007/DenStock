@@ -88,7 +88,7 @@ def _item_result(item: PartItem, message: str) -> ScanResult:
 def _location_result(loc: StorageLocation, *, is_alias=False) -> ScanResult:
     return ScanResult(
         status="found", type="location", id=loc.pk,
-        label=f"Ячейка {loc.code} — {loc.name}",
+        label=f"Ячейка {loc.code} - {loc.name}",
         url=reverse("location_detail", args=[loc.pk]),
         message=(
             f"Старый адрес распознан. Текущий адрес: {loc.code}."
@@ -217,7 +217,7 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
     if len(items) > 1:
         return ScanResult(
             status="ambiguous",
-            message="Серийный номер найден у нескольких экземпляров — уточните.",
+            message="Серийный номер найден у нескольких экземпляров - уточните.",
             candidates=[_item_candidate(i) for i in items],
         )
 

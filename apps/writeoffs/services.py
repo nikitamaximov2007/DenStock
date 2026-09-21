@@ -193,7 +193,7 @@ def quick_write_off(
 
 def _ensure_draft(doc: WriteOffDocument) -> None:
     if doc.status != WriteOffDocument.Status.DRAFT:
-        raise WriteOffError("Документ уже проведён или отменён — изменять состав нельзя.")
+        raise WriteOffError("Документ уже проведён или отменён - изменять состав нельзя.")
 
 
 @transaction.atomic
@@ -207,7 +207,7 @@ def add_part_item_to_write_off(doc, item, *, note="", by=None) -> WriteOffLine:
     if WriteOffLine.objects.filter(write_off=doc, part_item=item).exists():
         raise WriteOffError("Этот экземпляр уже в этом документе.")
     if is_part_item_reserved(item):
-        raise WriteOffError("Экземпляр зарезервирован — сначала снимите бронь.")
+        raise WriteOffError("Экземпляр зарезервирован - сначала снимите бронь.")
     return WriteOffLine.objects.create(
         write_off=doc, part_type=item.part_type, part_item=item,
         batch=item.batch, batch_line=item.batch_line,
@@ -278,7 +278,7 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
                 raise WriteOffError(f"Экземпляр {item.internal_number} нельзя списать.")
             if is_part_item_reserved(item):
                 raise WriteOffError(
-                    f"Экземпляр {item.internal_number} зарезервирован — снимите бронь."
+                    f"Экземпляр {item.internal_number} зарезервирован - снимите бронь."
                 )
             line.part_item = item
             _freeze_write_off_line_cost(line)
