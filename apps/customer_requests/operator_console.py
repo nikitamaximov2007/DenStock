@@ -161,7 +161,7 @@ def menu(binding=None) -> tuple[str, dict]:
         if context and context.request_id and _context_is_fresh(context):
             request = context.request
             heading += (
-                f"\nСейчас открыт диалог: №{request.reference} — "
+                f"\nСейчас открыт диалог: №{request.reference} - "
                 f"{(request.customer_name or 'Клиент')[:80]}"
             )
     return heading, {"inline_keyboard": [
@@ -186,7 +186,7 @@ def request_page(page: int = 1, *, new_only: bool = False, binding=None) -> tupl
     page = min(max(1, int(page or 1)), pages)
     rows = []
     for request in query[(page - 1) * LIST_PAGE_SIZE : page * LIST_PAGE_SIZE]:
-        rows.append([{"text": f"№{request.reference} — {(request.customer_name or 'Клиент')[:80]}",
+        rows.append([{"text": f"№{request.reference} - {(request.customer_name or 'Клиент')[:80]}",
                       "callback_data": _callback(binding, "c", request.public_id.hex)}])
     if not rows:
         return ("Новых заявок нет." if new_only else "Заявок нет."), menu(binding)[1]
@@ -286,7 +286,7 @@ def revoke_binding(*, binding):
 
 def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
     lines = [
-        f"Заявка №{request.reference} — {request.customer_name}",
+        f"Заявка №{request.reference} - {request.customer_name}",
         f"Телефон: {request.customer_phone}",
         f"Создана: {timezone.localtime(request.created_at):%d.%m.%Y %H:%M}",
         f"Канал клиента: {request.get_preferred_messenger_display()}",
