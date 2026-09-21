@@ -1,9 +1,8 @@
 """Safe plan and explicit apply path for the supplied bearing price list.
 
-The source is a list of catalog facts, not an inventory receipt.  A plan is
-always read-only.  Applying it is deliberately gated because the source gives
-only a RUB number and does not say whether that number is a customer price or
-an accounting cost.
+The source gives a purchase/procurement price in RUB. It is stored in the
+manual purchase-price source and the current customer price is derived as
+purchase price x 1.40. The list is a catalog import, not an inventory receipt.
 """
 
 from __future__ import annotations
@@ -13,12 +12,16 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from apps.catalog.manual_pricing import (
+    customer_price_from_purchase_price,
+    set_manual_purchase_price,
+)
 from apps.catalog.models import Manufacturer, PartType, normalize_number
 from apps.catalog.services import ManualPartError, create_manual_part
 from apps.inventory.presentation import EXACT_NUMBER_KINDS
 
 PRICE_SEMANTICS_UNCONFIRMED = "unconfirmed"
-PRICE_SEMANTICS_CUSTOMER = "customer_selling_rub"
+PRICE_SEMANTICS_PURCHASE = "purchase_cost_rub"
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,11 @@ class BearingSourceRow:
     brand: str
     article: str
     price_rub: Decimal
+
+    @property
+    def purchase_price_rub(self) -> Decimal:
+        """The supplied RUB number, confirmed as purchase cost by the owner."""
+        return self.price_rub
 
     @property
     def name(self) -> str:
@@ -59,7 +67,7 @@ class BearingImportPlan:
     @property
     def can_apply(self) -> bool:
         return (
-            self.price_semantics == PRICE_SEMANTICS_CUSTOMER
+            self.price_semantics == PRICE_SEMANTICS_PURCHASE
             and self.counts["AMBIGUOUS"] == 0
         )
 
@@ -68,7 +76,7 @@ class BearingImportPlan:
             "rows": len(self.rows),
             **self.counts,
             "price_semantics": self.price_semantics,
-            "price_semantics_confirmed": self.price_semantics == PRICE_SEMANTICS_CUSTOMER,
+            "price_semantics_confirmed": self.price_semantics == PRICE_SEMANTICS_PURCHASE,
             "barcodes_created": 0,
             "stock_changes": False,
             "analog_links_created": 0,
@@ -77,7 +85,10 @@ class BearingImportPlan:
                     "row": index,
                     "brand": item.source.brand,
                     "article": item.source.article,
-                    "price_rub": str(item.source.price_rub),
+                    "purchase_price_rub": str(item.source.purchase_price_rub),
+                    "customer_price_rub": str(
+                        customer_price_from_purchase_price(item.source.purchase_price_rub)
+                    ),
                     "status": item.status,
                     "existing_part_ids": list(item.existing_part_ids),
                     "detail": item.detail,
@@ -196,10 +207,10 @@ def build_plan(
 
 @transaction.atomic
 def apply_plan(plan: BearingImportPlan) -> dict:
-    """Apply only an explicitly customer-price-confirmed, unambiguous plan."""
-    if plan.price_semantics != PRICE_SEMANTICS_CUSTOMER:
+    """Apply only an explicitly purchase-price-confirmed, unambiguous plan."""
+    if plan.price_semantics != PRICE_SEMANTICS_PURCHASE:
         raise ManualPartError(
-            "Импорт остановлен: смысл RUB-цен не подтверждён как цена для клиента."
+            "Импорт остановлен: смысл RUB-цен не подтверждён как закупочная цена."
         )
     if plan.counts["AMBIGUOUS"]:
         raise ManualPartError("Импорт остановлен: сначала разберите неоднозначные строки.")
@@ -217,9 +228,10 @@ def apply_plan(plan: BearingImportPlan) -> dict:
         part = create_manual_part(
             name=item.source.name,
             article=item.source.article,
-            price=item.source.price_rub,
+            price=None,
             manufacturer_name=item.source.brand,
         )
+        set_manual_purchase_price(part, item.source.purchase_price_rub)
         created += 1
         if part.barcodes.exists():  # defensive invariant, never a source value
             raise ManualPartError("Импорт создал неожиданный штрихкод.")

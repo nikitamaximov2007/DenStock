@@ -162,8 +162,10 @@ class VehicleModel(Dictionary):
 class PartType(Dictionary):
     """Карточка вида детали (НЕ физический экземпляр и НЕ остаток).
 
-    Закупочной себестоимости здесь нет — она появится в партиях и остатках
-    (слои 6–12). Цены продажи (рекомендуемая/минимальная) — справочные.
+    Для обычных складских карточек закупочная себестоимость появляется в
+    партиях и остатках (слои 6–12). Отдельная ``ManualPurchasePrice`` ниже
+    предназначена только для явно импортированных ручных карточек, у которых
+    источник даёт закупочную цену, но партии ещё нет.
     """
 
     class TrackingMode(models.TextChoices):
@@ -302,6 +304,41 @@ class PartType(Dictionary):
         """TODO (слои 9–12): запретить смену режима, если по детали уже есть
         остатки/экземпляры. Сейчас остатков нет — всегда True."""
         return True
+
+
+class ManualPurchasePrice(models.Model):
+    """Authoritative RUB purchase price for a catalog-only manual part.
+
+    This is not landed cost, a receipt cost, or a stock-lot valuation. It is a
+    narrow source snapshot for manual imports such as the bearing list. The
+    current customer price is derived explicitly by the catalog pricing
+    service and copied to ``PartType.recommended_price``.
+    """
+
+    part_type = models.OneToOneField(
+        PartType,
+        verbose_name="Деталь",
+        on_delete=models.CASCADE,
+        related_name="manual_purchase_price",
+    )
+    purchase_price_rub = models.DecimalField(
+        "Закупочная цена (₽)", max_digits=12, decimal_places=2
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Закупочная цена ручной детали"
+        verbose_name_plural = "Закупочные цены ручных деталей"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(purchase_price_rub__gt=0),
+                name="manual_purchase_price_positive",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.part_type}: {self.purchase_price_rub} ₽"
 
 
 class PartNumber(models.Model):

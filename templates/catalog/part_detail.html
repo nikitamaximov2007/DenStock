@@ -57,6 +57,12 @@
           {% endif %}
         </td>
       </tr>
+      {% if manual_purchase_price %}
+        <tr>
+          <th>Закупочная цена, ₽</th>
+          <td>{{ manual_purchase_price.purchase_price_rub|money_int }}</td>
+        </tr>
+      {% endif %}
       {% if catalog_origin_label %}
         <tr>
           <th>Источник</th>

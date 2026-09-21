@@ -38,6 +38,7 @@ from .forms import (
     PartTypeForm,
 )
 from .models import (
+    ManualPurchasePrice,
     PartAnalog,
     PartBarcode,
     PartCompatibility,
@@ -121,6 +122,9 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         ctx["effective_customer_price"] = effective_part_customer_prices([self.object])[
             self.object.pk
         ]
+        ctx["manual_purchase_price"] = ManualPurchasePrice.objects.filter(
+            part_type=self.object
+        ).first()
         ctx["numbers"] = self.object.numbers.all()
         ctx["barcodes"] = self.object.barcodes.all()
         ctx["compatibilities"] = self.object.compatibilities.select_related("vehicle_model")

@@ -165,7 +165,9 @@ def test_min_price_not_greater_than_recommended(refs):
 
 
 def test_no_purchase_cost_on_part():
-    names = {f.name for f in PartType._meta.get_fields()}
+    # A catalog-only manual source lives in ManualPurchasePrice; it must not
+    # become a direct cost field on PartType or a receipt/lot substitute.
+    names = {f.name for f in PartType._meta.local_fields}
     assert not any("cost" in n or "purchase" in n for n in names)
 
 
