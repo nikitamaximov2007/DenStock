@@ -59,7 +59,7 @@ class Command(BaseCommand):
             by_label = {}
             for binding in active:
                 by_label.setdefault(binding.customer_visible_label, {})[binding.provider] = True
-            for label in ("Денис", "Рим", "Максим", "Владислав"):
+            for label in ("Денис", "Рим"):
                 status = by_label.get(label, {})
                 self.stdout.write(
                     f"{label}: Telegram - "

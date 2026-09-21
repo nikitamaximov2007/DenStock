@@ -48,6 +48,10 @@ CHANNEL_LABELS = {
     CustomerRequest.Messenger.TELEGRAM: "Telegram",
     CustomerRequest.Messenger.MAX: "MAX",
 }
+OWNER_LABELS = {
+    "Денис": "Денис, владелец сервиса PRO-STORE",
+    "Рим": "Рим, владелец сервиса PRO-STORE",
+}
 
 
 class OperatorReplyError(ValueError):
@@ -111,6 +115,11 @@ class ReplyResult:
 
 def _dedupe_key(key: str) -> str:
     return f"operator_reply:{key}"
+
+
+def customer_visible_operator_label(label: str) -> str:
+    """Return the immutable customer-facing owner wording for V1 operators."""
+    return OWNER_LABELS.get((label or "").strip(), label or "")
 
 
 def _stored_reply(key: str, telegram_update_id: int | None):
@@ -198,6 +207,8 @@ def submit_reply(
         operator_author_label = "PRO-STORE" if operator_control_source == "web" else (
             getattr(user, "full_name", "") or user.get_username()
         )
+    if operator_control_source in {"telegram", "max"}:
+        operator_author_label = customer_visible_operator_label(operator_author_label)
     # The operator console is an independently staged feature. Its compact
     # authorship metadata must not change the accepted workspace timeline
     # until the owner deliberately enables that feature flag.

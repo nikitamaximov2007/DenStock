@@ -328,7 +328,9 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         provider=provider, provider_user_id=provider_user_id,
         external_id="reply-before-revoke", text="исторический ответ", **chat_kwargs
     )
-    intro = MaxMessage.objects.get(text="Вам отвечает Денис.")
+    intro = MaxMessage.objects.get(
+        text="Вам отвечает Денис, владелец сервиса PRO-STORE."
+    )
     intro.delivery_status = MaxDeliveryStatus.SENT
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
@@ -417,7 +419,10 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
     assert MaxMessage.objects.filter(text="ответ B", recipient_chat_id=99851).exists()
     assert not MaxMessage.objects.filter(text="ответ B", recipient_chat_id=99841).exists()
 
-    intro_b = MaxMessage.objects.get(conversation__request=request_b, text="Вам отвечает Денис.")
+    intro_b = MaxMessage.objects.get(
+        conversation__request=request_b,
+        text="Вам отвечает Денис, владелец сервиса PRO-STORE.",
+    )
     intro_b.delivery_status = MaxDeliveryStatus.SENT
     intro_b.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro_b)
@@ -505,21 +510,22 @@ def test_responder_is_confirmed_only_after_intro_delivery(db, django_user_model)
     )
     request.refresh_from_db()
     assert request.current_responder_label == ""
-    assert request.pending_responder_label == "Денис"
+    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STORE"
     intro = MaxMessage.objects.get(
-        conversation__request=request, text="Вам отвечает Денис."
+        conversation__request=request,
+        text="Вам отвечает Денис, владелец сервиса PRO-STORE.",
     )
     intro.delivery_status = MaxDeliveryStatus.FAILED
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
     request.refresh_from_db()
     assert request.current_responder_label == ""
-    assert request.pending_responder_label == "Денис"
+    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STORE"
     intro.delivery_status = MaxDeliveryStatus.SENT
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
     request.refresh_from_db()
-    assert request.current_responder_label == "Денис"
+    assert request.current_responder_label == "Денис, владелец сервиса PRO-STORE"
     assert request.pending_responder_label == ""
 
 
@@ -732,6 +738,41 @@ def test_admin_status_access_rules_remain_unchanged(client, db, django_user_mode
     user = django_user_model.objects.create_user(username="status-user", password="x" * 12)
     client.force_login(user)
     assert client.get(reverse("staff_messenger_bindings")).status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("label", "first", "takeover"),
+    [
+        (
+            "Денис",
+            "Вам отвечает Денис, владелец сервиса PRO-STORE.",
+            "К диалогу подключился Денис, владелец сервиса PRO-STORE.",
+        ),
+        (
+            "Рим",
+            "Вам отвечает Рим, владелец сервиса PRO-STORE.",
+            "К диалогу подключился Рим, владелец сервиса PRO-STORE.",
+        ),
+    ],
+)
+def test_owner_customer_visible_wording_is_exact(label, first, takeover):
+    assert operator_replies.customer_visible_operator_label(label) in first
+    assert first == f"Вам отвечает {operator_replies.customer_visible_operator_label(label)}."
+    assert takeover == (
+        f"К диалогу подключился {operator_replies.customer_visible_operator_label(label)}."
+    )
+    assert "сотрудник" not in first.lower()
+    assert "менеджер" not in first.lower()
+
+
+def test_readiness_requires_only_denis_and_rim(db):
+    output = StringIO()
+    call_command("check_operator_console_readiness", stdout=output)
+    report = output.getvalue()
+    assert "Денис:" in report
+    assert "Рим:" in report
+    assert "Максим:" not in report
+    assert "Владислав:" not in report
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
