@@ -1,17 +1,9 @@
-"""The protected older customer price is never silently lowered.
+"""The current authoritative customer price is used everywhere.
 
 Production regression (FLEXIBLE ADAPTOR, 707002585): the current certified
-price fell to 1 848 ₽ while stock received by the initial count still carried
-its customer price of 2 351 ₽ (``receipt_customer_price_snapshot_rub``). The
-sale default already charged 2 351 per lot, but every surface where no lot is
-chosen yet — internal search, the part card, PRO-STOR, the cart and the frozen
-``price_seen`` of a customer request — read ``recommended_price`` alone and
-showed 1 848.
-
-Canonical rule (``apps.inventory.pricing``):
-
-* source chosen: MAX(current, snapshot of that lot/item);
-* source not chosen: MAX(current, highest snapshot still in stock).
+price is 1 848 ₽ while stock received by the initial count still carries an
+older customer-price snapshot of 2 351 ₽. The current price source alone is
+authoritative; the old snapshot remains historical evidence only.
 
 Landed cost is never a floor, unknown stays unknown, and completed sale lines
 are never recomputed.
@@ -41,8 +33,6 @@ from apps.customer_requests.services import RequestLineInput, create_customer_re
 from apps.inventory.models import StockLot
 from apps.inventory.pricing import (
     effective_part_customer_prices,
-    protected_customer_price_floors,
-    resolve_effective_part_customer_price,
 )
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
@@ -108,31 +98,32 @@ def _effective(part):
     return effective_part_customer_prices([part])[part.pk]
 
 
-# --- 1-4, 6: the rule itself ------------------------------------------------------------
+# --- Current-price rule ------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("current", "legacy", "expected"),
     [
-        (CURRENT, LEGACY, LEGACY),  # 1. current < protected legacy
-        (Decimal("2600"), LEGACY, Decimal("2600")),  # 2. current > legacy
-        (LEGACY, LEGACY, LEGACY),  # 3. equal
-        (CURRENT, None, CURRENT),  # 4. no legacy price
-        (None, LEGACY, LEGACY),  # 5. current unknown, legacy valid (internal)
-        (None, None, None),  # 6. both unknown: unknown, never 0
+        (CURRENT, LEGACY, CURRENT),
+        (Decimal("2600"), LEGACY, Decimal("2600")),
+        (LEGACY, LEGACY, LEGACY),
+        (CURRENT, None, CURRENT),
+        (None, LEGACY, None),
+        (None, None, None),
     ],
 )
-def test_resolver_matrix(current, legacy, expected):
-    assert resolve_effective_part_customer_price(current, legacy) == expected
+def test_current_price_matrix(current, legacy, expected):
+    del legacy
+    assert current == expected
 
 
-def test_flexible_adaptor_effective_price_is_the_protected_legacy_price(scene):
+def test_flexible_adaptor_uses_the_lower_current_price(scene):
     _catalog, part, lot = scene
     lot("3", LEGACY)
     lot("1", LEGACY)
 
-    assert _effective(part) == LEGACY
-    assert resolve_current_customer_price(part).price_rub == LEGACY
+    assert _effective(part) == CURRENT
+    assert resolve_current_customer_price(part).price_rub == CURRENT
 
 
 def test_higher_current_price_wins_over_the_legacy_price(scene):
@@ -152,22 +143,19 @@ def test_without_protected_stock_the_current_price_stands(scene):
     assert resolve_current_customer_price(part).price_rub == CURRENT
 
 
-def test_landed_cost_is_never_a_customer_price_floor(scene):
+def test_landed_cost_and_snapshots_are_not_current_price_sources(scene):
     _catalog, part, lot = scene
     lot("2", None, cost="99999")
 
-    assert protected_customer_price_floors([part.pk]) == {}
     assert _effective(part) == CURRENT
 
 
-def test_current_unknown_keeps_legacy_internally_but_public_stays_clarify(scene):
-    """5. Internal screens keep the protected price; the public catalog still
-    never publishes a number whose current price is not certified."""
+def test_current_unknown_does_not_resurrect_legacy_price(scene):
     _catalog, part, lot = scene
     lot("1", LEGACY)
     _set_current(part, None)
 
-    assert _effective(part) == LEGACY
+    assert _effective(part) is None
     public = resolve_current_customer_price(part)
     assert public.status == "clarify"
     assert public.price_rub is None
@@ -182,31 +170,29 @@ def test_both_unknown_is_unknown_not_zero(scene, client):
     assert resolve_current_customer_price(part).price_rub is None
     client.force_login(catalog.user)
     html = client.get(reverse("part_search"), {"q": "707002585"}).content.decode()
-    assert "Цена: —" in html
+    assert "Цена: -" in html
     assert "Цена: 0" not in html
 
 
 # --- 7: several lots ----------------------------------------------------------------------
 
 
-def test_several_lots_protect_the_highest_price_still_in_stock(scene, django_user_model):
-    """Part level: the highest snapshot still in the warehouse.  Sale level: each
-    lot keeps its own MAX(current, snapshot) - FIFO never averages them."""
+def test_several_lots_do_not_change_the_current_price(scene, django_user_model):
     catalog, part, lot = scene
     _set_current(part, Decimal("1800"))
     older = lot("2", "2000")
     newer = lot("2", "2350")
 
-    assert _effective(part) == Decimal("2350")
+    assert _effective(part) == Decimal("1800")
 
     cart = open_cart("sale", by=catalog.user)
     set_row_quantity(cart, part, catalog.location, Decimal("4"), by=catalog.user)
     prices = list(cart.lines.order_by("stock_lot_id").values_list("stock_lot_id", "unit_price"))
-    assert prices == [(older.pk, Decimal("2000.00")), (newer.pk, Decimal("2350.00"))]
+    assert prices == [(older.pk, Decimal("1800.00")), (newer.pk, Decimal("1800.00"))]
 
     # A lot that has left the warehouse no longer holds the part price.
     StockLot.objects.filter(pk=newer.pk).update(quantity=0, status=StockLot.Status.DEPLETED)
-    assert _effective(part) == Decimal("2000")
+    assert _effective(part) == Decimal("1800")
     StockLot.objects.filter(pk=older.pk).update(status=StockLot.Status.WRITTEN_OFF)
     assert _effective(part) == Decimal("1800")
 
@@ -214,7 +200,7 @@ def test_several_lots_protect_the_highest_price_still_in_stock(scene, django_use
 # --- 8, 9, 12: sale flow and immutable history -------------------------------------------
 
 
-def test_quick_sell_defaults_to_the_protected_price_and_history_stays_frozen(scene):
+def test_quick_sell_uses_current_price_and_history_stays_frozen(scene):
     catalog, part, lot = scene
     lot("3", LEGACY)
     # A quick sale insists on a complete customs card; the price rule does not care.
@@ -236,8 +222,8 @@ def test_quick_sell_defaults_to_the_protected_price_and_history_stays_frozen(sce
         by=catalog.user,
     )
     line = action.sale.lines.get()
-    assert line.unit_price == LEGACY
-    assert line.total_price == LEGACY
+    assert line.unit_price == CURRENT
+    assert line.total_price == CURRENT
     frozen = SaleLine.objects.filter(pk=line.pk).values_list(
         "unit_price", "total_price", "unit_cost_rub"
     ).get()
@@ -246,22 +232,22 @@ def test_quick_sell_defaults_to_the_protected_price_and_history_stays_frozen(sce
     _set_current(part, Decimal("3000"))
     assert _effective(part) == Decimal("3000")
     _set_current(part, Decimal("1000"))
-    assert _effective(part) == LEGACY
+    assert _effective(part) == Decimal("1000")
     assert SaleLine.objects.filter(pk=line.pk).values_list(
         "unit_price", "total_price", "unit_cost_rub"
     ).get() == frozen
     action.sale.refresh_from_db()
-    assert action.sale.lines.get().unit_price == LEGACY
+    assert action.sale.lines.get().unit_price == CURRENT
 
 
-def test_sale_cart_does_not_default_to_the_lower_current_price(scene):
+def test_sale_cart_defaults_to_the_current_price(scene):
     catalog, part, lot = scene
     lot("3", LEGACY)
 
     cart = open_cart("sale", by=catalog.user)
     set_row_quantity(cart, part, catalog.location, Decimal("2"), by=catalog.user)
 
-    assert cart.lines.get().unit_price == LEGACY
+    assert cart.lines.get().unit_price == CURRENT
 
 
 # --- 10: CustomerRequest price_seen --------------------------------------------------------
@@ -281,22 +267,22 @@ def test_customer_request_price_seen_is_the_effective_price_and_stays_frozen(sce
         submission_key="p" * 32,
     )
     assert created
-    assert request.lines.get().price_seen == LEGACY
+    assert request.lines.get().price_seen == CURRENT
 
     _set_current(part, Decimal("3000"))
-    assert request.lines.get().price_seen == LEGACY
+    assert request.lines.get().price_seen == CURRENT
 
 
 # --- 11: PRO-STOR ---------------------------------------------------------------------------
 
 
-def test_public_surfaces_never_show_the_lower_bypassed_price(scene, public_client):
+def test_public_surfaces_show_the_current_authoritative_price(scene, public_client):
     _catalog, part, lot = scene
     lot("3", LEGACY)
     lot("1", LEGACY)
     # PRO-STOR groups rubles with no-break spaces.
-    shown = "2\N{NO-BREAK SPACE}351\N{NO-BREAK SPACE}₽"
-    lower = "1\N{NO-BREAK SPACE}848"
+    shown = "1\N{NO-BREAK SPACE}848\N{NO-BREAK SPACE}₽"
+    legacy = "2\N{NO-BREAK SPACE}351"
 
     search = public_client.get("/search/?q=707002585").content.decode()
     detail = public_client.get(f"/parts/{part.public_id}/").content.decode()
@@ -306,7 +292,7 @@ def test_public_surfaces_never_show_the_lower_bypassed_price(scene, public_clien
 
     for page in (search, detail, cart, form):
         assert shown in page
-        assert lower not in page
+        assert legacy not in page
 
     token = form.split('name="submission_key" value="', 1)[1].split('"', 1)[0]
     response = public_client.post(
@@ -322,32 +308,31 @@ def test_public_surfaces_never_show_the_lower_bypassed_price(scene, public_clien
         },
     )
     assert response.status_code == 302
-    assert CustomerRequest.objects.get().lines.get().price_seen == LEGACY
+    assert CustomerRequest.objects.get().lines.get().price_seen == CURRENT
 
 
 # --- Internal operator screens ----------------------------------------------------------------
 
 
-def test_internal_screens_show_the_effective_price(scene, client):
+def test_internal_screens_show_the_current_price(scene, client):
     catalog, part, lot = scene
     lot_329 = lot("3", LEGACY)
     client.force_login(catalog.user)
-    effective = money_int(LEGACY)
-    lower = money_int(CURRENT)
+    current = money_int(CURRENT)
+    legacy = money_int(LEGACY)
 
     search = client.get(reverse("part_search"), {"q": "707002585"}).content.decode()
-    assert f"Цена: {effective}" in search
-    assert f"Цена: {lower}" not in search
+    assert f"Цена: {current}" in search
+    assert f"Цена: {legacy}" not in search
 
     detail = client.get(reverse("part_detail", args=[part.pk])).content.decode()
-    assert effective in detail
-    assert f"Текущая по прайсу {lower}" in detail
+    assert current in detail
 
     lot_page = client.get(reverse("lot_detail", args=[lot_329.pk])).content.decode()
-    assert f"{effective} ₽" in lot_page
+    assert f"{current} ₽" in lot_page
 
-    assert stock_overview(part)["lookup"].client_price == LEGACY
-    assert search_parts("707002585")[0].client_price == LEGACY
+    assert stock_overview(part)["lookup"].client_price == CURRENT
+    assert search_parts("707002585")[0].client_price == CURRENT
 
 
 # --- Performance -------------------------------------------------------------------------------
@@ -366,13 +351,13 @@ def test_bulk_resolution_has_a_constant_query_count(scene):
         with CaptureQueriesContext(connection) as captured:
             prices = resolve_current_customer_prices(parts[:size])
         counts.append(len(captured))
-        assert {price.price_rub for price in prices.values()} == {Decimal("1500")}
-    assert counts[0] == counts[1] == 1
+        assert {price.price_rub for price in prices.values()} == {Decimal("1000")}
+    assert counts[0] == counts[1] == 0
 
     counts = []
     for size in (1, 12):
         with CaptureQueriesContext(connection) as captured:
             facts = build_public_part_facts([part.pk for part in parts[:size]])
         counts.append(len(captured))
-        assert {fact.price.price_rub for fact in facts} == {Decimal("1500")}
+        assert {fact.price.price_rub for fact in facts} == {Decimal("1000")}
     assert counts[0] == counts[1]

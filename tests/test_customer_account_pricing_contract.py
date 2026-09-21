@@ -1,11 +1,9 @@
 """Reorder consumes the canonical pricing and manual-part contracts, unchanged.
 
 «Заказать ещё раз» must never hold pricing rules of its own. It reads the
-shared public catalog card, so whatever the canonical resolver decides today —
-including the protected higher legacy price of stock still in the warehouse
-(``apps.inventory.pricing``) and the publication rules for manually created
-parts — is what the preview and the cart show, with no second implementation
-to keep in step.
+shared public catalog card, so whatever the canonical resolver decides today
+and the publication rules for manually created parts is what the preview and
+the cart show, with no second implementation to keep in step.
 
 Every test here asserts the preview against ``resolve_current_customer_price``
 itself, so a future change to the resolver moves both sides together or fails
@@ -107,24 +105,22 @@ def _cart_amounts(client) -> set[str]:
 
 
 @pytest.mark.django_db
-def test_a_protected_higher_legacy_price_reaches_the_reorder_preview(shop):
-    """The regression case end to end: the floor wins, without a second rule."""
+def test_reorder_preview_uses_the_current_authoritative_price(shop):
     part = shop["catalog"].part("FLEXIBLE ADAPTOR", article="707002585", price=str(CURRENT))
     lot = shop["lot"](part, "5", LEGACY)
     sale = make_sale(shop["customer"], part, lot=lot, quantity="2", unit_price="1500")
 
     with public_account_runtime():
-        assert _canonical(part) == LEGACY  # the canonical resolver raised it
+        assert _canonical(part) == CURRENT
         line = _preview(shop, sale)[0]
-        assert line.current_price == LEGACY
-        assert line.current_price != CURRENT
+        assert line.current_price == CURRENT
         assert line.historical_unit_price == Decimal("1500")
         assert line.usable
 
 
 @pytest.mark.django_db
 def test_the_reorder_price_is_the_canonical_price_in_every_state(shop):
-    """Certified-only, floor-raised, and lowered-certified all agree."""
+    """Certified current prices remain canonical across price changes."""
     part = shop["catalog"].part("FLEXIBLE ADAPTOR", article="707002585", price=str(CURRENT))
     lot = shop["lot"](part, "5", None)
     sale = make_sale(shop["customer"], part, lot=lot, unit_price="1000")
@@ -133,9 +129,9 @@ def test_the_reorder_price_is_the_canonical_price_in_every_state(shop):
         # No snapshot: the certified price alone.
         assert _preview(shop, sale)[0].current_price == _canonical(part) == CURRENT
 
-        # A higher snapshot in stock raises the floor.
+        # A higher historical snapshot does not affect today's price.
         shop["lot"](part, "3", LEGACY)
-        assert _preview(shop, sale)[0].current_price == _canonical(part) == LEGACY
+        assert _preview(shop, sale)[0].current_price == _canonical(part) == CURRENT
 
         # The certified price moves up past the snapshot: the higher wins again.
         PartType.objects.filter(pk=part.pk).update(
@@ -168,7 +164,7 @@ def test_landed_cost_is_never_a_price_floor_in_the_preview(shop):
 
 
 @pytest.mark.django_db
-def test_the_protected_price_follows_through_to_the_cart(shop):
+def test_the_current_price_follows_through_to_the_cart(shop):
     part = shop["catalog"].part("FLEXIBLE ADAPTOR", article="707002585", price=str(CURRENT))
     lot = shop["lot"](part, "5", LEGACY)
     sale = make_sale(shop["customer"], part, lot=lot, quantity="1", unit_price="1000")
@@ -176,8 +172,8 @@ def test_the_protected_price_follows_through_to_the_cart(shop):
     with public_account_runtime():
         shop["client"].post(reverse("customer_account_reorder", args=[sale.number]))
         amounts = _cart_amounts(shop["client"])
-        assert "2351" in amounts, amounts  # the protected legacy price
-        assert "1848" not in amounts, amounts  # never the lowered certified one
+        assert "1848" in amounts, amounts
+        assert "2351" not in amounts, amounts
         assert "1000" not in amounts, amounts  # never the historical one
 
 

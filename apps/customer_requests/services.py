@@ -199,7 +199,7 @@ def create_customer_request(
     if len(parts) != len(part_ids):
         raise CustomerRequestError("Одна или несколько деталей больше недоступны.")
     availability = available_totals(part_ids)
-    # ``price_seen`` is the canonical effective price, protected floor included.
+    # ``price_seen`` is the current authoritative customer price snapshot.
     prices = resolve_current_customer_prices(parts.values())
     prepared_lines = []
     for line in line_inputs:

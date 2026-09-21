@@ -111,8 +111,7 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         )
         ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["can_manage_images"] = self.request.user.can_manage_images
-        # «Цена» — каноническая цена клиента: старая цена партии, которая ещё
-        # лежит на складе, не даёт ей опуститься ниже.
+        # «Цена» — каноническая текущая цена клиента из PartType.
         ctx["effective_customer_price"] = effective_part_customer_prices([self.object])[
             self.object.pk
         ]
