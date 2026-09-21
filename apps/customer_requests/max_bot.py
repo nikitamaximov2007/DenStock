@@ -783,28 +783,29 @@ class MaxBotWorker:
             return 0
         rows = operator_console.claim_notifications("max", limit)
         for row in rows:
-            binding = operator_console.binding_for("max", row.binding.provider_user_id, lock=True)
-            if binding is None:
-                operator_console.finish_notification(
-                    row, status=operator_console.OperatorNotification.Status.FAILED,
-                    error="Сотрудник отключён",
+            try:
+                delivery = operator_console.prepare_notification_delivery(
+                    notification_id=row.pk, provider="max"
                 )
+            except Exception as exc:
+                operator_console.retry_notification(row, exc)
                 continue
-            if not binding.delivery_chat_id:
-                operator_console.finish_notification(
-                    row, status=operator_console.OperatorNotification.Status.FAILED,
-                    error="Неизвестен диалог сотрудника MAX",
-                )
+            if delivery is None:
                 continue
-            text, buttons = operator_console.notification_content(row)
-            self.pacer.wait(binding.delivery_chat_id)
+            self.pacer.wait(delivery.delivery_chat_id)
             try:
                 result = self.api.send_message(
-                    chat_id=binding.delivery_chat_id,
-                    text=text,
-                    buttons=operator_console.buttons_for_provider(buttons, "max"),
+                    chat_id=delivery.delivery_chat_id,
+                    text=delivery.text,
+                    buttons=operator_console.buttons_for_provider(delivery.buttons, "max"),
                 )
             except MaxError as exc:
+                if isinstance(exc, MaxNetworkError) and exc.ambiguous:
+                    operator_console.finish_notification(
+                        row, status=operator_console.OperatorNotification.Status.UNCERTAIN,
+                        error=exc,
+                    )
+                    continue
                 operator_console.retry_notification(row, exc)
                 continue
             body = (result or {}).get("body") or {}
@@ -885,6 +886,8 @@ class MaxBotWorker:
         self.renew()
         if self._needs_recovery:
             recovered = self.recover_interrupted_sends()
+            if operator_console.enabled():
+                recovered += operator_console.recover_interrupted_notifications("max")
             self._needs_recovery = False
             if recovered:
                 logger.warning("marked %s interrupted sends as uncertain", recovered)

@@ -1,9 +1,11 @@
 import re
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import timedelta
 from io import StringIO
 
 import pytest
+from django.contrib.auth.models import Group
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -13,6 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.customer_requests import operator_console, operator_replies
+from apps.customer_requests.max_api import MaxApiError, MaxNetworkError
 from apps.customer_requests.max_bot import MaxBotWorker
 from apps.customer_requests.messengers import consume_max_start, issue_max_link
 from apps.customer_requests.models import (
@@ -24,6 +27,7 @@ from apps.customer_requests.models import (
     StaffMessengerBinding,
     StaffMessengerPairingToken,
 )
+from apps.customer_requests.telegram_api import TelegramApiError, TelegramNetworkError
 from apps.customer_requests.telegram_bot import TelegramBotWorker
 
 from .test_telegram_customer_messaging import FakeBotApi, _operator, _request, build_part
@@ -183,8 +187,9 @@ def test_owner_panel_delivery_command_is_safe_when_feature_is_off(db):
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
 def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
-    db, django_user_model
+    db, django_user_model, monkeypatch
 ):
+    Group.objects.get_or_create(name="Продавец/Мастер")
     user = _operator(django_user_model, 99204, username="panel-workers").user
     telegram = StaffMessengerBinding.objects.create(
         user=user,
@@ -202,13 +207,34 @@ def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
     operator_console.queue_owner_panel(binding=telegram)
     operator_console.queue_owner_panel(binding=max_binding)
 
-    telegram_api = FakeBotApi()
+    active_notification_transactions = 0
+    original_atomic = operator_console.transaction.atomic
+
+    @contextmanager
+    def tracked_atomic(*args, **kwargs):
+        nonlocal active_notification_transactions
+        with original_atomic(*args, **kwargs):
+            active_notification_transactions += 1
+            try:
+                yield
+            finally:
+                active_notification_transactions -= 1
+
+    monkeypatch.setattr(operator_console.transaction, "atomic", tracked_atomic)
+
+    class TransactionAwareTelegramApi(FakeBotApi):
+        def send_message(self, **kwargs):
+            assert active_notification_transactions == 0
+            return super().send_message(**kwargs)
+
+    telegram_api = TransactionAwareTelegramApi()
 
     class FakeMaxApi:
         def __init__(self):
             self.calls = []
 
         def send_message(self, **kwargs):
+            assert active_notification_transactions == 0
             self.calls.append(kwargs)
             return {"body": {"mid": "panel-worker-max"}}
 
@@ -217,8 +243,19 @@ def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
     max_worker = MaxBotWorker(max_api, heartbeat_file="")
     max_worker.pacer.wait = lambda _chat_id: None
 
+    original_binding_for = operator_console.binding_for
+    locked_in_transaction = []
+
+    def checked_binding_for(*args, **kwargs):
+        if kwargs.get("lock"):
+            locked_in_transaction.append(active_notification_transactions > 0)
+        return original_binding_for(*args, **kwargs)
+
+    monkeypatch.setattr(operator_console, "binding_for", checked_binding_for)
+
     assert telegram_worker.send_operator_console_notifications() == 1
     assert max_worker.send_operator_console_notifications() == 1
+    assert locked_in_transaction == [True, True]
     telegram_payload = telegram_api.sent[0]["reply_markup"]["inline_keyboard"][0][0][
         "callback_data"
     ]
@@ -230,6 +267,187 @@ def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
         kind=OperatorNotification.Kind.OWNER_PANEL,
         status=OperatorNotification.Status.SENT,
     ).count() == 2
+    assert OperatorNotification.objects.get(binding=telegram).external_message_id
+    assert OperatorNotification.objects.get(binding=max_binding).external_message_id
+
+
+@pytest.mark.parametrize(
+    ("provider", "api_error"),
+    [
+        ("telegram", TelegramApiError(400, "refused")),
+        ("max", MaxApiError(400, "refused", "refused")),
+    ],
+)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_owner_panel_explicit_provider_failure_returns_to_recoverable_state(
+    db, django_user_model, provider, api_error
+):
+    user = _operator(django_user_model, 99214, username=f"panel-error-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider=provider,
+        provider_user_id=99214,
+        delivery_chat_id=88214 if provider == "max" else None,
+        customer_visible_label="Денис",
+    )
+    row, _created = operator_console.queue_owner_panel(binding=binding)
+
+    class FailingApi:
+        def send_message(self, **_kwargs):
+            raise api_error
+
+    if provider == "telegram":
+        worker = TelegramBotWorker(FailingApi(), heartbeat_file="")
+    else:
+        worker = MaxBotWorker(FailingApi(), heartbeat_file="")
+        worker.pacer.wait = lambda _chat_id: None
+    worker.send_operator_console_notifications()
+
+    row.refresh_from_db()
+    assert row.status == OperatorNotification.Status.PENDING
+    assert row.external_message_id == ""
+
+
+@pytest.mark.parametrize("provider", ["telegram", "max"])
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_owner_panel_pre_provider_exception_never_stays_sending(
+    db, django_user_model, monkeypatch, provider
+):
+    user = _operator(django_user_model, 99215, username=f"panel-prepare-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider=provider,
+        provider_user_id=99215,
+        delivery_chat_id=88215 if provider == "max" else None,
+        customer_visible_label="Рим",
+    )
+    row, _created = operator_console.queue_owner_panel(binding=binding)
+    monkeypatch.setattr(
+        operator_console,
+        "prepare_notification_delivery",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("before provider")),
+    )
+
+    if provider == "telegram":
+        worker = TelegramBotWorker(FakeBotApi(), heartbeat_file="")
+    else:
+        worker = MaxBotWorker(object(), heartbeat_file="")
+        worker.pacer.wait = lambda _chat_id: None
+    worker.send_operator_console_notifications()
+
+    row.refresh_from_db()
+    assert row.status == OperatorNotification.Status.PENDING
+    assert row.external_message_id == ""
+
+
+@pytest.mark.parametrize(
+    ("provider", "api_error"),
+    [
+        ("telegram", TelegramNetworkError("timeout", ambiguous=True)),
+        ("max", MaxNetworkError("timeout", ambiguous=True)),
+    ],
+)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_owner_panel_ambiguous_provider_result_is_never_retried(
+    db, django_user_model, provider, api_error
+):
+    user = _operator(django_user_model, 99216, username=f"panel-ambiguous-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider=provider,
+        provider_user_id=99216,
+        delivery_chat_id=88216 if provider == "max" else None,
+        customer_visible_label="Денис",
+    )
+    row, _created = operator_console.queue_owner_panel(binding=binding)
+
+    class AmbiguousApi:
+        def send_message(self, **_kwargs):
+            raise api_error
+
+    if provider == "telegram":
+        worker = TelegramBotWorker(AmbiguousApi(), heartbeat_file="")
+    else:
+        worker = MaxBotWorker(AmbiguousApi(), heartbeat_file="")
+        worker.pacer.wait = lambda _chat_id: None
+    worker.send_operator_console_notifications()
+
+    row.refresh_from_db()
+    assert row.status == OperatorNotification.Status.UNCERTAIN, row.last_error
+    assert row.external_message_id == ""
+
+
+@pytest.mark.parametrize("provider", ["telegram", "max"])
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_revoked_owner_panel_binding_fails_closed_before_provider_send(
+    db, django_user_model, provider
+):
+    user = _operator(django_user_model, 99217, username=f"panel-revoked-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider=provider,
+        provider_user_id=99217,
+        delivery_chat_id=88217 if provider == "max" else None,
+        customer_visible_label="Рим",
+    )
+    row, _created = operator_console.queue_owner_panel(binding=binding)
+    binding.is_active = False
+    binding.save(update_fields=["is_active", "updated_at"])
+
+    class RecordingApi:
+        calls = 0
+
+        def send_message(self, **_kwargs):
+            self.calls += 1
+            return {}
+
+    api = RecordingApi()
+    if provider == "telegram":
+        worker = TelegramBotWorker(api, heartbeat_file="")
+    else:
+        worker = MaxBotWorker(api, heartbeat_file="")
+        worker.pacer.wait = lambda _chat_id: None
+    worker.send_operator_console_notifications()
+
+    row.refresh_from_db()
+    assert api.calls == 0
+    assert row.status == OperatorNotification.Status.FAILED
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
+def test_explicit_recovery_marks_only_proven_owner_panel_attempts_uncertain(
+    db, django_user_model, capsys
+):
+    user = _operator(django_user_model, 99218, username="panel-recovery").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="telegram",
+        provider_user_id=99218,
+        customer_visible_label="Денис",
+    )
+    row = OperatorNotification.objects.create(
+        binding=binding,
+        request=None,
+        kind=OperatorNotification.Kind.OWNER_PANEL,
+        dedupe_key=f"incident-owner-panel:{binding.pk}",
+        status=OperatorNotification.Status.SENDING,
+    )
+    other = OperatorNotification.objects.create(
+        binding=binding,
+        request=None,
+        kind=OperatorNotification.Kind.OWNER_PANEL,
+        dedupe_key=f"other-owner-panel:{binding.pk}",
+        status=OperatorNotification.Status.SENDING,
+    )
+
+    call_command("recover_owner_console_panel", "--notification-id", row.pk)
+
+    row.refresh_from_db()
+    other.refresh_from_db()
+    assert row.status == OperatorNotification.Status.UNCERTAIN
+    assert row.external_message_id == ""
+    assert other.status == OperatorNotification.Status.SENDING
+    assert "Панелей помечено для явного повтора: 1" in capsys.readouterr().out
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
@@ -336,6 +554,7 @@ def test_revoke_invalidates_unconsumed_slot_and_new_code_repairs(db, django_user
 def test_telegram_and_max_slots_are_atomic_and_independent(django_user_model):
     if connection.vendor != "postgresql":
         pytest.skip("requires PostgreSQL row-lock semantics")
+    Group.objects.get_or_create(name="Продавец/Мастер")
     user = _operator(django_user_model, 99010, username="parallel-pair").user
     token = operator_console.issue_pairing_token(user=user, label="Денис", created_by=user)
 

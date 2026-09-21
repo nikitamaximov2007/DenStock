@@ -741,21 +741,28 @@ class TelegramBotWorker:
             return 0
         rows = operator_console.claim_notifications("telegram", limit)
         for row in rows:
-            binding = operator_console.binding_for(
-                "telegram", row.binding.provider_user_id, lock=True
-            )
-            if binding is None:
-                operator_console.finish_notification(
-                    row, status=operator_console.OperatorNotification.Status.FAILED,
-                    error="Сотрудник отключён",
+            try:
+                delivery = operator_console.prepare_notification_delivery(
+                    notification_id=row.pk, provider="telegram"
                 )
+            except Exception as exc:
+                operator_console.retry_notification(row, exc)
                 continue
-            text, markup = operator_console.notification_content(row)
+            if delivery is None:
+                continue
             try:
                 result = self.api.send_message(
-                    chat_id=binding.provider_user_id, text=text, reply_markup=markup
+                    chat_id=delivery.provider_user_id,
+                    text=delivery.text,
+                    reply_markup=delivery.buttons,
                 )
             except TelegramError as exc:
+                if isinstance(exc, TelegramNetworkError) and exc.ambiguous:
+                    operator_console.finish_notification(
+                        row, status=operator_console.OperatorNotification.Status.UNCERTAIN,
+                        error=exc,
+                    )
+                    continue
                 operator_console.retry_notification(row, exc)
                 continue
             operator_console.finish_notification(
@@ -871,6 +878,8 @@ class TelegramBotWorker:
             # send in flight now, so every row still marked ``sending`` stopped
             # between the claim and its result: never resend, show it.
             recovered = self.recover_interrupted_sends()
+            if operator_console.enabled():
+                recovered += operator_console.recover_interrupted_notifications("telegram")
             self._needs_recovery = False
             if recovered:
                 logger.warning("marked %s interrupted sends as uncertain", recovered)

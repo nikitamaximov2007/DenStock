@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
@@ -648,6 +649,73 @@ def notification_content(notification: OperatorNotification) -> tuple[str, dict]
     ]}
 
 
+@dataclass(frozen=True)
+class PreparedNotificationDelivery:
+    """Immutable owner-notification routing copied while its rows are locked."""
+
+    notification_id: int
+    provider_user_id: int
+    delivery_chat_id: int | None
+    text: str
+    buttons: dict
+
+
+def _finish_locked_notification(
+    notification, *, status: str, external_id: str = "", error: str = ""
+):
+    notification.status = status
+    notification.last_error = str(error)[:255]
+    if status == OperatorNotification.Status.SENT:
+        notification.external_message_id = str(external_id or "")[:512]
+        notification.sent_at = timezone.now()
+    notification.save(update_fields=["status", "last_error", "external_message_id", "sent_at"])
+
+
+def prepare_notification_delivery(*, notification_id: int, provider: str):
+    """Lock and validate one claimed delivery without holding locks for provider I/O."""
+    provider = _valid_provider(provider)
+    if provider is None:
+        return None
+    with transaction.atomic():
+        notification = (
+            OperatorNotification.objects.select_for_update()
+            .select_related("binding__user")
+            .filter(
+                pk=notification_id,
+                binding__provider=provider,
+                status=OperatorNotification.Status.SENDING,
+            )
+            .first()
+        )
+        if notification is None:
+            return None
+        binding = binding_for(provider, notification.binding.provider_user_id, lock=True)
+        if binding is None or binding.pk != notification.binding_id:
+            _finish_locked_notification(
+                notification,
+                status=OperatorNotification.Status.FAILED,
+                error="Сотрудник отключён или привязка изменилась",
+            )
+            return None
+        delivery_chat_id = binding.delivery_chat_id
+        if provider == StaffMessengerBinding.Provider.MAX and not delivery_chat_id:
+            _finish_locked_notification(
+                notification,
+                status=OperatorNotification.Status.FAILED,
+                error="Неизвестен диалог сотрудника MAX",
+            )
+            return None
+        notification.binding = binding
+        text, buttons = notification_content(notification)
+        return PreparedNotificationDelivery(
+            notification_id=notification.pk,
+            provider_user_id=binding.provider_user_id,
+            delivery_chat_id=delivery_chat_id,
+            text=text,
+            buttons=buttons,
+        )
+
+
 def claim_notifications(provider: str, limit: int = 20):
     """Claim only this bot's rows; Telegram and MAX never deliver each other's work."""
     now = timezone.now()
@@ -681,19 +749,58 @@ def recover_interrupted_notifications(provider: str) -> int:
 
 
 def finish_notification(row, *, status: str, external_id: str = "", error: str = ""):
-    row.status = status
-    row.last_error = str(error)[:255]
-    if status == OperatorNotification.Status.SENT:
-        row.external_message_id = str(external_id or "")[:512]
-        row.sent_at = timezone.now()
-    row.save(update_fields=["status", "last_error", "external_message_id", "sent_at"])
+    with transaction.atomic():
+        notification = OperatorNotification.objects.select_for_update().get(pk=row.pk)
+        if notification.status != OperatorNotification.Status.SENDING:
+            return
+        _finish_locked_notification(
+            notification, status=status, external_id=external_id, error=error
+        )
 
 
 def retry_notification(row, error):
-    if row.attempts >= 8:
-        finish_notification(row, status=OperatorNotification.Status.FAILED, error=error)
-        return
-    row.status = OperatorNotification.Status.PENDING
-    row.next_attempt_at = timezone.now() + timedelta(seconds=min(900, 10 * 2 ** (row.attempts - 1)))
-    row.last_error = str(error)[:255]
-    row.save(update_fields=["status", "next_attempt_at", "last_error"])
+    with transaction.atomic():
+        notification = OperatorNotification.objects.select_for_update().get(pk=row.pk)
+        if notification.status != OperatorNotification.Status.SENDING:
+            return
+        if notification.attempts >= 8:
+            _finish_locked_notification(
+                notification, status=OperatorNotification.Status.FAILED, error=error
+            )
+            return
+        notification.status = OperatorNotification.Status.PENDING
+        notification.next_attempt_at = timezone.now() + timedelta(
+            seconds=min(900, 10 * 2 ** (notification.attempts - 1))
+        )
+        notification.last_error = str(error)[:255]
+        notification.save(update_fields=["status", "next_attempt_at", "last_error"])
+
+
+def recover_owner_panel_notifications(*, notification_ids) -> int:
+    """Mark only proven pre-send owner-panel attempts uncertain, never resend them."""
+    ids = sorted({int(value) for value in notification_ids if int(value) > 0})
+    if not ids:
+        raise ValueError("Не указаны уведомления панели владельца.")
+    with transaction.atomic():
+        rows = list(
+            OperatorNotification.objects.select_for_update()
+            .filter(pk__in=ids)
+            .order_by("pk")
+        )
+        if len(rows) != len(ids):
+            raise ValueError("Не все уведомления панели владельца найдены.")
+        for row in rows:
+            if (
+                row.kind != OperatorNotification.Kind.OWNER_PANEL
+                or row.status != OperatorNotification.Status.SENDING
+                or row.request_id is not None
+                or row.external_message_id
+            ):
+                raise ValueError("Уведомление не является безопасным pre-send recovery-кандидатом.")
+        note = "Отправка панели прервана до подтверждения провайдера; повторно не отправлялась."
+        OperatorNotification.objects.filter(pk__in=ids).update(
+            status=OperatorNotification.Status.UNCERTAIN,
+            last_error=note,
+            next_attempt_at=None,
+        )
+    return len(ids)
