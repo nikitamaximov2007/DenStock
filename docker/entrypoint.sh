@@ -25,18 +25,18 @@ if [[ "${DENSTOCK_MODE:-}" == "emergency-local" ]]; then
   if [[ "${DENSTOCK_EMERGENCY_DATABASE_NAME:-}" == "${emergency_control_db}" \
         && "${POSTGRES_DB:-}" == "${emergency_control_db}" ]]; then
     echo "[entrypoint] Применение миграций к служебной emergency control DB…"
-    python manage.py migrate --noinput
+    python manage.py migrate --noinput --skip-checks
   else
     echo "[entrypoint] Проверка миграций emergency standby без изменения БД…"
     python manage.py migrate --check
   fi
 else
   echo "[entrypoint] Применение миграций…"
-  python manage.py migrate --noinput
+  python manage.py migrate --noinput --skip-checks
 fi
 
 echo "[entrypoint] Сборка статики…"
-python manage.py collectstatic --noinput
+python manage.py collectstatic --noinput --skip-checks
 
 # Создание первичного администратора из переменных окружения (если заданы).
 if [[ "${DENSTOCK_MODE:-}" != "emergency-local" \
