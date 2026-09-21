@@ -226,8 +226,11 @@ def _message_created(update, *, attachment_loader=None) -> str:
     if operator_reply is not None:
         reply_text, buttons = operator_reply
         service.queue_message(
-            chat_id=chat_id, text=reply_text, buttons=buttons,
-            dedupe_key=f"operator:{mid}", callback_id="",
+            chat_id=chat_id,
+            text=reply_text,
+            buttons=operator_console.buttons_for_provider(buttons, "max"),
+            dedupe_key=f"operator:{mid}",
+            callback_id="",
         )
         return "operator"
     if (not isinstance(text, str) or not text.strip()) and attachment is None:
@@ -318,7 +321,9 @@ def _message_callback(update) -> str:
             return "denied"
         text, buttons = result
         service.queue_message(
-            chat_id=chat_id, text=text, buttons=buttons, callback_id=callback_id,
+            chat_id=chat_id, text=text,
+            buttons=operator_console.buttons_for_provider(buttons, "max"),
+            callback_id=callback_id,
             dedupe_key=f"operator-callback:{press_key}", in_place=True,
         )
         return "operator"
@@ -795,7 +800,9 @@ class MaxBotWorker:
             self.pacer.wait(binding.delivery_chat_id)
             try:
                 result = self.api.send_message(
-                    chat_id=binding.delivery_chat_id, text=text, buttons=buttons
+                    chat_id=binding.delivery_chat_id,
+                    text=text,
+                    buttons=operator_console.buttons_for_provider(buttons, "max"),
                 )
             except MaxError as exc:
                 operator_console.retry_notification(row, exc)

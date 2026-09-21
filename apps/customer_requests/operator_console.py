@@ -176,16 +176,16 @@ def consume_pairing(
     )
     setattr(row, slot, now)
     row.save(update_fields=[slot])
+    clear_panel_delivery(binding=binding)
     if enabled():
         return binding, (
-            "Доступ сотрудника подключён.\n\n"
-            f"Вы вошли как: {binding.customer_visible_label}\n\n"
-            "Для перехода в рабочий режим используйте /work."
+            "Доступ владельца подключён.\n\n"
+            f"Вы вошли как: {binding.customer_visible_label}"
         )
     return binding, (
-        "Доступ сотрудника подключён.\n\n"
+        "Доступ владельца подключён.\n\n"
         f"Вы вошли как: {binding.customer_visible_label}\n\n"
-        "Рабочий режим пока не активирован."
+        "Рабочая панель пока не активирована."
     )
 
 
@@ -207,7 +207,7 @@ def _callback(binding, kind: str, value: str = "") -> str:
 
 
 def menu(binding=None) -> tuple[str, dict]:
-    heading = "Рабочее меню PRO-STOR"
+    heading = "Панель владельца PRO-STORE"
     if binding is not None:
         context = OperatorConversationContext.objects.select_related("request").filter(
             binding=binding
@@ -222,6 +222,22 @@ def menu(binding=None) -> tuple[str, dict]:
         [{"text": "Все заявки", "callback_data": _callback(binding, "l", "1")}],
         [{"text": "Новые заявки", "callback_data": _callback(binding, "n", "1")}],
     ]}
+
+
+def buttons_for_provider(markup: dict | None, provider: str) -> dict | None:
+    """Translate shared callback markup to the provider's button shape."""
+    if markup is None or provider != StaffMessengerBinding.Provider.MAX:
+        return markup
+    return {
+        "inline_keyboard": [
+            [
+                {"text": button["text"], "payload": button["callback_data"]}
+                for button in row
+                if isinstance(button, dict) and "callback_data" in button
+            ]
+            for row in markup.get("inline_keyboard", [])
+        ]
+    }
 
 
 def _query(*, new_only: bool):
@@ -335,6 +351,7 @@ def revoke_binding(*, binding):
     binding.operator_mode = False
     binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
     clear_context(binding=binding)
+    clear_panel_delivery(binding=binding)
     StaffMessengerPairingToken.objects.filter(
         user=binding.user, revoked_at__isnull=True, used_at__isnull=True
     ).update(revoked_at=timezone.now())
@@ -389,7 +406,7 @@ def submit_text(
             binding.save(update_fields=["delivery_chat_id", "updated_at"])
     request = current_request(binding)
     if request is None:
-        return "Сначала выберите заявку в разделе «Все заявки».", menu(binding)[1]
+        return "Сначала выберите заявку в рабочей панели.", menu(binding)[1]
     try:
         operator_replies.submit_reply(
             request_id=request.pk, user=binding.user, text=text,
@@ -411,10 +428,12 @@ def handle_text(
     """Return a staff reply, or ``None`` so ordinary customer mode continues."""
     value = (text or "").strip()
     if is_pairing_code(value):
-        _binding, reply = consume_pairing(
+        binding, reply = consume_pairing(
             provider=provider, provider_user_id=provider_user_id, raw_token=value,
             provider_chat_id=provider_chat_id,
         )
+        if binding is not None and enabled():
+            return owner_panel(binding)
         return (reply, None) if reply else None
     if not enabled():
         return None
@@ -461,14 +480,17 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     binding = binding_for(provider, provider_user_id)
     if binding is None:
         return "Недоступно.", None
-    if not binding.operator_mode:
-        return "Рабочий режим не активен. Откройте /work.", None
     parts = payload.split(":")
     if len(parts) not in {3, 4}:
-        return "Рабочая сессия устарела. Откройте /work.", None
+        return "Рабочая сессия устарела. Откройте рабочую панель.", None
     kind, token = parts[1], parts[2]
     if token != _session_token(binding):
-        return "Рабочая сессия устарела. Откройте /work.", None
+        return "Рабочая сессия устарела. Откройте рабочую панель.", None
+    if kind not in {"m", "l", "n", "x", "c", "r"}:
+        return "Недоступно.", None
+    if not binding.operator_mode:
+        binding.operator_mode = True
+        binding.save(update_fields=["operator_mode", "updated_at"])
     value = parts[3] if len(parts) == 4 else ""
     if kind == "m":
         return menu(binding)
@@ -495,6 +517,11 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     return "Недоступно.", None
 
 
+def owner_panel(binding) -> tuple[str, dict]:
+    """The reusable panel delivered by the explicit server/admin action."""
+    return menu(binding)
+
+
 def notification_for(request, binding, *, kind=OperatorNotification.Kind.NEW_REQUEST,
                      preview="", identity=""):
     if not enabled() or not binding.is_active:
@@ -505,6 +532,48 @@ def notification_for(request, binding, *, kind=OperatorNotification.Kind.NEW_REQ
         dedupe_key=f"{kind}:{request.pk}:{binding.pk}:{digest}",
         defaults={"preview": preview[:700], "next_attempt_at": timezone.now()},
     )[0]
+
+
+def clear_panel_delivery(*, binding) -> None:
+    OperatorNotification.objects.filter(
+        binding=binding, kind=OperatorNotification.Kind.OWNER_PANEL
+    ).delete()
+
+
+def queue_owner_panel(*, binding, refresh: bool = False):
+    """Queue one explicit panel delivery without sending from the web process."""
+    if (
+        not enabled()
+        or not binding.is_active
+        or not binding.user.is_active
+        or not binding.user.can_manage_sales
+    ):
+        return None, False
+    row, created = OperatorNotification.objects.get_or_create(
+        binding=binding,
+        request=None,
+        kind=OperatorNotification.Kind.OWNER_PANEL,
+        dedupe_key=f"owner-panel:{binding.pk}",
+        defaults={"next_attempt_at": timezone.now()},
+    )
+    if refresh and not created:
+        row.status = OperatorNotification.Status.PENDING
+        row.attempts = 0
+        row.next_attempt_at = timezone.now()
+        row.external_message_id = ""
+        row.last_error = ""
+        row.sent_at = None
+        row.save(
+            update_fields=[
+                "status",
+                "attempts",
+                "next_attempt_at",
+                "external_message_id",
+                "last_error",
+                "sent_at",
+            ]
+        )
+    return row, created
 
 
 def queue_new_request_notifications(*, since):
@@ -562,6 +631,8 @@ def ensure_runtime():
 
 
 def notification_content(notification: OperatorNotification) -> tuple[str, dict]:
+    if notification.kind == OperatorNotification.Kind.OWNER_PANEL:
+        return owner_panel(notification.binding)
     request = notification.request
     binding = notification.binding
     name = (request.customer_name or "Клиент")[:80]

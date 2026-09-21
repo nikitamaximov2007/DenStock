@@ -6,6 +6,7 @@ from io import StringIO
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import close_old_connections, connection, connections
 from django.test import override_settings
 from django.urls import reverse
@@ -62,6 +63,175 @@ def test_pairing_code_has_two_independent_provider_slots(db, django_user_model):
     ) == (None, None)
 
 
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_enabled_pairing_returns_owner_panel_without_command_instructions(
+    db, django_user_model
+):
+    user = _operator(django_user_model, 99200, username="panel-pair").user
+    token = operator_console.issue_pairing_token(user=user, label="Денис", created_by=user)
+
+    reply = operator_console.handle_text(
+        provider="telegram", provider_user_id=99200, external_id="pair-panel", text=token
+    )
+
+    assert reply[0] == "Панель владельца PRO-STORE"
+    assert [row[0]["text"] for row in reply[1]["inline_keyboard"]] == [
+        "Все заявки",
+        "Новые заявки",
+    ]
+    assert "/work" not in reply[0]
+
+
+@pytest.mark.parametrize(
+    ("provider", "provider_user_id", "provider_chat_id"),
+    [("telegram", 99201, None), ("max", 94201, 88201)],
+)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_owner_panel_buttons_activate_console_for_both_providers(
+    db, django_user_model, provider, provider_user_id, provider_chat_id
+):
+    user = _operator(django_user_model, provider_user_id, username=f"panel-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider=provider,
+        provider_user_id=provider_user_id,
+        delivery_chat_id=provider_chat_id,
+        customer_visible_label="Денис",
+    )
+    text, markup = operator_console.owner_panel(binding)
+
+    assert text == "Панель владельца PRO-STORE"
+    assert [row[0]["text"] for row in markup["inline_keyboard"]] == [
+        "Все заявки",
+        "Новые заявки",
+    ]
+    assert binding.operator_mode is False
+
+    result = operator_console.handle_callback(
+        provider=provider,
+        provider_user_id=provider_user_id,
+        payload=markup["inline_keyboard"][0][0]["callback_data"],
+    )
+
+    binding.refresh_from_db()
+    assert result[0] == "Заявок нет."
+    assert binding.operator_mode is True
+
+
+def test_max_owner_markup_uses_max_payloads(db, django_user_model):
+    user = _operator(django_user_model, 94202, username="max-markup").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="max",
+        provider_user_id=94202,
+        delivery_chat_id=88202,
+        customer_visible_label="Рим",
+    )
+    _text, telegram_markup = operator_console.owner_panel(binding)
+
+    markup = operator_console.buttons_for_provider(telegram_markup, "max")
+
+    assert markup["inline_keyboard"][0][0]["payload"].startswith("op:l:")
+    assert "callback_data" not in markup["inline_keyboard"][0][0]
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_owner_panel_delivery_command_queues_one_panel_per_active_owner(
+    db, django_user_model, capsys
+):
+    user = _operator(django_user_model, 99203, username="panel-send").user
+    telegram = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="telegram",
+        provider_user_id=99203,
+        customer_visible_label="Денис",
+    )
+    max_binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="max",
+        provider_user_id=94203,
+        delivery_chat_id=88203,
+        customer_visible_label="Денис",
+    )
+    call_command("send_owner_console_panel")
+
+    rows = OperatorNotification.objects.filter(
+        kind=OperatorNotification.Kind.OWNER_PANEL
+    ).order_by("binding_id")
+    assert rows.count() == 2
+    assert set(rows.values_list("binding_id", flat=True)) == {telegram.pk, max_binding.pk}
+    assert rows.filter(status=OperatorNotification.Status.PENDING).count() == 2
+    assert "Панелей поставлено в очередь: 2" in capsys.readouterr().out
+
+    call_command("send_owner_console_panel")
+    assert OperatorNotification.objects.filter(
+        kind=OperatorNotification.Kind.OWNER_PANEL
+    ).count() == 2
+
+    call_command("send_owner_console_panel", refresh=True)
+    assert OperatorNotification.objects.filter(
+        kind=OperatorNotification.Kind.OWNER_PANEL,
+        status=OperatorNotification.Status.PENDING,
+    ).count() == 2
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
+def test_owner_panel_delivery_command_is_safe_when_feature_is_off(db):
+    with pytest.raises(CommandError, match="панель владельца не отправлена"):
+        call_command("send_owner_console_panel")
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
+    db, django_user_model
+):
+    user = _operator(django_user_model, 99204, username="panel-workers").user
+    telegram = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="telegram",
+        provider_user_id=99204,
+        customer_visible_label="Денис",
+    )
+    max_binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="max",
+        provider_user_id=94204,
+        delivery_chat_id=88204,
+        customer_visible_label="Рим",
+    )
+    operator_console.queue_owner_panel(binding=telegram)
+    operator_console.queue_owner_panel(binding=max_binding)
+
+    telegram_api = FakeBotApi()
+
+    class FakeMaxApi:
+        def __init__(self):
+            self.calls = []
+
+        def send_message(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"body": {"mid": "panel-worker-max"}}
+
+    max_api = FakeMaxApi()
+    telegram_worker = TelegramBotWorker(telegram_api, heartbeat_file="")
+    max_worker = MaxBotWorker(max_api, heartbeat_file="")
+    max_worker.pacer.wait = lambda _chat_id: None
+
+    assert telegram_worker.send_operator_console_notifications() == 1
+    assert max_worker.send_operator_console_notifications() == 1
+    telegram_payload = telegram_api.sent[0]["reply_markup"]["inline_keyboard"][0][0][
+        "callback_data"
+    ]
+    assert telegram_payload.startswith("op:l:")
+    assert max_api.calls[0]["buttons"]["inline_keyboard"][0][0]["payload"].startswith(
+        "op:l:"
+    )
+    assert OperatorNotification.objects.filter(
+        kind=OperatorNotification.Kind.OWNER_PANEL,
+        status=OperatorNotification.Status.SENT,
+    ).count() == 2
+
+
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
 def test_shared_auth_user_keeps_den_is_and_rim_identities_separate(db, django_user_model):
     admin = django_user_model.objects.create_superuser(username="shared-admin", password="x" * 12)
@@ -112,8 +282,8 @@ def test_pairing_works_with_feature_off_but_operator_mode_does_not(db, django_us
         provider="telegram", provider_user_id=99007, external_id="pair-1", text=token
     )
     assert reply[0] == (
-        "Доступ сотрудника подключён.\n\nВы вошли как: Рим\n\n"
-        "Рабочий режим пока не активирован."
+        "Доступ владельца подключён.\n\nВы вошли как: Рим\n\n"
+        "Рабочая панель пока не активирована."
     )
     assert operator_console.handle_text(
         provider="telegram", provider_user_id=99007, external_id="work", text="/work"
@@ -228,7 +398,7 @@ def test_operator_console_requires_binding_and_revocation_is_immediate(db, djang
     menu = operator_console.handle_text(
         provider="telegram", provider_user_id=99003, external_id="2", text="/work"
     )
-    assert menu[0] == "Рабочее меню PRO-STOR"
+    assert menu[0] == "Панель владельца PRO-STORE"
     binding.is_active = False
     binding.save(update_fields=["is_active"])
     assert operator_console.handle_callback(
@@ -257,7 +427,7 @@ def test_stale_callback_cannot_reactivate_customer_mode(db, django_user_model):
         provider="telegram", provider_user_id=99031, payload=f"op:r:{request.public_id.hex}"
     )
     binding.refresh_from_db()
-    assert result[0].startswith("Рабочий режим не активен")
+    assert result[0].startswith("Рабочая сессия устарела")
     assert binding.operator_mode is False
     assert operator_console.handle_text(
         provider="telegram", provider_user_id=99031, external_id="free", text="не отправляй"
@@ -825,6 +995,26 @@ def test_feature_off_worker_restart_ignores_console_notification_work(db, django
     assert notification.status == OperatorNotification.Status.SENDING
 
 
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_worker_restart_does_not_create_owner_panel_automatically(db, django_user_model):
+    user = _operator(django_user_model, 99205, username="restart-panel").user
+    StaffMessengerBinding.objects.create(
+        user=user,
+        provider="telegram",
+        provider_user_id=99205,
+        customer_visible_label="Рим",
+    )
+
+    worker = TelegramBotWorker(
+        FakeBotApi(), worker_id="operator-panel-restart", poll_timeout=0, heartbeat_file=""
+    )
+    worker.start()
+
+    assert not OperatorNotification.objects.filter(
+        kind=OperatorNotification.Kind.OWNER_PANEL
+    ).exists()
+
+
 def test_readiness_check_redacts_provider_identity_and_never_changes_bindings(
     db, django_user_model
 ):
@@ -870,13 +1060,21 @@ def test_operator_attachment_uses_the_same_private_reply_pipeline(
     binding = StaffMessengerBinding.objects.create(
         user=user, provider="telegram", provider_user_id=99011, customer_visible_label="Денис"
     )
-    operator_console.handle_text(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        external_id="work", text="/work"
+    _panel_text, panel = operator_console.owner_panel(binding)
+    _list_text, request_list = operator_console.handle_callback(
+        provider="telegram",
+        provider_user_id=binding.provider_user_id,
+        payload=panel["inline_keyboard"][0][0]["callback_data"],
     )
+    request_button = request_list["inline_keyboard"][0][0]["callback_data"]
+    _card_text, card_buttons = operator_console.handle_callback(
+        provider="telegram",
+        provider_user_id=binding.provider_user_id,
+        payload=request_button,
+    )
+    reply_button = card_buttons["inline_keyboard"][0][0]["callback_data"]
     operator_console.handle_callback(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        payload=operator_console._callback(binding, "r", request.public_id.hex)
+        provider="telegram", provider_user_id=binding.provider_user_id, payload=reply_button
     )
     result = operator_console.handle_text(
         provider="telegram", provider_user_id=binding.provider_user_id,

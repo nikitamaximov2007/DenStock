@@ -19,6 +19,9 @@ REQUIRED_MIGRATIONS = {
     "0019_customerrequest_current_responder_control_source_and_more",
     "0020_operator_context_safety",
     "0021_two_provider_pairing_slots",
+    "0022_operator_identity_keys",
+    "0023_owner_panel_notification",
+    "0024_alter_operatornotification_kind",
 }
 HEARTBEAT_MAX_AGE = timedelta(minutes=3)
 
@@ -52,7 +55,7 @@ class Command(BaseCommand):
             if missing:
                 blockers.append("не применены миграции: " + ", ".join(missing))
             else:
-                self.stdout.write("миграции 0017-0021: применены")
+                self.stdout.write("миграции 0017-0024: применены")
 
             active = StaffMessengerBinding.objects.select_related("user").filter(is_active=True)
             self.stdout.write(f"активных привязок: {active.count()}")

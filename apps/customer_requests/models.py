@@ -1116,6 +1116,7 @@ class OperatorNotification(models.Model):
     class Kind(models.TextChoices):
         NEW_REQUEST = "new_request", "Новая заявка"
         CUSTOMER_MESSAGE = "customer_message", "Сообщение клиента"
+        OWNER_PANEL = "owner_panel", "Панель владельца"
 
     class Status(models.TextChoices):
         PENDING = "pending", "В очереди"
@@ -1134,6 +1135,8 @@ class OperatorNotification(models.Model):
         CustomerRequest,
         verbose_name="Заявка",
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name="operator_notifications",
     )
     kind = models.CharField("Событие", max_length=24, choices=Kind.choices)
