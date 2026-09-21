@@ -7,11 +7,21 @@ from django.db import IntegrityError
 from django.urls import reverse
 
 from apps.brp.models import BrpPartLink
-from apps.catalog.models import Manufacturer, PartBarcode, PartNumber, PartType
+from apps.catalog.manual_pricing import (
+    customer_price_from_purchase_price,
+    set_manual_purchase_price,
+)
+from apps.catalog.models import (
+    ManualPurchasePrice,
+    Manufacturer,
+    PartBarcode,
+    PartNumber,
+    PartType,
+)
 from apps.catalog.services import ManualPartError, create_manual_part
 from apps.catalog_import.bearing_catalog import (
     BEARING_SOURCE_ROWS,
-    PRICE_SEMANTICS_CUSTOMER,
+    PRICE_SEMANTICS_PURCHASE,
     PRICE_SEMANTICS_UNCONFIRMED,
     apply_plan,
     build_plan,
@@ -64,18 +74,18 @@ def test_same_article_under_same_manufacturer_is_ambiguous(db):
     assert not plan.can_apply
 
 
-def test_apply_requires_explicit_customer_price_semantics(db):
+def test_apply_requires_explicit_purchase_price_semantics(db):
     plan = build_plan(rows=(BEARING_SOURCE_ROWS[0],))
 
-    with pytest.raises(ManualPartError, match="смысл RUB-цен"):
+    with pytest.raises(ManualPartError, match="закупочная цена"):
         apply_plan(plan)
 
     assert PartType.objects.count() == 0
 
 
-def test_confirmed_apply_creates_catalog_only_without_barcodes_or_stock(db):
+def test_confirmed_apply_stores_purchase_cost_and_derives_customer_price(db):
     plan = build_plan(
-        price_semantics=PRICE_SEMANTICS_CUSTOMER,
+        price_semantics=PRICE_SEMANTICS_PURCHASE,
     )
 
     result = apply_plan(plan)
@@ -97,7 +107,27 @@ def test_confirmed_apply_creates_catalog_only_without_barcodes_or_stock(db):
     assert StockLot.objects.count() == 0
     assert StockMovement.objects.count() == 0
     assert not BrpPartLink.objects.exists()
-    assert all(part.recommended_price is not None for part in PartType.objects.all())
+    assert ManualPurchasePrice.objects.count() == 38
+    for source in BEARING_SOURCE_ROWS:
+        part = PartType.objects.get(name=source.name)
+        purchase = ManualPurchasePrice.objects.get(part_type=part)
+        assert purchase.purchase_price_rub == source.price_rub
+        assert part.recommended_price == customer_price_from_purchase_price(source.price_rub)
+        assert part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
+
+
+def test_manual_purchase_price_change_is_explicit_and_keeps_customer_formula(db):
+    part = create_manual_part(name="Подшипник FAG 6012", article="6012")
+
+    set_manual_purchase_price(part, 1800)
+    part.refresh_from_db()
+    assert part.recommended_price == 2520
+    assert part.manual_purchase_price.purchase_price_rub == 1800
+
+    set_manual_purchase_price(part, 2000)
+    part.refresh_from_db()
+    assert part.recommended_price == 2800
+    assert ManualPurchasePrice.objects.get(part_type=part).purchase_price_rub == 2000
 
 
 def test_barcode_is_a_string_with_leading_zero_and_multiple_values(db):
@@ -145,11 +175,16 @@ def test_barcode_card_action_is_csrf_protected_and_removal_keeps_part(
     assert not PartBarcode.objects.exists()
 
 
-def test_command_defaults_to_read_only_and_apply_requires_price_confirmation(db):
+def test_command_defaults_to_read_only_and_apply_requires_purchase_confirmation(db):
     output = OutputWrapper(StringIO())
     call_command("import_bearings", stdout=output)
     assert "Режим проверки" in output.getvalue()
     assert PartType.objects.count() == 0
 
-    with pytest.raises(CommandError, match="prices-are-customer-selling"):
+    with pytest.raises(CommandError, match="prices-are-purchase-cost"):
         call_command("import_bearings", "--apply")
+
+
+def test_command_rejects_customer_price_confirmation(db):
+    with pytest.raises(CommandError, match="закупочную стоимость"):
+        call_command("import_bearings", "--apply", "--prices-are-customer-selling")

@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.catalog_import.bearing_catalog import (
-    PRICE_SEMANTICS_CUSTOMER,
+    PRICE_SEMANTICS_PURCHASE,
     apply_plan,
     build_plan,
 )
@@ -9,7 +9,7 @@ from apps.catalog_import.bearing_catalog import (
 
 class Command(BaseCommand):
     help = (
-        "Проверить список подшипников или явно применить его как клиентские цены. "
+        "Проверить список подшипников или явно применить его как закупочные цены. "
         "Остатки и штрихкоды не создаются."
     )
 
@@ -22,14 +22,17 @@ class Command(BaseCommand):
         parser.add_argument(
             "--prices-are-customer-selling",
             action="store_true",
-            help="Подтвердить, что цены из источника являются ценами для клиента.",
+            help="Устаревший флаг: клиентская цена не является источником этого импорта.",
+        )
+        parser.add_argument(
+            "--prices-are-purchase-cost",
+            action="store_true",
+            help="Подтвердить, что цены из источника являются закупочной стоимостью.",
         )
 
     def handle(self, *args, **options):
         semantics = (
-            PRICE_SEMANTICS_CUSTOMER
-            if options["prices_are_customer_selling"]
-            else None
+            PRICE_SEMANTICS_PURCHASE if options["prices_are_purchase_cost"] else None
         )
         plan = build_plan(price_semantics=semantics or "unconfirmed")
         summary = plan.as_summary()
@@ -39,15 +42,28 @@ class Command(BaseCommand):
         self.stdout.write(f"AMBIGUOUS: {summary['AMBIGUOUS']}")
         self.stdout.write(f"Штрихкоды: {summary['barcodes_created']}")
         self.stdout.write("Остатки: 0")
+        self.stdout.write("Таблица строк:")
+        for row in summary["rows_detail"]:
+            self.stdout.write(
+                f"{row['brand']} | {row['article']} | "
+                f"закупка {row['purchase_price_rub']} ₽ | "
+                f"клиент {row['customer_price_rub']} ₽ | {row['status']}"
+            )
         if not options["apply"]:
             self.stdout.write(
-                "Режим проверки: изменений нет. Смысл RUB-цен пока не подтверждён."
+                "Режим проверки: изменений нет. Смысл RUB-цен пока не подтверждён "
+                "как закупочная стоимость."
             )
             return
-        if not options["prices_are_customer_selling"]:
+        if options["prices_are_customer_selling"]:
             raise CommandError(
-                "Импорт остановлен: подтвердите --prices-are-customer-selling "
-                "только если источник содержит цены для клиента."
+                "Импорт остановлен: источник содержит закупочную стоимость, "
+                "а не цены для клиента."
+            )
+        if not options["prices_are_purchase_cost"]:
+            raise CommandError(
+                "Импорт остановлен: подтвердите --prices-are-purchase-cost, "
+                "если источник содержит закупочную стоимость."
             )
         try:
             result = apply_plan(plan)
