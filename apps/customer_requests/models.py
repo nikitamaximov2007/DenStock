@@ -994,6 +994,9 @@ class StaffMessengerBinding(models.Model):
         on_delete=models.PROTECT,
         related_name="staff_messenger_bindings",
     )
+    operator_key = models.CharField(
+        "Ключ личности оператора", max_length=32, default="", blank=True
+    )
     provider = models.CharField("Мессенджер", max_length=12, choices=Provider.choices)
     provider_user_id = models.BigIntegerField("ID пользователя мессенджера")
     delivery_chat_id = models.BigIntegerField(
@@ -1021,7 +1024,8 @@ class StaffMessengerBinding(models.Model):
                 fields=["provider", "provider_user_id"], name="staff_binding_provider_user_unique"
             ),
             models.UniqueConstraint(
-                fields=["user", "provider"], name="staff_binding_user_provider_unique"
+                fields=["user", "provider", "operator_key"],
+                name="staff_binding_user_provider_key_unique",
             ),
             models.CheckConstraint(
                 condition=models.Q(provider_user_id__gt=0),
@@ -1047,6 +1051,9 @@ class StaffMessengerPairingToken(models.Model):
         verbose_name="Сотрудник DenisStock",
         on_delete=models.PROTECT,
         related_name="staff_pairing_tokens",
+    )
+    operator_key = models.CharField(
+        "Ключ личности оператора", max_length=32, default="", blank=True
     )
     provider = models.CharField(
         "Мессенджер", max_length=12, choices=Provider.choices, blank=True, default=""

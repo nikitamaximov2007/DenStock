@@ -86,7 +86,7 @@ class Command(BaseCommand):
             if duplicates:
                 blockers.append("обнаружены дубли provider identity")
             duplicate_users = list(
-                StaffMessengerBinding.objects.values("user_id", "provider")
+                StaffMessengerBinding.objects.values("user_id", "provider", "operator_key")
                 .annotate(total=Count("pk"))
                 .filter(total__gt=1)
             )

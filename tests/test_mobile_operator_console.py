@@ -63,6 +63,32 @@ def test_pairing_code_has_two_independent_provider_slots(db, django_user_model):
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
+def test_shared_auth_user_keeps_den_is_and_rim_identities_separate(db, django_user_model):
+    admin = django_user_model.objects.create_superuser(username="shared-admin", password="x" * 12)
+    denis_code = operator_console.issue_pairing_token(
+        user=admin, label="Денис", created_by=admin, operator_key="DENIS"
+    )
+    rim_code = operator_console.issue_pairing_token(
+        user=admin, label="Рим", created_by=admin, operator_key="RIM"
+    )
+
+    denis_tg, _ = operator_console.consume_pairing(
+        provider="telegram", provider_user_id=99101, raw_token=denis_code
+    )
+    rim_tg, _ = operator_console.consume_pairing(
+        provider="telegram", provider_user_id=99102, raw_token=rim_code
+    )
+
+    assert denis_tg.user_id == admin.pk
+    assert denis_tg.operator_key == "DENIS"
+    assert denis_tg.customer_visible_label == "Денис"
+    assert rim_tg.user_id == admin.pk
+    assert rim_tg.operator_key == "RIM"
+    assert rim_tg.customer_visible_label == "Рим"
+    assert StaffMessengerBinding.objects.filter(user=admin, provider="telegram").count() == 2
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=False)
 def test_max_first_then_telegram_keeps_max_delivery_identity(db, django_user_model):
     user = _operator(django_user_model, 99004, username="max-first").user
     token = operator_console.issue_pairing_token(user=user, label="Максим", created_by=user)

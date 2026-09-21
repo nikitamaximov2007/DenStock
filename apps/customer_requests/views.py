@@ -196,29 +196,38 @@ def staff_messenger_bindings(request):
     staff_statuses = []
     for user in users:
         user_bindings = bindings_by_user.get(user.pk, [])
-        active_by_provider = {
-            provider: any(
-                binding.is_active and binding.provider == provider
-                for binding in user_bindings
-            )
-            for provider in StaffMessengerBinding.Provider.values
-        }
-        label = next(
-            (
-                binding.customer_visible_label
-                for binding in user_bindings
-                if binding.customer_visible_label
-            ),
-            str(user),
-        ) or str(user)
-        staff_statuses.append(
-            {
-                "label": label,
-                "telegram_connected": active_by_provider[StaffMessengerBinding.Provider.TELEGRAM],
-                "max_connected": active_by_provider[StaffMessengerBinding.Provider.MAX],
-                "bindings": user_bindings,
+        identity_groups = {}
+        for binding in user_bindings:
+            key = binding.operator_key or binding.customer_visible_label or f"USER_{user.pk}"
+            identity_groups.setdefault(key, []).append(binding)
+        if not identity_groups:
+            identity_groups[f"USER_{user.pk}"] = []
+        for identity_bindings in identity_groups.values():
+            active_by_provider = {
+                provider: any(
+                    binding.is_active and binding.provider == provider
+                    for binding in identity_bindings
+                )
+                for provider in StaffMessengerBinding.Provider.values
             }
-        )
+            label = next(
+                (
+                    binding.customer_visible_label
+                    for binding in identity_bindings
+                    if binding.customer_visible_label
+                ),
+                str(user),
+            ) or str(user)
+            staff_statuses.append(
+                {
+                    "label": label,
+                    "telegram_connected": active_by_provider[
+                        StaffMessengerBinding.Provider.TELEGRAM
+                    ],
+                    "max_connected": active_by_provider[StaffMessengerBinding.Provider.MAX],
+                    "bindings": identity_bindings,
+                }
+            )
     return render(
         request,
         "customer_requests/staff_bindings.html",

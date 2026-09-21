@@ -27,6 +27,7 @@ LIST_PAGE_SIZE = 8
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){2}$")
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+OWNER_OPERATOR_KEYS = {"Денис": "DENIS", "Рим": "RIM"}
 
 
 def enabled() -> bool:
@@ -67,20 +68,34 @@ def is_pairing_code(value: str) -> bool:
     return bool(PAIRING_CODE_RE.fullmatch((value or "").strip().upper()))
 
 
-def issue_pairing_token(*, user, provider: str | None = None, label: str, created_by) -> str:
+def _operator_key(*, label: str, operator_key: str | None) -> str:
+    if operator_key:
+        value = operator_key.strip().upper()
+    else:
+        value = OWNER_OPERATOR_KEYS.get(label) or f"LABEL_{_hash(label)[:16].upper()}"
+    if not value or len(value) > 32 or not re.fullmatch(r"[A-Z0-9_]+", value):
+        raise ValueError("Укажите корректную личность оператора.")
+    return value
+
+
+def issue_pairing_token(
+    *, user, provider: str | None = None, label: str, created_by, operator_key: str | None = None
+) -> str:
     # ``provider`` remains accepted for callers from the old admin UI, but a
     # newly issued code is deliberately provider-neutral.
     label = (label or "").strip()
     if not label or len(label) > 80:
         raise ValueError("Укажите подпись сотрудника длиной до 80 символов.")
+    operator_key = _operator_key(label=label, operator_key=operator_key)
     raw = _new_pairing_code()
     with transaction.atomic():
         StaffMessengerPairingToken.objects.filter(
-            user=user, revoked_at__isnull=True
+            user=user, operator_key=operator_key, revoked_at__isnull=True
         ).update(revoked_at=timezone.now())
         StaffMessengerPairingToken.objects.create(
             token_hash=_hash(raw),
             user=user,
+            operator_key=operator_key,
             provider="",
             customer_visible_label=label,
             expires_at=timezone.now() + PAIRING_TTL,
@@ -122,16 +137,19 @@ def consume_pairing(
     ).first()
     if existing and existing.is_active:
         return None, None
-    if existing and existing.user_id != row.user_id:
+    if existing and (
+        existing.user_id != row.user_id or existing.operator_key != row.operator_key
+    ):
         return None, None
     if existing is None and StaffMessengerBinding.objects.filter(
-        user=row.user, provider=provider
+        user=row.user, provider=provider, operator_key=row.operator_key
     ).exists():
         return None, None
     if existing is not None:
         binding = existing
         binding.is_active = True
         binding.operator_mode = False
+        binding.operator_key = row.operator_key
         clear_context(binding=binding)
         binding.customer_visible_label = row.customer_visible_label
         binding.created_by = row.created_by
@@ -141,6 +159,7 @@ def consume_pairing(
     else:
         binding = StaffMessengerBinding.objects.create(
             user=row.user,
+            operator_key=row.operator_key,
             provider=provider,
             provider_user_id=provider_user_id,
             delivery_chat_id=(
