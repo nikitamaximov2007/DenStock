@@ -128,17 +128,20 @@ inventory, catalog}`), но **никто не зависит от reports** — 
 
 | Метрика | Расчёт |
 |---|---|
-| Выручка | `Sum(Sale.revenue_total)` |
-| Себестоимость | `Sum(Sale.cost_total)` *(под `can_view_purchase_cost`)* |
-| Валовая прибыль | `Sum(Sale.profit_total)` *(под `can_view_purchase_cost`)* |
+| Выручка | Сумма `SaleLine.unit_price × quantity` для всех проведённых строк |
+| Себестоимость | Сумма защищённого dealer-base snapshot × quantity для строк с известной базой |
+| Прибыль | Выручка того же известного scope минус себестоимость |
 | Число продаж | `Count(Sale)` |
 | Число строк | `Count(SaleLine)` |
 | Кол-во по детали | `SaleLine.values("part_type").annotate(qty=Sum("quantity"))` |
-| Топ по выручке | `SaleLine.values("part_type").annotate(rev=Sum("total_price")).order_by("-rev")[:N]` |
+| Топ по выручке | Сумма `SaleLine.unit_price × quantity` по детали, `order_by("-rev")[:N]` |
 | Топ по количеству | `…annotate(qty=Sum("quantity")).order_by("-qty")[:N]` |
 
-Всё через **ORM-агрегацию** (`Sum`/`Count`), без N+1; `part_type` подтягивается
-`values()`+именами или `select_related`.
+Проведённые строки без подтверждённой оптовой базы не превращаются в ноль:
+их выручка известна, а себестоимость и прибыль не входят в финансовый scope и
+помечаются предупреждением. `Sale.cost_total`/`profit_total` и landed cost
+для этой сводки не являются источником. `part_type` подтягивается через
+`select_related`.
 
 ---
 

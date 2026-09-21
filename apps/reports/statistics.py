@@ -17,7 +17,6 @@ from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockBalance, StockLot, StockMovement
 from apps.procurement.models import money
-from apps.reports.services import sale_returned_quantities
 from apps.reports.warehouse_finance import get_warehouse_valuation
 from apps.sales.models import Reservation, Sale, SaleLine
 
@@ -250,18 +249,14 @@ def _movers(period: StatsPeriod) -> list:
         lines.select_related("part_type").only(
             "id",
             "quantity",
-            "total_price",
             "unit_price",
             "unmarked_unit_price_rub_snapshot",
             "part_type__name",
         )
     )
-    returned = sale_returned_quantities(rows)
     grouped = {}
     for line in rows:
-        quantity = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
-        if not quantity:
-            continue
+        quantity = line.quantity
         row = grouped.setdefault(
             line.part_type.name,
             {"quantity": DEC0, "revenue": DEC0, "profit": DEC0, "unavailable": DEC0},

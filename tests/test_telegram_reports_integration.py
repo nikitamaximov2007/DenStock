@@ -2,7 +2,7 @@
 
 Telegram customer messaging is optional reference data next to a
 CustomerRequest. It must never create business documents, move stock, change
-the canonical profit (actual sale price minus the immutable unmarked RUB
+the canonical profit (actual sale price minus the immutable dealer-base
 snapshot) or depend on profit pricing. The profit snapshot migration, in turn,
 must not touch Telegram.
 """

@@ -51,9 +51,11 @@ def priced_sale(db, django_user_model):
     return user, part, lot, location
 
 
-def _complete(user, lot, *, unit_price):
+def _complete(user, lot, *, unit_price, quantity="1"):
     sale = create_sale(customer_name="Клиент", by=user)
-    add_stock_lot_to_sale(sale, lot, Decimal("1"), unit_price=Decimal(unit_price), by=user)
+    add_stock_lot_to_sale(
+        sale, lot, Decimal(quantity), unit_price=Decimal(unit_price), by=user
+    )
     return complete_sale(sale, by=user)
 
 
@@ -75,11 +77,18 @@ def test_future_sale_freezes_live_unmarked_rate_and_uses_customer_price(priced_s
     settings.save(update_fields=["current_usd_rate"])
     part.aftermarket_catalog_entry.dealer_cost_usd = Decimal("50")
     part.aftermarket_catalog_entry.save(update_fields=["dealer_cost_usd"])
+    sale.revenue_total = Decimal("409907")
+    sale.cost_total = Decimal("368066")
+    sale.profit_total = Decimal("112581")
+    sale.save(update_fields=["revenue_total", "cost_total", "profit_total"])
     line.refresh_from_db()
     report = get_sales_report(
         Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
     )
     assert line.unmarked_unit_price_rub_snapshot == Decimal("10500")
+    assert report.revenue == Decimal("16000")
+    assert report.cost == Decimal("10500")
+    assert report.known_revenue == Decimal("16000")
     assert report.profit == Decimal("5500")
 
 
@@ -94,7 +103,9 @@ def test_profit_uses_effective_quantity_and_no_source_is_unavailable(priced_sale
     report = get_sales_report(
         Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
     )
-    assert report.profit == Decimal("0")
+    assert report.revenue == Decimal("14700")
+    assert report.cost == Decimal("10500")
+    assert report.profit == Decimal("4200")
     assert report.profit_unavailable_lines == 0
 
 
@@ -108,25 +119,59 @@ def test_formula_and_higher_customer_price_rule_are_distinct():
     ) == Decimal("16000")
 
 
-def test_owner_approved_legacy_backfill_uses_105_without_rewriting_sale_price(priced_sale):
+def test_configured_rate_controls_new_base_and_normal_customer_price(priced_sale):
+    user, _, lot, _ = priced_sale
+    settings = ValuationSettings.get()
+    settings.current_usd_rate = Decimal("120")
+    settings.save(update_fields=["current_usd_rate"])
+
+    sale = _complete(user, lot, unit_price="16800")
+    line = sale.lines.get()
+
+    assert line.unmarked_dealer_unit_usd_snapshot == Decimal("100")
+    assert line.unmarked_usd_rate_snapshot == Decimal("120")
+    assert line.unmarked_unit_price_rub_snapshot == Decimal("12000.00")
+    assert sale.lines.get().unit_price == Decimal("16800")
+
+
+def test_aggregate_reconciles_known_lines_and_quantities(priced_sale):
+    user, _, lot, _ = priced_sale
+    _complete(user, lot, unit_price="16000", quantity="2")
+    _complete(user, lot, unit_price="15000", quantity="1")
+
+    report = get_sales_report(
+        Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
+    )
+
+    assert report.revenue == Decimal("47000")
+    assert report.known_revenue == Decimal("47000")
+    assert report.cost == Decimal("31500")
+    assert report.profit == Decimal("15500")
+    assert report.revenue - report.cost == report.profit
+
+
+def test_unverified_legacy_backfill_is_cleared_without_rewriting_sale_price(priced_sale):
     from django.apps import apps
 
     user, _, lot, _ = priced_sale
     sale = _complete(user, lot, unit_price="16000")
     line = sale.lines.get()
-    line.unmarked_unit_price_rub_snapshot = None
-    line.unmarked_dealer_unit_usd_snapshot = None
-    line.unmarked_usd_rate_snapshot = None
-    line.unmarked_price_source = ""
-    line.unmarked_price_snapshot_note = ""
+    line.unmarked_unit_price_rub_snapshot = Decimal("10500")
+    line.unmarked_dealer_unit_usd_snapshot = Decimal("100")
+    line.unmarked_usd_rate_snapshot = Decimal("105")
+    line.unmarked_price_source = "aftermarket"
+    line.unmarked_price_snapshot_note = "legacy_reconstruction_105"
     line.save(update_fields=[
         "unmarked_unit_price_rub_snapshot", "unmarked_dealer_unit_usd_snapshot",
         "unmarked_usd_rate_snapshot", "unmarked_price_source", "unmarked_price_snapshot_note",
     ])
-    migration = import_module("apps.sales.migrations.0007_saleline_unmarked_price_snapshot")
-    migration.backfill_owner_approved_unmarked_prices(apps, None)
+    migration = import_module(
+        "apps.sales.migrations.0008_clear_unverified_legacy_base_snapshots"
+    )
+    migration.clear_unverified_legacy_base_snapshots(apps, None)
     line.refresh_from_db()
-    assert line.unmarked_unit_price_rub_snapshot == Decimal("10500")
-    assert line.unmarked_usd_rate_snapshot == Decimal("105")
-    assert line.unmarked_price_snapshot_note == "legacy_reconstruction_105"
+    assert line.unmarked_unit_price_rub_snapshot is None
+    assert line.unmarked_dealer_unit_usd_snapshot is None
+    assert line.unmarked_usd_rate_snapshot is None
+    assert line.unmarked_price_snapshot_note == "historical_base_unknown"
     assert line.unit_price == Decimal("16000")

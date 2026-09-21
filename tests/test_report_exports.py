@@ -105,7 +105,7 @@ def data(db, admin):
     receive_stock_lot(lot_wo, by=admin)
     remember_customs(serial, bulk)
 
-    # Продажа: item_a (500) + lot_sale × 2 (200) → выручка 900, себест. 328, прибыль 572.
+    # Продажа: item_a (500) + lot_sale × 2 (200) → выручка 900.
     sale = create_sale(customer_name="Покупатель", by=admin)
     add_part_item_to_sale(sale, item_a, unit_price=Decimal("500"), by=admin)
     add_stock_lot_to_sale(sale, lot_sale, Decimal("2"), unit_price=Decimal("200"), by=admin)
@@ -164,7 +164,7 @@ def test_manager_export_has_financial_columns(make_user, client, data):
     assert "Себестоимость (₽)" in text
     assert "Валовая прибыль (₽)" not in text
     assert "Прибыль (₽)" in text
-    assert "Строк без подтверждённой базы прибыли" in text
+    assert "Строк без подтверждённой базы себестоимости" in text
     assert "900" in text
     assert "900,00" not in text
 

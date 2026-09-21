@@ -1,20 +1,19 @@
-"""Immutable customer-price base snapshots for completed sale lines.
+"""Immutable dealer-base snapshots for completed sale lines.
 
 This module deliberately deals with the *dealer* base, not warehouse landed
-cost.  The resulting snapshot is the only input used for customer-price profit
-reports.  It is captured once while a sale is posted and is never refreshed.
+cost.  The resulting snapshot is the only input used for the normal sales
+report.  It is captured once while a sale is posted and is never refreshed.
 """
 from dataclasses import dataclass
 from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist
 
-from apps.brp.pricing import customer_price_rub, effective_wholesale_usd
+from apps.brp.pricing import effective_wholesale_usd
 from apps.catalog.services import get_current_price_settings
 from apps.counting.services import find_brp_price_source
 from apps.polaris.services import find_polaris_price_source
-
-LEGACY_RECONSTRUCTION_RATE = Decimal("105")
+from apps.procurement.models import money
 
 
 @dataclass(frozen=True)
@@ -81,9 +80,10 @@ def resolve_unmarked_price(part, *, usd_rate) -> tuple[UnmarkedPrice | None, str
     source, dealer_usd, reason = authoritative_dealer_unit_usd(part)
     if dealer_usd is None:
         return None, reason
-    # customer_price_rub with zero markup is the project-wide Decimal and
-    # ROUND_HALF_UP whole-ruble convention for a USD-to-RUB unit price.
-    unmarked = customer_price_rub(dealer_usd, usd_rate, Decimal("0"))
+    # This is a report base cost, not a customer price.  Customer prices use
+    # the whole-ruble pricing helper; the base preserves the configured rate
+    # multiplication to money precision and never includes customer markup.
+    unmarked = money(dealer_usd * Decimal(str(usd_rate)))
     return UnmarkedPrice(source, dealer_usd, Decimal(str(usd_rate)), unmarked), ""
 
 

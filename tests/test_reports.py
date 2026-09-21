@@ -175,12 +175,19 @@ def data(db, admin):
 
 
 def test_sales_totals(data):
+    Sale.objects.filter(pk=data["sale"].pk).update(
+        revenue_total=Decimal("409907"),
+        cost_total=Decimal("368066"),
+        profit_total=Decimal("112581"),
+    )
     rep = get_sales_report(_now_period())
     assert rep.count == 1
     assert rep.revenue == Decimal("900.00")
-    assert rep.cost == Decimal("328.00")
+    assert rep.cost == Decimal("0.00")
     assert rep.profit == Decimal("0.00")
-    assert rep.profit_unavailable_lines == 1  # строка item_a уже полностью возвращена
+    assert rep.profit_unavailable_lines == 2
+    assert rep.known_revenue == Decimal("0.00")
+    assert rep.known_revenue - rep.cost == rep.profit
 
 
 def test_sales_only_completed_in_period(data):
@@ -188,6 +195,16 @@ def test_sales_only_completed_in_period(data):
     create_sale(customer_name="Черновик", by=data["admin"])
     rep = get_sales_report(_now_period())
     assert rep.count == 1  # только проведённая
+
+
+@pytest.mark.parametrize("status", [Sale.Status.CANCELED, Sale.Status.VOIDED])
+def test_canceled_and_voided_sales_are_excluded(data, status):
+    sale = create_sale(customer_name="Закрытая продажа", by=data["admin"])
+    Sale.objects.filter(pk=sale.pk).update(status=status, sold_at=timezone.now())
+
+    report = get_sales_report(_now_period())
+
+    assert report.count == 1
 
 
 def test_sales_out_of_period_excluded(data):
@@ -303,6 +320,7 @@ def test_manager_sees_reports_with_money(make_user, client, data):
     assert "Выручка" in html  # денежный блок показан (точные суммы — в сервис-тестах)
     assert "Валовая прибыль" not in html
     assert "Прибыль" in html
+    assert "себестоимость и прибыль не рассчитаны" in html
 
 
 def test_storekeeper_sees_reports_without_money(make_user, client, data):

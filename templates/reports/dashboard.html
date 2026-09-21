@@ -72,7 +72,10 @@
     {% endif %}
   </section>
   {% if report.sales.profit_unavailable_lines %}
-    <p class="muted">По {{ report.sales.profit_unavailable_lines }} строкам прибыль не показана: нет подтверждённой дилерской цены.</p>
+    <p class="muted">
+      По {{ report.sales.profit_unavailable_lines }} строкам себестоимость и прибыль не рассчитаны:
+      нет подтверждённой оптовой цены. Карточки относятся только к строкам с известной базой.
+    </p>
   {% endif %}
   {% if not show_costs %}
     <p class="muted">Финансовые показатели скрыты для вашей роли.</p>

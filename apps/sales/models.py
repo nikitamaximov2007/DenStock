@@ -228,8 +228,8 @@ class SaleLine(models.Model):
     profit_rub = models.DecimalField(
         "Прибыль (₽)", max_digits=14, decimal_places=2, editable=False, default=0
     )
-    # Customer-price base, not landed cost.  It is written only on completion
-    # (or the owner-authorised legacy cutover) and makes report profit stable.
+    # Wholesale/dealer base, not landed cost. It is written only on completion
+    # and makes report cost and profit stable.
     unmarked_unit_price_rub_snapshot = models.DecimalField(
         "Немаркированная цена за ед. (снимок, ₽)", max_digits=14, decimal_places=2,
         null=True, blank=True, editable=False,
