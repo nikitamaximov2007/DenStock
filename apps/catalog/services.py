@@ -23,6 +23,7 @@ from .models import (
     PartNumber,
     PartType,
     Unit,
+    normalize_barcode,
     normalize_number,
 )
 
@@ -614,10 +615,10 @@ def assert_barcode_is_free(barcode: str) -> None:
     Оператору бесполезно сообщение «такое значение уже есть»: ему нужно знать,
     на какой детали оно висит, чтобы понять, ту ли коробку он держит.
     """
-    value = (barcode or "").strip()
+    value = normalize_barcode(barcode)
     if not value:
         return
-    taken = PartBarcode.objects.select_related("part").filter(value=value).first()
+    taken = PartBarcode.objects.select_related("part").filter(value__iexact=value).first()
     if taken is not None:
         raise ManualPartError(
             f"Штрихкод {value} уже стоит на детали «{taken.part.name}». "
