@@ -794,10 +794,11 @@ class MaxBotWorker:
                 continue
             self.pacer.wait(delivery.delivery_chat_id)
             try:
+                max_markup = operator_console.buttons_for_provider(delivery.buttons, "max")
                 result = self.api.send_message(
                     chat_id=delivery.delivery_chat_id,
                     text=delivery.text,
-                    buttons=operator_console.buttons_for_provider(delivery.buttons, "max"),
+                    buttons=(max_markup or {}).get("inline_keyboard", []),
                 )
             except MaxError as exc:
                 if isinstance(exc, MaxNetworkError) and exc.ambiguous:

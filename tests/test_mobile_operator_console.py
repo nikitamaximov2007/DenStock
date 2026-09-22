@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from apps.customer_requests import operator_console, operator_replies
-from apps.customer_requests.max_api import MaxApiError, MaxNetworkError
+from apps.customer_requests.max_api import MaxApiError, MaxBotApi, MaxNetworkError
 from apps.customer_requests.max_bot import MaxBotWorker
 from apps.customer_requests.messengers import consume_max_start, issue_max_link
 from apps.customer_requests.models import (
@@ -30,6 +30,7 @@ from apps.customer_requests.models import (
 from apps.customer_requests.telegram_api import TelegramApiError, TelegramNetworkError
 from apps.customer_requests.telegram_bot import TelegramBotWorker
 
+from .max_fake import FAKE_MAX_TOKEN, FakeMaxServer
 from .test_telegram_customer_messaging import FakeBotApi, _operator, _request, build_part
 
 
@@ -260,15 +261,74 @@ def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
         "callback_data"
     ]
     assert telegram_payload.startswith("op:l:")
-    assert max_api.calls[0]["buttons"]["inline_keyboard"][0][0]["payload"].startswith(
-        "op:l:"
-    )
+    assert max_api.calls[0]["buttons"][0][0]["payload"].startswith("op:l:")
+    assert "callback_data" not in max_api.calls[0]["buttons"][0][0]
     assert OperatorNotification.objects.filter(
         kind=OperatorNotification.Kind.OWNER_PANEL,
         status=OperatorNotification.Status.SENT,
     ).count() == 2
     assert OperatorNotification.objects.get(binding=telegram).external_message_id
     assert OperatorNotification.objects.get(binding=max_binding).external_message_id
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_max_owner_panel_real_serializer_and_callback_round_trip(
+    db, django_user_model
+):
+    user = _operator(django_user_model, 99206, username="panel-max-real").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        provider="max",
+        provider_user_id=94206,
+        delivery_chat_id=88206,
+        customer_visible_label="Денис",
+    )
+    operator_console.queue_owner_panel(binding=binding)
+    server = FakeMaxServer()
+    server.start()
+    try:
+        api = MaxBotApi(FAKE_MAX_TOKEN, base_url=server.base_url, timeout=2)
+        worker = MaxBotWorker(api, worker_id="max-real-panel", heartbeat_file="")
+        worker.pacer.wait = lambda _chat_id: None
+
+        assert worker.send_operator_console_notifications() == 1
+
+        sent = server.sent[0]
+        assert sent["chat_id"] == binding.delivery_chat_id
+        assert sent["chat_id"] != binding.provider_user_id
+        assert sent["text"] == "Панель владельца PRO-STORE"
+        buttons = sent["attachments"][0]["payload"]["buttons"]
+        assert [button["text"] for row in buttons for button in row] == [
+            "Все заявки",
+            "Новые заявки",
+        ]
+        assert all(
+            "callback_data" not in button
+            and button["payload"].startswith("op:")
+            for row in buttons
+            for button in row
+        )
+
+        first_result = operator_console.handle_callback(
+            provider="max",
+            provider_user_id=binding.provider_user_id,
+            payload=buttons[0][0]["payload"],
+        )
+        second_result = operator_console.handle_callback(
+            provider="max",
+            provider_user_id=binding.provider_user_id,
+            payload=buttons[1][0]["payload"],
+        )
+        assert first_result[0] == "Заявок нет."
+        assert second_result[0] == "Новых заявок нет."
+        assert OperatorConversationContext.objects.filter(
+            binding=binding, request__isnull=False
+        ).count() == 0
+        notification = OperatorNotification.objects.get(binding=binding)
+        assert notification.status == OperatorNotification.Status.SENT
+        assert notification.external_message_id
+    finally:
+        server.stop()
 
 
 @pytest.mark.parametrize(
