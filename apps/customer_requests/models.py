@@ -1110,6 +1110,74 @@ class OperatorConversationContext(models.Model):
         return f"{self.binding} · {self.request or 'без заявки'}"
 
 
+class OwnerPhotoUploadContext(models.Model):
+    """Short-lived, explicit PartType target for the next owner photo."""
+
+    binding = models.OneToOneField(
+        StaffMessengerBinding,
+        verbose_name="Привязка владельца",
+        on_delete=models.CASCADE,
+        related_name="photo_upload_context",
+    )
+    part_type = models.ForeignKey(
+        "catalog.PartType",
+        verbose_name="Деталь",
+        on_delete=models.PROTECT,
+        related_name="owner_photo_contexts",
+    )
+    operation_type = models.CharField("Тип операции", max_length=12)
+    operation_id = models.PositiveBigIntegerField("Операция")
+    article_snapshot = models.CharField("Артикул (снимок)", max_length=100, blank=True)
+    part_name_snapshot = models.CharField("Название (снимок)", max_length=200)
+    expires_at = models.DateTimeField("Истекает")
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+    updated_at = models.DateTimeField("Обновлён", auto_now=True)
+
+    class Meta:
+        verbose_name = "Контекст загрузки фото владельца"
+        verbose_name_plural = "Контексты загрузки фото владельца"
+        indexes = [
+            models.Index(fields=["expires_at"], name="owner_photo_ctx_exp_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.binding} · {self.part_type}"
+
+
+class OwnerPhotoUploadReceipt(models.Model):
+    """Idempotency record for one Telegram update handled as a photo upload."""
+
+    binding = models.ForeignKey(
+        StaffMessengerBinding,
+        verbose_name="Привязка владельца",
+        on_delete=models.CASCADE,
+        related_name="photo_upload_receipts",
+    )
+    external_id = models.CharField("Идентификатор обновления", max_length=160)
+    part_type = models.ForeignKey(
+        "catalog.PartType",
+        verbose_name="Деталь",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owner_photo_receipts",
+    )
+    response_text = models.TextField("Ответ")
+    created_at = models.DateTimeField("Создан", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Квитанция загрузки фото владельца"
+        verbose_name_plural = "Квитанции загрузки фото владельца"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["binding", "external_id"], name="owner_photo_receipt_unique"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.binding} · {self.external_id}"
+
+
 class OperatorNotification(models.Model):
     """Durable, per-binding notification for the mobile operator workspace."""
 

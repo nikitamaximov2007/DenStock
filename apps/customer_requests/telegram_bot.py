@@ -119,7 +119,16 @@ def _is_int(value) -> bool:
 def _telegram_attachment_descriptor(message: dict) -> tuple[str, str] | None:
     document = message.get("document")
     if isinstance(document, dict) and document.get("file_id"):
-        return str(document["file_id"]), str(document.get("file_name") or "document.pdf")
+        filename = document.get("file_name")
+        if not filename:
+            mime = str(document.get("mime_type") or "").lower()
+            extension = {
+                "image/png": "png",
+                "image/jpeg": "jpg",
+                "image/webp": "webp",
+            }.get(mime, "pdf")
+            filename = f"document.{extension}"
+        return str(document["file_id"]), str(filename)
     photos = message.get("photo")
     if isinstance(photos, list):
         candidates = [item for item in photos if isinstance(item, dict) and item.get("file_id")]

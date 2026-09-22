@@ -83,6 +83,7 @@ def test_enabled_pairing_returns_owner_panel_without_command_instructions(
     assert [row[0]["text"] for row in reply[1]["inline_keyboard"]] == [
         "Все заявки",
         "Новые заявки",
+        "Загрузка фото по продажам/ремонтам",
     ]
     assert "/work" not in reply[0]
 
@@ -106,10 +107,10 @@ def test_owner_panel_buttons_activate_console_for_both_providers(
     text, markup = operator_console.owner_panel(binding)
 
     assert text == "Панель владельца PRO-STORE"
-    assert [row[0]["text"] for row in markup["inline_keyboard"]] == [
-        "Все заявки",
-        "Новые заявки",
-    ]
+    expected = ["Все заявки", "Новые заявки"]
+    if provider == "telegram":
+        expected.append("Загрузка фото по продажам/ремонтам")
+    assert [row[0]["text"] for row in markup["inline_keyboard"]] == expected
     assert binding.operator_mode is False
 
     result = operator_console.handle_callback(

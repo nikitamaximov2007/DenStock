@@ -8,23 +8,37 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from apps.catalog.models import PartType, PartTypeImage
+from apps.catalog.photo_pipeline import PartPhotoAlreadyExists, upload_primary_part_photo
+from apps.catalog.public_photos import PublicPhotoError
+from apps.core.files import validate_image_upload
+from apps.inventory.presentation import part_exact_number
+from apps.repairs.models import RepairIssueLine, RepairOrder
+from apps.sales.models import Sale, SaleLine
+
 from . import operator_replies, workspace
+from .attachments import AttachmentError, ValidatedAttachment
 from .models import (
     CustomerRequest,
     MaxMessage,
     OperatorConsoleRuntime,
     OperatorConversationContext,
     OperatorNotification,
+    OwnerPhotoUploadContext,
+    OwnerPhotoUploadReceipt,
     StaffMessengerBinding,
     StaffMessengerPairingToken,
     TelegramMessage,
 )
 
 LIST_PAGE_SIZE = 8
+PHOTO_OPERATION_PAGE_SIZE = 6
 PAIRING_TTL = timedelta(minutes=10)
 PAIRING_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){2}$")
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -152,6 +166,7 @@ def consume_pairing(
         binding.operator_mode = False
         binding.operator_key = row.operator_key
         clear_context(binding=binding)
+        clear_photo_context(binding=binding)
         binding.customer_visible_label = row.customer_visible_label
         binding.created_by = row.created_by
         if provider == StaffMessengerBinding.Provider.MAX and isinstance(provider_chat_id, int):
@@ -195,6 +210,11 @@ def _context_is_fresh(context) -> bool:
     return context.updated_at >= timezone.now() - timedelta(minutes=ttl)
 
 
+def _photo_context_ttl() -> timedelta:
+    ttl = max(1, int(getattr(settings, "CUSTOMER_OPERATOR_PHOTO_CONTEXT_TTL_MINUTES", 5)))
+    return timedelta(minutes=ttl)
+
+
 def _session_token(binding) -> str:
     """Opaque token for the current binding session."""
     context, _ = OperatorConversationContext.objects.get_or_create(binding=binding)
@@ -222,6 +242,15 @@ def menu(binding=None) -> tuple[str, dict]:
     return heading, {"inline_keyboard": [
         [{"text": "Все заявки", "callback_data": _callback(binding, "l", "1")}],
         [{"text": "Новые заявки", "callback_data": _callback(binding, "n", "1")}],
+        *(
+            [[{
+                "text": "Загрузка фото по продажам/ремонтам",
+                "callback_data": _callback(binding, "p", "1"),
+            }]]
+            if binding is not None
+            and binding.provider == StaffMessengerBinding.Provider.TELEGRAM
+            else []
+        ),
     ]}
 
 
@@ -292,6 +321,235 @@ def request_by_hex(value: str):
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class _PhotoOperation:
+    kind: str
+    pk: int
+    when: object
+    customer_name: str
+
+
+def _photo_operations() -> list[_PhotoOperation]:
+    sales = [
+        _PhotoOperation("sale", sale.pk, sale.sold_at or sale.created_at, sale.customer_name)
+        for sale in Sale.objects.filter(status=Sale.Status.COMPLETED)
+    ]
+    repairs = [
+        _PhotoOperation(
+            "repair", repair.pk, repair.completed_at or repair.created_at, repair.customer_name
+        )
+        for repair in RepairOrder.objects.filter(status=RepairOrder.Status.COMPLETED)
+    ]
+    # Newest first, then a stable kind and primary-key tie-breaker.  The
+    # operation timestamp is the completed/sold timestamp, not row creation.
+    return sorted(
+        sales + repairs,
+        key=lambda item: (item.when, item.kind, item.pk),
+        reverse=True,
+    )
+
+
+def _photo_operation(ref: str):
+    if not isinstance(ref, str) or ref.count(":") != 1:
+        return None
+    kind, value = ref.split(":", 1)
+    if kind not in {"sale", "repair"} or not value.isdigit() or len(value) > 12:
+        return None
+    model = Sale if kind == "sale" else RepairOrder
+    status = model.Status.COMPLETED
+    return model.objects.filter(pk=int(value), status=status).first()
+
+
+def _photo_operation_lines(operation, kind: str):
+    line_model = SaleLine if kind == "sale" else RepairIssueLine
+    field = "sale_id" if kind == "sale" else "repair_order_id"
+    lines = line_model.objects.filter(**{field: operation.pk}).select_related("part_type")
+    unique = {}
+    for line in lines:
+        unique.setdefault(line.part_type_id, line.part_type)
+    return [unique[part_id] for part_id in sorted(unique)]
+
+
+def photo_operation_page(page: int = 1, *, binding=None) -> tuple[str, dict]:
+    operations = _photo_operations()
+    pages = max(1, (len(operations) + PHOTO_OPERATION_PAGE_SIZE - 1) // PHOTO_OPERATION_PAGE_SIZE)
+    page = min(max(1, int(page or 1)), pages)
+    current = operations[(page - 1) * PHOTO_OPERATION_PAGE_SIZE : page * PHOTO_OPERATION_PAGE_SIZE]
+    rows = []
+    labels = {"sale": "ПРОДАЖА", "repair": "РЕМОНТ"}
+    for operation in current:
+        stamp = timezone.localtime(operation.when).strftime("%d.%m.%Y %H:%M:%S")
+        rows.append([{
+            "text": f"{stamp} {labels[operation.kind]}\n{operation.customer_name or 'Клиент'}",
+            "callback_data": _callback(binding, "o", f"{operation.kind}-{operation.pk}"),
+        }])
+    if not rows:
+        return "Продаж и ремонтов нет.", menu(binding)[1]
+    navigation = []
+    if page > 1:
+        navigation.append({
+            "text": "Назад", "callback_data": _callback(binding, "p", str(page - 1))
+        })
+    if page < pages:
+        navigation.append({
+            "text": "Далее", "callback_data": _callback(binding, "p", str(page + 1))
+        })
+    if navigation:
+        rows.append(navigation)
+    rows.append([{"text": "В меню", "callback_data": _callback(binding, "m")}])
+    heading = "Продажи и ремонты для загрузки фото"
+    if pages > 1:
+        heading += f" · страница {page} из {pages}"
+    return heading, {"inline_keyboard": rows}
+
+
+def _photo_operation_markup(binding, ref: str):
+    return {"inline_keyboard": [
+        [{"text": "К продажам и ремонтам", "callback_data": _callback(binding, "p", "1")}],
+        [{"text": "В меню", "callback_data": _callback(binding, "m")}],
+    ]}
+
+
+def photo_operation_card(*, binding, kind: str, operation_id: int) -> tuple[str, dict]:
+    operation = _photo_operation(f"{kind}:{operation_id}")
+    if operation is None:
+        return "Операция не найдена или ещё не проведена.", photo_operation_page(binding=binding)[1]
+    labels = {"sale": "ПРОДАЖА", "repair": "РЕМОНТ"}
+    operation_when = operation.sold_at if kind == "sale" else operation.completed_at
+    stamp = timezone.localtime(operation_when or operation.created_at)
+    lines = [
+        f"{labels[kind]} {stamp:%d.%m.%Y %H:%M:%S}",
+        operation.customer_name or "Клиент",
+        "",
+    ]
+    rows = []
+    for part in _photo_operation_lines(operation, kind):
+        article = part_exact_number(part, default="Артикул не указан")
+        rows.append([{
+            "text": f"{article} {part.name}",
+            "callback_data": _callback(binding, "q", f"{kind}-{operation_id}-{part.pk}"),
+        }])
+    if not rows:
+        lines.append("Позиций детали нет.")
+    rows.append([{"text": "К продажам и ремонтам", "callback_data": _callback(binding, "p", "1")}])
+    return "\n".join(lines), {"inline_keyboard": rows}
+
+
+def _photo_context(binding):
+    context = OwnerPhotoUploadContext.objects.select_related("part_type").filter(
+        binding=binding
+    ).first()
+    if context is not None and context.expires_at <= timezone.now():
+        context.delete()
+        return None
+    return context
+
+
+def clear_photo_context(*, binding) -> None:
+    OwnerPhotoUploadContext.objects.filter(binding=binding).delete()
+
+
+@transaction.atomic
+def _photo_selection(*, binding, kind: str, operation_id: int, part_id: int):
+    binding = StaffMessengerBinding.objects.select_for_update().get(pk=binding.pk)
+    operation = _photo_operation(f"{kind}:{operation_id}")
+    part_ids = {part.pk for part in _photo_operation_lines(operation, kind)} if operation else set()
+    if operation is None or part_id not in part_ids:
+        return "Позиция операции не найдена.", photo_operation_page(binding=binding)[1]
+    part = PartType.objects.get(pk=part_id)
+    article = part_exact_number(part, default="Артикул не указан")
+    if PartTypeImage.objects.filter(part_id=part_id, is_active=True).exists():
+        return (
+            f"Фото уже загружено.\n\nАртикул: {article}\n{part.name}",
+            _photo_operation_markup(binding, f"{kind}:{operation_id}"),
+        )
+    OwnerPhotoUploadContext.objects.update_or_create(
+        binding=binding,
+        defaults={
+            "part_type": part,
+            "operation_type": kind,
+            "operation_id": operation_id,
+            "article_snapshot": article,
+            "part_name_snapshot": part.name,
+            "expires_at": timezone.now() + _photo_context_ttl(),
+        },
+    )
+    return (
+        f"Фото отсутствует.\n\nОтправьте фотографию детали.\n"
+        f"Она автоматически загрузится для артикула {article}\n"
+        "в систему склада и каталог PRO-STOR.",
+        {"inline_keyboard": [
+            [{"text": "Отмена", "callback_data": _callback(binding, "x")}],
+            [{"text": "Назад", "callback_data": _callback(binding, "o", f"{kind}-{operation_id}")}],
+        ]},
+    )
+
+
+def _photo_upload_file(attachment):
+    if isinstance(attachment, ValidatedAttachment):
+        if not attachment.content_type.startswith("image/"):
+            raise AttachmentError("Для этого действия отправьте изображение, а не PDF.")
+        return ContentFile(attachment.content, name=attachment.filename)
+    if attachment is None:
+        raise AttachmentError("Фото не выбрано.")
+    validate_image_upload(attachment)
+    attachment.seek(0)
+    return ContentFile(attachment.read(), name=getattr(attachment, "name", "photo.jpg"))
+
+
+@transaction.atomic
+def _consume_photo_upload(*, binding, external_id: str, attachment):
+    binding = StaffMessengerBinding.objects.select_for_update().get(pk=binding.pk)
+    existing = OwnerPhotoUploadReceipt.objects.filter(
+        binding=binding, external_id=str(external_id)
+    ).first()
+    if existing is not None:
+        return existing.response_text, menu(binding)[1]
+    context = OwnerPhotoUploadContext.objects.select_for_update().select_related(
+        "part_type"
+    ).filter(binding=binding).first()
+    if context is None or context.expires_at <= timezone.now():
+        if context is not None:
+            context.delete()
+        return "Сначала выберите деталь в разделе загрузки фото.", menu(binding)[1]
+    try:
+        upload = _photo_upload_file(attachment)
+        result = upload_primary_part_photo(
+            part=context.part_type,
+            upload=upload,
+            source="telegram",
+            owner_operator_key=binding.operator_key,
+            operation_type=context.operation_type,
+            operation_id=context.operation_id,
+        )
+    except (AttachmentError, ValidationError, PublicPhotoError) as exc:
+        return str(exc), {
+            "inline_keyboard": [[{"text": "Отмена", "callback_data": _callback(binding, "x")}]]
+        }
+    except PartPhotoAlreadyExists:
+        text = "Для этой детали фото уже было загружено."
+        clear_photo_context(binding=binding)
+        OwnerPhotoUploadReceipt.objects.create(
+            binding=binding, external_id=str(external_id), part_type=context.part_type,
+            response_text=text,
+        )
+        return text, _photo_operation_markup(
+            binding, f"{context.operation_type}-{context.operation_id}"
+        )
+    text = (
+        f"Фото загружено.\n\nАртикул: {context.article_snapshot}\n"
+        f"{context.part_name_snapshot}\n\nФото уже доступно в системе склада и каталоге PRO-STOR."
+    )
+    clear_photo_context(binding=binding)
+    OwnerPhotoUploadReceipt.objects.create(
+        binding=binding, external_id=str(external_id), part_type=result.image.part,
+        response_text=text,
+    )
+    return text, _photo_operation_markup(
+        binding, f"{context.operation_type}-{context.operation_id}"
+    )
+
+
 def set_context(*, binding, request_id: int):
     binding = binding_for(binding.provider, binding.provider_user_id, lock=True)
     if binding is None:
@@ -333,6 +591,7 @@ def invalidate_contexts(provider: str) -> int:
     """Require explicit re-entry and request selection after this worker restarts."""
     bindings = StaffMessengerBinding.objects.filter(provider=provider)
     bindings.update(operator_mode=False, updated_at=timezone.now())
+    OwnerPhotoUploadContext.objects.filter(binding__in=bindings).delete()
     return OperatorConversationContext.objects.filter(binding__in=bindings).update(
         request=None, updated_at=timezone.now()
     )
@@ -352,6 +611,7 @@ def revoke_binding(*, binding):
     binding.operator_mode = False
     binding.save(update_fields=["is_active", "operator_mode", "updated_at"])
     clear_context(binding=binding)
+    clear_photo_context(binding=binding)
     clear_panel_delivery(binding=binding)
     StaffMessengerPairingToken.objects.filter(
         user=binding.user, revoked_at__isnull=True, used_at__isnull=True
@@ -448,16 +708,37 @@ def handle_text(
             binding.save(update_fields=["delivery_chat_id", "updated_at"])
     if lower in {"/work", "рабочее меню"}:
         clear_context(binding=binding)
+        clear_photo_context(binding=binding)
         binding.operator_mode = True
         binding.save(update_fields=["operator_mode", "updated_at"])
         return menu(binding)
     if lower in {"/customer", "клиентский режим"}:
         clear_context(binding=binding)
+        clear_photo_context(binding=binding)
         binding.operator_mode = False
         binding.save(update_fields=["operator_mode", "updated_at"])
         return "Клиентский режим включён.", None
     if not binding.operator_mode:
         return None
+    if attachment is not None:
+        receipt = OwnerPhotoUploadReceipt.objects.filter(
+            binding=binding, external_id=str(external_id)
+        ).first()
+        if receipt is not None:
+            return receipt.response_text, menu(binding)[1]
+    photo_context = _photo_context(binding)
+    if photo_context is not None:
+        if lower in {"отмена", "/cancel"}:
+            clear_photo_context(binding=binding)
+            return "Загрузка фото отменена.", menu(binding)[1]
+        if attachment is not None:
+            return _consume_photo_upload(
+                binding=binding, external_id=external_id, attachment=attachment
+            )
+        return (
+            "Ожидается фотография выбранной детали. Нажмите «Отмена» или отправьте изображение.",
+            {"inline_keyboard": [[{"text": "Отмена", "callback_data": _callback(binding, "x")}]]},
+        )
     if lower in {"/menu", "меню", "рабочее меню"}:
         return menu(binding)
     if lower in {"/requests", "все заявки"}:
@@ -487,7 +768,9 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     kind, token = parts[1], parts[2]
     if token != _session_token(binding):
         return "Рабочая сессия устарела. Откройте рабочую панель.", None
-    if kind not in {"m", "l", "n", "x", "c", "r"}:
+    if kind not in {"m", "l", "n", "x", "c", "r", "p", "o", "q"}:
+        return "Недоступно.", None
+    if kind in {"p", "o", "q"} and provider != StaffMessengerBinding.Provider.TELEGRAM:
         return "Недоступно.", None
     if not binding.operator_mode:
         binding.operator_mode = True
@@ -499,10 +782,38 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
         page = int(value) if value.isdigit() and len(value) < 6 else 1
         return request_page(page, new_only=kind == "n", binding=binding)
     if kind == "x":
+        had_photo_context = _photo_context(binding) is not None
+        clear_photo_context(binding=binding)
         clear_context(binding=binding)
         return (
-            "Активная заявка закрыта для телефона. Клиенту ничего не отправлено.",
+            (
+                "Загрузка фото отменена."
+                if had_photo_context
+                else "Активная заявка закрыта для телефона. Клиенту ничего не отправлено."
+            ),
             menu(binding)[1],
+        )
+    if kind == "p":
+        page = int(value) if value.isdigit() and len(value) < 6 else 1
+        return photo_operation_page(page, binding=binding)
+    if kind == "o":
+        if "-" not in value:
+            return "Операция не найдена.", menu(binding)[1]
+        operation_kind, operation_id = value.rsplit("-", 1)
+        if operation_kind not in {"sale", "repair"} or not operation_id.isdigit():
+            return "Операция не найдена.", menu(binding)[1]
+        return photo_operation_card(
+            binding=binding, kind=operation_kind, operation_id=int(operation_id)
+        )
+    if kind == "q":
+        pieces = value.split("-")
+        if len(pieces) != 3 or not pieces[1].isdigit() or not pieces[2].isdigit():
+            return "Позиция не найдена.", menu(binding)[1]
+        return _photo_selection(
+            binding=binding,
+            kind=pieces[0],
+            operation_id=int(pieces[1]),
+            part_id=int(pieces[2]),
         )
     if kind in {"c", "r"}:
         request = request_by_hex(value)

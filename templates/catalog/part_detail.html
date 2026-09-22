@@ -200,7 +200,31 @@
       <button type="submit" class="btn">Добавить совместимость</button>
     </form>
   {% endif %}
-  {% include "partials/_image_gallery.html" with images=images primary_image=primary_image can_manage_images=can_manage_images add_url="part_image_add" primary_url="part_image_primary" delete_url="part_image_delete" owner_pk=part.pk %}
+  <section id="part-photo" class="card">
+    <div class="card__body">
+      <h2>Фото для PRO-STOR</h2>
+      {% if part_photo_exists %}
+        <p class="muted">Фото загружено. Замена в V1 отключена.</p>
+      {% elif can_manage_images %}
+        <form method="post"
+              action="{% url 'part_photo_upload' part.pk %}"
+              enctype="multipart/form-data"
+              class="form">
+          {% csrf_token %}
+          <label for="part-photo-file">Фото детали</label>
+          <input id="part-photo-file"
+                 type="file"
+                 name="image"
+                 accept=".jpg,.jpeg,.png,.webp"
+                 required>
+          <button type="submit" class="btn btn--primary">Загрузить фото</button>
+        </form>
+      {% else %}
+        <p class="muted">Фото ещё не загружено.</p>
+      {% endif %}
+    </div>
+  </section>
+  {% include "partials/_image_gallery.html" with images=images primary_image=primary_image can_manage_images=can_manage_images add_url="part_photo_upload" primary_url="part_image_primary" delete_url="part_image_delete" owner_pk=part.pk %}
   {% include "catalog/_public_photo_block.html" with rows=public_photo_rows sources=public_photo_sources can_moderate=can_manage %}
   <h2>Остатки</h2>
   {% if can_view_inventory %}

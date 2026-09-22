@@ -213,6 +213,8 @@ def actions_scan(request):
         else:
             ctx["overview"] = overview
             ctx["no_stock"] = not overview["locations"] and not overview["unit_items"]
+            ctx["part_photo_exists"] = part.images.filter(is_active=True).exists()
+            ctx["can_manage_images"] = request.user.can_manage_images
             ctx["request_token"] = secrets.token_urlsafe(32)
     return render(request, "actions/scan.html", ctx)
 

@@ -422,6 +422,49 @@ class PartTypeImage(BaseImage):
         return PartTypeImage.objects.filter(part_id=self.part_id)
 
 
+class PartPhotoUploadAudit(models.Model):
+    """Audit metadata for the one authoritative photo upload flow.
+
+    The image itself remains ``PartTypeImage``.  This row only records how the
+    image entered DenisStock, so Telegram and the internal web upload cannot
+    grow separate media stores.
+    """
+
+    class Source(models.TextChoices):
+        DESKTOP = "desktop", "DenisStock"
+        TELEGRAM = "telegram", "Telegram"
+
+    image = models.OneToOneField(
+        PartTypeImage,
+        verbose_name="Фото",
+        on_delete=models.CASCADE,
+        related_name="upload_audit",
+    )
+    source = models.CharField("Источник", max_length=12, choices=Source.choices)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Внутренний пользователь",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="part_photo_uploads",
+    )
+    owner_operator_key = models.CharField("Ключ владельца", max_length=32, blank=True)
+    operation_type = models.CharField("Тип операции", max_length=12, blank=True)
+    operation_id = models.PositiveBigIntegerField("Операция", null=True, blank=True)
+    uploaded_at = models.DateTimeField("Загружено", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Аудит загрузки фото детали"
+        verbose_name_plural = "Аудит загрузок фото деталей"
+        indexes = [
+            models.Index(fields=["source", "uploaded_at"], name="part_photo_audit_src_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.image_id} · {self.get_source_display()}"
+
+
 class PublicPartPhoto(models.Model):
     """Решение человека о том, может ли внутреннее фото детали стать публичным.
 

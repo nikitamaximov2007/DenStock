@@ -298,6 +298,16 @@
             · <strong>Доступно: {{ overview.total_available|quantity_int }}</strong>
           </p>
           {% if overview.lookup.alias_message %}<p class="muted">{{ overview.lookup.alias_message }}</p>{% endif %}
+          <p class="muted">
+            {% if part_photo_exists %}
+              Фото загружено.
+            {% elif can_manage_images %}
+              <a class="btn btn--small btn--secondary"
+                 href="{% url 'part_detail' overview.part.pk %}#part-photo">Загрузить фото</a>
+            {% else %}
+              Фото ещё не загружено.
+            {% endif %}
+          </p>
           {% if overview.unit_items %}
             <p class="muted">
               Поштучных экземпляров: {{ overview.unit_items }}. Продажа и выдача

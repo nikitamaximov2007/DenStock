@@ -47,6 +47,7 @@ from .models import (
     PartTypeImage,
     PublicPartPhoto,
 )
+from .photo_pipeline import PartPhotoAlreadyExists, upload_primary_part_photo
 from .public_photos import (
     PublicPhotoError,
     moderation_rows,
@@ -142,6 +143,7 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
         images = self.object.images.filter(is_active=True)
         ctx["images"] = images
         ctx["primary_image"] = next((i for i in images if i.is_primary), None)
+        ctx["part_photo_exists"] = images.exists()
         ctx["public_photo_rows"] = moderation_rows(self.object)
         ctx["public_photo_sources"] = PublicPartPhoto.Source.choices
         if ctx["can_manage"]:
@@ -341,6 +343,32 @@ def part_image_add(request, pk):
         messages.success(request, "Фото добавлено.")
     else:
         messages.error(request, "; ".join(form.errors.get("image", ["Не удалось загрузить фото."])))
+    return redirect("part_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def part_photo_upload(request, pk):
+    """V1 Quick Actions upload: one photo, immediately visible in PRO-STOR."""
+    _require_images(request)
+    part = get_object_or_404(PartType, pk=pk)
+    form = ImageUploadForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, "; ".join(form.errors.get("image", ["Не удалось загрузить фото."])))
+        return redirect("part_detail", pk=pk)
+    try:
+        upload_primary_part_photo(
+            part=part,
+            upload=form.cleaned_data["image"],
+            source="desktop",
+            by=request.user,
+        )
+    except PartPhotoAlreadyExists as exc:
+        messages.error(request, str(exc))
+    except PublicPhotoError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Фото загружено и доступно в каталоге PRO-STOR.")
     return redirect("part_detail", pk=pk)
 
 
