@@ -281,6 +281,13 @@ def operator_buttons(request_or_conversation) -> dict:
 
 
 def operator_menu() -> tuple[str, dict]:
+    return (
+        operator_console.TELEGRAM_OPERATOR_PANEL_TITLE,
+        operator_console.telegram_operator_keyboard(),
+    )
+
+
+def operator_start_menu() -> tuple[str, dict]:
     return OPERATOR_HELP_TEXT, operator_console.telegram_operator_keyboard()
 
 

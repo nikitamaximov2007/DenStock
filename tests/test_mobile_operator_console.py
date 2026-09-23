@@ -81,7 +81,7 @@ def test_pairing_code_has_two_independent_provider_slots(db, django_user_model):
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
-def test_enabled_pairing_returns_owner_panel_without_command_instructions(
+def test_enabled_pairing_returns_internal_keyboard_without_start_instructions(
     db, django_user_model
 ):
     user = _operator(django_user_model, 99200, username="panel-pair").user
@@ -91,7 +91,7 @@ def test_enabled_pairing_returns_owner_panel_without_command_instructions(
         provider="telegram", provider_user_id=99200, external_id="pair-panel", text=token
     )
 
-    assert reply[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert reply[0] == "Доступ владельца подключён.\n\nВы вошли как: Денис"
     assert [row[0]["text"] for row in reply[1]["keyboard"]] == [
         "Все заявки",
         "Новые заявки",
@@ -100,6 +100,7 @@ def test_enabled_pairing_returns_owner_panel_without_command_instructions(
     assert reply[1]["resize_keyboard"] is True
     assert reply[1]["is_persistent"] is False
     assert reply[1]["one_time_keyboard"] is False
+    assert "Доступно:" not in reply[0]
     assert "/work" not in reply[0]
 
 
@@ -142,7 +143,7 @@ def test_admin_binding_takes_precedence_over_customer_menu(db, django_user_model
         text="Мои заявки",
     )
 
-    assert reply[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert reply[0] == operator_console.TELEGRAM_OPERATOR_PANEL_TITLE
     assert "Мои заявки" not in str(reply)
 
 
@@ -167,7 +168,7 @@ def test_all_internal_telegram_roles_use_one_panel_without_customer_button(
         text="Мои заявки",
     )
 
-    assert text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert text == operator_console.TELEGRAM_OPERATOR_PANEL_TITLE
     assert [row[0]["text"] for row in markup["keyboard"]] == [
         "Все заявки",
         "Новые заявки",
@@ -199,7 +200,9 @@ def test_internal_reply_keyboard_buttons_reuse_authorized_flows(
 
     result = handle_update(message_update(binding.provider_user_id, label))
 
+    assert len(result) == 1
     assert result[-1].text == expected
+    assert "Доступно:" not in result[-1].text
     assert result[-1].reply_markup == {
         "keyboard": [
         [{"text": "Все заявки"}],
@@ -212,6 +215,28 @@ def test_internal_reply_keyboard_buttons_reuse_authorized_flows(
     }
     binding.refresh_from_db()
     assert binding.operator_mode is True
+
+
+@pytest.mark.parametrize("label", ["Все заявки", "Новые заявки"])
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_internal_request_lists_do_not_prepend_start_help(
+    db, django_user_model, label
+):
+    _request(build_part(), key=f"{label}-".encode().hex()[:32])
+    user = _operator(django_user_model, 877307970, username="list-with-help").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="NIKITA",
+        provider="telegram",
+        provider_user_id=877307970,
+        customer_visible_label="NIKITA",
+    )
+
+    result = handle_update(message_update(binding.provider_user_id, label))
+
+    assert len(result) == 1
+    assert "Доступно:" not in result[0].text
+    assert result[0].reply_markup["inline_keyboard"]
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
@@ -280,7 +305,7 @@ def test_telegram_internal_reply_removes_persisted_customer_keyboard(db, django_
     result = handle_update(message_update(binding.provider_user_id, "Мои заявки"))
 
     assert len(result) == 1
-    assert result[0].text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert result[0].text == operator_console.TELEGRAM_OPERATOR_PANEL_TITLE
     assert [row[0]["text"] for row in result[0].reply_markup["keyboard"]] == [
         "Все заявки",
         "Новые заявки",
@@ -298,7 +323,7 @@ def test_customer_to_admin_pairing_clears_keyboard_without_manual_cleanup(
     result = handle_update(message_update(877307951, token))
 
     assert len(result) == 1
-    assert result[0].text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert result[0].text == "Доступ владельца подключён.\n\nВы вошли как: NIKITA"
     assert "Мои заявки" not in str(result[0].reply_markup)
 
 
@@ -957,7 +982,7 @@ def test_operator_console_requires_binding_and_revocation_is_immediate(db, djang
     menu = operator_console.handle_text(
         provider="telegram", provider_user_id=99003, external_id="2", text="/work"
     )
-    assert menu[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert menu[0] == operator_console.TELEGRAM_OPERATOR_PANEL_TITLE
     binding.is_active = False
     binding.save(update_fields=["is_active"])
     assert operator_console.handle_callback(

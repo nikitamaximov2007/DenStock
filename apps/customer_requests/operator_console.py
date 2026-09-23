@@ -55,8 +55,9 @@ TELEGRAM_OPERATOR_HELP_TEXT = (
     "Доступно:\n"
     "- просмотр и общение по всем и новым заявкам;\n"
     "- загрузка фото по продажам/ремонтам.\n\n"
-    "Кнопки находятся в меню слева от поля ввода сообщения."
+    "Кнопки находятся в меню рядом с полем ввода сообщения."
 )
+TELEGRAM_OPERATOR_PANEL_TITLE = "Панель администратора PRO-STORE"
 
 
 def enabled() -> bool:
@@ -753,6 +754,8 @@ def handle_text(
             provider_chat_id=provider_chat_id,
         )
         if binding is not None and enabled():
+            if provider == StaffMessengerBinding.Provider.TELEGRAM:
+                return reply, telegram_operator_keyboard()
             return owner_panel(binding)
         return (reply, None) if reply else None
     if not enabled():
@@ -765,16 +768,20 @@ def handle_text(
         if binding.delivery_chat_id != provider_chat_id:
             binding.delivery_chat_id = provider_chat_id
             binding.save(update_fields=["delivery_chat_id", "updated_at"])
-    if lower in {"/start", "/help", "/menu", "меню", "мои заявки", "мои покупки"}:
+    if lower == "/start":
         clear_context(binding=binding)
         clear_photo_context(binding=binding)
         return owner_panel(binding)
+    if lower in {"/help", "/menu", "меню", "мои заявки", "мои покупки"}:
+        clear_context(binding=binding)
+        clear_photo_context(binding=binding)
+        return navigation_panel(binding)
     if lower in {"/work", "рабочее меню"}:
         clear_context(binding=binding)
         clear_photo_context(binding=binding)
         binding.operator_mode = True
         binding.save(update_fields=["operator_mode", "updated_at"])
-        return owner_panel(binding)
+        return navigation_panel(binding)
     if lower in {"все заявки", "новые заявки", "загрузка фото по продажам/ремонтам"}:
         # Reply-keyboard presses reuse the existing authorized handlers.
         if not binding.operator_mode:
@@ -849,7 +856,6 @@ def should_remove_telegram_customer_keyboard(text: str) -> bool:
         "клиентский режим",
         "мои заявки",
         "мои покупки",
-        *(label.lower() for label in INTERNAL_NAVIGATION_LABELS),
     }
 
 
@@ -877,7 +883,7 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
         binding.save(update_fields=["operator_mode", "updated_at"])
     value = parts[3] if len(parts) == 4 else ""
     if kind == "m":
-        return owner_panel(binding)
+        return navigation_panel(binding)
     if kind in {"l", "n"}:
         page = int(value) if value.isdigit() and len(value) < 6 else 1
         return request_page(page, new_only=kind == "n", binding=binding)
@@ -930,9 +936,16 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
 
 
 def owner_panel(binding) -> tuple[str, dict]:
-    """The reusable panel delivered by the explicit server/admin action."""
+    """The full internal introduction delivered by an explicit ``/start``."""
     if binding is not None and binding.provider == StaffMessengerBinding.Provider.TELEGRAM:
         return TELEGRAM_OPERATOR_HELP_TEXT, telegram_operator_keyboard()
+    return menu(binding)
+
+
+def navigation_panel(binding) -> tuple[str, dict]:
+    """Return internal navigation without replaying the ``/start`` introduction."""
+    if binding is not None and binding.provider == StaffMessengerBinding.Provider.TELEGRAM:
+        return TELEGRAM_OPERATOR_PANEL_TITLE, telegram_operator_keyboard()
     return menu(binding)
 
 
@@ -1046,7 +1059,7 @@ def ensure_runtime():
 
 def notification_content(notification: OperatorNotification) -> tuple[str, dict]:
     if notification.kind == OperatorNotification.Kind.OWNER_PANEL:
-        return owner_panel(notification.binding)
+        return navigation_panel(notification.binding)
     request = notification.request
     binding = notification.binding
     name = (request.customer_name or "Клиент")[:80]

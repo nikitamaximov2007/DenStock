@@ -508,6 +508,7 @@ def test_the_my_requests_button_text_is_not_stored_as_a_customer_message(part):
     )
 
     assert outgoing and "активная заявка" in outgoing[0].text
+    assert "Добрый день!" not in outgoing[0].text
     assert not TelegramMessage.objects.filter(text="Мои заявки").exists()
 
 

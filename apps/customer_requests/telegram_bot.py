@@ -112,19 +112,8 @@ def back_to_list() -> dict:
     return operator_bot.back_to_list()
 
 
-def _internal_reply(
-    chat_id: int, text: str, markup: dict | None, *, clear_keyboard: bool
-) -> list[Outgoing]:
-    """Render one internal reply and synchronize its role-aware keyboard."""
-    if clear_keyboard and markup and markup.get("inline_keyboard"):
-        return [
-            Outgoing(
-                chat_id=chat_id,
-                text=operator_console.TELEGRAM_OPERATOR_HELP_TEXT,
-                reply_markup=operator_console.telegram_operator_keyboard(),
-            ),
-            Outgoing(chat_id=chat_id, text=text, reply_markup=markup),
-        ]
+def _internal_reply(chat_id: int, text: str, markup: dict | None) -> list[Outgoing]:
+    """Render one internal reply with the markup selected by the role router."""
     return [Outgoing(chat_id=chat_id, text=text, reply_markup=markup)] if text else []
 
 
@@ -205,7 +194,6 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
         return _internal_reply(
             chat_id,
             *operator_reply,
-            clear_keyboard=operator_console.should_remove_telegram_customer_keyboard(text),
         )
     command, argument = "", ""
     if text.startswith("/"):
@@ -237,14 +225,16 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
                 return reply(*service.operator_request_page(1))
             if text.lower() == "новые заявки":
                 return reply(*service.operator_request_page(1, new_only=True))
-            if command in {"/start", "/menu"}:
+            if command == "/start":
+                return reply(*service.operator_start_menu())
+            if command == "/menu":
                 return reply(*service.operator_menu())
             if command == "/requests":
                 return reply(*service.operator_request_page(1))
             if command == "/cancel":
                 return reply(service.cancel_reply(telegram_user_id=user_id), back_to_list())
             if command:
-                return reply(service.OPERATOR_HELP_TEXT, back_to_list())
+                return reply(*service.operator_menu())
             answer = service.submit_operator_reply(
                 telegram_user_id=user_id, update_id=update_id, text=text
             )
