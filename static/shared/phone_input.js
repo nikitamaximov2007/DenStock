@@ -1,13 +1,11 @@
-// Маска российского телефона для полей [data-phone-input]. Одна и та же и в
-// DenisStock, и в публичной заявке PRO-STOR: правило записи номера в проекте
-// одно, значит и реализация одна.
+// Маска российского телефона для полей [data-phone-input]. Обычный режим
+// `ru` сохраняет внутренние поля совместимыми с историческими номерами, а
+// режим `ru-mobile` используется публичной заявкой PRO-STOR.
 //
-// Что делает: пока номер доказуемо российский, поле показывает канонический
-// вид «+7 900 123-45-67». Префикс «+7 9» появляется сам, как только человек
-// набрал первую девятку, и «8» в начале молча заменяется на «+7», поэтому
-// двойного «+7» не бывает: значение каждый раз собирается заново из цифр, а не
-// дописывается к прежнему тексту. Поэтому же корректно вставляются
-// «89001234567», «79001234567», «+79001234567» и «9001234567».
+// В обычном режиме поле показывает канонический вид «+7 900 123-45-67».
+// В мобильном режиме фиксированы «+7 (9», пользователь вводит остальные
+// девять цифр, а первая любая цифра считается цифрой после обязательной «9».
+// Значение всегда собирается заново из цифр, поэтому двойного «+7» не бывает.
 //
 // Чего НЕ делает: не трогает ввод, который не начинается с 7, 8 или 9. Номер
 // «+49 30 123456» это немецкий номер, а не российский без восьмёрки, и
@@ -102,6 +100,115 @@
     return value.slice(0, caret).replace(/\D+/g, "").length;
   }
 
+  function mobileNationalDigits(value) {
+    var text = String(value == null ? "" : value).trim();
+    var digits = text.replace(/\D+/g, "");
+    if (!digits) {
+      return "";
+    }
+    if (text.indexOf("+7") === 0 && digits.charAt(0) === "7") {
+      digits = digits.slice(1);
+    } else if (digits.length === 11 && (digits.charAt(0) === "7" || digits.charAt(0) === "8")) {
+      digits = digits.slice(1);
+    } else if (digits.length > 10) {
+      return "";
+    } else if (digits.length < 10 && text.charAt(0) !== "(") {
+      digits = "9" + digits;
+    }
+    return digits.length <= NATIONAL_LENGTH && digits.charAt(0) === "9" ? digits : "";
+  }
+
+  function formatMobile(national) {
+    var entered = national.slice(1);
+    var text = "+7 (9" + entered.slice(0, 2);
+    if (national.length >= 3) {
+      text += ")";
+    }
+    if (entered.length > 2) {
+      text += " " + entered.slice(2, 5);
+    }
+    if (entered.length > 5) {
+      text += "-" + entered.slice(5, 7);
+    }
+    if (entered.length > 7) {
+      text += "-" + entered.slice(7, 9);
+    }
+    return text;
+  }
+
+  function mobileMaskValue(value) {
+    var national = mobileNationalDigits(value);
+    return national ? formatMobile(national) : "";
+  }
+
+  function mobileDigitsBeforeCaret(value, caret) {
+    var digits = digitsBeforeCaret(value, caret);
+    if (value.indexOf("+7") === 0) {
+      return Math.max(0, digits - 2); // country 7 and fixed mobile 9
+    }
+    return digits;
+  }
+
+  function mobileCaretForDigits(text, enteredDigits) {
+    var fixedNine = text.indexOf("9", 4);
+    if (fixedNine < 0) {
+      return text.length;
+    }
+    if (enteredDigits <= 0) {
+      return fixedNine + 1;
+    }
+    var seen = 0;
+    for (var index = fixedNine + 1; index < text.length; index += 1) {
+      if (/\d/.test(text.charAt(index))) {
+        seen += 1;
+        if (seen === enteredDigits) {
+          return index + 1;
+        }
+      }
+    }
+    return text.length;
+  }
+
+  function applyMobile(field) {
+    var before = field.value;
+    var masked = mobileMaskValue(before);
+    var caret = field.selectionStart;
+    var enteredDigits = null;
+    if (caret !== null && caret !== undefined) {
+      enteredDigits = mobileDigitsBeforeCaret(before, caret);
+    }
+    field.value = masked;
+    if (enteredDigits !== null) {
+      try {
+        var position = mobileCaretForDigits(masked, enteredDigits);
+        field.setSelectionRange(position, position);
+      } catch (error) {
+        // Some mobile browsers do not allow changing the caret during input.
+      }
+    }
+  }
+
+  function removeMobileDigit(field, direction) {
+    var start = field.selectionStart;
+    var end = field.selectionEnd;
+    if (start === null || end === null || start !== end) {
+      return false;
+    }
+    var index = start + direction;
+    while (index >= 5 && index < field.value.length && !/\d/.test(field.value.charAt(index))) {
+      index += direction;
+    }
+    if (index < 5 || index >= field.value.length) {
+      field.setSelectionRange(start, start);
+      return true;
+    }
+    field.value = field.value.slice(0, index) + field.value.slice(index + 1);
+    var caret = direction < 0 ? index : start;
+    field.setSelectionRange(caret, caret);
+    applyMobile(field);
+    return true;
+  }
+
   function apply(field) {
     var before = field.value;
     var masked = maskValue(before);
@@ -135,14 +242,24 @@
       return;
     }
     field.dataset.phoneInputBound = "1";
+    var mask = field.dataset.phoneInput === "ru-mobile" ? applyMobile : apply;
     field.addEventListener("input", function () {
-      apply(field);
+      mask(field);
     });
     field.addEventListener("blur", function () {
-      apply(field);
+      mask(field);
     });
+    if (field.dataset.phoneInput === "ru-mobile") {
+      field.addEventListener("keydown", function (event) {
+        if (event.key === "Backspace" && removeMobileDigit(field, -1)) {
+          event.preventDefault();
+        } else if (event.key === "Delete" && removeMobileDigit(field, 1)) {
+          event.preventDefault();
+        }
+      });
+    }
     if (field.value) {
-      apply(field);
+      mask(field);
     }
   }
 
@@ -155,7 +272,12 @@
 
   if (typeof module === "object" && module.exports) {
     // Для узлового теста маски: чистые функции без DOM.
-    module.exports = { maskValue: maskValue, nationalDigits: nationalDigits };
+    module.exports = {
+      maskValue: maskValue,
+      nationalDigits: nationalDigits,
+      mobileMaskValue: mobileMaskValue,
+      mobileNationalDigits: mobileNationalDigits,
+    };
   }
 
   if (typeof document === "undefined") {
