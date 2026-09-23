@@ -21,7 +21,7 @@
       {% for order in orders %}
         <tr>
           <td><a href="{% url 'customs_order_detail' order.pk %}">{{ order.get_order_type_display }} - заказ №{{ order.number }}</a></td>
-          <td>{{ order.created_at|date:"d.m.Y H:i" }}</td>
+          <td>{{ order.created_at|ru_dt }}</td>
           <td>{{ order.created_by|default:"·" }}</td>
           <td class="num--qty">{{ order.total_quantity|quantity_int }}</td>
           <td class="num--money">{{ order.total_rub }}</td>

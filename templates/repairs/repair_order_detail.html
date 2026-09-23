@@ -49,7 +49,7 @@
         <th>Проведён</th>
         <td>
           {% if order.completed_at %}
-            {{ order.completed_at|date:"d.m.Y H:i" }}
+            {{ order.completed_at|ru_dt }}
           {% else %}
             · (черновик)
           {% endif %}

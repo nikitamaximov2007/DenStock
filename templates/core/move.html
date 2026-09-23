@@ -325,7 +325,7 @@
     <tbody>
       {% for m in history %}
         <tr>
-          <td>{{ m.created_at|date:"d.m.Y H:i" }}</td>
+          <td>{{ m.created_at|ru_dt }}</td>
           <td>
             {{ m.part_name }} · <span class="code-pill">{{ m.part_number }}</span>
           </td>

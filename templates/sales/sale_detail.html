@@ -38,7 +38,7 @@
         <th>Проведена</th>
         <td>
           {% if sale.sold_at %}
-            {{ sale.sold_at|date:"d.m.Y H:i" }} · {{ sale.sold_by|default:"·" }}
+            {{ sale.sold_at|ru_dt }} · {{ sale.sold_by|default:"·" }}
           {% else %}
             · (черновик)
           {% endif %}

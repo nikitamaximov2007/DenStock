@@ -110,7 +110,7 @@
       <tbody>
         {% for entry in rename_history %}
           <tr>
-            <td>{{ entry.renamed_at|date:"d.m.Y H:i" }}</td>
+            <td>{{ entry.renamed_at|ru_dt }}</td>
             <td>{{ entry.old_code }}</td>
             <td>{{ entry.new_code }}</td>
             <td>{{ entry.renamed_by|default:"Система" }}</td>

@@ -27,7 +27,7 @@
         <th>Проведён</th>
         <td>
           {% if doc.completed_at %}
-            {{ doc.completed_at|date:"d.m.Y H:i" }}
+            {{ doc.completed_at|ru_dt }}
           {% else %}
             · (черновик)
           {% endif %}

@@ -5,11 +5,13 @@
 себестоимость/прибыль — но НЕ становится кассой/чеком. Физику делают
 inventory.sell_*, документ ведёт apps/sales; view ledger напрямую не пишет.
 """
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.models import Group
+from django.test import override_settings
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -339,6 +341,20 @@ def test_sale_detail_keeps_customer_money_and_hides_internal_columns_for_all_rol
     assert "Себестоимость" not in html
     assert "Прибыль" not in html
     assert "Источник остатка" not in html
+
+
+@override_settings(TIME_ZONE="Europe/Moscow")
+def test_sale_detail_renders_operation_time_in_perm_timezone(make_user, client, data):
+    sale = create_sale(customer_name="Иван", by=data["admin"])
+    sale.status = Sale.Status.COMPLETED
+    sale.sold_at = datetime(2026, 9, 23, 14, 7, 8, tzinfo=UTC)
+    sale.save(update_fields=["status", "sold_at"])
+    client.force_login(data["admin"])
+
+    html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
+
+    assert "23.09.2026 19:07" in html
+    assert "23.09.2026 17:07" not in html
 
 
 def test_sale_detail_keeps_full_sale_cancellation_but_hides_return_entry(make_user, client, data):

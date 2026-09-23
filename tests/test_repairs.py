@@ -5,11 +5,13 @@
 меняются, себестоимость заморожена), но НЕ продажа/оплата/чек. Физику делают
 inventory.issue_*, документ ведёт apps/repairs; view ledger напрямую не пишет.
 """
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.models import Group
+from django.test import override_settings
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -365,6 +367,20 @@ def test_cost_visible_for_manager(make_user, client, data):
     client.login(username="boss", password=PASSWORD)
     html = client.get(reverse("repair_order_detail", args=[order.pk])).content.decode()
     assert "Себестоимость" in html
+
+
+@override_settings(TIME_ZONE="Europe/Moscow")
+def test_repair_detail_renders_operation_time_in_perm_timezone(client, data):
+    order = create_repair_order(customer_name="Иван", by=data["admin"])
+    order.status = RepairOrder.Status.COMPLETED
+    order.completed_at = datetime(2026, 9, 23, 14, 7, 8, tzinfo=UTC)
+    order.save(update_fields=["status", "completed_at"])
+    client.force_login(data["admin"])
+
+    html = client.get(reverse("repair_order_detail", args=[order.pk])).content.decode()
+
+    assert "23.09.2026 19:07" in html
+    assert "23.09.2026 17:07" not in html
 
 
 def test_repair_detail_keeps_document_cancellation_and_hides_return_entry(make_user, client, data):

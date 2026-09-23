@@ -21,7 +21,7 @@
       {% endif %}
     </div>
   </div>
-  <p>Создан: {{ order.created_at|date:"d.m.Y H:i" }} · Кто создал: {{ order.created_by|default:"·" }}</p>
+  <p>Создан: {{ order.created_at|ru_dt }} · Кто создал: {{ order.created_by|default:"·" }}</p>
   <p>Курс USD/RUB: {{ order.fx_rate }} · Количество: {{ order.total_quantity|quantity_int }} · Сумма: {{ order.total_rub }} ₽</p>
   <p class="page-subtitle">Статус: {{ order.get_status_display }}. {% if order.status == "draft" %}Таможенные данные будут обновлены при фиксации.{% else %}Состав, цена и таможенные данные зафиксированы.{% endif %}</p>
   <table class="table table--wide">

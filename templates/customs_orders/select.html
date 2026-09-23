@@ -56,7 +56,7 @@
             <tr data-customs-boundary-row
                 data-source="{{ row.source }}:{{ row.source_id }}">
               <td><span data-prefix-check aria-label="Не выбрано">○</span></td>
-              <td>{{ row.occurred_at|date:"d.m.Y H:i"|default:"Дата не указана" }}</td>
+              <td>{{ row.occurred_at|ru_dt|default:"Дата не указана" }}</td>
               <td>{{ row.source_label }}</td>
               <td><span class="code-pill">{{ row.number }}</span></td>
               <td>{{ row.name_ru }}</td>

@@ -45,7 +45,7 @@
         <th>Проведён</th>
         <td>
           {% if ret.completed_at %}
-            {{ ret.completed_at|date:"d.m.Y H:i" }}
+            {{ ret.completed_at|ru_dt }}
             {% if ret.completed_by %}
               <br>
               <span class="muted">{{ ret.completed_by }}</span>
@@ -59,7 +59,7 @@
         <tr>
           <th>Отменён</th>
           <td>
-            {{ ret.canceled_at|date:"d.m.Y H:i" }}
+            {{ ret.canceled_at|ru_dt }}
             {% if ret.canceled_by %}· {{ ret.canceled_by }}{% endif %}
             <br>
             {{ ret.cancel_reason }}

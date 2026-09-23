@@ -23,7 +23,7 @@
         <th>Действует до</th>
         <td>
           {% if reservation.expires_at %}
-            {{ reservation.expires_at|date:"d.m.Y H:i" }}
+            {{ reservation.expires_at|ru_dt }}
           {% else %}
             бессрочно
           {% endif %}
@@ -35,7 +35,7 @@
       </tr>
       <tr>
         <th>Создан</th>
-        <td>{{ reservation.created_at|date:"d.m.Y H:i" }} · {{ reservation.created_by|default:"·" }}</td>
+        <td>{{ reservation.created_at|ru_dt }} · {{ reservation.created_by|default:"·" }}</td>
       </tr>
     </tbody>
   </table>

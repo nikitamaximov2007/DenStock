@@ -55,7 +55,7 @@
         {% for m in movements %}
           <tr>
             <td>
-              <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|date:"d.m.Y H:i" }}</a>
+              <a href="{% url 'movement_detail' m.pk %}">{{ m.created_at|ru_dt }}</a>
             </td>
             <td>{{ m.get_movement_type_display }}</td>
             <td><span class="code-pill">{{ m.display_part_number }}</span></td>
