@@ -25,6 +25,16 @@ from apps.inventory.models import StockMovement
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
+from apps.reports.services import (
+    Period,
+    get_client_part_history,
+    get_client_timeline,
+    get_clients_sales_and_repairs,
+    get_customer_part_operations,
+    get_customer_part_sales,
+    get_sales_by_customer,
+    get_sales_report,
+)
 from apps.sales.models import Sale, SaleLine
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
@@ -167,6 +177,28 @@ def test_existing_customer_is_linked_without_renaming_and_draft_is_prefilled(sal
         (Decimal("1"), Decimal("1000"))
     ]
     assert StockMovement.objects.filter(document_type="sale").count() == 0
+
+
+def test_request_draft_is_absent_from_completed_reports_and_customer_history(sale_scene):
+    customer = Customer.objects.create(name="История клиента", phone="+79090000001")
+    request = take(
+        make_request(sale_scene["part"], key="draft-report-exclusion"), sale_scene["admin"]
+    )
+    sale = prepare_request_sale(request_id=request.pk, by=sale_scene["admin"])
+    assert sale.status == Sale.Status.DRAFT
+
+    period = Period(None, None, "all")
+
+    sales_report = get_sales_report(period)
+    assert sales_report.count == 0
+    assert sales_report.line_count == 0
+    assert sales_report.revenue == Decimal("0")
+    assert get_sales_by_customer(period) == []
+    assert get_clients_sales_and_repairs(period) == []
+    assert list(get_customer_part_sales(period, customer_id=customer.pk)) == []
+    assert list(get_customer_part_operations(period, customer_id=customer.pk)) == []
+    assert get_client_part_history(period, customer_id=customer.pk) == []
+    assert get_client_timeline(period, customer_id=customer.pk) == []
 
 
 def test_no_match_requires_explicit_customer_creation(sale_scene):
