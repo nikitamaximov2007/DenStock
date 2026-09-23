@@ -98,7 +98,8 @@ def test_enabled_pairing_returns_owner_panel_without_command_instructions(
         "Загрузка фото по продажам/ремонтам",
     ]
     assert reply[1]["resize_keyboard"] is True
-    assert reply[1]["is_persistent"] is True
+    assert reply[1]["is_persistent"] is False
+    assert reply[1]["one_time_keyboard"] is False
     assert "/work" not in reply[0]
 
 
@@ -206,7 +207,8 @@ def test_internal_reply_keyboard_buttons_reuse_authorized_flows(
         [{"text": "Загрузка фото по продажам/ремонтам"}],
         ],
         "resize_keyboard": True,
-        "is_persistent": True,
+        "is_persistent": False,
+        "one_time_keyboard": False,
     }
     binding.refresh_from_db()
     assert binding.operator_mode is True
@@ -258,7 +260,8 @@ def test_customer_typed_internal_button_and_revoked_binding_stay_customer_only(
     assert result[0].reply_markup == {
         "keyboard": [[{"text": "Мои заявки"}]],
         "resize_keyboard": True,
-        "is_persistent": True,
+        "is_persistent": False,
+        "one_time_keyboard": False,
     }
     assert "Панель администратора" not in result[0].text
 
@@ -375,7 +378,8 @@ def test_owner_panel_buttons_activate_console_for_both_providers(
     if provider == "telegram":
         assert text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
         assert [row[0]["text"] for row in markup["keyboard"]] == expected
-        assert markup["is_persistent"] is True
+        assert markup["is_persistent"] is False
+        assert markup["one_time_keyboard"] is False
         return
     assert text == "Панель администратора PRO-STORE"
     assert [row[0]["text"] for row in markup["inline_keyboard"]] == expected

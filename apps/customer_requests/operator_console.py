@@ -291,11 +291,12 @@ def menu(binding=None) -> tuple[str, dict]:
 
 
 def telegram_operator_keyboard() -> dict:
-    """The persistent, user-collapsible top-level Telegram navigation."""
+    """The user-collapsible top-level Telegram navigation."""
     return {
         "keyboard": [[{"text": label}] for label in INTERNAL_NAVIGATION_LABELS],
         "resize_keyboard": True,
-        "is_persistent": True,
+        "is_persistent": False,
+        "one_time_keyboard": False,
     }
 
 

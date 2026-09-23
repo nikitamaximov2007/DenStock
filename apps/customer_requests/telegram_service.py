@@ -425,7 +425,8 @@ def customer_keyboard() -> dict:
     return {
         "keyboard": [[{"text": customer_ui.MY_REQUESTS_BUTTON}]],
         "resize_keyboard": True,
-        "is_persistent": True,
+        "is_persistent": False,
+        "one_time_keyboard": False,
     }
 
 

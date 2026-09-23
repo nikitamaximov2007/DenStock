@@ -199,7 +199,8 @@ def test_the_telegram_keyboard_offers_my_requests_without_a_command(part):
 
     assert greeting.keyboard == telegram_service.customer_keyboard()
     assert greeting.keyboard["keyboard"][0][0]["text"] == "Мои заявки"
-    assert greeting.keyboard["is_persistent"] is True
+    assert greeting.keyboard["is_persistent"] is False
+    assert greeting.keyboard["one_time_keyboard"] is False
     assert "/requests" not in greeting.reply
     assert request.reference not in greeting.reply  # a hello, not a summary
 
