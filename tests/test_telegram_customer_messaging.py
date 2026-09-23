@@ -604,7 +604,7 @@ def test_customer_who_never_starts_keeps_a_valid_request(part, worker, api, oper
 # --- J, K, L, S: operator authorization --------------------------------------------------
 
 
-def test_random_user_sees_no_request_data_and_whoami_shows_only_own_id(
+def test_random_user_sees_customer_ux_and_whoami_shows_no_internal_onboarding(
     part, worker, api, operators
 ):
     request = _request(part, key="p" * 32)
@@ -623,7 +623,11 @@ def test_random_user_sees_no_request_data_and_whoami_shows_only_own_id(
     )
 
     stranger_text = "\n".join(api.texts_to(STRANGER))
-    assert f"Ваш Telegram ID: {STRANGER}" in stranger_text
+    assert f"Ваш Telegram ID: {STRANGER}" not in stranger_text
+    assert "Если вы сотрудник" not in stranger_text
+    assert "Команды:" not in stranger_text
+    assert "/requests" not in stranger_text
+    assert "заявкам" in stranger_text.lower()
     for secret in (f"№{request.human_number}", "Иван", "912", "448", "Нужна деталь"):
         assert secret not in stranger_text
     assert [text for _id, text in api.answers] == ["Недоступно."] * 3

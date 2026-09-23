@@ -43,6 +43,7 @@ PAIRING_TTL = timedelta(minutes=10)
 PAIRING_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){2}$")
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 OWNER_OPERATOR_KEYS = {"Денис": "DENIS", "Рим": "RIM"}
+ADMIN_OPERATOR_KEYS = {"NIKITA"}
 
 
 def enabled() -> bool:
@@ -72,6 +73,28 @@ def binding_for(provider: str, provider_user_id: int, *, lock: bool = False):
         query = query.select_for_update()
     binding = query.first()
     return binding if binding and binding.user.can_manage_sales else None
+
+
+def is_admin_binding(binding) -> bool:
+    """Return whether this explicit binding represents the internal admin role."""
+    return bool(binding and binding.operator_key in ADMIN_OPERATOR_KEYS)
+
+
+def binding_role(binding) -> str:
+    """The durable role represented by an active messenger binding."""
+    return "ADMIN" if is_admin_binding(binding) else "OWNER"
+
+
+def internal_author_label(binding) -> str:
+    """Stable internal audit label, independent of customer-facing wording."""
+    if is_admin_binding(binding):
+        return f"{binding.operator_key} / ADMIN"
+    return binding.customer_visible_label
+
+
+def customer_responder_label(binding) -> str:
+    """The service identity shown to customers for this binding's replies."""
+    return "PRO-STORE" if is_admin_binding(binding) else binding.customer_visible_label
 
 
 def _new_pairing_code() -> str:
@@ -193,13 +216,14 @@ def consume_pairing(
     setattr(row, slot, now)
     row.save(update_fields=[slot])
     clear_panel_delivery(binding=binding)
+    access_word = "администратора" if is_admin_binding(binding) else "владельца"
     if enabled():
         return binding, (
-            "Доступ владельца подключён.\n\n"
+            f"Доступ {access_word} подключён.\n\n"
             f"Вы вошли как: {binding.customer_visible_label}"
         )
     return binding, (
-        "Доступ владельца подключён.\n\n"
+        f"Доступ {access_word} подключён.\n\n"
         f"Вы вошли как: {binding.customer_visible_label}\n\n"
         "Рабочая панель пока не активирована."
     )
@@ -228,7 +252,11 @@ def _callback(binding, kind: str, value: str = "") -> str:
 
 
 def menu(binding=None) -> tuple[str, dict]:
-    heading = "Панель владельца PRO-STORE"
+    heading = (
+        "Панель администратора PRO-STORE"
+        if is_admin_binding(binding)
+        else "Панель владельца PRO-STORE"
+    )
     if binding is not None:
         context = OperatorConversationContext.objects.select_related("request").filter(
             binding=binding
@@ -679,7 +707,8 @@ def submit_text(
             key=_key(provider, external_id), channel=request.preferred_messenger,
             attachment=attachment,
             operator_control_source=provider,
-            operator_author_label=binding.customer_visible_label,
+            operator_author_label=internal_author_label(binding),
+            customer_responder_label=customer_responder_label(binding),
         )
     except operator_replies.OperatorReplyError as exc:
         return str(exc), menu(binding)[1]
@@ -691,7 +720,7 @@ def handle_text(
     *, provider: str, provider_user_id: int, external_id: str, text: str, attachment=None,
     provider_chat_id: int | None = None,
 ):
-    """Return a staff reply, or ``None`` so ordinary customer mode continues."""
+    """Route an authenticated staff identity without falling into customer UX."""
     value = (text or "").strip()
     if is_pairing_code(value):
         binding, reply = consume_pairing(
@@ -711,6 +740,10 @@ def handle_text(
         if binding.delivery_chat_id != provider_chat_id:
             binding.delivery_chat_id = provider_chat_id
             binding.save(update_fields=["delivery_chat_id", "updated_at"])
+    if lower in {"/start", "/help", "/menu", "меню", "мои заявки", "мои покупки"}:
+        clear_context(binding=binding)
+        clear_photo_context(binding=binding)
+        return menu(binding)
     if lower in {"/work", "рабочее меню"}:
         clear_context(binding=binding)
         clear_photo_context(binding=binding)
@@ -724,7 +757,7 @@ def handle_text(
         binding.save(update_fields=["operator_mode", "updated_at"])
         return "Клиентский режим включён.", None
     if not binding.operator_mode:
-        return None
+        return "Откройте рабочую панель для работы с заявками.", menu(binding)[1]
     if attachment is not None:
         receipt = OwnerPhotoUploadReceipt.objects.filter(
             binding=binding, external_id=str(external_id)

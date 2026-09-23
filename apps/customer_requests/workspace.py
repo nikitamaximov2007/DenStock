@@ -444,6 +444,8 @@ def _author(message) -> str:
             source_label = {"telegram": "Telegram", "max": "MAX", "web": "PRO-STORE"}.get(
                 source, source
             )
+            if snapshot.endswith(" / ADMIN"):
+                return snapshot
             return snapshot if snapshot == "PRO-STORE" else (
                 f"{snapshot} · {source_label}" if source_label else snapshot
             )

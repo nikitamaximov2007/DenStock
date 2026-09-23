@@ -28,6 +28,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Повторно поставить уже доставленную панель в очередь.",
         )
+        parser.add_argument(
+            "--operator-key",
+            choices=[*OWNER_LABELS, "NIKITA"],
+            help="Ограничить отправку одной durable identity.",
+        )
 
     def handle(self, *args, **options):
         if not operator_console.enabled():
@@ -41,11 +46,19 @@ class Command(BaseCommand):
             if provider == "all"
             else [provider]
         )
+        filters = {
+            "provider__in": providers,
+            "is_active": True,
+            "user__is_active": True,
+        }
+        if options["operator_key"] == "NIKITA":
+            filters["operator_key"] = "NIKITA"
+        elif options["operator_key"]:
+            filters["customer_visible_label"] = options["operator_key"]
+        else:
+            filters["customer_visible_label__in"] = OWNER_LABELS
         bindings = StaffMessengerBinding.objects.select_related("user").filter(
-            provider__in=providers,
-            customer_visible_label__in=OWNER_LABELS,
-            is_active=True,
-            user__is_active=True,
+            **filters
         ).order_by("customer_visible_label", "provider", "pk")
         queued = refreshed = existing = 0
         for binding in bindings:

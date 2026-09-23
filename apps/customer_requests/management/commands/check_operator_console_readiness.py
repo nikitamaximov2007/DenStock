@@ -69,6 +69,17 @@ class Command(BaseCommand):
                     f"{'подключён' if status.get('telegram') else 'не подключён'}; "
                     f"MAX - {'подключён' if status.get('max') else 'не подключён'}"
                 )
+            nikita = {
+                binding.provider: True
+                for binding in active
+                if binding.operator_key == "NIKITA"
+            }
+            if nikita:
+                self.stdout.write(
+                    "NIKITA (ADMIN): Telegram - "
+                    f"{'подключён' if nikita.get('telegram') else 'не подключён'}; "
+                    f"MAX - {'подключён' if nikita.get('max') else 'не подключён'}"
+                )
             for binding in active.order_by("customer_visible_label", "provider", "pk"):
                 state = "Telegram" if binding.provider == "telegram" else "MAX"
                 self.stdout.write(

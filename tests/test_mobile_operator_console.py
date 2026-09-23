@@ -17,7 +17,12 @@ from django.utils import timezone
 from apps.customer_requests import operator_console, operator_replies
 from apps.customer_requests.max_api import MaxApiError, MaxBotApi, MaxNetworkError
 from apps.customer_requests.max_bot import MaxBotWorker
-from apps.customer_requests.messengers import consume_max_start, issue_max_link
+from apps.customer_requests.messengers import (
+    consume_max_start,
+    consume_telegram_start,
+    issue_max_link,
+    issue_telegram_link,
+)
 from apps.customer_requests.models import (
     CustomerRequest,
     MaxDeliveryStatus,
@@ -26,6 +31,7 @@ from apps.customer_requests.models import (
     OperatorNotification,
     StaffMessengerBinding,
     StaffMessengerPairingToken,
+    TelegramMessage,
 )
 from apps.customer_requests.telegram_api import TelegramApiError, TelegramNetworkError
 from apps.customer_requests.telegram_bot import TelegramBotWorker
@@ -86,6 +92,103 @@ def test_enabled_pairing_returns_owner_panel_without_command_instructions(
         "Загрузка фото по продажам/ремонтам",
     ]
     assert "/work" not in reply[0]
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_nikita_binding_renders_admin_panel_without_customer_button(db, django_user_model):
+    user = _operator(django_user_model, 877307933, username="nikita-admin").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="NIKITA",
+        provider="telegram",
+        provider_user_id=877307933,
+        customer_visible_label="NIKITA",
+    )
+
+    reply = operator_console.handle_text(
+        provider="telegram", provider_user_id=877307933, external_id="nikita-menu",
+        text="/start",
+    )
+
+    assert reply[0] == "Панель администратора PRO-STORE"
+    buttons = [row[0]["text"] for row in reply[1]["inline_keyboard"]]
+    assert buttons == ["Все заявки", "Новые заявки", "Загрузка фото по продажам/ремонтам"]
+    assert "Мои заявки" not in buttons
+    assert operator_console.binding_role(binding) == "ADMIN"
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_admin_binding_takes_precedence_over_customer_menu(db, django_user_model):
+    user = _operator(django_user_model, 877307934, username="nikita-precedence").user
+    StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="NIKITA",
+        provider="telegram",
+        provider_user_id=877307934,
+        customer_visible_label="NIKITA",
+    )
+
+    reply = operator_console.handle_text(
+        provider="telegram", provider_user_id=877307934, external_id="nikita-my-requests",
+        text="Мои заявки",
+    )
+
+    assert reply[0] == "Панель администратора PRO-STORE"
+    assert "Мои заявки" not in str(reply)
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_explicit_nikita_binding_command_is_idempotent_and_redacts_identity(
+    db, django_user_model, capsys
+):
+    _operator(django_user_model, 877307936, username="admin")
+
+    for _ in range(2):
+        call_command(
+            "activate_telegram_admin_identity",
+            provider_user_id=877307936,
+            username="admin",
+            confirm=True,
+        )
+
+    binding = StaffMessengerBinding.objects.get(provider_user_id=877307936)
+    assert binding.operator_key == "NIKITA"
+    assert binding.customer_visible_label == "NIKITA"
+    assert "877307936" not in capsys.readouterr().out
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_nikita_reply_is_pro_store_to_customer_and_admin_in_audit(
+    db, django_user_model
+):
+    user = _operator(django_user_model, 877307935, username="nikita-reply").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="NIKITA",
+        provider="telegram",
+        provider_user_id=877307935,
+        customer_visible_label="NIKITA",
+    )
+    request = _request(build_part(), key="nikita-role-reply".ljust(32, "n"))
+    consume_telegram_start(
+        token=issue_telegram_link(request_id=request.pk).token,
+        chat_id=700099,
+        user_id=700099,
+        username="client",
+    )
+    operator_console.set_context(binding=binding, request_id=request.pk)
+
+    reply = operator_console.handle_text(
+        provider="telegram", provider_user_id=877307935, external_id="nikita-reply",
+        text="Ответ от администратора",
+    )
+
+    assert reply[0] == "Ответ поставлен в очередь доставки клиенту."
+    message = TelegramMessage.objects.get(text="Ответ от администратора")
+    assert message.operator_author_label == "NIKITA / ADMIN"
+    assert message.operator_control_source == "telegram"
+    intro = TelegramMessage.objects.get(text="Вам отвечает PRO-STORE.")
+    assert intro.operator_author_label == "PRO-STORE"
 
 
 @pytest.mark.parametrize(
@@ -708,9 +811,10 @@ def test_stale_callback_cannot_reactivate_customer_mode(db, django_user_model):
     binding.refresh_from_db()
     assert result[0].startswith("Рабочая сессия устарела")
     assert binding.operator_mode is False
-    assert operator_console.handle_text(
+    reply = operator_console.handle_text(
         provider="telegram", provider_user_id=99031, external_id="free", text="не отправляй"
-    ) is None
+    )
+    assert reply[0] == "Откройте рабочую панель для работы с заявками."
     assert not MaxMessage.objects.filter(conversation__request=request).exists()
 
 

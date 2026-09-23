@@ -193,12 +193,6 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
         command = head.split("@", 1)[0].lower()
         argument = argument.strip()
 
-    if command == "/whoami":
-        # The caller's own identity only; no request data for anyone.
-        return reply(
-            f"Ваш Telegram ID: {user_id}\n"
-            "Если вы сотрудник PRO-STOR, передайте этот номер администратору."
-        )
     if command == "/start" and argument:
         # A link from the website's «Подключить Telegram» is an account event.
         account_reply = account_hooks.telegram_start(
@@ -272,6 +266,10 @@ def _handle_callback(callback) -> list[Outgoing]:
             return denied
         text, markup = result
         return [answered, Outgoing(chat_id=callback_chat_id, text=text, reply_markup=markup)]
+
+    # An active staff identity never falls through to customer callbacks.
+    if operator_console.enabled() and operator_console.binding_for("telegram", user_id):
+        return denied
 
     if kind == "s":
         # Customer choosing among their own requests. In a private chat the

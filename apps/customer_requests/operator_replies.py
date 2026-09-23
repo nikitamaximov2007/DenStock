@@ -52,6 +52,7 @@ OWNER_LABELS = {
     "Денис": "Денис, владелец сервиса PRO-STORE",
     "Рим": "Рим, владелец сервиса PRO-STORE",
 }
+ADMIN_LABELS = {"NIKITA / ADMIN": "PRO-STORE"}
 
 
 class OperatorReplyError(ValueError):
@@ -118,8 +119,9 @@ def _dedupe_key(key: str) -> str:
 
 
 def customer_visible_operator_label(label: str) -> str:
-    """Return the immutable customer-facing owner wording for V1 operators."""
-    return OWNER_LABELS.get((label or "").strip(), label or "")
+    """Return immutable customer-facing wording for a staff identity."""
+    normalized = (label or "").strip()
+    return ADMIN_LABELS.get(normalized, OWNER_LABELS.get(normalized, normalized))
 
 
 def _stored_reply(key: str, telegram_update_id: int | None):
@@ -153,6 +155,7 @@ def submit_reply(
     attachment=None,
     operator_control_source: str | None = None,
     operator_author_label: str = "",
+    customer_responder_label: str | None = None,
 ) -> ReplyResult:
     """Queue one reply for delivery by the request's own messenger worker.
 
@@ -207,19 +210,27 @@ def submit_reply(
         operator_author_label = "PRO-STORE" if operator_control_source == "web" else (
             getattr(user, "full_name", "") or user.get_username()
         )
+    stored_operator_author_label = operator_author_label
     if operator_control_source in {"telegram", "max"}:
-        operator_author_label = customer_visible_operator_label(operator_author_label)
+        if customer_responder_label is None:
+            customer_responder_label = customer_visible_operator_label(operator_author_label)
+        else:
+            customer_responder_label = customer_visible_operator_label(customer_responder_label)
+        stored_operator_author_label = OWNER_LABELS.get(
+            (operator_author_label or "").strip(), operator_author_label
+        )
     # The operator console is an independently staged feature. Its compact
     # authorship metadata must not change the accepted workspace timeline
     # until the owner deliberately enables that feature flag.
     if not settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED:
         operator_control_source = ""
         operator_author_label = ""
+        stored_operator_author_label = ""
     if telegram_update_id is None and operator_control_source in {"telegram", "max"}:
         _ensure_customer_visible_responder(
             target,
             user=user,
-            label=operator_author_label,
+            label=customer_responder_label or "PRO-STORE",
             control_source=operator_control_source,
             telegram_operator=telegram_operator,
         )
@@ -227,7 +238,7 @@ def submit_reply(
         message = _queue_max_reply(
             target, user=user, text=text, key=key, attachment=validated,
             operator_control_source=operator_control_source,
-            operator_author_label=operator_author_label,
+            operator_author_label=stored_operator_author_label,
         )
     else:
         message = _queue_telegram_reply(
@@ -239,7 +250,7 @@ def submit_reply(
             telegram_update_id=telegram_update_id,
             attachment=validated,
             operator_control_source=operator_control_source,
-            operator_author_label=operator_author_label,
+            operator_author_label=stored_operator_author_label,
         )
     return ReplyResult(message, target.channel, created=True)
 
