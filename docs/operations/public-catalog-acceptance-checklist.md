@@ -26,7 +26,7 @@ photo quality, wording).
 | Load | `scripts/qualification/public_catalog_load.py` | loopback only |
 | Content coverage | `manage.py public_catalog_coverage_report` | read-only |
 | Customer price equals the wholesale catalog price (P0 before launch) | `manage.py audit_customer_prices --csv <path>`, then `docs/operations/customer-price-audit.md` | read-only, on a fresh production snapshot |
-| Public price is the canonical price on every surface, browser price ignored | `tests/test_customer_price_gate.py` | pytest |
+| Public price mirrors DenisStock's current price on every surface, browser price ignored | `manage.py audit_public_price_parity`, `tests/test_customer_price_gate.py` | read-only, pytest |
 | One canonical phone record, server-side | `tests/test_phone_input.py` | pytest |
 
 ## 2. Manual pass (15 minutes)

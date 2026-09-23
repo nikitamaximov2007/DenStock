@@ -202,7 +202,7 @@ def test_cart_recomputes_price_and_availability_every_time(public_client, public
     part.recommended_price = Decimal("150")
     part.save(update_fields=["recommended_price"])
     body = _cart(public_client)
-    assert "Уточнить цену" in body
+    assert "150 ₽" in body
 
     from apps.inventory.models import StockLot
     from apps.sales.services import (

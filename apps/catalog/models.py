@@ -173,12 +173,14 @@ class PartType(Dictionary):
         BULK = "bulk", "Количественный"
 
     class PriceProvenance(models.TextChoices):
-        """Why the current public customer price may be shown.
+        """How the current customer price was obtained for audit purposes.
 
         This is deliberately a statement about the *current* commercial
         price, not a historical sale/receipt snapshot and not a second price
-        formula.  ``VALID_MANUAL_EXCEPTION`` is set only after an owner has
-        confirmed that this PartType is a distinct commercial item.
+        formula. It is not a gate for the public catalog: DenisStock's
+        positive current price is the public price. ``VALID_MANUAL_EXCEPTION``
+        is set only after an owner has confirmed that this PartType is a
+        distinct commercial item.
         """
 
         FORMULA_CERTIFIED = "formula_certified", "Подтверждена формулой"
@@ -229,11 +231,9 @@ class PartType(Dictionary):
     # «проверить нечем»: оптового источника у детали нет, он неположительный
     # или позиция ушла из прайса.
     #
-    # Публичный каталог показывает число клиенту, только если эта сумма
-    # совпадает с `recommended_price`. Так сделано намеренно: любой, кто
-    # поставит цену руками, свидетельство не обновит, совпадение пропадёт, и
-    # витрина честно напишет «Уточнить цену» вместо непроверенного числа.
-    # Внутри DenisStock цена при этом остаётся видимой как была.
+    # Поле хранит свидетельство расчёта для аудита. Оно не является второй
+    # текущей ценой и не может скрыть положительную `recommended_price` на
+    # публичной витрине: DenisStock сам является источником финальной цены.
     certified_price_rub = models.DecimalField(
         "Цена, подтверждённая расчётом (₽)",
         max_digits=12,

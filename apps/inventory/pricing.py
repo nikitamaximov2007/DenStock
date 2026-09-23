@@ -22,10 +22,24 @@ def resolve_effective_inventory_customer_price(inventory, current_price) -> Deci
     return current_price if current_price is not None else None
 
 
+def resolve_current_customer_price(part) -> Decimal | None:
+    """Return the current DenisStock customer price for one PartType.
+
+    ``PartType.recommended_price`` is the current price shown by DenisStock.
+    Provenance and certification fields explain how that value was obtained,
+    but they are not a second price authority.  A non-positive or unusable
+    value is an unknown customer price, never a public ``0 ₽`` price.
+    """
+    price = getattr(part, "recommended_price", None)
+    if isinstance(price, Decimal) and price.is_finite() and price > 0:
+        return price
+    return None
+
+
 def effective_part_customer_prices(parts: Iterable) -> dict[int, Decimal | None]:
     """Return each part's current customer price without historical fallback."""
     return {
-        part.pk: part.recommended_price
+        part.pk: resolve_current_customer_price(part)
         for part in parts
         if part is not None
     }
