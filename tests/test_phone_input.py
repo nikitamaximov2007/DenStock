@@ -26,7 +26,13 @@ from django.core.cache import cache
 from django.urls import reverse
 
 from apps.core.forms import PhoneFormMixin, PhoneInput
-from apps.core.phones import canonical_phone_text, format_ru_phone, normalize_phone
+from apps.core.phones import (
+    canonical_phone_text,
+    canonical_ru_mobile,
+    format_ru_phone,
+    normalize_phone,
+    normalize_ru_mobile,
+)
 from apps.customer_requests.models import CustomerRequest
 from apps.customers.models import Customer
 from apps.repairs.forms import RepairOrderForm
@@ -36,6 +42,7 @@ PASSWORD = "parol-12345"
 JS_PATH = Path(settings.BASE_DIR) / "static" / "shared" / "phone_input.js"
 JS = JS_PATH.read_text(encoding="utf-8")
 CANONICAL = "+7 900 123-45-67"
+MOBILE_CANONICAL = "+79001234567"
 SAME_NUMBER = ["89001234567", "79001234567", "+79001234567", "9001234567", CANONICAL]
 
 
@@ -84,6 +91,25 @@ def test_landline_with_the_country_code_uses_the_same_record():
 def test_canonical_is_idempotent():
     assert canonical_phone_text(CANONICAL) == CANONICAL
     assert canonical_phone_text(canonical_phone_text("9001234567")) == CANONICAL
+
+
+@pytest.mark.parametrize("raw", [
+    "+79123456789",
+    "79123456789",
+    "89123456789",
+    "9123456789",
+    "+7 912 345-67-89",
+    "8 (912) 345-67-89",
+])
+def test_strict_public_mobile_normalization_has_one_compact_canonical_value(raw):
+    assert normalize_ru_mobile(raw) == "79123456789"
+    assert canonical_ru_mobile(raw) == "+79123456789"
+
+
+@pytest.mark.parametrize("raw", ["+74951234567", "4951234567", "912345678", "abc9123456789"])
+def test_strict_public_mobile_normalization_rejects_incomplete_landline_and_letters(raw):
+    assert normalize_ru_mobile(raw) == ""
+    assert canonical_ru_mobile(raw) == ""
 
 
 @pytest.mark.parametrize(
@@ -200,11 +226,13 @@ def test_the_public_request_form_carries_the_same_field(public_client, public_ca
     public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "1"})
     html = public_client.get("/request/").content.decode()
     tag = _phone_tag(html, 'id="customer_phone"')
-    for attribute in ('type="tel"', 'inputmode="tel"', 'data-phone-input="ru"'):
+    for attribute in ('type="tel"', 'inputmode="numeric"', 'data-phone-input="ru-mobile"'):
         assert attribute in tag, attribute
     described = tag.split('aria-describedby="', 1)[1].split('"', 1)[0]
     assert 'id="request-phone-hint"' in html and "request-phone-hint" in described.split()
     assert "shared/phone_input.js" in html
+    assert "+7 (9__) ___-__-__" in tag
+    assert "Введите 9 цифр после обязательного" in html
 
 
 def test_the_public_policy_allows_that_one_script_and_nothing_looser(public_client):
@@ -245,11 +273,14 @@ def test_a_request_sent_without_js_gets_the_canonical_record(
 
     assert response.status_code == 302, response.status_code
     created = CustomerRequest.objects.get()
-    assert created.customer_phone == CANONICAL
+    assert created.customer_phone == "+79001234567"
     assert created.customer_phone_normalized == "79001234567"
 
 
-def test_a_request_with_a_foreign_number_keeps_it_as_typed(public_client, public_catalog):
+@pytest.mark.parametrize("raw", ["+74951234567", "912345678", "abc9123456789"])
+def test_a_public_request_rejects_non_mobile_or_incomplete_phone(
+    public_client, public_catalog, raw
+):
     part = public_catalog.part("HOSE", article="H-1", price="500")
     public_catalog.stock(part, "1")
     public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "1"})
@@ -261,15 +292,15 @@ def test_a_request_with_a_foreign_number_keeps_it_as_typed(public_client, public
         {
             "submission_key": token,
             "customer_name": "Klaus Schmidt",
-            "customer_phone": "+49 30 123456",
+            "customer_phone": raw,
             "preferred_messenger": "telegram",
             "comment": "",
             "consent": "1",
         },
     )
 
-    assert response.status_code == 302
-    assert CustomerRequest.objects.get().customer_phone == "+49 30 123456"
+    assert response.status_code == 400
+    assert not CustomerRequest.objects.exists()
 
 
 # --- Сама маска ----------------------------------------------------------------------------
@@ -280,6 +311,60 @@ def test_the_mask_never_builds_a_second_country_code_by_hand():
     assert 'value +=' not in JS
     assert "replace(/\\D+/g" in JS
     assert "module.exports" in JS  # чистые функции доступны тесту
+
+
+def _mobile_mask(value):
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - зависит от машины
+        pytest.skip("node не установлен: поведение маски проверяется отдельно")
+    script = (
+        "const m=require(process.argv[1]);"
+        "process.stdout.write(JSON.stringify(m.mobileMaskValue(JSON.parse(process.argv[2]))));"
+    )
+    result = subprocess.run(
+        [node, "-e", script, str(JS_PATH), json.dumps(value)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize(
+    ("typed", "shown"),
+    [
+        ("1", "+7 (91"),
+        ("5", "+7 (95"),
+        ("0", "+7 (90"),
+        ("123456789", "+7 (912) 345-67-89"),
+        ("+79123456789", "+7 (912) 345-67-89"),
+        ("79123456789", "+7 (912) 345-67-89"),
+        ("89123456789", "+7 (912) 345-67-89"),
+        ("9123456789", "+7 (912) 345-67-89"),
+        ("+7 912 345-67-89", "+7 (912) 345-67-89"),
+        ("8 (912) 345-67-89", "+7 (912) 345-67-89"),
+    ],
+)
+def test_mobile_mask_has_fixed_prefix_and_normalizes_common_pastes(typed, shown):
+    assert _mobile_mask(typed) == shown
+
+
+def test_mobile_mask_typed_digits_build_the_required_prefix_once():
+    value = ""
+    for digit in "123456789":
+        value = _mobile_mask(value + digit)
+    assert value == "+7 (912) 345-67-89"
+
+
+def test_mobile_mask_keeps_prefix_and_backspace_can_remove_entered_digits():
+    assert _mobile_mask("+7 (9") == "+7 (9"
+    value = _mobile_mask("123456789")
+    for _ in range(9):
+        last_digit = max(index for index, char in enumerate(value) if char.isdigit() and index > 4)
+        value = _mobile_mask(value[:last_digit] + value[last_digit + 1 :])
+    assert value == "+7 (9"
+    assert _mobile_mask("abc") == ""
 
 
 def test_the_mask_refuses_to_guess_a_foreign_number():

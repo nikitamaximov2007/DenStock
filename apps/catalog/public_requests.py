@@ -229,6 +229,7 @@ def send_cart(request, cart: CartView, submission: Submission, values) -> tuple[
             privacy_policy_version=privacy_policy_version,
             personal_data_consent_version=consent_version,
             submission_key=submission.token,
+            mobile_only=True,
         )
     public_id = str(customer_request.public_id)
     if created:

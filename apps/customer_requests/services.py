@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from apps.catalog.models import PartType
 from apps.catalog.public_contracts import resolve_current_customer_prices
-from apps.core.phones import canonical_phone_text, normalize_phone
+from apps.core.phones import canonical_phone_text, canonical_ru_mobile, normalize_phone
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number, with_part_identity
 
@@ -74,7 +74,7 @@ def _required_text(value, field, maximum, *, form_field=None):
     return cleaned
 
 
-def _phone(value: str) -> str:
+def _phone(value: str, *, mobile_only: bool = False) -> str:
     """Телефон заявки: проверка и единая запись номера.
 
     Решает сервер, а не браузер: маска в форме делает то же самое, но заявка,
@@ -82,6 +82,14 @@ def _phone(value: str) -> str:
     же каноническую запись.
     """
     value = _required_text(value, "телефон", 50, form_field="customer_phone")
+    if mobile_only:
+        canonical = canonical_ru_mobile(value)
+        if not canonical:
+            raise CustomerRequestError(
+                "Укажите российский мобильный номер в формате +7 (9XX) XXX-XX-XX.",
+                field="customer_phone",
+            )
+        return canonical
     normalized = normalize_phone(value)
     if len(normalized) < 5 or any(char.isalpha() for char in value):
         raise CustomerRequestError("Укажите телефон в обычном формате.", field="customer_phone")
@@ -155,6 +163,7 @@ def create_customer_request(
     submission_key: str,
     source: str = CustomerRequest.Source.PUBLIC_CATALOG,
     consent_purpose: str = PUBLIC_REQUEST_CONSENT_PURPOSE,
+    mobile_only: bool = False,
 ) -> tuple[CustomerRequest, bool]:
     """Create a request and immutable line snapshots, without stock mutation.
 
@@ -173,7 +182,7 @@ def create_customer_request(
         return existing, False
 
     customer_name = _required_text(customer_name, "имя", 255, form_field="customer_name")
-    customer_phone = _phone(customer_phone)
+    customer_phone = _phone(customer_phone, mobile_only=mobile_only)
     if preferred_messenger not in CustomerRequest.Messenger.values:
         raise CustomerRequestError("Выберите Telegram или MAX.", field="preferred_messenger")
     comment = str(comment or "").strip()

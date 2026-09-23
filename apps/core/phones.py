@@ -60,6 +60,32 @@ def normalize_phone(value: str) -> str:
     return digits
 
 
+def normalize_ru_mobile(value: str) -> str:
+    """Return compact Russian mobile digits, or ``""`` when invalid.
+
+    This stricter variant is for the public request form.  The general
+    ``normalize_phone`` function remains deliberately broader for historical
+    internal customer/document workflows.
+    """
+    text = str(value or "").strip()
+    if not text or any(char.isalpha() for char in text):
+        return ""
+    digits = _NON_DIGITS.sub("", text)
+    if len(digits) == RU_FULL_LENGTH and digits.startswith(("7", "8")):
+        national = digits[1:]
+    elif len(digits) == RU_LOCAL_LENGTH and digits.startswith(RU_MOBILE_PREFIX):
+        national = digits
+    else:
+        return ""
+    return RU_COUNTRY_CODE + national if national.startswith(RU_MOBILE_PREFIX) else ""
+
+
+def canonical_ru_mobile(value: str) -> str:
+    """Return the public form's punctuation-free canonical mobile value."""
+    normalized = normalize_ru_mobile(value)
+    return f"+{normalized}" if normalized else ""
+
+
 def format_ru_phone(value: str) -> str:
     """Канонический вид российского номера или пустая строка.
 

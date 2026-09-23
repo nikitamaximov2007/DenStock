@@ -34,13 +34,13 @@
                name="customer_phone"
                maxlength="50"
                autocomplete="tel"
-               inputmode="tel"
-               placeholder="+7 900 123-45-67"
-               data-phone-input="ru"
+               inputmode="numeric"
+               placeholder="+7 (9__) ___-__-__"
+               data-phone-input="ru-mobile"
                value="{{ values.customer_phone }}"
                {% if error_field == "customer_phone" %}aria-invalid="true" aria-describedby="request-error request-phone-hint"{% else %}aria-describedby="request-phone-hint"{% endif %}
                required>
-        <p id="request-phone-hint" class="field__hint">Российский мобильный: наберите номер, «+7» подставится само.</p>
+        <p id="request-phone-hint" class="field__hint">Введите 9 цифр после обязательного «+7 (9».</p>
       </div>
       <fieldset class="field choice-group"
                 {% if error_field == "preferred_messenger" %}aria-describedby="request-error"{% endif %}>
