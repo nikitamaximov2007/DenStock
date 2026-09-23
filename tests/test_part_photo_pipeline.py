@@ -1,17 +1,19 @@
 import base64
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import close_old_connections, connection
+from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
 
 from apps.catalog.models import Category, PartPhotoUploadAudit, PartType, PublicPartPhoto, Unit
 from apps.catalog.photo_pipeline import PartPhotoAlreadyExists, upload_primary_part_photo
 from apps.catalog.public_photos import primary_photos
+from apps.core.time import format_perm_datetime
 from apps.customer_requests import max_bot, operator_console
 from apps.customer_requests.attachments import ValidatedAttachment
 from apps.customer_requests.models import (
@@ -74,7 +76,7 @@ def test_telegram_photo_flow_targets_selected_part_and_is_idempotent(
         number="S-PHOTO-1",
         status=Sale.Status.COMPLETED,
         customer_name="Иванов Иван Иванович",
-        sold_at=timezone.now(),
+        sold_at=datetime(2026, 9, 23, 11, 59, 35, tzinfo=UTC),
     )
     monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
 
@@ -88,7 +90,8 @@ def test_telegram_photo_flow_targets_selected_part_and_is_idempotent(
     button_text = feed[1]["inline_keyboard"][0][0]["text"]
     assert "ПРОДАЖА" in button_text
     assert "Иванов Иван Иванович" in button_text
-    assert timezone.localtime(sale.sold_at).strftime("%H:%M:%S") in button_text
+    assert format_perm_datetime(sale.sold_at) == "23.09.2026 16:59:35"
+    assert format_perm_datetime(sale.sold_at) in button_text
 
     card = operator_console.handle_callback(
         provider="telegram",
@@ -151,7 +154,7 @@ def test_max_photo_flow_uses_native_buttons_and_shared_photo_service(
         number="S-MAX-PHOTO-1",
         status=Sale.Status.COMPLETED,
         customer_name="Иванов Иван Иванович",
-        sold_at=timezone.now(),
+        sold_at=datetime(2026, 9, 23, 11, 59, 35, tzinfo=UTC),
     )
     monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
 
@@ -175,9 +178,7 @@ def test_max_photo_flow_uses_native_buttons_and_shared_photo_service(
     )
     assert "ПРОДАЖА" in feed[1]["inline_keyboard"][0][0]["text"]
     assert "Иванов Иван Иванович" in feed[1]["inline_keyboard"][0][0]["text"]
-    assert timezone.localtime(sale.sold_at).strftime("%H:%M:%S") in feed[1][
-        "inline_keyboard"
-    ][0][0]["text"]
+    assert format_perm_datetime(sale.sold_at) in feed[1]["inline_keyboard"][0][0]["text"]
 
     max_feed = operator_console.buttons_for_provider(feed[1], "max")
     card = operator_console.handle_callback(
@@ -221,6 +222,52 @@ def test_max_photo_flow_uses_native_buttons_and_shared_photo_service(
         ),
     )
     assert duplicate[0] == result[0]
+
+
+@override_settings(TIME_ZONE="UTC")
+def test_photo_feed_uses_explicit_perm_timezone_and_authoritative_sorting(
+    db, django_user_model, settings
+):
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    user = django_user_model.objects.create_superuser(username="perm-time", password="x")
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="DENIS",
+        provider="telegram",
+        provider_user_id=7402,
+        customer_visible_label="Денис",
+    )
+    older = Sale.objects.create(
+        number="S-PERM-OLD",
+        status=Sale.Status.COMPLETED,
+        customer_name="Старая операция",
+        sold_at=datetime(2026, 9, 23, 10, 0, tzinfo=UTC),
+    )
+    newer = Sale.objects.create(
+        number="S-PERM-NEW",
+        status=Sale.Status.COMPLETED,
+        customer_name="Новая операция",
+        sold_at=datetime(2026, 9, 23, 12, 0, tzinfo=UTC),
+    )
+
+    expected_new = "23.09.2026 17:00:00"
+    expected_old = "23.09.2026 15:00:00"
+    assert format_perm_datetime(newer.sold_at) == expected_new
+    assert format_perm_datetime(older.sold_at) == expected_old
+    with override_settings(TIME_ZONE="Europe/Moscow"):
+        assert format_perm_datetime(newer.sold_at) == expected_new
+
+    _text, markup = operator_console.photo_operation_page(binding=binding)
+    operation_labels = [row[0]["text"] for row in markup["inline_keyboard"][:2]]
+    assert operation_labels == [
+        f"{expected_new} ПРОДАЖА\nНовая операция",
+        f"{expected_old} ПРОДАЖА\nСтарая операция",
+    ]
+
+    card_text, _card_markup = operator_console.photo_operation_card(
+        binding=binding, kind="sale", operation_id=newer.pk
+    )
+    assert card_text.startswith(f"ПРОДАЖА {expected_new}")
 
 
 def test_max_webhook_photo_path_preserves_native_payload_and_rejects_unbound_owner(
