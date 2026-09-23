@@ -1,4 +1,76 @@
-# Current handoff
+# ACTIVE HANDOFF: Price parity + public phone mask integration
+
+Task: integrate the qualified public-price-parity and public-Russian-mobile-mask
+RCs on top of the accepted `origin/main`, qualify the candidate, and release it
+only after production preflight, signed backups, live acceptance, and main
+alignment.
+
+Branch: `codex/price-parity-phone-mask-integration`
+Current commit: `HEAD` on this branch after the handoff update below.
+
+Completed:
+
+- Created the integration branch from accepted `origin/main` `a30ada0`.
+- Cherry-picked only the coherent RC commits: price parity `604f3a8` and
+  public phone mask `49a60e3`.
+- Preserved the accepted Telegram role separation and PartTypeImage to
+  PublicPartPhoto pipeline.
+- Price resolver now mirrors every finite positive `PartType.recommended_price`
+  to PRO-STOR, independent of provenance/certification metadata; unknown or
+  non-positive values remain `Уточнить цену`.
+- Public requests use strict Russian mobile validation and store compact
+  canonical `+79XXXXXXXXX`; internal phone behavior remains unchanged.
+- Candidate was pushed to
+  `origin/codex/price-parity-phone-mask-integration`.
+
+Qualification evidence:
+
+- Focused SQLite feature/regression tests: passed; 6 browser-dependent tests
+  skipped by the local environment.
+- Full SQLite baseline `a30ada0`: 5876 passed, 7 failed, 234 skipped.
+- Full SQLite candidate: 5902 passed, 7 failed, 234 skipped.
+- Candidate-only failures: 0. Failure IDs are identical to baseline.
+- PostgreSQL 16 focused qualification: 309 passed, 0 failed, 0 skipped.
+- `ruff check .`, `djlint templates --check`, Django `check`,
+  `makemigrations --check`, and `git diff --check`: passed.
+- Baseline and candidate repo-wide djlint: 0 files would be updated.
+
+Not completed / blocker:
+
+- Production host `/opt/denstock` and its Docker stack are not available from
+  this workspace. No verified production writer check, host health check,
+  signed PRE backup, live price/phone/Telegram/MAX/photo acceptance, signed
+  POST backup, or deployment was performed.
+- `origin/main` remains `a30ada0`; it must not be advanced until the candidate
+  is deployed and accepted on production.
+
+Exact next steps on the production host, with one writer only:
+
+1. Verify production HEAD, `DENSTOCK_APP_COMMIT`, `origin/main`, active writer
+   processes, host health, and bindings.
+2. Create and verify the signed/offsite PRE backup with the negative signature
+   control and `rclone check`.
+3. Deploy exactly the final handoff SHA, apply only pending safe migrations,
+   and run health/check/ops checks without restarting PostgreSQL.
+4. Run live acceptance for article `517302674`, `audit_public_price_parity`,
+   the public phone form, NIKITA ADMIN, DENIS/RIM, and the photo pipeline.
+5. Create and verify the signed/offsite POST backup, then fast-forward
+   `origin/main` to the deployed SHA and verify SHA equality.
+
+Commands already run: `git fetch origin --prune`, focused and full pytest
+baseline/candidate runs, PG16 focused pytest, ruff, djlint, Django check,
+makemigrations check, migration plan, diff check, and candidate push.
+
+Commands still required: production runbook preflight, PRE backup, deployment,
+live acceptance, POST backup, and fast-forward of `origin/main`.
+
+Known baseline risks: the seven pre-existing full-suite failures are four
+zero-price label expectations, one partial-repair filter expectation, and two
+deployment/compose expectations. They reproduce unchanged on `a30ada0`.
+
+---
+
+# Historical handoffs
 
 Task: Customs Orders full integration and production release.
 
