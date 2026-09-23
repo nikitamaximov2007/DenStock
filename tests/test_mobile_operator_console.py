@@ -107,9 +107,7 @@ def test_owner_panel_buttons_activate_console_for_both_providers(
     text, markup = operator_console.owner_panel(binding)
 
     assert text == "Панель владельца PRO-STORE"
-    expected = ["Все заявки", "Новые заявки"]
-    if provider == "telegram":
-        expected.append("Загрузка фото по продажам/ремонтам")
+    expected = ["Все заявки", "Новые заявки", "Загрузка фото по продажам/ремонтам"]
     assert [row[0]["text"] for row in markup["inline_keyboard"]] == expected
     assert binding.operator_mode is False
 
@@ -302,6 +300,7 @@ def test_max_owner_panel_real_serializer_and_callback_round_trip(
         assert [button["text"] for row in buttons for button in row] == [
             "Все заявки",
             "Новые заявки",
+            "Загрузка фото по продажам/ремонтам",
         ]
         assert all(
             "callback_data" not in button

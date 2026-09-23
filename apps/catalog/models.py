@@ -433,6 +433,7 @@ class PartPhotoUploadAudit(models.Model):
     class Source(models.TextChoices):
         DESKTOP = "desktop", "DenisStock"
         TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
 
     image = models.OneToOneField(
         PartTypeImage,

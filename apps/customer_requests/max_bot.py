@@ -267,9 +267,7 @@ def load_operator_attachment(api: MaxBotApi, body: dict):
         raise AttachmentError("Вложение не распознано.")
     item = attachments[0] if isinstance(attachments[0], dict) else {}
     payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
-    filename = str(
-        payload.get("filename") or payload.get("file_name") or payload.get("name") or "document.pdf"
-    )
+    filename = payload.get("filename") or payload.get("file_name") or payload.get("name")
     encoded = payload.get("content_base64")
     if isinstance(encoded, str) and encoded:
         try:
@@ -279,6 +277,17 @@ def load_operator_attachment(api: MaxBotApi, body: dict):
     else:
         url = payload.get("url") or payload.get("download_url")
         content = api.download_url(url)
+    if not filename:
+        # MAX photo messages may omit a filename. Infer only from the already
+        # downloaded magic bytes; the attachment validator remains authoritative.
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            filename = "attachment.png"
+        elif content.startswith(b"\xff\xd8\xff"):
+            filename = "attachment.jpg"
+        elif content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+            filename = "attachment.webp"
+        else:
+            filename = "document.pdf"
     return validate_attachment(ContentFile(content, name=filename))
 
 

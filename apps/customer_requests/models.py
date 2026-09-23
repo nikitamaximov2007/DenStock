@@ -1145,7 +1145,7 @@ class OwnerPhotoUploadContext(models.Model):
 
 
 class OwnerPhotoUploadReceipt(models.Model):
-    """Idempotency record for one Telegram update handled as a photo upload."""
+    """Idempotency record for one messenger update handled as a photo upload."""
 
     binding = models.ForeignKey(
         StaffMessengerBinding,

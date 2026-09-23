@@ -248,7 +248,6 @@ def menu(binding=None) -> tuple[str, dict]:
                 "callback_data": _callback(binding, "p", "1"),
             }]]
             if binding is not None
-            and binding.provider == StaffMessengerBinding.Provider.TELEGRAM
             else []
         ),
     ]}
@@ -400,6 +399,12 @@ def photo_operation_page(page: int = 1, *, binding=None) -> tuple[str, dict]:
     heading = "Продажи и ремонты для загрузки фото"
     if pages > 1:
         heading += f" · страница {page} из {pages}"
+    oversized_labels = [
+        row[0]["text"] for row in rows
+        if row and len(row[0].get("text", "")) > 128
+    ]
+    if oversized_labels:
+        heading += "\n\n" + "\n\n".join(oversized_labels)
     return heading, {"inline_keyboard": rows}
 
 
@@ -517,7 +522,7 @@ def _consume_photo_upload(*, binding, external_id: str, attachment):
         result = upload_primary_part_photo(
             part=context.part_type,
             upload=upload,
-            source="telegram",
+            source=binding.provider,
             owner_operator_key=binding.operator_key,
             operation_type=context.operation_type,
             operation_id=context.operation_id,
@@ -726,7 +731,12 @@ def handle_text(
         ).first()
         if receipt is not None:
             return receipt.response_text, menu(binding)[1]
-    photo_context = _photo_context(binding)
+    photo_context = OwnerPhotoUploadContext.objects.filter(binding=binding).first()
+    if photo_context is not None and photo_context.expires_at <= timezone.now():
+        photo_context.delete()
+        return "Срок выбора детали истёк. Сначала выберите деталь в разделе загрузки фото.", menu(
+            binding
+        )[1]
     if photo_context is not None:
         if lower in {"отмена", "/cancel"}:
             clear_photo_context(binding=binding)
@@ -769,8 +779,6 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     if token != _session_token(binding):
         return "Рабочая сессия устарела. Откройте рабочую панель.", None
     if kind not in {"m", "l", "n", "x", "c", "r", "p", "o", "q"}:
-        return "Недоступно.", None
-    if kind in {"p", "o", "q"} and provider != StaffMessengerBinding.Provider.TELEGRAM:
         return "Недоступно.", None
     if not binding.operator_mode:
         binding.operator_mode = True
