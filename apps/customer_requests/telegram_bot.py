@@ -112,6 +112,24 @@ def back_to_list() -> dict:
     return operator_bot.back_to_list()
 
 
+def _internal_reply(
+    chat_id: int, text: str, markup: dict | None, *, clear_keyboard: bool
+) -> list[Outgoing]:
+    """Render an internal reply, clearing any persisted customer keyboard first."""
+    outgoing = []
+    if clear_keyboard:
+        outgoing.append(
+            Outgoing(
+                chat_id=chat_id,
+                text="Клиентское меню отключено.",
+                reply_markup=operator_console.remove_telegram_customer_keyboard(),
+            )
+        )
+    if text:
+        outgoing.append(Outgoing(chat_id=chat_id, text=text, reply_markup=markup))
+    return outgoing
+
+
 def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -186,7 +204,11 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
         provider_chat_id=chat_id,
     )
     if operator_reply is not None:
-        return reply(*operator_reply)
+        return _internal_reply(
+            chat_id,
+            *operator_reply,
+            clear_keyboard=operator_console.should_remove_telegram_customer_keyboard(text),
+        )
     command, argument = "", ""
     if text.startswith("/"):
         head, _, argument = text.partition(" ")
@@ -758,6 +780,12 @@ class TelegramBotWorker:
             if delivery is None:
                 continue
             try:
+                if row.kind == operator_console.OperatorNotification.Kind.OWNER_PANEL:
+                    self.api.send_message(
+                        chat_id=delivery.provider_user_id,
+                        text="Клиентское меню отключено.",
+                        reply_markup=operator_console.remove_telegram_customer_keyboard(),
+                    )
                 result = self.api.send_message(
                     chat_id=delivery.provider_user_id,
                     text=delivery.text,

@@ -1755,6 +1755,8 @@ def test_the_customer_keyboard_opens_my_requests_and_switching_is_one_line(
         {"text": "Мои заявки"},
         {"text": "Мои покупки"},
     ]]
+    assert "Все заявки" not in str(hello["reply_markup"])
+    assert "Загрузка фото по продажам/ремонтам" not in str(hello["reply_markup"])
 
     # Pressing it sends plain text, and the bot answers with the selector.
     run(worker, api, message_update(CUSTOMER, "Мои заявки"))

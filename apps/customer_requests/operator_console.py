@@ -18,6 +18,7 @@ from apps.catalog.models import PartType, PartTypeImage
 from apps.catalog.photo_pipeline import PartPhotoAlreadyExists, upload_primary_part_photo
 from apps.catalog.public_photos import PublicPhotoError
 from apps.core.files import validate_image_upload
+from apps.core.time import format_perm_datetime
 from apps.inventory.presentation import part_exact_number
 from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.sales.models import Sale, SaleLine
@@ -252,11 +253,7 @@ def _callback(binding, kind: str, value: str = "") -> str:
 
 
 def menu(binding=None) -> tuple[str, dict]:
-    heading = (
-        "Панель администратора PRO-STORE"
-        if is_admin_binding(binding)
-        else "Панель владельца PRO-STORE"
-    )
+    heading = "Панель администратора PRO-STORE"
     if binding is not None:
         context = OperatorConversationContext.objects.select_related("request").filter(
             binding=binding
@@ -405,7 +402,7 @@ def photo_operation_page(page: int = 1, *, binding=None) -> tuple[str, dict]:
     rows = []
     labels = {"sale": "ПРОДАЖА", "repair": "РЕМОНТ"}
     for operation in current:
-        stamp = timezone.localtime(operation.when).strftime("%d.%m.%Y %H:%M:%S")
+        stamp = format_perm_datetime(operation.when)
         rows.append([{
             "text": f"{stamp} {labels[operation.kind]}\n{operation.customer_name or 'Клиент'}",
             "callback_data": _callback(binding, "o", f"{operation.kind}-{operation.pk}"),
@@ -449,9 +446,9 @@ def photo_operation_card(*, binding, kind: str, operation_id: int) -> tuple[str,
         return "Операция не найдена или ещё не проведена.", photo_operation_page(binding=binding)[1]
     labels = {"sale": "ПРОДАЖА", "repair": "РЕМОНТ"}
     operation_when = operation.sold_at if kind == "sale" else operation.completed_at
-    stamp = timezone.localtime(operation_when or operation.created_at)
+    stamp = format_perm_datetime(operation_when or operation.created_at)
     lines = [
-        f"{labels[kind]} {stamp:%d.%m.%Y %H:%M:%S}",
+        f"{labels[kind]} {stamp}",
         operation.customer_name or "Клиент",
         "",
     ]
@@ -797,6 +794,28 @@ def handle_text(
     return submit_text(provider=provider, provider_user_id=provider_user_id,
                        external_id=external_id, text=value, attachment=attachment,
                        provider_chat_id=provider_chat_id)
+
+
+def should_remove_telegram_customer_keyboard(text: str) -> bool:
+    """Return whether internal navigation must clear customer UI."""
+    value = (text or "").strip().lower()
+    return is_pairing_code(text) or value in {
+        "/start",
+        "/help",
+        "/menu",
+        "/work",
+        "/customer",
+        "меню",
+        "рабочее меню",
+        "клиентский режим",
+        "мои заявки",
+        "мои покупки",
+    }
+
+
+def remove_telegram_customer_keyboard() -> dict:
+    """Return Telegram's explicit ReplyKeyboardRemove payload."""
+    return {"remove_keyboard": True}
 
 
 def handle_callback(*, provider: str, provider_user_id: int, payload: str):
