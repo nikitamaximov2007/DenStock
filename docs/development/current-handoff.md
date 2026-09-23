@@ -1,5 +1,69 @@
 # Current handoff
 
+## PERM time + internal Telegram keyboard - active handoff
+
+Task: fix the internal Telegram/MAX Sales/Repairs photo-feed timezone and
+remove the persisted customer reply keyboard from active internal Telegram
+bindings.
+
+Branch: `codex/perm-time-admin-keyboard`, candidate `87fbce0`, based on the
+accepted `origin/main` `a30ada0`. The candidate has not been deployed and
+`origin/main` was not changed.
+
+Completed engineering work:
+
+- Added the shared explicit presentation helper
+  `apps/core/time.py`, using `ZoneInfo("Asia/Yekaterinburg")` and
+  `DD.MM.YYYY HH:MM:SS`. Stored timezone-aware datetimes and authoritative
+  newest-first sorting are unchanged.
+- Applied Perm formatting to the shared Telegram/MAX photo operation feed and
+  operation cards.
+- Unified the internal panel title as `Панель администратора PRO-STORE` for
+  NIKITA, DENIS and RIM while preserving responder and audit identity labels.
+- Telegram internal navigation and pairing now explicitly send
+  `ReplyKeyboardRemove` before the inline internal panel. Owner-panel refresh
+  delivery also clears a previously persisted customer keyboard. MAX keeps its
+  native button payloads and has no Telegram keyboard removal logic.
+- Added regression coverage for explicit timezone conversion, seconds,
+  server `TIME_ZONE` independence, Telegram/MAX rendering, chronological
+  sorting, customer/admin/owner role precedence, pairing transitions, stale
+  keyboard removal and normal customer UX.
+- Updated the Telegram, photo workflow, activation, user manual and ChatGPT
+  context documentation.
+
+Qualification completed:
+
+- Focused Telegram/MAX/operator/photo/customer tests pass.
+- Candidate full suite: `5876 passed, 7 failed, 234 skipped`; all seven are
+  inherited baseline failures listed below, so candidate-only failures are 0.
+- Ruff, Django check, migration check, djlint and diff check pass.
+- No model or migration changes were made, so PG16 schema/identity
+  qualification is not required for this candidate. Production access and
+  backup/deploy capability were not available in this workspace.
+
+Remaining release steps:
+
+1. Finish the clean `origin/main` baseline full-suite comparison.
+2. Push the candidate branch for review.
+3. On the production host, create and verify the requested signed PRE backup,
+   deploy one qualified SHA, refresh only NIKITA, DENIS and RIM through the
+   existing owner-panel refresh command, and perform live acceptance.
+4. Create and verify the signed POST backup, then fast-forward `origin/main`
+   to the deployed SHA. Do not deploy or claim live acceptance from this
+   workspace.
+
+Known baseline failures from `origin/main`:
+
+- Four existing operator-price/zero-price UI assertions.
+- One existing partial-repair report-link assertion.
+- One existing macOS root-owned AI-support renderer assertion.
+- One existing MAX compose volume assertion.
+- One existing MAX edge-route fixture comparison.
+
+The final verdict is `NOT READY - production host, backup verification and
+live acceptance are unavailable in this workspace` until those release steps
+are executed.
+
 Task: Customs Orders full integration and production release.
 
 Branch: `codex/customs-orders-release`, based on `feature/customs-orders`
