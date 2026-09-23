@@ -14,6 +14,7 @@ from uuid import UUID
 from apps.actions.models import PartCustomsInfo
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import manufacturer_display, part_exact_number, with_part_identity
+from apps.inventory.pricing import effective_part_customer_prices
 
 from .models import PartType
 
@@ -50,33 +51,60 @@ class PublicPartFacts:
     available_quantity: Decimal
 
 
-def resolve_current_customer_price(part: PartType) -> CurrentCustomerPrice:
-    """Read a public-safe current price from the canonical price result.
+PRICE_PARITY_A = "A"
+PRICE_PARITY_B = "B"
+PRICE_PARITY_C = "C"
+PRICE_PARITY_D = "D"
+PRICE_PARITY_E = "E"
+PRICE_PARITY_CATEGORIES = (
+    PRICE_PARITY_A,
+    PRICE_PARITY_B,
+    PRICE_PARITY_C,
+    PRICE_PARITY_D,
+    PRICE_PARITY_E,
+)
 
-    Pricing pipelines own all calculations and updates. The facade only
-    exposes a finite positive Decimal as a known price; every other state is
-    deliberately represented as ``clarify``.
 
-    Historical receipt snapshots and completed sale prices are not current
-    price candidates. A missing or uncertified current price remains
-    ``clarify`` and never becomes zero.
-    """
-    price = part.recommended_price
-    formula_certified = (
-        part.price_provenance == PartType.PriceProvenance.FORMULA_CERTIFIED
-        and part.certified_price_rub == price
-    )
-    valid_manual_exception = (
-        part.price_provenance == PartType.PriceProvenance.VALID_MANUAL_EXCEPTION
-    )
-    if (
-        isinstance(price, Decimal)
-        and price.is_finite()
-        and price > ZERO
-        and (formula_certified or valid_manual_exception)
-    ):
+@dataclass(frozen=True, slots=True)
+class PublicPriceParityRow:
+    """One read-only comparison between internal and public current price."""
+
+    part_id: int
+    internal_price: Decimal | None
+    public_price: Decimal | None
+    category: str
+
+
+@dataclass(frozen=True, slots=True)
+class PublicPriceParityAudit:
+    """A bounded, read-only audit of public/sellable PartTypes."""
+
+    rows: tuple[PublicPriceParityRow, ...]
+
+    @property
+    def counts(self) -> dict[str, int]:
+        return {
+            category: sum(row.category == category for row in self.rows)
+            for category in PRICE_PARITY_CATEGORIES
+        }
+
+
+def _public_price_from_internal(price: Decimal | None) -> CurrentCustomerPrice:
+    if price is not None and price > ZERO:
         return CurrentCustomerPrice(price_rub=price, status="known")
     return CurrentCustomerPrice(price_rub=None, status="clarify")
+
+
+def resolve_current_customer_price(part: PartType) -> CurrentCustomerPrice:
+    """Project DenisStock's current customer price without re-validating it.
+
+    ``recommended_price`` is resolved by the same inventory pricing service
+    used by DenisStock's internal screens. ``certified_price_rub`` and
+    ``price_provenance`` remain audit metadata; disagreement with them must
+    not hide a positive current price accepted and displayed internally.
+    """
+    price = effective_part_customer_prices([part]).get(part.pk)
+    return _public_price_from_internal(price)
 
 
 def resolve_current_customer_prices(
@@ -84,10 +112,46 @@ def resolve_current_customer_prices(
 ) -> dict[int, CurrentCustomerPrice]:
     """Resolve the authoritative current price for many parts."""
     parts = list(parts)
+    prices = effective_part_customer_prices(parts)
     return {
-        part.pk: resolve_current_customer_price(part)
+        part.pk: _public_price_from_internal(prices.get(part.pk))
         for part in parts
     }
+
+
+def audit_public_price_parity(parts: Iterable[PartType]) -> PublicPriceParityAudit:
+    """Compare public/sellable prices with DenisStock's current price.
+
+    Categories are A/B/C/D/E from the release acceptance contract. The audit
+    performs no writes and uses the same current-price resolver as internal
+    screens and public facts.
+    """
+    parts = list(parts)
+    internal_prices = effective_part_customer_prices(parts)
+    public_prices = resolve_current_customer_prices(parts)
+    rows = []
+    for part in parts:
+        internal = internal_prices.get(part.pk)
+        public = public_prices[part.pk].price_rub
+        if internal is not None and public == internal:
+            category = PRICE_PARITY_A
+        elif internal is not None and public is None:
+            category = PRICE_PARITY_B
+        elif internal is not None:
+            category = PRICE_PARITY_C
+        elif public is None:
+            category = PRICE_PARITY_D
+        else:
+            category = PRICE_PARITY_E
+        rows.append(
+            PublicPriceParityRow(
+                part_id=part.pk,
+                internal_price=internal,
+                public_price=public,
+                category=category,
+            )
+        )
+    return PublicPriceParityAudit(rows=tuple(rows))
 
 
 def build_public_part_facts(

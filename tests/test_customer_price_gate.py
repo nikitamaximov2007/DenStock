@@ -37,7 +37,7 @@ from apps.catalog.price_audit import (
     WHOLESALE_SOURCE_MISSING,
     audit_prices,
 )
-from apps.catalog.public_contracts import resolve_current_customer_price
+from apps.catalog.public_contracts import audit_public_price_parity, resolve_current_customer_price
 from apps.catalog.services import (
     certify_valid_manual_price_exception,
     get_current_price_settings,
@@ -184,6 +184,46 @@ def test_every_public_surface_shows_the_canonical_price(
     assert line.price_seen == expected
 
 
+def test_positive_current_price_with_provenance_disagreement_reaches_every_surface(
+    pricing, admin_user, public_client, public_catalog
+):
+    catalog_part = _catalog_part("517302674", "100")
+    part = _publish(promote_to_warehouse(catalog_part, by=admin_user), public_catalog)
+    PartType.objects.filter(pk=part.pk).update(
+        recommended_price=Decimal("247"),
+        certified_price_rub=None,
+        price_provenance=PartType.PriceProvenance.UNVERIFIED,
+    )
+    part.refresh_from_db()
+    shown = f"247{NBSP}₽"
+
+    assert resolve_current_customer_price(part).price_rub == Decimal("247")
+    assert shown in public_client.get("/search/?q=517302674").content.decode()
+    assert shown in public_client.get(f"/parts/{part.public_id}/").content.decode()
+
+    public_client.post(f"/cart/{part.public_id}/add/", {"quantity": "1"})
+    assert shown in public_client.get("/cart/").content.decode()
+
+    form = public_client.get("/request/").content.decode()
+    assert shown in form
+    token = form.split('name="submission_key" value="', 1)[1].split('"', 1)[0]
+    response = public_client.post(
+        "/request/submit/",
+        {
+            "submission_key": token,
+            "customer_name": "Проверка цены",
+            "customer_phone": "9001234567",
+            "preferred_messenger": "telegram",
+            "comment": "",
+            "consent": "1",
+            "price_seen": "1",
+        },
+    )
+
+    assert response.status_code == 302
+    assert CustomerRequest.objects.get().lines.get().price_seen == Decimal("247")
+
+
 def test_the_public_price_follows_a_new_wholesale_price_without_a_second_formula(
     pricing, admin_user, public_client, public_catalog
 ):
@@ -242,7 +282,7 @@ def test_rebuild_manual_exception_never_inherits_replacement_wholesale_price(
     assert CustomerRequest.objects.get().lines.get().price_seen == Decimal("45000")
 
 
-def test_public_catalog_clarifies_an_unverified_numeric_price(pricing, admin_user):
+def test_public_catalog_mirrors_an_unverified_positive_numeric_price(pricing, admin_user):
     part = promote_to_warehouse(_catalog_part("UNVERIFIED-PRICE", "100"), by=admin_user)
     PartType.objects.filter(pk=part.pk).update(
         recommended_price=Decimal("16000"),
@@ -251,7 +291,26 @@ def test_public_catalog_clarifies_an_unverified_numeric_price(pricing, admin_use
     )
     part.refresh_from_db()
 
-    assert resolve_current_customer_price(part).status == "clarify"
+    assert resolve_current_customer_price(part).price_rub == Decimal("16000")
+
+
+def test_public_price_parity_audit_has_no_mismatch_for_unverified_positive_price(
+    pricing, admin_user
+):
+    priced = promote_to_warehouse(_catalog_part("PARITY-PRICE", "100"), by=admin_user)
+    PartType.objects.filter(pk=priced.pk).update(
+        recommended_price=Decimal("247"),
+        certified_price_rub=None,
+        price_provenance=PartType.PriceProvenance.UNVERIFIED,
+    )
+    unknown = promote_to_warehouse(_catalog_part("PARITY-UNKNOWN", "0"), by=admin_user)
+
+    report = audit_public_price_parity(
+        PartType.objects.filter(pk__in=[priced.pk, unknown.pk]).order_by("pk")
+    )
+
+    assert report.counts == {"A": 1, "B": 0, "C": 0, "D": 1, "E": 0}
+    assert [row.category for row in report.rows] == ["A", "D"]
 
 
 def test_refresh_marks_a_card_without_any_catalog_as_not_applicable(pricing, admin_user):

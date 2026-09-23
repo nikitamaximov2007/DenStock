@@ -140,8 +140,9 @@ class LinkedPriceRefreshPlan:
     def drop_certificate(self, part) -> None:
         """Оптового источника нет: цену оставляем, свидетельство снимаем.
 
-        Прежняя цена может быть верной, но доказать её нечем, и витрина
-        обязана сказать «Уточнить цену», а не показать непроверенное число.
+        Прежняя цена может быть верной, но доказать её нечем. Свидетельство
+        нужно для аудита источника, а не для скрытия положительной текущей
+        цены: витрина зеркалит цену, которую показывает DenisStock.
         """
         if part.certified_price_rub is not None:
             part.certified_price_rub = None
@@ -251,8 +252,9 @@ def plan_linked_part_price_refresh(
             if link.price_source == BrpPartLink.PriceSource.MANUAL:
                 # A manual price is never consent to overwrite it merely
                 # because the supplier has a related or even own wholesale
-                # value.  Until its commercial meaning is confirmed, the
-                # public surface safely asks to clarify the price.
+                # value.  Until its commercial meaning is confirmed, audit
+                # metadata remains unverified while the public surface still
+                # mirrors the positive current DenisStock price.
                 plan.mark_unverified_manual(link.part)
                 continue
             if not link.brp_part.is_current:
