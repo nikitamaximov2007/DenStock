@@ -74,6 +74,25 @@
           </form>
         </div>
       {% endif %}
+      {% if request_sale %}
+        <p>
+          {% if request_sale.status == "completed" %}
+            <a class="pill pill--success"
+               href="{% url 'sale_detail' request_sale.pk %}">Продажа проведена · {{ request_sale.number }}</a>
+          {% else %}
+            <a class="btn btn--small btn--secondary"
+               href="{% url 'sale_detail' request_sale.pk %}">Открыть черновик продажи {{ request_sale.number }}</a>
+          {% endif %}
+        </p>
+      {% elif customer_request.status == "in_progress" %}
+        <p>
+          <a class="btn btn--small btn--primary"
+             href="{% url 'customer_request_sale' customer_request.pk %}">Оформить продажу по заявке</a>
+        </p>
+      {% endif %}
+      {% if linked_customer %}
+        <p class="muted">Клиент: {{ linked_customer.name }} · найден по телефону.</p>
+      {% endif %}
     </div>
   </section>
   <div class="cr-workspace">

@@ -442,6 +442,24 @@ def sale_remove_line(request, pk):
 def sale_complete(request, pk):
     _require_sales(request)
     sale = get_object_or_404(Sale, pk=pk)
+    # A request-linked draft has a stricter finalization contract than a
+    # manually assembled sale: its customer, exact request composition and
+    # current customer prices are rechecked under the request lock.
+    from apps.customer_requests.models import CustomerRequest
+    from apps.customer_requests.sale_conversion import (
+        CustomerRequestSaleError,
+        complete_request_sale,
+    )
+
+    customer_request = CustomerRequest.objects.filter(sale=sale).first()
+    if customer_request is not None:
+        try:
+            complete_request_sale(request_id=customer_request.pk, sale_id=sale.pk, by=request.user)
+        except CustomerRequestSaleError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, f"Продажа {sale.number} проведена.")
+        return redirect("sale_detail", pk=sale.pk)
     from apps.actions.completion_workflow import missing_parts, save_completion_metadata
 
     def metadata_context(*, entries, error=""):

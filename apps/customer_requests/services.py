@@ -298,7 +298,11 @@ def change_request_status(
     _validate_status_transition(request.status, target_status)
     previous = request.status
     request.status = target_status
-    request.save(update_fields=["status", "updated_at"])
+    update_fields = ["status", "updated_at"]
+    if target_status == CustomerRequest.Status.IN_PROGRESS and request.taken_by_id is None:
+        request.taken_by = by
+        update_fields.append("taken_by")
+    request.save(update_fields=update_fields)
     CustomerRequestStatusEvent.objects.create(
         request=request, from_status=previous, to_status=target_status, changed_by=by
     )

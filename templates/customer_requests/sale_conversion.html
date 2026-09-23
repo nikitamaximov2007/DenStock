@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Продажа по заявке №{{ customer_request.reference }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">Продажа по заявке №{{ customer_request.reference }}</h1>
+  <p><a href="{% url 'customer_request_detail' customer_request.pk %}">← К заявке</a></p>
+  <section class="card">
+    <div class="card__body">
+      {% if match.count %}<p><strong>Клиент найден по телефону.</strong></p>{% endif %}
+      <p class="muted">Телефон для сравнения: {{ match.normalized_phone|default:"не указан" }}</p>
+      {% if match.count == 1 %}
+        <p>В базе: <strong>{{ match.customers.0.name }}</strong></p>
+        <p>В заявке: {{ customer_request.customer_name }}</p>
+        <form method="post">
+          {% csrf_token %}
+          <button class="btn btn--primary" type="submit">Создать черновик продажи</button>
+        </form>
+      {% elif match.count > 1 %}
+        <p class="notice">Найдено несколько клиентов с этим номером. Выберите карточку, автоматического объединения нет.</p>
+        {% for customer in match.customers %}
+          <form method="post" class="toolbar">
+            {% csrf_token %}
+            <input type="hidden" name="customer_id" value="{{ customer.pk }}">
+            <button class="btn btn--secondary" type="submit">{{ customer.name }} · {{ customer.phone }}</button>
+          </form>
+        {% endfor %}
+      {% else %}
+        <p>Клиент по телефону не найден.</p>
+        <p class="muted">
+          Имя из заявки: {{ customer_request.customer_name }}
+          <br>
+          Телефон: {{ customer_request.customer_phone }}
+        </p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="create_customer" value="1">
+          <button class="btn btn--primary" type="submit">Создать клиента из заявки</button>
+        </form>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

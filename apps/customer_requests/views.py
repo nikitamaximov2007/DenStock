@@ -47,6 +47,11 @@ from .models import (
     TelegramOutboxEvent,
     WorkspaceEvent,
 )
+from .sale_conversion import (
+    CustomerRequestSaleError,
+    match_request_customer,
+    prepare_request_sale,
+)
 from .services import (
     CustomerRequestError,
     change_request_status,
@@ -366,6 +371,10 @@ def _detail_context(
     list_query = _list_query(params)
     return {
         "customer_request": customer_request,
+        "linked_customer": (
+            customer_request.customer if customer_request.customer_id else None
+        ),
+        "request_sale": customer_request.sale if customer_request.sale_id else None,
         "lines": lines,
         "total": workspace.lines_total(lines),
         "events": customer_request.status_events.select_related("changed_by"),
@@ -430,6 +439,34 @@ def customer_request_status(request, pk):
         if changed:
             messages.success(request, "Статус заявки обновлён.")
     return redirect(_detail_url(pk, _list_params(request.GET)))
+
+
+@login_required
+def customer_request_sale(request, pk):
+    """Show the match choice or create the one linked Sale draft."""
+    _require_access(request)
+    customer_request = _annotated_or_404(pk)
+    if customer_request.sale_id:
+        return redirect("sale_detail", pk=customer_request.sale_id)
+    match = match_request_customer(customer_request)
+    if request.method == "POST":
+        try:
+            sale = prepare_request_sale(
+                request_id=customer_request.pk,
+                by=request.user,
+                customer_id=request.POST.get("customer_id"),
+                create_customer=request.POST.get("create_customer") == "1",
+            )
+        except CustomerRequestSaleError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, f"Черновик продажи {sale.number} подготовлен.")
+            return redirect("sale_detail", pk=sale.pk)
+    return render(
+        request,
+        "customer_requests/sale_conversion.html",
+        {"customer_request": customer_request, "match": match},
+    )
 
 
 @login_required

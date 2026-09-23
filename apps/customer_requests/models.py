@@ -1,8 +1,10 @@
 """Persistent, non-reserving customer requests.
 
-A request is intentionally not a sale, a reservation, or a customer record.
-It preserves the contact and the current customer-facing price observed at
-submission, while all stock truth continues to live in inventory.
+A request is intentionally not a sale, a reservation, or an automatically
+created customer record.  It preserves the contact and the current
+customer-facing price observed at submission, while all stock truth continues
+to live in inventory.  An internal operator may later link it to a customer
+and one sale through the explicit conversion workflow.
 """
 from __future__ import annotations
 
@@ -83,6 +85,36 @@ class CustomerRequest(models.Model):
         null=True,
         blank=True,
         related_name="requests",
+    )
+    # A request is linked to a persistent customer only by the internal
+    # request-to-sale workflow.  Public submission deliberately does not
+    # create customer cards.
+    customer = models.ForeignKey(
+        "customers.Customer",
+        verbose_name="Карточка клиента",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="customer_requests",
+    )
+    taken_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Взял в работу",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="taken_customer_requests",
+    )
+    # One request can produce at most one sale, including its server-side
+    # draft.  The unique relation is the database guard behind double-click
+    # and retry safety.
+    sale = models.OneToOneField(
+        "sales.Sale",
+        verbose_name="Продажа по заявке",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="customer_request",
     )
     current_responder_label = models.CharField("Текущий ответственный", max_length=80, blank=True)
     current_responder_control_source = models.CharField(
