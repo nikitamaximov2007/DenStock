@@ -36,19 +36,19 @@ Qualification completed:
 - Focused Telegram/MAX/operator/photo/customer tests pass.
 - Candidate full suite: `5876 passed, 7 failed, 234 skipped`; all seven are
   inherited baseline failures listed below, so candidate-only failures are 0.
+- Clean `origin/main` baseline full suite: `5876 passed, 7 failed, 234 skipped`
+  with the identical seven failure IDs.
 - Ruff, Django check, migration check, djlint and diff check pass.
-- No model or migration changes were made, so PG16 schema/identity
-  qualification is not required for this candidate. Production access and
+- Focused PG16 qualification for the operator-console and photo workflow
+  passed. No model or migration changes were made. Production access and
   backup/deploy capability were not available in this workspace.
 
 Remaining release steps:
 
-1. Finish the clean `origin/main` baseline full-suite comparison.
-2. Push the candidate branch for review.
-3. On the production host, create and verify the requested signed PRE backup,
+1. On the production host, create and verify the requested signed PRE backup,
    deploy one qualified SHA, refresh only NIKITA, DENIS and RIM through the
    existing owner-panel refresh command, and perform live acceptance.
-4. Create and verify the signed POST backup, then fast-forward `origin/main`
+2. Create and verify the signed POST backup, then fast-forward `origin/main`
    to the deployed SHA. Do not deploy or claim live acceptance from this
    workspace.
 
