@@ -1,4 +1,64 @@
-# ACTIVE HANDOFF: Price parity + public phone mask integration
+# ACTIVE HANDOFF: Customer request to sale final release
+
+Task: final review and production release of the safe
+`CustomerRequest -> Customer -> DRAFT Sale -> completed Sale` workflow, stopping
+before any real production sale is finalized.
+
+Branch: `codex/request-to-sale-customer-match-latest`
+Candidate: `101d7b936a845df07925ffaa701f2e9b2eba359b`
+Qualified base: `212786bc6059c762f953a77d8f6bf9f74354f365`
+
+Completed:
+
+- Refetched actual remote `origin/main`; it had advanced from `95dc50c` to
+  `212786bc` with the Telegram keyboard fix.
+- Created a fresh branch from `212786bc` and cherry-picked the coherent
+  request-to-sale RC without conflicts.
+- Added the explicit DRAFT exclusion regression for completed reports and
+  customer history projections.
+- Pushed the candidate to
+  `origin/codex/request-to-sale-customer-match-latest`.
+- Verified additive migration semantics, exact normalized-phone matching,
+  explicit customer creation, multiple-match fail-closed behavior, current
+  price/stock rechecks, atomic finalization, one-to-one request-sale linkage,
+  and PostgreSQL locking/idempotency.
+
+Qualification evidence:
+
+- Latest-main affected request/sale and Telegram tests passed.
+- Fresh PG16 request/sale/concurrency suite: `58 passed / 0 failed / 0 skipped`.
+- Fresh full baseline and candidate on `212786bc` had the same seven inherited
+  failures and no candidate-only failures.
+- `ruff check .`, `djlint templates --check`, Django `check`,
+  `makemigrations --check`, migration plan, and `git diff --check`: passed.
+- Public `https://pro-brp.ru/healthz/` read-only check: HTTP 200, `db=ok`.
+
+Not completed / blocker:
+
+- Production SSH/host `/opt/denstock` is unavailable from this workspace:
+  `ssh production` cannot resolve the hostname. Production HEAD,
+  `DENSTOCK_APP_COMMIT`, active writers, container health, flags/bindings,
+  production phone audit, signed PRE/POST backups, deployment, human request
+  acceptance, and main alignment were not performed.
+- No production database, Customer, Sale, StockMovement, backup, flag, or
+  deployment state was mutated.
+
+Exact next steps on the production host, with one writer only:
+
+1. Verify production HEAD, `DENSTOCK_APP_COMMIT`, actual `origin/main`, active
+   writers, host health, bindings, and before-counts.
+2. Create and verify signed/offsite PRE backup, negative signature control,
+   and `rclone check` with zero differences.
+3. Deploy exactly the candidate SHA, apply only the additive migration, and
+   do not restart PostgreSQL.
+4. Run the read-only phone audit and inspect the one real request through
+   «Взять в работу» and prepared DRAFT state. Do not press «Провести продажу».
+5. Verify unchanged after-counts, create/verify POST backup, then fast-forward
+   `origin/main` and verify exact SHA equality.
+
+---
+
+# Historical handoff: Price parity + public phone mask integration
 
 Task: integrate the qualified public-price-parity and public-Russian-mobile-mask
 RCs on top of the accepted `origin/main`, qualify the candidate, and release it
