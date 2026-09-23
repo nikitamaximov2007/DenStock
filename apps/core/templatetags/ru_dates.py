@@ -16,6 +16,8 @@ from datetime import date, datetime
 from django import template
 from django.utils import timezone
 
+from apps.core.time import PERM_TIMEZONE
+
 register = template.Library()
 
 
@@ -48,7 +50,10 @@ def _format(value, pattern):
         # Пусто -> пусто; нераспознанное -> как есть (не роняем шаблон).
         return "" if value in (None, "") else value
     if timezone.is_aware(dt):
-        dt = timezone.localtime(dt)
+        # Internal operation timestamps are always shown in the PRO-STORE
+        # operating timezone.  Never depend on the server/Django default: it
+        # may be Moscow while the business operates in Perm (UTC+5).
+        dt = timezone.localtime(dt, PERM_TIMEZONE)
     return dt.strftime(pattern)
 
 
@@ -83,11 +88,11 @@ def ru_chat_date(value):
     if dt is None:
         return "" if value in (None, "") else value
     if timezone.is_aware(dt):
-        dt = timezone.localtime(dt)
+        dt = timezone.localtime(dt, PERM_TIMEZONE)
     months = (
         "января", "февраля", "марта", "апреля", "мая", "июня",
         "июля", "августа", "сентября", "октября", "ноября", "декабря",
     )
-    current_year = timezone.localdate().year
+    current_year = timezone.localdate(timezone=PERM_TIMEZONE).year
     suffix = f" {dt.year}" if dt.year != current_year else ""
     return f"{dt.day} {months[dt.month - 1]}{suffix}"

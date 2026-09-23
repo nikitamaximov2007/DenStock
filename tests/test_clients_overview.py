@@ -1,4 +1,5 @@
 """Общий отчёт «Продажи и ремонты по клиентам» и историческая лента."""
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -6,6 +7,7 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.customers.models import Customer
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
@@ -245,6 +247,34 @@ def test_overview_page_explains_client_total(client, make_user, data):
     _login(client, make_user)
     html = client.get(reverse("reports_clients_overview")).content.decode()
     assert "Итого с клиента" in html
+
+
+def test_reports_and_customer_history_show_sale_and_repair_in_perm_time(
+    client, make_user, data
+):
+    """Web reports use the same Perm-local instant as the messenger operation feed."""
+    _login(client, make_user)
+    customer = Customer.objects.create(name="Пермский клиент")
+    sale = _sale(data, customer.name, 1)
+    repair = _repair(data, customer.name, 1)
+    sale.customer = customer
+    sale.sold_at = datetime(2026, 9, 23, 14, 7, 0, tzinfo=UTC)
+    sale.save(update_fields=["customer", "sold_at"])
+    repair.customer = customer
+    repair.completed_at = datetime(2026, 9, 23, 14, 7, 8, tzinfo=UTC)
+    repair.save(update_fields=["customer", "completed_at"])
+
+    timeline = get_client_timeline(
+        resolve_period({"preset": "all"}), customer_id=customer.pk
+    )
+    overview = client.get(reverse("reports_clients_overview"), {"preset": "all"})
+    detail = client.get(reverse("customer_detail", args=[customer.pk]))
+
+    assert [event["kind"] for event in timeline] == ["repair", "sale"]
+    assert "23.09.2026 19:07" in overview.content.decode()
+    detail_html = detail.content.decode()
+    assert detail_html.count("23.09.2026 19:07") == 2
+    assert "23.09.2026 17:07" not in detail_html
 
 
 def test_overview_page_offers_customer_creation_even_without_report_rows(client, make_user, data):

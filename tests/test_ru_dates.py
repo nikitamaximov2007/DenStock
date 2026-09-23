@@ -3,9 +3,10 @@
 Гарантируем, что технический ISO-вид (2026-07-03T05:21:19) и run_id
 (2026-07-03_05-21-19) не просачиваются в UI.
 """
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from django.template import Context, Template
+from django.test import override_settings
 
 from apps.core.templatetags.ru_dates import ru_date, ru_dt, ru_dts
 
@@ -46,3 +47,16 @@ def test_filters_available_as_builtins_in_templates():
     out = Template("{{ v|ru_dt }}").render(Context({"v": "2026-07-03T05:21:19"}))
     assert out == "03.07.2026 05:21"
     assert "2026-07-03T05:21:19" not in out
+
+
+@override_settings(TIME_ZONE="Europe/Moscow")
+def test_aware_operation_timestamp_is_always_formatted_in_perm_without_mutation():
+    """A stored UTC instant is presentation-only converted to Perm time."""
+    stored = datetime(2026, 9, 23, 14, 7, 8, tzinfo=UTC)
+
+    assert ru_dt(stored) == "23.09.2026 19:07"
+    assert ru_dts(stored) == "23.09.2026 19:07:08"
+    assert stored == datetime(2026, 9, 23, 14, 7, 8, tzinfo=UTC)
+
+    with override_settings(TIME_ZONE="UTC"):
+        assert ru_dts(stored) == "23.09.2026 19:07:08"
