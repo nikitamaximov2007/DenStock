@@ -198,11 +198,12 @@ def _row_state(request) -> str:
     return "в работе"
 
 
-def request_page(page: int) -> tuple[str, dict | None]:
-    """Open requests of both messengers, the ones waiting for a reply first."""
-    queryset = workspace.order_by_priority(
-        workspace.annotate_workspace().filter(status__in=workspace.OPEN_STATUSES)
-    )
+def request_page(page: int, *, new_only: bool = False) -> tuple[str, dict | None]:
+    """Open requests of both messengers, optionally limited to new requests."""
+    queryset = workspace.annotate_workspace().filter(status__in=workspace.OPEN_STATUSES)
+    if new_only:
+        queryset = queryset.filter(status=CustomerRequest.Status.NEW)
+    queryset = workspace.order_by_priority(queryset)
     counts = queryset.order_by().aggregate(
         total=Count("pk"),
         waiting=Count("pk", filter=Q(needs_reply=True)),
@@ -235,7 +236,11 @@ def request_page(page: int) -> tuple[str, dict | None]:
         navigation.append({"text": "Дальше", "callback_data": f"l:{page + 1}"})
     if navigation:
         rows.append(navigation)
-    heading = f"Активные заявки: {total} · ждут ответа: {counts['waiting']}"
+    heading = (
+        f"Новые заявки: {total}"
+        if new_only
+        else f"Активные заявки: {total} · ждут ответа: {counts['waiting']}"
+    )
     if pages > 1:
         heading += f"\nСтраница {page} из {pages}"
     return heading, {"inline_keyboard": rows}

@@ -91,12 +91,14 @@ def test_enabled_pairing_returns_owner_panel_without_command_instructions(
         provider="telegram", provider_user_id=99200, external_id="pair-panel", text=token
     )
 
-    assert reply[0] == "Панель администратора PRO-STORE"
-    assert [row[0]["text"] for row in reply[1]["inline_keyboard"]] == [
+    assert reply[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert [row[0]["text"] for row in reply[1]["keyboard"]] == [
         "Все заявки",
         "Новые заявки",
         "Загрузка фото по продажам/ремонтам",
     ]
+    assert reply[1]["resize_keyboard"] is True
+    assert reply[1]["is_persistent"] is True
     assert "/work" not in reply[0]
 
 
@@ -116,8 +118,8 @@ def test_nikita_binding_renders_admin_panel_without_customer_button(db, django_u
         text="/start",
     )
 
-    assert reply[0] == "Панель администратора PRO-STORE"
-    buttons = [row[0]["text"] for row in reply[1]["inline_keyboard"]]
+    assert reply[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    buttons = [row[0]["text"] for row in reply[1]["keyboard"]]
     assert buttons == ["Все заявки", "Новые заявки", "Загрузка фото по продажам/ремонтам"]
     assert "Мои заявки" not in buttons
     assert operator_console.binding_role(binding) == "ADMIN"
@@ -139,7 +141,7 @@ def test_admin_binding_takes_precedence_over_customer_menu(db, django_user_model
         text="Мои заявки",
     )
 
-    assert reply[0] == "Панель администратора PRO-STORE"
+    assert reply[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
     assert "Мои заявки" not in str(reply)
 
 
@@ -164,13 +166,101 @@ def test_all_internal_telegram_roles_use_one_panel_without_customer_button(
         text="Мои заявки",
     )
 
-    assert text == "Панель администратора PRO-STORE"
-    assert [row[0]["text"] for row in markup["inline_keyboard"]] == [
+    assert text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert [row[0]["text"] for row in markup["keyboard"]] == [
         "Все заявки",
         "Новые заявки",
         "Загрузка фото по продажам/ремонтам",
     ]
     assert "Мои заявки" not in str(markup)
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [
+        ("Все заявки", "Заявок нет."),
+        ("Новые заявки", "Новых заявок нет."),
+        ("Загрузка фото по продажам/ремонтам", "Продаж и ремонтов нет."),
+    ],
+)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_internal_reply_keyboard_buttons_reuse_authorized_flows(
+    db, django_user_model, label, expected
+):
+    user = _operator(django_user_model, 877307960, username="keyboard-flow").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="NIKITA",
+        provider="telegram",
+        provider_user_id=877307960,
+        customer_visible_label="NIKITA",
+    )
+
+    result = handle_update(message_update(binding.provider_user_id, label))
+
+    assert result[-1].text == expected
+    assert result[-1].reply_markup == {
+        "keyboard": [
+        [{"text": "Все заявки"}],
+        [{"text": "Новые заявки"}],
+        [{"text": "Загрузка фото по продажам/ремонтам"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+    binding.refresh_from_db()
+    assert binding.operator_mode is True
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_repeated_internal_start_is_one_clean_reply_with_reply_keyboard(
+    db, django_user_model
+):
+    user = _operator(django_user_model, 877307961, username="repeat-start").user
+    StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="NIKITA",
+        provider="telegram",
+        provider_user_id=877307961,
+        customer_visible_label="NIKITA",
+    )
+
+    first = handle_update(message_update(877307961, "/start"))
+    second = handle_update(message_update(877307961, "/start"))
+
+    for result in (first, second):
+        assert len(result) == 1
+        assert result[0].text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+        assert "Клиентское меню отключено" not in result[0].text
+        assert "/work" not in result[0].text
+        assert "inline_keyboard" not in result[0].reply_markup
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_customer_typed_internal_button_and_revoked_binding_stay_customer_only(
+    db, django_user_model
+):
+    user = django_user_model.objects.create_user(
+        username="revoked-keyboard", password="x" * 12
+    )
+    user.groups.add(Group.objects.get(name="Продавец/Мастер"))
+    binding = StaffMessengerBinding.objects.create(
+        user=user,
+        operator_key="DENIS",
+        provider="telegram",
+        provider_user_id=877307962,
+        customer_visible_label="Денис",
+    )
+
+    operator_console.revoke_binding(binding=binding)
+    result = handle_update(message_update(binding.provider_user_id, "Все заявки"))
+
+    assert result[0].reply_markup == {
+        "keyboard": [[{"text": "Мои заявки"}]],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+    assert "Панель администратора" not in result[0].text
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
@@ -186,10 +276,9 @@ def test_telegram_internal_reply_removes_persisted_customer_keyboard(db, django_
 
     result = handle_update(message_update(binding.provider_user_id, "Мои заявки"))
 
-    assert result[0].reply_markup == {"remove_keyboard": True}
-    assert result[0].text == "Клиентское меню отключено."
-    assert result[1].text == "Панель администратора PRO-STORE"
-    assert [row[0]["text"] for row in result[1].reply_markup["inline_keyboard"]] == [
+    assert len(result) == 1
+    assert result[0].text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert [row[0]["text"] for row in result[0].reply_markup["keyboard"]] == [
         "Все заявки",
         "Новые заявки",
         "Загрузка фото по продажам/ремонтам",
@@ -205,9 +294,9 @@ def test_customer_to_admin_pairing_clears_keyboard_without_manual_cleanup(
 
     result = handle_update(message_update(877307951, token))
 
-    assert result[0].reply_markup == {"remove_keyboard": True}
-    assert result[1].text == "Панель администратора PRO-STORE"
-    assert "Мои заявки" not in str(result[1].reply_markup)
+    assert len(result) == 1
+    assert result[0].text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+    assert "Мои заявки" not in str(result[0].reply_markup)
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
@@ -282,8 +371,13 @@ def test_owner_panel_buttons_activate_console_for_both_providers(
     )
     text, markup = operator_console.owner_panel(binding)
 
-    assert text == "Панель администратора PRO-STORE"
     expected = ["Все заявки", "Новые заявки", "Загрузка фото по продажам/ремонтам"]
+    if provider == "telegram":
+        assert text == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
+        assert [row[0]["text"] for row in markup["keyboard"]] == expected
+        assert markup["is_persistent"] is True
+        return
+    assert text == "Панель администратора PRO-STORE"
     assert [row[0]["text"] for row in markup["inline_keyboard"]] == expected
     assert binding.operator_mode is False
 
@@ -434,16 +528,14 @@ def test_provider_workers_deliver_queued_panel_with_native_button_shapes(
     assert locked_in_transaction == [True, True]
     panel_message = next(
         item for item in telegram_api.sent
-        if (item["reply_markup"] or {}).get("inline_keyboard")
+        if (item["reply_markup"] or {}).get("keyboard")
     )
-    assert any(
-        item["reply_markup"] == {"remove_keyboard": True}
-        for item in telegram_api.sent
-    )
-    telegram_payload = panel_message["reply_markup"]["inline_keyboard"][0][0][
-        "callback_data"
+    assert all(item["reply_markup"] != {"remove_keyboard": True} for item in telegram_api.sent)
+    assert [row[0]["text"] for row in panel_message["reply_markup"]["keyboard"]] == [
+        "Все заявки",
+        "Новые заявки",
+        "Загрузка фото по продажам/ремонтам",
     ]
-    assert telegram_payload.startswith("op:l:")
     assert max_api.calls[0]["buttons"][0][0]["payload"].startswith("op:l:")
     assert "callback_data" not in max_api.calls[0]["buttons"][0][0]
     assert OperatorNotification.objects.filter(
@@ -861,7 +953,7 @@ def test_operator_console_requires_binding_and_revocation_is_immediate(db, djang
     menu = operator_console.handle_text(
         provider="telegram", provider_user_id=99003, external_id="2", text="/work"
     )
-    assert menu[0] == "Панель администратора PRO-STORE"
+    assert menu[0] == operator_console.TELEGRAM_OPERATOR_HELP_TEXT
     binding.is_active = False
     binding.save(update_fields=["is_active"])
     assert operator_console.handle_callback(
@@ -1525,10 +1617,12 @@ def test_operator_attachment_uses_the_same_private_reply_pipeline(
         user=user, provider="telegram", provider_user_id=99011, customer_visible_label="Денис"
     )
     _panel_text, panel = operator_console.owner_panel(binding)
-    _list_text, request_list = operator_console.handle_callback(
+    assert "keyboard" in panel
+    _list_text, request_list = operator_console.handle_text(
         provider="telegram",
         provider_user_id=binding.provider_user_id,
-        payload=panel["inline_keyboard"][0][0]["callback_data"],
+        external_id="attachment-list",
+        text="Все заявки",
     )
     request_button = request_list["inline_keyboard"][0][0]["callback_data"]
     _card_text, card_buttons = operator_console.handle_callback(

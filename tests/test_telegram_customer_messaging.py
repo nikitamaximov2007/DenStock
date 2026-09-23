@@ -1751,10 +1751,7 @@ def test_the_customer_keyboard_opens_my_requests_and_switching_is_one_line(
     # The greeting already carries the customer's own keyboard.
     run(worker, api, message_update(CUSTOMER, "/start"))
     hello = api.last_with(CUSTOMER, "Напишите сообщение")
-    assert hello["reply_markup"]["keyboard"] == [[
-        {"text": "Мои заявки"},
-        {"text": "Мои покупки"},
-    ]]
+    assert hello["reply_markup"]["keyboard"] == [[{"text": "Мои заявки"}]]
     assert "Все заявки" not in str(hello["reply_markup"])
     assert "Загрузка фото по продажам/ремонтам" not in str(hello["reply_markup"])
 

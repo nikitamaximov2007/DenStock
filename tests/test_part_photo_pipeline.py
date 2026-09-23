@@ -81,10 +81,16 @@ def test_telegram_photo_flow_targets_selected_part_and_is_idempotent(
     monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
 
     _text, panel = operator_console.owner_panel(binding)
-    feed = operator_console.handle_callback(
+    assert panel["keyboard"] == [
+        [{"text": "Все заявки"}],
+        [{"text": "Новые заявки"}],
+        [{"text": "Загрузка фото по продажам/ремонтам"}],
+    ]
+    feed = operator_console.handle_text(
         provider="telegram",
         provider_user_id=binding.provider_user_id,
-        payload=panel["inline_keyboard"][2][0]["callback_data"],
+        external_id="photo-menu",
+        text="Загрузка фото по продажам/ремонтам",
     )
     assert feed[0].startswith("Продажи и ремонты")
     button_text = feed[1]["inline_keyboard"][0][0]["text"]

@@ -45,6 +45,18 @@ PAIRING_CODE_RE = re.compile(r"^[A-Z0-9]{4}(?:-[A-Z0-9]{4}){2}$")
 PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 OWNER_OPERATOR_KEYS = {"Денис": "DENIS", "Рим": "RIM"}
 ADMIN_OPERATOR_KEYS = {"NIKITA"}
+INTERNAL_NAVIGATION_LABELS = (
+    "Все заявки",
+    "Новые заявки",
+    "Загрузка фото по продажам/ремонтам",
+)
+TELEGRAM_OPERATOR_HELP_TEXT = (
+    "Панель администратора PRO-STORE\n"
+    "Доступно:\n"
+    "- просмотр и общение по всем и новым заявкам;\n"
+    "- загрузка фото по продажам/ремонтам.\n\n"
+    "Кнопки находятся в меню слева от поля ввода сообщения."
+)
 
 
 def enabled() -> bool:
@@ -278,6 +290,21 @@ def menu(binding=None) -> tuple[str, dict]:
     ]}
 
 
+def telegram_operator_keyboard() -> dict:
+    """The persistent, user-collapsible top-level Telegram navigation."""
+    return {
+        "keyboard": [[{"text": label}] for label in INTERNAL_NAVIGATION_LABELS],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def _top_level_markup(binding) -> dict:
+    if binding is not None and binding.provider == StaffMessengerBinding.Provider.TELEGRAM:
+        return telegram_operator_keyboard()
+    return menu(binding)[1]
+
+
 def buttons_for_provider(markup: dict | None, provider: str) -> dict | None:
     """Translate shared callback markup to the provider's button shape."""
     if markup is None or provider != StaffMessengerBinding.Provider.MAX:
@@ -313,7 +340,7 @@ def request_page(page: int = 1, *, new_only: bool = False, binding=None) -> tupl
         rows.append([{"text": f"№{request.reference} - {(request.customer_name or 'Клиент')[:80]}",
                       "callback_data": _callback(binding, "c", request.public_id.hex)}])
     if not rows:
-        return ("Новых заявок нет." if new_only else "Заявок нет."), menu(binding)[1]
+        return ("Новых заявок нет." if new_only else "Заявок нет."), _top_level_markup(binding)
     if page > 1 or page < pages:
         rows.append([
             *(
@@ -408,7 +435,7 @@ def photo_operation_page(page: int = 1, *, binding=None) -> tuple[str, dict]:
             "callback_data": _callback(binding, "o", f"{operation.kind}-{operation.pk}"),
         }])
     if not rows:
-        return "Продаж и ремонтов нет.", menu(binding)[1]
+        return "Продаж и ремонтов нет.", _top_level_markup(binding)
     navigation = []
     if page > 1:
         navigation.append({
@@ -534,14 +561,14 @@ def _consume_photo_upload(*, binding, external_id: str, attachment):
         binding=binding, external_id=str(external_id)
     ).first()
     if existing is not None:
-        return existing.response_text, menu(binding)[1]
+        return existing.response_text, _top_level_markup(binding)
     context = OwnerPhotoUploadContext.objects.select_for_update().select_related(
         "part_type"
     ).filter(binding=binding).first()
     if context is None or context.expires_at <= timezone.now():
         if context is not None:
             context.delete()
-        return "Сначала выберите деталь в разделе загрузки фото.", menu(binding)[1]
+        return "Сначала выберите деталь в разделе загрузки фото.", _top_level_markup(binding)
     try:
         upload = _photo_upload_file(attachment)
         result = upload_primary_part_photo(
@@ -697,7 +724,7 @@ def submit_text(
             binding.save(update_fields=["delivery_chat_id", "updated_at"])
     request = current_request(binding)
     if request is None:
-        return "Сначала выберите заявку в рабочей панели.", menu(binding)[1]
+        return "Сначала выберите заявку в рабочей панели.", _top_level_markup(binding)
     try:
         operator_replies.submit_reply(
             request_id=request.pk, user=binding.user, text=text,
@@ -708,9 +735,9 @@ def submit_text(
             customer_responder_label=customer_responder_label(binding),
         )
     except operator_replies.OperatorReplyError as exc:
-        return str(exc), menu(binding)[1]
+        return str(exc), _top_level_markup(binding)
     touch_context(binding=binding)
-    return "Ответ поставлен в очередь доставки клиенту.", menu(binding)[1]
+    return "Ответ поставлен в очередь доставки клиенту.", _top_level_markup(binding)
 
 
 def handle_text(
@@ -740,13 +767,23 @@ def handle_text(
     if lower in {"/start", "/help", "/menu", "меню", "мои заявки", "мои покупки"}:
         clear_context(binding=binding)
         clear_photo_context(binding=binding)
-        return menu(binding)
+        return owner_panel(binding)
     if lower in {"/work", "рабочее меню"}:
         clear_context(binding=binding)
         clear_photo_context(binding=binding)
         binding.operator_mode = True
         binding.save(update_fields=["operator_mode", "updated_at"])
-        return menu(binding)
+        return owner_panel(binding)
+    if lower in {"все заявки", "новые заявки", "загрузка фото по продажам/ремонтам"}:
+        # Reply-keyboard presses reuse the existing authorized handlers.
+        if not binding.operator_mode:
+            binding.operator_mode = True
+            binding.save(update_fields=["operator_mode", "updated_at"])
+        if lower == "все заявки":
+            return request_page(binding=binding)
+        if lower == "новые заявки":
+            return request_page(new_only=True, binding=binding)
+        return photo_operation_page(1, binding=binding)
     if lower in {"/customer", "клиентский режим"}:
         clear_context(binding=binding)
         clear_photo_context(binding=binding)
@@ -754,23 +791,24 @@ def handle_text(
         binding.save(update_fields=["operator_mode", "updated_at"])
         return "Клиентский режим включён.", None
     if not binding.operator_mode:
-        return "Откройте рабочую панель для работы с заявками.", menu(binding)[1]
+        return "Откройте рабочую панель для работы с заявками.", _top_level_markup(binding)
     if attachment is not None:
         receipt = OwnerPhotoUploadReceipt.objects.filter(
             binding=binding, external_id=str(external_id)
         ).first()
         if receipt is not None:
-            return receipt.response_text, menu(binding)[1]
+            return receipt.response_text, _top_level_markup(binding)
     photo_context = OwnerPhotoUploadContext.objects.filter(binding=binding).first()
     if photo_context is not None and photo_context.expires_at <= timezone.now():
         photo_context.delete()
-        return "Срок выбора детали истёк. Сначала выберите деталь в разделе загрузки фото.", menu(
-            binding
-        )[1]
+        return (
+            "Срок выбора детали истёк. Сначала выберите деталь в разделе загрузки фото.",
+            _top_level_markup(binding),
+        )
     if photo_context is not None:
         if lower in {"отмена", "/cancel"}:
             clear_photo_context(binding=binding)
-            return "Загрузка фото отменена.", menu(binding)[1]
+            return "Загрузка фото отменена.", _top_level_markup(binding)
         if attachment is not None:
             return _consume_photo_upload(
                 binding=binding, external_id=external_id, attachment=attachment
@@ -780,7 +818,7 @@ def handle_text(
             {"inline_keyboard": [[{"text": "Отмена", "callback_data": _callback(binding, "x")}]]},
         )
     if lower in {"/menu", "меню", "рабочее меню"}:
-        return menu(binding)
+        return owner_panel(binding)
     if lower in {"/requests", "все заявки"}:
         return request_page(binding=binding)
     if lower in {"/new", "новые заявки"}:
@@ -789,7 +827,7 @@ def handle_text(
         clear_context(binding=binding)
         return (
             "Активная заявка закрыта для телефона. Клиенту ничего не отправлено.",
-            menu(binding)[1],
+            _top_level_markup(binding),
         )
     return submit_text(provider=provider, provider_user_id=provider_user_id,
                        external_id=external_id, text=value, attachment=attachment,
@@ -797,7 +835,7 @@ def handle_text(
 
 
 def should_remove_telegram_customer_keyboard(text: str) -> bool:
-    """Return whether internal navigation must clear customer UI."""
+    """Compatibility predicate for callers that synchronize role keyboards."""
     value = (text or "").strip().lower()
     return is_pairing_code(text) or value in {
         "/start",
@@ -810,11 +848,12 @@ def should_remove_telegram_customer_keyboard(text: str) -> bool:
         "клиентский режим",
         "мои заявки",
         "мои покупки",
+        *(label.lower() for label in INTERNAL_NAVIGATION_LABELS),
     }
 
 
 def remove_telegram_customer_keyboard() -> dict:
-    """Return Telegram's explicit ReplyKeyboardRemove payload."""
+    """Return Telegram's explicit removal payload for legacy integrations."""
     return {"remove_keyboard": True}
 
 
@@ -837,7 +876,7 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
         binding.save(update_fields=["operator_mode", "updated_at"])
     value = parts[3] if len(parts) == 4 else ""
     if kind == "m":
-        return menu(binding)
+        return owner_panel(binding)
     if kind in {"l", "n"}:
         page = int(value) if value.isdigit() and len(value) < 6 else 1
         return request_page(page, new_only=kind == "n", binding=binding)
@@ -851,24 +890,24 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
                 if had_photo_context
                 else "Активная заявка закрыта для телефона. Клиенту ничего не отправлено."
             ),
-            menu(binding)[1],
+            _top_level_markup(binding),
         )
     if kind == "p":
         page = int(value) if value.isdigit() and len(value) < 6 else 1
         return photo_operation_page(page, binding=binding)
     if kind == "o":
         if "-" not in value:
-            return "Операция не найдена.", menu(binding)[1]
+            return "Операция не найдена.", _top_level_markup(binding)
         operation_kind, operation_id = value.rsplit("-", 1)
         if operation_kind not in {"sale", "repair"} or not operation_id.isdigit():
-            return "Операция не найдена.", menu(binding)[1]
+            return "Операция не найдена.", _top_level_markup(binding)
         return photo_operation_card(
             binding=binding, kind=operation_kind, operation_id=int(operation_id)
         )
     if kind == "q":
         pieces = value.split("-")
         if len(pieces) != 3 or not pieces[1].isdigit() or not pieces[2].isdigit():
-            return "Позиция не найдена.", menu(binding)[1]
+            return "Позиция не найдена.", _top_level_markup(binding)
         return _photo_selection(
             binding=binding,
             kind=pieces[0],
@@ -878,10 +917,10 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     if kind in {"c", "r"}:
         request = request_by_hex(value)
         if request is None:
-            return "Заявка не найдена.", menu(binding)[1]
+            return "Заявка не найдена.", _top_level_markup(binding)
         selected, error = set_context(binding=binding, request_id=request.pk)
         if error:
-            return error, menu(binding)[1]
+            return error, _top_level_markup(binding)
         binding = binding_for(provider, provider_user_id)
         return card(selected, binding=binding) if kind == "c" else reply_prompt(
             selected, binding=binding
@@ -891,6 +930,8 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
 
 def owner_panel(binding) -> tuple[str, dict]:
     """The reusable panel delivered by the explicit server/admin action."""
+    if binding is not None and binding.provider == StaffMessengerBinding.Provider.TELEGRAM:
+        return TELEGRAM_OPERATOR_HELP_TEXT, telegram_operator_keyboard()
     return menu(binding)
 
 

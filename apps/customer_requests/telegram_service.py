@@ -16,7 +16,7 @@ from datetime import timedelta
 from django.db import connection, transaction
 from django.utils import timezone
 
-from . import customer_ui, messaging, operator_bot, operator_replies, workspace
+from . import customer_ui, messaging, operator_bot, operator_console, operator_replies, workspace
 from .models import (
     CustomerRequest,
     MaxMessage,
@@ -44,10 +44,7 @@ MEDIA_NOT_SUPPORTED_TEXT = (
     "когда получите ответ."
 )
 CUSTOMER_ACK_TEXT = messaging.CUSTOMER_ACK_TEXT
-OPERATOR_HELP_TEXT = (
-    "Команды: /requests: активные заявки (Telegram и MAX), /cancel: отменить ответ, "
-    "/whoami: ваш Telegram ID."
-)
+OPERATOR_HELP_TEXT = operator_console.TELEGRAM_OPERATOR_HELP_TEXT
 NOT_AVAILABLE_TEXT = "Недоступно."
 
 
@@ -284,11 +281,11 @@ def operator_buttons(request_or_conversation) -> dict:
 
 
 def operator_menu() -> tuple[str, dict]:
-    return operator_bot.menu()
+    return OPERATOR_HELP_TEXT, operator_console.telegram_operator_keyboard()
 
 
-def operator_request_page(page: int) -> tuple[str, dict | None]:
-    return operator_bot.request_page(page)
+def operator_request_page(page: int, *, new_only: bool = False) -> tuple[str, dict | None]:
+    return operator_bot.request_page(page, new_only=new_only)
 
 
 def delivery_content(event: TelegramOutboxEvent) -> tuple[str, dict | None]:
@@ -425,12 +422,8 @@ def _linked_conversations(chat_id: int) -> list[TelegramConversation]:
 # The customer's one control, always under the text field. It is not a command
 # and does not get in the way of typing an ordinary message.
 def customer_keyboard() -> dict:
-    buttons = [{"text": customer_ui.MY_REQUESTS_BUTTON}]
-    from .customer_cabinet import cabinet_enabled
-    if cabinet_enabled():
-        buttons.append({"text": customer_ui.MY_PURCHASES_BUTTON})
     return {
-        "keyboard": [buttons],
+        "keyboard": [[{"text": customer_ui.MY_REQUESTS_BUTTON}]],
         "resize_keyboard": True,
         "is_persistent": True,
     }

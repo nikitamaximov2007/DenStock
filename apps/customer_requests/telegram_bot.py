@@ -115,19 +115,17 @@ def back_to_list() -> dict:
 def _internal_reply(
     chat_id: int, text: str, markup: dict | None, *, clear_keyboard: bool
 ) -> list[Outgoing]:
-    """Render an internal reply, clearing any persisted customer keyboard first."""
-    outgoing = []
-    if clear_keyboard:
-        outgoing.append(
+    """Render one internal reply and synchronize its role-aware keyboard."""
+    if clear_keyboard and markup and markup.get("inline_keyboard"):
+        return [
             Outgoing(
                 chat_id=chat_id,
-                text="Клиентское меню отключено.",
-                reply_markup=operator_console.remove_telegram_customer_keyboard(),
-            )
-        )
-    if text:
-        outgoing.append(Outgoing(chat_id=chat_id, text=text, reply_markup=markup))
-    return outgoing
+                text=operator_console.TELEGRAM_OPERATOR_HELP_TEXT,
+                reply_markup=operator_console.telegram_operator_keyboard(),
+            ),
+            Outgoing(chat_id=chat_id, text=text, reply_markup=markup),
+        ]
+    return [Outgoing(chat_id=chat_id, text=text, reply_markup=markup)] if text else []
 
 
 def _is_int(value) -> bool:
@@ -235,6 +233,10 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
 
     if service.authorized_operator(user_id) is not None:
         try:
+            if text.lower() == "все заявки":
+                return reply(*service.operator_request_page(1))
+            if text.lower() == "новые заявки":
+                return reply(*service.operator_request_page(1, new_only=True))
             if command in {"/start", "/menu"}:
                 return reply(*service.operator_menu())
             if command == "/requests":
@@ -255,6 +257,13 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
 
     if text.strip().lower() in service.MY_REQUESTS_TEXTS:
         # The persistent keyboard sends plain text, not a command.
+        return customer(service.customer_conversations_prompt(chat_id))
+    if text.strip().lower() in {
+        label.lower() for label in operator_console.INTERNAL_NAVIGATION_LABELS
+    }:
+        # A customer may type an internal button label manually. Treat it as
+        # ordinary customer navigation; the binding check above is the only
+        # path that can reach an operator flow.
         return customer(service.customer_conversations_prompt(chat_id))
     if text.strip().lower() in service.MY_PURCHASES_TEXTS and service.customer_cabinet_enabled():
         return customer(service.purchase_selector_result(chat_id, provider_user_id=user_id))
@@ -780,12 +789,6 @@ class TelegramBotWorker:
             if delivery is None:
                 continue
             try:
-                if row.kind == operator_console.OperatorNotification.Kind.OWNER_PANEL:
-                    self.api.send_message(
-                        chat_id=delivery.provider_user_id,
-                        text="Клиентское меню отключено.",
-                        reply_markup=operator_console.remove_telegram_customer_keyboard(),
-                    )
                 result = self.api.send_message(
                     chat_id=delivery.provider_user_id,
                     text=delivery.text,

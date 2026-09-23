@@ -407,9 +407,13 @@ def test_the_customer_never_learns_who_answered(part, worker, api, operators):
 
 def test_the_bot_menu_mentions_both_messengers(part, worker, api, operators):
     run(worker, api, message_update(OPERATOR_A, "/menu"))
-    menu = api.last_with(OPERATOR_A, "Бот заявок PRO-STOR")
-    assert "Telegram" in menu["text"] and "MAX" in menu["text"]
-    assert [b["text"] for b in buttons_of(menu)] == ["Активные заявки"]
+    menu = api.last_with(OPERATOR_A, "Панель администратора PRO-STORE")
+    assert "Клиентское меню отключено" not in menu["text"]
+    assert menu["reply_markup"]["keyboard"] == [
+        [{"text": "Все заявки"}],
+        [{"text": "Новые заявки"}],
+        [{"text": "Загрузка фото по продажам/ремонтам"}],
+    ]
 
 
 def test_cancel_returns_the_employee_to_the_list_without_sending(part, worker, api, operators):
@@ -420,4 +424,10 @@ def test_cancel_returns_the_employee_to_the_list_without_sending(part, worker, a
 
     assert not MaxMessage.objects.filter(text="это уже не ответ").exists()
     assert "Ответ отменён." in texts(api, OPERATOR_A)
-    assert telegram_service.OPERATOR_HELP_TEXT.startswith("Команды:")
+    assert telegram_service.OPERATOR_HELP_TEXT == (
+        "Панель администратора PRO-STORE\n"
+        "Доступно:\n"
+        "- просмотр и общение по всем и новым заявкам;\n"
+        "- загрузка фото по продажам/ремонтам.\n\n"
+        "Кнопки находятся в меню слева от поля ввода сообщения."
+    )
