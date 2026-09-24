@@ -8,6 +8,7 @@ price remains ``None`` rather than becoming zero.
 """
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from decimal import Decimal
 
 
@@ -105,3 +106,48 @@ def resolve_oil_package_price_rub(part) -> Decimal | None:
     """Current package price for an oil PartType - the same authority
     (``PartType.recommended_price``) a normal part's current price uses."""
     return resolve_current_customer_price(part)
+
+
+@dataclass(frozen=True)
+class OilAvailabilityRow:
+    """Context an operator needs to sell/issue oil: what's on hand, what it costs."""
+
+    part_type_id: int
+    part_type_name: str
+    package_volume_l: Decimal
+    package_price_rub: Decimal | None
+    price_per_liter_rub: Decimal | None
+    available_l: Decimal
+
+
+def oil_availability_rows(part_types: Iterable) -> list[OilAvailabilityRow]:
+    """Один расчёт объёма упаковки / цены / цены за литр / наличия для UI.
+
+    Единая точка, которую используют Sale/Repair/поиск/публичный каталог -
+    чтобы формула цены за литр не дублировалась в каждом месте отдельно.
+    """
+    from apps.inventory.availability import available_totals
+    from apps.procurement.models import money
+
+    parts = [part for part in part_types if part is not None and part.is_oil]
+    if not parts:
+        return []
+    totals = available_totals(part.pk for part in parts)
+    rows = []
+    for part in parts:
+        package_price = resolve_oil_package_price_rub(part)
+        price_per_liter = None
+        if package_price is not None and part.oil_package_volume_l:
+            exact = oil_price_per_liter_rub(package_price, part.oil_package_volume_l)
+            price_per_liter = money(exact) if exact is not None else None
+        rows.append(
+            OilAvailabilityRow(
+                part_type_id=part.pk,
+                part_type_name=part.name,
+                package_volume_l=part.oil_package_volume_l,
+                package_price_rub=package_price,
+                price_per_liter_rub=price_per_liter,
+                available_l=totals.get(part.pk, Decimal("0")),
+            )
+        )
+    return rows

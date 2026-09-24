@@ -7,8 +7,11 @@
 from decimal import Decimal
 
 import pytest
+from django.contrib.auth.models import Group
+from django.urls import reverse
 from django.utils import timezone
 
+from apps.accounts import roles
 from apps.catalog.models import Category, Manufacturer, PartType, Unit
 from apps.catalog_import.models import AftermarketCatalogPart
 from apps.inventory.services import create_stock_lot, receive_stock_lot
@@ -39,10 +42,26 @@ from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 from tests.customs_support import remember_customs
 
+PASSWORD = "parol-12345"
+
 
 @pytest.fixture
 def admin(db, django_user_model):
     return django_user_model.objects.create_superuser("owner", "owner@example.test", "pass")
+
+
+@pytest.fixture
+def make_user(db, django_user_model):
+    def _make(username, *, role=None, is_superuser=False):
+        if is_superuser:
+            user = django_user_model.objects.create_superuser(username=username, password=PASSWORD)
+        else:
+            user = django_user_model.objects.create_user(username=username, password=PASSWORD)
+        if role:
+            user.groups.add(Group.objects.get(name=role))
+        return user
+
+    return _make
 
 
 @pytest.fixture
@@ -370,3 +389,82 @@ def test_repair_oil_requires_package_price(category, liter_unit, admin):
     order = create_repair_order(customer_name="К", by=admin)
     with pytest.raises(RepairError):
         add_oil_volume_to_repair_order(order, lot, "1", by=admin)
+
+
+# --- UI: sale/repair detail pages show liters, add-oil-lot views work --------
+
+
+def test_sale_detail_shows_oil_availability_and_liter_unit(
+    make_user, client, oil_part, oil_lot
+):
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    sale = create_sale(customer_name="К", by=None)
+    resp = client.get(reverse("sale_detail", args=[sale.pk]))
+    assert resp.status_code == 200
+    text = resp.content.decode()
+    assert "Масло" in text
+    assert "Объём упаковки" in text
+    assert "250" in text  # цена за литр 1000/4
+
+
+def test_sale_add_oil_lot_view_creates_line_with_liters(make_user, client, oil_part, oil_lot):
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    sale = create_sale(customer_name="К", by=None)
+    resp = client.post(
+        reverse("sale_add_oil_lot", args=[sale.pk]),
+        {"lot": oil_lot.pk, "volume_l": "0,3"},
+    )
+    assert resp.status_code == 302
+    sale.refresh_from_db()
+    line = sale.lines.get()
+    assert line.quantity == Decimal("0.300")
+    assert line.total_price == Decimal("75.00")
+
+
+def test_sale_add_oil_lot_rejects_non_oil_lot(make_user, client, category, liter_unit, admin):
+    part = PartType.objects.create(
+        name="Обычная деталь", category=category, unit=liter_unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    remember_customs(part)
+    lot, _ = _oil_lot(part, admin, package_qty="5")
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    sale = create_sale(customer_name="К", by=None)
+    resp = client.post(
+        reverse("sale_add_oil_lot", args=[sale.pk]),
+        {"lot": lot.pk, "volume_l": "1"},
+    )
+    assert resp.status_code == 302
+    sale.refresh_from_db()
+    assert sale.lines.count() == 0
+
+
+def test_repair_detail_shows_oil_availability(make_user, client, oil_part, oil_lot):
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    order = create_repair_order(customer_name="К", by=None)
+    resp = client.get(reverse("repair_order_detail", args=[order.pk]))
+    assert resp.status_code == 200
+    text = resp.content.decode()
+    assert "Масло" in text
+    assert "Объём залитого масла, л" in text
+
+
+def test_repair_add_oil_lot_view_creates_line_with_liters(
+    make_user, client, oil_part, oil_lot
+):
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    order = create_repair_order(customer_name="К", by=None)
+    resp = client.post(
+        reverse("repair_order_add_oil_lot", args=[order.pk]),
+        {"lot": oil_lot.pk, "volume_l": "0,3"},
+    )
+    assert resp.status_code == 302
+    order.refresh_from_db()
+    line = order.lines.get()
+    assert line.quantity == Decimal("0.300")
+    assert line.oil_customer_amount_rub_snapshot == Decimal("75.00")

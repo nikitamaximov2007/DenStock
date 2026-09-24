@@ -27,6 +27,7 @@ from apps.inventory.presentation import (
 )
 
 from .forms import (
+    AddOilRepairLotForm,
     AddRepairItemForm,
     AddRepairLotForm,
     RepairCancellationForm,
@@ -36,6 +37,7 @@ from .forms import (
 from .models import RepairIssueLine, RepairOrder
 from .services import (
     RepairError,
+    add_oil_volume_to_repair_order,
     add_part_item_to_repair_order,
     add_stock_lot_to_repair_order,
     calculate_repair_customer_amount,
@@ -146,11 +148,14 @@ def repair_order_detail(request, pk):
             line.net_quantity = max(line.quantity - (returned.get(line.pk) or 0), 0)
     else:
         for line in lines:
-            line.customer_total_rub = (
-                None
-                if line.customer_unit_price_rub is None
-                else line.customer_unit_price_rub * line.quantity
-            )
+            if line.oil_customer_amount_rub_snapshot is not None:
+                # Точная сумма, посчитанная один раз (см. add_oil_volume_to_repair_order) -
+                # НЕ price × quantity повторно, чтобы не накопить дрейф округления.
+                line.customer_total_rub = line.oil_customer_amount_rub_snapshot
+            elif line.customer_unit_price_rub is None:
+                line.customer_total_rub = None
+            else:
+                line.customer_total_rub = line.customer_unit_price_rub * line.quantity
             line.customer_display_unit_price_rub = line.customer_unit_price_rub
             line.customer_price_source = "historical"
             line.net_quantity = line.quantity
@@ -179,8 +184,21 @@ def repair_order_detail(request, pk):
             else None,
             "add_item_form": AddRepairItemForm(),
             "add_lot_form": AddRepairLotForm(),
+            "add_oil_lot_form": AddOilRepairLotForm(),
+            "oil_availability": _oil_availability_for_repair(),
         },
     )
+
+
+def _oil_availability_for_repair():
+    from apps.catalog.models import PartType
+    from apps.inventory.models import StockLot
+    from apps.inventory.pricing import oil_availability_rows
+
+    part_types = PartType.objects.filter(
+        is_oil=True, stock_lots__status=StockLot.Status.AVAILABLE
+    ).distinct()
+    return oil_availability_rows(part_types)
 
 
 @login_required
@@ -260,6 +278,27 @@ def repair_order_add_lot(request, pk):
         messages.error(request, str(exc))
     else:
         messages.success(request, "Количество из лота добавлено в заказ.")
+    return redirect("repair_order_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def repair_order_add_oil_lot(request, pk):
+    """Масло: оператор вводит только объём залитого, л - цена считается от package price."""
+    _require_repairs(request)
+    order = get_object_or_404(RepairOrder, pk=pk)
+    form = AddOilRepairLotForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Проверьте лот и объём.")
+        return redirect("repair_order_detail", pk=pk)
+    try:
+        add_oil_volume_to_repair_order(
+            order, form.cleaned_data["lot"], form.cleaned_data["volume_l"], by=request.user,
+        )
+    except RepairError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Объём масла добавлен в заказ.")
     return redirect("repair_order_detail", pk=pk)
 
 
