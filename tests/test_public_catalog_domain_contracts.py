@@ -403,6 +403,10 @@ def test_public_part_facts_expose_no_internal_stock_or_commercial_fields(domain_
         "unit",
         "price",
         "available_quantity",
+        # Масло: оба поля уже показываются на публичной странице (объём
+        # упаковки, "В наличии: N л") - не внутренние складские данные.
+        "is_oil",
+        "oil_package_volume_l",
     }
     for forbidden in (
         "location",
