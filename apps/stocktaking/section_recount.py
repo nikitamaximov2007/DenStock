@@ -512,17 +512,23 @@ def _record_part(doc, cell, part, part_number):
         .first()
     )
     if line is None:
+        # Масло: количество - литры, а не «сколько раз опознали». Строка
+        # заводится с 0 л (валидное, «ещё не посчитано» состояние - см.
+        # section_recount_qty_nonnegative), а фактический объём вводится
+        # вручную через set_section_line_quantity, а не накоплением +1.
         line = SectionRecountLine.objects.create(
             recount=doc,
             cell=cell,
             part_type=part,
             part_number=part_number,
             preferred_snapshot=_preferred_snapshot_for_part(part.pk),
-            quantity=1,
+            quantity=Decimal("0") if part.is_oil else Decimal("1"),
         )
-    else:
+    elif not part.is_oil:
         line.quantity += Decimal("1")
         line.save(update_fields=["quantity", "updated_at"])
+    # Повторный скан/выбор масла - строка уже есть, "+1" не имеет смысла;
+    # оператор правит объём вручную (line возвращается без изменений).
     if cell.status == SectionRecountCell.Status.COMPLETED:
         cell.status = SectionRecountCell.Status.COUNTING
         cell.save(update_fields=["status"])
