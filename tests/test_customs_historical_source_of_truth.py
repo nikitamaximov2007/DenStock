@@ -36,7 +36,7 @@ from apps.actions.services import (
     parse_customs_usd,
     perform_action,
 )
-from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.inventory.models import StockMovement
 from apps.inventory.services import (
     create_stock_lot,
@@ -118,6 +118,17 @@ def _receive(env, part, quantity="10", unit_cost="100", location=None):
     lot = create_stock_lot(line, location or env["loc"], Decimal(quantity))
     receive_stock_lot(lot, by=env["admin"])
     return lot
+
+
+def _prove_brp(part):
+    """Настоящее доказательство BRP: явный PartType.manufacturer, не просто
+    строка в таможенной карточке. Нужен только тестам, которые проверяют
+    полноту/допуск карточки как таковой - authoritative_manufacturer больше
+    не доверяет "BRP" в customs.manufacturer без такого доказательства."""
+    manufacturer, _ = Manufacturer.objects.get_or_create(name="BRP")
+    part.manufacturer = manufacturer
+    part.save(update_fields=["manufacturer"])
+    return part
 
 
 def _card(part, **overrides):
@@ -776,7 +787,7 @@ def test_incomplete_customs_data_leaves_blanks_but_keeps_the_row(client, env, ma
 
 def test_reconciliation_keeps_sale_repair_and_incomplete_data_in_the_export(env):
     """Каждая каноническая строка попадает в выгрузку; неполнота лишь помечена."""
-    complete = _part(env, number="SALE-001", name="ПРОДАЖА")
+    complete = _prove_brp(_part(env, number="SALE-001", name="ПРОДАЖА"))
     incomplete = _part(env, number="REPAIR-001", name="РЕМОНТ")
     _receive(env, complete, quantity="10")
     _receive(env, incomplete, quantity="10")
@@ -801,7 +812,7 @@ def test_reconciliation_keeps_sale_repair_and_incomplete_data_in_the_export(env)
 
 
 def test_reconciliation_nets_returns_and_cancellation_without_losing_source(env):
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _receive(env, part, quantity="20")
     _card(part)
     sale = _sell(env, part, quantity="5", number="219800345")

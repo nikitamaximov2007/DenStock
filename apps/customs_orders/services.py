@@ -1,5 +1,4 @@
 """Canonical source membership and atomic, immutable customs order finalization."""
-import datetime
 import hashlib
 import json
 from decimal import ROUND_HALF_UP, Decimal
@@ -16,7 +15,6 @@ from .models import CustomsOrder, CustomsOrderLine
 
 CHANGED = "Состав изменился. Обновите список и повторите."
 TOKEN_SALT = "customs-orders.selection.v1"
-_EPOCH = datetime.datetime.min.replace(tzinfo=datetime.UTC)
 SNAPSHOT_FIELDS = (
     "number", "name_ru", "name_en", "manufacturer", "country", "gross_weight_kg",
     "net_weight_kg", "actual_gross_weight_kg", "actual_net_weight_kg",
@@ -44,7 +42,7 @@ def line_rub(row, rate):
 
 def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
     """One row per stable source, with membership excluded in SQL when requested."""
-    from apps.actions.customs_history import canonical_customs_lines
+    from apps.actions.customs_history import canonical_customs_lines, line_chronological_key
     from apps.actions.services import _customs_rows_from_lines, is_brp_export_eligible
     from apps.ordered_parts.customs import ordered_parts_customs_lines
 
@@ -87,11 +85,10 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
             # Для "Истории для таможенных заказов": видно всё, но допуск в
             # BRP/PRO-X выгрузку - отдельный явный признак, а не производитель.
             export_eligible=is_brp_export_eligible(row.get("manufacturer")),
+            _chronological_key=line_chronological_key(line),
         )
         result.append(row)
-    return sorted(result, key=lambda row: (
-        row["occurred_at"] or _EPOCH, row["source"], row["source_id"]
-    ))
+    return sorted(result, key=lambda row: row["_chronological_key"])
 
 
 def eligible_customs_sources(order_type=CustomsOrder.OrderType.ORIGINAL) -> list[dict]:

@@ -99,6 +99,16 @@ def _receive(env, part, *, quantity="20", unit_cost="100"):
     return lot
 
 
+def _prove_brp(part):
+    """Настоящее доказательство BRP: явный PartType.manufacturer, не просто
+    строка в таможенной карточке (authoritative_manufacturer больше не
+    доверяет "BRP" в customs.manufacturer без такого доказательства)."""
+    manufacturer, _ = Manufacturer.objects.get_or_create(name="BRP")
+    part.manufacturer = manufacturer
+    part.save(update_fields=["manufacturer"])
+    return part
+
+
 def _card(part, **overrides):
     """Таможенная карточка тем же путём, каким её заводит форма."""
     values = {
@@ -434,7 +444,7 @@ def test_every_canonical_line_lands_in_the_export(env):
     """Молчаливой категории не существует: строка либо в XLSX, либо её нет вовсе."""
     from apps.inventory.services import write_off_stock_lot_quantity
 
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     lot = _receive(env, part)
     _card(part)
     _sell(env, part, quantity="4", number="219800345")

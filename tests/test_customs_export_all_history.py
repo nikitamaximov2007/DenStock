@@ -32,7 +32,7 @@ from apps.actions.services import (
     historical_customs_rows,
     perform_action,
 )
-from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.inventory.services import (
     create_stock_lot,
     receive_stock_lot,
@@ -126,6 +126,16 @@ def _receive(env, part, quantity="50", unit_cost="100", location=None):
     lot = create_stock_lot(line, location or env["loc"], Decimal(quantity))
     receive_stock_lot(lot, by=env["admin"])
     return lot
+
+
+def _prove_brp(part):
+    """Настоящее доказательство BRP: явный PartType.manufacturer, не просто
+    строка в таможенной карточке (authoritative_manufacturer больше не
+    доверяет "BRP" в customs.manufacturer без такого доказательства)."""
+    manufacturer, _ = Manufacturer.objects.get_or_create(name="BRP")
+    part.manufacturer = manufacturer
+    part.save(update_fields=["manufacturer"])
+    return part
 
 
 def _card(part, **overrides):
@@ -798,7 +808,7 @@ def test_a_filter_cannot_make_an_unpriced_repair_order_look_priced(env):
 
 def test_the_report_page_counts_incomplete_positions_itself(client, env, make_user):
     """Число в предупреждении вычисляется, а не записано в шаблоне."""
-    complete = _part(env, number="UI-COMPLETE")
+    complete = _prove_brp(_part(env, number="UI-COMPLETE"))
     first = _part(env, number="UI-MISSING-1", name="ПЕРВАЯ")
     second = _part(env, number="UI-MISSING-2", name="ВТОРАЯ")
     for part in (complete, first, second):
