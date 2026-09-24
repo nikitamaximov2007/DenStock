@@ -35,6 +35,7 @@ urlpatterns = [
     path("sales/<int:pk>/", views.sale_detail, name="sale_detail"),
     path("sales/<int:pk>/add-item/", views.sale_add_item, name="sale_add_item"),
     path("sales/<int:pk>/add-lot/", views.sale_add_lot, name="sale_add_lot"),
+    path("sales/<int:pk>/add-oil-lot/", views.sale_add_oil_lot, name="sale_add_oil_lot"),
     path("sales/<int:pk>/complete/", views.sale_complete, name="sale_complete"),
     path("sales/<int:pk>/cancel/", views.sale_cancel, name="sale_cancel"),
     path(

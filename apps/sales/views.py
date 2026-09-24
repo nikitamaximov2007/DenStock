@@ -27,6 +27,7 @@ from apps.inventory.presentation import (
 from .forms import (
     AddItemForm,
     AddLotForm,
+    AddOilSaleLotForm,
     AddSaleItemForm,
     AddSaleLotForm,
     ReservationForm,
@@ -39,6 +40,7 @@ from .services import (
     ReservationError,
     SaleError,
     activate_reservation,
+    add_oil_volume_to_sale,
     add_part_item_to_reservation,
     add_part_item_to_sale,
     add_stock_lot_to_reservation,
@@ -349,9 +351,22 @@ def sale_detail(request, pk):
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
             "add_lot_form": AddSaleLotForm(),
+            "add_oil_lot_form": AddOilSaleLotForm(),
+            "oil_availability": _oil_availability_for_sale(),
             "can_cancel": request.user.can_manage_sales and request.user.can_manage_returns,
         },
     )
+
+
+def _oil_availability_for_sale():
+    from apps.catalog.models import PartType
+    from apps.inventory.models import StockLot
+    from apps.inventory.pricing import oil_availability_rows
+
+    part_types = PartType.objects.filter(
+        is_oil=True, stock_lots__status=StockLot.Status.AVAILABLE
+    ).distinct()
+    return oil_availability_rows(part_types)
 
 
 @login_required
@@ -420,6 +435,27 @@ def sale_add_lot(request, pk):
         messages.error(request, str(exc))
     else:
         messages.success(request, "Количество из лота добавлено в продажу.")
+    return redirect("sale_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def sale_add_oil_lot(request, pk):
+    """Масло: оператор вводит только объём, л - цена считается от package price."""
+    _require_sales(request)
+    sale = get_object_or_404(Sale, pk=pk)
+    form = AddOilSaleLotForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Проверьте лот и объём.")
+        return redirect("sale_detail", pk=pk)
+    try:
+        add_oil_volume_to_sale(
+            sale, form.cleaned_data["lot"], form.cleaned_data["volume_l"], by=request.user,
+        )
+    except SaleError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Объём масла добавлен в продажу.")
     return redirect("sale_detail", pk=pk)
 
 

@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django import forms
 
+from apps.catalog.forms import CommaDecimalField
 from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
 from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
@@ -13,6 +14,15 @@ def _available_lots():
     """Лоты для выбора: опция подписана названием + exact-артикулом детали."""
     return with_part_identity(
         StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
+        .select_related("part_type", "location")
+        .order_by("part_type__name", "location__code")
+    )
+
+
+def _available_oil_lots():
+    """Только лоты масла - для отдельной формы «Объём, л» (не «Количество, шт.»)."""
+    return with_part_identity(
+        StockLot.objects.filter(status=StockLot.Status.AVAILABLE, part_type__is_oil=True)
         .select_related("part_type", "location")
         .order_by("part_type__name", "location__code")
     )
@@ -97,6 +107,20 @@ class AddSaleLotForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["lot"].queryset = _available_lots()
+
+
+class AddOilSaleLotForm(forms.Form):
+    """Масло: оператор вводит только объём, л - цена считается от package price."""
+
+    lot = ExactLotChoiceField(label="Масло (лот)", queryset=StockLot.objects.none())
+    volume_l = CommaDecimalField(
+        label="Объём, л", max_digits=12, decimal_places=3, min_value=Decimal("0.001"),
+        widget=forms.TextInput(attrs={"inputmode": "decimal", "step": "0.001"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["lot"].queryset = _available_oil_lots()
 
 
 class SaleLineCancellationForm(forms.Form):
