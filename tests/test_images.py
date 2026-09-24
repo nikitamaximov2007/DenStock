@@ -5,7 +5,7 @@
 меняет `StockBalance`/количества/статусы и не трогает scanner/barcode.
 """
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 
 import pytest
 from django.contrib.auth.models import Group
@@ -13,9 +13,10 @@ from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.urls import reverse
+from PIL import Image
 
 from apps.accounts import roles
-from apps.catalog.models import Category, PartBarcode, PartType, Unit
+from apps.catalog.models import Category, PartBarcode, PartType, PublicPartPhoto, Unit
 from apps.core.files import validate_image_upload
 from apps.core.scanner import resolve_scan
 from apps.inventory.models import StockBalance, StockMovement
@@ -27,10 +28,15 @@ from apps.warehouse.models import StorageLocation
 
 PASSWORD = "parol-12345"
 
-# Минимальные валидные сигнатуры (magic bytes) без Pillow.
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
-WEBP = b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 64
+def _image_bytes(fmt):
+    output = BytesIO()
+    Image.new("RGB", (12, 9), (30, 80, 140)).save(output, format=fmt)
+    return output.getvalue()
+
+
+PNG = _image_bytes("PNG")
+JPEG = _image_bytes("JPEG")
+WEBP = _image_bytes("WEBP")
 
 
 def png(name="photo.png"):
@@ -105,6 +111,22 @@ def test_storekeeper_can_upload_part_image(client, make_user, data):
     resp = client.post(reverse("part_image_add", args=[data["part"].pk]), {"image": png()})
     assert resp.status_code == 302
     assert data["part"].images.filter(is_active=True).count() == 1
+
+
+def test_quick_action_accepts_jpeg_with_generic_mime(client, make_user, data):
+    _login(client, make_user, roles.MANAGER)
+    response = client.post(
+        reverse("part_photo_upload", args=[data["part"].pk]),
+        {
+            "image": SimpleUploadedFile(
+                "IMG_1144.JPG", JPEG, content_type="application/octet-stream"
+            )
+        },
+    )
+
+    assert response.status_code == 302
+    assert data["part"].images.filter(is_active=True).count() == 1
+    assert PublicPartPhoto.objects.filter(part=data["part"], status="published").exists()
 
 
 def test_seller_cannot_upload_part_image(client, make_user, data):
@@ -189,6 +211,39 @@ def test_soft_deleted_not_in_active_gallery(client, make_user, data):
 )
 def test_valid_images_pass(content, name):
     validate_image_upload(SimpleUploadedFile(name, content))  # не бросает
+
+
+@pytest.mark.parametrize(
+    "name", ["IMG_1144.jpg", "IMG_1144.JPG", "IMG_1144.jpeg", "IMG_1144.JPEG", "IMG_1144"]
+)
+def test_real_jpeg_accepts_windows_names_and_generic_mime(name):
+    upload = SimpleUploadedFile(name, JPEG, content_type="application/octet-stream")
+
+    validate_image_upload(upload)
+
+    assert upload.name.lower().endswith((".jpg", ".jpeg"))
+
+
+def test_damaged_jpeg_is_rejected_after_decoding():
+    with pytest.raises(ValidationError, match="Не удалось прочитать изображение"):
+        validate_image_upload(
+            SimpleUploadedFile(
+                "IMG_1144.jpg", b"\xff\xd8\xff" + b"broken", content_type="image/jpeg"
+            )
+        )
+
+
+def test_real_unsupported_image_format_is_rejected():
+    gif = BytesIO()
+    Image.new("RGB", (12, 9), (30, 80, 140)).save(gif, format="GIF")
+
+    with pytest.raises(ValidationError, match="Можно загрузить только JPG"):
+        validate_image_upload(SimpleUploadedFile("photo.gif", gif.getvalue()))
+
+
+def test_valid_jpeg_with_jpg_name_and_fake_content_is_rejected():
+    with pytest.raises(ValidationError, match="Не удалось прочитать изображение"):
+        validate_image_upload(SimpleUploadedFile("photo.jpg", b"not an image"))
 
 
 @pytest.mark.parametrize("name", ["bad.svg", "bad.html", "bad.js", "bad.txt"])

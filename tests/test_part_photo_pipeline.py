@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 import pytest
+from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import close_old_connections, connection
 from django.test import override_settings
@@ -33,6 +34,12 @@ def _image(name="part.png"):
     return SimpleUploadedFile(name, output.getvalue(), content_type="image/png")
 
 
+def _jpeg_image(name="part.jpg", content_type="image/jpeg"):
+    output = BytesIO()
+    Image.new("RGB", (32, 24), (30, 80, 140)).save(output, format="JPEG")
+    return SimpleUploadedFile(name, output.getvalue(), content_type=content_type)
+
+
 @pytest.fixture
 def part(db):
     category = Category.objects.create(name="Фото")
@@ -57,6 +64,52 @@ def test_authoritative_upload_publishes_once_and_refuses_replacement(
         upload_primary_part_photo(
             part=part, upload=_image("second.png"), source="desktop", by=user
         )
+
+
+@pytest.mark.parametrize(
+    "name", ["IMG_1144.jpg", "IMG_1144.JPG", "IMG_1144.jpeg", "IMG_1144.JPEG", "IMG_1144"]
+)
+def test_authoritative_upload_accepts_real_jpeg_windows_variants(
+    part, name, django_user_model, tmp_path, settings
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    user = django_user_model.objects.create_superuser(
+        username=f"photo-{name.replace('.', '-')}", password="x"
+    )
+
+    result = upload_primary_part_photo(
+        part=part,
+        upload=_jpeg_image(name, content_type="application/octet-stream"),
+        source="desktop",
+        by=user,
+    )
+
+    expected_suffix = ".jpg" if "." not in name else name.rsplit(".", 1)[1].lower()
+    assert result.image.image.name.lower().endswith(expected_suffix)
+    assert PublicPartPhoto.objects.get(pk=result.public_photo_id).status == "published"
+
+
+@pytest.mark.parametrize(
+    "name,content", [("photo.jpg", b"not an image"), ("photo.jpg", b"\xff\xd8\xffbroken")]
+)
+def test_authoritative_upload_rejects_fake_or_damaged_jpeg_without_side_effects(
+    part, name, content, django_user_model, tmp_path, settings
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    user = django_user_model.objects.create_superuser(
+        username=f"bad-{len(content)}", password="x"
+    )
+
+    with pytest.raises(ValidationError):
+        upload_primary_part_photo(
+            part=part,
+            upload=SimpleUploadedFile(name, content, content_type="application/octet-stream"),
+            source="desktop",
+            by=user,
+        )
+
+    assert not part.images.exists()
+    assert not PublicPartPhoto.objects.exists()
 
 
 def test_telegram_photo_flow_targets_selected_part_and_is_idempotent(
@@ -115,9 +168,9 @@ def test_telegram_photo_flow_targets_selected_part_and_is_idempotent(
     assert context.part_type_id == part.pk
     assert context.expires_at > timezone.now()
 
-    image = _image().file.read()
+    image = _jpeg_image("IMG_1144.JPG", content_type="application/octet-stream").file.read()
     attachment = ValidatedAttachment(
-        content=image, filename="photo.png", content_type="image/png"
+        content=image, filename="IMG_1144.JPG", content_type="application/octet-stream"
     )
     result = operator_console.handle_text(
         provider="telegram",
@@ -210,7 +263,11 @@ def test_max_photo_flow_uses_native_buttons_and_shared_photo_service(
         text="",
         provider_chat_id=binding.delivery_chat_id,
         attachment=ValidatedAttachment(
-            content=_image().file.read(), filename="max-photo.png", content_type="image/png"
+            content=_jpeg_image(
+                "IMG_1144.JPEG", content_type="application/octet-stream"
+            ).file.read(),
+            filename="IMG_1144.JPEG",
+            content_type="application/octet-stream",
         ),
     )
     assert result[0].startswith("Фото загружено")

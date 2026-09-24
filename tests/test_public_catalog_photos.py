@@ -55,6 +55,17 @@ def test_renditions_are_bounded_jpegs_without_metadata():
         assert len(rendition.data) < len(source)
 
 
+def test_jpeg_based_photo_labelled_mpo_is_reencoded_as_safe_jpeg():
+    first = Image.new("RGB", (64, 48), "red")
+    second = Image.new("RGB", (64, 48), "blue")
+    source = BytesIO()
+    first.save(source, format="MPO", save_all=True, append_images=[second])
+
+    renditions = build_renditions(BytesIO(source.getvalue()))
+
+    assert Image.open(BytesIO(renditions[0].data)).format == "JPEG"
+
+
 def test_transparent_png_is_flattened_on_white():
     image = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
     buffer = BytesIO()

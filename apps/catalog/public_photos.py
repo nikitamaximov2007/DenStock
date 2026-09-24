@@ -27,12 +27,20 @@ from django.db import transaction
 from django.utils import timezone
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from apps.core.files import (
+    MAX_IMAGE_PIXELS,
+    ImageTooLargeError,
+    InvalidImageError,
+    UnsupportedImageFormatError,
+    inspect_supported_image,
+)
+
 from .models import PartType, PartTypeImage, PublicPartPhoto, PublicPartPhotoRendition
 
 MAX_PUBLISHED_PER_PART = 8
 # Source uploads are already capped at 10 MB. A pixel cap refuses a small
 # file that decodes into a huge bitmap before Pillow allocates it.
-MAX_SOURCE_PIXELS = 40_000_000
+MAX_SOURCE_PIXELS = MAX_IMAGE_PIXELS
 CARD_EDGE = 480
 DETAIL_EDGE = 1200
 MAX_RENDITION_BYTES = 900 * 1024
@@ -143,15 +151,20 @@ def _encode(image: Image.Image, quality: int) -> bytes:
 def build_renditions(fileobj) -> list[_Rendition]:
     """Decode an upload once and produce the bounded public renditions."""
     try:
+        actual_format = inspect_supported_image(fileobj, max_pixels=MAX_SOURCE_PIXELS)
         with Image.open(fileobj) as source:
-            if source.format not in _ALLOWED_FORMATS:
-                raise PublicPhotoError("Публиковать можно только JPG, PNG или WEBP.")
+            if actual_format.upper() not in _ALLOWED_FORMATS:
+                raise UnsupportedImageFormatError
             width, height = source.size
-            if width < 1 or height < 1 or width * height > MAX_SOURCE_PIXELS:
-                raise PublicPhotoError("Размер изображения вне допустимых пределов.")
-            source.seek(0)
-            source.load()
             upright = _flatten(ImageOps.exif_transpose(source))
+    except UnsupportedImageFormatError:
+        raise PublicPhotoError("Можно загрузить только JPG, JPEG, PNG или WEBP.") from None
+    except ImageTooLargeError:
+        raise PublicPhotoError("Размер изображения вне допустимых пределов.") from None
+    except InvalidImageError:
+        raise PublicPhotoError(
+            "Не удалось прочитать изображение. Выберите корректный JPG, JPEG, PNG или WEBP."
+        ) from None
     except PublicPhotoError:
         raise
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError, Image.DecompressionBombError):

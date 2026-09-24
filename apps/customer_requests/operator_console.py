@@ -546,9 +546,17 @@ def _photo_selection(*, binding, kind: str, operation_id: int, part_id: int):
 
 def _photo_upload_file(attachment):
     if isinstance(attachment, ValidatedAttachment):
-        if not attachment.content_type.startswith("image/"):
-            raise AttachmentError("Для этого действия отправьте изображение, а не PDF.")
-        return ContentFile(attachment.content, name=attachment.filename)
+        upload = ContentFile(attachment.content, name=attachment.filename)
+        try:
+            validate_image_upload(upload)
+        except ValidationError:
+            if (attachment.content_type or "").lower() == "application/pdf":
+                raise AttachmentError(
+                    "Для этого действия отправьте изображение, а не PDF."
+                ) from None
+            raise
+        upload.seek(0)
+        return upload
     if attachment is None:
         raise AttachmentError("Фото не выбрано.")
     validate_image_upload(attachment)
