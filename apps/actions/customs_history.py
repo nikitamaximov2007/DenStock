@@ -367,7 +367,8 @@ def _repair_line_amounts(repair_lines):
         return {}, set()
     order_ids = {line.repair_order_id for line in repair_lines}
     siblings = list(RepairIssueLine.objects.filter(repair_order_id__in=order_ids).only(
-        "id", "repair_order_id", "part_type_id", "quantity", "customer_unit_price_rub"
+        "id", "repair_order_id", "part_type_id", "quantity", "customer_unit_price_rub",
+        "oil_customer_amount_rub_snapshot",
     ))
     amounts = repair_customer_line_amounts(siblings)
     unpriced = {

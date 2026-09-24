@@ -2,6 +2,8 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from django import template
 
+from apps.catalog.quantity_units import quantity_unit_short
+
 register = template.Library()
 
 
@@ -57,3 +59,17 @@ def quantity_int(value):
 def quantity_number(value):
     """Backward-compatible alias for the physical quantity formatter."""
     return quantity_int(value)
+
+
+@register.filter
+def part_quantity_unit(part_type):
+    """шт./л label for a PartType's quantity number - see quantity_units.py."""
+    return quantity_unit_short(part_type)
+
+
+@register.filter
+def quantity_with_unit(value, part_type):
+    """'7,3 л' for oil, '5 шт.' for a normal part - number + correct unit in one call."""
+    unit = quantity_unit_short(part_type)
+    number = quantity_int(value)
+    return f"{number} {unit}".strip() if unit else number

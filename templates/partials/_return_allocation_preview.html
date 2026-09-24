@@ -46,3 +46,32 @@
     {% endif %}
   </div>
 </div>
+{% if oil_excluded_lines %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">Масло не будет возвращено на склад</h2>
+    </div>
+    <div class="card__body">
+      <p class="muted">
+        Отпущенный по объёму литр считается физически невозвратным: отмена
+        документа НЕ восстановит остаток по этим строкам.
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Деталь</th>
+            <th class="num--qty">Объём</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in oil_excluded_lines %}
+            <tr>
+              <td>{{ line.part_type.name }}</td>
+              <td class="num--qty">{{ line.quantity|quantity_with_unit:line.part_type }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}

@@ -42,11 +42,24 @@ class RepairError(Exception):
 
 
 def _freeze_repair_line_cost(line: RepairIssueLine) -> None:
-    """Заморозить себестоимость строки на момент выдачи (из landed cost объекта)."""
+    """Заморозить себестоимость строки на момент выдачи (из landed cost объекта).
+
+    Для масла сумма клиента пересчитывается из замороженных на добавлении
+    package price/volume - идемпотентно, той же формулой, что и на
+    добавлении строки (см. `add_oil_volume_to_repair_order`).
+    """
     if line.part_item_id:
         unit_cost = line.part_item.landed_cost_rub
     else:
         unit_cost = line.stock_lot.landed_unit_cost_rub
+    if line.oil_package_volume_l_snapshot is not None and line.oil_package_price_rub_snapshot is not None:
+        from apps.inventory.pricing import oil_line_amount_rub
+
+        line.oil_customer_amount_rub_snapshot = oil_line_amount_rub(
+            package_price_rub=line.oil_package_price_rub_snapshot,
+            package_volume_l=line.oil_package_volume_l_snapshot,
+            used_volume_l=line.quantity,
+        )
     line.unit_cost_rub = unit_cost
     line.total_cost_rub = money(unit_cost * line.quantity)
 
@@ -172,6 +185,59 @@ def add_stock_lot_to_repair_order(
 
 
 @transaction.atomic
+def add_oil_volume_to_repair_order(order, lot, volume_l, *, note="", by=None) -> RepairIssueLine:
+    """Добавить в заказ объём залитого масла (в литрах) из лота.
+
+    Цена клиента считается от текущей цены упаковки и объёма упаковки, как
+    в `apps.sales.services.add_oil_volume_to_sale`, и замораживается на
+    строке. Оператор вводит только объём.
+    """
+    from apps.inventory.pricing import oil_line_amount_rub, resolve_oil_package_price_rub
+
+    order = RepairOrder.objects.select_for_update().get(pk=order.pk)
+    _ensure_draft(order)
+    try:
+        volume_l = Decimal(volume_l)
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        raise RepairError("Некорректный объём.") from exc
+    if volume_l <= 0:
+        raise RepairError("Объём должен быть больше нуля.")
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if not lot.part_type.is_oil:
+        raise RepairError("Эта деталь не масло - добавьте её обычным способом.")
+    if lot.status != StockLot.Status.AVAILABLE:
+        raise RepairError("Выдать в ремонт можно только доступный лот.")
+    package_volume_l = lot.part_type.oil_package_volume_l
+    package_price_rub = resolve_oil_package_price_rub(lot.part_type)
+    if package_volume_l is None or package_price_rub is None:
+        raise RepairError("У масла не задана цена упаковки - выдать без неё нельзя.")
+    reserved = active_reserved_for_lot(lot)
+    already_in_order = RepairIssueLine.objects.filter(
+        repair_order=order, stock_lot=lot
+    ).aggregate(s=Sum("quantity"))["s"] or Decimal("0")
+    available = lot.quantity - reserved - already_in_order
+    if volume_l > available:
+        raise RepairError(
+            f"Недостаточно в лоте: доступно для выдачи {available} л, запрошено {volume_l} л."
+        )
+    amount = oil_line_amount_rub(
+        package_price_rub=package_price_rub,
+        package_volume_l=package_volume_l,
+        used_volume_l=volume_l,
+    )
+    unit_price = money(package_price_rub / package_volume_l)
+    return RepairIssueLine.objects.create(
+        repair_order=order, part_type=lot.part_type, stock_lot=lot,
+        batch=lot.batch, batch_line=lot.batch_line,
+        quantity=volume_l, note=(note or "").strip(),
+        customer_unit_price_rub=unit_price,
+        oil_package_volume_l_snapshot=package_volume_l,
+        oil_package_price_rub_snapshot=package_price_rub,
+        oil_customer_amount_rub_snapshot=amount,
+    )
+
+
+@transaction.atomic
 def remove_repair_line(line, *, by=None) -> None:
     """Снять позицию из черновика заказа."""
     line = (
@@ -235,7 +301,12 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
             line.part_item = item
             _freeze_repair_line_cost(line)
             line.issued_at = now
-            line.save(update_fields=["unit_cost_rub", "total_cost_rub", "issued_at"])
+            line.save(
+                update_fields=[
+                    "unit_cost_rub", "total_cost_rub", "issued_at",
+                    "oil_customer_amount_rub_snapshot",
+                ]
+            )
             issue_part_item(item, by=by, document_id=order.pk, comment=f"Ремонт {order.number}")
         else:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
@@ -250,7 +321,12 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
             line.stock_lot = lot
             _freeze_repair_line_cost(line)
             line.issued_at = now
-            line.save(update_fields=["unit_cost_rub", "total_cost_rub", "issued_at"])
+            line.save(
+                update_fields=[
+                    "unit_cost_rub", "total_cost_rub", "issued_at",
+                    "oil_customer_amount_rub_snapshot",
+                ]
+            )
             issue_stock_lot(
                 lot, line.quantity, by=by, document_id=order.pk, comment=f"Ремонт {order.number}"
             )
@@ -274,6 +350,18 @@ def repair_cancellation_returns(order) -> list:
     ))
     returned = completed_returned_quantities(lines, source_field="source_repair_line_id")
     return cancellation_allocations(lines, returned)
+
+
+@transaction.atomic
+def repair_cancellation_oil_excluded(order) -> list:
+    """Предпросмотр: строки масла, которые отмена НЕ восстановит на склад."""
+    from apps.returns.services import completed_returned_quantities, oil_lines_excluded_from_cancellation
+
+    if order.status != RepairOrder.Status.COMPLETED:
+        return []
+    lines = list(order.lines.select_related("part_type"))
+    returned = completed_returned_quantities(lines, source_field="source_repair_line_id")
+    return oil_lines_excluded_from_cancellation(lines, returned)
 
 
 def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
@@ -499,17 +587,29 @@ def repair_customer_line_prices(lines):
 
 
 def repair_customer_line_amounts(lines):
-    """Net customer amount per issue line; ``None`` means price setup is required."""
+    """Net customer amount per issue line; ``None`` means price setup is required.
+
+    An oil line with a frozen ``oil_customer_amount_rub_snapshot`` uses that
+    exact amount directly rather than ``price × remaining``: the per-liter
+    price was already rounded once for display, so re-multiplying it would
+    risk the cumulative-drift bug ``oil_line_amount_rub`` exists to avoid
+    (see apps.inventory.pricing). This is safe because oil issue lines are
+    never partially returned (apps.returns.services rejects it), so
+    ``remaining`` always equals the full frozen quantity for them.
+    """
     lines = list(lines)
     returned = repair_returned_quantities(lines)
     prices = repair_customer_line_prices(lines)
     amounts = {}
     for line in lines:
         remaining = max(line.quantity - (returned.get(line.pk) or Decimal("0")), Decimal("0"))
-        price = prices[line.pk].unit_price_rub
-        amounts[line.pk] = (
-            Decimal("0") if not remaining else None if price is None else money(price * remaining)
-        )
+        if not remaining:
+            amounts[line.pk] = Decimal("0")
+        elif line.oil_customer_amount_rub_snapshot is not None:
+            amounts[line.pk] = line.oil_customer_amount_rub_snapshot
+        else:
+            price = prices[line.pk].unit_price_rub
+            amounts[line.pk] = None if price is None else money(price * remaining)
     return amounts
 
 
@@ -529,6 +629,7 @@ def repair_customer_amounts(orders):
             "part_type_id",
             "quantity",
             "customer_unit_price_rub",
+            "oil_customer_amount_rub_snapshot",
         )
     )
     line_amounts = repair_customer_line_amounts(lines)

@@ -148,6 +148,26 @@ class RepairIssueLine(models.Model):
         blank=True,
         help_text="Снимок цены клиента. Пусто означает, что цена не была зафиксирована.",
     )
+    # Масло: те же поля и то же назначение, что у SaleLine (см. её докстринг) -
+    # package price/volume, из которых была посчитана цена за литр, заморожены
+    # на момент добавления строки. Пусто для обычных строк.
+    oil_package_volume_l_snapshot = models.DecimalField(
+        "Объём упаковки (снимок, л)", max_digits=8, decimal_places=3,
+        null=True, blank=True, editable=False,
+    )
+    oil_package_price_rub_snapshot = models.DecimalField(
+        "Цена упаковки (снимок, ₽)", max_digits=12, decimal_places=2,
+        null=True, blank=True, editable=False,
+    )
+    # Итоговая сумма клиента по маслу, посчитанная один раз с точным (не
+    # заранее округлённым) делением package_price/package_volume - иначе
+    # `customer_unit_price_rub × quantity` копил бы копейку дрейфа на
+    # неровно делящихся упаковках (см. apps.inventory.pricing.oil_line_amount_rub).
+    # Пусто для обычных строк.
+    oil_customer_amount_rub_snapshot = models.DecimalField(
+        "Сумма клиента за масло (снимок, ₽)", max_digits=14, decimal_places=2,
+        null=True, blank=True, editable=False,
+    )
     note = models.CharField("Примечание", max_length=255, blank=True)
     issued_at = models.DateTimeField("Выдано (когда)", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
