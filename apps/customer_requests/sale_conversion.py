@@ -120,6 +120,16 @@ def _add_request_stock_lines(sale: Sale, request: CustomerRequest, *, by=None) -
             raise CustomerRequestSaleError(
                 f"{request_line.part_name}: это запрос о поставке, а не продажная позиция."
             )
+        if request_line.part_type.is_oil:
+            # V1: публичная заявка на масло - пакетная (quantity_requested = число
+            # упаковок), а не литры. Автоматически перенести её в строку продажи
+            # здесь означало бы взять это число как ЛИТРЫ по цене УПАКОВКИ за
+            # литр - и неверный объём, и цена в разы завышена. Позицию
+            # пропускаем: оператор добавляет масло в уже подготовленный
+            # черновик вручную (раздел «Масло» на карточке продажи), указывая
+            # реальный отпускаемый объём. См. _validate_request_sale_lines и
+            # complete_request_sale - обе явно знают про этот пропуск.
+            continue
 
         remaining = request_line.quantity_requested
         item_ids = list(
@@ -196,15 +206,25 @@ def prepare_request_sale(
 
 
 def _validate_request_sale_lines(request: CustomerRequest, sale: Sale) -> dict[int, Decimal]:
+    request_lines = [line for line in request.lines.all() if not line.is_supply_inquiry]
+    # Масло: заявка считает упаковками, строка продажи - литрами (её вручную
+    # добавляет оператор через apps.sales.services.add_oil_volume_to_sale) -
+    # эти числа НИКОГДА не совпадут по построению, поэтому для масла
+    # проверяется только «позиция добавлена», а не точное количество.
     expected = {
         line.part_type_id: line.quantity_requested
-        for line in request.lines.all()
-        if not line.is_supply_inquiry
+        for line in request_lines
+        if not line.part_type.is_oil
     }
+    expected_oil_ids = {line.part_type_id for line in request_lines if line.part_type.is_oil}
     actual = {}
-    for line in sale.lines.all():
+    actual_oil_ids = set()
+    for line in sale.lines.select_related("part_type"):
+        if line.part_type.is_oil:
+            actual_oil_ids.add(line.part_type_id)
+            continue
         actual[line.part_type_id] = actual.get(line.part_type_id, Decimal("0")) + line.quantity
-    if actual != expected:
+    if actual != expected or not expected_oil_ids <= actual_oil_ids:
         raise CustomerRequestSaleError(
             "Состав черновика изменён. Сверьте позиции заявки перед проведением."
         )
@@ -230,9 +250,17 @@ def complete_request_sale(*, request_id: int, sale_id: int, by=None) -> Sale:
         raise CustomerRequestSaleError("Сначала подтвердите карточку клиента.")
 
     _validate_request_sale_lines(request, sale)
-    part_types = {line.part_type for line in sale.lines.select_related("part_type")}
+    part_types = {
+        line.part_type for line in sale.lines.select_related("part_type")
+        if not line.part_type.is_oil
+    }
     prices = resolve_current_customer_prices(part_types)
     for line in sale.lines.select_for_update().select_related("part_type"):
+        if line.part_type.is_oil:
+            # Цена/сумма уже верно посчитаны и заморожены при ручном
+            # добавлении (add_oil_volume_to_sale) - price здесь была бы
+            # ценой УПАКОВКИ, а не за литр, и испортила бы строку.
+            continue
         price = prices[line.part_type_id].price_rub
         if price is None or price <= 0:
             raise CustomerRequestSaleError(
