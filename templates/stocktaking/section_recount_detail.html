@@ -120,10 +120,11 @@
                                  step="0.001"
                                  value="{{ line.quantity }}"
                                  required>
+                          {{ line.part_type|part_quantity_unit }}
                           <button type="submit">OK</button>
                         </form>
                       {% else %}
-                        {{ line.quantity|quantity_int }}
+                        {{ line.quantity|quantity_with_unit:line.part_type }}
                       {% endif %}
                     </td>
                     <td>

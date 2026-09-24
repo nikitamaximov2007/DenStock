@@ -337,6 +337,17 @@ def add_candidate(session, candidate: ReceivingCandidate) -> tuple[dict, bool]:
         raise ReceivingQueueError(
             "Эта карточка учитывается по экземплярам. Сканируйте ITEM:/DS-номер или серийник."
         )
+    if candidate.part_id is not None and PartType.objects.filter(
+        pk=candidate.part_id, is_oil=True
+    ).exists():
+        # «+1 за скан» здесь всегда целое количество единиц сканирования, а
+        # для масла количество означает литры - целое «+1» было бы
+        # неоднозначным (ещё канистра? ещё литр?) и молча исказило бы остаток.
+        raise ReceivingQueueError(
+            "Масло нельзя принять сканированием «плюс один»: количество для "
+            "него - литры, а не штуки. Используйте приёмку партии или "
+            "инвентаризацию ячейки."
+        )
     queue = load_queue(session)
     guidance = _location_guidance(candidate.part_id)
     location_id = guidance["location_id"]

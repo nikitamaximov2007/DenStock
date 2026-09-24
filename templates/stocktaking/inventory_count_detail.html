@@ -54,7 +54,7 @@
             {{ line.location.short_code }}
             <span class="muted">· лот #{{ line.stock_lot_id }}</span>
           </td>
-          <td>{{ line.expected_quantity|quantity_int }}</td>
+          <td>{{ line.expected_quantity|quantity_with_unit:line.part_type }}</td>
           <td>
             {% if can_manage and is_draft %}
               <form method="post"
@@ -67,17 +67,18 @@
                        min="0"
                        value="{{ line.counted_quantity|default_if_none:'' }}"
                        required>
+                {{ line.part_type|part_quantity_unit }}
                 <button type="submit">OK</button>
               </form>
             {% else %}
-              {{ line.counted_quantity|default_if_none:"·"|quantity_int }}
+              {{ line.counted_quantity|default_if_none:"·"|quantity_with_unit:line.part_type }}
             {% endif %}
           </td>
           <td>
             {% if line.difference is None %}
               ·
             {% else %}
-              {{ line.difference|quantity_int }}
+              {{ line.difference|quantity_with_unit:line.part_type }}
             {% endif %}
           </td>
           {% if show_costs %}<td>{{ line.unit_cost_rub|money_int }}</td>{% endif %}
