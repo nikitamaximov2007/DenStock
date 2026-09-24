@@ -295,8 +295,15 @@
             {% else %}
               не указана
             {% endif %}
-            · <strong>Доступно: {{ overview.total_available|quantity_int }}</strong>
+            · <strong>Доступно: {{ overview.total_available|quantity_with_unit:overview.part }}</strong>
           </p>
+          {% if overview.part.is_oil %}
+            <p class="muted">
+              Масло: объём упаковки {{ overview.part.oil_package_volume_l|quantity_int }} л.
+              Сканер действий маслом не торгует - добавьте его в продаже или
+              ремонте (раздел «Масло»): там нужен объём, а не штука.
+            </p>
+          {% endif %}
           {% if overview.lookup.alias_message %}<p class="muted">{{ overview.lookup.alias_message }}</p>{% endif %}
           <p class="muted">
             {% if part_photo_exists %}
