@@ -163,8 +163,11 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
     declared = (info.manufacturer.strip().upper() if info is not None else "")
     if info is None:
         live = ""
-    elif facts is not None and _normalized_manufacturer(declared) == "BRP":
-        live = resolved
+    elif facts is not None:
+        # authoritative_manufacturer() only re-proves the legacy BRP default;
+        # every other declared value is already authoritative.  Keep the bulk
+        # path query-free while preserving that exact read-time rule.
+        live = resolved if _normalized_manufacturer(declared) == "BRP" else declared
     else:
         live = authoritative_manufacturer(part, declared, number)
     stale_brp = _normalized_manufacturer(declared) == "BRP" and declared != live
