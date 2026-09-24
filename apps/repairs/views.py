@@ -44,6 +44,7 @@ from .services import (
     complete_repair_order,
     create_repair_order,
     remove_repair_line,
+    repair_cancellation_oil_excluded,
     repair_cancellation_returns,
     repair_customer_line_amounts,
     repair_customer_line_prices,
@@ -380,6 +381,7 @@ def repair_order_cancel_confirm(request, pk):
             "order": order,
             "form": RepairCancellationForm(),
             "return_allocations": repair_cancellation_returns(order),
+            "oil_excluded_lines": repair_cancellation_oil_excluded(order),
         },
     )
 

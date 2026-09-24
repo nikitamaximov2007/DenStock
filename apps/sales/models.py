@@ -244,6 +244,20 @@ class SaleLine(models.Model):
     )
     unmarked_price_source = models.CharField(max_length=20, blank=True, editable=False)
     unmarked_price_snapshot_note = models.CharField(max_length=80, blank=True, editable=False)
+    # Масло: package price/volume используемые для цены за литр этой строки,
+    # заморожены на момент добавления строки - иначе последующее изменение
+    # PartType.oil_package_volume_l/recommended_price переписало бы историю.
+    # Пусто для обычных (не масляных) строк. quantity уже означает литры,
+    # unit_price уже означает цену за литр - новых полей для самой продажи не
+    # нужно, только для того, ИЗ ЧЕГО она была посчитана.
+    oil_package_volume_l_snapshot = models.DecimalField(
+        "Объём упаковки (снимок, л)", max_digits=8, decimal_places=3,
+        null=True, blank=True, editable=False,
+    )
+    oil_package_price_rub_snapshot = models.DecimalField(
+        "Цена упаковки (снимок, ₽)", max_digits=12, decimal_places=2,
+        null=True, blank=True, editable=False,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

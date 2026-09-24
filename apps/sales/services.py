@@ -412,19 +412,45 @@ def _ensure_sale_draft(sale: Sale) -> None:
 
 
 def _freeze_line_costs(line: SaleLine) -> None:
-    """Заморозить цену и landed-себестоимость строки на момент продажи."""
+    """Заморозить цену и landed-себестоимость строки на момент продажи.
+
+    Для масла сумма строки пересчитывается из замороженных на добавлении
+    package price/volume (`oil_line_amount_rub`), а НЕ из
+    `unit_price × quantity`: `unit_price` - округлённая до копеек цена за
+    литр для отображения, а точная сумма считается делением без
+    промежуточного округления (см. apps.inventory.pricing.oil_line_amount_rub).
+    Пересчёт здесь идемпотентен - те же снимки дают ту же сумму, что была
+    показана в черновике.
+    """
     if line.part_item_id:
         unit_cost = line.part_item.landed_cost_rub
     else:
         unit_cost = line.stock_lot.landed_unit_cost_rub
-    line.total_price = money(line.unit_price * line.quantity)
+    if line.oil_package_volume_l_snapshot is not None and line.oil_package_price_rub_snapshot is not None:
+        from apps.inventory.pricing import oil_line_amount_rub
+
+        line.total_price = oil_line_amount_rub(
+            package_price_rub=line.oil_package_price_rub_snapshot,
+            package_volume_l=line.oil_package_volume_l_snapshot,
+            used_volume_l=line.quantity,
+        )
+    else:
+        line.total_price = money(line.unit_price * line.quantity)
     line.unit_cost_rub = unit_cost
     line.total_cost_rub = money(unit_cost * line.quantity)
     line.profit_rub = money(line.total_price - line.total_cost_rub)
 
 
 def _freeze_line_unmarked_price(line: SaleLine) -> None:
-    """Freeze the authoritative customer-price base, never landed cost."""
+    """Freeze the authoritative customer-price base, never landed cost.
+
+    For an oil line, the resolved dealer base is PACKAGE-scale (same
+    convention as the customer package price - see
+    apps.inventory.pricing), so it is converted to a PER-LITER RUB base here.
+    That keeps `quantity` (already liters for oil) × this snapshot exactly
+    correct for the sales report's `cost = Σ base × quantity`, with no
+    change needed to the already-qualified get_sales_report().
+    """
     from apps.sales.pricing_snapshots import capture_current_unmarked_price
 
     snapshot, reason = capture_current_unmarked_price(line.part_type)
@@ -435,7 +461,12 @@ def _freeze_line_unmarked_price(line: SaleLine) -> None:
         line.unmarked_price_source = ""
         line.unmarked_price_snapshot_note = reason
         return
-    line.unmarked_unit_price_rub_snapshot = snapshot.unmarked_unit_price_rub
+    if line.oil_package_volume_l_snapshot is not None:
+        line.unmarked_unit_price_rub_snapshot = money(
+            snapshot.unmarked_unit_price_rub / line.oil_package_volume_l_snapshot
+        )
+    else:
+        line.unmarked_unit_price_rub_snapshot = snapshot.unmarked_unit_price_rub
     line.unmarked_dealer_unit_usd_snapshot = snapshot.dealer_unit_usd
     line.unmarked_usd_rate_snapshot = snapshot.usd_rate
     line.unmarked_price_source = snapshot.source
@@ -491,6 +522,61 @@ def add_stock_lot_to_sale(sale, lot, quantity, *, unit_price, by=None) -> SaleLi
         batch=lot.batch, batch_line=lot.batch_line,
         quantity=quantity, unit_price=unit_price,
         total_price=money(unit_price * quantity),
+    )
+
+
+@transaction.atomic
+def add_oil_volume_to_sale(sale, lot, volume_l, *, by=None) -> SaleLine:
+    """Добавить в продажу объём масла (в литрах) из лота.
+
+    Цена не спрашивается у оператора: она считается от текущей цены упаковки
+    (`PartType.recommended_price`) и объёма упаковки
+    (`PartType.oil_package_volume_l`) в момент добавления и замораживается
+    на строке (`oil_package_*_snapshot`), чтобы более позднее изменение этих
+    настроек не переписало уже показанную сумму.
+    """
+    from apps.inventory.pricing import oil_line_amount_rub, resolve_oil_package_price_rub
+
+    sale = Sale.objects.select_for_update().get(pk=sale.pk)
+    _ensure_sale_draft(sale)
+    try:
+        volume_l = Decimal(volume_l)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise SaleError("Некорректный объём.") from exc
+    if volume_l <= 0:
+        raise SaleError("Объём должен быть больше нуля.")
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if not lot.part_type.is_oil:
+        raise SaleError("Эта деталь не масло - добавьте её обычным способом.")
+    if lot.status != StockLot.Status.AVAILABLE:
+        raise SaleError("Продать можно только доступный лот.")
+    package_volume_l = lot.part_type.oil_package_volume_l
+    package_price_rub = resolve_oil_package_price_rub(lot.part_type)
+    if package_volume_l is None or package_price_rub is None:
+        raise SaleError("У масла не задана цена упаковки - продать без неё нельзя.")
+    reserved_others = _active_reserved_for_lot(lot, exclude=sale.reservation)
+    already_in_sale = (
+        SaleLine.objects.filter(sale=sale, stock_lot=lot)
+        .aggregate(s=Sum("quantity"))["s"]
+        or Decimal("0")
+    )
+    available = lot.quantity - reserved_others - already_in_sale
+    if volume_l > available:
+        raise SaleError(
+            f"Недостаточно: доступно для продажи {available} л, запрошено {volume_l} л."
+        )
+    total_price = oil_line_amount_rub(
+        package_price_rub=package_price_rub,
+        package_volume_l=package_volume_l,
+        used_volume_l=volume_l,
+    )
+    unit_price = money(package_price_rub / package_volume_l)
+    return SaleLine.objects.create(
+        sale=sale, part_type=lot.part_type, stock_lot=lot,
+        batch=lot.batch, batch_line=lot.batch_line,
+        quantity=volume_l, unit_price=unit_price, total_price=total_price,
+        oil_package_volume_l_snapshot=package_volume_l,
+        oil_package_price_rub_snapshot=package_price_rub,
     )
 
 
@@ -764,6 +850,18 @@ def sale_cancellation_returns(sale) -> list:
     ))
     returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
     return cancellation_allocations(lines, returned)
+
+
+@transaction.atomic
+def sale_cancellation_oil_excluded(sale) -> list:
+    """Предпросмотр: строки масла, которые отмена НЕ восстановит на склад."""
+    from apps.returns.services import completed_returned_quantities, oil_lines_excluded_from_cancellation
+
+    if sale.status != Sale.Status.COMPLETED:
+        return []
+    lines = list(sale.lines.select_related("part_type"))
+    returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
+    return oil_lines_excluded_from_cancellation(lines, returned)
 
 
 def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
