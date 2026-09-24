@@ -56,6 +56,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.actions.management.commands.audit_customs_manufacturer_classification import (
+    ClassificationFacts,
     classify_part,
 )
 from apps.actions.models import PartCustomsInfo
@@ -93,12 +94,16 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         apply = options["apply"]
         clear_unproven = options["clear_unproven"]
+        facts = ClassificationFacts()
         parts = (
             PartType.objects.select_related("category", "manufacturer", "customs_info")
-            .prefetch_related("numbers")
             .order_by("pk")
         )
-        rows = [row for row in (classify_part(part) for part in parts) if row["has_customs_info"]]
+        rows = [
+            row for row in
+            (classify_part(part, facts=facts) for part in parts.iterator(chunk_size=1000))
+            if row["has_customs_info"]
+        ]
 
         tier1 = [row for row in rows if row["stale_brp_high_confidence"]]
         tier2 = [row for row in rows if row["stale_brp_ambiguous"]]

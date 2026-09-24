@@ -22,11 +22,14 @@ rewrite historical documents. This file proves the two-layer answer:
    evidence at all to unknown - the task explicitly wants a human gate before
    that step even though nothing else could have produced it.
 """
+import json
 from decimal import Decimal
 from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
@@ -224,6 +227,26 @@ def _run_repair(*args):
     out = StringIO()
     call_command("repair_customs_manufacturers", *args, stdout=out)
     return out.getvalue()
+
+
+def test_manufacturer_audit_uses_bounded_queries(env):
+    _stale_brp_part(env, name="BRONCO ДЕТАЛЬ", article="AUDIT-BRONCO", manufacturer_name="BRONCO")
+    _stale_brp_part(env, name="ЗАГАДКА", article="AUDIT-UNKNOWN")
+    output = StringIO()
+    with CaptureQueriesContext(connection) as queries:
+        call_command(
+            "audit_customs_manufacturer_classification",
+            "--json",
+            "--list",
+            "0",
+            stdout=output,
+        )
+
+    payload = json.loads(output.getvalue())
+    assert payload["parts_with_customs_info"] == 2
+    assert payload["stale_brp_high_confidence"] == 1
+    assert payload["stale_brp_ambiguous_needs_owner_review"] == 1
+    assert len(queries.captured_queries) <= 20
 
 
 def test_repair_dry_run_writes_nothing(env):

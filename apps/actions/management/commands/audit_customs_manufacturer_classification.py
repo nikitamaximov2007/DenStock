@@ -39,9 +39,12 @@ from apps.actions.services import (
     is_brp_export_eligible,
     manual_part_name_ru,
 )
-from apps.catalog.models import PartType
+from apps.brp.models import BrpCatalogPart, BrpPartLink
+from apps.catalog.models import PartNumber, PartType, normalize_number
 from apps.catalog.services import MANUAL_CATEGORY_NAME
+from apps.catalog_import.models import AftermarketCatalogPart
 from apps.inventory.presentation import part_exact_number
+from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 
 _BUCKET_LABELS = {
     "brp": "A. proven BRP",
@@ -57,6 +60,70 @@ _NAME_BY_BUCKET = {
 }
 
 
+class ClassificationFacts:
+    """Bulk read-only manufacturer evidence for the whole catalog."""
+
+    def __init__(self):
+        self.brp_by_part = dict(
+            BrpPartLink.objects.values_list("part_id", "brp_part__material_no")
+        )
+        self.polaris_by_part = dict(
+            PolarisPartLink.objects.values_list("part_id", "polaris_part__part_number")
+        )
+        self.aftermarket_by_part = {}
+        self.aftermarket_by_number = {}
+        aftermarket_rows = AftermarketCatalogPart.objects.order_by("pk").values_list(
+            "part_id", "normalized_manufacturer_number", "manufacturer__name"
+        )
+        for part_id, number, manufacturer in aftermarket_rows:
+            self.aftermarket_by_part[part_id] = manufacturer
+            self.aftermarket_by_number.setdefault(number, manufacturer)
+        self.brp_numbers = set(
+            BrpCatalogPart.objects.filter(is_current=True).values_list(
+                "material_no_norm", flat=True
+            )
+        )
+        self.polaris_numbers = set(
+            PolarisCatalogPart.objects.values_list("part_number_norm", flat=True)
+        )
+        self.exact_numbers = {}
+        exact_numbers = PartNumber.objects.filter(
+            kind__in=(PartNumber.Kind.OEM, PartNumber.Kind.ARTICLE)
+        ).order_by("-is_primary", "pk").values_list("part_id", "value")
+        for part_id, value in exact_numbers:
+            self.exact_numbers.setdefault(part_id, value)
+
+    def number_for(self, part) -> str:
+        if part.pk in self.brp_by_part:
+            return self.brp_by_part[part.pk]
+        if part.pk in self.polaris_by_part:
+            return self.polaris_by_part[part.pk]
+        return self.exact_numbers.get(part.pk, "")
+
+    def has_direct_catalog(self, part) -> bool:
+        return (
+            part.pk in self.brp_by_part
+            or part.pk in self.polaris_by_part
+            or part.pk in self.aftermarket_by_part
+        )
+
+    def resolved_manufacturer(self, part, number: str) -> str:
+        if part.pk in self.brp_by_part:
+            return "BRP"
+        if part.pk in self.polaris_by_part:
+            return "POLARIS"
+        if part.pk in self.aftermarket_by_part:
+            return self.aftermarket_by_part[part.pk].strip().upper()
+        normalized = normalize_number(number)
+        if normalized in self.brp_numbers:
+            return "BRP"
+        if normalized in self.polaris_numbers:
+            return "POLARIS"
+        if normalized in self.aftermarket_by_number:
+            return self.aftermarket_by_number[normalized].strip().upper()
+        return (part.manufacturer.name if part.manufacturer_id else "").strip().upper()
+
+
 def _bucket_for(resolved: str) -> str:
     normalized = _normalized_manufacturer(resolved)
     for bucket, name in _NAME_BY_BUCKET.items():
@@ -65,7 +132,7 @@ def _bucket_for(resolved: str) -> str:
     return "unknown_manual" if not resolved else "other"
 
 
-def classify_part(part: PartType) -> dict:
+def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -> dict:
     """Доказанная категория детали, живое чтение и сохранённая карточка.
 
     Три разных значения, три разных вопроса:
@@ -85,12 +152,21 @@ def classify_part(part: PartType) -> dict:
       небрендовый default не существовал).
     """
     is_manual = part.category.name == MANUAL_CATEGORY_NAME
-    number = part_exact_number(part, default="")
-    resolved = catalog_or_explicit_manufacturer(part, number)
+    number = facts.number_for(part) if facts is not None else part_exact_number(part, default="")
+    resolved = (
+        facts.resolved_manufacturer(part, number)
+        if facts is not None
+        else catalog_or_explicit_manufacturer(part, number)
+    )
     bucket = _bucket_for(resolved)
     info = getattr(part, "customs_info", None)
     declared = (info.manufacturer.strip().upper() if info is not None else "")
-    live = authoritative_manufacturer(part, declared, number) if info is not None else ""
+    if info is None:
+        live = ""
+    elif facts is not None and _normalized_manufacturer(declared) == "BRP":
+        live = resolved
+    else:
+        live = authoritative_manufacturer(part, declared, number)
     stale_brp = _normalized_manufacturer(declared) == "BRP" and declared != live
     return {
         "part": part,
@@ -118,7 +194,12 @@ def classify_part(part: PartType) -> dict:
         "stale_brp_ambiguous": stale_brp and not resolved,
         "has_customs_info": info is not None,
         "name_ru_declared": (info.customs_name_ru.strip() if info is not None else ""),
-        "usable_manual_name_ru": manual_part_name_ru(part),
+        "usable_manual_name_ru": (
+            part.name.strip()
+            if facts is not None and is_manual and not facts.has_direct_catalog(part)
+            else manual_part_name_ru(part)
+        ),
+        "article": number,
     }
 
 
@@ -138,51 +219,66 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        facts = ClassificationFacts()
         parts = (
             PartType.objects.select_related("category", "manufacturer", "customs_info")
-            .prefetch_related("numbers")
             .order_by("pk")
         )
-        rows = [classify_part(part) for part in parts]
-
-        manual_rows = [row for row in rows if row["is_manual"]]
-        with_info = [row for row in rows if row["has_customs_info"]]
+        limit = options["list_limit"]
+        samples = {"unproven_manual_brp": [], "misclassified": [], "name_gap": []}
+        totals = {key: 0 for key in samples}
+        manual_part_types_total = 0
+        manual_with_customs_info = 0
+        parts_with_customs_info = 0
         bucket_counts = {bucket: 0 for bucket in _BUCKET_LABELS}
-        for row in rows:
-            bucket_counts[row["bucket"]] += 1
+        currently_marked_brp = 0
+        currently_eligible = 0
+        should_be_eligible = 0
+        stale_high = 0
+        stale_ambiguous = 0
 
-        currently_marked_brp = [row for row in with_info if row["currently_marked_brp"]]
-        misclassified = [row for row in with_info if row["classification_would_change"]]
-        currently_eligible = [row for row in with_info if row["currently_eligible"]]
-        should_be_eligible = [row for row in rows if row["should_be_eligible"]]
-        stale_high = [row for row in with_info if row["stale_brp_high_confidence"]]
-        stale_ambiguous = [row for row in with_info if row["stale_brp_ambiguous"]]
-        name_gap = [
-            row for row in with_info
-            if not row["name_ru_declared"] and row["usable_manual_name_ru"]
-        ]
+        def collect(key, row):
+            totals[key] += 1
+            if len(samples[key]) < limit:
+                samples[key].append(row)
+
+        for part in parts.iterator(chunk_size=1000):
+            row = classify_part(part, facts=facts)
+            bucket_counts[row["bucket"]] += 1
+            manual_part_types_total += row["is_manual"]
+            parts_with_customs_info += row["has_customs_info"]
+            manual_with_customs_info += row["is_manual"] and row["has_customs_info"]
+            should_be_eligible += row["should_be_eligible"]
+            if row["has_customs_info"]:
+                currently_marked_brp += row["currently_marked_brp"]
+                currently_eligible += row["currently_eligible"]
+                stale_high += row["stale_brp_high_confidence"]
+                stale_ambiguous += row["stale_brp_ambiguous"]
+                if row["classification_would_change"]:
+                    collect("misclassified", row)
+                if not row["name_ru_declared"] and row["usable_manual_name_ru"]:
+                    collect("name_gap", row)
+                if row["currently_marked_brp"] and row["is_manual"] and row["bucket"] != "brp":
+                    collect("unproven_manual_brp", row)
 
         payload = {
-            "part_types_total": len(rows),
-            "manual_part_types_total": len(manual_rows),
-            "manual_with_customs_info": sum(1 for row in manual_rows if row["has_customs_info"]),
-            "parts_with_customs_info": len(with_info),
+            "part_types_total": sum(bucket_counts.values()),
+            "manual_part_types_total": manual_part_types_total,
+            "manual_with_customs_info": manual_with_customs_info,
+            "parts_with_customs_info": parts_with_customs_info,
             **{f"bucket_{bucket}": bucket_counts[bucket] for bucket in _BUCKET_LABELS},
-            "currently_marked_brp": len(currently_marked_brp),
+            "currently_marked_brp": currently_marked_brp,
             "proven_brp": bucket_counts["brp"],
-            "currently_customs_export_eligible": len(currently_eligible),
-            "should_be_customs_export_eligible": len(should_be_eligible),
-            "classification_would_change": len(misclassified),
-            "manual_currently_marked_brp_unproven": sum(
-                1 for row in currently_marked_brp
-                if row["is_manual"] and row["bucket"] != "brp"
-            ),
+            "currently_customs_export_eligible": currently_eligible,
+            "should_be_customs_export_eligible": should_be_eligible,
+            "classification_would_change": totals["misclassified"],
+            "manual_currently_marked_brp_unproven": totals["unproven_manual_brp"],
             # Repair-таргеты: repair_customs_manufacturers --apply трогает
             # ТОЛЬКО stale_brp_high_confidence; stale_brp_ambiguous остаётся
             # в базе как есть и требует --clear-unproven для очистки.
-            "stale_brp_high_confidence": len(stale_high),
-            "stale_brp_ambiguous_needs_owner_review": len(stale_ambiguous),
-            "export_rows_missing_name_ru_with_usable_manual_name": len(name_gap),
+            "stale_brp_high_confidence": stale_high,
+            "stale_brp_ambiguous_needs_owner_review": stale_ambiguous,
+            "export_rows_missing_name_ru_with_usable_manual_name": totals["name_gap"],
         }
 
         if options["as_json"]:
@@ -195,38 +291,33 @@ class Command(BaseCommand):
             for key, value in payload.items():
                 self.stdout.write(f"{key}: {value}")
 
-        limit = options["list_limit"]
         if limit:
-            unproven_manual_brp = [
-                row for row in currently_marked_brp
-                if row["is_manual"] and row["bucket"] != "brp"
-            ]
             self._list_section(
                 "Ручные карточки, сейчас помеченные BRP без доказательства "
                 "(кандидаты на ручной пересмотр; НЕ трогать автоматически)",
-                unproven_manual_brp, limit,
+                samples["unproven_manual_brp"], totals["unproven_manual_brp"], limit,
             )
             self._list_section(
                 "Строки, чья классификация изменилась бы (declared != resolved)",
-                misclassified, limit,
+                samples["misclassified"], totals["misclassified"], limit,
             )
             self._list_section(
                 "Строки с готовым ручным русским названием, но пустым customs_name_ru",
-                name_gap, limit,
+                samples["name_gap"], totals["name_gap"], limit,
             )
 
-    def _list_section(self, title, rows, limit):
-        if not rows:
+    def _list_section(self, title, rows, total, limit):
+        if not total:
             return
         self.stdout.write("")
-        self.stdout.write(f"{title} ({len(rows)}):")
+        self.stdout.write(f"{title} ({total}):")
         for row in rows[:limit]:
             part = row["part"]
-            article = part.numbers.all()[0].value if part.numbers.all() else "-"
+            article = row["article"] or "-"
             self.stdout.write(
                 f"  PartType #{part.pk} [{article}]: "
                 f"declared={row['declared_manufacturer'] or '-'} "
                 f"resolved={row['resolved_manufacturer'] or '-'} bucket={row['bucket']}"
             )
-        if len(rows) > limit:
-            self.stdout.write(f"  ... и ещё {len(rows) - limit}")
+        if total > len(rows):
+            self.stdout.write(f"  ... и ещё {total - len(rows)}")
