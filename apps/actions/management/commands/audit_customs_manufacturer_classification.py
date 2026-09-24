@@ -200,6 +200,8 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
         "usable_manual_name_ru": (
             part.name.strip()
             if facts is not None and is_manual and not facts.has_direct_catalog(part)
+            else ""
+            if facts is not None
             else manual_part_name_ru(part)
         ),
         "article": number,
