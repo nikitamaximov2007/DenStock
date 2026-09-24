@@ -564,7 +564,16 @@ def test_customer_create_different_tokens_create_independent_customers(client, m
 
     base = {"name": "Допустимые тёзки", "phone": "+7 900 000-00-02", "comment": ""}
     client.post(reverse("customer_create"), {**base, "client_create_token": first_token})
-    client.post(reverse("customer_create"), {**base, "client_create_token": second_token})
+    # Второй запрос - тот же телефон, но другой (не повторный) токен: система
+    # честно предупреждает про дубликат и требует явного подтверждения, а не
+    # создаёт вторую карточку молча.
+    warned = client.post(reverse("customer_create"), {**base, "client_create_token": second_token})
+    assert warned.status_code == 200
+    assert Customer.objects.filter(name="Допустимые тёзки").count() == 1
+    client.post(
+        reverse("customer_create"),
+        {**base, "client_create_token": second_token, "confirm_duplicate": "1"},
+    )
 
     assert Customer.objects.filter(name="Допустимые тёзки").count() == 2
 

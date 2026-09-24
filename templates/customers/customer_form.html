@@ -24,6 +24,26 @@
         {% endif %}
         {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
         {{ form.non_field_errors }}
+        {% if duplicate_check %}
+          <div class="notice notice--warning">
+            {% if duplicate_check.is_multiple %}
+              <p>
+                По этому телефону уже есть несколько карточек. Создание новой
+                запрещено - выберите подходящую вручную:
+              </p>
+            {% else %}
+              <p>Уже есть карточка с этим телефоном:</p>
+            {% endif %}
+            <ul>
+              {% for match in duplicate_check.matches %}
+                <li>
+                  <a href="{% url 'customer_detail' match.pk %}">{{ match.name }}</a>
+                  {% if match.phone %}({{ match.phone }}){% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          </div>
+        {% endif %}
         <p>
           <label for="{{ form.name.id_for_label }}">Имя клиента</label>
           <br>
@@ -72,7 +92,19 @@
           {{ form.comment.errors }}
         </p>
         <div class="form-actions">
-          <button type="submit" class="btn btn--primary" data-client-create-submit>{% if customer %}Сохранить{% else %}Создать{% endif %}</button>
+          {% if duplicate_check and duplicate_check.is_multiple %}
+            <button type="submit" class="btn btn--primary" disabled>Создать</button>
+          {% else %}
+            <button type="submit"
+                    class="btn btn--primary"
+                    data-client-create-submit>{% if customer %}Сохранить{% else %}Создать{% endif %}</button>
+          {% endif %}
+          {% if duplicate_check and duplicate_check.is_single %}
+            <button type="submit"
+                    name="confirm_duplicate"
+                    value="1"
+                    class="btn btn--secondary">Всё равно создать новую карточку</button>
+          {% endif %}
         </div>
       </form>
     </div>

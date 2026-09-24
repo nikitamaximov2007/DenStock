@@ -19,8 +19,8 @@ from apps.sales.models import Reservation, Sale
 
 from .forms import CustomerForm
 from .legacy_linking import legacy_group_summary, link_legacy_group, suggest_identity
-from .models import Customer
-from .services import create_customer_idempotently, search_customers
+from .models import Customer, CustomerCreateIdempotency
+from .services import check_duplicate_phone, create_customer_idempotently, search_customers
 
 PAGE_SIZE = 50
 
@@ -87,7 +87,17 @@ def customer_list(request):
 
 @login_required
 def customer_create(request):
+    """Создать карточку клиента.
+
+    Совпадение канонического телефона с уже живой (не объединённой) карточкой
+    никогда не создаёт дубликат молча:
+
+    * ровно одно совпадение - показываем предупреждение с найденной карточкой
+      и требуем явного подтверждения «Всё равно создать новую»;
+    * несколько совпадений - создание запрещено, список для ручного разбора.
+    """
     _require_edit(request)
+    duplicate_check = None
     if request.method == "POST":
         form = CustomerForm(request.POST)
         try:
@@ -97,12 +107,31 @@ def customer_create(request):
             # carry a fresh UUID in the hidden field.
             create_token = uuid4()
         if form.is_valid():
-            customer, _created = create_customer_idempotently(form, token=create_token)
-            messages.success(request, f"Клиент {customer.name} создан.")
-            target = _return_to_new_customer_flow(request, customer)
-            if target:
-                return redirect(target)
-            return redirect("customer_detail", pk=customer.pk)
+            # Повтор ОДНОГО и того же запроса (тот же токен, уже завершённый
+            # ранее) - не новая карточка, а идемпотентный возврат существующей:
+            # проверка дубликата здесь неуместна и заблокировала бы легитимный
+            # повторный клик/ретрай сети.
+            is_replay = CustomerCreateIdempotency.objects.filter(
+                token=create_token, customer__isnull=False
+            ).exists()
+            phone = form.cleaned_data.get("phone") or ""
+            duplicate_check = None if is_replay else check_duplicate_phone(phone)
+            confirmed = request.POST.get("confirm_duplicate") == "1"
+            if duplicate_check is not None and duplicate_check.is_multiple:
+                messages.error(
+                    request,
+                    "По этому телефону уже есть несколько карточек - создание новой "
+                    "запрещено. Выберите подходящую вручную.",
+                )
+            elif duplicate_check is not None and duplicate_check.is_single and not confirmed:
+                pass  # falls through to render the warning below
+            else:
+                customer, _created = create_customer_idempotently(form, token=create_token)
+                messages.success(request, f"Клиент {customer.name} создан.")
+                target = _return_to_new_customer_flow(request, customer)
+                if target:
+                    return redirect(target)
+                return redirect("customer_detail", pk=customer.pk)
     else:
         form = CustomerForm(initial={"name": (request.GET.get("name") or "").strip()})
         create_token = uuid4()
@@ -115,6 +144,7 @@ def customer_create(request):
             "customer": None,
             "next": request.POST.get("next") or request.GET.get("next") or "",
             "client_create_token": str(create_token),
+            "duplicate_check": duplicate_check,
         },
     )
 

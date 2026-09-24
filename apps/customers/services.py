@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from dataclasses import dataclass
 
 from django.db import IntegrityError, transaction
 from django.db.models import DateTimeField, OuterRef, Q, Subquery, Value
@@ -47,10 +48,50 @@ def create_customer_idempotently(form, *, token):
         return customer, True
 
 
+@dataclass(frozen=True)
+class DuplicatePhoneCheck:
+    """Existing live Customer(s) already using this canonical phone."""
+
+    normalized_phone: str
+    matches: tuple
+
+    @property
+    def is_single(self) -> bool:
+        return len(self.matches) == 1
+
+    @property
+    def is_multiple(self) -> bool:
+        return len(self.matches) > 1
+
+
+def check_duplicate_phone(phone: str, *, exclude_id=None) -> DuplicatePhoneCheck | None:
+    """Live (not merged-away) Customers sharing this phone's canonical form.
+
+    ``None`` means no usable phone or no match - safe to create/save without
+    a warning. A non-empty result is never used to block automatically: the
+    caller (customer_create) decides what a single vs. multiple match means.
+    """
+    normalized = normalize_phone(phone)
+    if not normalized:
+        return None
+    queryset = Customer.objects.filter(phone_normalized=normalized, merged_into__isnull=True)
+    if exclude_id is not None:
+        queryset = queryset.exclude(pk=exclude_id)
+    matches = tuple(queryset.order_by("pk"))
+    if not matches:
+        return None
+    return DuplicatePhoneCheck(normalized_phone=normalized, matches=matches)
+
+
 def search_customers(query: str, *, limit: int = SEARCH_LIMIT):
-    """Клиенты по имени (подстрока) или телефону в любом привычном формате."""
+    """Клиенты по имени (подстрока) или телефону в любом привычном формате.
+
+    Объединённые (merged_into) карточки исключены: для нового документа их
+    нельзя выбрать по ошибке - живая каноническая карточка уже есть. Прямая
+    ссылка на объединённую карточку по-прежнему открывает её историю.
+    """
     query = (query or "").strip()
-    queryset = Customer.objects.all()
+    queryset = Customer.objects.filter(merged_into__isnull=True)
     if not query:
         return queryset[:limit]
     condition = Q(name__icontains=query)
@@ -91,7 +132,8 @@ def customers_by_recent_activity(*, limit: int | None = SEARCH_LIMIT):
     )
     floor = Value(_NO_ACTIVITY, output_field=DateTimeField())
     ordered = (
-        Customer.objects.annotate(
+        Customer.objects.filter(merged_into__isnull=True)
+        .annotate(
             last_sale_at=Subquery(last_sale, output_field=DateTimeField()),
             last_repair_at=Subquery(last_repair, output_field=DateTimeField()),
         )
