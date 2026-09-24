@@ -177,10 +177,17 @@ def data(db, admin):
 def test_sales_totals(data):
     rep = get_sales_report(_now_period())
     assert rep.count == 1
+    # Ни у item_a, ни у lot_sale нет авторитетного USD-источника (каталожной
+    # связи) - себестоимость и прибыль честно неизвестны для ОБЕИХ строк, а
+    # не подменяются landed cost. Выручка при этом известна полностью.
     assert rep.revenue == Decimal("900.00")
-    assert rep.cost == Decimal("328.00")
+    assert rep.known_revenue == Decimal("0.00")
+    assert rep.cost == Decimal("0.00")
     assert rep.profit == Decimal("0.00")
-    assert rep.profit_unavailable_lines == 1  # строка item_a уже полностью возвращена
+    assert rep.profit_unavailable_lines == 2
+    # Возврат item_a НЕ уменьшает выручку продаж - это отдельный отчёт.
+    assert rep.revenue - rep.cost != rep.profit  # scope возможен только когда unavailable == 0
+    assert rep.known_revenue - rep.cost == rep.profit
 
 
 def test_sales_only_completed_in_period(data):

@@ -70,7 +70,7 @@ def sales_rows(report, period, *, include_costs):
     if include_costs:
         header += [
             "Выручка (₽)", "Себестоимость (₽)", "Прибыль (₽)",
-            "Строк без подтверждённой базы прибыли",
+            "Строк без подтверждённой базы себестоимости",
         ]
         row += [
             _money(report.revenue), _money(report.cost), _money(report.profit),

@@ -71,8 +71,13 @@
       </div>
     {% endif %}
   </section>
-  {% if report.sales.profit_unavailable_lines %}
-    <p class="muted">По {{ report.sales.profit_unavailable_lines }} строкам прибыль не показана: нет подтверждённой дилерской цены.</p>
+  {% if show_costs and report.sales.profit_unavailable_lines %}
+    <p class="muted">
+      По {{ report.sales.profit_unavailable_lines }} строкам себестоимость и прибыль не рассчитаны:
+      нет подтверждённой оптовой/дилерской цены. «Выручка» включает эти строки, а
+      «Себестоимость» и «Прибыль» - только строки с известной базой (поэтому
+      Прибыль = Выручка − Себестоимость сходится лишь когда таких строк нет).
+    </p>
   {% endif %}
   {% if not show_costs %}
     <p class="muted">Финансовые показатели скрыты для вашей роли.</p>
