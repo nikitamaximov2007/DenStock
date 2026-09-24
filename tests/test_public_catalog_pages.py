@@ -373,3 +373,24 @@ def test_price_is_shown_as_canonical_decimal_without_rounding(public_client, pub
     part.certified_price_rub = Decimal("1235")
     part.save(update_fields=["recommended_price", "certified_price_rub"])
     assert "1\u00a0235\u00a0₽" in _detail(public_client, part).content.decode()
+
+
+def test_oil_shows_liters_not_pieces_and_package_price(public_client, public_catalog):
+    """Наличие масла - в литрах, цена остаётся ценой упаковки (никогда не
+    подменяется независимой ценой за литр) - см. задачу §13."""
+    part = public_catalog.part("OIL PART", article="OIL-1", price="1000")
+    part.is_oil = True
+    part.oil_package_volume_l = Decimal("4")
+    part.save(update_fields=["is_oil", "oil_package_volume_l"])
+    public_catalog.stock(part, "10")
+
+    text = _detail(public_client, part).content.decode()
+    assert "В наличии: 10 л" in text
+    assert "за упаковку" in text
+    assert "Объём упаковки: 4 л" in text
+    # Штук/шт. не должно появляться рядом с наличием масла.
+    assert "10 шт" not in text
+
+    # Количество в форме запроса остаётся пакетным (V1: не литры).
+    assert 'name="quantity"' in text
+    assert 'step="1"' in text
