@@ -217,3 +217,41 @@ def test_scanner_cart_refuses_oil(oil_part, oil_lot, admin):
     cart = open_cart("sale", by=admin)
     with pytest.raises(ActionError, match="корзиной сканера"):
         add_scan(cart, oil_part, oil_lot.location, by=admin)
+
+
+# --- Formal stocktaking (InventoryCountDocument): fractional liters --------
+
+
+def test_inventory_count_accepts_fractional_oil_volume(oil_part, oil_lot, admin):
+    from apps.stocktaking.services import (
+        add_stock_lot_count_line,
+        complete_inventory_count,
+        create_inventory_count,
+        update_counted_quantity,
+    )
+
+    doc = create_inventory_count(scope_location=oil_lot.location, by=admin)
+    line = add_stock_lot_count_line(doc, oil_lot, by=admin)
+    assert line.expected_quantity == Decimal("10")
+
+    update_counted_quantity(line, "9.300", by=admin)
+    line.refresh_from_db()
+    assert line.counted_quantity == Decimal("9.300")
+    assert line.difference == Decimal("-0.700")
+
+    complete_inventory_count(doc, by=admin)
+    oil_lot.refresh_from_db()
+    assert oil_lot.quantity == Decimal("9.300")
+
+
+# --- Search/barcode: oil resolves through the same identity path ----------
+
+
+def test_barcode_and_article_resolve_oil_part(oil_part):
+    from apps.core.part_lookup import resolve_part_lookup
+
+    lookup = resolve_part_lookup("OIL-0001")
+    assert lookup.found
+    assert lookup.candidate.part.pk == oil_part.pk
+    # Наличие уже в литрах, а не в "штуках" - lookup не гадает объём по коду.
+    assert lookup.candidate.physical == Decimal("0")  # приёмки в этом тесте не было
