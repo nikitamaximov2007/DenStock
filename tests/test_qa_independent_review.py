@@ -13,7 +13,7 @@ from django.urls import reverse
 from apps.actions.cart import add_scan, complete_cart, open_cart
 from apps.actions.models import PartCustomsInfo, WarehouseAction
 from apps.actions.services import ActionError, perform_action
-from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.customers.models import Customer
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
@@ -66,8 +66,11 @@ def env(db, admin):
     loc = StorageLocation.objects.create(
         name="Ячейка 1", code="S01-D03-C08", storage_allowed=True, is_active=True
     )
+    # _card() ниже пишет "BRP" в карточку; authoritative_manufacturer больше
+    # не доверяет этому без доказательства - деталь явно помечена BRP.
+    brp, _ = Manufacturer.objects.get_or_create(name="BRP")
     part = PartType.objects.create(
-        name="Болт", category=cat, unit=unit,
+        name="Болт", category=cat, unit=unit, manufacturer=brp,
         tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
     )
     PartNumber.objects.create(part=part, value="700100", kind=PartNumber.Kind.OEM)
