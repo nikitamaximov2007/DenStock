@@ -52,7 +52,11 @@ def _freeze_repair_line_cost(line: RepairIssueLine) -> None:
         unit_cost = line.part_item.landed_cost_rub
     else:
         unit_cost = line.stock_lot.landed_unit_cost_rub
-    if line.oil_package_volume_l_snapshot is not None and line.oil_package_price_rub_snapshot is not None:
+    is_oil_line = (
+        line.oil_package_volume_l_snapshot is not None
+        and line.oil_package_price_rub_snapshot is not None
+    )
+    if is_oil_line:
         from apps.inventory.pricing import oil_line_amount_rub
 
         line.oil_customer_amount_rub_snapshot = oil_line_amount_rub(
@@ -355,7 +359,10 @@ def repair_cancellation_returns(order) -> list:
 @transaction.atomic
 def repair_cancellation_oil_excluded(order) -> list:
     """Предпросмотр: строки масла, которые отмена НЕ восстановит на склад."""
-    from apps.returns.services import completed_returned_quantities, oil_lines_excluded_from_cancellation
+    from apps.returns.services import (
+        completed_returned_quantities,
+        oil_lines_excluded_from_cancellation,
+    )
 
     if order.status != RepairOrder.Status.COMPLETED:
         return []

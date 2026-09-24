@@ -63,7 +63,9 @@ def attach_effective_customer_price(parts: Iterable) -> None:
 # Price-per-liter is always *derived*: package price / package volume.
 
 
-def oil_price_per_liter_rub(package_price_rub: Decimal, package_volume_l: Decimal) -> Decimal | None:
+def oil_price_per_liter_rub(
+    package_price_rub: Decimal, package_volume_l: Decimal
+) -> Decimal | None:
     """Exact (unrounded) price per liter. ``None`` if either input is unusable.
 
     Never money-rounded here: rounding this intermediate value before
