@@ -287,3 +287,74 @@ def test_request_detail_exposes_sale_action_and_audit_is_read_only(client, sale_
     call_command("audit_customer_request_customer_matches", stdout=output)
     assert "Заявки без совпадения" in output.getvalue()
     assert Customer.objects.count() == before_customers
+
+
+# --- Масло в заявке: пакетная заявка не превращается в литры молча ----------
+
+
+@pytest.fixture
+def oil_sale_scene(admin):
+    category = Category.objects.create(name="Масло заявки")
+    unit, _ = Unit.objects.get_or_create(name="Литр", defaults={"short_name": "л"})
+    part = PartType.objects.create(
+        name="Масло для заявки", category=category, unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        is_oil=True, oil_package_volume_l=Decimal("4"),
+        recommended_price=Decimal("1000"), is_public=True,
+    )
+    PartNumber.objects.create(part=part, value="OIL-REQ-1", is_primary=True)
+    supplier = Supplier.objects.create(name="Поставщик масла заявок")
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    batch_line = BatchLine.objects.create(
+        batch=batch, part_type=part, quantity=Decimal("10"), unit_cost_currency=Decimal("5")
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    batch = finalize_cost(batch, admin)
+    batch_line.refresh_from_db()
+    location = StorageLocation.objects.create(
+        name="Заявки масло", code="REQ-OIL-A", storage_allowed=True, is_active=True
+    )
+    lot = create_stock_lot(batch_line, location, Decimal("10"))
+    receive_stock_lot(lot, by=admin)
+    remember_customs(part)
+    return {"admin": admin, "part": part, "lot": lot, "location": location}
+
+
+def test_prepare_request_sale_skips_oil_line_instead_of_misreading_liters(oil_sale_scene):
+    customer = Customer.objects.create(name="Клиент масла", phone="+79090000001")
+    request = take(
+        make_request(oil_sale_scene["part"], key="oil-request-prepare"), oil_sale_scene["admin"]
+    )
+
+    sale = prepare_request_sale(request_id=request.pk, by=oil_sale_scene["admin"])
+
+    assert sale.customer_id == customer.pk
+    # Масло НЕ добавлено автоматически (заявка "1" - это упаковка, не литр).
+    assert sale.lines.count() == 0
+
+
+def test_complete_request_sale_preserves_manually_added_oil_pricing(oil_sale_scene):
+    from apps.sales.services import add_oil_volume_to_sale
+
+    Customer.objects.create(name="Клиент масла", phone="+79090000001")
+    request = take(
+        make_request(oil_sale_scene["part"], key="oil-request-complete"), oil_sale_scene["admin"]
+    )
+    sale = prepare_request_sale(request_id=request.pk, by=oil_sale_scene["admin"])
+
+    # Оператор вручную добавляет реальный объём (не совпадает с "1" из заявки).
+    line = add_oil_volume_to_sale(
+        sale, oil_sale_scene["lot"], "0.3", by=oil_sale_scene["admin"]
+    )
+    assert line.total_price == Decimal("75.00")
+
+    completed = complete_request_sale(
+        request_id=request.pk, sale_id=sale.pk, by=oil_sale_scene["admin"]
+    )
+
+    completed_line = completed.lines.get()
+    # Цена НЕ переписана как цена упаковки за "единицу" - осталась 75 ₽.
+    assert completed_line.total_price == Decimal("75.00")
+    assert completed_line.quantity == Decimal("0.300")
+    assert completed.status == Sale.Status.COMPLETED
