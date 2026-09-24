@@ -49,6 +49,7 @@
         <th>Цена</th>
         <td>
           {{ effective_customer_price|money_int }}
+          {% if part.is_oil %}(за упаковку){% endif %}
           {% if part.recommended_price is not None and effective_customer_price > part.recommended_price %}
             <div class="muted">
               Текущая по прайсу {{ part.recommended_price|money_int }} ₽; на складе есть партия
@@ -57,6 +58,20 @@
           {% endif %}
         </td>
       </tr>
+      {% if part.is_oil %}
+        <tr>
+          <th>Масло</th>
+          <td>
+            Объём упаковки: {{ part.oil_package_volume_l|quantity_int }} л.
+            {% if oil_availability_row and oil_availability_row.price_per_liter_rub is not None %}
+              Цена за литр: {{ oil_availability_row.price_per_liter_rub|money_rub }}/л.
+            {% endif %}
+            {% if oil_availability_row %}
+              В наличии: {{ oil_availability_row.available_l|quantity_int }} л.
+            {% endif %}
+          </td>
+        </tr>
+      {% endif %}
       {% if manual_purchase_price %}
         <tr>
           <th>Закупочная цена, ₽</th>
