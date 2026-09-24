@@ -29,6 +29,11 @@ class OilCandidateRow:
     tracking_mode: str
     matched_numbers: str
     reason: str
+    # "safe_to_mark": no stock/movements/sales/repairs yet - PartType.clean()
+    # would allow flipping is_oil today. "needs_owner_review": history already
+    # exists, so the immutability guard would block a naive flip - converting
+    # this one (if it truly is oil) needs a deliberate decision, not a click.
+    candidate_status: str
 
     def asdict(self) -> dict:
         return asdict(self)
@@ -38,6 +43,8 @@ class OilCandidateRow:
 class OilCandidateReport:
     already_oil_count: int
     candidate_count: int
+    safe_to_mark_count: int
+    needs_owner_review_count: int
     rows: list
 
 
@@ -64,23 +71,129 @@ def audit_oil_candidates() -> OilCandidateReport:
         by_part.setdefault(number.part_id, []).append(number.value)
         parts[number.part_id] = number.part
 
-    rows = [
-        OilCandidateRow(
-            part_type_id=part_id,
-            name=parts[part_id].name,
-            manufacturer=(
-                parts[part_id].manufacturer.name if parts[part_id].manufacturer_id else ""
-            ),
-            category=parts[part_id].category.name if parts[part_id].category_id else "",
-            tracking_mode=parts[part_id].tracking_mode,
-            matched_numbers=", ".join(sorted(set(numbers))),
-            reason=f"article starts with {OIL_ARTICLE_PREFIX!r} (MOTUL oil convention, unverified)",
+    rows = []
+    safe_to_mark_count = 0
+    needs_owner_review_count = 0
+    for part_id, numbers in sorted(by_part.items()):
+        part = parts[part_id]
+        has_history = part.has_stock_or_history()
+        status = "needs_owner_review" if has_history else "safe_to_mark"
+        if has_history:
+            needs_owner_review_count += 1
+        else:
+            safe_to_mark_count += 1
+        rows.append(
+            OilCandidateRow(
+                part_type_id=part_id,
+                name=part.name,
+                manufacturer=part.manufacturer.name if part.manufacturer_id else "",
+                category=part.category.name if part.category_id else "",
+                tracking_mode=part.tracking_mode,
+                matched_numbers=", ".join(sorted(set(numbers))),
+                reason=(
+                    f"article starts with {OIL_ARTICLE_PREFIX!r} "
+                    "(MOTUL oil convention, unverified)"
+                ),
+                candidate_status=status,
+            )
         )
-        for part_id, numbers in sorted(by_part.items())
-    ]
 
     return OilCandidateReport(
         already_oil_count=already_oil_count,
         candidate_count=len(rows),
+        safe_to_mark_count=safe_to_mark_count,
+        needs_owner_review_count=needs_owner_review_count,
         rows=rows,
     )
+
+
+@dataclass(frozen=True)
+class OilPartStatusRow:
+    """One already-marked oil PartType's configuration and real usage."""
+
+    part_type_id: int
+    name: str
+    manufacturer: str
+    oil_package_volume_l: str
+    available_liters: str
+    stock_lot_count: int
+    movement_count: int
+    sale_line_count: int
+    repair_line_count: int
+    tracking_mode: str
+    configuration_status: str  # "ok" | "missing_package_volume" | "wrong_tracking_mode"
+
+
+@dataclass(frozen=True)
+class OilMigrationReadinessReport:
+    """Explicit oil parts: configuration + how much real history already exists.
+
+    Read-only. Answers "is this oil part safely configured, and how much
+    history already depends on its current settings" - not "should this
+    part be oil", which stays a human/business decision made elsewhere.
+    """
+
+    rows: list
+
+
+def audit_oil_migration_readiness() -> OilMigrationReadinessReport:
+    from apps.inventory.models import StockLot, StockMovement
+    from apps.inventory.pricing import oil_availability_rows
+    from apps.repairs.models import RepairIssueLine
+    from apps.sales.models import SaleLine
+
+    parts = list(
+        PartType.objects.filter(is_oil=True).select_related("manufacturer").order_by("name")
+    )
+    if not parts:
+        return OilMigrationReadinessReport(rows=[])
+
+    availability = {row.part_type_id: row for row in oil_availability_rows(parts)}
+    part_ids = [part.pk for part in parts]
+    lot_counts = _count_by_part(StockLot.objects.filter(part_type_id__in=part_ids), part_ids)
+    movement_counts = _count_by_part(
+        StockMovement.objects.filter(part_type_id__in=part_ids), part_ids
+    )
+    sale_counts = _count_by_part(SaleLine.objects.filter(part_type_id__in=part_ids), part_ids)
+    repair_counts = _count_by_part(
+        RepairIssueLine.objects.filter(part_type_id__in=part_ids), part_ids
+    )
+
+    rows = []
+    for part in parts:
+        if part.tracking_mode != PartType.TrackingMode.BULK:
+            status = "wrong_tracking_mode"
+        elif not part.oil_package_volume_l or part.oil_package_volume_l <= 0:
+            status = "missing_package_volume"
+        else:
+            status = "ok"
+        row = availability.get(part.pk)
+        rows.append(
+            OilPartStatusRow(
+                part_type_id=part.pk,
+                name=part.name,
+                manufacturer=part.manufacturer.name if part.manufacturer_id else "",
+                oil_package_volume_l=(
+                    str(part.oil_package_volume_l) if part.oil_package_volume_l else ""
+                ),
+                available_liters=str(row.available_l) if row else "0",
+                stock_lot_count=lot_counts.get(part.pk, 0),
+                movement_count=movement_counts.get(part.pk, 0),
+                sale_line_count=sale_counts.get(part.pk, 0),
+                repair_line_count=repair_counts.get(part.pk, 0),
+                tracking_mode=part.tracking_mode,
+                configuration_status=status,
+            )
+        )
+    return OilMigrationReadinessReport(rows=rows)
+
+
+def _count_by_part(queryset, part_ids) -> dict[int, int]:
+    from django.db.models import Count
+
+    counts = dict(
+        queryset.values_list("part_type_id")
+        .annotate(n=Count("id"))
+        .values_list("part_type_id", "n")
+    )
+    return {part_id: counts.get(part_id, 0) for part_id in part_ids}
