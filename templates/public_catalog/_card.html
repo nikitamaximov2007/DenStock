@@ -58,7 +58,11 @@
       </p>
       <p class="stock">
         {% if card.in_stock %}
-          <span class="stock__in">В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}</span>
+          {% if facts.is_oil %}
+            <span class="stock__in">В наличии: {{ facts.available_quantity|quantity_int }} л</span>
+          {% else %}
+            <span class="stock__in">В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}</span>
+          {% endif %}
         {% else %}
           <span class="stock__out">Нет на складе</span>
         {% endif %}
