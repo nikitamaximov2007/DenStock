@@ -426,7 +426,11 @@ def _freeze_line_costs(line: SaleLine) -> None:
         unit_cost = line.part_item.landed_cost_rub
     else:
         unit_cost = line.stock_lot.landed_unit_cost_rub
-    if line.oil_package_volume_l_snapshot is not None and line.oil_package_price_rub_snapshot is not None:
+    is_oil_line = (
+        line.oil_package_volume_l_snapshot is not None
+        and line.oil_package_price_rub_snapshot is not None
+    )
+    if is_oil_line:
         from apps.inventory.pricing import oil_line_amount_rub
 
         line.total_price = oil_line_amount_rub(
@@ -855,7 +859,10 @@ def sale_cancellation_returns(sale) -> list:
 @transaction.atomic
 def sale_cancellation_oil_excluded(sale) -> list:
     """Предпросмотр: строки масла, которые отмена НЕ восстановит на склад."""
-    from apps.returns.services import completed_returned_quantities, oil_lines_excluded_from_cancellation
+    from apps.returns.services import (
+        completed_returned_quantities,
+        oil_lines_excluded_from_cancellation,
+    )
 
     if sale.status != Sale.Status.COMPLETED:
         return []
