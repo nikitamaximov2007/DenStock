@@ -150,6 +150,11 @@ class PartTypeDetailView(LoginRequiredMixin, DetailView):
             ctx["number_form"] = PartNumberForm()
             ctx["barcode_form"] = PartBarcodeForm()
             ctx["compat_form"] = PartCompatibilityForm()
+        if self.object.is_oil:
+            from apps.inventory.pricing import oil_availability_rows
+
+            rows = oil_availability_rows([self.object])
+            ctx["oil_availability_row"] = rows[0] if rows else None
         return ctx
 
 

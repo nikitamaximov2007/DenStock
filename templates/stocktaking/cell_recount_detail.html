@@ -122,12 +122,13 @@
                              aria-label="Количество {{ line.part_number }}"
                              class="qty-input"
                              required>
+                      {{ line.part_type|part_quantity_unit }}
                       <button class="btn btn--small btn--secondary" type="submit">Сохранить</button>
                     </form>
                   </td>
                   <td>
                     {% for allocation in line.allocations.all %}
-                      <div>Партия {{ allocation.batch_line.batch.number }} · {{ allocation.get_lot_status_display }} · {{ allocation.quantity|quantity_int }} шт. · {{ allocation.unit_cost_rub|money_int }} ₽</div>
+                      <div>Партия {{ allocation.batch_line.batch.number }} · {{ allocation.get_lot_status_display }} · {{ allocation.quantity|quantity_with_unit:line.part_type }} · {{ allocation.unit_cost_rub|money_int }} ₽</div>
                     {% empty %}
                       <span class="muted">Будет определено перед dry-run</span>
                     {% endfor %}

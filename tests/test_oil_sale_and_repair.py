@@ -468,3 +468,14 @@ def test_repair_add_oil_lot_view_creates_line_with_liters(
     line = order.lines.get()
     assert line.quantity == Decimal("0.300")
     assert line.oil_customer_amount_rub_snapshot == Decimal("75.00")
+
+
+def test_internal_part_detail_shows_oil_context(make_user, client, oil_part, oil_lot):
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    resp = client.get(reverse("part_detail", args=[oil_part.pk]))
+    assert resp.status_code == 200
+    text = resp.content.decode()
+    assert "Объём упаковки: 4 л" in text
+    assert "250" in text  # цена за литр
+    assert "10 л" in text  # в наличии
