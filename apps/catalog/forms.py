@@ -111,6 +111,17 @@ class PriceSettingsForm(forms.Form):
 
 
 class PartTypeForm(forms.ModelForm):
+    oil_package_volume_l = CommaDecimalField(
+        label="Объём упаковки, л",
+        required=False,
+        max_digits=8,
+        decimal_places=3,
+        min_value=Decimal("0.001"),
+        widget=forms.TextInput(
+            attrs={"inputmode": "decimal", "step": "0.001", "class": "form-control"}
+        ),
+    )
+
     class Meta:
         model = PartType
         fields = [
@@ -123,6 +134,8 @@ class PartTypeForm(forms.ModelForm):
             "recommended_price",
             "min_price",
             "min_stock_level",
+            "is_oil",
+            "oil_package_volume_l",
         ]
 
 
