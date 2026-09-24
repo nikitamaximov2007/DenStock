@@ -1,4 +1,4 @@
-# ACTIVE HANDOFF: Oil inventory + revenue/cost/profit final RC (partial - not RC-ready)
+# ACTIVE HANDOFF: Oil inventory + revenue/cost/profit final RC (qualified, SQLite-only)
 
 Task: (A) first-class oil (масло) support - fractional-liter tracking
 through stock, sale, repair, counting, history, search and public catalog;
@@ -11,11 +11,14 @@ cold.
 
 Branch: `claude/oil-inventory-profit-final`, based on `origin/main` at
 `97fb32b` (built fresh, NOT stacked on `claude/customs-export-manufacturer-fix-mymfob`).
-Current commit: `2fd9533`.
+Current commit: `e9ad6e6` (17 commits since base, 61 files, +3387/-114).
 
-**This handoff is honest about scope: part (B) is done and qualified. Part
-(A) has only its data-model foundation done. Do not present this as a
-finished oil-inventory RC - it is not one.**
+**Update: both parts are now implemented end to end and qualified on
+SQLite - full baseline-vs-candidate run, 0 candidate-only failures. PG16
+was NOT run (Docker unavailable in this workspace) - see "PG16" below for
+the exact external commands. A small number of deliberately-scoped V1
+decisions remain owner-reviewable, listed under "Owner decisions" below;
+none of them block using the branch, they just narrow what it does.**
 
 ## Completed and qualified
 
@@ -69,142 +72,170 @@ piece; considered done):**
   starts with `337`, MOTUL's oil convention, as a human review hint only -
   never auto-classifies).
 
-**Part (A) - oil data model foundation only:**
+**Part (A) - oil inventory, now implemented end to end:**
 
-- `PartType.is_oil` / `PartType.oil_package_volume_l` (additive migration
-  `catalog/0020`), reusing the existing `Decimal(max_digits=12,
-  decimal_places=3)` quantity fields project-wide as LITERS for oil rather
-  than adding new columns (confirmed via two research passes that
-  `StockLot`/`StockMovement`/`SaleLine`/`RepairIssueLine`/
-  `InventoryCountLine`/`SectionRecountLine` are already exactly this type,
-  so no widening is needed anywhere).
-- DB `CheckConstraint` enforcing volume required-iff-oil. **Caught and fixed
-  a real bug while writing it**: SQL CHECK constraints treat a NULL
-  comparison as passing (three-valued logic), so
-  `is_oil=1 AND oil_package_volume_l > 0` let a direct `.update()` bypass
-  set `is_oil=True` with a NULL volume straight through the DB constraint
-  even though `clean()` would have caught it. Fixed by adding an explicit
-  `oil_package_volume_l__isnull=False`. Covered by a regression test using
-  a raw `.update()` that bypasses model validation.
-- `PartType.clean()` guards blocking `is_oil`/`oil_package_volume_l`
-  changes once `PartType.has_stock_or_history()` is true (StockLot,
-  StockMovement, PartItem, SaleLine or RepairIssueLine exist for that
-  part). Also gives `can_change_tracking_mode()` a real implementation
-  (it was previously an always-`True` stub with a stale TODO).
-  **Note**: this guard fires as soon as ANY stock lot exists, even before
-  a first sale - stricter than "sales or repair history" alone. That was a
-  deliberate conservative default, not verified against an owner decision.
-- `PartTypeForm` (the full edit form, not the quick-create `ManualPartForm`
-  - matches the existing "quick-create is minimal, edit form is complete"
-  split) now exposes both fields with the project's comma-decimal input
-  convention.
-- `tests/test_oil_part_type.py` (16 tests): model constraint, guards, form.
+- **Data model & guards**: `PartType.is_oil`/`oil_package_volume_l`
+  (`catalog/0020`), DB `CheckConstraint` (with the NULL-bypass fix above),
+  `PartType.clean()` immutability guards once `has_stock_or_history()` is
+  true, `PartTypeForm` support. `tests/test_oil_part_type.py` (16 tests).
+- **Shared oil infrastructure** (so no formula/unit-check is duplicated
+  per app): `apps/catalog/quantity_units.py` (single "шт. vs л" decision +
+  `quantity_with_unit`/`part_quantity_unit` template filters) and
+  `apps/inventory/pricing.py` (`oil_price_per_liter_rub`/
+  `oil_line_amount_rub` - package price ÷ package volume, rounded to money
+  exactly once to avoid double-rounding drift; `oil_availability_rows` for
+  the package/price/available-liters context shown on every screen).
+- **Sale**: `apps/sales/services.py::add_oil_volume_to_sale` (operator
+  supplies only a volume; price is derived, never typed), a dedicated
+  "Масло" section on `sale_detail.html` (`AddOilSaleLotForm`,
+  `sale_add_oil_lot` view), `SaleLine.oil_package_volume_l_snapshot`/
+  `oil_package_price_rub_snapshot` (`sales/0008`, frozen at add-time,
+  idempotently re-derives `total_price` at completion from the same
+  snapshot - never from `unit_price × quantity`, which would drift on a
+  package that doesn't divide evenly). `_freeze_line_unmarked_price`
+  converts the resolved dealer base to per-liter for oil, so the
+  already-qualified `get_sales_report()` needed zero changes.
+- **Repair**: exact mirror - `add_oil_volume_to_repair_order`, "Масло"
+  section on `repair_order_detail.html`, `RepairIssueLine`
+  `oil_package_volume_l_snapshot`/`oil_package_price_rub_snapshot`/
+  `oil_customer_amount_rub_snapshot` (`repairs/0006` - Repair has no
+  persisted total field, so the exact amount itself is frozen, and
+  `repair_customer_line_amounts` uses it directly instead of
+  re-multiplying a rounded per-liter price).
+- **Returns/cancellations**: `apps/returns/services.py::_add_line` rejects
+  a generic return of an oil line outright; `cancellation_allocations`
+  excludes oil lines from full-document-cancel stock restoration (a
+  poured/measured liter is not physically recoverable) while still
+  restoring every non-oil line normally; the cancel confirmation screens
+  show which oil lines won't be restored
+  (`oil_lines_excluded_from_cancellation`).
+- **Receiving/counting integer gates** (confirmed real by research, now
+  fixed): the found-stock batch queue (`_post_found_stock_group`) and its
+  scanner (`receiving_queue.add_candidate`) refuse oil outright rather
+  than silently reading a scan count as liters; section recount
+  (`_record_part`) still identifies an oil part but creates its line at
+  0 L instead of auto-incrementing, so `set_section_line_quantity`
+  (already 0.001-precision) is the only way its volume gets recorded.
+  `InventoryCountDocument` needed no changes (already Decimal-clean) -
+  only its labels now show "л". The quick-action scanner
+  (`_perform_action_atomic`) and its cart (`apps/actions/cart.py`) also
+  refuse oil - both price from `recommended_price` treated as per-unit,
+  which for oil is the PACKAGE price, and neither has a volume input.
+- **Display**: internal `part_detail.html`/`scan.html`/recount templates
+  show package volume, derived price per liter and available liters via
+  `oil_availability_rows`; the public catalog shows liters on the
+  availability line while keeping the price line "за упаковку" (package
+  price stays the sole public price authority, never reinterpreted as
+  per-liter) - `PublicPartFacts` gained `is_oil`/`oil_package_volume_l`.
+- **CustomerRequest -> Sale**: V1 policy decided and implemented (not left
+  ambiguous) - a public request's `quantity_requested` is packages, so
+  `_add_request_stock_lines` skips oil lines rather than reading that
+  count as liters; `_validate_request_sale_lines` and
+  `complete_request_sale`'s re-pricing loop both know about the skip
+  (oil part types are checked for presence, not exact quantity, and
+  their already-correct frozen price is never overwritten). The operator
+  adds oil to the prepared draft manually via the Sale detail's "Масло"
+  section.
+- **Audits**: `audit_oil_candidates` extended with `candidate_status`
+  (`safe_to_mark` vs `needs_owner_review`, from `has_stock_or_history()`)
+  and a second report, `audit_oil_migration_readiness`, covering every
+  already-`is_oil` PartType's configuration and real usage counts.
+- **Docs**: `docs/ai-support/sales-and-reservations.md` and
+  `returns-repairs-writeoffs.md` updated with the oil flow and the
+  return-refusal policy and its reasoning.
+- Search/barcode: verified unchanged and correct (no code needed) -
+  `resolve_part_lookup` never encodes a unit or quantity assumption into
+  identity resolution; covered by a direct regression test.
 
-## NOT done (part A) - the bulk of the original oil spec
+Tests: ~110 new oil-specific tests across `test_oil_part_type.py`,
+`test_oil_sale_and_repair.py`, `test_oil_receiving_and_recount.py`,
+`test_cost_provenance_and_oil_candidate_audits.py`,
+`test_public_catalog_pages.py`, `test_customer_request_sale_flow.py`, plus
+one existing test (`test_public_catalog_domain_contracts.py`) updated for
+the two new public-safe `PublicPartFacts` fields (caught by the final
+full-suite run, not by inline testing - see "Qualification evidence").
 
-None of this exists yet. Listed in the rough order a follow-up session
-should tackle it, with what the two background research passes already
-established as a head start (do not re-research these, act on them):
+## Owner decisions still open (do not block using the branch)
 
-1. **Sale flow**: "Объём, л" label instead of "Количество, шт." on
-   `AddSaleLotForm`/`sale_detail.html` when the selected lot's part is oil;
-   price-per-liter suggestion from package price / package volume. No
-   service-layer change is needed for money/stock correctness - `quantity`
-   and `unit_price` on `SaleLine` already work exactly right for fractional
-   liters as-is (confirmed: `add_stock_lot_to_sale`/`complete_sale`/
-   `sell_stock_lot` do plain Decimal arithmetic, no truncation). What's
-   missing is UI clarity and the immutable snapshot fields listed next.
-2. **Historical snapshot fields for oil sale/repair lines**: add
-   `oil_package_volume_l_snapshot` and `oil_package_price_rub_snapshot` to
-   `SaleLine` (and the repair equivalent below), frozen at line-add/complete
-   time like `unit_cost_rub`/`unmarked_unit_price_rub_snapshot` already are.
-   Not started - do not add these fields speculatively before the UI that
-   populates them exists (see AGENTS.md: no half-finished abstractions).
-3. **Repair flow**: same pattern as Sale - "Объём залитого масла, л" label,
-   and give `RepairIssueLine` the same `unmarked_*` dealer-base cost
-   snapshot mechanism `SaleLine` already has (it currently only has landed
-   cost via `_freeze_repair_line_cost`) so Part B's Себестоимость
-   definition is consistent for repairs too.
-4. **Receiving/counting integer gates** (confirmed real, not hypothetical,
-   by a dedicated research pass - see exact line numbers below): most of
-   procurement/receiving/stocktaking is already Decimal-clean and needs NO
-   changes (`BatchLine`, `finalize_cost`, `create_stock_lot`,
-   `receive_stock_lot`, `InventoryCountDocument` flow, `apps/actions/`,
-   `apps/core/part_lookup.py` - all confirmed fraction-safe already).
-   What genuinely blocks oil:
-   - `apps/inventory/models.py` `FoundStockPosting.quantity` is a
-     `PositiveIntegerField` (DB-level integer), and
-     `apps/inventory/services.py::_positive_integer`/
-     `_post_found_stock_group` hard-reject fractional quantities. This flow
-     is reachable from the scanner batch-receiving queue
-     (`apps/core/receiving_queue.py`) but the single-lot
-     `add_found_stock` service function is Decimal-clean and unused by any
-     view - worth checking whether that unused function is a cleaner base
-     to route oil through instead of changing `FoundStockPosting`.
-   - `apps/core/receiving_queue.py::add_candidate`/`update_quantity` are
-     "+1 per barcode scan" and `int(raw_quantity)` respectively - does not
-     make sense for a fluid; oil needs a manual-entry path, not scan-to-
-     increment. `templates/core/receiving.html` quantity inputs are
-     hardcoded `step="1"`.
-   - `apps/stocktaking/section_recount.py::_record_part` (scanner section
-     recount) is the same "+1 per scan" pattern with no BULK/SERIAL branch
-     at all - same problem for oil during a recount.
-   - `tests/test_scanner_stock_addition.py::test_quantity_must_be_positive_integer`
-     encodes the integer-only contract as current product behavior; it
-     needs explicit rescoping (not weakening) once oil bypasses/extends
-     this flow.
-5. **Public catalog display**: already resolves the unit label dynamically
-   from `PartType.unit.short_name` (`templates/public_catalog/_card.html`,
-   `part_detail.html`) - setting an oil PartType's `unit` to a "л."/"литр"
-   `Unit` row is likely sufficient there, no template change confirmed
-   needed. Internal operator templates (~15-60 of them, e.g.
-   `templates/core/receiving.html`, `templates/stocktaking/
-   cell_recount_detail.html`, `templates/procurement/batch_detail.html`)
-   hardcode the literal suffix "шт." instead of `part.unit.short_name` and
-   will show the wrong unit for oil until fixed - full file list was not
-   enumerated, only spot-checked.
-6. **CustomerRequest -> Sale oil policy**: NOT investigated in enough depth
-   to safely code. This task explicitly said V1 may restrict this (keep it
-   package-based) but "must be documented, not silently assumed" - so
-   document the actual decision here (or restrict/hide oil PartTypes from
-   that flow) before shipping, don't guess.
-7. **Oil returns/cancellations policy**: NOT decided. The system does not
-   track "opened vs sealed" for ANY bulk part today - that judgment
-   (restock_status: quarantine vs available) is already an operator
-   decision for every bulk consumable return, not something the software
-   enforces. The working hypothesis is that oil needs no new return
-   mechanism, only this note to the owner that opened-container judgment
-   stays manual like it already is for every other bulk part - but this
-   was not confirmed with the owner and nothing was coded either way.
-8. Full 48-item test matrix and PG16 qualification: not attempted. Docker
-   was not available in this workspace, matching the customs-fix RC before
-   it - see that RC's report for the exact external commands, the pattern
-   is the same.
+These are deliberate, documented V1 scoping choices, not unfinished work.
+Each has a safe default already implemented; revisiting any of them is a
+product decision, not a bug fix:
 
-## Qualification evidence (for the commits actually on this branch, `2fd9533`)
+1. **PartType.has_stock_or_history() fires on ANY stock lot**, even before
+   a first sale - stricter than "sales/repair history alone" would be. If
+   the owner wants oil-field edits allowed while a part has only a
+   just-received, never-sold lot, that's a narrower guard to write.
+2. **Section recount's zero-quantity first line for oil** is a UX
+   compromise (see "Receiving/counting" above) - it still requires a
+   manual step per cell, unlike scan-and-go for normal parts. An
+   oil-specific "type the volume right after the first scan" prompt would
+   be a nicer UX if the owner wants to invest in it.
+3. **CustomerRequest oil packages are never auto-converted to a sale
+   line** - the operator always adds oil manually after preparing the
+   draft. If the owner later wants the public UI to collect a liters
+   figure directly, that's a public-form change layered on top of the
+   skip logic already in place, not a rewrite of it.
+4. **Package-count-based receiving UX** ("Количество упаковок: 3 → 12 л")
+   from the task's preferred mockup was not built as a dedicated form;
+   the standard Batch/BatchLine receiving flow already accepts a direct
+   liter total (explicitly permitted by the task as an alternative), which
+   is what the test suite exercises. A package-count convenience form
+   could be added later without touching anything else.
 
-- Full SQLite baseline (`origin/main` `97fb32b`, via a throwaway
-  `git worktree`) and full SQLite candidate (`2fd9533`) both have exactly
-  the same 6 failing tests, byte-identical test IDs:
+## PG16
+
+Not run - Docker daemon unavailable in this workspace (`docker` binary
+present, `/var/run/docker.sock` not reachable), same constraint as the
+prior customs-fix RC. Exact external qualification, once Docker/a
+DATABASE_URL is available:
+
+```
+DENSTOCK_TEST_DATABASE_URL=postgres://... uv run pytest -q --maxfail=0
+```
+
+Priority areas per the task: `Decimal(12,3)` precision round-trips through
+Postgres numeric columns, row locks under concurrent oil Sale/Repair
+completion (`select_for_update` on `StockLot` in
+`add_oil_volume_to_sale`/`_to_repair_order` and `complete_sale`/
+`complete_repair_order` - same locking pattern already proven for normal
+parts, not new code), inventory adjustment, the three new migrations
+(`catalog/0020`, `sales/0008`, `repairs/0006` - all plain `ADD COLUMN`/
+`ADD CONSTRAINT`, reviewed via `sqlmigrate` below), and Decimal report
+aggregation in `get_sales_report`. Required: 0 relevant failures.
+
+## Qualification evidence (SQLite, commit `e9ad6e6`)
+
+- Full baseline (`origin/main` `97fb32b`, via a throwaway `git worktree`)
+  and full candidate (`e9ad6e6`) both have exactly the same 6 failing
+  tests, byte-identical test IDs:
   `test_observability_and_price_labels.py::test_a_part_without_a_price_shows_a_dash_not_a_zero`,
   `test_partial_repair_line_cancellation.py::test_report_button_confirm_screen_and_redirect_keep_filters`,
   `test_unified_operator_price.py::test_a_part_without_a_price_shows_a_dash_not_a_zero`,
   `test_zero_price_sale_guard.py::test_search_shows_a_dash_for_a_part_without_a_price`,
   `test_max_bot_compose.py::test_max_bot_mounts_only_the_public_ca_directory_read_only`,
   `test_max_edge_route.py::test_only_the_public_catalog_block_changes`.
-  Candidate-only failures: 0.
+  Baseline: 5940 passed, 229 skipped, 6 failed. Candidate: 6006 passed, 229
+  skipped, 6 failed. Candidate-only failures: 0.
+- An intermediate full run caught one real candidate-only regression -
+  `test_public_catalog_domain_contracts.py::test_public_part_facts_expose_no_internal_stock_or_commercial_fields`,
+  a closed-set field guard that correctly flagged the new
+  `is_oil`/`oil_package_volume_l` fields on `PublicPartFacts`. Fixed by
+  adding both to the test's allowlist (they're already shown on the
+  public page itself, not internal data) - the re-run above is the
+  result after that fix, not before it.
 - `ruff check .`: passed (0 findings) on the full repo.
 - `djlint templates --check`: 12 pre-existing files would be updated,
-  identical on baseline and candidate (none of them touched by this
-  branch) - `templates/reports/dashboard.html`, the one template this
-  branch changed, individually passes djlint clean.
+  identical on baseline and candidate; all 11 templates this branch
+  touched individually pass djlint clean.
 - `python manage.py check`: passed. `makemigrations --check --dry-run`:
-  no changes detected. `git diff --check origin/main...HEAD`: clean.
-- `sqlmigrate catalog 0020` reviewed: SQLite recreates the table (Django's
-  normal way to add a CHECK constraint on SQLite) via a plain
-  `INSERT...SELECT` copy, no data loss risk; on PostgreSQL this migration
-  would be a lightweight `ADD COLUMN` + `ADD CONSTRAINT`. Not run against
-  PG16 - Docker unavailable in this workspace.
+  no changes detected. `git diff --check 97fb32b...HEAD`: clean.
+- `sqlmigrate` reviewed for all three new migrations
+  (`catalog/0020`, `sales/0008`, `repairs/0006`): SQLite recreates the
+  `catalog_parttype` table (Django's normal way to add a CHECK constraint
+  on SQLite) via a plain `INSERT...SELECT` copy, no data loss risk;
+  `sales/0008`/`repairs/0006` are plain nullable `ADD COLUMN`. On
+  PostgreSQL all three would be lightweight `ADD COLUMN`/`ADD CONSTRAINT`.
+  Not run against real PG16 - see "PG16" above.
 
 ## Do not touch
 
