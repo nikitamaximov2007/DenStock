@@ -131,6 +131,7 @@ class SalesReport:
     revenue: Decimal
     cost: Decimal
     profit: Decimal
+    known_revenue: Decimal = DEC0
     profit_unavailable_lines: int = 0
     top_by_revenue: list = field(default_factory=list)
     top_by_quantity: list = field(default_factory=list)
@@ -214,66 +215,89 @@ class DashboardReport:
 
 
 def get_sales_report(period: Period) -> SalesReport:
+    """Выручка/себестоимость/прибыль - один scope строк, одна база.
+
+    Все три числа считаются здесь же, из одних и тех же проведённых
+    `SaleLine`, а не из заранее замороженных `Sale.revenue_total/cost_total`
+    (которые считаются по landed cost и не обновляются после возврата -
+    см. историю). Себестоимость - подтверждённая оптовая/дилерская цена
+    (`unmarked_unit_price_rub_snapshot`, замороженная в момент продажи), а НЕ
+    landed cost и не закупочная цена партии. Возвраты здесь не вычитаются:
+    это отдельный отчёт (см. `get_returns_report`), поэтому выручка,
+    себестоимость и прибыль одинаково считают исходное количество строки -
+    иначе выручка (не уменьшается возвратом) и прибыль (уменьшалась бы)
+    разошлись бы по scope, как раньше.
+
+    Если у строки нет подтверждённой базы, её выручка остаётся в `revenue`,
+    но исключается из `known_revenue`/`cost`/`profit` - это НЕ равносильно
+    себестоимости "0 ₽": строка просто не входит в известный scope
+    (`profit_unavailable_lines` считает такие строки, шаблон обязан это
+    показать, а не молчать).
+    """
     sales = Sale.objects.filter(
         status=Sale.Status.COMPLETED, **period_range("sold_at", period)
     )
-    agg = sales.aggregate(
-        count=Count("id"),
-        revenue=Sum("revenue_total"),
-        cost=Sum("cost_total"),
+    lines = list(
+        SaleLine.objects.filter(sale__in=sales)
+        .select_related("part_type")
+        .only(
+            "id", "part_type_id", "part_type__name", "quantity", "unit_price",
+            "unmarked_unit_price_rub_snapshot",
+        )
     )
-    lines = SaleLine.objects.filter(sale__in=sales)
-    profit_lines = list(
-        lines.only("id", "quantity", "unit_price", "unmarked_unit_price_rub_snapshot")
-    )
-    returned = sale_returned_quantities(profit_lines)
-    profit = DEC0
+    revenue = DEC0
+    known_revenue = DEC0
+    cost = DEC0
+    revenue_by_part: dict[int, Decimal] = {}
+    quantity_by_part: dict[int, Decimal] = {}
+    part_names: dict[int, str] = {}
     unavailable = 0
-    for line in profit_lines:
-        effective_quantity = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
-        if not effective_quantity:
-            continue
-        if line.unmarked_unit_price_rub_snapshot is None:
+    for line in lines:
+        line_revenue = money(line.unit_price * line.quantity)
+        revenue += line_revenue
+        revenue_by_part[line.part_type_id] = (
+            revenue_by_part.get(line.part_type_id, DEC0) + line_revenue
+        )
+        quantity_by_part[line.part_type_id] = (
+            quantity_by_part.get(line.part_type_id, DEC0) + line.quantity
+        )
+        part_names[line.part_type_id] = line.part_type.name
+        base = line.unmarked_unit_price_rub_snapshot
+        if base is None or base <= 0:
             unavailable += 1
             continue
-        profit += (
-            line.unit_price - line.unmarked_unit_price_rub_snapshot
-        ) * effective_quantity
-    top_rev = list(
-        lines.values("part_type_id", "part_type__name")
-        .annotate(v=Sum("total_price"))
-        .order_by("-v")[:TOP_N]
-    )
-    top_qty = list(
-        lines.values("part_type_id", "part_type__name")
-        .annotate(v=Sum("quantity"))
-        .order_by("-v")[:TOP_N]
-    )
+        known_revenue += line_revenue
+        cost += money(base * line.quantity)
+    revenue = money(revenue)
+    known_revenue = money(known_revenue)
+    cost = money(cost)
+    profit = money(known_revenue - cost)
+    if unavailable == 0 and profit != money(revenue - cost):
+        raise AssertionError("Продажи: прибыль не сходится с выручкой и себестоимостью.")
+    top_rev = sorted(
+        revenue_by_part.items(), key=lambda item: (-item[1], part_names[item[0]], item[0])
+    )[:TOP_N]
+    top_qty = sorted(
+        quantity_by_part.items(), key=lambda item: (-item[1], part_names[item[0]], item[0])
+    )[:TOP_N]
     identity = identity_for_part_ids(
-        {r["part_type_id"] for r in top_rev} | {r["part_type_id"] for r in top_qty}
+        {part_id for part_id, _ in top_rev} | {part_id for part_id, _ in top_qty}
     )
     return SalesReport(
-        count=agg["count"] or 0,
-        line_count=lines.count(),
-        revenue=money(agg["revenue"] or DEC0),
-        cost=money(agg["cost"] or DEC0),
-        profit=money(profit),
+        count=sales.count(),
+        line_count=len(lines),
+        revenue=revenue,
+        cost=cost,
+        profit=profit,
+        known_revenue=known_revenue,
         profit_unavailable_lines=unavailable,
         top_by_revenue=[
-            TopRow(
-                r["part_type__name"],
-                money(r["v"] or DEC0),
-                identity[r["part_type_id"]].exact_number,
-            )
-            for r in top_rev
+            TopRow(part_names[part_id], money(value), identity[part_id].exact_number)
+            for part_id, value in top_rev
         ],
         top_by_quantity=[
-            TopRow(
-                r["part_type__name"],
-                r["v"] or DEC0,
-                identity[r["part_type_id"]].exact_number,
-            )
-            for r in top_qty
+            TopRow(part_names[part_id], value, identity[part_id].exact_number)
+            for part_id, value in top_qty
         ],
     )
 
