@@ -86,9 +86,9 @@
       {% for line in lines %}
         <tr>
           {% include "partials/_line_part_cells.html" %}
-          <td>{{ line.quantity|quantity_int }}</td>
+          <td>{{ line.quantity|quantity_with_unit:line.part_type }}</td>
           <td>
-            {{ line.unit_price|money_int }}
+            {{ line.unit_price|money_int }}{% if line.part_type.is_oil %}/л{% endif %}
             {% if line.part_type.min_price and line.unit_price < line.part_type.min_price %}
               <span class="muted">(ниже мин. {{ line.part_type.min_price|money_int }})</span>
             {% endif %}
@@ -159,6 +159,44 @@
       {{ add_lot_form.as_p }}
       <button type="submit">Добавить из лота</button>
     </form>
+    {% if oil_availability %}
+      <h2>Масло</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Масло</th>
+            <th class="num--qty">Объём упаковки</th>
+            <th class="num">Цена упаковки</th>
+            <th class="num">Цена за литр</th>
+            <th class="num--qty">В наличии</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in oil_availability %}
+            <tr>
+              <td>{{ row.part_type_name }}</td>
+              <td class="num--qty">{{ row.package_volume_l|quantity_int }} л</td>
+              <td class="num">
+                {% if row.package_price_rub is not None %}{{ row.package_price_rub|money_rub }}
+          {% else %}<span class="muted">не задана</span>{% endif %}
+            </td>
+            <td class="num">
+              {% if row.price_per_liter_rub is not None %}{{ row.price_per_liter_rub|money_rub }}/л
+          {% else %}<span class="muted">-</span>{% endif %}
+            </td>
+            <td class="num--qty">{{ row.available_l|quantity_int }} л</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <form method="post"
+            action="{% url 'sale_add_oil_lot' sale.pk %}"
+            class="form">
+        {% csrf_token %}
+        {{ add_oil_lot_form.as_p }}
+        <button type="submit">Добавить объём масла</button>
+      </form>
+    {% endif %}
     <p class="muted">
       Проведение продажи списывает остаток (создаёт складское движение расхода) и
       замораживает цену и себестоимость. Отмена проведённой продажи: будущий слой.

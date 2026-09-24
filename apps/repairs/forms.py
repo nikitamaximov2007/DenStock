@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django import forms
 
+from apps.catalog.forms import CommaDecimalField
 from apps.catalog.models import VehicleType
 from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
@@ -130,6 +131,25 @@ class AddRepairLotForm(forms.Form):
         # Опция подписана названием + exact-артикулом детали (не только именем).
         self.fields["lot"].queryset = with_part_identity(
             StockLot.objects.filter(status=StockLot.Status.AVAILABLE)
+            .select_related("part_type", "location")
+            .order_by("part_type__name", "location__code")
+        )
+
+
+class AddOilRepairLotForm(forms.Form):
+    """Масло: оператор вводит только объём залитого, л - цена считается от package price."""
+
+    lot = ExactLotChoiceField(label="Масло (лот)", queryset=StockLot.objects.none())
+    volume_l = CommaDecimalField(
+        label="Объём залитого масла, л", max_digits=12, decimal_places=3,
+        min_value=Decimal("0.001"),
+        widget=forms.TextInput(attrs={"inputmode": "decimal", "step": "0.001"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["lot"].queryset = with_part_identity(
+            StockLot.objects.filter(status=StockLot.Status.AVAILABLE, part_type__is_oil=True)
             .select_related("part_type", "location")
             .order_by("part_type__name", "location__code")
         )
