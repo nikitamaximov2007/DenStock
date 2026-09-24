@@ -89,14 +89,21 @@
         <p class="offer__price">
           {% if facts.price.status == "known" %}
             {{ facts.price.price_rub|rub }}
-            <span class="offer__unit">за {{ facts.unit.short_name }}</span>
+            <span class="offer__unit">{% if facts.is_oil %}за упаковку{% else %}за {{ facts.unit.short_name }}{% endif %}</span>
           {% else %}
             <span class="price__clarify">Уточнить цену</span>
           {% endif %}
         </p>
+        {% if facts.is_oil and facts.oil_package_volume_l %}
+          <p class="offer__note">Объём упаковки: {{ facts.oil_package_volume_l|quantity_int }} л</p>
+        {% endif %}
         {% if card.in_stock %}
           <p class="offer__stock stock__in">
-            В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}
+            {% if facts.is_oil %}
+              В наличии: {{ facts.available_quantity|quantity_int }} л
+            {% else %}
+              В наличии: {{ facts.available_quantity|quantity_int }} {{ facts.unit.short_name }}
+            {% endif %}
           </p>
         {% else %}
           <p class="offer__stock stock__out">Сейчас нет на складе</p>

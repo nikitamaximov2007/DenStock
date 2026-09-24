@@ -49,6 +49,12 @@ class PublicPartFacts:
     unit: PublicUnit
     price: CurrentCustomerPrice
     available_quantity: Decimal
+    # Масло: available_quantity выше уже в литрах (физический остаток), а
+    # `unit`/цена остаются пакетными (V1: публичный запрос - по упаковкам,
+    # см. docs). is_oil даёт шаблону показать литры наличия отдельной
+    # подписью, не путая её с единицей запроса/цены.
+    is_oil: bool = False
+    oil_package_volume_l: Decimal | None = None
 
 
 PRICE_PARITY_A = "A"
@@ -199,9 +205,16 @@ def build_public_part_facts(
             english_name=part.name,
             russian_name=russian_names.get(part.pk),
             manufacturer=manufacturer_display(part),
+            # ВАЖНО: это единица ЗАПРОСА/цены (для масла - "упаковка", V1
+            # держит публичный запрос пакетным - см. apps.catalog.quantity_units
+            # и docs/ai-support про CustomerRequest→Sale), а НЕ единица
+            # физического наличия. available_quantity ниже - всегда литры для
+            # масла независимо от этого поля; шаблон показывает их отдельно.
             unit=PublicUnit(name=part.unit.name, short_name=part.unit.short_name),
             price=prices[part.pk],
             available_quantity=quantities[part.pk],
+            is_oil=part.is_oil,
+            oil_package_volume_l=part.oil_package_volume_l,
         )
         for part_id in ids
         if (part := parts_by_id.get(part_id)) is not None
