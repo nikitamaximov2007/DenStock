@@ -32,6 +32,7 @@ from apps.procurement.services import finalize_cost
 from apps.repairs.models import RepairOrder
 from apps.repairs.services import (
     RepairError,
+    add_oil_volume_to_repair_order,
     add_stock_lot_to_repair_order,
     cancel_repair_order,
     complete_repair_order,
@@ -40,6 +41,7 @@ from apps.repairs.services import (
 from apps.sales.models import Sale
 from apps.sales.services import (
     SaleError,
+    add_oil_volume_to_sale,
     add_stock_lot_to_sale,
     complete_sale,
     create_sale,
@@ -287,6 +289,130 @@ def test_concurrent_adjustments_do_not_lose_an_update(world):
     _wins_and_losses(results, (InventoryError,))
 
     assert _available(part) == before + Decimal("8"), "потеряно одно из обновлений"
+
+
+# --- Масло: дробные литры ----------------------------------------------------
+
+
+@pytest.fixture
+def oil_world():
+    """Минимальный литровый остаток для конкурентных Sale/Repair проверок."""
+    admin = get_user_model().objects.create_superuser(username="oil-boss", password=PASSWORD)
+    supplier = Supplier.objects.create(name="ООО Масла")
+    category = Category.objects.create(name="Масла")
+    unit, _ = Unit.objects.get_or_create(name="Литр", defaults={"short_name": "л"})
+    location = StorageLocation.objects.create(
+        name="Масляная ячейка", code="S90-D01-C01", storage_allowed=True, is_active=True
+    )
+    part = PartType.objects.create(
+        name="Масло PG16", category=category, unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("1000"), is_oil=True,
+        oil_package_volume_l=Decimal("4"),
+    )
+    remember_customs(part)
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    line = BatchLine.objects.create(
+        batch=batch, part_type=part, quantity=Decimal("0.500"),
+        unit_cost_currency=Decimal("5"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    line.refresh_from_db()
+    lot = create_stock_lot(line, location, Decimal("0.500"))
+    receive_stock_lot(lot, by=admin)
+    return {"admin": admin, "part": part, "lot": lot}
+
+
+def _build_oil_sale(lot_pk, admin_pk, volume="0.300"):
+    admin = _user(admin_pk)
+    sale = create_sale(customer_name="Масло", by=admin)
+    add_oil_volume_to_sale(
+        sale, StockLot.objects.get(pk=lot_pk), Decimal(volume), by=admin
+    )
+    return sale
+
+
+def _build_oil_repair(lot_pk, admin_pk, volume="0.300"):
+    admin = _user(admin_pk)
+    order = create_repair_order(customer_name="Масло", by=admin)
+    add_oil_volume_to_repair_order(
+        order, StockLot.objects.get(pk=lot_pk), Decimal(volume), by=admin
+    )
+    return order
+
+
+def test_two_oil_sales_cannot_overdraw_fractional_liters(oil_world):
+    """Две продажи по 0.300 л не могут одновременно списать 0.500 л."""
+    lot, admin, part = oil_world["lot"], oil_world["admin"], oil_world["part"]
+    first = _build_oil_sale(lot.pk, admin.pk)
+    second = _build_oil_sale(lot.pk, admin.pk)
+
+    results = _race(_complete_sale_by_pk, (first.pk, admin.pk), (second.pk, admin.pk))
+    wins, losses = _wins_and_losses(results, (SaleError, InventoryError))
+
+    assert len(wins) == 1
+    assert len(losses) == 1
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("0.200")
+    assert not StockLot.objects.filter(quantity__lt=0).exists()
+    assert StockMovement.objects.filter(
+        part_type=part, movement_type=StockMovement.MovementType.SALE_LOT
+    ).count() == 1
+
+
+def test_two_oil_repairs_cannot_overdraw_fractional_liters(oil_world):
+    """Две выдачи масла по 0.300 л не могут одновременно списать 0.500 л."""
+    lot, admin, part = oil_world["lot"], oil_world["admin"], oil_world["part"]
+    first = _build_oil_repair(lot.pk, admin.pk)
+    second = _build_oil_repair(lot.pk, admin.pk)
+
+    results = _race(_complete_repair_by_pk, (first.pk, admin.pk), (second.pk, admin.pk))
+    wins, losses = _wins_and_losses(results, (RepairError, InventoryError))
+
+    assert len(wins) == 1
+    assert len(losses) == 1
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("0.200")
+    assert not StockLot.objects.filter(quantity__lt=0).exists()
+    assert StockMovement.objects.filter(
+        part_type=part, movement_type=StockMovement.MovementType.ISSUE_LOT
+    ).count() == 1
+
+
+def test_concurrent_double_submit_of_one_oil_sale_is_single_decrement(oil_world):
+    lot, admin, part = oil_world["lot"], oil_world["admin"], oil_world["part"]
+    sale = _build_oil_sale(lot.pk, admin.pk)
+
+    results = _race(_complete_sale_by_pk, (sale.pk, admin.pk), (sale.pk, admin.pk))
+    wins, losses = _wins_and_losses(results, (SaleError, InventoryError))
+
+    assert len(wins) == 1
+    assert len(losses) == 1
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("0.200")
+    assert Sale.objects.get(pk=sale.pk).status == Sale.Status.COMPLETED
+    assert StockMovement.objects.filter(
+        part_type=part, movement_type=StockMovement.MovementType.SALE_LOT
+    ).count() == 1
+
+
+def test_concurrent_double_submit_of_one_oil_repair_is_single_issue(oil_world):
+    lot, admin, part = oil_world["lot"], oil_world["admin"], oil_world["part"]
+    order = _build_oil_repair(lot.pk, admin.pk)
+
+    results = _race(_complete_repair_by_pk, (order.pk, admin.pk), (order.pk, admin.pk))
+    wins, losses = _wins_and_losses(results, (RepairError, InventoryError))
+
+    assert len(wins) >= 1
+    assert not losses or len(losses) == 1
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("0.200")
+    assert RepairOrder.objects.get(pk=order.pk).status == RepairOrder.Status.COMPLETED
+    assert StockMovement.objects.filter(
+        part_type=part, movement_type=StockMovement.MovementType.ISSUE_LOT
+    ).count() == 1
 
 
 def test_concurrent_cancellation_of_one_action_restores_stock_once(world):
