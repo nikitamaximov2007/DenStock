@@ -34,12 +34,14 @@ from django.core.management.base import BaseCommand
 
 from apps.actions.services import (
     _normalized_manufacturer,
+    authoritative_manufacturer,
+    catalog_or_explicit_manufacturer,
     is_brp_export_eligible,
     manual_part_name_ru,
 )
 from apps.catalog.models import PartType
 from apps.catalog.services import MANUAL_CATEGORY_NAME
-from apps.inventory.presentation import manufacturer_display
+from apps.inventory.presentation import part_exact_number
 
 _BUCKET_LABELS = {
     "brp": "A. proven BRP",
@@ -64,30 +66,56 @@ def _bucket_for(resolved: str) -> str:
 
 
 def classify_part(part: PartType) -> dict:
-    """Доказанная категория детали + расхождение с сохранённой таможенной карточкой.
+    """Доказанная категория детали, живое чтение и сохранённая карточка.
 
-    ``resolved`` - то, что доказывает система (каталог или явный выбор
-    производителя). ``declared`` - то, что реально лежит в живой таможенной
-    карточке прямо сейчас (может быть отсутствующей карточкой - тогда пусто).
+    Три разных значения, три разных вопроса:
+
+    * ``resolved`` - что доказывает СВЕЖАЯ проверка каталога/карточки прямо
+      сейчас, независимо от того, что сохранено (``catalog_or_explicit_manufacturer``).
+      Определяет bucket (A-F) и «should_be_*».
+    * ``declared`` - что БУКВАЛЬНО лежит в живой таможенной карточке
+      (``PartCustomsInfo.manufacturer``) без какой-либо перепроверки. Только
+      для «currently_marked_brp» - состояние данных как есть, до любого чтения.
+    * ``live`` - что реально увидит сотрудник и что реально попадёт в
+      Excel/заказ ПРЯМО СЕЙЧАС, без единой записи в базу: тот же
+      ``authoritative_manufacturer``, что использует History/Excel/заказ.
+      Для declared="BRP" без доказательства live отличается от declared -
+      устаревший default уже не побеждает при чтении. Для любого другого
+      declared live совпадает с declared (см. authoritative_manufacturer:
+      небрендовый default не существовал).
     """
     is_manual = part.category.name == MANUAL_CATEGORY_NAME
-    resolved = manufacturer_display(part).strip().upper()
+    number = part_exact_number(part, default="")
+    resolved = catalog_or_explicit_manufacturer(part, number)
     bucket = _bucket_for(resolved)
     info = getattr(part, "customs_info", None)
     declared = (info.manufacturer.strip().upper() if info is not None else "")
+    live = authoritative_manufacturer(part, declared, number) if info is not None else ""
+    stale_brp = _normalized_manufacturer(declared) == "BRP" and declared != live
     return {
         "part": part,
         "is_manual": is_manual,
         "resolved_manufacturer": resolved,
         "declared_manufacturer": declared,
+        "live_manufacturer": live,
         "bucket": bucket,
         "currently_marked_brp": _normalized_manufacturer(declared) == "BRP",
         "should_be_brp": bucket == "brp",
-        "currently_eligible": is_brp_export_eligible(declared),
+        # "Currently eligible" - то, что экспорт/заказ реально допускают СЕЙЧАС
+        # (через authoritative_manufacturer), а не сырое сохранённое значение:
+        # устаревший default больше не проходит проверку допуска при чтении.
+        "currently_eligible": is_brp_export_eligible(live),
         "should_be_eligible": is_brp_export_eligible(resolved),
         "classification_would_change": (
             _normalized_manufacturer(declared) != _normalized_manufacturer(resolved)
         ),
+        # Устаревший default, который чтение уже перепроверяет и не путает с
+        # доказанным BRP, но который ещё стоит поправить в самой карточке
+        # (см. repair_customs_manufacturers), чтобы следующая настоящая
+        # правка формы не заморозила его в новую версию как «BRP».
+        "stale_brp": stale_brp,
+        "stale_brp_high_confidence": stale_brp and bool(resolved),
+        "stale_brp_ambiguous": stale_brp and not resolved,
         "has_customs_info": info is not None,
         "name_ru_declared": (info.customs_name_ru.strip() if info is not None else ""),
         "usable_manual_name_ru": manual_part_name_ru(part),
@@ -127,6 +155,8 @@ class Command(BaseCommand):
         misclassified = [row for row in with_info if row["classification_would_change"]]
         currently_eligible = [row for row in with_info if row["currently_eligible"]]
         should_be_eligible = [row for row in rows if row["should_be_eligible"]]
+        stale_high = [row for row in with_info if row["stale_brp_high_confidence"]]
+        stale_ambiguous = [row for row in with_info if row["stale_brp_ambiguous"]]
         name_gap = [
             row for row in with_info
             if not row["name_ru_declared"] and row["usable_manual_name_ru"]
@@ -147,6 +177,11 @@ class Command(BaseCommand):
                 1 for row in currently_marked_brp
                 if row["is_manual"] and row["bucket"] != "brp"
             ),
+            # Repair-таргеты: repair_customs_manufacturers --apply трогает
+            # ТОЛЬКО stale_brp_high_confidence; stale_brp_ambiguous остаётся
+            # в базе как есть и требует --clear-unproven для очистки.
+            "stale_brp_high_confidence": len(stale_high),
+            "stale_brp_ambiguous_needs_owner_review": len(stale_ambiguous),
             "export_rows_missing_name_ru_with_usable_manual_name": len(name_gap),
         }
 

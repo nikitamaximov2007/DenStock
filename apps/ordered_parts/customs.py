@@ -126,8 +126,9 @@ def ordered_parts_customs_rows(**filters) -> list[dict]:
     Порядок - хронологический (дата оформления заказа), тот же принцип, что и
     у продаж/ремонтов: общий экспортёр сливает оба источника по этому ключу.
     """
+    from apps.actions.customs_history import line_chronological_key
     from apps.actions.models import PartCustomsInfo
-    from apps.actions.services import _CUSTOMS_ROW_EPOCH, _customs_row_from_version
+    from apps.actions.services import _customs_row_from_version
 
     lines = ordered_parts_customs_lines(**filters)
     if not lines:
@@ -139,7 +140,7 @@ def ordered_parts_customs_rows(**filters) -> list[dict]:
         parts[line["part_id"]] = line["part"]
         versions[key] = version
         totals[key] = totals.get(key, Decimal("0")) + line["quantity"]
-        line_key = (line["occurred_at"] or _CUSTOMS_ROW_EPOCH, line["kind"], line["line_id"])
+        line_key = line_chronological_key(line)
         previous = chronological.get(key)
         chronological[key] = line_key if previous is None else min(previous, line_key)
     customs_by_part = {

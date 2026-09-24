@@ -7,7 +7,6 @@
 Excel-экспорт «Формы для заказа» (openpyxl, шаблон в apps/actions/customs_template/:
 рантайм-ассет должен лежать в пакете, docs/ исключён из Docker-образа).
 """
-import datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -16,7 +15,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from apps.actions.customs_history import canonical_customs_lines
+from apps.actions.customs_history import canonical_customs_lines, line_chronological_key
 from apps.actions.customs_provenance import ARTICLE_PROVEN
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import (
@@ -955,6 +954,53 @@ def catalog_manufacturer_name(part: PartType, number: str = "") -> str:
     return ""
 
 
+def catalog_or_explicit_manufacturer(part: PartType, number: str = "") -> str:
+    """Всё доказательство производителя разом: каталожная связь ИЛИ явный выбор.
+
+    Тот же приоритет, что и при настоящем сохранении формы
+    (``manufacturer_display``: связь карточки сильнее справочника), плюс
+    запасной путь по точному артикулу (``catalog_manufacturer_name``) для
+    строк без прямой связи карточки, но с известным номером операции.
+    Независимо от того, что сейчас сохранено - это ответ на вопрос «что
+    доказывает система прямо сейчас», используемый и живой проверкой
+    (``authoritative_manufacturer``), и аудитом.
+    """
+    return catalog_manufacturer_name(part, number) or manufacturer_display(part).strip().upper()
+
+
+def authoritative_manufacturer(part: PartType, declared: str, number: str = "") -> str:
+    """Re-prove a persisted manufacturer, but only when it claims to be BRP.
+
+    The old ``PartCustomsInfo.manufacturer`` model default wrote exactly one
+    unproven value - "BRP" - into every untouched card, including manual
+    parts nobody classified. That default is gone (see the migration), but
+    it already froze "BRP" into some ``PartCustomsDataVersion`` rows before
+    this fix, and those historical versions are never rewritten. A frozen
+    "BRP" must not keep being trusted at read time just because it was
+    saved: it is re-checked against exactly the evidence
+    ``system_customs_facts``/``manufacturer_display`` would use for a fresh
+    save today - a proven catalog link (BRP/Polaris/aftermarket, by card or
+    by exact article) or an explicitly chosen ``PartType.manufacturer``.
+
+    Any OTHER persisted brand (BRONCO, SPI, PROX, MOTUL, ...) is trusted as
+    recorded and returned unchanged: the customs form has never let an
+    operator type a manufacturer by hand (see actions_customs_edit), so a
+    non-"BRP" value could only get there through catalog linkage or an
+    explicit PartType.manufacturer choice already resolved by
+    system_customs_facts at save time - there is no stale-default path that
+    produces anything but "BRP".
+
+    Returns the proven brand when the evidence disagrees with "BRP" (e.g.
+    "BRONCO"), stays "BRP" when the evidence still agrees, and returns ""
+    when there is no evidence at all - an unproven "BRP" must not survive
+    as an unlabelled fact, and "" is what a genuinely unclassified part
+    already looks like everywhere else in this module.
+    """
+    if _normalized_manufacturer(declared) != "BRP":
+        return declared
+    return catalog_or_explicit_manufacturer(part, number)
+
+
 def catalog_customs_usd(part: PartType, number: str = "") -> Decimal | None:
     """Таможенная стоимость единицы в USD из каталога поставщика.
 
@@ -1341,7 +1387,10 @@ def part_export_data(part: PartType, number: str | None = None) -> dict:
     # Customs facts are explicit operator input. Neither current catalog
     # wholesale nor a manufacturer default may masquerade as historical truth.
     usd_price = customs.customs_unit_price_usd
-    manufacturer = customs.manufacturer.strip().upper()
+    # Живая карточка могла сохранить «BRP» ещё ДО того, как модель перестала
+    # подставлять его по умолчанию: перепроверяем именно этот случай (см.
+    # authoritative_manufacturer), а не доверяем сохранённому значению вслепую.
+    manufacturer = authoritative_manufacturer(part, customs.manufacturer.strip().upper(), number)
     country = resolve_customs_country(part, customs.country_of_origin, number)
     # Область применения: приоритет 1) ручное значение карточки, 2) автоопределение
     # по PartCompatibility, 3) пусто. Легаси-хардкод «МОТО ЗАПЧАСТИ» (старый
@@ -1564,6 +1613,11 @@ def _customs_row_from_version(
         values["name_ru_confirmed"] = True
     if not values["manufacturer"]:
         values["manufacturer"] = catalog_manufacturer_name(part, number)
+    # Замороженная версия могла сохранить «BRP» ещё ДО того, как модель
+    # перестала подставлять его по умолчанию (см. authoritative_manufacturer).
+    # Саму версию это не переписывает - подстановка живёт только в строке
+    # выгрузки, ровно как и остальные fallback'ы этой функции.
+    values["manufacturer"] = authoritative_manufacturer(part, values["manufacturer"], number)
     if values["usd_price"] is None:
         values["usd_price"] = catalog_customs_usd(part, number)
     missing = [label for key, label in (
@@ -1638,19 +1692,6 @@ def customs_data_version_for(part: PartType, at):
     )
 
 
-_CUSTOMS_ROW_EPOCH = datetime.datetime.min.replace(tzinfo=datetime.UTC)
-
-
-def _line_chronological_key(line) -> tuple:
-    """Тот же порядок, что у «Истории для таможенных заказов» (canonical_customs_lines).
-
-    Тип операции и id строки - обязательный довесок: у продажи и ремонта
-    нумерация своя, и без него две строки с одинаковой датой (или без даты)
-    сравнивались бы произвольно.
-    """
-    return (line["occurred_at"] or _CUSTOMS_ROW_EPOCH, line["kind"], line["line_id"])
-
-
 def _customs_rows_from_lines(lines) -> list[dict]:
     """Свернуть канонические строки в строки Excel.
 
@@ -1673,7 +1714,7 @@ def _customs_rows_from_lines(lines) -> list[dict]:
         parts[line["part_id"]] = line["part"]
         versions[key] = version
         totals[key] = totals.get(key, Decimal("0")) + line["quantity"]
-        line_key = _line_chronological_key(line)
+        line_key = line_chronological_key(line)
         previous = chronological.get(key)
         chronological[key] = line_key if previous is None else min(previous, line_key)
 
