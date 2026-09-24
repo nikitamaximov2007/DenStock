@@ -283,10 +283,18 @@ class PartType(Dictionary):
             # Объём упаковки обязателен и положителен только у масла; у обычной
             # детали поле остаётся пустым - не "0", чтобы не путать
             # "не масло" с "масло с ошибочно нулевым объёмом".
+            # Явно исключает NULL из сравнения "> 0": в SQL CHECK NULL считается
+            # пройденной проверкой (three-valued logic), поэтому без
+            # oil_package_volume_l__isnull=False масло с NULL-объёмом молча
+            # прошло бы через прямой UPDATE в обход Python-валидации.
             models.CheckConstraint(
                 condition=(
                     models.Q(is_oil=False, oil_package_volume_l__isnull=True)
-                    | models.Q(is_oil=True, oil_package_volume_l__gt=0)
+                    | models.Q(
+                        is_oil=True,
+                        oil_package_volume_l__isnull=False,
+                        oil_package_volume_l__gt=0,
+                    )
                 ),
                 name="parttype_oil_package_volume_required_iff_oil",
             ),
