@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Сравнение карточек · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Сравнение карточек</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'customer_detail' first.pk %}">К карточке #{{ first.pk }}</a>
+    </div>
+  </div>
+  <div class="notice notice--warning">
+    <p>
+      Ничего ещё не меняется. Выберите, какая карточка останется канонической -
+      вторая будет объединена с ней на следующем шаге, после явного подтверждения.
+    </p>
+  </div>
+  <div class="grid grid--2">
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">#{{ first.pk }} {{ first.name }}</h2>
+      </div>
+      <div class="card__body">
+        <table class="table">
+          <tbody>
+            <tr>
+              <th>Телефон</th>
+              <td>{{ first.phone|default:"·" }}</td>
+            </tr>
+            <tr>
+              <th>Город</th>
+              <td>{{ first.city|default:"·" }}</td>
+            </tr>
+            <tr>
+              <th>Создана</th>
+              <td>{{ first.created_at|ru_dt }}</td>
+            </tr>
+            <tr>
+              <th>Продаж</th>
+              <td>{{ first_documents.sales }}</td>
+            </tr>
+            <tr>
+              <th>Ремонтов</th>
+              <td>{{ first_documents.repairs }}</td>
+            </tr>
+            <tr>
+              <th>Резервов</th>
+              <td>{{ first_documents.reservations }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <a class="btn btn--primary"
+           href="{% url 'customer_merge_confirm' first.pk second.pk %}?target={{ first.pk }}">Оставить эту карточку канонической</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">#{{ second.pk }} {{ second.name }}</h2>
+      </div>
+      <div class="card__body">
+        <table class="table">
+          <tbody>
+            <tr>
+              <th>Телефон</th>
+              <td>{{ second.phone|default:"·" }}</td>
+            </tr>
+            <tr>
+              <th>Город</th>
+              <td>{{ second.city|default:"·" }}</td>
+            </tr>
+            <tr>
+              <th>Создана</th>
+              <td>{{ second.created_at|ru_dt }}</td>
+            </tr>
+            <tr>
+              <th>Продаж</th>
+              <td>{{ second_documents.sales }}</td>
+            </tr>
+            <tr>
+              <th>Ремонтов</th>
+              <td>{{ second_documents.repairs }}</td>
+            </tr>
+            <tr>
+              <th>Резервов</th>
+              <td>{{ second_documents.reservations }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <a class="btn btn--primary"
+           href="{% url 'customer_merge_confirm' first.pk second.pk %}?target={{ second.pk }}">Оставить эту карточку канонической</a>
+      </div>
+    </div>
+  </div>
+{% endblock %}

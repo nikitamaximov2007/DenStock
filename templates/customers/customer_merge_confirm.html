@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Подтверждение объединения · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">Подтверждение объединения</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'customer_compare' target.pk source.pk %}">Назад к сравнению</a>
+    </div>
+  </div>
+  {% if plan.already_merged_here %}
+    <div class="notice notice--warning">
+      <p>
+        Карточка #{{ source.pk }} уже объединена с #{{ target.pk }} - переносить
+        больше нечего. Повторное нажатие «Объединить» безопасно и ничего не
+        изменит ещё раз.
+      </p>
+    </div>
+  {% else %}
+    <div class="notice notice--warning">
+      <p>Будет перенесено на карточку #{{ target.pk }} {{ target.name }}:</p>
+      <ul>
+        {% for key, count in plan.moved_counts.items %}
+          <li>{{ key }}: {{ count }}</li>
+        {% endfor %}
+      </ul>
+      <p>Итого связей: {{ plan.total_moved }}.</p>
+      <p>
+        Карточка #{{ source.pk }} {{ source.name }} останется в системе как
+        объединённая (не удаляется), её история остаётся доступна по прямой
+        ссылке. Уже проведённые продажи, ремонты и суммы в них не меняются -
+        меняется только ссылка на карточку клиента.
+      </p>
+    </div>
+  {% endif %}
+  <div class="card">
+    <div class="card__body">
+      <form method="post" action="{% url 'customer_merge_apply' %}" class="form">
+        {% csrf_token %}
+        <input type="hidden" name="target_id" value="{{ target.pk }}">
+        <input type="hidden" name="source_id" value="{{ source.pk }}">
+        <p>
+          <label for="id_reason">Причина объединения</label>
+          <br>
+          <textarea id="id_reason" name="reason" rows="3"></textarea>
+        </p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn--primary">Объединить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

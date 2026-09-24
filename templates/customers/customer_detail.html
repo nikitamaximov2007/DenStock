@@ -17,6 +17,35 @@
       </div>
     {% endif %}
   </div>
+  {% if customer.is_merged %}
+    <div class="notice notice--warning">
+      <p>
+        Эта карточка объединена с
+        <a href="{% url 'customer_detail' customer.merged_into_id %}">{{ customer.merged_into }}</a>.
+        Новые документы оформляйте на неё - история этой карточки остаётся доступна.
+      </p>
+    </div>
+  {% endif %}
+  {% if duplicate_group %}
+    <div class="notice notice--warning">
+      <p>Обнаружены карточки с тем же телефоном:</p>
+      <ul>
+        {% for row in duplicate_group.customers %}
+          <li>
+            <a href="{% url 'customer_detail' row.customer_id %}">{{ row.name }}</a>
+            - продаж {{ row.sale_count }}, ремонтов {{ row.repair_count }}
+            {% if can_merge %}
+              <a class="btn btn--small btn--secondary"
+                 href="{% url 'customer_compare' customer.pk row.customer_id %}">Сравнить карточки</a>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      {% if duplicate_group.classification == "review_required" %}
+        <p class="muted">{{ duplicate_group.reason|capfirst }} - сравните карточки перед объединением.</p>
+      {% endif %}
+    </div>
+  {% endif %}
   <div class="card">
     <div class="card__body">
       <table class="table">

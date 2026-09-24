@@ -13,14 +13,22 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.http import require_POST
 
 from apps.repairs.models import RepairOrder
 from apps.sales.models import Reservation, Sale
 
+from .dedup_audit import duplicate_group_for_phone
 from .forms import CustomerForm
 from .legacy_linking import legacy_group_summary, link_legacy_group, suggest_identity
+from .merge import CustomerMergeError, execute_customer_merge, preview_customer_merge
 from .models import Customer, CustomerCreateIdempotency
-from .services import check_duplicate_phone, create_customer_idempotently, search_customers
+from .services import (
+    check_duplicate_phone,
+    create_customer_idempotently,
+    documents_of,
+    search_customers,
+)
 
 PAGE_SIZE = 50
 
@@ -60,6 +68,13 @@ def _require_access(request) -> None:
 def _require_edit(request) -> None:
     user = request.user
     if not (user.can_manage_sales or user.can_manage_repairs or user.can_manage_reservations):
+        raise PermissionDenied
+
+
+def _require_merge(request) -> None:
+    """Слияние карточек затрагивает продажи/ремонты/заявки по всей системе -
+    более узкая роль, чем обычное редактирование карточки."""
+    if not request.user.is_manager:
         raise PermissionDenied
 
 
@@ -248,6 +263,11 @@ def customer_detail(request, pk):
         .order_by("-created_at")[:20]
     )
     reservations = list(Reservation.objects.filter(customer=customer).order_by("-created_at")[:20])
+    duplicate_group = None
+    if not customer.is_merged and customer.phone_normalized:
+        duplicate_group = duplicate_group_for_phone(
+            customer.phone_normalized, exclude_id=customer.pk
+        )
     return render(
         request,
         "customers/customer_detail.html",
@@ -261,6 +281,85 @@ def customer_detail(request, pk):
                 or request.user.can_manage_repairs
                 or request.user.can_manage_reservations
             ),
+            "can_merge": request.user.is_manager,
+            "duplicate_group": duplicate_group,
             "show_costs": request.user.can_view_purchase_cost,
         },
     )
+
+
+@login_required
+def customer_compare(request, pk, other_pk):
+    """Сравнить две карточки и выбрать, какая станет канонической.
+
+    Ничего не меняет: обе половины формы ведут на подтверждение
+    (customer_merge_confirm), а не сразу на объединение.
+    """
+    _require_merge(request)
+    if pk == other_pk:
+        messages.error(request, "Нельзя сравнивать карточку саму с собой.")
+        return redirect("customer_detail", pk=pk)
+    first = get_object_or_404(Customer, pk=pk)
+    second = get_object_or_404(Customer, pk=other_pk)
+    return render(
+        request,
+        "customers/customer_compare.html",
+        {
+            "first": first,
+            "second": second,
+            "first_documents": documents_of(first),
+            "second_documents": documents_of(second),
+        },
+    )
+
+
+@login_required
+def customer_merge_confirm(request, pk, other_pk):
+    """Явное подтверждение: что именно перенесётся, прежде чем что-то менять."""
+    _require_merge(request)
+    target_id = int(request.GET.get("target", pk))
+    source_id = other_pk if target_id == pk else pk
+    if target_id not in (pk, other_pk):
+        messages.error(request, "Некорректный выбор канонической карточки.")
+        return redirect("customer_compare", pk=pk, other_pk=other_pk)
+    target = get_object_or_404(Customer, pk=target_id)
+    source = get_object_or_404(Customer, pk=source_id)
+    try:
+        plan = preview_customer_merge(target, source)
+    except CustomerMergeError as exc:
+        messages.error(request, str(exc))
+        return redirect("customer_compare", pk=pk, other_pk=other_pk)
+    return render(
+        request,
+        "customers/customer_merge_confirm.html",
+        {"target": target, "source": source, "plan": plan},
+    )
+
+
+@login_required
+@require_POST
+def customer_merge_apply(request):
+    """Выполнить объединение. target/source передаются явно в теле запроса -
+    ID из URL здесь не участвуют, чтобы выбор канонической карточки не мог
+    перепутаться между экранами."""
+    _require_merge(request)
+    try:
+        target_id = int(request.POST.get("target_id", ""))
+        source_id = int(request.POST.get("source_id", ""))
+    except (TypeError, ValueError):
+        messages.error(request, "Некорректные параметры объединения.")
+        return redirect("customer_list")
+    reason = (request.POST.get("reason") or "").strip()
+    try:
+        receipt = execute_customer_merge(
+            target_id=target_id, source_id=source_id, by=request.user, reason=reason
+        )
+    except CustomerMergeError as exc:
+        messages.error(request, str(exc))
+        return redirect("customer_compare", pk=target_id, other_pk=source_id)
+    total = sum(receipt.moved_counts.values())
+    messages.success(
+        request,
+        f"Карточка #{source_id} объединена с #{target_id}: перенесено связей - {total}.",
+    )
+    return redirect("customer_detail", pk=target_id)
