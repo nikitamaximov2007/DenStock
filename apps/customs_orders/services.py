@@ -45,7 +45,7 @@ def line_rub(row, rate):
 def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
     """One row per stable source, with membership excluded in SQL when requested."""
     from apps.actions.customs_history import canonical_customs_lines
-    from apps.actions.services import _customs_rows_from_lines
+    from apps.actions.services import _customs_rows_from_lines, is_brp_export_eligible
     from apps.ordered_parts.customs import ordered_parts_customs_lines
 
     filters = dict(filters or {})
@@ -84,6 +84,9 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
             quantity=line["quantity"], is_analog=bool(line.get("is_analog")),
             provenance="ordered" if marker[0] == "ordered" else "sales_repairs",
             membership=member, document_number=line["document_number"],
+            # Для "Истории для таможенных заказов": видно всё, но допуск в
+            # BRP/PRO-X выгрузку - отдельный явный признак, а не производитель.
+            export_eligible=is_brp_export_eligible(row.get("manufacturer")),
         )
         result.append(row)
     return sorted(result, key=lambda row: (
@@ -92,11 +95,23 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
 
 
 def eligible_customs_sources(order_type=CustomsOrder.OrderType.ORIGINAL) -> list[dict]:
-    """Unassigned source queue limited to one canonical classification."""
+    """Unassigned source queue limited to one canonical classification.
+
+    Also limited to BRP/PRO-X: a таможенный заказ built from this queue is the
+    same BRP customs shipment as the plain Excel export
+    (apps.actions.services.historical_customs_rows). BRONCO/SPI/MOTUL and any
+    unproven manual manufacturer stay visible in customs_sources("История")
+    but can never be selected into an order here.
+    """
+    from apps.actions.services import is_brp_export_eligible
+
     if order_type not in CustomsOrder.OrderType.values:
         raise CustomsOrderError("Выберите тип таможенного заказа.")
     analog = order_type == CustomsOrder.OrderType.ANALOG
-    return [row for row in customs_sources(unassigned_only=True) if row["is_analog"] == analog]
+    return [
+        row for row in customs_sources(unassigned_only=True)
+        if row["is_analog"] == analog and is_brp_export_eligible(row["manufacturer"])
+    ]
 
 
 def _signature(row):
