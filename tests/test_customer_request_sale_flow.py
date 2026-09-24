@@ -496,3 +496,52 @@ def test_request_sale_customs_completion_handles_multiple_lines_and_permissions(
         client.post(reverse("customer_request_customs", args=[request.pk]), {}).status_code
         == 403
     )
+
+
+def test_prepare_request_sale_surfaces_unresolved_oil_without_silent_sale_line(oil_sale_scene, client):
+    request = take(
+        make_request(oil_sale_scene["part"], key="oil-request-prepare"),
+        oil_sale_scene["admin"],
+    )
+
+    sale = prepare_request_sale(
+        request_id=request.pk,
+        by=oil_sale_scene["admin"],
+        create_customer=True,
+    )
+
+    assert sale.lines.count() == 0
+    client.force_login(oil_sale_scene["admin"])
+    response = client.get(reverse("customer_request_detail", args=[request.pk]))
+    html = response.content.decode()
+    assert "Масло требует указания объёма" in html
+    assert "Добавить масло в продажу" in html
+    assert "4 л" in html
+
+
+def test_complete_request_sale_accepts_manually_added_oil_volume(oil_sale_scene):
+    from apps.sales.services import add_oil_volume_to_sale
+
+    request = take(
+        make_request(oil_sale_scene["part"], key="oil-request-complete"),
+        oil_sale_scene["admin"],
+    )
+    sale = prepare_request_sale(
+        request_id=request.pk,
+        by=oil_sale_scene["admin"],
+        create_customer=True,
+    )
+
+    line = add_oil_volume_to_sale(
+        sale, oil_sale_scene["lot"], "0.3", by=oil_sale_scene["admin"]
+    )
+    assert line.total_price == Decimal("75.00")
+
+    completed = complete_request_sale(
+        request_id=request.pk, sale_id=sale.pk, by=oil_sale_scene["admin"]
+    )
+
+    completed_line = completed.lines.get()
+    assert completed_line.total_price == Decimal("75.00")
+    assert completed_line.quantity == Decimal("0.300")
+    assert completed.status == Sale.Status.COMPLETED
