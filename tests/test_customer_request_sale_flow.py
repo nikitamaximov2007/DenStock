@@ -348,6 +348,10 @@ def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client,
     assert "Заполнить данные" in request_html
     assert "GUIDE SCREW" in request_html
     assert "404105500" in request_html
+    draft_html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
+    # The request-specific action is a card action before the wide positions
+    # table, so it remains visible and tappable on a narrow viewport.
+    assert draft_html.find('data-customs-warning') < draft_html.find("<h2>Позиции</h2>")
 
     completion_url = reverse("customer_request_customs", args=[request.pk])
     form_page = client.get(completion_url)
@@ -400,8 +404,9 @@ def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client,
     request_after = client.get(reverse("customer_request_detail", args=[request.pk]))
     sale_after = client.get(reverse("sale_detail", args=[sale.pk]))
     assert "Не хватает данных для проведения" not in request_after.content.decode()
-    assert "Не хватает данных для проведения" not in sale_after.content.decode()
-    assert "Провести продажу" in sale_after.content.decode()
+    sale_html = sale_after.content.decode()
+    assert "Не хватает данных для проведения" not in sale_html
+    assert "Провести продажу" in sale_html
 
     completed = client.post(reverse("sale_complete", args=[sale.pk]), follow=True)
     assert "Продажа" in completed.content.decode()
