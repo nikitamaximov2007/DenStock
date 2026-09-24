@@ -49,13 +49,24 @@
 {% if oil_excluded_lines %}
   <div class="card">
     <div class="card__header">
-      <h2 class="card__title">Масло не будет возвращено на склад</h2>
+      {% if oil_return_policy == "sale_owner_decision" %}
+        <h2 class="card__title">Отмена продажи с маслом заблокирована</h2>
+      {% else %}
+        <h2 class="card__title">Использованное масло не возвращается</h2>
+      {% endif %}
     </div>
     <div class="card__body">
-      <p class="muted">
-        Отпущенный по объёму литр считается физически невозвратным: отмена
-        документа НЕ восстановит остаток по этим строкам.
-      </p>
+      {% if oil_return_policy == "sale_owner_decision" %}
+        <p class="muted">
+          По проведённой продаже нельзя определить, был ли объём физически отпущен.
+          Нужна отдельная политика владельца перед любым восстановлением остатка.
+        </p>
+      {% else %}
+        <p class="muted">
+          Масло уже выдано в ремонт и считается использованным: отмена ремонта
+          не восстановит этот объём.
+        </p>
+      {% endif %}
       <table class="table">
         <thead>
           <tr>

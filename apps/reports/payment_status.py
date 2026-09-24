@@ -18,7 +18,7 @@ from apps.repairs.services import repair_customer_line_prices, repair_returned_q
 from apps.returns.models import StockReturn, StockReturnLine
 from apps.sales.models import Sale, SaleLine
 
-from .services import DEC0, period_range
+from .services import DEC0, period_range, sale_line_amount_for_quantity
 
 
 def _decimal(value) -> str:
@@ -81,7 +81,7 @@ def customer_payment_states(*, customer_ids, period) -> dict[int, dict]:
     for line in sale_lines:
         returned = sale_returns.get(line.pk) or DEC0
         net_quantity = max(line.quantity - returned, DEC0)
-        line_amount = money(line.unit_price * net_quantity)
+        line_amount = sale_line_amount_for_quantity(line, net_quantity)
         state = states[line.sale.customer_id]
         state["amount"] += line_amount
         state["facts"].append(

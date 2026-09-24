@@ -105,6 +105,45 @@ def take(request, admin):
     return request
 
 
+@pytest.fixture
+def oil_sale_scene(admin):
+    category = Category.objects.create(name="Масло заявок")
+    unit, _ = Unit.objects.get_or_create(name="Литр", defaults={"short_name": "л"})
+    part = PartType.objects.create(
+        name="Масло для заявки",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        is_oil=True,
+        oil_package_volume_l=Decimal("4"),
+        recommended_price=Decimal("1000"),
+        is_public=True,
+    )
+    PartNumber.objects.create(part=part, value="OIL-REQ-1", is_primary=True)
+    supplier = Supplier.objects.create(name="Поставщик масла заявок")
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    batch_line = BatchLine.objects.create(
+        batch=batch,
+        part_type=part,
+        quantity=Decimal("10"),
+        unit_cost_currency=Decimal("5"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    batch_line.refresh_from_db()
+    location = StorageLocation.objects.create(
+        name="Заявки масло",
+        code="REQ-OIL-A",
+        storage_allowed=True,
+        is_active=True,
+    )
+    lot = create_stock_lot(batch_line, location, Decimal("10"))
+    receive_stock_lot(lot, by=admin)
+    remember_customs(part)
+    return {"admin": admin, "part": part, "lot": lot, "location": location}
+
+
 @pytest.mark.parametrize(
     "phone",
     [
@@ -498,7 +537,9 @@ def test_request_sale_customs_completion_handles_multiple_lines_and_permissions(
     )
 
 
-def test_prepare_request_sale_surfaces_unresolved_oil_without_silent_sale_line(oil_sale_scene, client):
+def test_prepare_request_sale_surfaces_unresolved_oil_without_silent_sale_line(
+    oil_sale_scene, client
+):
     request = take(
         make_request(oil_sale_scene["part"], key="oil-request-prepare"),
         oil_sale_scene["admin"],

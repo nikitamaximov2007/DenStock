@@ -31,6 +31,7 @@ from apps.returns.services import (
     add_sale_line_return,
     create_return,
 )
+from apps.sales.models import Sale
 from apps.sales.services import (
     SaleError,
     add_oil_volume_to_sale,
@@ -127,6 +128,26 @@ def test_03l_is_75(oil_part, oil_lot, admin):
     assert line.total_price == Decimal("75.00")
 
 
+@pytest.mark.parametrize(
+    ("volume", "expected"),
+    [
+        ("0.001", "0.25"),
+        ("0.01", "2.50"),
+        ("0.1", "25.00"),
+        ("0.25", "62.50"),
+        ("0.3", "75.00"),
+        ("0.75", "187.50"),
+        ("1.2", "300.00"),
+        ("1.5", "375.00"),
+        ("3.75", "937.50"),
+    ],
+)
+def test_fractional_oil_amounts_are_exact(volume, expected, oil_part, oil_lot, admin):
+    sale = create_sale(customer_name="К", by=admin)
+    line = add_oil_volume_to_sale(sale, oil_lot, volume, by=admin)
+    assert line.total_price == Decimal(expected)
+
+
 def test_15l_is_375(oil_part, oil_lot, admin):
     sale = create_sale(customer_name="К", by=admin)
     line = add_oil_volume_to_sale(sale, oil_lot, "1.5", by=admin)
@@ -155,6 +176,9 @@ def test_no_cumulative_rounding_drift_on_uneven_package(category, liter_unit, ad
     assert line.total_price == Decimal("1000.00")
     # Отображаемая цена за литр округлена отдельно и НЕ используется для суммы.
     assert line.unit_price == Decimal("333.33")
+    complete_sale(sale, by=admin)
+    report = get_sales_report(Period(None, None, "all"))
+    assert report.revenue == Decimal("1000.00")
 
 
 # --- Наличие / доступность ---------------------------------------------------
@@ -305,17 +329,18 @@ def test_oil_sale_line_return_is_rejected(oil_part, oil_lot, admin):
         )
 
 
-def test_cancel_sale_does_not_restore_oil_stock(oil_part, oil_lot, admin):
+def test_cancel_sale_with_oil_requires_owner_policy(oil_part, oil_lot, admin):
     sale = create_sale(customer_name="К", by=admin)
     add_oil_volume_to_sale(sale, oil_lot, "1", by=admin)
     complete_sale(sale, by=admin)
     oil_lot.refresh_from_db()
     before = oil_lot.quantity
-    cancel_sale(sale, by=admin, reason="ошибка", author="Тест")
+    with pytest.raises(SaleError, match="решения владельца"):
+        cancel_sale(sale, by=admin, reason="ошибка", author="Тест")
     oil_lot.refresh_from_db()
-    assert oil_lot.quantity == before  # НЕ восстановлено
+    assert oil_lot.quantity == before
     sale.refresh_from_db()
-    assert sale.status == sale.Status.CANCELED
+    assert sale.status == Sale.Status.COMPLETED
 
 
 # --- Repair -------------------------------------------------------------------

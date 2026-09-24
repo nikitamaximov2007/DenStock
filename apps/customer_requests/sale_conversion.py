@@ -33,6 +33,24 @@ class CustomerRequestSaleError(SaleError):
     """A request cannot be safely prepared or completed as a sale."""
 
 
+def unresolved_oil_request_lines(request, sale):
+    """Return oil request lines that still need an operator volume decision.
+
+    Public request quantities for oil are package counts.  A prepared Sale
+    line, however, is always liters, so the package count must never be copied
+    into the Sale as a guessed volume.
+    """
+    added_oil_ids = set(
+        sale.lines.filter(part_type__is_oil=True).values_list("part_type_id", flat=True)
+    )
+    return list(
+        request.lines.filter(part_type__is_oil=True)
+        .exclude(part_type_id__in=added_oil_ids)
+        .select_related("part_type")
+        .order_by("pk")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CustomerMatch:
     normalized_phone: str
@@ -224,9 +242,14 @@ def _validate_request_sale_lines(request: CustomerRequest, sale: Sale) -> dict[i
             actual_oil_ids.add(line.part_type_id)
             continue
         actual[line.part_type_id] = actual.get(line.part_type_id, Decimal("0")) + line.quantity
-    if actual != expected or not expected_oil_ids <= actual_oil_ids:
+    if actual != expected:
         raise CustomerRequestSaleError(
             "Состав черновика изменён. Сверьте позиции заявки перед проведением."
+        )
+    missing_oil_ids = expected_oil_ids - actual_oil_ids
+    if missing_oil_ids:
+        raise CustomerRequestSaleError(
+            "Масло требует указания фактического объёма перед проведением продажи."
         )
     return expected
 

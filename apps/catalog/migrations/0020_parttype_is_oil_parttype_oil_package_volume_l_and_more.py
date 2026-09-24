@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="parttype",
             name="is_oil",
-            field=models.BooleanField(default=False, verbose_name="Масло"),
+            field=models.BooleanField(db_default=False, default=False, verbose_name="Масло"),
         ),
         migrations.AddField(
             model_name="parttype",

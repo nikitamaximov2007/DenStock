@@ -51,6 +51,7 @@ from .sale_conversion import (
     CustomerRequestSaleError,
     match_request_customer,
     prepare_request_sale,
+    unresolved_oil_request_lines,
 )
 from .services import (
     CustomerRequestError,
@@ -371,12 +372,14 @@ def _detail_context(
     list_query = _list_query(params)
     request_sale = customer_request.sale if customer_request.sale_id else None
     request_sale_customs_missing = []
+    request_sale_oil_missing = []
     if request_sale and request_sale.status == "draft":
         from apps.actions.completion_workflow import missing_parts
 
         request_sale_customs_missing = missing_parts(
             [line.part_type for line in request_sale.lines.select_related("part_type")]
         )
+        request_sale_oil_missing = unresolved_oil_request_lines(customer_request, request_sale)
     return {
         "customer_request": customer_request,
         "linked_customer": (
@@ -384,6 +387,7 @@ def _detail_context(
         ),
         "request_sale": request_sale,
         "request_sale_customs_missing": request_sale_customs_missing,
+        "request_sale_oil_missing": request_sale_oil_missing,
         "lines": lines,
         "total": workspace.lines_total(lines),
         "events": customer_request.status_events.select_related("changed_by"),

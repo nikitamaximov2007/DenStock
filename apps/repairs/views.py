@@ -421,6 +421,7 @@ def repair_order_cancel_confirm(request, pk):
             "form": RepairCancellationForm(),
             "return_allocations": repair_cancellation_returns(order),
             "oil_excluded_lines": repair_cancellation_oil_excluded(order),
+            "oil_return_policy": "repair_used",
         },
     )
 

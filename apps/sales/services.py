@@ -858,17 +858,17 @@ def sale_cancellation_returns(sale) -> list:
 
 @transaction.atomic
 def sale_cancellation_oil_excluded(sale) -> list:
-    """Предпросмотр: строки масла, которые отмена НЕ восстановит на склад."""
+    """Предпросмотр: строки масла, требующие решения владельца."""
     from apps.returns.services import (
         completed_returned_quantities,
-        oil_lines_excluded_from_cancellation,
+        oil_lines_needing_owner_decision,
     )
 
     if sale.status != Sale.Status.COMPLETED:
         return []
     lines = list(sale.lines.select_related("part_type"))
     returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
-    return oil_lines_excluded_from_cancellation(lines, returned)
+    return oil_lines_needing_owner_decision(lines, returned)
 
 
 def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
@@ -903,12 +903,18 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
     from apps.returns.services import (
         cancellation_allocations,
         completed_returned_quantities,
+        oil_lines_needing_owner_decision,
     )
 
     lines = list(sale.lines.select_for_update(of=("self",)).select_related(
         "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
     ))
     returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
+    if oil_lines_needing_owner_decision(lines, returned):
+        raise SaleError(
+            "Отмена продажи с маслом требует решения владельца: "
+            "система не знает, был ли объём физически отпущен."
+        )
     # Тот же расчёт, что показал экран подтверждения: расхождение между
     # обещанной и фактической ячейкой невозможно по построению.
     for allocation in cancellation_allocations(lines, returned):

@@ -96,6 +96,21 @@
                    href="{% url 'customer_request_customs' customer_request.pk %}">Заполнить данные</a>
               </div>
             {% endif %}
+            {% if request_sale_oil_missing %}
+              <div class="notice" data-oil-warning>
+                <strong>Масло требует указания объёма</strong>
+                {% for line in request_sale_oil_missing %}
+                  <p>
+                    {{ line.part_type.name }}
+                    <br>
+                    Заказано: {{ line.quantity_requested|quantity_int }} уп.
+                    · Объём упаковки: {{ line.part_type.oil_package_volume_l|quantity_int }} л
+                  </p>
+                {% endfor %}
+                <a class="btn btn--small btn--primary"
+                   href="{% url 'sale_detail' request_sale.pk %}#sale-oil">Добавить масло в продажу</a>
+              </div>
+            {% endif %}
           {% endif %}
         </p>
       {% elif customer_request.status == "in_progress" %}
