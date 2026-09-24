@@ -53,6 +53,7 @@ from .services import (
     remove_reservation_line,
     remove_sale_line,
     reversible_quantity,
+    sale_cancellation_oil_excluded,
     sale_cancellation_returns,
     sale_line_source_location,
 )
@@ -529,6 +530,7 @@ def sale_cancel_confirm(request, pk):
             "sale": sale,
             "form": SaleCancellationForm(),
             "return_allocations": sale_cancellation_returns(sale),
+            "oil_excluded_lines": sale_cancellation_oil_excluded(sale),
         },
     )
 
@@ -546,6 +548,7 @@ def sale_cancel(request, pk):
                 "sale": sale,
                 "form": form,
                 "return_allocations": sale_cancellation_returns(sale),
+                "oil_excluded_lines": sale_cancellation_oil_excluded(sale),
             },
             status=400,
         )

@@ -76,9 +76,15 @@ def cancellation_allocations(lines, returned_by_line) -> list[ReturnAllocation]:
     Одна и та же функция обслуживает и предпросмотр, и саму отмену. Иначе
     экран показывал бы одну ячейку, а товар уезжал в другую, и разойтись они
     могли бы незаметно.
+
+    Масло сюда НЕ попадает (см. `oil_lines_excluded_from_cancellation`):
+    отпущенный по объёму литр физически не возвращается обычным механизмом
+    возврата - отмена документа не восстанавливает его остаток.
     """
     allocations = []
     for line in lines:
+        if line.part_type.is_oil:
+            continue
         outstanding = line.quantity - (returned_by_line.get(line.pk) or Decimal("0"))
         if outstanding <= 0:
             continue  # строку уже вернули возвратом, отмене возвращать нечего
@@ -98,6 +104,23 @@ def cancellation_allocations(lines, returned_by_line) -> list[ReturnAllocation]:
                 )
             )
     return allocations
+
+
+def oil_lines_excluded_from_cancellation(lines, returned_by_line) -> list:
+    """Строки масла, которые отмена документа НЕ восстановит на склад.
+
+    Только для того, чтобы экран отмены мог явно предупредить оператора -
+    сама `cancellation_allocations` их уже молча пропускает (см. её докстринг
+    и раздел «OIL RETURN / CANCELLATION POLICY» в задаче).
+    """
+    excluded = []
+    for line in lines:
+        if not line.part_type.is_oil:
+            continue
+        outstanding = line.quantity - (returned_by_line.get(line.pk) or Decimal("0"))
+        if outstanding > 0:
+            excluded.append(line)
+    return excluded
 
 
 # --- Источник возврата (полиморфизм SaleLine / RepairIssueLine) --------------
@@ -225,6 +248,12 @@ def _add_line(ret, source_line, quantity, *, to_location, restock_status) -> Sto
     """Общая логика добавления строки возврата (источник-агностичная)."""
     if not _source_belongs(ret, source_line):
         raise ReturnError("Строка-источник не относится к этому возврату.")
+    if source_line.part_type.is_oil:
+        raise ReturnError(
+            "Учтённое по объёму масло нельзя вернуть обычным возвратом: "
+            "отпущенный объём считается физически невозвратным. При "
+            "необходимости скорректируйте остаток через инвентаризацию."
+        )
     if restock_status not in (
         StockReturnLine.RestockStatus.AVAILABLE, StockReturnLine.RestockStatus.QUARANTINE
     ):
