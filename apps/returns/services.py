@@ -107,11 +107,10 @@ def cancellation_allocations(lines, returned_by_line) -> list[ReturnAllocation]:
 
 
 def oil_lines_excluded_from_cancellation(lines, returned_by_line) -> list:
-    """Строки масла, которые отмена документа НЕ восстановит на склад.
+    """Repair oil lines that were issued and therefore are not restocked.
 
-    Только для того, чтобы экран отмены мог явно предупредить оператора -
-    сама `cancellation_allocations` их уже молча пропускает (см. её докстринг
-    и раздел «OIL RETURN / CANCELLATION POLICY» в задаче).
+    Used only for repair policy. Sales use the explicit owner-decision helper
+    below because a completed sale does not prove that the oil was dispensed.
     """
     excluded = []
     for line in lines:
@@ -121,6 +120,22 @@ def oil_lines_excluded_from_cancellation(lines, returned_by_line) -> list:
         if outstanding > 0:
             excluded.append(line)
     return excluded
+
+
+def oil_lines_needing_owner_decision(lines, returned_by_line) -> list:
+    """Sale oil lines whose physical disposition is not known.
+
+    A sale cancellation must fail closed for these lines. The stock layer
+    cannot infer whether a customer collected or used the measured volume.
+    """
+    blocked = []
+    for line in lines:
+        if not line.part_type.is_oil:
+            continue
+        outstanding = line.quantity - (returned_by_line.get(line.pk) or Decimal("0"))
+        if outstanding > 0:
+            blocked.append(line)
+    return blocked
 
 
 # --- Источник возврата (полиморфизм SaleLine / RepairIssueLine) --------------

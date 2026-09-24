@@ -68,6 +68,22 @@
       </div>
     </section>
   {% endif %}
+  {% if can_sell and is_draft and request_oil_missing %}
+    <section class="card" data-oil-warning>
+      <div class="card__body">
+        <h2>Масло требует указания объёма</h2>
+        {% for line in request_oil_missing %}
+          <p>
+            <strong>{{ line.part_type.name }}</strong>
+            <br>
+            Заказано: {{ line.quantity_requested|quantity_int }} уп.
+            · Объём упаковки: {{ line.part_type.oil_package_volume_l|quantity_int }} л
+          </p>
+        {% endfor %}
+        <a class="btn btn--small btn--primary" href="#sale-oil">Добавить масло в продажу</a>
+      </div>
+    </section>
+  {% endif %}
   <h2>Позиции</h2>
   <table class="table">
     <thead>
@@ -160,7 +176,7 @@
       <button type="submit">Добавить из лота</button>
     </form>
     {% if oil_availability %}
-      <h2>Масло</h2>
+      <h2 id="sale-oil">Масло</h2>
       <table class="table">
         <thead>
           <tr>

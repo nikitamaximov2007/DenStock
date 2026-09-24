@@ -35,6 +35,24 @@ TOP_N = 10
 DEC0 = Decimal("0")
 
 
+def sale_line_amount_for_quantity(line, quantity=None) -> Decimal:
+    """Return a historical sale amount without re-rounding oil per-liter price.
+
+    Oil lines keep a rounded display ``unit_price`` and an exact money snapshot
+    in ``total_price``. Partial returns use the same frozen total
+    proportionally, so reports never turn a full uneven package into a
+    one-kopeck shortfall.
+    """
+    quantity = line.quantity if quantity is None else Decimal(quantity)
+    if quantity <= 0:
+        return DEC0
+    if line.quantity <= 0:
+        return money(line.unit_price * quantity)
+    if quantity == line.quantity:
+        return money(line.total_price)
+    return money(line.total_price * quantity / line.quantity)
+
+
 # --- Период ------------------------------------------------------------------
 
 
@@ -253,7 +271,7 @@ def get_sales_report(period: Period) -> SalesReport:
     part_names: dict[int, str] = {}
     unavailable = 0
     for line in lines:
-        line_revenue = money(line.unit_price * line.quantity)
+        line_revenue = sale_line_amount_for_quantity(line)
         revenue += line_revenue
         revenue_by_part[line.part_type_id] = (
             revenue_by_part.get(line.part_type_id, DEC0) + line_revenue
@@ -408,7 +426,8 @@ def get_sales_by_customer(period: Period) -> list[dict]:
     )
     sale_lines = list(
         _completed_sale_lines(period).select_related("sale").only(
-            "id", "sale_id", "quantity", "unit_price", "sale__customer_id", "sale__customer_name"
+            "id", "sale_id", "quantity", "unit_price", "total_price",
+            "sale__customer_id", "sale__customer_name"
         )
     )
     returned = sale_returned_quantities(sale_lines)
@@ -422,7 +441,7 @@ def get_sales_by_customer(period: Period) -> list[dict]:
         )
         remaining = max(line.quantity - (returned.get(line.pk) or DEC0), DEC0)
         quantities[key] = quantities.get(key, DEC0) + remaining
-        totals[key] = totals.get(key, DEC0) + money(line.unit_price * remaining)
+        totals[key] = totals.get(key, DEC0) + sale_line_amount_for_quantity(line, remaining)
     for row in rows:
         key = ("card", row["customer_id"]) if row["linked"] else ("legacy", row["report_customer"])
         row["quantity"] = quantities.get(key, DEC0)
@@ -550,7 +569,7 @@ def attach_line_reversals(lines):
         line.reversed_quantity = returned.get(line.pk) or DEC0
         line.effective_quantity = line.quantity - line.reversed_quantity
         line.reversible_quantity = line.effective_quantity
-        line.effective_total = money(line.unit_price * line.effective_quantity)
+        line.effective_total = sale_line_amount_for_quantity(line, line.effective_quantity)
     return lines
 
 

@@ -15,6 +15,8 @@ from decimal import Decimal
 
 from apps.sales.models import Sale, SaleLine
 
+from .services import sale_line_amount_for_quantity
+
 LEGACY_NOTE_PREFIX = "legacy_reconstruction_"
 
 
@@ -75,7 +77,7 @@ def audit_sale_cost_provenance() -> CostProvenanceReport:
 
     for line in lines:
         provenance = _provenance(line)
-        revenue = (line.unit_price or Decimal("0")) * line.quantity
+        revenue = sale_line_amount_for_quantity(line)
         source_key = line.unmarked_price_source or "-"
         by_source[source_key] = by_source.get(source_key, 0) + 1
         if provenance == "live":

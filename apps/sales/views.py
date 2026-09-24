@@ -336,10 +336,16 @@ def sale_detail(request, pk):
     is_draft = sale.status == Sale.Status.DRAFT
     from apps.actions.completion_workflow import missing_parts
     from apps.customer_requests.models import CustomerRequest
+    from apps.customer_requests.sale_conversion import unresolved_oil_request_lines
 
     request_customer_request = CustomerRequest.objects.filter(sale_id=sale.pk).first()
     request_customs_missing = (
         missing_parts([line.part_type for line in lines])
+        if request_customer_request and is_draft
+        else []
+    )
+    request_oil_missing = (
+        unresolved_oil_request_lines(request_customer_request, sale)
         if request_customer_request and is_draft
         else []
     )
@@ -359,6 +365,7 @@ def sale_detail(request, pk):
             "is_draft": is_draft,
             "request_customer_request": request_customer_request,
             "request_customs_missing": request_customs_missing,
+            "request_oil_missing": request_oil_missing,
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
             "add_lot_form": AddSaleLotForm(),
@@ -567,6 +574,7 @@ def sale_cancel_confirm(request, pk):
             "form": SaleCancellationForm(),
             "return_allocations": sale_cancellation_returns(sale),
             "oil_excluded_lines": sale_cancellation_oil_excluded(sale),
+            "oil_return_policy": "sale_owner_decision",
         },
     )
 
@@ -585,6 +593,7 @@ def sale_cancel(request, pk):
                 "form": form,
                 "return_allocations": sale_cancellation_returns(sale),
                 "oil_excluded_lines": sale_cancellation_oil_excluded(sale),
+                "oil_return_policy": "sale_owner_decision",
             },
             status=400,
         )

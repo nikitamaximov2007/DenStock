@@ -250,6 +250,7 @@ def _movers(period: StatsPeriod) -> list:
             "id",
             "quantity",
             "unit_price",
+            "total_price",
             "unmarked_unit_price_rub_snapshot",
             "part_type__name",
         )
@@ -265,7 +266,7 @@ def _movers(period: StatsPeriod) -> list:
             {"quantity": DEC0, "revenue": DEC0, "profit": DEC0, "unavailable": DEC0},
         )
         row["quantity"] += quantity
-        row["revenue"] += line.unit_price * quantity
+        row["revenue"] += line.total_price
         if line.unmarked_unit_price_rub_snapshot is None:
             row["unavailable"] += quantity
         else:
