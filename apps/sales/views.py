@@ -331,6 +331,15 @@ def sale_detail(request, pk):
     )
     attach_part_identity(lines)  # exact-артикул отдельной колонкой
     is_draft = sale.status == Sale.Status.DRAFT
+    from apps.actions.completion_workflow import missing_parts
+    from apps.customer_requests.models import CustomerRequest
+
+    request_customer_request = CustomerRequest.objects.filter(sale_id=sale.pk).first()
+    request_customs_missing = (
+        missing_parts([line.part_type for line in lines])
+        if request_customer_request and is_draft
+        else []
+    )
     return render(
         request,
         "sales/sale_detail.html",
@@ -345,6 +354,8 @@ def sale_detail(request, pk):
             # получил бы ссылку, которая упирается в отказ.
             "can_open_special_return": _special_return_available(request.user, sale, lines),
             "is_draft": is_draft,
+            "request_customer_request": request_customer_request,
+            "request_customs_missing": request_customs_missing,
             "show_costs": request.user.can_view_purchase_cost,
             "add_item_form": AddSaleItemForm(),
             "add_lot_form": AddSaleLotForm(),

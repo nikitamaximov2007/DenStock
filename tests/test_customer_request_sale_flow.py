@@ -6,6 +6,7 @@ import pytest
 from django.core.management import call_command
 from django.urls import reverse
 
+from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.core.phones import normalize_phone
 from apps.customer_requests.models import CustomerRequest
@@ -287,3 +288,206 @@ def test_request_detail_exposes_sale_action_and_audit_is_read_only(client, sale_
     call_command("audit_customer_request_customer_matches", stdout=output)
     assert "Заявки без совпадения" in output.getvalue()
     assert Customer.objects.count() == before_customers
+
+
+def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client, sale_scene):
+    part = sale_scene["part"]
+    part.name = "GUIDE SCREW"
+    part.recommended_price = Decimal("4138")
+    part.save(update_fields=["name", "recommended_price"])
+    part_number = PartNumber.objects.get(part=part, is_primary=True)
+    part_number.value = "404105500"
+    part_number.normalized_value = "404105500"
+    part_number.save(update_fields=["value", "normalized_value"])
+    customs = PartCustomsInfo.objects.get(part_type=part)
+    customs.customs_name_ru = "НАПРАВЛЯЮЩИЙ ВИНТ"
+    customs.customs_name_ru_confirmed = True
+    customs.save(update_fields=["customs_name_ru", "customs_name_ru_confirmed", "updated_at"])
+    PartCustomsInfo.objects.filter(pk=customs.pk).update(
+        gross_weight_kg=None, net_weight_kg=None, application_area=""
+    )
+    previous_version = (
+        PartCustomsDataVersion.objects.filter(part_type=part).order_by("-version").first()
+    )
+    request = take(
+        make_request(
+            part,
+            name="Александр Пушкарёв",
+            key="customs-completion-real-case",
+        ),
+        sale_scene["admin"],
+    )
+    sale = prepare_request_sale(
+        request_id=request.pk, by=sale_scene["admin"], create_customer=True
+    )
+    request.refresh_from_db()
+    request_line = request.lines.get()
+    request_snapshot = (
+        request_line.part_name,
+        request_line.article,
+        request_line.quantity_requested,
+        request_line.price_seen,
+    )
+    sale_line = sale.lines.get()
+    sale_snapshot = (sale_line.quantity, sale_line.unit_price, sale.status)
+    before_quantity = sale_scene["lot"].quantity
+    before_movements = StockMovement.objects.filter(document_type="sale").count()
+
+    client.force_login(sale_scene["admin"])
+    blocked = client.post(reverse("sale_complete", args=[sale.pk]), follow=True)
+    assert "Для таможенной формы не хватает данных" in blocked.content.decode()
+    sale.refresh_from_db()
+    assert sale.status == Sale.Status.DRAFT
+    assert StockMovement.objects.filter(document_type="sale").count() == before_movements
+    sale_scene["lot"].refresh_from_db()
+    assert sale_scene["lot"].quantity == before_quantity
+
+    request_page = client.get(reverse("customer_request_detail", args=[request.pk]))
+    request_html = request_page.content.decode()
+    assert "Не хватает данных для проведения" in request_html
+    assert "Заполнить данные" in request_html
+    assert "GUIDE SCREW" in request_html
+    assert "404105500" in request_html
+
+    completion_url = reverse("customer_request_customs", args=[request.pk])
+    form_page = client.get(completion_url)
+    form_html = form_page.content.decode()
+    assert form_page.status_code == 200
+    assert "Вес брутто, г" in form_html
+    assert "Вес нетто, г" in form_html
+    assert "Область применения" in form_html
+    assert "Русское название" not in form_html
+    assert "Сохранить данные" in form_html
+
+    saved = client.post(
+        completion_url,
+        {
+            "metadata_submit": "1",
+            "part_id": str(part.pk),
+            f"gross_weight_g_{part.pk}": "180",
+            f"net_weight_g_{part.pk}": "120",
+            f"application_area_{part.pk}": "СНЕГОХОД",
+        },
+        follow=True,
+    )
+    assert "Таможенные данные сохранены. Продажа остаётся черновиком." in saved.content.decode()
+    customs.refresh_from_db()
+    sale.refresh_from_db()
+    request.refresh_from_db()
+    assert customs.gross_weight_kg == Decimal("0.180")
+    assert customs.net_weight_kg == Decimal("0.120")
+    assert customs.application_area == "СНЕГОХОД"
+    assert customs.customs_name_ru == "НАПРАВЛЯЮЩИЙ ВИНТ"
+    assert customs.customs_name_ru_confirmed is True
+    assert previous_version is not None
+    previous_version.refresh_from_db()
+    assert previous_version.gross_weight_kg != customs.gross_weight_kg
+    assert (
+        PartCustomsDataVersion.objects.filter(part_type=part).count()
+        == previous_version.version + 1
+    )
+    assert (
+        request_line.part_name,
+        request_line.article,
+        request_line.quantity_requested,
+        request_line.price_seen,
+    ) == request_snapshot
+    assert (sale_line.quantity, sale_line.unit_price, sale.status) == sale_snapshot
+    assert StockMovement.objects.filter(document_type="sale").count() == before_movements
+    sale_scene["lot"].refresh_from_db()
+    assert sale_scene["lot"].quantity == before_quantity
+
+    request_after = client.get(reverse("customer_request_detail", args=[request.pk]))
+    sale_after = client.get(reverse("sale_detail", args=[sale.pk]))
+    assert "Не хватает данных для проведения" not in request_after.content.decode()
+    assert "Не хватает данных для проведения" not in sale_after.content.decode()
+    assert "Провести продажу" in sale_after.content.decode()
+
+    completed = client.post(reverse("sale_complete", args=[sale.pk]), follow=True)
+    assert "Продажа" in completed.content.decode()
+    sale.refresh_from_db()
+    request.refresh_from_db()
+    assert sale.status == Sale.Status.COMPLETED
+    assert request.status == CustomerRequest.Status.COMPLETED
+    assert StockMovement.objects.filter(document_type="sale").count() == before_movements + 1
+
+
+def test_request_sale_customs_completion_handles_multiple_lines_and_permissions(
+    client, sale_scene, django_user_model
+):
+    category = Category.objects.get(name="Запчасти заявки")
+    unit = Unit.objects.get(name="Штука")
+    manufacturer = Manufacturer.objects.get(name="BRP request")
+    second = PartType.objects.create(
+        name="Неполная деталь заявки",
+        category=category,
+        unit=unit,
+        manufacturer=manufacturer,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("2000"),
+        is_public=True,
+    )
+    PartNumber.objects.create(part=second, value="REQ-2", is_primary=True)
+    batch = Batch.objects.create(
+        supplier=Supplier.objects.create(name="Поставщик заявок 2"),
+        shipping_cost=Decimal("0"),
+    )
+    batch_line = BatchLine.objects.create(
+        batch=batch, part_type=second, quantity=Decimal("2"), unit_cost_currency=Decimal("100")
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, sale_scene["admin"])
+    batch_line.refresh_from_db()
+    lot = create_stock_lot(batch_line, sale_scene["location"], Decimal("1"))
+    receive_stock_lot(lot, by=sale_scene["admin"])
+    PartCustomsInfo.objects.filter(part_type=second).delete()
+
+    request, _created = create_customer_request(
+        customer_name="Много позиций",
+        customer_phone="89090000004",
+        preferred_messenger=CustomerRequest.Messenger.TELEGRAM,
+        lines=[
+            RequestLineInput(part_id=sale_scene["part"].pk, quantity="1", supply_inquiry=False),
+            RequestLineInput(part_id=second.pk, quantity="1", supply_inquiry=False),
+        ],
+        privacy_policy_version=POLICY,
+        personal_data_consent_version=POLICY,
+        submission_key="customer-request-multiple-customs",
+    )
+    request = take(request, sale_scene["admin"])
+    sale = prepare_request_sale(request_id=request.pk, by=sale_scene["admin"], create_customer=True)
+
+    client.force_login(sale_scene["admin"])
+    response = client.get(reverse("customer_request_customs", args=[request.pk]))
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert "Неполная деталь заявки" in html
+    assert "Деталь для заявки" not in html
+    assert html.count('name="part_id"') == 1
+
+    response = client.post(
+        reverse("customer_request_customs", args=[request.pk]),
+        {
+            "metadata_submit": "1",
+            "part_id": str(second.pk),
+            f"gross_weight_g_{second.pk}": "90",
+            f"net_weight_g_{second.pk}": "60",
+            f"application_area_{second.pk}": "КАТЕР",
+        },
+    )
+    assert response.status_code == 302
+    assert response.url == reverse("sale_detail", args=[sale.pk])
+    assert PartCustomsInfo.objects.get(part_type=second).application_area == "КАТЕР"
+    sale.refresh_from_db()
+    assert sale.status == Sale.Status.DRAFT
+
+    restricted = django_user_model.objects.create_user(
+        username="request-customs-viewer", password=PASSWORD
+    )
+    client.force_login(restricted)
+    assert client.get(reverse("customer_request_customs", args=[request.pk])).status_code == 403
+    assert (
+        client.post(reverse("customer_request_customs", args=[request.pk]), {}).status_code
+        == 403
+    )

@@ -82,6 +82,20 @@
           {% else %}
             <a class="btn btn--small btn--secondary"
                href="{% url 'sale_detail' request_sale.pk %}">Открыть черновик продажи {{ request_sale.number }}</a>
+            {% if request_sale_customs_missing %}
+              <div class="notice" data-customs-warning>
+                <strong>Не хватает данных для проведения</strong>
+                {% for entry in request_sale_customs_missing %}
+                  <p>
+                    {{ entry.part.name }} · {{ entry.article }}
+                    <br>
+                    {{ entry.missing_labels|join:", " }}
+                  </p>
+                {% endfor %}
+                <a class="btn btn--small btn--primary"
+                   href="{% url 'customer_request_customs' customer_request.pk %}">Заполнить данные</a>
+              </div>
+            {% endif %}
           {% endif %}
         </p>
       {% elif customer_request.status == "in_progress" %}
