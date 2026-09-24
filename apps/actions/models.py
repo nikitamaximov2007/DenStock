@@ -208,7 +208,13 @@ class PartCustomsInfo(models.Model):
         editable=False,
         db_default=Value(""),
     )
-    manufacturer = models.CharField("Производитель", max_length=80, default="BRP")
+    # Пусто = не установлен. BRP раньше был значением по умолчанию для ЛЮБОЙ
+    # карточки, включая ручные детали без единого доказательства бренда - это
+    # и есть источник дефекта «ручная деталь стала BRP». Принадлежность к BRP
+    # (или другому бренду) доказывается связью с каталогом поставщика или
+    # явным выбором производителя у детали (см. _customs_defaults,
+    # manufacturer_display), а не тем, что карточку кто-то открыл или сохранил.
+    manufacturer = models.CharField("Производитель", max_length=80, blank=True, default="")
     country_of_origin = models.CharField("Страна производства", max_length=80, blank=True)
     gross_weight_kg = models.DecimalField(
         "Вес брутто, кг/шт", max_digits=8, decimal_places=3, null=True, blank=True

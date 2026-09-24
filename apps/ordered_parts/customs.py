@@ -122,20 +122,26 @@ def ordered_parts_customs_rows(**filters) -> list[dict]:
     одну строку - количество при этом сохраняется точно, а происхождение
     остаётся однозначно «заказ». Со строкой продажи того же артикула она не
     сливается никогда: у них разное происхождение.
+
+    Порядок - хронологический (дата оформления заказа), тот же принцип, что и
+    у продаж/ремонтов: общий экспортёр сливает оба источника по этому ключу.
     """
     from apps.actions.models import PartCustomsInfo
-    from apps.actions.services import _customs_row_from_version
+    from apps.actions.services import _CUSTOMS_ROW_EPOCH, _customs_row_from_version
 
     lines = ordered_parts_customs_lines(**filters)
     if not lines:
         return []
-    parts, versions, totals = {}, {}, {}
+    parts, versions, totals, chronological = {}, {}, {}, {}
     for line in lines:
         version = line["version"]
         key = (line["part_id"], version.pk if version is not None else None, line["number"])
         parts[line["part_id"]] = line["part"]
         versions[key] = version
         totals[key] = totals.get(key, Decimal("0")) + line["quantity"]
+        line_key = (line["occurred_at"] or _CUSTOMS_ROW_EPOCH, line["kind"], line["line_id"])
+        previous = chronological.get(key)
+        chronological[key] = line_key if previous is None else min(previous, line_key)
     customs_by_part = {
         info.part_type_id: info
         for info in PartCustomsInfo.objects.filter(part_type_id__in=parts)
@@ -154,11 +160,9 @@ def ordered_parts_customs_rows(**filters) -> list[dict]:
         # строкой расхода того же артикула, даже если совпадут все поля. Общий
         # экспортёр при этом свой ключ не меняет: его правят параллельно.
         row["source_key"] = (PROVENANCE, *key)
+        row["_chronological_key"] = chronological[key]
         rows.append(row)
-    return sorted(
-        rows,
-        key=lambda row: (row["number"], row["name_ru"], row["source_key"][1]),
-    )
+    return sorted(rows, key=lambda row: row["_chronological_key"])
 
 
 def ordered_parts_reconciliation(**filters) -> dict:

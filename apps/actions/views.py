@@ -1154,7 +1154,10 @@ def actions_customs_quick_save(request, part_id):
 
     error_message = None
     with transaction.atomic():
-        customs, _created = PartCustomsInfo.objects.get_or_create(part_type=part)
+        # Та же карточка, что и полная форма правки: производитель по
+        # умолчанию берётся только из доказанной каталожной связи, а не
+        # проставляется вслепую (см. get_or_create_customs/_customs_defaults).
+        customs = get_or_create_customs(part)
         update_fields = ["updated_by", "updated_at"]
         if application_area is not _UNSET:
             customs.application_area = application_area

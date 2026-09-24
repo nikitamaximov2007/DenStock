@@ -101,6 +101,7 @@
               <th>Название</th>
               <th>Производитель</th>
               <th>Классификация</th>
+              <th>BRP/PRO-X экспорт</th>
               <th class="num--qty">Действующее количество</th>
             </tr>
           </thead>
@@ -112,13 +113,20 @@
                 <td>{{ row.source_label }}</td>
                 <td><span class="code-pill">{{ row.number }}</span></td>
                 <td>{{ row.name_ru }}</td>
-                <td>{{ row.manufacturer }}</td>
+                <td>{{ row.manufacturer|default:"-" }}</td>
                 <td>{% if row.is_analog %}Аналог{% else %}Оригинал{% endif %}</td>
+                <td>
+                  {% if row.export_eligible %}
+                    <span class="pill pill--success">Да</span>
+                  {% else %}
+                    <span class="pill pill--muted">Нет</span>
+                  {% endif %}
+                </td>
                 <td class="num--qty">{{ row.quantity|quantity_int }}</td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="7">Подходящих строк нет.</td>
+                <td colspan="8">Подходящих строк нет.</td>
               </tr>
             {% endfor %}
           </tbody>

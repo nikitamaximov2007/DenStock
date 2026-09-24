@@ -7,6 +7,7 @@
 Excel-экспорт «Формы для заказа» (openpyxl, шаблон в apps/actions/customs_template/:
 рантайм-ассет должен лежать в пакете, docs/ исключён из Docker-образа).
 """
+import datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
@@ -24,6 +25,7 @@ from apps.catalog.models import (
     VehicleType,
     normalize_number,
 )
+from apps.catalog.services import MANUAL_CATEGORY_NAME
 from apps.catalog_import.models import AftermarketCatalogPart
 from apps.core.part_lookup import (
     MatchSource,
@@ -761,8 +763,18 @@ def auto_customs_name_ru(english_name: str) -> str:
 
 
 def _customs_defaults(part: PartType) -> dict:
+    """Предзаполнение новой карточки. Производитель — только по доказанной связи.
+
+    Раньше поле модели само было значением по умолчанию «BRP», и любая ручная
+    деталь без единого доказательства получала чужой бренд простым открытием
+    карточки. Теперь предзаполнение существует только там, где связь с
+    каталогом поставщика уже доказывает производителя; иначе поле остаётся
+    пустым, и его задаёт исключительно system_customs_facts при сохранении.
+    """
     if _polaris_part_for(part) is not None:
         return {"manufacturer": "POLARIS", "country_of_origin": ""}
+    if _brp_part_for(part) is not None:
+        return {"manufacturer": "BRP"}
     return {}
 
 
@@ -804,7 +816,9 @@ def record_customs_data_version(
     # Открытие формы правки заводит карточку со значениями по умолчанию - это
     # ещё не заявление пользователя. Записать её версией нельзя: она станет
     # самой ранней и перехватит всю историю списаний, оставив декларацию
-    # пустой. Значением по умолчанию считается и «BRP» у производителя.
+    # пустой. Производитель по умолчанию тоже сравнивается с _customs_defaults,
+    # а не с фиксированным «BRP»: для доказанной связи это «BRP»/«POLARIS»,
+    # иначе пусто.
     untouched = PartCustomsInfo(
         part_type=customs.part_type, **_customs_defaults(customs.part_type)
     )
@@ -828,6 +842,29 @@ def record_customs_data_version(
 # Утверждённый business fallback только для BRP без явно сохранённой страны.
 # Это правило компании, а не вывод о стране из каталога или названия бренда.
 CUSTOMS_COUNTRY = "CANADA"
+
+# Производители, допущенные в общую BRP-таможенную выгрузку (Excel «для
+# таможни» и заказы apps.customs_orders). Эксплицитный allow-list, а не
+# вывод из факта ручного создания или самого производителя: PRO-X отправляется
+# вместе с BRP, оставаясь при этом своим брендом в колонке производителя;
+# BRONCO/SPI/MOTUL и любой непроверенный ручной бренд в эту выгрузку не входят.
+BRP_EXPORT_MANUFACTURERS = frozenset({"BRP", "PROX"})
+
+
+def _normalized_manufacturer(manufacturer: str) -> str:
+    """Сравнение без пробелов/дефисов: «PRO-X» и «PROX» — одно и то же имя."""
+    return "".join((manufacturer or "").upper().split()).replace("-", "")
+
+
+def is_brp_export_eligible(manufacturer: str) -> bool:
+    """BRP/PRO-X customs export eligibility. Not a manufacturer identity check.
+
+    Экспорт-допуск и производитель — разные вопросы: у PRO-X в колонке
+    остаётся «PROX», а допуск при этом положительный. Пустой/непроверенный
+    производитель и любой прочий бренд (BRONCO, SPI, MOTUL, ...) исключаются
+    явно, а не потому что не оказались в положительном списке случайно.
+    """
+    return _normalized_manufacturer(manufacturer) in BRP_EXPORT_MANUFACTURERS
 
 
 def resolve_customs_country(part: PartType, explicit_country: str = "", number: str = "") -> str:
@@ -878,6 +915,27 @@ def catalog_english_name(part: PartType, number: str = "") -> str:
     if aftermarket is not None and aftermarket.source_description.strip():
         return aftermarket.source_description.strip().upper()
     return ""
+
+
+def manual_part_name_ru(part: PartType) -> str:
+    """Русское название ручной карточки как таможенный fallback.
+
+    Только для деталей БЕЗ каталожной связи: их ``name`` вводит оператор
+    по-русски (язык интерфейса), и это единственный источник правды о самой
+    детали. Каталожная карточка такого источника не имеет - её `name` может
+    быть исходной англоязычной строкой прайса, и подставлять его в таможенное
+    русское название нельзя. Ничего не подтверждает и не сохраняет: то же
+    место, что и автоперевод EN-названия, только для деталей без EN вовсе.
+    """
+    if (
+        _brp_part_for(part) is not None
+        or _polaris_part_for(part) is not None
+        or _aftermarket_part_for(part) is not None
+    ):
+        return ""
+    if part.category.name != MANUAL_CATEGORY_NAME:
+        return ""
+    return part.name.strip()
 
 
 def catalog_manufacturer_name(part: PartType, number: str = "") -> str:
@@ -1490,6 +1548,11 @@ def _customs_row_from_version(
         values["name_en"] = catalog_english_name(part, number)
     if not values["name_ru"] and values["name_en"]:
         values["name_ru"] = auto_customs_name_ru(values["name_en"])
+    # Деталь без каталога и без EN-названия (ручная карточка) остаётся без
+    # русского имени только потому, что его некуда взять переводом - хотя имя
+    # уже есть в самой карточке на русском. Подтверждением это не становится.
+    if not values["name_ru"]:
+        values["name_ru"] = manual_part_name_ru(part).upper()
     # Обычная таможенная выгрузка - текущая операторская форма. Снимок версии
     # продолжает задавать исторические технические поля, но явно сохранённое
     # общее русское имя карточки всегда сильнее старой версии. Frozen
@@ -1575,16 +1638,33 @@ def customs_data_version_for(part: PartType, at):
     )
 
 
+_CUSTOMS_ROW_EPOCH = datetime.datetime.min.replace(tzinfo=datetime.UTC)
+
+
+def _line_chronological_key(line) -> tuple:
+    """Тот же порядок, что у «Истории для таможенных заказов» (canonical_customs_lines).
+
+    Тип операции и id строки - обязательный довесок: у продажи и ремонта
+    нумерация своя, и без него две строки с одинаковой датой (или без даты)
+    сравнивались бы произвольно.
+    """
+    return (line["occurred_at"] or _CUSTOMS_ROW_EPOCH, line["kind"], line["line_id"])
+
+
 def _customs_rows_from_lines(lines) -> list[dict]:
     """Свернуть канонические строки в строки Excel.
 
     Ключ строки: деталь, версия таможенных данных и доказанный артикул.
     Разные версии и разные артикулы одной детали остаются разными строками:
     склеив их, выгрузка выдала бы за один товар два разных исторических факта.
+    Несколько операций одного ключа (тот же артикул продан/выдан дважды)
+    остаются ОДНОЙ строкой с суммарным количеством - так же, как и раньше;
+    её место в порядке экспорта задаёт САМАЯ РАННЯЯ из них, а не факт слияния.
     """
     parts = {}
     versions = {}
     totals: dict[tuple, Decimal] = {}
+    chronological: dict[tuple, tuple] = {}
     for line in lines:
         if line["quantity"] <= 0:
             continue  # полностью возвращённая строка расхода не образует
@@ -1593,6 +1673,9 @@ def _customs_rows_from_lines(lines) -> list[dict]:
         parts[line["part_id"]] = line["part"]
         versions[key] = version
         totals[key] = totals.get(key, Decimal("0")) + line["quantity"]
+        line_key = _line_chronological_key(line)
+        previous = chronological.get(key)
+        chronological[key] = line_key if previous is None else min(previous, line_key)
 
     customs_by_part = {
         info.part_type_id: info
@@ -1608,17 +1691,13 @@ def _customs_rows_from_lines(lines) -> list[dict]:
         row["number"] = number
         row["provenance"] = SALES_REPAIRS_PROVENANCE
         row["source_key"] = key
+        row["_chronological_key"] = chronological[key]
         rows.append(row)
-    # Артикул у нескольких строк может быть пустым (историческое происхождение
-    # не доказано). Тогда порядок задают название и деталь, иначе строки
-    # выстраивались бы произвольно и файл менялся бы от выгрузки к выгрузке.
-    return sorted(
-        rows,
-        key=lambda row: (
-            row["number"], row["name_ru"], row["name_en"],
-            row["source_key"][0], row["version_number"] or 0,
-        ),
-    )
+    # Порядок - хронологический по фактической операции (Sale/Repair), тот же,
+    # что показывает «История для таможенных заказов»: старые операции сверху,
+    # новые снизу. Раньше строки сортировались по артикулу/названию - это и
+    # было расхождение между историей и выгрузкой.
+    return sorted(rows, key=lambda row: row["_chronological_key"])
 
 
 def historical_customs_rows(
@@ -1634,7 +1713,16 @@ def historical_customs_rows(
 
     Сохранённая страна имеет приоритет; пустая страна BRP заполняется
     утверждённым правилом компании. Остальные незаполненные поля остаются
-    пустыми, но саму операцию из выгрузки не вычёркивают.
+    пустыми, но саму операцию из выгрузки не вычёркивают - ни производитель,
+    ни полнота карточки не решают, попадает ли фактически произошедшая
+    операция в эту выгрузку. Допуск к самой BRP/PRO-X отправке решается
+    отдельно, при формировании таможенного заказа (см.
+    apps.customs_orders.services.eligible_customs_sources), а не здесь.
+
+    Продажи/ремонты и запчасти на заказ сливаются в один хронологический
+    порядок - тот же принцип, что и у «Истории для таможенных заказов»
+    (customs_sources): старые операции сверху, новые снизу, а не два
+    раздельных блока.
     """
     filters = {
         "date_from": date_from, "date_to": date_to, "action_type": action_type,
@@ -1648,7 +1736,8 @@ def historical_customs_rows(
             unassigned_only=unassigned_only,
         ) if not line.get("is_analog")]
     )
-    return sales_rows + ordered_customs_rows(**filters)
+    rows = sales_rows + ordered_customs_rows(**filters)
+    return sorted(rows, key=lambda row: row["_chronological_key"])
 
 
 def ordered_customs_rows(**filters) -> list[dict]:

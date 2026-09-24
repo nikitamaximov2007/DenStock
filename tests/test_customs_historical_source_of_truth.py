@@ -248,12 +248,16 @@ def test_opening_the_form_does_not_record_a_version(client, env, make_user):
 
 
 def test_default_manufacturer_alone_is_not_an_entry(env):
-    """Одно лишь «BRP» из умолчания модели заявлением не считается."""
+    """Пустой производитель из умолчания модели заявлением не считается.
+
+    Деталь без каталожной связи не получает «BRP» просто по факту открытия
+    карточки - производитель остаётся пустым, пока не доказан.
+    """
     part = _part(env, number="219800345")
     PartCustomsInfo.objects.create(part_type=part)  # ровно умолчания
     assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 0
     card = PartCustomsInfo.objects.get(part_type=part)
-    assert card.manufacturer == "BRP"  # умолчание на месте
+    assert card.manufacturer == ""  # не «BRP»: связь с каталогом не доказана
     _edit(card, country_of_origin="CANADA")  # первый настоящий факт
     assert PartCustomsDataVersion.objects.filter(part_type=part).count() == 1
 
