@@ -228,6 +228,16 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
     есть только строки.
     """
     _ensure_draft(cart)
+    if part.is_oil:
+        # Корзина сканера ценит по part.recommended_price как цене ЗА ШТУКУ;
+        # для масла это цена ЗА УПАКОВКУ - подстановка её как цены за литр
+        # завысила бы сумму в разы, а "quantity" со скана здесь не объём.
+        # Явный отказ - масло добавляется в продажу/ремонт отдельно, там,
+        # где есть выбор объёма (см. add_oil_volume_to_sale/_to_repair_order).
+        raise ActionError(
+            "Масло нельзя добавить корзиной сканера: цена и объём для него "
+            "считаются иначе. Добавьте масло прямо в продаже/ремонте."
+        )
     quantity = parse_quantity(quantity, allow_zero=True)
     _drop_row_lines(cart, part, location)
     if quantity == 0:

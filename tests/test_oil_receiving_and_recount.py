@@ -190,3 +190,30 @@ def test_section_recount_normal_part_still_increments_by_one(admin):
     assert scanned.quantity == Decimal("1")
     scanned = record_section_scan(doc, cell_number=1, raw_value="RC-N-0001", by=admin)
     assert scanned.quantity == Decimal("2")
+
+
+# --- Quick-action scanner (sell/reserve/repair in one step, and its cart) ---
+#
+# Both price a line from part.recommended_price as a PER-UNIT price. For oil
+# that field means PER-PACKAGE, so treating it as a per-liter price would
+# overcharge by the package volume's factor (e.g. 4x for a 4 L canister).
+# Neither UI here has a volume input either - quantity defaults to 1 "unit".
+# Both must refuse outright rather than silently misprice.
+
+
+def test_quick_action_scanner_refuses_oil(oil_part, oil_lot, admin):
+    from apps.actions.services import ActionError, perform_action
+
+    with pytest.raises(ActionError, match="сканером действий"):
+        perform_action(
+            part=oil_part, location=oil_lot.location, action_type="sale",
+            quantity="1", customer_comment="Клиент", by=admin,
+        )
+
+
+def test_scanner_cart_refuses_oil(oil_part, oil_lot, admin):
+    from apps.actions.cart import ActionError, add_scan, open_cart
+
+    cart = open_cart("sale", by=admin)
+    with pytest.raises(ActionError, match="корзиной сканера"):
+        add_scan(cart, oil_part, oil_lot.location, by=admin)
