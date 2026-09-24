@@ -259,6 +259,18 @@ class PartType(Dictionary):
     # warehouse primary key, which remains an implementation detail.
     public_id = models.UUIDField("Публичный ID", default=uuid.uuid4, unique=True, editable=False)
     is_public = models.BooleanField("Показывать в публичном каталоге", default=True)
+    # Масло: количественная деталь (tracking_mode=BULK), у которой существующее
+    # поле `quantity` (StockLot/StockMovement/SaleLine/RepairIssueLine - все уже
+    # Decimal(12, 3)) означает не штуки, а ЛИТРЫ с точностью до миллилитра. Ни
+    # одно поле не расширяется: масло переиспользует тот же количественный
+    # столбец, что и обычная bulk-деталь, только с другой единицей смысла.
+    is_oil = models.BooleanField("Масло", default=False)
+    # Объём полной упаковки/канистры в литрах - основа цены за литр (цена
+    # клиента за упаковку / объём упаковки) и себестоимости за литр. Пусто у
+    # обычных деталей; обязательно и > 0 у масла (см. clean()).
+    oil_package_volume_l = models.DecimalField(
+        "Объём упаковки, л", max_digits=8, decimal_places=3, null=True, blank=True,
+    )
 
     class Meta:
         verbose_name = "Вид детали"
@@ -266,6 +278,18 @@ class PartType(Dictionary):
         ordering = ["name"]
         indexes = [
             models.Index(fields=["search_name_compact"], name="parttype_name_compact_idx"),
+        ]
+        constraints = [
+            # Объём упаковки обязателен и положителен только у масла; у обычной
+            # детали поле остаётся пустым - не "0", чтобы не путать
+            # "не масло" с "масло с ошибочно нулевым объёмом".
+            models.CheckConstraint(
+                condition=(
+                    models.Q(is_oil=False, oil_package_volume_l__isnull=True)
+                    | models.Q(is_oil=True, oil_package_volume_l__gt=0)
+                ),
+                name="parttype_oil_package_volume_required_iff_oil",
+            ),
         ]
 
     def __str__(self) -> str:
@@ -300,10 +324,79 @@ class PartType(Dictionary):
             if previous and previous != self.public_id:
                 raise ValidationError({"public_id": "Публичный ID нельзя изменять."})
 
+        if self.is_oil:
+            if not self.oil_package_volume_l or self.oil_package_volume_l <= 0:
+                raise ValidationError(
+                    {"oil_package_volume_l": "У масла объём упаковки обязателен и больше нуля."}
+                )
+            if self.tracking_mode != self.TrackingMode.BULK:
+                raise ValidationError(
+                    {"is_oil": "Масло учитывается только по объёму (bulk), не поштучно."}
+                )
+        elif self.oil_package_volume_l is not None:
+            raise ValidationError(
+                {"oil_package_volume_l": "Объём упаковки задаётся только для масла."}
+            )
+
+        if self.pk:
+            previous_is_oil, previous_volume = (
+                type(self)
+                .objects.filter(pk=self.pk)
+                .values_list("is_oil", "oil_package_volume_l")
+                .first()
+                or (None, None)
+            )
+            if previous_is_oil is not None:
+                if previous_is_oil != self.is_oil and self.has_stock_or_history():
+                    raise ValidationError(
+                        {
+                            "is_oil": (
+                                "Нельзя менять признак «Масло» - по детали уже есть "
+                                "остатки, движения, продажи или ремонты."
+                            )
+                        }
+                    )
+                if (
+                    previous_is_oil
+                    and self.is_oil
+                    and previous_volume != self.oil_package_volume_l
+                    and self.has_stock_or_history()
+                ):
+                    raise ValidationError(
+                        {
+                            "oil_package_volume_l": (
+                                "Нельзя менять объём упаковки - по детали уже есть "
+                                "остатки, движения, продажи или ремонты."
+                            )
+                        }
+                    )
+
+    def has_stock_or_history(self) -> bool:
+        """True если по детали уже есть остатки, движения, продажи или ремонты.
+
+        Используется, чтобы запретить опасные изменения (признак «Масло»,
+        объём упаковки, смену режима учёта) после того, как деталь уже живёт
+        в реальном складском/финансовом контуре.
+        """
+        if not self.pk:
+            return False
+        from apps.inventory.models import PartItem, StockLot, StockMovement
+        from apps.repairs.models import RepairIssueLine
+        from apps.sales.models import SaleLine
+
+        return (
+            StockLot.objects.filter(part_type=self).exists()
+            or StockMovement.objects.filter(part_type=self).exists()
+            or PartItem.objects.filter(part_type=self).exists()
+            or SaleLine.objects.filter(part_type=self).exists()
+            or RepairIssueLine.objects.filter(part_type=self).exists()
+        )
+
     def can_change_tracking_mode(self) -> bool:
-        """TODO (слои 9–12): запретить смену режима, если по детали уже есть
-        остатки/экземпляры. Сейчас остатков нет — всегда True."""
-        return True
+        """Режим учёта (поштучно/bulk) нельзя менять, если по детали уже есть
+        остатки, движения, продажи или ремонты - иначе исторические строки
+        потеряют смысл (например, лот "5" при переходе в SERIAL)."""
+        return not self.has_stock_or_history()
 
 
 class ManualPurchasePrice(models.Model):

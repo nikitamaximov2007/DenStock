@@ -51,9 +51,9 @@ def priced_sale(db, django_user_model):
     return user, part, lot, location
 
 
-def _complete(user, lot, *, unit_price):
+def _complete(user, lot, *, unit_price, quantity="1"):
     sale = create_sale(customer_name="Клиент", by=user)
-    add_stock_lot_to_sale(sale, lot, Decimal("1"), unit_price=Decimal(unit_price), by=user)
+    add_stock_lot_to_sale(sale, lot, Decimal(quantity), unit_price=Decimal(unit_price), by=user)
     return complete_sale(sale, by=user)
 
 
@@ -80,10 +80,18 @@ def test_future_sale_freezes_live_unmarked_rate_and_uses_customer_price(priced_s
         Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
     )
     assert line.unmarked_unit_price_rub_snapshot == Decimal("10500")
+    assert report.revenue == Decimal("16000.00")
+    assert report.known_revenue == Decimal("16000.00")
+    assert report.cost == Decimal("10500.00")
     assert report.profit == Decimal("5500")
+    assert report.known_revenue - report.cost == report.profit
 
 
-def test_profit_uses_effective_quantity_and_no_source_is_unavailable(priced_sale):
+def test_return_does_not_reduce_sales_report_revenue_cost_or_profit(priced_sale):
+    """Возвраты - отдельный отчёт (get_returns_report); сводка продаж всегда
+    считает исходное количество проведённой строки, иначе выручка (которая
+    возвратом не уменьшается) и прибыль (которая уменьшалась бы) разошлись
+    бы по scope - именно так и родился баг с несходящимся Прибыль=Выручка-Себестоимость."""
     user, _, lot, location = priced_sale
     sale = _complete(user, lot, unit_price="14700")
     line = sale.lines.get()
@@ -94,8 +102,11 @@ def test_profit_uses_effective_quantity_and_no_source_is_unavailable(priced_sale
     report = get_sales_report(
         Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
     )
-    assert report.profit == Decimal("0")
+    assert report.revenue == Decimal("14700.00")
+    assert report.cost == Decimal("10500.00")
+    assert report.profit == Decimal("4200.00")
     assert report.profit_unavailable_lines == 0
+    assert report.revenue - report.cost == report.profit
 
 
 def test_formula_and_higher_customer_price_rule_are_distinct():
@@ -130,3 +141,58 @@ def test_owner_approved_legacy_backfill_uses_105_without_rewriting_sale_price(pr
     assert line.unmarked_usd_rate_snapshot == Decimal("105")
     assert line.unmarked_price_snapshot_note == "legacy_reconstruction_105"
     assert line.unit_price == Decimal("16000")
+
+
+def test_legacy_105_rate_snapshot_still_feeds_the_sales_report(priced_sale):
+    """Регресс: 105 ₽/USD был реальным курсом на момент этих продаж и
+    остаётся допустимой историческй базой - его нельзя аннулировать только
+    за то, что он «105» или «фиксированный». Строка с legacy_reconstruction_105
+    участвует в известном scope наравне с обычной."""
+    from django.apps import apps
+
+    user, _, lot, _ = priced_sale
+    sale = _complete(user, lot, unit_price="16000")
+    line = sale.lines.get()
+    line.unmarked_unit_price_rub_snapshot = None
+    line.unmarked_dealer_unit_usd_snapshot = None
+    line.unmarked_usd_rate_snapshot = None
+    line.unmarked_price_source = ""
+    line.unmarked_price_snapshot_note = ""
+    line.save(update_fields=[
+        "unmarked_unit_price_rub_snapshot", "unmarked_dealer_unit_usd_snapshot",
+        "unmarked_usd_rate_snapshot", "unmarked_price_source", "unmarked_price_snapshot_note",
+    ])
+    migration = import_module("apps.sales.migrations.0007_saleline_unmarked_price_snapshot")
+    migration.backfill_owner_approved_unmarked_prices(apps, None)
+    report = get_sales_report(
+        Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
+    )
+    assert report.revenue == Decimal("16000.00")
+    assert report.known_revenue == Decimal("16000.00")
+    assert report.cost == Decimal("10500.00")
+    assert report.profit == Decimal("5500.00")
+    assert report.profit_unavailable_lines == 0
+
+
+def test_impossible_aggregate_regression_profit_always_equals_revenue_minus_cost(priced_sale):
+    """Регресс на конкретный сообщённый баг: Выручка=409907, Себестоимость=368066,
+    Прибыль=112581 не сходятся (409907-368066=41841 != 112581). Причина была в
+    том, что revenue/cost брались из замороженных Sale.revenue_total/cost_total
+    (landed cost, никогда не обновлялись после возврата), а profit считался
+    отдельно по дилерской базе с вычетом возвращённого количества - два разных
+    scope на одном отчёте. Теперь все три числа - из одних и тех же строк и
+    одной базы, поэтому равенство обязано выполняться конструктивно."""
+    user, _, lot, _ = priced_sale
+    _complete(user, lot, unit_price="16000", quantity="2")
+    _complete(user, lot, unit_price="15000", quantity="1")
+
+    report = get_sales_report(
+        Period(timezone.localdate() - timedelta(days=1), timezone.localdate(), "")
+    )
+
+    assert report.revenue == Decimal("47000.00")
+    assert report.known_revenue == Decimal("47000.00")
+    assert report.cost == Decimal("31500.00")
+    assert report.profit == Decimal("15500.00")
+    assert report.profit_unavailable_lines == 0
+    assert report.revenue - report.cost == report.profit
