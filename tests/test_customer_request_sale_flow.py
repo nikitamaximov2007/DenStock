@@ -231,6 +231,26 @@ def test_multiple_matches_fail_closed_until_operator_selects(sale_scene):
     assert first.pk != second.pk
 
 
+def test_merge_resolves_a_previously_multiple_match_phone_to_one(sale_scene):
+    """A merge is what actually resolves the ambiguity ``fail closed`` guards.
+
+    Same duplicate-phone pair as the fail-closed test above, but this time the
+    operator has already merged them: the request-to-sale match must now see
+    exactly one live customer, not two, without weakening the original rule.
+    """
+    from apps.customers.merge import execute_customer_merge
+
+    first = Customer.objects.create(name="Первый", phone="+79090000001")
+    second = Customer.objects.create(name="Второй", phone="8 (909) 000-00-01")
+    execute_customer_merge(target_id=first.pk, source_id=second.pk, by=sale_scene["admin"])
+    request = take(make_request(sale_scene["part"], key="merged-customer"), sale_scene["admin"])
+
+    match = match_request_customer(request)
+
+    assert match.count == 1
+    assert match.customers[0].pk == first.pk
+
+
 def test_final_sale_rechecks_current_price_and_is_idempotent(sale_scene):
     customer = Customer.objects.create(name="Покупатель", phone="+79090000001")
     request = take(make_request(sale_scene["part"], key="final-sale"), sale_scene["admin"])

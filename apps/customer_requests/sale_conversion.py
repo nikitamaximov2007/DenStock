@@ -48,8 +48,10 @@ def _legacy_phone_matches(normalized_phone: str) -> list[Customer]:
     if not normalized_phone:
         return []
     matches = []
-    for customer in Customer.objects.filter(phone_normalized="").exclude(phone="").only(
-        "pk", "name", "phone", "phone_normalized"
+    for customer in (
+        Customer.objects.filter(phone_normalized="", merged_into__isnull=True)
+        .exclude(phone="")
+        .only("pk", "name", "phone", "phone_normalized")
     ):
         if normalize_phone(customer.phone) == normalized_phone:
             matches.append(customer)
@@ -57,10 +59,17 @@ def _legacy_phone_matches(normalized_phone: str) -> list[Customer]:
 
 
 def match_request_customer(customer_request: CustomerRequest) -> CustomerMatch:
-    """Resolve by exact normalized phone, including legacy raw phone values."""
+    """Resolve by exact normalized phone, including legacy raw phone values.
+
+    Merged-away cards (``merged_into`` set) are excluded: they are the same
+    identity as their live target under a tombstone, and counting both would
+    turn a merge-resolved phone back into a false multiple-match.
+    """
     normalized = normalize_phone(customer_request.customer_phone)
     indexed = list(
-        Customer.objects.filter(phone_normalized=normalized).order_by("pk")
+        Customer.objects.filter(
+            phone_normalized=normalized, merged_into__isnull=True
+        ).order_by("pk")
         if normalized
         else Customer.objects.none()
     )

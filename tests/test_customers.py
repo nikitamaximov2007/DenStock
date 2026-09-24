@@ -687,6 +687,73 @@ def test_customer_create_rejects_external_return_target(client, make_user, db):
     assert response["Location"] == reverse("customer_detail", args=[customer.pk])
 
 
+def test_customer_create_with_unused_phone_creates_without_warning(client, make_user, db):
+    """Ноль совпадений по телефону - обычное создание без предупреждения."""
+    _login(client, make_user)
+    response = client.get(reverse("customer_create"))
+    token = UUID(response.context["client_create_token"])
+
+    result = client.post(
+        reverse("customer_create"),
+        {
+            "name": "Уникальный клиент",
+            "phone": "+7 900 555-11-22",
+            "comment": "",
+            "client_create_token": token,
+        },
+    )
+
+    assert result.status_code == 302
+    assert Customer.objects.filter(name="Уникальный клиент").count() == 1
+
+
+def test_customer_create_fails_closed_with_multiple_existing_matches(client, make_user, db):
+    """Несколько живых карточек с этим телефоном - создание запрещено совсем."""
+    _login(client, make_user)
+    Customer.objects.create(name="Первый тёзка", phone="+7 900 777-11-22")
+    Customer.objects.create(name="Второй тёзка", phone="8 900 777 11 22")
+    response = client.get(reverse("customer_create"))
+    token = UUID(response.context["client_create_token"])
+
+    result = client.post(
+        reverse("customer_create"),
+        {
+            "name": "Третий тёзка",
+            "phone": "+79007771122",
+            "comment": "",
+            "client_create_token": token,
+            # Подтверждение не должно ничего изменить: несколько совпадений
+            # запрещают создание даже при явном флаге.
+            "confirm_duplicate": "1",
+        },
+    )
+
+    assert result.status_code == 200
+    assert not Customer.objects.filter(name="Третий тёзка").exists()
+
+
+def test_customer_create_duplicate_check_matches_across_phone_formats(client, make_user, db):
+    """Разное написание одного и того же номера всё равно считается дублем."""
+    _login(client, make_user)
+    Customer.objects.create(name="Существующий клиент", phone="8 (900) 333-44-55")
+    response = client.get(reverse("customer_create"))
+    token = UUID(response.context["client_create_token"])
+
+    warned = client.post(
+        reverse("customer_create"),
+        {
+            "name": "Новый со старым телефоном",
+            "phone": "+7 900 333-44-55",
+            "comment": "",
+            "client_create_token": token,
+        },
+    )
+
+    assert warned.status_code == 200
+    assert "Существующий клиент" in warned.content.decode()
+    assert not Customer.objects.filter(name="Новый со старым телефоном").exists()
+
+
 def test_customer_form_rejects_empty_name(client, make_user, db):
     _login(client, make_user)
     client.post(reverse("customer_create"), {"name": "   ", "phone": "", "comment": ""})
