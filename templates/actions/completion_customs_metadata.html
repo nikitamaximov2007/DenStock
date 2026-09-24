@@ -1,12 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Данные для таможни · DenisStock{% endblock %}
+{% block title %}{{ page_title|default:"Данные для таможни" }} · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Данные для таможни перед проведением</h1>
-  <p class="muted">Заполните только позиции, для которых данных не хватает.</p>
+  <h1 class="page-title">{{ page_title|default:"Данные для таможни перед проведением" }}</h1>
+  <p class="muted">{{ page_intro|default:"Заполните только позиции, для которых данных не хватает." }}</p>
   {% if error %}
     <p class="alert alert--error">{{ error }}</p>
   {% endif %}
-  <form method="post" class="form">
+  <form method="post"
+        class="form"
+        {% if form_action %} action="{{ form_action }}"{% endif %}>
     {% csrf_token %}
     <input type="hidden" name="metadata_submit" value="1">
     {% for entry in entries %}
@@ -15,32 +17,38 @@
           <h2>{{ entry.part.name }}</h2>
           <p class="code-pill">{{ entry.article }}</p>
           <input type="hidden" name="part_id" value="{{ entry.part.pk }}">
-          <label>
-            Вес брутто, г
-            <input name="gross_weight_g_{{ entry.part.pk }}"
-                   value="{{ entry.gross_weight_g|default_if_none:'' }}"
-                   inputmode="numeric">
-          </label>
-          <label>
-            Вес нетто, г
-            <input name="net_weight_g_{{ entry.part.pk }}"
-                   value="{{ entry.net_weight_g|default_if_none:'' }}"
-                   inputmode="numeric">
-          </label>
-          <label>
-            Область применения
-            <select name="application_area_{{ entry.part.pk }}">
-              <option value="">Не выбрано</option>
-              {% for value,label in application_choices %}
-                <option value="{{ value }}"
-                        {% if entry.application_area == value %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </label>
+          {% if "gross_weight_g" in entry.missing_fields %}
+            <label>
+              Вес брутто, г
+              <input name="gross_weight_g_{{ entry.part.pk }}"
+                     value="{{ entry.gross_weight_g|default_if_none:'' }}"
+                     inputmode="numeric">
+            </label>
+          {% endif %}
+          {% if "net_weight_g" in entry.missing_fields %}
+            <label>
+              Вес нетто, г
+              <input name="net_weight_g_{{ entry.part.pk }}"
+                     value="{{ entry.net_weight_g|default_if_none:'' }}"
+                     inputmode="numeric">
+            </label>
+          {% endif %}
+          {% if "application_area" in entry.missing_fields %}
+            <label>
+              Область применения
+              <select name="application_area_{{ entry.part.pk }}">
+                <option value="">Не выбрано</option>
+                {% for value,label in application_choices %}
+                  <option value="{{ value }}"
+                          {% if entry.application_area == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          {% endif %}
         </div>
       </section>
     {% endfor %}
-    <button class="btn btn--primary" type="submit">Сохранить и провести</button>
+    <button class="btn btn--primary" type="submit">{{ submit_label|default:"Сохранить и провести" }}</button>
     <a class="btn" href="{{ back }}">Назад</a>
   </form>
 {% endblock %}

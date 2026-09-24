@@ -29,12 +29,34 @@ def missing_parts(parts):
         except ValueError:
             valid_pair = False
         if not valid_pair or not _has_valid_application_area(area):
+            missing_fields = []
+            if not valid_pair:
+                if gross is None or net is None:
+                    if gross is None:
+                        missing_fields.append("gross_weight_g")
+                    if net is None:
+                        missing_fields.append("net_weight_g")
+                else:
+                    # An invalid pair needs both values visible so the operator
+                    # can correct the authoritative weight relationship.
+                    missing_fields.extend(("gross_weight_g", "net_weight_g"))
+            if not _has_valid_application_area(area):
+                missing_fields.append("application_area")
             result.append({
                 "part": part,
                 "article": part_exact_number(part),
                 "gross_weight_g": weight_kg_as_grams(gross),
                 "net_weight_g": weight_kg_as_grams(net),
                 "application_area": area,
+                "missing_fields": missing_fields,
+                "missing_labels": [
+                    {
+                        "gross_weight_g": "не заполнен вес брутто",
+                        "net_weight_g": "не заполнен вес нетто",
+                        "application_area": "не выбрана область применения",
+                    }[field]
+                    for field in missing_fields
+                ],
             })
     return result
 
@@ -46,13 +68,19 @@ def save_completion_metadata(post, parts, *, by):
     if submitted != set(expected):
         raise ValueError("Состав документа изменился. Обновите страницу.")
     for pk, part in expected.items():
-        gross = parse_weight_g(post.get(f"gross_weight_g_{pk}"))
-        net = parse_weight_g(post.get(f"net_weight_g_{pk}"))
-        area = parse_application_area(post.get(f"application_area_{pk}"))
+        customs = get_or_create_customs(part)
+        gross = customs.gross_weight_kg
+        net = customs.net_weight_kg
+        area = customs.application_area
+        if f"gross_weight_g_{pk}" in post:
+            gross = parse_weight_g(post.get(f"gross_weight_g_{pk}"))
+        if f"net_weight_g_{pk}" in post:
+            net = parse_weight_g(post.get(f"net_weight_g_{pk}"))
+        if f"application_area_{pk}" in post:
+            area = parse_application_area(post.get(f"application_area_{pk}"))
         if gross is None or net is None or not area:
             raise ValueError("Для каждой детали укажите оба веса и область применения.")
         validate_weight_pair(gross, net)
-        customs = get_or_create_customs(part)
         customs.gross_weight_kg, customs.net_weight_kg = gross, net
         customs.application_area, customs.updated_by = area, by
         customs.save(update_fields=[

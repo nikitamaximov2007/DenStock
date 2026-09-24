@@ -4,6 +4,9 @@
   <h1 class="page-title">Продажа {{ sale.number }}</h1>
   <p>
     <a href="{% url 'sale_list' %}">← К продажам</a>
+    {% if request_customer_request %}
+      · <a href="{% url 'customer_request_detail' request_customer_request.pk %}">К заявке</a>
+    {% endif %}
     {% if can_cancel and sale.status == "completed" %}
       · <a href="{% url 'sale_cancel_confirm' sale.pk %}">Отменить продажу</a>
     {% endif %}
@@ -48,6 +51,22 @@
   </table>
   {% if sale.status == "canceled" or sale.status == "voided" %}
     <p class="notice">Отменена: {{ sale.cancellation_reason|default:"·" }}. Автор: {{ sale.cancellation_author|default:"·" }}.</p>
+  {% endif %}
+  {% if can_sell and request_customs_missing %}
+    <section class="card" data-customs-warning>
+      <div class="card__body">
+        <h2>Не хватает данных для проведения</h2>
+        {% for entry in request_customs_missing %}
+          <p>
+            <strong>{{ entry.part.name }}</strong> · {{ entry.article }}
+            <br>
+            {{ entry.missing_labels|join:", " }}
+          </p>
+        {% endfor %}
+        <a class="btn btn--small btn--primary"
+           href="{% url 'customer_request_customs' request_customer_request.pk %}">Заполнить данные</a>
+      </div>
+    </section>
   {% endif %}
   <h2>Позиции</h2>
   <table class="table">

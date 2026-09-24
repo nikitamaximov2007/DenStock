@@ -369,12 +369,21 @@ def _detail_context(
         )
     target = operator_replies.reply_target(customer_request)
     list_query = _list_query(params)
+    request_sale = customer_request.sale if customer_request.sale_id else None
+    request_sale_customs_missing = []
+    if request_sale and request_sale.status == "draft":
+        from apps.actions.completion_workflow import missing_parts
+
+        request_sale_customs_missing = missing_parts(
+            [line.part_type for line in request_sale.lines.select_related("part_type")]
+        )
     return {
         "customer_request": customer_request,
         "linked_customer": (
             customer_request.customer if customer_request.customer_id else None
         ),
-        "request_sale": customer_request.sale if customer_request.sale_id else None,
+        "request_sale": request_sale,
+        "request_sale_customs_missing": request_sale_customs_missing,
         "lines": lines,
         "total": workspace.lines_total(lines),
         "events": customer_request.status_events.select_related("changed_by"),
@@ -466,6 +475,102 @@ def customer_request_sale(request, pk):
         request,
         "customer_requests/sale_conversion.html",
         {"customer_request": customer_request, "match": match},
+    )
+
+
+@login_required
+def customer_request_customs(request, pk):
+    """Complete missing customs metadata for a request-linked draft only."""
+    _require_access(request)
+    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    if not customer_request.sale_id:
+        messages.error(request, "Сначала подготовьте черновик продажи по заявке.")
+        return redirect("customer_request_detail", pk=pk)
+
+    from apps.actions.completion_workflow import (
+        QUICK_ACTION_APPLICATION_AREAS,
+        missing_parts,
+        save_completion_metadata,
+    )
+    from apps.actions.models import PartCustomsInfo
+    from apps.sales.models import Sale
+
+    application_choices = [
+        choice
+        for choice in PartCustomsInfo.ApplicationArea.choices
+        if choice[0] in {str(area) for area in QUICK_ACTION_APPLICATION_AREAS}
+    ]
+
+    sale = get_object_or_404(Sale, pk=customer_request.sale_id)
+    if sale.status != Sale.Status.DRAFT:
+        messages.error(request, "Таможенные данные можно менять только у черновика продажи.")
+        return redirect("sale_detail", pk=sale.pk)
+
+    def entries_for(current_sale):
+        lines = list(current_sale.lines.select_related("part_type").all())
+        return lines, missing_parts([line.part_type for line in lines])
+
+    lines, entries = entries_for(sale)
+    if request.method == "POST":
+        try:
+            with transaction.atomic():
+                locked_request = (
+                    CustomerRequest.objects.select_for_update()
+                    .select_related("sale")
+                    .get(pk=pk)
+                )
+                if locked_request.sale_id != sale.pk:
+                    raise ValueError("Продажа по заявке изменилась. Обновите страницу.")
+                locked_sale = Sale.objects.select_for_update().get(pk=sale.pk)
+                if locked_sale.status != Sale.Status.DRAFT:
+                    raise ValueError("Таможенные данные можно менять только у черновика продажи.")
+                lines, entries = entries_for(locked_sale)
+                if not entries:
+                    messages.info(request, "Все позиции уже готовы для проведения.")
+                else:
+                    save_completion_metadata(
+                        request.POST,
+                        [line.part_type for line in lines],
+                        by=request.user,
+                    )
+        except ValueError as exc:
+            for entry in entries:
+                part_pk = entry["part"].pk
+                for field in ("gross_weight_g", "net_weight_g", "application_area"):
+                    key = f"{field}_{part_pk}"
+                    if key in request.POST:
+                        entry[field] = request.POST.get(key, "")
+            return render(
+                request,
+                "actions/completion_customs_metadata.html",
+                {
+                    "entries": entries,
+                    "application_choices": application_choices,
+                    "back": reverse("sale_detail", args=[sale.pk]),
+                    "form_action": reverse("customer_request_customs", args=[pk]),
+                    "page_title": "Таможенные данные для продажи по заявке",
+                    "page_intro": "Заполните только данные, которых не хватает для проведения.",
+                    "submit_label": "Сохранить данные",
+                    "error": str(exc),
+                },
+                status=400,
+            )
+        else:
+            messages.success(request, "Таможенные данные сохранены. Продажа остаётся черновиком.")
+            return redirect("sale_detail", pk=sale.pk)
+
+    return render(
+        request,
+        "actions/completion_customs_metadata.html",
+        {
+            "entries": entries,
+            "application_choices": application_choices,
+            "back": reverse("sale_detail", args=[sale.pk]),
+            "form_action": reverse("customer_request_customs", args=[pk]),
+            "page_title": "Таможенные данные для продажи по заявке",
+            "page_intro": "Заполните только данные, которых не хватает для проведения.",
+            "submit_label": "Сохранить данные",
+        },
     )
 
 

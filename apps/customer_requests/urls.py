@@ -7,6 +7,11 @@ urlpatterns = [
     path("events/", views.customer_request_events, name="customer_request_events"),
     path("<int:pk>/", views.customer_request_detail, name="customer_request_detail"),
     path("<int:pk>/sale/", views.customer_request_sale, name="customer_request_sale"),
+    path(
+        "<int:pk>/sale/customs/",
+        views.customer_request_customs,
+        name="customer_request_customs",
+    ),
     path("<int:pk>/status/", views.customer_request_status, name="customer_request_status"),
     path("<int:pk>/delete/", views.customer_request_delete, name="customer_request_delete"),
     path("delete-canceled/", views.customer_request_delete_all, name="customer_request_delete_all"),
