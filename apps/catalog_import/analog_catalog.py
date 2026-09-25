@@ -23,6 +23,7 @@ from django.db import transaction
 
 from apps.catalog.models import (
     PartAnalog,
+    PartAnalogEvidence,
     PartNumber,
     PartType,
     normalize_number,
@@ -64,8 +65,39 @@ COLUMNS = {
         "original_manufacturer", "производитель оригинала",
         "производитель исходной детали",
     ),
+    # Необязательные колонки провенанса (§9/§17). Отсутствие любой из них не
+    # мешает разбору: строка просто заводится как раньше - ANALOG, источник
+    # IMPORT без подробностей.
+    "relation_type": (
+        "relation_type", "тип связи", "тип отношения",
+    ),
+    "source_name": (
+        "source_name", "источник", "название источника",
+    ),
+    "source_currency": (
+        "source_currency", "валюта", "валюта цены",
+    ),
+    "observed_at": (
+        "observed_at", "дата наблюдения", "дата цены", "дата",
+    ),
+    "external_source_id": (
+        "external_source_id", "идентификатор источника", "id источника",
+    ),
 }
 REQUIRED = ("original_article", "analog_article", "analog_name")
+
+# Текст колонки relation_type -> значение PartAnalog.RelationType. Сравнение по
+# строчным буквам без пробелов, как и заголовки колонок.
+RELATION_TYPE_ALIASES = {
+    "analog": PartAnalog.RelationType.ANALOG,
+    "аналог": PartAnalog.RelationType.ANALOG,
+    "supersession": PartAnalog.RelationType.SUPERSESSION,
+    "замена": PartAnalog.RelationType.SUPERSESSION,
+    "замена артикула": PartAnalog.RelationType.SUPERSESSION,
+    "cross_reference": PartAnalog.RelationType.CROSS_REFERENCE,
+    "кросс-ссылка": PartAnalog.RelationType.CROSS_REFERENCE,
+    "кросс ссылка": PartAnalog.RelationType.CROSS_REFERENCE,
+}
 
 
 class AnalogCatalogError(RuntimeError):
@@ -82,6 +114,11 @@ class Row:
     analog_manufacturer: str = ""
     analog_barcode: str = ""
     original_manufacturer: str = ""
+    relation_type: str = ""
+    source_name: str = ""
+    source_currency: str = ""
+    observed_at: str = ""
+    external_source_id: str = ""
 
 
 @dataclass
@@ -237,8 +274,10 @@ class Index:
         self.known_analogs: set[int] = set(
             PartAnalog.objects.values_list("analog_id", flat=True)
         )
-        self.links: set[tuple[int, int]] = set(
-            PartAnalog.objects.values_list("original_id", "analog_id")
+        # Тип связи входит в ключ: та же пара под ДРУГИМ типом - не дубль (см.
+        # relation_type в apps.catalog.models.PartAnalog).
+        self.links: set[tuple[int, int, str]] = set(
+            PartAnalog.objects.values_list("original_id", "analog_id", "relation_type")
         )
 
     def parts_by_article(self, article: str) -> list[PartType]:
@@ -252,9 +291,9 @@ class Index:
         if normalized:
             self.by_article.setdefault(normalized, []).append(part)
 
-    def remember_link(self, original_id: int, analog_id: int) -> None:
+    def remember_link(self, original_id: int, analog_id: int, relation_type: str) -> None:
         self.known_analogs.add(analog_id)
-        self.links.add((original_id, analog_id))
+        self.links.add((original_id, analog_id, relation_type))
 
 
 def build_index(rows: list[Row]) -> Index:
@@ -311,6 +350,39 @@ def _clean_price(value: str):
     return price.quantize(Decimal("0.01"))
 
 
+def _clean_relation_type(value: str) -> str:
+    """Пустая колонка - ANALOG (как и раньше, до появления типов связи)."""
+    key = " ".join((value or "").strip().casefold().split())
+    if not key:
+        return PartAnalog.RelationType.ANALOG
+    if key in RELATION_TYPE_ALIASES:
+        return RELATION_TYPE_ALIASES[key]
+    raise AnalogCatalogError(
+        f"«{value}» - неизвестный тип связи. Допустимо: analog, supersession, cross_reference "
+        "(или их русские названия)."
+    )
+
+
+def _clean_observed_at(value: str):
+    """Дата наблюдения цены источником. Пусто - не указана, не ошибка."""
+    from datetime import datetime
+
+    from django.utils import timezone as dj_timezone
+
+    text = (value or "").strip()
+    if not text:
+        return None
+    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            parsed = datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+        return dj_timezone.make_aware(parsed) if dj_timezone.is_naive(parsed) else parsed
+    raise AnalogCatalogError(
+        f"«{value}» - не дата. Ожидается ГГГГ-ММ-ДД, ДД.ММ.ГГГГ или ГГГГ-ММ-ДД ЧЧ:ММ:СС."
+    )
+
+
 @dataclass
 class Resolution:
     """Что делать с одной строкой файла."""
@@ -319,7 +391,9 @@ class Resolution:
     analog: PartType | None = None
     create_analog: bool = False
     problem: Problem | None = None
+    relation_type: str = PartAnalog.RelationType.ANALOG
     price = None
+    observed_at = None
 
 
 def resolve_row(row: Row, index: Index) -> Resolution:
@@ -342,6 +416,16 @@ def resolve_row(row: Row, index: Index) -> Resolution:
         price = _clean_price(row.analog_price)
     except AnalogCatalogError as exc:
         return Resolution(problem=Problem(row.number, "Некорректная цена", str(exc)))
+
+    try:
+        relation_type = _clean_relation_type(row.relation_type)
+    except AnalogCatalogError as exc:
+        return Resolution(problem=Problem(row.number, "Некорректный тип связи", str(exc)))
+
+    try:
+        observed_at = _clean_observed_at(row.observed_at)
+    except AnalogCatalogError as exc:
+        return Resolution(problem=Problem(row.number, "Некорректная дата наблюдения", str(exc)))
 
     # Аналог разрешается ПЕРВЫМ, и вот почему. У аналога артикул часто тот же,
     # что у исходной детали, поэтому обе карточки находятся по одному номеру.
@@ -390,8 +474,9 @@ def resolve_row(row: Row, index: Index) -> Resolution:
             + ". Укажите колонку «Производитель оригинала», чтобы различить их.",
         ))
 
-    resolution = Resolution(original=originals[0], analog=analog)
+    resolution = Resolution(original=originals[0], analog=analog, relation_type=relation_type)
     resolution.price = price
+    resolution.observed_at = observed_at
     resolution.create_analog = analog is None
     return resolution
 
@@ -405,7 +490,7 @@ def build_plan(path) -> Plan:
     plan = Plan(rows_total=len(rows))
     index = build_index(rows)
     linked = index.links
-    planned_pairs: set[tuple[int, int]] = set()
+    planned_pairs: set[tuple[int, int, str]] = set()
 
     for row in rows:
         resolution = resolve_row(row, index)
@@ -422,10 +507,10 @@ def build_plan(path) -> Plan:
             continue
 
         plan.will_reuse_parts += 1
-        pair = (resolution.original.pk, resolution.analog.pk)
+        pair = (resolution.original.pk, resolution.analog.pk, resolution.relation_type)
         if pair in linked or pair in planned_pairs:
             plan.already_linked += 1
-        elif (pair[1], pair[0]) in linked:
+        elif (pair[1], pair[0], pair[2]) in linked:
             _count_problem(plan, Problem(
                 row.number, "Эти детали уже связаны в обратную сторону",
                 f"{resolution.analog.name} / {resolution.original.name}",
@@ -492,12 +577,21 @@ def apply_file(path, *, by=None) -> dict:
             reused_parts += 1
 
         try:
-            _, created = link_analog(original=resolution.original, analog=analog, by=by)
+            _, created = link_analog(
+                original=resolution.original, analog=analog,
+                relation_type=resolution.relation_type, by=by,
+                source_type=PartAnalogEvidence.SourceType.IMPORT,
+                source_name=row.source_name,
+                external_source_id=row.external_source_id,
+                source_price=resolution.price,
+                source_currency=row.source_currency,
+                source_price_observed_at=resolution.observed_at,
+            )
         except AnalogLinkError as exc:
             skipped += 1
             problems.append(Problem(row.number, "Связь не создана", str(exc)))
             continue
-        index.remember_link(resolution.original.pk, analog.pk)
+        index.remember_link(resolution.original.pk, analog.pk, resolution.relation_type)
         if created:
             created_links += 1
         else:
