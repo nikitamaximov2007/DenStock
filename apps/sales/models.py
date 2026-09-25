@@ -280,3 +280,36 @@ class SaleLine(models.Model):
     def __str__(self) -> str:
         target = self.part_item or self.stock_lot
         return f"{self.part_type} × {self.quantity} ({target})"
+
+
+class SaleOilCancellationDecision(models.Model):
+    """Explicit physical-disposition decision for one completed-sale oil line.
+
+    This is deliberately separate from ``SaleLine``: sale prices, quantities,
+    cost snapshots and package snapshots are historical and remain immutable.
+    """
+
+    class Disposition(models.TextChoices):
+        RETURN_TO_STOCK = "return_to_stock", "Вернуть объём на склад"
+        DO_NOT_RETURN = "do_not_return", "Не возвращать - масло уже выдано/использовано"
+
+    sale_line = models.OneToOneField(
+        SaleLine, verbose_name="Строка продажи", on_delete=models.PROTECT,
+        related_name="oil_cancellation_decision",
+    )
+    disposition = models.CharField(
+        "Решение по отмене масла", max_length=20,
+        choices=Disposition.choices,
+    )
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто решил", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="sale_oil_cancellation_decisions",
+    )
+    decided_at = models.DateTimeField("Решено (когда)", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Решение по отмене масла"
+        verbose_name_plural = "Решения по отмене масла"
+
+    def __str__(self) -> str:
+        return f"{self.sale_line} - {self.get_disposition_display()}"

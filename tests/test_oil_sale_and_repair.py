@@ -20,6 +20,7 @@ from apps.procurement.services import finalize_cost
 from apps.repairs.services import (
     RepairError,
     add_oil_volume_to_repair_order,
+    cancel_repair_order,
     complete_repair_order,
     create_repair_order,
     repair_customer_line_amounts,
@@ -31,7 +32,7 @@ from apps.returns.services import (
     add_sale_line_return,
     create_return,
 )
-from apps.sales.models import Sale
+from apps.sales.models import Sale, SaleOilCancellationDecision
 from apps.sales.services import (
     SaleError,
     add_oil_volume_to_sale,
@@ -329,10 +330,19 @@ def test_oil_sale_line_return_is_rejected(oil_part, oil_lot, admin):
         )
 
 
-def test_cancel_sale_with_oil_requires_owner_policy(oil_part, oil_lot, admin):
+def test_cancel_sale_with_oil_requires_explicit_disposition(oil_part, oil_lot, admin):
     sale = create_sale(customer_name="К", by=admin)
-    add_oil_volume_to_sale(sale, oil_lot, "1", by=admin)
+    line = add_oil_volume_to_sale(sale, oil_lot, "0.3", by=admin)
     complete_sale(sale, by=admin)
+    line.refresh_from_db()
+    snapshot = (
+        line.quantity,
+        line.unit_price,
+        line.total_price,
+        line.unit_cost_rub,
+        line.oil_package_volume_l_snapshot,
+        line.oil_package_price_rub_snapshot,
+    )
     oil_lot.refresh_from_db()
     before = oil_lot.quantity
     with pytest.raises(SaleError, match="решения владельца"):
@@ -341,6 +351,114 @@ def test_cancel_sale_with_oil_requires_owner_policy(oil_part, oil_lot, admin):
     assert oil_lot.quantity == before
     sale.refresh_from_db()
     assert sale.status == Sale.Status.COMPLETED
+
+    cancel_sale(
+        sale, by=admin, reason="ошибка", author="Тест",
+        oil_dispositions={
+            line.pk: SaleOilCancellationDecision.Disposition.RETURN_TO_STOCK
+        },
+    )
+    oil_lot.refresh_from_db()
+    assert oil_lot.quantity == before + Decimal("0.300")
+    line.refresh_from_db()
+    assert SaleOilCancellationDecision.objects.get(
+        sale_line=line
+    ).disposition == SaleOilCancellationDecision.Disposition.RETURN_TO_STOCK
+    line.refresh_from_db()
+    assert (
+        line.quantity,
+        line.unit_price,
+        line.total_price,
+        line.unit_cost_rub,
+        line.oil_package_volume_l_snapshot,
+        line.oil_package_price_rub_snapshot,
+    ) == snapshot
+
+
+def test_cancel_sale_oil_no_return_restores_zero_and_is_idempotent(oil_part, oil_lot, admin):
+    sale = create_sale(customer_name="К", by=admin)
+    line = add_oil_volume_to_sale(sale, oil_lot, "0.3", by=admin)
+    complete_sale(sale, by=admin)
+    oil_lot.refresh_from_db()
+    before = oil_lot.quantity
+
+    cancel_sale(
+        sale, by=admin, reason="выдано", author="Тест",
+        oil_dispositions={
+            line.pk: SaleOilCancellationDecision.Disposition.DO_NOT_RETURN
+        },
+    )
+    oil_lot.refresh_from_db()
+    assert oil_lot.quantity == before
+    movements = oil_lot.movements.count()
+    cancel_sale(
+        sale, by=admin, reason="повтор", author="Тест",
+        oil_dispositions={
+            line.pk: SaleOilCancellationDecision.Disposition.DO_NOT_RETURN
+        },
+    )
+    oil_lot.refresh_from_db()
+    assert oil_lot.quantity == before
+    assert oil_lot.movements.count() == movements
+
+
+def test_cancel_sale_mixed_oil_and_normal_restores_only_selected_oil(
+    category, liter_unit, oil_part, oil_lot, admin
+):
+    normal = PartType.objects.create(
+        name="Фильтр", category=category, unit=liter_unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    remember_customs(normal)
+    normal_lot, _ = _oil_lot(normal, admin, package_qty="2", location_code="S61-D01-C01")
+    sale = create_sale(customer_name="К", by=admin)
+    oil_line = add_oil_volume_to_sale(sale, oil_lot, "0.3", by=admin)
+    from apps.sales.services import add_stock_lot_to_sale
+
+    add_stock_lot_to_sale(sale, normal_lot, Decimal("1"), unit_price=Decimal("100"), by=admin)
+    complete_sale(sale, by=admin)
+    oil_lot.refresh_from_db()
+    normal_lot.refresh_from_db()
+    oil_before, normal_before = oil_lot.quantity, normal_lot.quantity
+
+    cancel_sale(
+        sale, by=admin, reason="смешанная отмена", author="Тест",
+        oil_dispositions={
+            oil_line.pk: SaleOilCancellationDecision.Disposition.DO_NOT_RETURN
+        },
+    )
+    oil_lot.refresh_from_db()
+    normal_lot.refresh_from_db()
+    assert oil_lot.quantity == oil_before
+    assert normal_lot.quantity == normal_before + Decimal("1")
+
+
+def test_sale_cancel_screen_requires_a_choice_for_each_oil_line(
+    make_user, client, oil_part, oil_lot
+):
+    make_user("boss", role=roles.MANAGER)
+    client.login(username="boss", password=PASSWORD)
+    sale = create_sale(customer_name="К")
+    line = add_oil_volume_to_sale(sale, oil_lot, "0.3")
+    complete_sale(sale)
+    response = client.get(reverse("sale_cancel_confirm", args=[sale.pk]))
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert "Для каждой позиции масла выберите физическое решение" in html
+    assert f'name="oil_disposition_{line.pk}"' in html
+    assert "Вернуть объём на склад" in html
+    assert "Не возвращать - масло уже выдано/использовано" in html
+
+
+def test_cancel_completed_repair_does_not_restore_oil(oil_part, oil_lot, admin):
+    order = create_repair_order(customer_name="К", by=admin)
+    add_oil_volume_to_repair_order(order, oil_lot, "0.3", by=admin)
+    complete_repair_order(order, by=admin)
+    oil_lot.refresh_from_db()
+    before = oil_lot.quantity
+    cancel_repair_order(order, by=admin, reason="ошибка", author="Тест")
+    oil_lot.refresh_from_db()
+    assert oil_lot.quantity == before
 
 
 # --- Repair -------------------------------------------------------------------

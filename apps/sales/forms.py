@@ -7,7 +7,7 @@ from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
 from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
 
-from .models import Reservation, Sale
+from .models import Reservation, Sale, SaleOilCancellationDecision
 
 
 def _available_lots():
@@ -72,6 +72,15 @@ class SaleForm(CustomerSelectionMixin):
 class SaleCancellationForm(forms.Form):
     reason = forms.CharField(label="Причина отмены", max_length=255)
     author = forms.CharField(label="Кто отменяет", max_length=255)
+
+    def __init__(self, *args, oil_lines=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        for line in oil_lines or []:
+            self.fields[f"oil_disposition_{line.pk}"] = forms.ChoiceField(
+                label=f"{line.part_type.name} - {line.quantity} л",
+                choices=SaleOilCancellationDecision.Disposition.choices,
+                required=True,
+            )
 
     def clean_reason(self):
         value = (self.cleaned_data["reason"] or "").strip()

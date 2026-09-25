@@ -571,7 +571,9 @@ def sale_cancel_confirm(request, pk):
         request, "sales/sale_cancel_confirm.html",
         {
             "sale": sale,
-            "form": SaleCancellationForm(),
+            "form": SaleCancellationForm(
+                oil_lines=sale_cancellation_oil_excluded(sale)
+            ),
             "return_allocations": sale_cancellation_returns(sale),
             "oil_excluded_lines": sale_cancellation_oil_excluded(sale),
             "oil_return_policy": "sale_owner_decision",
@@ -584,7 +586,8 @@ def sale_cancel_confirm(request, pk):
 def sale_cancel(request, pk):
     _require_reversal(request)
     sale = get_object_or_404(Sale, pk=pk)
-    form = SaleCancellationForm(request.POST)
+    oil_lines = sale_cancellation_oil_excluded(sale)
+    form = SaleCancellationForm(request.POST, oil_lines=oil_lines)
     if not form.is_valid():
         return render(
             request, "sales/sale_cancel_confirm.html",
@@ -601,6 +604,10 @@ def sale_cancel(request, pk):
         cancel_sale(
             sale, by=request.user, reason=form.cleaned_data["reason"],
             author=form.cleaned_data["author"],
+            oil_dispositions={
+                line.pk: form.cleaned_data[f"oil_disposition_{line.pk}"]
+                for line in oil_lines
+            },
         )
     except SaleError as exc:
         messages.error(request, str(exc))

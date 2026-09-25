@@ -18,6 +18,7 @@ from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
+    InventoryError,
     ensure_location_operation_allowed,
     recompute_balance_row,
     return_part_item,
@@ -28,7 +29,13 @@ from apps.inventory.services import (
 from apps.procurement.models import BatchLine, money
 from apps.warehouse.models import StorageLocation
 
-from .models import Reservation, ReservationLine, Sale, SaleLine
+from .models import (
+    Reservation,
+    ReservationLine,
+    Sale,
+    SaleLine,
+    SaleOilCancellationDecision,
+)
 
 
 class ReservationError(Exception):
@@ -871,12 +878,14 @@ def sale_cancellation_oil_excluded(sale) -> list:
     return oil_lines_needing_owner_decision(lines, returned)
 
 
-def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
+def cancel_sale(sale, *, by=None, reason="", author="", oil_dispositions=None) -> Sale:
     """Cancel a completed sale with canonical compensating inventory movements.
 
     The original sale, its prices and cost snapshots remain immutable.  Only
     quantity not already returned by a completed customer return is restored,
     and every restoration goes through the standard RETURN_* inventory API.
+    Oil requires an explicit per-line physical-disposition decision because a
+    completed sale does not prove whether the measured volume was dispensed.
     """
     from apps.returns.models import StockReturn
 
@@ -910,11 +919,24 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
         "part_item__current_location", "stock_lot__location", "batch_line", "part_type"
     ))
     returned = completed_returned_quantities(lines, source_field="source_sale_line_id")
-    if oil_lines_needing_owner_decision(lines, returned):
-        raise SaleError(
-            "Отмена продажи с маслом требует решения владельца: "
-            "система не знает, был ли объём физически отпущен."
-        )
+    pending_oil = oil_lines_needing_owner_decision(lines, returned)
+    dispositions = oil_dispositions or {}
+    normalized_dispositions = {
+        int(key): value for key, value in dispositions.items()
+        if str(key).isdigit()
+    }
+    allowed_dispositions = {
+        SaleOilCancellationDecision.Disposition.RETURN_TO_STOCK,
+        SaleOilCancellationDecision.Disposition.DO_NOT_RETURN,
+    }
+    for line in pending_oil:
+        if normalized_dispositions.get(line.pk) not in allowed_dispositions:
+            raise SaleError(
+                "Отмена продажи с маслом требует решения владельца по каждой позиции: "
+                "выберите возврат объёма или подтверждение, что масло уже выдано/использовано."
+            )
+    if set(normalized_dispositions) - {line.pk for line in pending_oil}:
+        raise SaleError("Получено решение по неизвестной позиции масла.")
     # Тот же расчёт, что показал экран подтверждения: расхождение между
     # обещанной и фактической ячейкой невозможно по построению.
     for allocation in cancellation_allocations(lines, returned):
@@ -933,6 +955,33 @@ def cancel_sale(sale, *, by=None, reason="", author="") -> Sale:
                 restock_status=StockLot.Status.AVAILABLE, by=by,
                 document_type="sale", document_id=sale.pk, comment=comment,
             )
+    for line in pending_oil:
+        disposition = normalized_dispositions[line.pk]
+        if disposition == SaleOilCancellationDecision.Disposition.RETURN_TO_STOCK:
+            location = sale_line_source_location(line)
+            if location is None or line.stock_lot_id is None:
+                raise SaleError(
+                    "У масляной позиции не сохранена исходная ячейка: "
+                    "безопасный возврат невозможен."
+                )
+            try:
+                return_stock_lot_quantity(
+                    line.batch_line,
+                    location,
+                    line.quantity - (returned.get(line.pk) or Decimal("0")),
+                    unit_cost_rub=line.unit_cost_rub,
+                    stock_lot=line.stock_lot,
+                    restock_status=StockLot.Status.AVAILABLE,
+                    by=by,
+                    document_type="sale",
+                    document_id=sale.pk,
+                    comment=f"Отмена продажи {sale.number}: {reason}"[:255],
+                )
+            except InventoryError as exc:
+                raise SaleError(str(exc)) from exc
+        SaleOilCancellationDecision.objects.create(
+            sale_line=line, disposition=disposition, decided_by=by,
+        )
     sale.status = Sale.Status.CANCELED
     sale.canceled_at = timezone.now()
     sale.canceled_by = by
