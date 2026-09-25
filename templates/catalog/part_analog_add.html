@@ -78,6 +78,11 @@
                     <form method="post" class="inline-form">
                       {% csrf_token %}
                       <input type="hidden" name="link_part" value="{{ row.part.pk }}">
+                      <select name="relation_type" class="form-control">
+                        {% for value, label in relation_type_choices %}
+                          <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                      </select>
                       <button type="submit" class="btn btn--small btn--primary">Связать</button>
                     </form>
                   {% endif %}
