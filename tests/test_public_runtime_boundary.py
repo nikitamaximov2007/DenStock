@@ -88,6 +88,7 @@ def test_public_resolver_has_only_catalog_routes():
     names = set(route_names(get_resolver("config.public_urls").url_patterns))
     assert names == {
         "public_catalog_root",
+        "public_catalog_about",
         "public_catalog_search",
         "public_catalog_part",
         "public_catalog_photo",
