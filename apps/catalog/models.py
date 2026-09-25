@@ -767,6 +767,11 @@ class PartAnalog(models.Model):
     relation_type = models.CharField(
         "Тип связи", max_length=20,
         choices=RelationType.choices, default=RelationType.ANALOG,
+        # db_default, не только Python default: колонка добавлена ALTER TABLE
+        # к уже существующей таблице. Во время выката старый контейнер ещё
+        # может вставлять строки без этой колонки - без db_default такие
+        # INSERT'ы падали бы на NOT NULL (тот же урок, см. search_name_compact).
+        db_default=Value(RelationType.ANALOG),
     )
     note = models.CharField("Примечание", max_length=255, blank=True)
     source = models.CharField("Источник", max_length=120, default="internal")
@@ -777,6 +782,7 @@ class PartAnalog(models.Model):
     verification_state = models.CharField(
         "Статус проверки", max_length=20,
         choices=VerificationState.choices, default=VerificationState.UNVERIFIED,
+        db_default=Value(VerificationState.UNVERIFIED),
     )
     confirmed_at = models.DateTimeField("Подтверждена", null=True, blank=True)
     confirmed_by = models.ForeignKey(
