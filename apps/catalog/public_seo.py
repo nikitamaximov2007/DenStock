@@ -31,6 +31,36 @@ def indexing_enabled() -> bool:
     return bool(getattr(settings, "PUBLIC_CATALOG_INDEXING", False))
 
 
+#  Confirmed from docs/research/01-denis-public-channels-full-review.md (the
+# same channel tools/research/telegram_collector.py reads). VK and YouTube
+# have no confirmed public URL anywhere in the repository - default stays
+# empty, never guessed.
+DEFAULT_TELEGRAM_URL = "https://t.me/probrp1"
+
+
+def social_links() -> list[dict]:
+    """Real public accounts only - never the private request-bot deep links.
+
+    The default here (not only in settings) is the single source of truth
+    for the confirmed Telegram channel, so it applies consistently across
+    every settings module, not only the deployed public-catalog one. Each
+    entry renders only when its URL is non-empty, so an unconfirmed platform
+    simply does not show a card instead of guessing a handle.
+    """
+    platforms = (
+        ("telegram", "Telegram", "PUBLIC_CATALOG_TELEGRAM_URL", DEFAULT_TELEGRAM_URL,
+         "Новости и работа сервиса"),
+        ("vk", "VK", "PUBLIC_CATALOG_VK_URL", "", "Сообщество сервиса"),
+        ("youtube", "YouTube", "PUBLIC_CATALOG_YOUTUBE_URL", "", "Видео о ремонте и технике"),
+    )
+    links = []
+    for key, label, setting_name, default_url, description in platforms:
+        url = str(getattr(settings, setting_name, default_url) or default_url).strip()
+        if url:
+            links.append({"key": key, "label": label, "url": url, "description": description})
+    return links
+
+
 def base_url(request) -> str:
     """The canonical origin: configured for production, else the request's own."""
     configured = str(getattr(settings, "PUBLIC_CATALOG_BASE_URL", "") or "").strip()

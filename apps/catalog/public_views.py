@@ -68,6 +68,7 @@ def _render(request, template, context=None, *, status=200):
             settings, "PUBLIC_CATALOG_GOOGLE_SITE_VERIFICATION", ""
         ),
         "yandex_verification": getattr(settings, "PUBLIC_CATALOG_YANDEX_VERIFICATION", ""),
+        "social_links": public_seo.social_links(),
         "max_query_length": MAX_QUERY_LENGTH,
         # Header only, and no database: the cookie's presence is a hint,
         # the account pages re-check the session themselves.
@@ -84,6 +85,15 @@ def public_root(request):
         request,
         "public_catalog/home.html",
         {"canonical_url": public_seo.absolute_url(request, reverse("public_catalog_root"))},
+    )
+
+
+@require_safe
+def public_about(request):
+    return _render(
+        request,
+        "public_catalog/about.html",
+        {"canonical_url": public_seo.absolute_url(request, reverse("public_catalog_about"))},
     )
 
 
@@ -472,8 +482,9 @@ def sitemap_parts(request, number):
         for public_id, updated_at in public_seo.sitemap_entries(number)
     ]
     if number == 1:
-        # No single trustworthy "changed" timestamp for the catalog root
-        # itself - omitting lastmod here beats fabricating one.
+        # No single trustworthy "changed" timestamp for either static page -
+        # omitting lastmod beats fabricating one.
+        urls.insert(0, {"loc": base + reverse("public_catalog_about"), "lastmod": ""})
         urls.insert(0, {"loc": base + reverse("public_catalog_root"), "lastmod": ""})
     response = render(
         request, "public_catalog/sitemap.xml", {"urls": urls}, content_type="application/xml"

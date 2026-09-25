@@ -13,6 +13,7 @@ urlpatterns = [
     # The customer account. 404 until CUSTOMER_ACCOUNT_ENABLED.
     path("account/", include("apps.customer_accounts.urls")),
     path("", public_views.public_root, name="public_catalog_root"),
+    path("about/", public_views.public_about, name="public_catalog_about"),
     path("search/", public_views.public_search, name="public_catalog_search"),
     path("parts/<uuid:public_id>/", public_views.public_part_detail, name="public_catalog_part"),
     path(

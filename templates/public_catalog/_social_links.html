@@ -1,0 +1,18 @@
+{% comment %}
+  Social platform cards only (no heading/lead text) - reused by
+  _trust_block.html and about.html under their own headings.
+{% endcomment %}
+{% if social_links %}
+  <div class="trust__social" aria-label="Мы в соцсетях">
+    {% for link in social_links %}
+      <a class="trust__social-card trust__social-card--{{ link.key }}"
+         href="{{ link.url }}"
+         target="_blank"
+         rel="noopener noreferrer"
+         aria-label="{{ link.label }}: {{ link.description }}, открыть в новой вкладке">
+        <span class="trust__social-name">{{ link.label }}</span>
+        <span class="trust__social-desc">{{ link.description }}</span>
+      </a>
+    {% endfor %}
+  </div>
+{% endif %}

@@ -173,6 +173,7 @@
       <p class="muted">Показаны только связи, которые проверил сотрудник.</p>
     {% endif %}
   </section>
+  {% include "public_catalog/_trust_block.html" with compact=True %}
 {% endblock %}
 {% block structured_data %}
   <script type="application/ld+json">{{ json_ld|safe }}</script>
