@@ -52,6 +52,13 @@ TEMPLATES[0]["OPTIONS"]["context_processors"] = list(PUBLIC_CONTEXT_PROCESSORS) 
 # and remove the edge X-Robots-Tag header for that host.
 PUBLIC_CATALOG_INDEXING = env.bool("PUBLIC_CATALOG_INDEXING", default=False)
 PUBLIC_CATALOG_BASE_URL = env("PUBLIC_CATALOG_BASE_URL", default="").strip().rstrip("/")
+# Ownership verification tokens for Search Console / Yandex Webmaster - never
+# a real value committed here, only read from the deployment environment.
+# Empty by default, so the meta tag simply does not render until set.
+PUBLIC_CATALOG_GOOGLE_SITE_VERIFICATION = env(
+    "PUBLIC_CATALOG_GOOGLE_SITE_VERIFICATION", default=""
+).strip()
+PUBLIC_CATALOG_YANDEX_VERIFICATION = env("PUBLIC_CATALOG_YANDEX_VERIFICATION", default="").strip()
 
 # --- Transport ------------------------------------------------------------------
 # Caddy terminates TLS and forwards X-Forwarded-Proto (prod.py trusts it).

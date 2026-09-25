@@ -16,6 +16,7 @@ from django.db import connection
 from django.http import Http404, HttpResponse, HttpResponseNotModified, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.cache import patch_cache_control
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
@@ -63,6 +64,10 @@ def _render(request, template, context=None, *, status=200):
     base = {
         "cart_lines": cart_size(request.session),
         "indexing": public_seo.indexing_enabled(),
+        "google_site_verification": getattr(
+            settings, "PUBLIC_CATALOG_GOOGLE_SITE_VERIFICATION", ""
+        ),
+        "yandex_verification": getattr(settings, "PUBLIC_CATALOG_YANDEX_VERIFICATION", ""),
         "max_query_length": MAX_QUERY_LENGTH,
         # Header only, and no database: the cookie's presence is a hint,
         # the account pages re-check the session themselves.
@@ -460,11 +465,16 @@ def sitemap_parts(request, number):
         raise Http404
     base = public_seo.base_url(request)
     urls = [
-        base + reverse("public_catalog_part", args=[public_id])
-        for public_id in public_seo.sitemap_public_ids(number)
+        {
+            "loc": base + reverse("public_catalog_part", args=[public_id]),
+            "lastmod": timezone.localtime(updated_at).date().isoformat() if updated_at else "",
+        }
+        for public_id, updated_at in public_seo.sitemap_entries(number)
     ]
     if number == 1:
-        urls.insert(0, base + reverse("public_catalog_root"))
+        # No single trustworthy "changed" timestamp for the catalog root
+        # itself - omitting lastmod here beats fabricating one.
+        urls.insert(0, {"loc": base + reverse("public_catalog_root"), "lastmod": ""})
     response = render(
         request, "public_catalog/sitemap.xml", {"urls": urls}, content_type="application/xml"
     )

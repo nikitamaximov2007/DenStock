@@ -278,6 +278,13 @@ class PartType(Dictionary):
         ordering = ["name"]
         indexes = [
             models.Index(fields=["search_name_compact"], name="parttype_name_compact_idx"),
+            # Публичный каталог и карта сайта всегда фильтруют по этой паре
+            # (см. apps.catalog.public_catalog.public_parts) и сортируют по
+            # pk для постраничной выгрузки карты сайта; без индекса при
+            # больших каталогах это полный скан таблицы на каждый запрос.
+            models.Index(
+                fields=["is_public", "is_active", "id"], name="parttype_public_active_idx"
+            ),
         ]
         constraints = [
             # Объём упаковки обязателен и положителен только у масла; у обычной

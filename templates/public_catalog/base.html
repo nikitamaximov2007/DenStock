@@ -4,6 +4,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% if google_site_verification %}
+      <meta name="google-site-verification"
+            content="{{ google_site_verification }}">
+    {% endif %}
+    {% if yandex_verification %}
+      <meta name="yandex-verification" content="{{ yandex_verification }}">
+    {% endif %}
     <title>{% block title %}PRO-STOR · запчасти по артикулу и названию{% endblock %}</title>
     {% if indexing %}
       {% block robots %}{% endblock %}

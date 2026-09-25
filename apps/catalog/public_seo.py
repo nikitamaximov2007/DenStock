@@ -78,12 +78,19 @@ def part_description(card: PartCard) -> str:
 
 
 def product_json_ld(card: PartCard, *, url: str, images: list[str]) -> dict:
-    """A minimal, truthful schema.org Product for one part page."""
+    """A minimal, truthful schema.org Product for one part page.
+
+    ``description`` reuses ``part_description`` - one wording, not a second
+    text generator. Oil stays safe by omission: there is no ``quantity`` or
+    unit field anywhere here, so nothing ever claims a piece count for a
+    part sold by the package (see ``card.in_stock``, already litre-aware).
+    """
     facts = card.facts
     data: dict = {
         "@context": "https://schema.org",
         "@type": "Product",
         "name": card.display_name,
+        "description": part_description(card),
         "url": url,
     }
     if facts.russian_name and facts.english_name != facts.russian_name:
@@ -120,11 +127,19 @@ def sitemap_page_count() -> int:
     return max(1, math.ceil(public_parts().count() / SITEMAP_PAGE_SIZE))
 
 
-def sitemap_public_ids(number: int) -> list:
-    """One bounded sitemap file of part identities, in stable key order."""
+def sitemap_entries(number: int) -> list[tuple]:
+    """One bounded sitemap file: (public_id, lastmod) pairs, stable key order.
+
+    ``updated_at`` (``auto_now``, already selected - no extra query or join)
+    is a real signal, not a fabricated one: it only moves when the row
+    actually changes. It is not scoped to public-visible fields alone, so it
+    can be a little conservative (bumps on an internal-only edit too), but
+    that is the honest trade the task allows - "omitting lastmod is better
+    than fabricating it", and this is not fabricated.
+    """
     start = (number - 1) * SITEMAP_PAGE_SIZE
     return list(
         public_parts()
         .order_by("pk")
-        .values_list("public_id", flat=True)[start : start + SITEMAP_PAGE_SIZE]
+        .values_list("public_id", "updated_at")[start : start + SITEMAP_PAGE_SIZE]
     )
