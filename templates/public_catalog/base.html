@@ -39,15 +39,12 @@
     <a class="skip-link" href="#main">Перейти к содержимому</a>
     <header class="site-header">
       <div class="site-header__inner">
-        <div class="site-header__brand-group">
-          <a class="brand" href="{% url 'public_catalog_root' %}">
-            <img src="{% static 'public_catalog/pro-stor-logo.svg' %}"
-                 alt="PRO-STOR, на главную"
-                 width="100"
-                 height="40">
-          </a>
-          <a class="nav-link" href="{% url 'public_catalog_about' %}">О сервисе</a>
-        </div>
+        <a class="brand" href="{% url 'public_catalog_root' %}">
+          <img src="{% static 'public_catalog/pro-stor-logo.svg' %}"
+               alt="PRO-STOR, на главную"
+               width="100"
+               height="40">
+        </a>
         {% block header_search %}
           <form class="header-search"
                 action="{% url 'public_catalog_search' %}"
@@ -66,20 +63,33 @@
             <button class="btn header-search__button" type="submit">Найти</button>
           </form>
         {% endblock %}
-        {% if account_enabled %}
-          {% if account_signed_in %}
-            <a class="account-link" href="{% url 'customer_account_home' %}">Мой кабинет</a>
-          {% else %}
-            <a class="account-link" href="{% url 'customer_account_login' %}">Войти</a>
-          {% endif %}
-        {% endif %}
-        <a class="cart-link" href="{% url 'public_catalog_cart' %}">
-          Корзина
-          {% if cart_lines %}
-            <span class="visually-hidden">, позиций:</span>
-            <span class="cart-link__count">{{ cart_lines }}</span>
-          {% endif %}
-        </a>
+        <div class="site-header__right">
+          {% comment %}
+            Grouped with the cart, on the far right - well apart from the
+            logo, so it reads as navigation, never as part of the PRO-STOR
+            wordmark. Hidden on mobile entirely; reachable there through
+            the trust block or the footer instead.
+          {% endcomment %}
+          <nav class="site-header__nav" aria-label="Дополнительная навигация">
+            <a class="nav-link" href="{% url 'public_catalog_about' %}">О сервисе</a>
+          </nav>
+          <div class="site-header__actions">
+            {% if account_enabled %}
+              {% if account_signed_in %}
+                <a class="account-link" href="{% url 'customer_account_home' %}">Мой кабинет</a>
+              {% else %}
+                <a class="account-link" href="{% url 'customer_account_login' %}">Войти</a>
+              {% endif %}
+            {% endif %}
+            <a class="cart-link" href="{% url 'public_catalog_cart' %}">
+              Корзина
+              {% if cart_lines %}
+                <span class="visually-hidden">, позиций:</span>
+                <span class="cart-link__count">{{ cart_lines }}</span>
+              {% endif %}
+            </a>
+          </div>
+        </div>
       </div>
     </header>
     <main id="main" class="site-main" tabindex="-1">
@@ -97,6 +107,7 @@
       <div class="site-footer__inner">
         <p>PRO-STOR · каталог запчастей</p>
         <p>Цена и наличие показаны по данным склада на момент открытия страницы.</p>
+        <p><a href="{% url 'public_catalog_about' %}">О сервисе</a></p>
       </div>
     </footer>
     {% block structured_data %}{% endblock %}

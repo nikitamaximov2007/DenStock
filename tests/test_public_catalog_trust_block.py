@@ -21,7 +21,7 @@ def test_trust_block_renders_on_home_product_and_about_pages(public_client, publ
 
     assert 'id="trust-title"' in home
     assert 'id="trust-title"' in detail
-    assert "Где нас можно найти" in about
+    assert "Мы в соцсетях" in about
 
 
 def test_all_three_confirmed_social_links_render_by_default(public_client, public_catalog):
