@@ -71,10 +71,11 @@ def test_previous_release_can_still_insert_parts_and_links_after_upgrade():
             ids.append(cursor.fetchone()[0])
         cursor.execute(
             "INSERT INTO catalog_partanalog (original_id, analog_id, note, created_at) "
-            "VALUES (%s, %s, '', now()) RETURNING is_confirmed, source",
+            "VALUES (%s, %s, '', now()) "
+            "RETURNING is_confirmed, source, relation_type, verification_state",
             ids,
         )
-        is_confirmed, source = cursor.fetchone()
+        is_confirmed, source, relation_type, verification_state = cursor.fetchone()
         cursor.execute(
             "SELECT count(DISTINCT public_id), bool_and(is_public) FROM catalog_parttype "
             "WHERE id = ANY(%s)",
@@ -83,3 +84,4 @@ def test_previous_release_can_still_insert_parts_and_links_after_upgrade():
         distinct_ids, all_public = cursor.fetchone()
     assert distinct_ids == 2 and all_public is True
     assert is_confirmed is False and source == "internal"
+    assert relation_type == "analog" and verification_state == "unverified"

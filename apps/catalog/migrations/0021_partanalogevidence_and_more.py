@@ -5,10 +5,20 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def _backfill_verification_state(apps, schema_editor):
+    """Keep the legacy public-confirmation decision during the additive upgrade."""
+    PartAnalog = apps.get_model("catalog", "PartAnalog")
+    PartAnalog.objects.filter(is_confirmed=True).update(verification_state="verified")
+
+
+def _leave_verification_state_as_is(apps, schema_editor):
+    """The legacy boolean cannot distinguish rejected from unverified on rollback."""
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("catalog", "0019_partphotouploadaudit_max_source"),
+        ("catalog", "0020_parttype_is_oil_parttype_oil_package_volume_l_and_more"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -130,6 +140,7 @@ class Migration(migrations.Migration):
                 verbose_name="Статус проверки",
             ),
         ),
+        migrations.RunPython(_backfill_verification_state, _leave_verification_state_as_is),
         migrations.AddConstraint(
             model_name="partanalog",
             constraint=models.UniqueConstraint(

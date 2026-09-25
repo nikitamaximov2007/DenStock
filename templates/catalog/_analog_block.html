@@ -30,10 +30,8 @@
         <tr>
           <td>
             <a href="{% url 'part_detail' row.part.pk %}">{{ row.part.name }}</a>
-            {% if row.link.is_confirmed %}<span class="badge"
-      title="Связь видна в публичном каталоге">В каталоге</span>{% endif %}
-            {% if row.verification_state == "rejected" %}<span class="badge"
-      title="Связь отклонена сотрудником">Отклонена</span>{% endif %}
+            {% if row.link.is_confirmed %}<span class="badge" title="Связь видна в публичном каталоге">В каталоге</span>{% endif %}
+            {% if row.verification_state == "rejected" %}<span class="badge" title="Связь отклонена сотрудником">Отклонена</span>{% endif %}
           </td>
           <td class="muted">{{ row.relation_type_display }}</td>
           <td>{{ row.exact_number|default:"·" }}</td>
