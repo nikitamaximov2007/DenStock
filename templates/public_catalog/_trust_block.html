@@ -1,0 +1,25 @@
+{% comment %}
+  Trust/social block. Reused on the homepage (compact=False, full copy) and
+  on the product page (compact=True, short copy + link to /about/).
+
+  Parameters: compact (bool).
+
+  Only real, confirmed facts (see docs/research/01-denis-public-channels-full-review.md):
+  BRP snowmobile/watercraft engine repair and rebuilding, Rotax engines,
+  maintenance. No invented years, customer counts, ratings or dealer status.
+{% endcomment %}
+<section class="trust" aria-labelledby="trust-title">
+  <h2 id="trust-title" class="trust__title">{% if compact %}О сервисе PRO-STOR{% else %}Кто мы{% endif %}</h2>
+  <p class="trust__lead">
+    За каталогом PRO-STOR - реальный сервис по ремонту техники BRP: переборка
+    двигателей Rotax, обслуживание снегоходов и гидроциклов. Мы ведём склад
+    оригинальных запчастей и подтверждённых сотрудником аналогов для этой
+    техники.
+  </p>
+  {% include "public_catalog/_social_links.html" %}
+  {% if compact %}
+    <p class="trust__more">
+      <a href="{% url 'public_catalog_about' %}">Подробнее о сервисе</a>
+    </p>
+  {% endif %}
+</section>

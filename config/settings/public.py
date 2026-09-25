@@ -60,6 +60,19 @@ PUBLIC_CATALOG_GOOGLE_SITE_VERIFICATION = env(
 ).strip()
 PUBLIC_CATALOG_YANDEX_VERIFICATION = env("PUBLIC_CATALOG_YANDEX_VERIFICATION", default="").strip()
 
+# --- Public social presence (trust block) ----------------------------------------
+# Real public accounts only, never the customer-request Telegram/MAX bot deep
+# links (those are per-request, private continuations - see
+# apps.customer_requests.messengers). Empty here defers to
+# apps.catalog.public_seo.social_links()'s own default (the confirmed
+# Telegram channel) - one source of truth, not duplicated across settings
+# modules. VK and YouTube have no confirmed public URL anywhere in the
+# repository - stay empty until an owner supplies one; the trust block hides
+# a card rather than guess a handle.
+PUBLIC_CATALOG_TELEGRAM_URL = env("PUBLIC_CATALOG_TELEGRAM_URL", default="").strip()
+PUBLIC_CATALOG_VK_URL = env("PUBLIC_CATALOG_VK_URL", default="").strip()
+PUBLIC_CATALOG_YOUTUBE_URL = env("PUBLIC_CATALOG_YOUTUBE_URL", default="").strip()
+
 # --- Transport ------------------------------------------------------------------
 # Caddy terminates TLS and forwards X-Forwarded-Proto (prod.py trusts it).
 # Cookies are Secure unless explicitly turned off for a local HTTP run. prod.py
