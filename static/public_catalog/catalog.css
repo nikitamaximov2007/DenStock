@@ -337,6 +337,10 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 .part__photo {
   display: flex; align-items: center; justify-content: center; aspect-ratio: 1 / 1;
   background: #fff; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden;
+  /* On a phone a real photo stays modest too (like the placeholder below),
+     so article/name/price/availability/CTA need at most one short scroll,
+     not a full screen of photo first. */
+  max-width: 240px; margin: 0 auto;
 }
 .part__photo img { width: 100%; height: 100%; object-fit: contain; }
 /* Most parts have no confirmed photo yet: on a phone the placeholder stays
@@ -379,6 +383,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 @media (min-width: 720px) {
   .part { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); padding: var(--space-5); gap: var(--space-6); }
   .part__photo--empty { aspect-ratio: 1 / 1; height: auto; }
+  .part__photo { max-width: none; margin: 0; }
   .part__title { font-size: 1.85rem; }
 }
 
@@ -506,13 +511,21 @@ fieldset.field { border: 0; padding: 0; min-width: 0; }
 }
 .trust__title { font-size: 1.15rem; margin-bottom: var(--space-2); }
 .trust__lead { color: var(--muted); margin-bottom: var(--space-4); }
+.trust__social-title { font-size: 1rem; margin: 0 0 var(--space-3); }
 .trust__social { display: grid; gap: var(--space-3); grid-template-columns: 1fr; }
 .trust__social-card {
-  display: flex; flex-direction: column; gap: 2px; min-height: 64px;
+  display: flex; flex-direction: row; align-items: center; gap: var(--space-3); min-height: 64px;
   padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-sm);
   background: var(--bg); text-decoration: none; color: var(--ink);
 }
 .trust__social-card:hover { border-color: var(--primary); background: var(--primary-soft); }
+.trust__social-icon {
+  flex: none; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+}
+.trust__social-card--telegram .trust__social-icon { color: #26a5e4; }
+.trust__social-card--vk .trust__social-icon { color: #0057b8; }
+.trust__social-card--youtube .trust__social-icon { color: #ff0000; }
+.trust__social-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .trust__social-name { font-weight: 700; color: var(--primary); }
 .trust__social-desc { font-size: 14px; color: var(--muted); }
 .trust__more { margin: var(--space-4) 0 0; }

@@ -159,7 +159,7 @@ def test_public_static_serves_only_public_and_explicitly_shared_assets():
     assert "FileSystemFinder" in public_settings_source
     assert "AppDirectoriesFinder" not in public_settings_source
     public_dir = settings.BASE_DIR / "static" / "public_catalog"
-    assert {path.suffix for path in public_dir.iterdir()} <= {".css", ".svg"}
+    assert {path.suffix for path in public_dir.iterdir()} <= {".css", ".svg", ".png", ".ico"}
 
     shared_dir = settings.BASE_DIR / "static" / "shared"
     shared = {path.name for path in shared_dir.iterdir() if path.is_file()}
