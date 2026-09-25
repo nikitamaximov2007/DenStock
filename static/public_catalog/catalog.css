@@ -176,30 +176,45 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 
 /* --- Home ---------------------------------------------------------------- */
 
-.hero { max-width: 760px; margin: var(--space-5) auto var(--space-6); }
-.hero__title { font-size: 1.6rem; margin-bottom: var(--space-3); }
-.hero__lead { color: var(--muted); font-size: 1.05rem; margin-bottom: var(--space-5); }
+/* Mobile-first spacing here is deliberately tight: all five acceptance
+   answers (what/who/result/trust/action) must clear the first ~390px-wide
+   viewport without scrolling, so every margin below is the minimum that
+   still reads as a clear hierarchy. Desktop gets its own roomier values
+   in the min-width query. */
+.hero { max-width: 760px; margin: var(--space-4) auto var(--space-3); }
+.hero__title { font-size: 1.5rem; margin-bottom: var(--space-2); }
+.hero__lead { color: var(--muted); font-size: 1rem; margin-bottom: var(--space-3); }
 
-.search__label { display: block; font-weight: 600; margin-bottom: var(--space-2); }
+.search__label { display: block; font-weight: 600; margin-bottom: var(--space-1); }
 .search__row { display: flex; gap: var(--space-2); }
 .search__input { flex: 1; min-width: 0; }
-.search--hero .search__input { min-height: 56px; font-size: 18px; border-width: 2px; border-color: var(--primary); }
-.search--hero .btn { min-height: 56px; }
-.search__hint { color: var(--muted); font-size: 14px; margin: var(--space-2) 0 0; }
+.search--hero .search__input { min-height: 48px; font-size: 17px; border-width: 2px; border-color: var(--primary); }
+.search--hero .btn { min-height: 48px; }
+.search__hint { color: var(--muted); font-size: 13px; margin: var(--space-1) 0 0; }
+
+.who { max-width: 760px; margin: var(--space-3) auto 0; }
+.who__lead { margin: 0; color: var(--muted); }
+.who__lead strong { color: var(--ink); }
 
 .result-line {
-  max-width: 760px; margin: var(--space-4) auto 0; font-size: 1rem; font-weight: 600;
+  max-width: 760px; margin: var(--space-2) auto 0; font-size: 1rem; font-weight: 600;
 }
 .result-line span[aria-hidden] { color: var(--muted); margin: 0 2px; font-weight: 400; }
 
 .trust-signal {
-  max-width: 760px; margin: var(--space-3) auto 0; color: var(--muted); font-size: 14px;
+  max-width: 760px; margin: var(--space-2) auto 0; color: var(--muted); font-size: 14px;
 }
 .trust-signal span[aria-hidden] { margin: 0 2px; }
 
 @media (min-width: 720px) {
-  .hero { margin-top: var(--space-6); }
+  .hero { margin-top: var(--space-6); margin-bottom: var(--space-6); }
   .hero__title { font-size: 2.1rem; }
+  .hero__lead { margin-bottom: var(--space-5); }
+  .search--hero .search__input, .search--hero .btn { min-height: 56px; }
+  .search--hero .search__input { font-size: 18px; }
+  .who { margin-top: var(--space-6); }
+  .result-line { margin-top: var(--space-4); }
+  .trust-signal { margin-top: var(--space-3); }
 }
 
 /* --- Page head, breadcrumbs, chips --------------------------------------- */
@@ -367,6 +382,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 .part__article .article__value { font-size: 1.1rem; }
 .part__title { font-size: 1.5rem; margin-bottom: var(--space-2); overflow-wrap: anywhere; }
 .part__alt { color: var(--muted); overflow-wrap: anywhere; }
+.part__context { color: var(--muted); font-size: 13px; margin: 0 0 var(--space-2); }
 .part__specs { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0 0 var(--space-3); }
 .part__specs dt { font-size: 13px; color: var(--muted); }
 .part__specs dd { margin: 0; font-weight: 600; }
@@ -512,10 +528,6 @@ fieldset.field { border: 0; padding: 0; min-width: 0; }
 
 .nav-link { color: var(--ink); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .nav-link:hover { color: var(--primary); text-decoration: underline; }
-
-.who { max-width: 760px; margin: var(--space-6) auto 0; }
-.who__title { font-size: 1.15rem; margin-bottom: var(--space-2); }
-.who__lead { margin: 0; color: var(--muted); }
 
 .trust {
   max-width: 760px; margin: var(--space-6) auto 0; background: var(--surface);
