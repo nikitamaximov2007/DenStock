@@ -514,9 +514,11 @@ def customer_request_customs(request, pk):
     if request.method == "POST":
         try:
             with transaction.atomic():
+                # Lock only the authoritative request row. ``sale`` is nullable,
+                # so locking it through select_related would create a PostgreSQL
+                # FOR UPDATE outer join. The Sale row is locked separately below.
                 locked_request = (
                     CustomerRequest.objects.select_for_update()
-                    .select_related("sale")
                     .get(pk=pk)
                 )
                 if locked_request.sale_id != sale.pk:
