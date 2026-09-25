@@ -65,14 +65,14 @@ def test_json_ld_never_claims_a_piece_quantity_for_oil(public_client, public_cat
 
 def test_sitemap_entries_carry_a_real_lastmod(public_client, public_catalog):
     part = public_catalog.part("Mapped", article="LM-1")
-    with override_settings(PUBLIC_CATALOG_BASE_URL="https://pro-stor.ru"):
+    with override_settings(PUBLIC_CATALOG_BASE_URL="https://pro-brp.ru"):
         page = public_client.get("/sitemaps/parts-1.xml").content.decode()
 
     expected_date = part.updated_at.date().isoformat()
     assert f"<lastmod>{expected_date}</lastmod>" in page
     # The catalog root has no single trustworthy "changed" timestamp - it
     # must not carry a fabricated one.
-    root_line = next(line for line in page.splitlines() if "pro-stor.ru/</loc>" in line)
+    root_line = next(line for line in page.splitlines() if "pro-brp.ru/</loc>" in line)
     assert "<lastmod>" not in root_line
 
 
@@ -81,7 +81,7 @@ def test_sitemap_lastmod_reflects_a_real_update(public_client, public_catalog):
     part.name = "Mapped renamed"
     part.save(update_fields=["name", "updated_at"])
 
-    with override_settings(PUBLIC_CATALOG_BASE_URL="https://pro-stor.ru"):
+    with override_settings(PUBLIC_CATALOG_BASE_URL="https://pro-brp.ru"):
         page = public_client.get("/sitemaps/parts-1.xml").content.decode()
 
     part.refresh_from_db()

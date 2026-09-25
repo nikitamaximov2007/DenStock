@@ -115,6 +115,30 @@ def test_detail_without_analogs_says_so(public_client, public_catalog):
     )
 
 
+def test_rejected_analog_relation_never_appears_publicly(public_client, public_catalog):
+    """REJECTED must be as hidden as UNVERIFIED, never merely "not yet confirmed"."""
+    from django.utils import timezone
+
+    from apps.catalog.models import PartAnalog
+
+    original = public_catalog.part("OEM FILTER", article="OEM-F1")
+    rejected = public_catalog.part("WRONGLY SUGGESTED FILTER", article="AM-F1", price="500")
+    public_catalog.stock(rejected, "10")
+    link = PartAnalog.objects.create(original=original, analog=rejected)
+    link.verification_state = PartAnalog.VerificationState.REJECTED
+    link.is_confirmed = False
+    link.confirmed_at = timezone.now()
+    link.save()
+    assert link.is_confirmed is False, "REJECTED must not resync to VERIFIED via save()"
+
+    original_page = _detail(public_client, original).content.decode()
+
+    assert "WRONGLY SUGGESTED FILTER" not in original_page
+    assert (
+        "Подтверждённых аналогов для этой детали пока нет" in original_page
+    ), "a REJECTED-only original must read exactly like a part with no analogs at all"
+
+
 def test_unknown_and_hidden_parts_are_404_pages(public_client, public_catalog):
     hidden = public_catalog.part("Hidden", article="H-1", public=False)
     retired = public_catalog.part("Retired", article="R-1", active=False)

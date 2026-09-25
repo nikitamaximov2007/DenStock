@@ -64,11 +64,9 @@ PUBLIC_CATALOG_YANDEX_VERIFICATION = env("PUBLIC_CATALOG_YANDEX_VERIFICATION", d
 # Real public accounts only, never the customer-request Telegram/MAX bot deep
 # links (those are per-request, private continuations - see
 # apps.customer_requests.messengers). Empty here defers to
-# apps.catalog.public_seo.social_links()'s own default (the confirmed
-# Telegram channel) - one source of truth, not duplicated across settings
-# modules. VK and YouTube have no confirmed public URL anywhere in the
-# repository - stay empty until an owner supplies one; the trust block hides
-# a card rather than guess a handle.
+# apps.catalog.public_seo.social_links()'s own defaults (all three accounts
+# are owner-confirmed) - one source of truth, not duplicated across settings
+# modules. Set here only to override an account without a code deploy.
 PUBLIC_CATALOG_TELEGRAM_URL = env("PUBLIC_CATALOG_TELEGRAM_URL", default="").strip()
 PUBLIC_CATALOG_VK_URL = env("PUBLIC_CATALOG_VK_URL", default="").strip()
 PUBLIC_CATALOG_YOUTUBE_URL = env("PUBLIC_CATALOG_YOUTUBE_URL", default="").strip()

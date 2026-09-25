@@ -31,27 +31,31 @@ def indexing_enabled() -> bool:
     return bool(getattr(settings, "PUBLIC_CATALOG_INDEXING", False))
 
 
-#  Confirmed from docs/research/01-denis-public-channels-full-review.md (the
-# same channel tools/research/telegram_collector.py reads). VK and YouTube
-# have no confirmed public URL anywhere in the repository - default stays
-# empty, never guessed.
+# Owner-confirmed real public accounts (all three). Telegram is also the
+# channel docs/research/01-denis-public-channels-full-review.md read and
+# tools/research/telegram_collector.py reads. Descriptions stay generic
+# ("PRO-STOR on <platform>") rather than characterizing channel content -
+# no claim here needs separate proof.
 DEFAULT_TELEGRAM_URL = "https://t.me/probrp1"
+DEFAULT_VK_URL = "https://vk.ru/club226817030"
+DEFAULT_YOUTUBE_URL = "https://www.youtube.com/@pro-stor6592"
 
 
 def social_links() -> list[dict]:
     """Real public accounts only - never the private request-bot deep links.
 
-    The default here (not only in settings) is the single source of truth
-    for the confirmed Telegram channel, so it applies consistently across
-    every settings module, not only the deployed public-catalog one. Each
-    entry renders only when its URL is non-empty, so an unconfirmed platform
-    simply does not show a card instead of guessing a handle.
+    The defaults here (not only in settings) are the single source of truth
+    for the confirmed accounts, so they apply consistently across every
+    settings module, not only the deployed public-catalog one. An env
+    override still wins when set, for a future account change without a
+    code deploy.
     """
     platforms = (
         ("telegram", "Telegram", "PUBLIC_CATALOG_TELEGRAM_URL", DEFAULT_TELEGRAM_URL,
-         "Новости и работа сервиса"),
-        ("vk", "VK", "PUBLIC_CATALOG_VK_URL", "", "Сообщество сервиса"),
-        ("youtube", "YouTube", "PUBLIC_CATALOG_YOUTUBE_URL", "", "Видео о ремонте и технике"),
+         "PRO-STOR в Telegram"),
+        ("vk", "VK", "PUBLIC_CATALOG_VK_URL", DEFAULT_VK_URL, "PRO-STOR во ВКонтакте"),
+        ("youtube", "YouTube", "PUBLIC_CATALOG_YOUTUBE_URL", DEFAULT_YOUTUBE_URL,
+         "PRO-STOR на YouTube"),
     )
     links = []
     for key, label, setting_name, default_url, description in platforms:

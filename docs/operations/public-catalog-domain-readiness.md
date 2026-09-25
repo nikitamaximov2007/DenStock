@@ -1,5 +1,14 @@
 # PRO-STOR public catalog: final domain readiness
 
+> **Domain update:** this document was drafted against a `pro-stor.ru`
+> placeholder before the owner confirmed the real domain. **The real
+> production domain is `pro-brp.ru`** - already live in
+> `deploy/caddy/Caddyfile.production`. Read every `pro-stor.ru` below as
+> `pro-brp.ru` and every `admin.pro-stor.ru` as the equivalent internal host
+> on the real domain; the runbook steps and reasoning are otherwise
+> unchanged. See [`docs/SEO_INDEXING.md`](../SEO_INDEXING.md) for the
+> current, domain-correct SEO reference.
+
 Design for moving from the preview hostname to `pro-stor.ru` (customers)
 and `admin.pro-stor.ru` (DenisStock staff). Nothing here assumes the domain
 is bought or that DNS exists; nothing here changes DNS, Caddy or any server.

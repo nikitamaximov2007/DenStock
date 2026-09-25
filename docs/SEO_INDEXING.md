@@ -9,16 +9,24 @@ explains what is indexable, why, and how to verify it.
 
 ## Domain name note
 
-`docs/operations/public-catalog-domain-readiness.md` and the test suite use
-`pro-stor.ru` as the canonical example domain. The committed production Caddy
-config (`deploy/caddy/Caddyfile.production`) instead serves the real site at
-`pro-brp.ru`. Everything below is domain-agnostic (the code never hardcodes
-either name - see "Canonical domain" below), but **the owner should confirm
-which domain is actually live** and make sure `PUBLIC_CATALOG_BASE_URL`,
-`DJANGO_PUBLIC_ALLOWED_HOSTS` and the Caddy blocks all agree before flipping
-the indexing switch. This report and the domain-readiness doc were not
-reconciled as part of this task - do not assume `pro-stor.ru` without
-checking the deployed Caddy config first.
+**The real production domain is `pro-brp.ru`** (owner-confirmed). The
+committed production Caddy config (`deploy/caddy/Caddyfile.production`)
+serves the site there already. `docs/operations/public-catalog-domain-readiness.md`
+predates that confirmation and still writes its runbook against a
+`pro-stor.ru` placeholder throughout (registration steps, env var examples,
+`admin.pro-stor.ru` for the internal host) - that document was not rewritten
+as part of this task, so read every `pro-stor.ru` in it as `pro-brp.ru`
+(and `admin.pro-stor.ru` as the equivalent internal host on the real
+domain). Some tests in this repository also use `pro-stor.ru` purely as an
+arbitrary example hostname in an `override_settings(PUBLIC_CATALOG_BASE_URL=...)`
+block - that is a legacy placeholder with no bearing on the real domain, not
+a claim about production. This document, the production Caddy config, and
+every example below use `pro-brp.ru` as the real domain.
+
+The code itself never hardcodes either name - see "Canonical domain" below.
+Before flipping the indexing switch, confirm `PUBLIC_CATALOG_BASE_URL`,
+`DJANGO_PUBLIC_ALLOWED_HOSTS` and the Caddy blocks all agree on
+`pro-brp.ru`.
 
 ## Canonical domain
 
@@ -191,6 +199,93 @@ page is generated for the relation itself, and no description, photo, or
 manufacturer is ever copied between an original and its analog - each
 product page's metadata comes only from that `PartType`'s own facts.
 
+## Cold-visitor conversion: the five questions
+
+Every page a cold search visitor can land on directly - the home page and
+every product page - must naturally answer five questions (the task's own
+framework, quoted verbatim; do not rename or replace them):
+
+1. Что конкретно вы продаёте?
+2. Кому это подходит, в каких ситуациях?
+3. Какой результат я здесь могу получить?
+4. Почему у меня вообще есть смысл смотреть дальше сайт?
+5. Какое конкретное действие я могу сделать сейчас?
+
+They are answered through ordinary page content, never as a printed
+questionnaire. On the home page: the hero and search answer (1)-(2), the
+catalog/search results and trust block answer (3)-(4), and the search box
+plus trust-block CTAs answer (5). On a product page: the article, name,
+manufacturer and specs answer (1)-(2); price/stock/analogs and the trust
+block answer (3)-(4); the "Заказать" / "Узнать о поставке" button answers
+(5). See the final RC report's sections E/F for the exact rendered copy,
+location and CTA used for each question on each page.
+
+## Product page call to action
+
+The primary CTA on a product page is **"Заказать"** when the part is in
+stock and priced, matching the visitor's actual intent (they came here to
+order this part) rather than describing the underlying mechanism. It still
+uses the existing add-to-cart/request architecture - there is no second
+ordering system - so the flow stays Заказать → cart line → "Отправить
+заявку" on `/cart/` → `/request/success/<id>/`. Two things keep this
+honest despite the stronger verb:
+
+- The `offer__fine` disclaimer directly under the button states plainly
+  that this is a request, not a payment: "Это заявка, а не оплата: корзина
+  не резервирует деталь, сервис PRO-STOR свяжется и подтвердит наличие,
+  цену и срок."
+- The button text itself stays truthful when the premise is not met: "Узнать
+  о поставке" when out of stock, "Изменить количество" once the part is
+  already in the cart. Nothing ever claims stock, a price, or an online
+  payment that does not exist.
+
+## Trust / social block
+
+A visible section (`templates/public_catalog/_trust_block.html`,
+`id="trust-title"`), not footer icons, rendered on the home page, every
+product page (compact variant) and the `/about/` page. It links the three
+owner-confirmed real public accounts, never the private per-request
+Telegram/MAX bot deep links (`apps.customer_requests.messengers`, a
+different, session-specific mechanism):
+
+| Platform | URL | Setting override |
+| --- | --- | --- |
+| Telegram | `https://t.me/probrp1` | `PUBLIC_CATALOG_TELEGRAM_URL` |
+| VK | `https://vk.ru/club226817030` | `PUBLIC_CATALOG_VK_URL` |
+| YouTube | `https://www.youtube.com/@pro-stor6592` | `PUBLIC_CATALOG_YOUTUBE_URL` |
+
+The defaults live in `apps.catalog.public_seo.social_links()` (single
+source of truth across every settings module); an env var overrides one
+account without a code deploy. Every card carries an accessible name
+(`aria-label`, e.g. "Telegram, открыть в новой вкладке"),
+`target="_blank" rel="noopener noreferrer"`, plain markup usable without
+JavaScript or cookies, and mobile-friendly grid classes that collapse to
+one column by default. No follower/subscriber counts or review/rating
+claims are ever generated - there is no data source for them, so none is
+invented.
+
+## The two indexation gates
+
+Production indexing requires BOTH of the following to be true - either one
+alone leaves the site (or a page) noindex:
+
+1. **`PUBLIC_CATALOG_INDEXING`** (Django, `config/settings/public.py`,
+   fail-closed default `false`). Controls the application-level
+   `X-Robots-Tag` header, the `<meta name="robots">` tag, and whether
+   `robots.txt` allows or blocks everything.
+2. **The Caddy `X-Robots-Tag` header** (`deploy/caddy/Caddyfile.production`).
+   The production `pro-brp.ru` block currently sends
+   `header X-Robots-Tag "noindex, nofollow"` unconditionally, as a second,
+   independent launch gate at the edge - this predates and does not depend
+   on the Django flag. **This header has not been removed or conditioned in
+   this task** (task section 39 asks only for a prepared, unapplied diff -
+   see the final RC report's section N for the exact patch and the
+   production writer's handoff).
+
+Until both gates are open, `curl -sI https://pro-brp.ru/` will show
+`X-Robots-Tag: noindex, nofollow` regardless of the Django setting - see
+"How to diagnose missing product indexing" below for the full checklist.
+
 ## What is intentionally noindex (and why)
 
 | Surface | Why |
@@ -294,6 +389,62 @@ In order - each step rules out one layer:
    duplicate without user-selected canonical, blocked by robots.txt, etc.).
 7. Indexing takes time even once everything above is correct - a missing
    page a few hours after submission is not yet a bug.
+
+## Production release sequence
+
+The exact, ordered handoff for enabling indexing in production. **Not
+executed in this task** - this session does not deploy, does not touch
+production secrets, and does not advance `origin/main`. A later production
+writer follows this sequence exactly; see the final RC report's section Z
+for the identical, numbered list tied to the qualified candidate SHA.
+
+1. Fetch `origin` and confirm the actual latest `origin/main` (never trust a
+   remembered SHA).
+2. Confirm exactly one writer is deploying (no concurrent release).
+3. Take a PRE-deploy backup.
+4. Deploy the exact qualified candidate SHA.
+5. Apply the additive migration (`catalog.0022_parttype_parttype_public_active_idx`
+   or its current number on `main` - `CREATE INDEX` only, no data rewrite).
+6. Verify process health (`/healthz/`, logs, no startup errors).
+7. Configure `PUBLIC_CATALOG_BASE_URL=https://pro-brp.ru` and confirm
+   `DJANGO_PUBLIC_ALLOWED_HOSTS` includes `pro-brp.ru`.
+8. Configure `PUBLIC_CATALOG_TELEGRAM_URL`, `PUBLIC_CATALOG_VK_URL`,
+   `PUBLIC_CATALOG_YOUTUBE_URL` (or leave unset to use the code defaults,
+   which already match the confirmed accounts - set only if a different
+   override is wanted).
+9. Set `PUBLIC_CATALOG_INDEXING=true` and restart `catalog-web`.
+10. Apply the qualified Caddy diff (final RC report section N) removing the
+    `X-Robots-Tag` header from the `pro-brp.ru` production block only.
+11. Reload Caddy.
+12. `curl -sI https://pro-brp.ru/` - confirm no `X-Robots-Tag` header.
+13. `curl -s https://pro-brp.ru/robots.txt` - confirm `Allow: /` and the
+    `Sitemap:` line points at `https://pro-brp.ru/sitemap.xml`.
+14. `curl -sI https://pro-brp.ru/sitemap.xml` and one shard - confirm 200.
+15. Open a representative product page (e.g. the real equivalent of the
+    404105500 fixture) - confirm canonical, title, JSON-LD `sku`/`mpn`, and
+    no `X-Robots-Tag`.
+16. Confirm `<link rel="canonical">` on that page is `https://pro-brp.ru/...`
+    (not `www`, not an internal IP, not the preview host).
+17. Confirm `/search/` and `/request/success/<id>/` still carry
+    `X-Robots-Tag: noindex, nofollow` (indexing only opened the routes meant
+    to be indexable, nothing else).
+18. Confirm the trust block on the live home page links exactly
+    `https://t.me/probrp1`, `https://vk.ru/club226817030`, and
+    `https://www.youtube.com/@pro-stor6592` - no other account, no bot
+    deep link.
+19. Confirm the representative product page is present in the sitemap shard
+    it should be in (`<loc>https://pro-brp.ru/parts/<public_id>/</loc>`).
+20. Confirm the JSON-LD on that page validates (`sku`, `mpn`, `name`,
+    `description`, `offers` when priced).
+21. Take a POST-deploy backup.
+22. Fast-forward `origin/main` to the deployed SHA (no force, no squash, no
+    rebase of deployed history).
+23. Submit the sitemap in Google Search Console and Yandex Webmaster (see
+    "Search engine verification" above), then request indexing for the one
+    representative product URL in each.
+24. Hand off to the owner for the "OWNER ACTIONS AFTER PRODUCTION" steps
+    (see the final RC report) - social account upkeep, monitoring the
+    coverage/indexing reports over the following days.
 
 ## Not implemented in this task (deferred, see owner decisions)
 
