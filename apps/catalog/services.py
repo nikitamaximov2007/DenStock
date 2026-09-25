@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.brp.models import BrpPartLink, BrpPricingSettings
 from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
@@ -19,6 +20,7 @@ from .models import (
     Category,
     Manufacturer,
     PartAnalog,
+    PartAnalogEvidence,
     PartBarcode,
     PartNumber,
     PartType,
@@ -636,20 +638,47 @@ class AnalogLinkError(ValueError):
 
 
 @transaction.atomic
-def link_analog(*, original: PartType, analog: PartType, note: str = "", by=None):
-    """Отметить одну деталь аналогом другой. Возвращает пару (связь, создана).
+def link_analog(
+    *,
+    original: PartType,
+    analog: PartType,
+    relation_type: str = PartAnalog.RelationType.ANALOG,
+    note: str = "",
+    by=None,
+    source_type: str | None = None,
+    source_name: str = "",
+    external_source_id: str = "",
+    source_price=None,
+    source_currency: str = "",
+    source_price_observed_at=None,
+):
+    """Отметить одну деталь аналогом/заменой/кросс-ссылкой другой.
 
-    Повторный вызов ничего не удваивает: это нужно и оператору, который нажал
-    дважды, и импорту каталога, который могут запустить тем же файлом.
+    Возвращает пару (связь, создана). Повторный вызов ничего не удваивает: это
+    нужно и оператору, который нажал дважды, и импорту каталога, который могут
+    запустить тем же файлом.
+
+    Новая связь всегда UNVERIFIED (см. ``PartAnalog.verification_state``) -
+    сам факт вызова, ручного или из импорта, никогда не делает её доверенной.
+    Подтверждение - отдельное явное действие, см. ``set_analog_verification``.
+
+    ``source_type`` необязателен: без него связь заводится как раньше, без
+    записи провенанса. Если передан, создаётся (или переиспользуется -
+    повторный импорт идемпотентен) ровно одна строка ``PartAnalogEvidence``
+    для этого источника; другой источник для той же связи создаёт вторую
+    строку провенанса, не трогая первую.
     """
     if original.pk == analog.pk:
         raise AnalogLinkError("Деталь не может быть аналогом самой себя.")
 
-    reverse = PartAnalog.objects.filter(original=analog, analog=original).first()
+    # Обратная связь блокируется только для ТОГО ЖЕ типа: "A заменена на B"
+    # (SUPERSESSION) и "B - аналог A" (ANALOG) - разные факты и могут
+    # существовать одновременно. Но вторая строка ANALOG в обратную сторону
+    # была бы тем же фактом с другой стороны, что и увидело бы обе карточки.
+    reverse = PartAnalog.objects.filter(
+        original=analog, analog=original, relation_type=relation_type
+    ).first()
     if reverse is not None:
-        # Тот же факт с другой стороны. Вторая запись показала бы одну и ту же
-        # пару и в «Аналогах», и в «Аналог для», и человек решил бы, что это
-        # разные связи.
         raise AnalogLinkError(
             f"«{original.name}» уже отмечена как аналог детали «{analog.name}». "
             "Обратная связь заводится отдельно только вместе со снятием прежней."
@@ -658,9 +687,79 @@ def link_analog(*, original: PartType, analog: PartType, note: str = "", by=None
     link, created = PartAnalog.objects.get_or_create(
         original=original,
         analog=analog,
+        relation_type=relation_type,
         defaults={"note": (note or "").strip()[:255], "created_by": by},
     )
+    if source_type:
+        record_analog_evidence(
+            link,
+            source_type=source_type,
+            source_name=source_name,
+            external_source_id=external_source_id,
+            note=note,
+            source_price=source_price,
+            source_currency=source_currency,
+            source_price_observed_at=source_price_observed_at,
+            by=by,
+        )
     return link, created
+
+
+def record_analog_evidence(
+    link: PartAnalog,
+    *,
+    source_type: str,
+    source_name: str = "",
+    external_source_id: str = "",
+    note: str = "",
+    source_price=None,
+    source_currency: str = "",
+    source_price_observed_at=None,
+    by=None,
+) -> tuple[PartAnalogEvidence, bool]:
+    """Добавить провенанс к уже существующей связи. Идемпотентно на источник.
+
+    ``source_price`` - то, что НАЗВАЛ источник, никогда не текущая цена
+    DenisStock для покупателя (та считается отдельно, см.
+    ``apps.inventory.pricing.effective_part_customer_prices``).
+    """
+    return PartAnalogEvidence.objects.get_or_create(
+        relation=link,
+        source_type=source_type,
+        source_name=(source_name or "").strip()[:255],
+        external_source_id=(external_source_id or "").strip()[:120],
+        defaults={
+            "note": (note or "").strip()[:500],
+            "source_price": source_price,
+            "source_currency": (source_currency or "").strip()[:8],
+            "source_price_observed_at": source_price_observed_at,
+            "created_by": by,
+        },
+    )
+
+
+class AnalogVerificationError(ValueError):
+    """Понятная человеку причина, по которой статус проверки не изменён."""
+
+
+def set_analog_verification(link: PartAnalog, state: str, *, by=None) -> PartAnalog:
+    """Единственная точка, которая меняет verification_state (и is_confirmed).
+
+    Меняет оба поля явно и вместе - см. предупреждение в ``PartAnalog.save``
+    о том, почему раздельное присвоение опасно.
+    """
+    if state not in PartAnalog.VerificationState.values:
+        raise AnalogVerificationError(f"Неизвестный статус проверки: {state}")
+    link.verification_state = state
+    link.is_confirmed = state == PartAnalog.VerificationState.VERIFIED
+    if link.is_confirmed:
+        link.confirmed_at = timezone.now()
+        link.confirmed_by = by
+    else:
+        link.confirmed_at = None
+        link.confirmed_by = None
+    link.save(update_fields=["verification_state", "is_confirmed", "confirmed_at", "confirmed_by"])
+    return link
 
 
 def unlink_analog(link: PartAnalog) -> None:
