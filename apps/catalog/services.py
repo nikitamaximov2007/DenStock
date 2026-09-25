@@ -841,6 +841,9 @@ def analog_rows(part: PartType, *, direction: str = "analogs") -> list[dict]:
             "available": sum((row.available for row in locations), zero),
             "locations": [row.location.short_code for row in locations],
             "note": link.note,
+            "relation_type": link.relation_type,
+            "relation_type_display": link.get_relation_type_display(),
+            "verification_state": link.verification_state,
         })
     return rows
 

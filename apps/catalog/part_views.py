@@ -8,7 +8,6 @@ from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django.views.generic import DetailView, FormView, ListView, UpdateView
@@ -58,11 +57,13 @@ from .public_photos import (
 )
 from .services import (
     AnalogLinkError,
+    AnalogVerificationError,
     ManualPartError,
     analog_rows,
     create_analog_part,
     create_manual_part,
     link_analog,
+    set_analog_verification,
     unlink_analog,
 )
 
@@ -407,10 +408,7 @@ def analog_confirm(request, pk):
     """Human moderation gate before an analog reaches the public catalog."""
     _require_parts(request)
     link = get_object_or_404(PartAnalog, pk=pk)
-    link.is_confirmed = True
-    link.confirmed_at = timezone.now()
-    link.confirmed_by = request.user
-    link.save(update_fields=["is_confirmed", "confirmed_at", "confirmed_by"])
+    set_analog_verification(link, PartAnalog.VerificationState.VERIFIED, by=request.user)
     messages.success(request, "Аналог подтверждён для публичного каталога.")
     return redirect("part_detail", pk=link.original_id)
 
@@ -421,11 +419,28 @@ def analog_unconfirm(request, pk):
     """Снять связь с публичного каталога, не удаляя её из склада."""
     _require_parts(request)
     link = get_object_or_404(PartAnalog, pk=pk)
-    link.is_confirmed = False
-    link.confirmed_at = None
-    link.confirmed_by = None
-    link.save(update_fields=["is_confirmed", "confirmed_at", "confirmed_by"])
+    set_analog_verification(link, PartAnalog.VerificationState.UNVERIFIED, by=request.user)
     messages.success(request, "Связь снята с публичного каталога. На складе она осталась.")
+    return redirect("part_detail", pk=link.original_id)
+
+
+@login_required
+@require_POST
+def analog_reject(request, pk):
+    """Отклонить связь-кандидата: она была неверной, а не просто неподтверждённой.
+
+    Сама строка не удаляется - остаётся для истории и аудита (см. §23), но
+    больше не показывается ни в обычном списке аналогов, ни тем более в
+    публичном каталоге.
+    """
+    _require_parts(request)
+    link = get_object_or_404(PartAnalog, pk=pk)
+    try:
+        set_analog_verification(link, PartAnalog.VerificationState.REJECTED, by=request.user)
+    except AnalogVerificationError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Связь отклонена. Запись сохранена в истории.")
     return redirect("part_detail", pk=link.original_id)
 
 
@@ -533,18 +548,23 @@ def analog_add(request, pk):
         link_pk = (request.POST.get("link_part") or "").strip()
         if link_pk.isdigit():
             candidate = get_object_or_404(PartType, pk=int(link_pk))
+            relation_type = request.POST.get("relation_type") or PartAnalog.RelationType.ANALOG
+            if relation_type not in PartAnalog.RelationType.values:
+                relation_type = PartAnalog.RelationType.ANALOG
             try:
                 _, created = link_analog(
-                    original=original, analog=candidate, by=request.user
+                    original=original, analog=candidate,
+                    relation_type=relation_type, by=request.user,
                 )
             except AnalogLinkError as exc:
                 messages.error(request, str(exc))
                 back = reverse("part_analog_add", args=[original.pk])
                 return redirect(f"{back}?q={quote(query)}" if query else back)
+            label = PartAnalog.RelationType(relation_type).label
             messages.success(
                 request,
-                f"«{candidate.name}» отмечена как аналог."
-                if created else f"«{candidate.name}» уже была отмечена как аналог.",
+                f"«{candidate.name}» отмечена как «{label}»."
+                if created else f"«{candidate.name}» уже была отмечена связью такого типа.",
             )
             return redirect("part_detail", pk=original.pk)
 
@@ -619,6 +639,7 @@ def _add_page_context(original, form, query, request):
         "q": query,
         "found": found,
         "duplicates": getattr(form, "duplicates", []),
+        "relation_type_choices": PartAnalog.RelationType.choices,
     }
 
 
