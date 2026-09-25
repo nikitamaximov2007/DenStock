@@ -627,7 +627,33 @@ class PartAnalog(models.Model):
     быть много аналогов, и один аналог может подходить к нескольким исходным.
     Обратное направление отдельной записью не заводится: это тот же факт с
     другой стороны, и на экранах он показывается сам.
+
+    Направленность одной и той же пары строк (original, analog) хранит разный
+    смысл в зависимости от ``relation_type``:
+
+    * ANALOG - "analog" можно использовать вместо "original"; факт по смыслу
+      симметричен (обе карточки подходят одна вместо другой), но запись всё
+      равно одна и направленная - см. ``link_analog``.
+    * SUPERSESSION - "original" (старый артикул) заменён на "analog" (новый).
+      Строго направлено: открыв новый артикул, видно "Заменяет: <старый>", а
+      не обратную запись.
+    * CROSS_REFERENCE - внешний источник утверждает соответствие, но
+      эквивалентность ещё не обязательно подтверждена сотрудником.
+
+    Подтверждена ли связь для покупателя - решает ``verification_state``, а не
+    факт импорта: импортированная строка никогда не становится доверенной
+    сама по себе (см. модуль ``apps.catalog_import.analog_catalog``).
     """
+
+    class RelationType(models.TextChoices):
+        ANALOG = "analog", "Аналог"
+        SUPERSESSION = "supersession", "Замена артикула"
+        CROSS_REFERENCE = "cross_reference", "Кросс-ссылка"
+
+    class VerificationState(models.TextChoices):
+        UNVERIFIED = "unverified", "Не подтверждена"
+        VERIFIED = "verified", "Подтверждена"
+        REJECTED = "rejected", "Отклонена"
 
     original = models.ForeignKey(
         PartType, verbose_name="Исходная деталь",
@@ -637,9 +663,20 @@ class PartAnalog(models.Model):
         PartType, verbose_name="Аналог",
         on_delete=models.CASCADE, related_name="original_links",
     )
+    relation_type = models.CharField(
+        "Тип связи", max_length=20,
+        choices=RelationType.choices, default=RelationType.ANALOG,
+    )
     note = models.CharField("Примечание", max_length=255, blank=True)
     source = models.CharField("Источник", max_length=120, default="internal")
+    # Устаревающее поле: оставлено для обратной совместимости (публичный
+    # каталог и старый код фильтруют по нему). Единственный источник истины -
+    # verification_state; is_confirmed всегда зеркалит VERIFIED, см. save().
     is_confirmed = models.BooleanField("Подтверждена для публичного каталога", default=False)
+    verification_state = models.CharField(
+        "Статус проверки", max_length=20,
+        choices=VerificationState.choices, default=VerificationState.UNVERIFIED,
+    )
     confirmed_at = models.DateTimeField("Подтверждена", null=True, blank=True)
     confirmed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -660,8 +697,15 @@ class PartAnalog(models.Model):
         verbose_name_plural = "Связи аналогов"
         ordering = ["analog__name", "pk"]
         constraints = [
+            # relation_type входит в уникальность: одна и та же пара деталей
+            # может одновременно быть, например, ANALOG в одном направлении
+            # разбора каталога и CROSS_REFERENCE по данным другого источника -
+            # это два разных логических факта, не дубль одного. Существующие
+            # строки все имеют relation_type=ANALOG (значение по умолчанию),
+            # поэтому это сужение constraint'а не конфликтует ни с одной уже
+            # сохранённой записью.
             models.UniqueConstraint(
-                fields=["original", "analog"], name="uniq_part_analog_pair"
+                fields=["original", "analog", "relation_type"], name="uniq_part_analog_pair"
             ),
             # Деталь не может быть аналогом самой себя. Проверка стоит в базе,
             # потому что связь заводится не только из формы.
@@ -673,3 +717,97 @@ class PartAnalog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.analog} - аналог {self.original}"
+
+    def save(self, *args, **kwargs):
+        # verification_state - источник истины; is_confirmed - зеркало для
+        # старого кода (публичный каталог и старые вызовы фильтруют и пишут
+        # именно его напрямую, включая код, написанный до verification_state).
+        #
+        # Совместимость двусторонняя: старый код, который меняет только
+        # is_confirmed (True/False) и вызывает save(), обязан по-прежнему
+        # работать без изменений - отсюда пересчёт verification_state ИЗ
+        # is_confirmed при явном рассогласовании. Новый код, которому нужно
+        # REJECTED (состояние, которое is_confirmed=False не различает от
+        # UNVERIFIED), обязан менять verification_state и is_confirmed вместе
+        # за один присвоение до save() - иначе следующая строка ниже сотрёт
+        # REJECTED обратно в VERIFIED, если is_confirmed всё ещё True.
+        if self.is_confirmed and self.verification_state != self.VerificationState.VERIFIED:
+            self.verification_state = self.VerificationState.VERIFIED
+        elif not self.is_confirmed and self.verification_state == self.VerificationState.VERIFIED:
+            self.verification_state = self.VerificationState.UNVERIFIED
+        self.is_confirmed = self.verification_state == self.VerificationState.VERIFIED
+        super().save(*args, **kwargs)
+
+
+class PartAnalogEvidence(models.Model):
+    """Провенанс ОДНОГО источника, подтверждающего логическую связь.
+
+    Разделение "логическая связь" (``PartAnalog``) / "доказательство"
+    (эта модель) сделано намеренно, а не потому что так исторически вышло:
+    одна и та же пара деталей может быть подтверждена НЕСКОЛЬКИМИ источниками
+    (каталог производителя И прайс поставщика), и это два разных факта
+    провенанса про ОДНУ связь, а не повод завести вторую строку связи или
+    перезаписать первую. ``PartAnalog`` остаётся единственным местом, которое
+    решает, доверена ли связь (``verification_state``); эта модель только
+    накапливает, откуда каждое подтверждение взялось, включая цену, которую
+    источник называл, - НЕ текущую цену DenisStock (см.
+    ``apps.inventory.pricing.effective_part_customer_prices`` - единственный
+    источник текущей цены для покупателя).
+
+    Ничего здесь не удаляется при повторном импорте: тот же источник для той
+    же связи просто не создаёт вторую строку (см. UniqueConstraint), а другой
+    источник добавляет ещё одну - история наблюдений не переписывается.
+    """
+
+    class SourceType(models.TextChoices):
+        MANUFACTURER_CATALOG = "manufacturer_catalog", "Каталог производителя"
+        SUPPLIER = "supplier", "Поставщик"
+        IMPORT = "import", "Импортированный файл"
+        MANUAL = "manual", "Оператор вручную"
+        AFTERMARKET_CATALOG = "aftermarket_catalog", "Каталог аналогов"
+        OTHER = "other", "Другое"
+
+    relation = models.ForeignKey(
+        PartAnalog, verbose_name="Связь", on_delete=models.CASCADE, related_name="evidence"
+    )
+    source_type = models.CharField(
+        "Тип источника", max_length=30,
+        choices=SourceType.choices, default=SourceType.MANUAL,
+    )
+    source_name = models.CharField("Название источника", max_length=255, blank=True)
+    external_source_id = models.CharField(
+        "Идентификатор во внешнем источнике", max_length=120, blank=True
+    )
+    note = models.CharField("Примечание", max_length=500, blank=True)
+    # Цена, которую НАЗВАЛ источник - не текущая цена DenisStock для
+    # покупателя. Может быть устаревшей; для этого и хранится метка времени
+    # наблюдения отдельно от created_at (когда запись завели у нас).
+    source_price = models.DecimalField(
+        "Цена источника", max_digits=14, decimal_places=2, null=True, blank=True,
+    )
+    source_currency = models.CharField("Валюта источника", max_length=8, blank=True)
+    source_price_observed_at = models.DateTimeField(
+        "Когда источник называл эту цену", null=True, blank=True,
+    )
+    created_at = models.DateTimeField("Добавлена", auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, verbose_name="Кто добавил",
+        on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+
+    class Meta:
+        verbose_name = "Провенанс связи аналога"
+        verbose_name_plural = "Провенанс связей аналогов"
+        ordering = ["-created_at", "-pk"]
+        constraints = [
+            # Тот же источник для той же связи не создаёт вторую строку при
+            # повторном импорте - именно это делает импорт идемпотентным на
+            # уровне провенанса, а не только на уровне самой связи.
+            models.UniqueConstraint(
+                fields=["relation", "source_type", "source_name", "external_source_id"],
+                name="uniq_part_analog_evidence_source",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.get_source_type_display()} для #{self.relation_id}"
