@@ -196,16 +196,6 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
 .who__lead { margin: 0; color: var(--muted); }
 .who__lead strong { color: var(--ink); }
 
-.result-line {
-  max-width: 760px; margin: var(--space-2) auto 0; font-size: 1rem; font-weight: 600;
-}
-.result-line span[aria-hidden] { color: var(--muted); margin: 0 2px; font-weight: 400; }
-
-.trust-signal {
-  max-width: 760px; margin: var(--space-2) auto 0; color: var(--muted); font-size: 14px;
-}
-.trust-signal span[aria-hidden] { margin: 0 2px; }
-
 @media (min-width: 720px) {
   .hero { margin-top: var(--space-6); margin-bottom: var(--space-6); }
   .hero__title { font-size: 2.1rem; }
@@ -213,8 +203,6 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; margin:
   .search--hero .search__input, .search--hero .btn { min-height: 56px; }
   .search--hero .search__input { font-size: 18px; }
   .who { margin-top: var(--space-6); }
-  .result-line { margin-top: var(--space-4); }
-  .trust-signal { margin-top: var(--space-3); }
 }
 
 /* --- Page head, breadcrumbs, chips --------------------------------------- */

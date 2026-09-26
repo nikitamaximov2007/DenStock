@@ -145,3 +145,12 @@ def test_trust_block_social_cards_are_mobile_friendly_markup(public_client, publ
     trust_section = body[trust_start:trust_end]
     assert "<table" not in trust_section
     assert 'class="trust__social"' in trust_section
+
+
+def test_home_first_screen_has_no_value_or_trust_signal_lines(public_client, public_catalog):
+    # Both lines only restated the "who" sentence and the trust block below it.
+    body = public_client.get("/").content.decode()
+    assert "Реальный остаток" not in body
+    assert "С BRP с 2003 года" not in body
+    assert "Для владельцев и сервисов BRP:" in body
+    assert "Мы с 2003 года знакомы с брендом BRP" in body
