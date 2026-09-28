@@ -10,9 +10,21 @@ from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
 
-from apps.catalog.models import Category, PartPhotoUploadAudit, PartType, PublicPartPhoto, Unit
-from apps.catalog.photo_pipeline import PartPhotoAlreadyExists, upload_primary_part_photo
-from apps.catalog.public_photos import primary_photos
+from apps.catalog.models import (
+    Category,
+    PartPhotoUploadAudit,
+    PartType,
+    PartTypeImage,
+    PublicPartPhoto,
+    Unit,
+)
+from apps.catalog.photo_pipeline import (
+    PartPhotoAlreadyExists,
+    replace_part_photo,
+    upload_additional_part_photo,
+    upload_primary_part_photo,
+)
+from apps.catalog.public_photos import PublicPhotoError, part_photos, primary_photos
 from apps.core.time import format_perm_datetime
 from apps.customer_requests import max_bot, operator_console
 from apps.customer_requests.attachments import ValidatedAttachment
@@ -126,8 +138,10 @@ def test_telegram_photo_flow_targets_selected_part_and_is_idempotent(
         text="",
         attachment=attachment,
     )
-    assert result[0].startswith("Фото загружено")
-    assert not OwnerPhotoUploadContext.objects.filter(binding=binding).exists()
+    assert result[0].startswith("Фото добавлено")
+    assert OwnerPhotoUploadContext.objects.get(binding=binding).mode == (
+        OwnerPhotoUploadContext.Mode.MANAGE
+    )
     assert OwnerPhotoUploadReceipt.objects.filter(binding=binding, external_id="update-1").exists()
     assert CustomerRequest.objects.count() == 0
 
@@ -213,10 +227,12 @@ def test_max_photo_flow_uses_native_buttons_and_shared_photo_service(
             content=_image().file.read(), filename="max-photo.png", content_type="image/png"
         ),
     )
-    assert result[0].startswith("Фото загружено")
+    assert result[0].startswith("Фото добавлено")
     assert PartPhotoUploadAudit.objects.get(image__part=part).source == "max"
     assert PublicPartPhoto.objects.filter(part=part, status="published").exists()
-    assert not OwnerPhotoUploadContext.objects.filter(binding=binding).exists()
+    assert OwnerPhotoUploadContext.objects.get(binding=binding).mode == (
+        OwnerPhotoUploadContext.Mode.MANAGE
+    )
     duplicate = operator_console.handle_text(
         provider="max",
         provider_user_id=binding.provider_user_id,
@@ -405,8 +421,8 @@ def test_telegram_and_max_photo_contexts_are_isolated_by_binding(
             content_type="image/png",
         ),
     )
-    assert telegram_result[0].startswith("Фото загружено")
-    assert max_result[0].startswith("Фото загружено")
+    assert telegram_result[0].startswith("Фото добавлено")
+    assert max_result[0].startswith("Фото добавлено")
     assert PartPhotoUploadAudit.objects.get(image__part=part).source == "telegram"
     assert PartPhotoUploadAudit.objects.get(image__part=second_part).source == "max"
 
@@ -444,6 +460,309 @@ def test_expired_or_revoked_max_photo_context_fails_closed(
         provider="max", provider_user_id=binding.provider_user_id,
         payload=panel["inline_keyboard"][2][0]["callback_data"],
     ) == ("Недоступно.", None)
+
+
+def _photo_attachment(name="photo.png", content=None):
+    upload = _image(name)
+    return ValidatedAttachment(
+        content=content if content is not None else upload.file.read(),
+        filename=name,
+        content_type="image/png",
+    )
+
+
+def test_telegram_photo_session_adds_three_photos_and_done_clears_state(
+    part, django_user_model, settings, tmp_path, monkeypatch
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    user = django_user_model.objects.create_superuser(username="multi-owner", password="x")
+    binding = StaffMessengerBinding.objects.create(
+        user=user, operator_key="DENIS", provider="telegram", provider_user_id=7801,
+        customer_visible_label="Денис", operator_mode=True,
+    )
+    sale = Sale.objects.create(
+        number="S-MULTI-PHOTO", status=Sale.Status.COMPLETED,
+        customer_name="Тестовый клиент", sold_at=timezone.now(),
+    )
+    monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
+
+    prompt = operator_console._photo_selection(
+        binding=binding, kind="sale", operation_id=sale.pk, part_id=part.pk
+    )
+    assert "Фото отсутствует" in prompt[0]
+
+    def upload(external_id, filename):
+        return operator_console.handle_text(
+            provider="telegram", provider_user_id=binding.provider_user_id,
+            external_id=external_id, text="", attachment=_photo_attachment(filename),
+        )
+
+    first = upload("multi-1", "one.png")
+    assert first[0].startswith("Фото добавлено")
+    assert [row[0]["text"] for row in first[1]["inline_keyboard"]] == [
+        "Добавить ещё фото", "Заменить фото", "Готово"
+    ]
+    duplicate = upload("multi-1", "one.png")
+    assert duplicate[0] == first[0]
+    assert part.images.filter(is_active=True).count() == 1
+
+    for external_id, filename in (("multi-2", "two.png"), ("multi-3", "three.png")):
+        add = operator_console.handle_callback(
+            provider="telegram", provider_user_id=binding.provider_user_id,
+            payload=first[1]["inline_keyboard"][0][0]["callback_data"],
+        )
+        assert "ещё одно фото" in add[0]
+        first = upload(external_id, filename)
+
+    images = list(part.images.filter(is_active=True).order_by("sort_order", "uploaded_at", "pk"))
+    assert len(images) == 3
+    assert all(image.image.name.endswith(".png") for image in images)
+    assert [image.is_primary for image in images] == [True, False, False]
+    assert (
+        PublicPartPhoto.objects.filter(
+            part=part, status=PublicPartPhoto.Status.PUBLISHED
+        ).count()
+        == 3
+    )
+    assert len(part_photos(part.pk)) == 3
+    assert primary_photos([part.pk])[part.pk].public_id == (
+        PublicPartPhoto.objects.get(source_image=images[0]).public_id
+    )
+
+    done = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=first[1]["inline_keyboard"][2][0]["callback_data"],
+    )
+    assert done[0] == "Сеанс работы с фото завершён."
+    assert not OwnerPhotoUploadContext.objects.filter(binding=binding).exists()
+    unrelated = operator_console.handle_text(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        external_id="after-done", text="", attachment=_photo_attachment("four.png"),
+    )
+    assert unrelated[0] == "Сначала выберите заявку в рабочей панели."
+    assert part.images.filter(is_active=True).count() == 3
+
+
+def test_multiple_photo_replace_targets_only_selected_image_and_preserves_order(
+    part, django_user_model, settings, tmp_path, monkeypatch
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    user = django_user_model.objects.create_superuser(username="replace-owner", password="x")
+    binding = StaffMessengerBinding.objects.create(
+        user=user, operator_key="RIM", provider="telegram", provider_user_id=7802,
+        customer_visible_label="Рим", operator_mode=True,
+    )
+    first = upload_primary_part_photo(
+        part=part, upload=_image("one.png"), source="telegram", by=user
+    ).image
+    second = upload_additional_part_photo(
+        part=part, upload=_image("two.png"), source="telegram", by=user
+    ).image
+    third = upload_additional_part_photo(
+        part=part, upload=_image("three.png"), source="telegram", by=user
+    ).image
+    sale = Sale.objects.create(
+        number="S-REPLACE-MULTI", status=Sale.Status.COMPLETED,
+        customer_name="Тестовый клиент", sold_at=timezone.now(),
+    )
+    monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
+
+    manage = operator_console._photo_selection(
+        binding=binding, kind="sale", operation_id=sale.pk, part_id=part.pk
+    )
+    replace = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=manage[1]["inline_keyboard"][1][0]["callback_data"],
+    )
+    assert replace[0] == "Выберите фото, которое хотите заменить."
+    choices = replace[1]["inline_keyboard"]
+    assert [row[0]["text"] for row in choices[:3]] == [
+        "Фото 1 (главное)", "Фото 2", "Фото 3"
+    ]
+    second_choice = choices[1][0]["callback_data"]
+    target_token = second_choice.split(":")[-1]
+    assert len(target_token) == 16
+    assert all(character in "0123456789abcdef" for character in target_token)
+    assert target_token != str(second.pk)
+
+    upload_prompt = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=second_choice,
+    )
+    assert upload_prompt[0] == "Пришлите новое фото."
+    result = operator_console.handle_text(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        external_id="replace-2", text="", attachment=_photo_attachment("replacement.png"),
+    )
+    assert result[0].startswith("Фото добавлено")
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    third.refresh_from_db()
+    active = list(part.images.filter(is_active=True).order_by("sort_order", "uploaded_at", "pk"))
+    replacement = active[1]
+    assert active == [first, replacement, third]
+    assert [image.is_primary for image in active] == [True, False, False]
+    assert second.is_active is False
+    assert (
+        PublicPartPhoto.objects.get(source_image=second).status
+        == PublicPartPhoto.Status.REJECTED
+    )
+    assert (
+        PublicPartPhoto.objects.get(source_image=replacement).status
+        == PublicPartPhoto.Status.PUBLISHED
+    )
+    assert len(part_photos(part.pk)) == 3
+    assert primary_photos([part.pk])[part.pk].public_id == (
+        PublicPartPhoto.objects.get(source_image=first).public_id
+    )
+
+
+def test_single_photo_failed_replacement_keeps_old_photo_and_retry_is_safe(
+    part, django_user_model, settings, tmp_path, monkeypatch
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    user = django_user_model.objects.create_superuser(username="replace-one", password="x")
+    binding = StaffMessengerBinding.objects.create(
+        user=user, operator_key="DENIS", provider="telegram", provider_user_id=7803,
+        customer_visible_label="Денис", operator_mode=True,
+    )
+    original = upload_primary_part_photo(
+        part=part, upload=_image("original.png"), source="telegram", by=user
+    ).image
+    sale = Sale.objects.create(
+        number="S-REPLACE-ONE", status=Sale.Status.COMPLETED,
+        customer_name="Тестовый клиент", sold_at=timezone.now(),
+    )
+    monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
+    manage = operator_console._photo_selection(
+        binding=binding, kind="sale", operation_id=sale.pk, part_id=part.pk
+    )
+    confirm = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=manage[1]["inline_keyboard"][1][0]["callback_data"],
+    )
+    ready = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=confirm[1]["inline_keyboard"][0][0]["callback_data"],
+    )
+    assert ready[0] == "Пришлите новое фото."
+    failed = operator_console.handle_text(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        external_id="replace-invalid", text="", attachment=_photo_attachment(
+            "invalid.png", content=b"not an image"
+        ),
+    )
+    assert "изображение" in failed[0].lower()
+    original.refresh_from_db()
+    assert original.is_active is True
+    assert part.images.filter(is_active=True).count() == 1
+    assert OwnerPhotoUploadContext.objects.get(binding=binding).mode == (
+        OwnerPhotoUploadContext.Mode.REPLACE_UPLOAD
+    )
+
+    canceled = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=failed[1]["inline_keyboard"][0][0]["callback_data"],
+    )
+    assert canceled[0] == "Загрузка фото отменена."
+    assert part.images.filter(is_active=True).count() == 1
+
+    manage = operator_console._photo_selection(
+        binding=binding, kind="sale", operation_id=sale.pk, part_id=part.pk
+    )
+    confirm = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=manage[1]["inline_keyboard"][1][0]["callback_data"],
+    )
+    ready = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=confirm[1]["inline_keyboard"][0][0]["callback_data"],
+    )
+    succeeded = operator_console.handle_text(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        external_id="replace-valid", text="", attachment=_photo_attachment("new.png"),
+    )
+    assert succeeded[0].startswith("Фото добавлено")
+    original.refresh_from_db()
+    assert original.is_active is False
+    replacement = PartTypeImage.objects.get(part=part, is_active=True)
+    assert replacement.is_primary is True
+    assert (
+        PublicPartPhoto.objects.get(source_image=original).status
+        == PublicPartPhoto.Status.REJECTED
+    )
+    assert (
+        PublicPartPhoto.objects.get(source_image=replacement).status
+        == PublicPartPhoto.Status.PUBLISHED
+    )
+
+
+def test_stale_replacement_target_fails_closed_without_new_image(
+    part, django_user_model, settings, tmp_path, monkeypatch
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    user = django_user_model.objects.create_superuser(username="stale-target", password="x")
+    binding = StaffMessengerBinding.objects.create(
+        user=user, operator_key="RIM", provider="telegram", provider_user_id=7804,
+        customer_visible_label="Рим", operator_mode=True,
+    )
+    upload_primary_part_photo(part=part, upload=_image("one.png"), source="telegram", by=user)
+    target = upload_additional_part_photo(
+        part=part, upload=_image("two.png"), source="telegram", by=user
+    )
+    sale = Sale.objects.create(
+        number="S-STALE-TARGET", status=Sale.Status.COMPLETED,
+        customer_name="Тестовый клиент", sold_at=timezone.now(),
+    )
+    monkeypatch.setattr(operator_console, "_photo_operation_lines", lambda operation, kind: [part])
+    manage = operator_console._photo_selection(
+        binding=binding, kind="sale", operation_id=sale.pk, part_id=part.pk
+    )
+    replace = operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=manage[1]["inline_keyboard"][1][0]["callback_data"],
+    )
+    operator_console.handle_callback(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        payload=replace[1]["inline_keyboard"][1][0]["callback_data"],
+    )
+    image_count_before_stale = part.images.count()
+    PartTypeImage.objects.filter(pk=target.image.pk).update(is_active=False, is_primary=False)
+    result = operator_console.handle_text(
+        provider="telegram", provider_user_id=binding.provider_user_id,
+        external_id="stale-target", text="", attachment=_photo_attachment("new.png"),
+    )
+    assert "недоступно" in result[0].lower()
+    assert part.images.filter(is_active=True).count() == 1
+    assert part.images.count() == image_count_before_stale
+
+
+def test_replace_service_rolls_back_new_image_when_public_publishing_fails(
+    part, django_user_model, settings, tmp_path, monkeypatch
+):
+    settings.MEDIA_ROOT = str(tmp_path)
+    user = django_user_model.objects.create_superuser(username="publish-failure", password="x")
+    original = upload_primary_part_photo(
+        part=part, upload=_image("old.png"), source="telegram", by=user
+    )
+    monkeypatch.setattr(
+        "apps.catalog.photo_pipeline.publish_photo",
+        lambda *args, **kwargs: (_ for _ in ()).throw(PublicPhotoError("rendition failed")),
+    )
+    with pytest.raises(PublicPhotoError, match="rendition failed"):
+        replace_part_photo(
+            part=part, target_image_id=original.image.pk, upload=_image("new.png"),
+            source="telegram", by=user,
+        )
+    original.image.refresh_from_db()
+    assert original.image.is_active is True
+    assert part.images.filter(is_active=True).count() == 1
+    assert not PartTypeImage.objects.filter(part=part, image__endswith="new.png").exists()
 
 
 @pytest.mark.postgresql

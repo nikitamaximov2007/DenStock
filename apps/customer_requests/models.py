@@ -1146,6 +1146,13 @@ class OperatorConversationContext(models.Model):
 class OwnerPhotoUploadContext(models.Model):
     """Short-lived, explicit PartType target for the next owner photo."""
 
+    class Mode(models.TextChoices):
+        UPLOAD = "upload", "Ожидает фото"
+        MANAGE = "manage", "Управление фото"
+        REPLACE_CONFIRM = "replace_confirm", "Подтверждение замены"
+        REPLACE_SELECT = "replace_select", "Выбор фото"
+        REPLACE_UPLOAD = "replace_upload", "Ожидает замену"
+
     binding = models.OneToOneField(
         StaffMessengerBinding,
         verbose_name="Привязка владельца",
@@ -1163,6 +1170,17 @@ class OwnerPhotoUploadContext(models.Model):
     article_snapshot = models.CharField("Артикул (снимок)", max_length=100, blank=True)
     part_name_snapshot = models.CharField("Название (снимок)", max_length=200)
     expires_at = models.DateTimeField("Истекает")
+    mode = models.CharField(
+        "Режим", max_length=20, choices=Mode.choices, default=Mode.UPLOAD
+    )
+    target_image = models.ForeignKey(
+        "catalog.PartTypeImage",
+        verbose_name="Заменяемое фото",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owner_photo_replace_contexts",
+    )
     created_at = models.DateTimeField("Создан", auto_now_add=True)
     updated_at = models.DateTimeField("Обновлён", auto_now=True)
 
