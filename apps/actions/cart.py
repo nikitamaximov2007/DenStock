@@ -220,7 +220,9 @@ def _drop_row_lines(cart, part, location) -> None:
 
 
 @transaction.atomic
-def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None) -> CartRow | None:
+def set_row_quantity(
+    cart, part, location, quantity, *, unit_price=None, preserve_unit_prices=False, by=None
+) -> CartRow | None:
     """Задать итоговое количество детали в ячейке (0 — убрать позицию).
 
     Позиция пересобирается по лотам заново (FIFO): доступность проверяют те же
@@ -239,6 +241,12 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
             "считаются иначе. Добавьте масло прямо в продаже/ремонте."
         )
     quantity = parse_quantity(quantity, allow_zero=True)
+    existing_prices = {}
+    if preserve_unit_prices:
+        for line in _lines(cart).filter(part_type=part, stock_lot__location=location):
+            existing_prices[line.stock_lot_id] = (
+                line.unit_price if isinstance(cart, Sale) else line.customer_unit_price_rub
+            )
     _drop_row_lines(cart, part, location)
     if quantity == 0:
         return None
@@ -251,7 +259,7 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
     try:
         for lot, portion in portions:
             if isinstance(cart, Sale):
-                price = unit_price
+                price = existing_prices.get(lot.pk) if preserve_unit_prices else unit_price
                 if price is None:
                     price = resolve_effective_inventory_customer_price(
                         lot, part.recommended_price
@@ -263,8 +271,11 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
                 )
                 add_stock_lot_to_sale(cart, lot, portion, unit_price=price, by=by)
             else:
+                repair_price = (
+                    existing_prices.get(lot.pk) if preserve_unit_prices else unit_price
+                )
                 add_stock_lot_to_repair_order(
-                    cart, lot, portion, customer_unit_price_rub=unit_price, by=by
+                    cart, lot, portion, customer_unit_price_rub=repair_price, by=by
                 )
     except (SaleError, RepairError) as exc:
         raise ActionError(str(exc)) from exc

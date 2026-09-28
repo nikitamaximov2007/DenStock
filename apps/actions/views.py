@@ -14,14 +14,14 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.http import HttpResponse, HttpResponseNotAllowed, QueryDict
+from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 
 from apps.catalog.models import PartType
 from apps.core.part_lookup import resolve_part_lookup
-from apps.core.templatetags.number_format import quantity_int
+from apps.core.templatetags.number_format import money_int, quantity_int
 from apps.customers.models import Customer
 from apps.customers.services import customers_by_recent_activity
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
@@ -44,6 +44,7 @@ from .cart import (
     effective_customs_metadata,
     load_cart,
     open_cart,
+    parse_quantity,
     parse_row_key,
     remove_row,
     set_row_quantity,
@@ -65,6 +66,7 @@ from .services import (
     parse_application_area,
     parse_weight_kg,
     perform_action,
+    read_customs,
     stock_overview,
     validate_weight_pair,
 )
@@ -611,6 +613,83 @@ def actions_cart_update(request):
     location = get_object_or_404(StorageLocation, pk=location_id)
 
     row_key = f"{part.pk}:{location.pk}"
+    is_autosave = operation in {"customs", "quantity"}
+    is_ajax = request.headers.get("x-requested-with") == "XMLHttpRequest"
+    if is_autosave and not is_ajax:
+        return HttpResponseNotAllowed(["XMLHttpRequest"])
+    if operation in {"customs", "quantity"}:
+        row = next((row for row in cart_rows(cart) if row.key == row_key), None)
+        if row is None:
+            return JsonResponse({"ok": False, "error": "Позиция уже отсутствует."}, status=404)
+        if operation == "quantity":
+            try:
+                quantity = parse_quantity(request.POST.get("quantity", ""), allow_zero=True)
+                if quantity == 0:
+                    return JsonResponse(
+                        {
+                            "ok": False,
+                            "error": "Чтобы убрать позицию, используйте кнопку «Убрать».",
+                            "value": quantity_int(row.quantity),
+                        },
+                        status=400,
+                    )
+                updated = set_row_quantity(
+                    cart,
+                    part,
+                    location,
+                    quantity,
+                    preserve_unit_prices=True,
+                    by=request.user,
+                )
+            except (ActionError, ValueError) as exc:
+                return JsonResponse(
+                    {"ok": False, "error": str(exc), "value": quantity_int(row.quantity)},
+                    status=400,
+                )
+            if updated is None:
+                return JsonResponse(
+                    {
+                        "ok": False,
+                        "error": "Количество должно быть больше нуля.",
+                        "value": quantity_int(row.quantity),
+                    },
+                    status=400,
+                )
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "quantity": quantity_int(updated.quantity),
+                    "total": (
+                        money_int(updated.total_price)
+                        if updated.total_price is not None
+                        else "-"
+                    ),
+                    "cart_total": money_int(cart_total(cart)) if kind == KIND_SALE else None,
+                }
+            )
+
+        field = request.POST.get("field", "")
+        if field not in {"gross_weight_kg", "net_weight_kg", "application_area"}:
+            return JsonResponse({"ok": False, "error": "Неизвестное поле."}, status=400)
+        try:
+            if field == "application_area":
+                value = parse_application_area(request.POST.get(field, ""))
+            else:
+                value = parse_weight_kg(request.POST.get(field, ""))
+            current = _customs_input_for(request, kind).get(part.pk, {})
+            effective = effective_customs_metadata(part, current)
+            effective[field] = value
+            validate_weight_pair(effective["gross_weight_kg"], effective["net_weight_kg"])
+        except ValueError as exc:
+            pending = _customs_input_for(request, kind).get(part.pk, {})
+            saved = pending.get(field, getattr(read_customs(part), field))
+            return JsonResponse(
+                {"ok": False, "error": str(exc), "value": str(saved or "")},
+                status=400,
+            )
+        _remember_customs_input(request, kind, part.pk, {field: value})
+        return JsonResponse({"ok": True, "field": field, "value": str(value or "")})
+
     if operation == "remove":
         remove_row(cart, part, location, by=request.user)
         _forget_scan(request, kind, row_key)
@@ -632,6 +711,7 @@ def actions_cart_update(request):
                 location,
                 request.POST.get("quantity", ""),
                 unit_price=(raw_unit_price or None) if kind == KIND_REPAIR else None,
+                preserve_unit_prices="unit_price" not in request.POST,
                 by=request.user,
             )
         except ActionError as exc:

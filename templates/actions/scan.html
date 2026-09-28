@@ -81,7 +81,10 @@
           </thead>
           <tbody>
             {% for item in panel.rows %}
-              <tr>
+              <tr data-cart-row
+                  data-cart-update-url="{% url 'actions_cart_update' %}"
+                  data-cart-kind="{{ panel.kind }}"
+                  data-cart-row-key="{{ item.row.key }}">
                 <td>{{ item.row.part.name }}</td>
                 <td>
                   {% if item.identity.exact_number %}
@@ -94,26 +97,26 @@
                   <span class="code-pill">{{ item.row.location.short_code }}</span>
                 </td>
                 <td class="num--qty">
-                  <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
-                         name="gross_weight_kg"
+                  <input name="gross_weight_kg"
                          type="text"
                          inputmode="decimal"
                          size="5"
                          value="{{ item.customs.gross_weight_kg|default_if_none:''|unlocalize }}"
+                         data-cart-autosave="gross_weight_kg"
                          aria-label="Вес брутто, кг">
                 </td>
                 <td class="num--qty">
-                  <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
-                         name="net_weight_kg"
+                  <input name="net_weight_kg"
                          type="text"
                          inputmode="decimal"
                          size="5"
                          value="{{ item.customs.net_weight_kg|default_if_none:''|unlocalize }}"
+                         data-cart-autosave="net_weight_kg"
                          aria-label="Вес нетто, кг">
                 </td>
                 <td>
-                  <select form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
-                          name="application_area"
+                  <select name="application_area"
+                          data-cart-autosave="application_area"
                           aria-label="Область применения">
                     <option value=""
                             {% if not item.customs.application_area %}selected{% endif %}>{{ item.customs.application_unset_label }}</option>
@@ -125,7 +128,7 @@
                 </td>
                 <td class="num--qty">
                   <form method="post"
-                        id="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
+                        id="cart-row-{{ panel.kind }}-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
                         action="{% url 'actions_cart_update' %}"
                         class="inline-form cart-quantity-form">
                     {% csrf_token %}
@@ -138,20 +141,12 @@
                            inputmode="decimal"
                            size="4"
                            value="{{ item.row.quantity|quantity_int }}"
+                           data-cart-autosave="quantity"
                            aria-label="Количество">
                     <span class="cart-quantity-form__available"
                           aria-label="Доступно в выбранной ячейке">/ {{ item.available|quantity_int }}</span>
-                    {% if not panel.is_sale %}
-                      <input name="unit_price"
-                             type="number"
-                             min="0"
-                             step="0.01"
-                             size="6"
-                             value="{{ item.row.unit_price|default_if_none:'' }}"
-                             aria-label="Цена">
-                    {% endif %}
-                    <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
                   </form>
+                  <span class="muted" data-cart-autosave-status aria-live="polite"></span>
                 </td>
                 <td class="num--money">
                   {% if item.row.unit_price is not None %}
@@ -160,7 +155,7 @@
                     <span class="muted">-</span>
                   {% endif %}
                 </td>
-                <td class="num--money">
+                <td class="num--money" data-cart-row-total>
                   {% if item.row.total_price is not None %}
                     {{ item.row.total_price|money_int }} ₽
                   {% else %}
@@ -187,7 +182,7 @@
           Позиций: {{ panel.positions }}.
           Сумма:
           {% if panel.total is not None %}
-            {{ panel.total|money_int }} ₽
+            <span data-cart-total>{{ panel.total|money_int }}</span> ₽
           {% else %}
             не указана
           {% endif %}
@@ -439,6 +434,74 @@
           if (!index) return;
           option.hidden = Boolean(term) && !option.dataset.customerSearch.includes(term);
         });
+      });
+    });
+
+    document.querySelectorAll('[data-cart-row]').forEach((row) => {
+      let saveQueue = Promise.resolve();
+      const status = row.querySelector('[data-cart-autosave-status]');
+
+      const saveField = (input) => {
+        const field = input.dataset.cartAutosave;
+        const value = input.value;
+        const isQuantity = field === 'quantity';
+        const body = new URLSearchParams({
+          kind: row.dataset.cartKind,
+          operation: isQuantity ? 'quantity' : 'customs',
+          row_key: row.dataset.cartRowKey,
+          [isQuantity ? 'quantity' : 'field']: value,
+        });
+        if (!isQuantity) body.set('field', field);
+        const form = row.querySelector('.cart-quantity-form');
+        const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
+        status.textContent = 'Сохраняем…';
+        saveQueue = saveQueue.then(async () => {
+          const response = await fetch(row.dataset.cartUpdateUrl, {
+            method: 'POST',
+            headers: {
+              'X-CSRFToken': csrf,
+              'X-Requested-With': 'XMLHttpRequest',
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            },
+            body,
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) {
+            if (input.value === value && result.value !== undefined) input.value = result.value;
+            throw new Error(result.error || 'Не удалось сохранить изменение.');
+          }
+          input.dataset.savedValue = value;
+          if (isQuantity) {
+            const total = row.querySelector('[data-cart-row-total]');
+            if (total && result.total !== undefined) {
+              total.textContent = result.total === '-' ? '–' : `${result.total} ₽`;
+            }
+            const cartTotal = row.closest('.card').querySelector('[data-cart-total]');
+            if (cartTotal && result.cart_total !== null) {
+              cartTotal.textContent = result.cart_total;
+            }
+          }
+          status.textContent = 'Сохранено';
+          status.removeAttribute('role');
+        }).catch((error) => {
+          if (input.value === value) input.value = input.dataset.savedValue;
+          status.textContent = error.message || 'Не удалось сохранить. Проверьте соединение.';
+          status.setAttribute('role', 'alert');
+        });
+      };
+
+      row.querySelectorAll('[data-cart-autosave]').forEach((input) => {
+        input.dataset.savedValue = input.value;
+        input.addEventListener('change', () => {
+          if (input.value !== input.dataset.savedValue) saveField(input);
+        });
+      });
+
+      const quantityForm = row.querySelector('.cart-quantity-form');
+      quantityForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const quantity = quantityForm.querySelector('[name=quantity]');
+        if (quantity.value !== quantity.dataset.savedValue) saveField(quantity);
       });
     });
   </script>

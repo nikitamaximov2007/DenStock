@@ -127,6 +127,20 @@ def _row(client, env, *, kind="sale", **fields):
     return client.post(reverse("actions_cart_update"), payload)
 
 
+def _autosave(client, env, field, value, *, kind="sale"):
+    return client.post(
+        reverse("actions_cart_update"),
+        {
+            "kind": kind,
+            "operation": "quantity" if field == "quantity" else "customs",
+            "row_key": f"{env['part'].pk}:{env['loc'].pk}",
+            "field": field,
+            field: value,
+        },
+        HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+    )
+
+
 def _complete(client, *, kind="sale", customer=None):
     customer = customer or Customer.objects.create(name="Иванов")
     return client.post(reverse("actions_cart_complete"), {
@@ -385,6 +399,199 @@ def test_nothing_is_remembered_before_the_operation_succeeds(client, make_user, 
     assert not PartCustomsInfo.objects.filter(
         part_type=env["part"], gross_weight_kg=Decimal("0.250")
     ).exists()
+
+
+# --- Field-specific Quick Actions autosave -----------------------------------------------
+
+
+def test_application_then_quantity_autosaves_and_survives_reload(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+
+    app_response = _autosave(client, env, "application_area", "СНЕГОХОД")
+    qty_response = _autosave(client, env, "quantity", "2")
+
+    assert app_response.status_code == 200 and app_response.json()["ok"]
+    assert qty_response.status_code == 200 and qty_response.json()["quantity"] == "2"
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert 'option value="СНЕГОХОД"' in html
+    assert "selected" in html
+    assert 'value="2"' in html
+    assert not PartCustomsInfo.objects.filter(part_type=env["part"]).exists()
+
+
+def test_quantity_then_application_preserves_both_fields(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _autosave(client, env, "quantity", "2")
+    _autosave(client, env, "application_area", "КВАДРОЦИКЛ")
+
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert 'value="2"' in html
+    assert 'option value="КВАДРОЦИКЛ"' in html
+
+
+def test_sale_and_repair_same_row_autosaves_stay_in_their_own_drafts(
+    client, make_user, env
+):
+    _login(client, make_user)
+    _add(client, env, kind="sale")
+    _add(client, env, kind="repair")
+
+    app_response = _autosave(client, env, "application_area", "СНЕГОХОД", kind="repair")
+    qty_response = _autosave(client, env, "quantity", "2", kind="repair")
+    pending = client.session["actions_cart_customs"]
+    html = client.get(reverse("actions_scan")).content.decode()
+
+    assert app_response.status_code == 200
+    assert qty_response.status_code == 200
+    assert f"repair:{env['part'].pk}" in pending
+    assert f"sale:{env['part'].pk}" not in pending
+    assert html.count('id="cart-row-sale-') == 1
+    assert html.count('id="cart-row-repair-') == 1
+    assert html.count('data-cart-row-key=') == 2
+    assert html.count('value="2"') == 1
+
+
+def test_weight_autosaves_do_not_overwrite_quantity_or_application(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _autosave(client, env, "gross_weight_kg", "0.250")
+    _autosave(client, env, "net_weight_kg", "0.200")
+    _autosave(client, env, "application_area", "СНЕГОХОД")
+    _autosave(client, env, "quantity", "2")
+
+    html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
+    assert 'value="2"' in html
+    assert 'value="0.25"' in html or 'value="0.250"' in html
+    assert 'value="0.2"' in html or 'value="0.200"' in html
+    assert 'option value="СНЕГОХОД"' in html
+
+
+def test_omitted_customs_field_is_not_cleared_by_quantity_autosave(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _autosave(client, env, "application_area", "СНЕГОХОД")
+    response = _autosave(client, env, "quantity", "2")
+
+    assert response.status_code == 200
+    assert client.session["actions_cart_customs"][f"sale:{env['part'].pk}"][
+        "application_area"
+    ] == "СНЕГОХОД"
+
+
+def test_explicit_application_clear_only_clears_application(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _autosave(client, env, "application_area", "СНЕГОХОД")
+    _autosave(client, env, "gross_weight_kg", "0.250")
+    _autosave(client, env, "net_weight_kg", "0.200")
+
+    response = _autosave(client, env, "application_area", "")
+    assert response.status_code == 200
+    values = client.session["actions_cart_customs"][f"sale:{env['part'].pk}"]
+    assert values["application_area"] == ""
+    assert values["gross_weight_kg"] == "0.250"
+    assert values["net_weight_kg"] == "0.200"
+
+
+@pytest.mark.parametrize("kind", ["sale", "repair"])
+def test_autosaved_customs_and_quantity_allow_finalization(client, make_user, env, kind):
+    _login(client, make_user)
+    _add(client, env, kind=kind)
+    _autosave(client, env, "application_area", "СНЕГОХОД", kind=kind)
+    _autosave(client, env, "quantity", "2", kind=kind)
+    _autosave(client, env, "gross_weight_kg", "0.250", kind=kind)
+    _autosave(client, env, "net_weight_kg", "0.200", kind=kind)
+
+    response = _complete(client, kind=kind)
+    assert "проведена" in response.content.decode().lower()
+    assert WarehouseAction.objects.filter(action_type=kind).count() == 1
+
+
+def test_quantity_autosave_preserves_existing_sale_price(client, make_user, env):
+    from apps.sales.models import Sale
+
+    _login(client, make_user)
+    _add(client, env)
+    sale = Sale.objects.get(status=Sale.Status.DRAFT)
+    before = list(sale.lines.values_list("stock_lot_id", "unit_price", "total_price"))
+
+    response = _autosave(client, env, "quantity", "2")
+    sale.refresh_from_db()
+
+    assert response.status_code == 200
+    assert list(sale.lines.values_list("stock_lot_id", "unit_price")) == [
+        (lot_id, price) for lot_id, price, _total in before
+    ]
+    assert sum(sale.lines.values_list("total_price", flat=True), Decimal("0")) == Decimal("200")
+
+
+def test_quantity_autosave_preserves_existing_repair_price(client, make_user, env):
+    from apps.repairs.models import RepairOrder
+
+    _login(client, make_user)
+    _add(client, env, kind="repair")
+    order = RepairOrder.objects.get(status=RepairOrder.Status.DRAFT)
+    before = list(
+        order.lines.values_list("stock_lot_id", "customer_unit_price_rub")
+    )
+
+    response = _autosave(client, env, "quantity", "2", kind="repair")
+    order.refresh_from_db()
+
+    assert response.status_code == 200
+    assert list(order.lines.values_list("stock_lot_id", "customer_unit_price_rub")) == before
+
+
+def test_failed_customs_autosave_returns_authoritative_field_value(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _autosave(client, env, "application_area", "СНЕГОХОД")
+    _autosave(client, env, "net_weight_kg", "0.200")
+
+    response = _autosave(client, env, "gross_weight_kg", "0.100")
+
+    assert response.status_code == 400
+    assert response.json()["value"] == ""
+    assert "gross_weight_kg" not in client.session["actions_cart_customs"][
+        f"sale:{env['part'].pk}"
+    ]
+
+
+def test_customer_customs_validation_still_blocks_missing_application(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    _autosave(client, env, "gross_weight_kg", "0.250")
+    _autosave(client, env, "net_weight_kg", "0.200")
+    _autosave(client, env, "quantity", "2")
+
+    response = _complete(client)
+    assert "область применения" in response.content.decode().lower()
+    assert not WarehouseAction.objects.exists()
+
+
+def test_scan_template_has_field_autosave_and_no_generic_quantity_save(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+    html = client.get(reverse("actions_scan")).content.decode()
+
+    for field in ("quantity", "gross_weight_kg", "net_weight_kg", "application_area"):
+        assert f'data-cart-autosave="{field}"' in html
+    assert ">Сохранить</button>" not in html
+    assert 'name="unit_price"' not in html
+    assert 'aria-label="Цена"' not in html
+
+
+def test_zero_quantity_autosave_keeps_row_and_requests_remove_action(client, make_user, env):
+    _login(client, make_user)
+    _add(client, env)
+
+    response = _autosave(client, env, "quantity", "0")
+
+    assert response.status_code == 400
+    assert response.json()["value"] == "1"
+    assert 'value="1"' in client.get(reverse("actions_scan")).content.decode()
 
 
 def test_remembering_writes_an_immutable_version(client, make_user, env):
