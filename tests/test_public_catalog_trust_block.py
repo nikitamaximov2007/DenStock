@@ -88,8 +88,17 @@ def test_no_fake_social_statistics_anywhere_in_the_trust_block(public_client, pu
 def test_about_page_is_public_and_carries_no_internal_terminology(public_client, public_catalog):
     response = public_client.get("/about/")
     body = response.content.decode()
+    visible_body = " ".join(body.split())
     assert response.status_code == 200
     assert "<h1" in body
+    assert "Общение с сервисом" in body
+    assert (
+        "После отправки заявки можно продолжить общение с сервисом в Telegram "
+        "или MAX - уточнить детали заказа и быстро получить ответ."
+    ) in visible_body
+    assert "диалог с сервисом через" not in visible_body
+    assert "—" not in visible_body
+    assert "–" not in visible_body
     for internal_term in ("DenisStock", "Django", "PartType", "StockLot", "warehouse"):
         assert internal_term not in body
 
