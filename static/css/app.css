@@ -624,6 +624,10 @@ th.num, td.num, .table th.num, .table td.num,
 .btn:hover, .btn:focus { text-decoration: none; }
 .btn--primary:hover { background: #1a5fd0; border-color: #1a5fd0; }
 .btn--primary:active { background: #184fb0; border-color: #184fb0; }
+.btn--primary:focus-visible { outline: 3px solid rgba(37, 99, 235, .35); outline-offset: 2px; }
+.btn--primary:disabled, .btn--primary[aria-disabled="true"] {
+  background: #a8b4c5; border-color: #a8b4c5; color: #fff; cursor: not-allowed;
+}
 .btn--secondary:hover { background: var(--bg); border-color: #c4cad3; }
 .btn--danger:hover { filter: none; background: #9f1e14; border-color: #9f1e14; }
 

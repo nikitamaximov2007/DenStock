@@ -27,6 +27,8 @@ from django.db import transaction
 from django.utils import timezone
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from apps.core.files import SUPPORTED_IMAGE_FORMATS
+
 from .models import PartType, PartTypeImage, PublicPartPhoto, PublicPartPhotoRendition
 
 MAX_PUBLISHED_PER_PART = 8
@@ -41,7 +43,7 @@ _VARIANTS = (
     (PublicPartPhotoRendition.Variant.CARD, CARD_EDGE, 78),
     (PublicPartPhotoRendition.Variant.DETAIL, DETAIL_EDGE, 82),
 )
-_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
+_ALLOWED_FORMATS = SUPPORTED_IMAGE_FORMATS
 
 
 class PublicPhotoError(ValueError):
@@ -145,7 +147,7 @@ def build_renditions(fileobj) -> list[_Rendition]:
     try:
         with Image.open(fileobj) as source:
             if source.format not in _ALLOWED_FORMATS:
-                raise PublicPhotoError("Публиковать можно только JPG, PNG или WEBP.")
+                raise PublicPhotoError("Файл не читается как поддерживаемое изображение.")
             width, height = source.size
             if width < 1 or height < 1 or width * height > MAX_SOURCE_PIXELS:
                 raise PublicPhotoError("Размер изображения вне допустимых пределов.")

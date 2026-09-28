@@ -5,8 +5,8 @@ so it cannot drift from what the customer and the employees actually wrote.
 
 The rule (``needs_reply``), for one request:
 
-* the request is open (``new`` or ``in_progress``). A closed request waits for
-  nobody: its customer can no longer write, and it is history;
+* the request is open (``new`` or ``in_progress``). A completed request remains
+  communicable, but is not placed in the active waiting queue;
 * the customer wrote at least one message (``customer_to_operator``) in either
   messenger;
 * and no employee reply was *delivered* after the customer's latest message:

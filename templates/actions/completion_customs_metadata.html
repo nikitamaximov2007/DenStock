@@ -17,20 +17,20 @@
           <h2>{{ entry.part.name }}</h2>
           <p class="code-pill">{{ entry.article }}</p>
           <input type="hidden" name="part_id" value="{{ entry.part.pk }}">
-          {% if "gross_weight_g" in entry.missing_fields %}
+          {% if "gross_weight_kg" in entry.missing_fields %}
             <label>
-              Вес брутто, г
-              <input name="gross_weight_g_{{ entry.part.pk }}"
-                     value="{{ entry.gross_weight_g|default_if_none:'' }}"
-                     inputmode="numeric">
+              Вес брутто, кг
+              <input name="gross_weight_kg_{{ entry.part.pk }}"
+                     value="{{ entry.gross_weight_kg|default_if_none:'' }}"
+                     inputmode="decimal">
             </label>
           {% endif %}
-          {% if "net_weight_g" in entry.missing_fields %}
+          {% if "net_weight_kg" in entry.missing_fields %}
             <label>
-              Вес нетто, г
-              <input name="net_weight_g_{{ entry.part.pk }}"
-                     value="{{ entry.net_weight_g|default_if_none:'' }}"
-                     inputmode="numeric">
+              Вес нетто, кг
+              <input name="net_weight_kg_{{ entry.part.pk }}"
+                     value="{{ entry.net_weight_kg|default_if_none:'' }}"
+                     inputmode="decimal">
             </label>
           {% endif %}
           {% if "application_area" in entry.missing_fields %}

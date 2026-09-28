@@ -747,9 +747,9 @@ def test_operator_reply_from_denisstock_reaches_the_customer_once_with_audit(
     customer_view = "\n".join(server.texts_to(CUSTOMER_CHAT))
     for secret in ("denis", "Denis", str(OPERATOR_A_TG)):
         assert secret not in customer_view
-    # The other operator hears about it, the author does not.
+    # The shared-service feed mirrors the event to both operators.
     assert any("Ответ клиенту отправлен" in t for t in tg.texts_to(masha.telegram_user_id))
-    assert not any("Ответ клиенту отправлен" in t for t in tg.texts_to(denis.telegram_user_id))
+    assert any("Ответ клиенту отправлен" in t for t in tg.texts_to(denis.telegram_user_id))
 
 
 def test_operator_reply_is_refused_without_rights_link_or_consent(
@@ -781,7 +781,7 @@ def test_operator_reply_is_refused_without_rights_link_or_consent(
     assert not MaxMessage.objects.filter(direction="operator_to_customer").exists()
 
 
-def test_operator_reply_with_nobody_else_to_tell_completes_without_deliveries(
+def test_operator_reply_with_nobody_else_to_tell_is_delivered_to_author(
     client, part, worker, django_user_model, operator_bot
 ):
     bot, tg = operator_bot
@@ -796,7 +796,7 @@ def test_operator_reply_with_nobody_else_to_tell_completes_without_deliveries(
 
     event = MaxOutboxEvent.objects.get(kind="operator_reply")
     assert event.status == MaxOutboxEvent.Status.DISPATCHED
-    assert event.deliveries.count() == 0
+    assert event.deliveries.count() == 1
     assert event.attempts == 0
     assert not worker.has_due_work()
 
@@ -1353,7 +1353,7 @@ def test_a_cancelled_current_request_refuses_the_message_and_offers_the_open_one
     assert customer_messages(request_b) == ["Про B"]
 
 
-def test_a_completed_only_request_refuses_messages_and_offers_nothing(
+def test_a_completed_request_accepts_follow_up_messages(
     client, part, worker, server, admin_user
 ):
     request = _request(part, key="sc" * 16)
@@ -1365,11 +1365,8 @@ def test_a_completed_only_request_refuses_messages_and_offers_nothing(
 
     say(client, worker, "А ещё вопрос")
 
-    assert customer_messages(request) == ["Спасибо"]
-    assert _customer_message_events() == events
-    prompt = server.sent[-1]
-    assert prompt["text"] == messaging.closed_request_text(request.reference, other_open=False)
-    assert not prompt.get("attachments")
+    assert customer_messages(request) == ["Спасибо", "А ещё вопрос"]
+    assert _customer_message_events() == events + 1
 
 
 def test_requests_hide_closed_requests_and_a_stale_button_changes_nothing(
@@ -1400,23 +1397,20 @@ def test_requests_hide_closed_requests_and_a_stale_button_changes_nothing(
     assert customer_messages(request_a) == []
 
 
-def test_a_completed_request_can_neither_issue_nor_consume_a_max_link(
+def test_a_completed_request_can_continue_through_a_max_link(
     client, part, worker, server, admin_user
 ):
     request = _request(part, key="sf" * 16)
-    token = issue_max_link(request_id=request.pk).token
     change_request_status(request_id=request.pk, target_status="in_progress", by=admin_user)
     change_request_status(request_id=request.pk, target_status="completed", by=admin_user)
 
-    with pytest.raises(MessengerLinkError):
-        issue_max_link(request_id=request.pk)
-    assert deliver(client, bot_started(CUSTOMER, CUSTOMER_CHAT, token)).status_code == 200
+    fresh_token = issue_max_link(request_id=request.pk).token
+    assert deliver(client, bot_started(CUSTOMER, CUSTOMER_CHAT, fresh_token)).status_code == 200
     drain(worker)
 
-    assert not MaxConversation.objects.filter(
+    assert MaxConversation.objects.filter(
         request=request, status=MaxConversation.Status.LINKED
     ).exists()
-    assert server.texts_to(CUSTOMER_CHAT) == [max_service.LINK_INVALID_TEXT]
 
 
 def test_my_requests_button_opens_the_selector_in_the_pressed_message(

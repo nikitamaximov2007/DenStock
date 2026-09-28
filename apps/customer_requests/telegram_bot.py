@@ -575,15 +575,13 @@ class TelegramBotWorker:
                 ).order_by("pk")[:limit]
             )
             for event in events:
-                operators = service.active_operators(exclude_id=event.exclude_operator_id)
+                # Internal staff share one conversation. Keep the real author
+                # on the message, but mirror the event to that author's feed.
+                operators = service.active_operators()
                 outcome = messaging.operator_event_outcome(
                     has_recipients=bool(operators),
-                    excludes_author=event.exclude_operator_id is not None,
-                    anyone_eligible=bool(operators)
-                    or (
-                        event.exclude_operator_id is not None
-                        and bool(service.active_operators())
-                    ),
+                    excludes_author=False,
+                    anyone_eligible=bool(operators),
                     expired=now - event.created_at > EVENT_MAX_AGE,
                 )
                 if outcome != messaging.EVENT_DELIVER:

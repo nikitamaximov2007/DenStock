@@ -420,8 +420,8 @@ def test_regular_sale_collects_only_missing_customs_metadata_and_completes(clien
 
     response = client.post(reverse("sale_complete", args=[sale.pk]), {
         "metadata_submit": "1", "part_id": str(data["bulk"].pk),
-        f"gross_weight_g_{data['bulk'].pk}": "29",
-        f"net_weight_g_{data['bulk'].pk}": "30",
+        f"gross_weight_kg_{data['bulk'].pk}": "0.029",
+        f"net_weight_kg_{data['bulk'].pk}": "0.030",
         f"application_area_{data['bulk'].pk}": "КАТЕР",
     })
     assert response.status_code == 400
@@ -432,8 +432,8 @@ def test_regular_sale_collects_only_missing_customs_metadata_and_completes(clien
 
     response = client.post(reverse("sale_complete", args=[sale.pk]), {
         "metadata_submit": "1", "part_id": str(data["bulk"].pk),
-        f"gross_weight_g_{data['bulk'].pk}": "31",
-        f"net_weight_g_{data['bulk'].pk}": "30",
+        f"gross_weight_kg_{data['bulk'].pk}": "0.031",
+        f"net_weight_kg_{data['bulk'].pk}": "0.030",
         f"application_area_{data['bulk'].pk}": "КАТЕР",
     })
     assert response.status_code == 302

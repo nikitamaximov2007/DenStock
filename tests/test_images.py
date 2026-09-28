@@ -5,7 +5,7 @@
 меняет `StockBalance`/количества/статусы и не трогает scanner/barcode.
 """
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 
 import pytest
 from django.contrib.auth.models import Group
@@ -13,6 +13,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.urls import reverse
+from PIL import Image
 
 from apps.accounts import roles
 from apps.catalog.models import Category, PartBarcode, PartType, Unit
@@ -27,10 +28,19 @@ from apps.warehouse.models import StorageLocation
 
 PASSWORD = "parol-12345"
 
-# Минимальные валидные сигнатуры (magic bytes) без Pillow.
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
-JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
-WEBP = b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 64
+def _encoded(format_name):
+    output = BytesIO()
+    Image.new("RGB", (16, 12), (30, 80, 140)).save(output, format=format_name)
+    return output.getvalue()
+
+
+PNG = _encoded("PNG")
+JPEG = _encoded("JPEG")
+WEBP = _encoded("WEBP")
+BMP = _encoded("BMP")
+TIFF = _encoded("TIFF")
+GIF = _encoded("GIF")
+AVIF = _encoded("AVIF")
 
 
 def png(name="photo.png"):
@@ -185,7 +195,17 @@ def test_soft_deleted_not_in_active_gallery(client, make_user, data):
 
 @pytest.mark.parametrize(
     "content,name",
-    [(PNG, "a.png"), (JPEG, "a.jpg"), (JPEG, "a.jpeg"), (WEBP, "a.webp")],
+    [
+        (PNG, "a.png"),
+        (JPEG, "a.jpg"),
+        (JPEG, "a.JPEG"),
+        (JPEG, "a.jpe"),
+        (WEBP, "a.webp"),
+        (BMP, "a.bmp"),
+        (TIFF, "a.tiff"),
+        (GIF, "a.gif"),
+        (AVIF, "a.avif"),
+    ],
 )
 def test_valid_images_pass(content, name):
     validate_image_upload(SimpleUploadedFile(name, content))  # не бросает

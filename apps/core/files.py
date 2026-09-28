@@ -1,45 +1,73 @@
-"""Слой 24 — безопасная валидация и размещение загружаемых изображений.
+"""Безопасная валидация и размещение загружаемых изображений.
 
-Без Pillow и без сторонних зависимостей: проверяем расширение по allowlist, размер и
-**сигнатуру файла (magic bytes)** — браузерному `content_type` и исходному имени файла
-НЕ доверяем. На диск пишем под сгенерированным UUID-именем (см. `image_upload_to`).
+Расширение и MIME браузера не являются доказательством типа файла. Перед сохранением
+мы открываем изображение Pillow, проверяем фактический формат и декодируем первый кадр.
+Публичный pipeline всё равно перекодирует разрешённый источник в безопасный JPEG.
 """
 import os
 import uuid
+import warnings
 
 from django.core.exceptions import ValidationError
+from PIL import Image, UnidentifiedImageError
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 МБ
-ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+ALLOWED_IMAGE_EXTENSIONS = {
+    ".jpg", ".jpeg", ".jpe", ".png", ".webp", ".heic", ".heif", ".avif",
+    ".bmp", ".tif", ".tiff", ".gif",
+}
+_EXTENSION_FORMATS = {
+    ".jpg": "JPEG", ".jpeg": "JPEG", ".jpe": "JPEG", ".png": "PNG", ".webp": "WEBP",
+    ".heic": "HEIC", ".heif": "HEIF", ".avif": "AVIF", ".bmp": "BMP",
+    ".tif": "TIFF", ".tiff": "TIFF", ".gif": "GIF",
+}
+SUPPORTED_IMAGE_FORMATS = frozenset(_EXTENSION_FORMATS.values())
 
 
-def _sniff(head: bytes) -> str | None:
-    """Определить тип изображения по первым байтам. None — не jpg/png/webp."""
-    if head[:3] == b"\xff\xd8\xff":
-        return "jpeg"
-    if head[:8] == b"\x89PNG\r\n\x1a\n":
-        return "png"
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return "webp"
-    return None
+def expected_image_format(extension: str) -> str | None:
+    """Return the decoder format expected for a normalized file extension."""
+    return _EXTENSION_FORMATS.get(str(extension or "").lower())
 
 
 def validate_image_upload(file) -> None:
-    """Проверить загружаемый файл. Бросает ValidationError при нарушении правил."""
+    """Validate and decode an uploaded still image.
+
+    GIF is accepted only as a safe first-frame source. HEIC/HEIF/AVIF are accepted
+    when the deployed Pillow build has a decoder for them; unsupported codecs fail
+    closed at the decode step rather than being stored as arbitrary bytes.
+    """
     ext = os.path.splitext(getattr(file, "name", "") or "")[1].lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
-        raise ValidationError("Разрешены только изображения JPG, JPEG, PNG или WEBP.")
+        raise ValidationError(
+            "Разрешены только файлы изображений JPEG, PNG, WEBP, HEIC, HEIF, AVIF, BMP, TIFF и GIF."
+        )
     if file.size > MAX_IMAGE_SIZE:
         raise ValidationError("Файл слишком большой (максимум 10 МБ).")
-    head = file.read(12)
-    file.seek(0)
-    kind = _sniff(head)
-    if kind is None:
-        raise ValidationError("Файл не является корректным изображением JPG/PNG/WEBP.")
-    # Содержимое должно соответствовать расширению (jpg/jpeg → jpeg).
-    ext_kind = "jpeg" if ext in {".jpg", ".jpeg"} else ext.lstrip(".")
-    if ext_kind != kind:
-        raise ValidationError("Расширение файла не соответствует его содержимому.")
+    expected = expected_image_format(ext)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(file) as image:
+                if image.format != expected:
+                    raise ValidationError("Расширение файла не соответствует его содержимому.")
+                width, height = image.size
+                if width < 1 or height < 1 or width * height > 40_000_000:
+                    raise ValidationError("Размер изображения вне допустимых пределов.")
+                image.seek(0)
+                image.load()
+    except ValidationError:
+        raise
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+    ):
+        raise ValidationError("Файл не читается как изображение.") from None
+    finally:
+        file.seek(0)
 
 
 def image_upload_to(instance, filename: str) -> str:

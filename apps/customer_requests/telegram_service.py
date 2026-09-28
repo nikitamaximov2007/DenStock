@@ -589,7 +589,7 @@ def selector_text_and_markup(chat_id: int) -> tuple[str, dict | None]:
     return result.reply, keyboard
 
 
-CONTACT_CLOSED_TEXT = "Переписка по этой заявке закрыта."
+CONTACT_CLOSED_TEXT = "Заявка выполнена. Переписка по ней остаётся доступной."
 
 
 def _closed_reply(request: CustomerRequest, still_open) -> CustomerResult:

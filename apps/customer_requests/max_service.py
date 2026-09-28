@@ -51,6 +51,7 @@ MEDIA_NOT_SUPPORTED_TEXT = telegram_service.MEDIA_NOT_SUPPORTED_TEXT
 SELECT_TEXT = customer_ui.SELECTOR_HINT
 AMBIGUOUS_TEXT = "У вас несколько заявок. Выберите нужную и отправьте сообщение ещё раз."
 SELECTED_TEXT = customer_ui.SELECTED_TEXT
+CLOSED_TEXT = "Заявка выполнена. Переписка по ней остаётся доступной."
 # MAX has no persistent keyboard, so the bot's own messages carry the entry point.
 MENU_PAYLOAD = customer_ui.MY_REQUESTS_PAYLOAD
 def menu_button() -> list[list[dict]]:
@@ -65,7 +66,6 @@ def menu_button() -> list[list[dict]]:
 # A selector answer re-renders the pressed message instead of sending a new one.
 SELECTOR_DEDUPE_PREFIX = "selector:"
 SELECTION_UNAVAILABLE_TEXT = "Эта заявка недоступна. Отправьте /requests, чтобы выбрать другую."
-CLOSED_TEXT = "Переписка по этой заявке закрыта."
 
 
 def summary_policy() -> messaging.SummaryPolicy:

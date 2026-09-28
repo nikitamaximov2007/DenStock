@@ -256,6 +256,7 @@ class CustomerRequestStatusEvent(models.Model):
     to_status = models.CharField(
         "Статус после", max_length=20, choices=CustomerRequest.Status.choices
     )
+    reason = models.CharField("Причина", max_length=500, blank=True)
     changed_at = models.DateTimeField("Изменён", auto_now_add=True)
     changed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

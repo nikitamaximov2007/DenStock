@@ -58,6 +58,7 @@ from .services import (
     change_request_status,
     delete_all_cancelled_requests,
     delete_cancelled_request,
+    reopen_customer_request,
 )
 from .telegram import handle_update, webhook_secret_is_valid
 
@@ -441,7 +442,11 @@ def customer_request_status(request, pk):
     target_status = (request.POST.get("status") or "").strip()
     try:
         _customer_request, changed = change_request_status(
-            request_id=pk, target_status=target_status, by=request.user
+            request_id=pk,
+            target_status=target_status,
+            by=request.user,
+            allow_without_sale=request.POST.get("without_sale") == "1",
+            reason=request.POST.get("reason", ""),
         )
     except CustomerRequest.DoesNotExist:
         raise Http404 from None
@@ -451,6 +456,24 @@ def customer_request_status(request, pk):
     else:
         if changed:
             messages.success(request, "Статус заявки обновлён.")
+    return redirect(_detail_url(pk, _list_params(request.GET)))
+
+
+@login_required
+@require_POST
+def customer_request_reopen(request, pk):
+    _require_access(request)
+    try:
+        _customer_request, changed = reopen_customer_request(
+            request_id=pk, by=request.user, reason=request.POST.get("reason", "")
+        )
+    except CustomerRequest.DoesNotExist:
+        raise Http404 from None
+    except CustomerRequestError as exc:
+        messages.error(request, str(exc))
+    else:
+        if changed:
+            messages.success(request, "Заявка возвращена в работу.")
     return redirect(_detail_url(pk, _list_params(request.GET)))
 
 
@@ -542,7 +565,7 @@ def customer_request_customs(request, pk):
         except ValueError as exc:
             for entry in entries:
                 part_pk = entry["part"].pk
-                for field in ("gross_weight_g", "net_weight_g", "application_area"):
+                for field in ("gross_weight_kg", "net_weight_kg", "application_area"):
                     key = f"{field}_{part_pk}"
                     if key in request.POST:
                         entry[field] = request.POST.get(key, "")

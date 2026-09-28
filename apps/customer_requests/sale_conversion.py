@@ -267,8 +267,6 @@ def complete_request_sale(*, request_id: int, sale_id: int, by=None) -> Sale:
         raise CustomerRequestSaleError("Продажа не связана с этой заявкой.")
     if sale.status == Sale.Status.COMPLETED:
         return sale
-    if request.status == CustomerRequest.Status.COMPLETED:
-        raise CustomerRequestSaleError("Заявка уже выполнена без проведённой продажи.")
     if request.customer_id is None or sale.customer_id != request.customer_id:
         raise CustomerRequestSaleError("Сначала подтвердите карточку клиента.")
 
@@ -297,6 +295,4 @@ def complete_request_sale(*, request_id: int, sale_id: int, by=None) -> Sale:
         sale = complete_sale(sale, by=by)
     except SaleError as exc:
         raise CustomerRequestSaleError(str(exc)) from exc
-    request.status = CustomerRequest.Status.COMPLETED
-    request.save(update_fields=["status", "updated_at"])
     return sale

@@ -36,7 +36,7 @@
         {% for option in options %}
           <tr>
             <td>{{ option.exact_number|default:"·" }}</td>
-            <td>{{ option.part.name }}</td>
+            <td>{% if option.display_name %}{{ option.display_name }}{% else %}{{ option.part.name }}{% endif %}</td>
             <td>{{ option.manufacturer|default:"·" }}</td>
             <td>
               <a class="btn btn--small btn--secondary"
@@ -61,7 +61,7 @@
             </tr>
             <tr>
               <th>Название</th>
-              <td>{{ candidate.part.name }}</td>
+              <td>{% if candidate.display_name %}{{ candidate.display_name }}{% else %}{{ candidate.part.name }}{% endif %}</td>
             </tr>
             <tr>
               <th>Производитель</th>

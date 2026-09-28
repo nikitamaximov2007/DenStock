@@ -395,7 +395,7 @@ def test_end_to_end_first_time_customer(e2e):
     reply = MaxMessage.objects.get(direction=MaxMessage.Direction.OPERATOR)
     assert reply.operator_user == denis and reply.delivery_status == MaxDeliveryStatus.SENT
     assert any("Ответ клиенту отправлен" in text for text in tg.texts_to(830002))
-    assert not any("Ответ клиенту отправлен" in text for text in tg.texts_to(830001))
+    assert any("Ответ клиенту отправлен" in text for text in tg.texts_to(830001))
     assert "denis" not in "\n".join(server.texts_to(CUSTOMER_CHAT))
     assert not MaxMessage.objects.exclude(
         direction=MaxMessage.Direction.CUSTOMER

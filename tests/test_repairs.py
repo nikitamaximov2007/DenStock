@@ -443,8 +443,8 @@ def test_regular_repair_collects_missing_customs_metadata_and_completes(client, 
 
     response = client.post(reverse("repair_order_complete", args=[order.pk]), {
         "metadata_submit": "1", "part_id": str(data["serial"].pk),
-        f"gross_weight_g_{data['serial'].pk}": "250",
-        f"net_weight_g_{data['serial'].pk}": "200",
+        f"gross_weight_kg_{data['serial'].pk}": "0.250",
+        f"net_weight_kg_{data['serial'].pk}": "0.200",
         f"application_area_{data['serial'].pk}": "СНЕГОХОД",
     })
     assert response.status_code == 302

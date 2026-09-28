@@ -364,7 +364,7 @@ def test_a_request_closed_while_chosen_is_reported_and_never_swapped(part, messe
         stored = TelegramMessage.objects.filter(text="а что с заявкой?").count()
         routing = TelegramCustomerChat.objects.get(chat_id=CHAT).active_conversation
 
-    assert reply.startswith(f"Заявка №{chosen.reference} уже закрыта.")
+    assert reply.startswith(f"Заявка №{chosen.reference} отменена.")
     assert stored == 0
     assert routing.request_id == chosen.pk  # never silently moved to the other one
 

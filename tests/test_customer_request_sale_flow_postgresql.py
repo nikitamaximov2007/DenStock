@@ -52,8 +52,8 @@ def _post_customs(request_pk, admin_pk, part_pk):
         {
             "metadata_submit": "1",
             "part_id": str(part_pk),
-            f"gross_weight_g_{part_pk}": "180",
-            f"net_weight_g_{part_pk}": "120",
+            f"gross_weight_kg_{part_pk}": "0.18",
+            f"net_weight_kg_{part_pk}": "0.12",
             f"application_area_{part_pk}": "СНЕГОХОД",
         },
     )
@@ -87,7 +87,7 @@ def test_postgresql_request_prepare_and_complete_double_submit_is_single_sale(
     assert Sale.objects.filter(pk=sale_id, status=Sale.Status.COMPLETED).count() == 1
     assert StockMovement.objects.filter(document_type="sale").count() == 1
     request.refresh_from_db()
-    assert request.status == request.Status.COMPLETED
+    assert request.status == request.Status.IN_PROGRESS
     assert request.customer_id == customer.pk
     assert request.sale_id == sale_id
 

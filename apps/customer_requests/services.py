@@ -289,13 +289,28 @@ def create_customer_request(
 
 @transaction.atomic
 def change_request_status(
-    *, request_id: int, target_status: str, by
+    *, request_id: int, target_status: str, by, allow_without_sale: bool = False, reason: str = ""
 ) -> tuple[CustomerRequest, bool]:
     """Apply one permitted transition; retrying the same POST is idempotent."""
     request = CustomerRequest.objects.select_for_update().get(pk=request_id)
     if target_status == request.status:
         return request, False
     _validate_status_transition(request.status, target_status)
+    if target_status == CustomerRequest.Status.COMPLETED and request.sale_id:
+        from apps.sales.models import Sale
+
+        if Sale.objects.filter(pk=request.sale_id, status=Sale.Status.DRAFT).exists():
+            if not allow_without_sale:
+                raise CustomerRequestError(
+                    "По заявке есть непроведённая продажа. Сначала проведите продажу "
+                    "или явно завершите заявку без продажи."
+                )
+            reason = str(reason or "").strip()
+            if not reason:
+                raise CustomerRequestError(
+                    "Для завершения заявки без продажи укажите причину."
+                )
+    reason = str(reason or "").strip()[:500]
     previous = request.status
     request.status = target_status
     update_fields = ["status", "updated_at"]
@@ -304,7 +319,38 @@ def change_request_status(
         update_fields.append("taken_by")
     request.save(update_fields=update_fields)
     CustomerRequestStatusEvent.objects.create(
-        request=request, from_status=previous, to_status=target_status, changed_by=by
+        request=request,
+        from_status=previous,
+        to_status=target_status,
+        reason=reason,
+        changed_by=by,
+    )
+    return request, True
+
+
+@transaction.atomic
+def reopen_customer_request(*, request_id: int, by, reason: str) -> tuple[CustomerRequest, bool]:
+    """Return a completed request to work without erasing its status history."""
+    request = CustomerRequest.objects.select_for_update().get(pk=request_id)
+    if request.status == CustomerRequest.Status.IN_PROGRESS:
+        return request, False
+    if request.status != CustomerRequest.Status.COMPLETED:
+        raise CustomerRequestError("Вернуть в работу можно только выполненную заявку.")
+    reason = str(reason or "").strip()[:500]
+    if not reason:
+        raise CustomerRequestError("Укажите причину возврата заявки в работу.")
+    request.status = CustomerRequest.Status.IN_PROGRESS
+    update_fields = ["status", "updated_at"]
+    if request.taken_by_id is None:
+        request.taken_by = by
+        update_fields.append("taken_by")
+    request.save(update_fields=update_fields)
+    CustomerRequestStatusEvent.objects.create(
+        request=request,
+        from_status=CustomerRequest.Status.COMPLETED,
+        to_status=CustomerRequest.Status.IN_PROGRESS,
+        reason=reason,
+        changed_by=by,
     )
     return request, True
 

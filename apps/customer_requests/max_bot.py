@@ -554,12 +554,11 @@ class MaxBotWorker:
                 ).order_by("pk")[:limit]
             )
             for event in events:
-                recipients = service.eligible_recipients(exclude_user_id=event.exclude_user_id)
+                recipients = service.eligible_recipients()
                 outcome = messaging.operator_event_outcome(
                     has_recipients=bool(recipients),
-                    excludes_author=event.exclude_user_id is not None,
-                    anyone_eligible=bool(recipients)
-                    or (event.exclude_user_id is not None and bool(service.eligible_recipients())),
+                    excludes_author=False,
+                    anyone_eligible=bool(recipients),
                     expired=now - event.created_at > EVENT_MAX_AGE,
                 )
                 if outcome == messaging.EVENT_DELIVER:

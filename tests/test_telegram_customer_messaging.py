@@ -721,9 +721,9 @@ def test_full_conversation_is_stored_delivered_and_attributed(part, worker, api,
     assert reply.operator_user == operators[0].user
     assert reply.delivery_status == TelegramDeliveryStatus.SENT
     assert reply.telegram_message_id
-    # The other operator sees who answered; the author gets no echo of it.
+    # Both operators see the shared event and the real author label.
     assert any("Сотрудник: denis" in text for text in api.texts_to(OPERATOR_B))
-    assert not any("Сотрудник: denis" in text for text in api.texts_to(OPERATOR_A))
+    assert any("Сотрудник: denis" in text for text in api.texts_to(OPERATOR_A))
     # The customer never sees the employee identity.
     assert "denis" not in "\n".join(api.texts_to(CUSTOMER))
 
@@ -1391,7 +1391,7 @@ def _replied_event(worker, api, part, *, key):
     return request, conversation
 
 
-def test_reply_by_the_only_operator_needs_no_notification_and_completes(
+def test_reply_by_the_only_operator_is_mirrored_to_the_author(
     part, worker, api, solo_operator
 ):
     _replied_event(worker, api, part, key="z1" * 16)
@@ -1400,7 +1400,9 @@ def test_reply_by_the_only_operator_needs_no_notification_and_completes(
     assert event.exclude_operator_id == solo_operator.pk
     assert event.status == TelegramOutboxEvent.Status.DISPATCHED
     assert event.dispatched_at is not None
-    assert not TelegramDelivery.objects.filter(event=event).exists()
+    assert list(
+        TelegramDelivery.objects.filter(event=event).values_list("operator_id", flat=True)
+    ) == [solo_operator.pk]
     assert event.attempts == 0
 
 
@@ -1425,7 +1427,7 @@ def test_redispatching_a_zero_recipient_reply_event_is_idempotent(part, worker, 
     assert event.status == TelegramOutboxEvent.Status.DISPATCHED
     assert event.dispatched_at == dispatched_at
     assert event.attempts == attempts
-    assert not TelegramDelivery.objects.filter(event=event).exists()
+    assert TelegramDelivery.objects.filter(event=event).count() == 1
 
 
 def test_worker_restart_does_not_reopen_a_completed_zero_recipient_event(
@@ -1440,11 +1442,11 @@ def test_worker_restart_does_not_reopen_a_completed_zero_recipient_event(
 
     event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
     assert event.status == TelegramOutboxEvent.Status.DISPATCHED
-    assert not TelegramDelivery.objects.filter(event=event).exists()
+    assert TelegramDelivery.objects.filter(event=event).count() == 1
     successor.release()
 
 
-def test_an_operator_hired_later_never_hears_an_old_self_notification(
+def test_an_operator_hired_later_does_not_receive_an_old_event(
     part, worker, api, solo_operator, django_user_model
 ):
     _replied_event(worker, api, part, key="z5" * 16)
@@ -1453,7 +1455,9 @@ def test_an_operator_hired_later_never_hears_an_old_self_notification(
     latecomer = _operator(django_user_model, OPERATOR_B, username="latecomer")
     worker.drain_outbox()
 
-    assert not TelegramDelivery.objects.filter(event=event).exists()
+    assert [row.operator_id for row in TelegramDelivery.objects.filter(event=event)] == [
+        solo_operator.pk
+    ]
     assert not api.texts_to(latecomer.telegram_user_id)
 
 
@@ -1480,7 +1484,7 @@ def test_a_second_operator_still_hears_about_a_colleagues_reply(part, worker, ap
     event = TelegramOutboxEvent.objects.get(kind=TelegramOutboxEvent.Kind.OPERATOR_REPLY)
     assert event.status == TelegramOutboxEvent.Status.DISPATCHED
     deliveries = TelegramDelivery.objects.filter(event=event)
-    assert [row.operator_id for row in deliveries] == [operators[1].pk]
+    assert [row.operator_id for row in deliveries] == [operators[0].pk, operators[1].pk]
     assert any("ответ первого сотрудника" in text for text in api.texts_to(OPERATOR_B))
 
 
@@ -1632,7 +1636,7 @@ def test_telegram_cancelled_current_request_refuses_the_message_and_offers_the_o
     assert not TelegramMessage.objects.filter(text="ещё про вторую").exists()
     assert _telegram_customer_message_events() == events
     assert "ещё про вторую" not in "\n".join(api.texts_to(OPERATOR_A))
-    reply = api.last_with(CUSTOMER, "уже закрыта")
+    reply = api.last_with(CUSTOMER, "отменена")
     assert reply["text"] == messaging.closed_request_text(second.reference, other_open=True)
     assert {row[0]["callback_data"] for row in reply["reply_markup"]["inline_keyboard"]} == {
         f"s:{first_conversation.public_id.hex}"
@@ -1652,7 +1656,7 @@ def test_telegram_cancelled_current_request_refuses_the_message_and_offers_the_o
     assert TelegramMessage.objects.get(text="теперь про первую").conversation == first_conversation
 
 
-def test_telegram_completed_only_request_refuses_messages_and_offers_nothing(
+def test_telegram_completed_request_accepts_follow_up_messages(
     part, worker, api, operators
 ):
     request = _request(part, key="t2" * 16)
@@ -1670,13 +1674,10 @@ def test_telegram_completed_only_request_refuses_messages_and_offers_nothing(
 
     run(worker, api, message_update(CUSTOMER, "а ещё вопрос"))
 
-    assert not TelegramMessage.objects.filter(text="а ещё вопрос").exists()
-    assert _telegram_customer_message_events() == events
-    reply = api.last_with(CUSTOMER, "уже закрыта")
-    assert reply["text"] == messaging.closed_request_text(request.reference, other_open=False)
-    # Nothing to switch to: no request buttons, only the customer's own keyboard.
-    assert not (reply["reply_markup"] or {}).get("inline_keyboard")
-    assert reply["reply_markup"] == service_module.customer_keyboard()
+    assert TelegramMessage.objects.filter(text="а ещё вопрос").exists()
+    assert _telegram_customer_message_events() == events + 1
+    request.refresh_from_db()
+    assert request.status == CustomerRequest.Status.COMPLETED
 
 
 def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothing(
@@ -1718,11 +1719,10 @@ def test_telegram_requests_hide_closed_requests_and_a_stale_button_changes_nothi
     assert f"№{first.human_number}" not in "\n".join(api.texts_to(OTHER_CUSTOMER))
 
 
-def test_telegram_completed_request_can_neither_issue_nor_consume_a_link(
+def test_telegram_completed_request_can_continue_through_a_link(
     part, worker, api, operators
 ):
     request = _request(part, key="t6" * 16)
-    token = issue_telegram_link(request_id=request.pk).token
     change_request_status(
         request_id=request.pk,
         target_status=CustomerRequest.Status.IN_PROGRESS,
@@ -1732,11 +1732,10 @@ def test_telegram_completed_request_can_neither_issue_nor_consume_a_link(
         request_id=request.pk, target_status=CustomerRequest.Status.COMPLETED, by=operators[0].user
     )
 
-    with pytest.raises(MessengerLinkError):
-        issue_telegram_link(request_id=request.pk)
-    run(worker, api, message_update(CUSTOMER, f"/start {token}"))
+    fresh_token = issue_telegram_link(request_id=request.pk).token
+    run(worker, api, message_update(CUSTOMER, f"/start {fresh_token}"))
 
-    assert not TelegramConversation.objects.get(request=request).is_linked
+    assert TelegramConversation.objects.get(request=request).is_linked
 
 
 def test_the_customer_keyboard_opens_my_requests_and_switching_is_one_line(

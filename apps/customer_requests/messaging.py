@@ -156,15 +156,19 @@ def customer_contact_allowed(request: CustomerRequest) -> bool:
     return request.consent_withdrawn_at is None and request.data_anonymized_at is None
 
 
-# The statuses a customer may still write about. Completed and cancelled have no
-# transition out of them, so a request that reaches one is closed for good.
+# Completion changes the business status, not the existence of the conversation.
+# Cancellation/anonymization remain hard communication boundaries.
 MESSAGEABLE_STATUSES = frozenset(
-    {CustomerRequest.Status.NEW, CustomerRequest.Status.IN_PROGRESS}
+    {
+        CustomerRequest.Status.NEW,
+        CustomerRequest.Status.IN_PROGRESS,
+        CustomerRequest.Status.COMPLETED,
+    }
 )
 
-CLOSED_REQUEST_TEXT = "Заявка №{reference} уже закрыта.\nВыберите другую активную заявку."
+CLOSED_REQUEST_TEXT = "Заявка №{reference} отменена.\nВыберите другую активную заявку."
 CLOSED_REQUEST_NO_OTHER_TEXT = (
-    "Заявка №{reference} уже закрыта.\n"
+    "Заявка №{reference} отменена.\n"
     "Других открытых заявок у вас сейчас нет. Оформите новую заявку на сайте "
     "PRO-STOR, и сервис PRO-STOR ответит вам здесь."
 )
@@ -177,7 +181,7 @@ NO_OPEN_REQUESTS_TEXT = (
 def customer_can_message(request: CustomerRequest) -> bool:
     """Whether the customer may still write about this request.
 
-    Contact must be allowed and the request still open. The request is read as
+    Contact must be allowed and the request not canceled. The request is read as
     it is now, never as it was when the conversation was linked.
     """
     return request.status in MESSAGEABLE_STATUSES and customer_contact_allowed(request)
@@ -253,13 +257,13 @@ def operator_event_outcome(
 ) -> str:
     """Deliver, finish with nobody to tell, keep waiting, or give up.
 
-    An event that excludes its own author has no audience once that author is
-    the only eligible employee: nobody needs to hear about their own reply,
-    and waiting cannot change that, so it completes with no delivery rows.
-    Only an event nobody can receive *yet* waits, until it is too old.
+    The exclusion arguments remain in the signature for transport compatibility,
+    but shared-service events are delivered to every currently eligible operator,
+    including the author. Only an event nobody can receive yet waits.
     """
     if has_recipients:
         return EVENT_DELIVER
-    if excludes_author and anyone_eligible:
-        return EVENT_COMPLETE
+    # The event is a shared conversation event. The responder's own author
+    # identity is retained on the message, but their internal feed receives it
+    # just like every other authorized operator.
     return EVENT_EXPIRE if expired else EVENT_WAIT

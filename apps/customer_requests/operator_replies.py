@@ -226,7 +226,7 @@ def submit_reply(
         operator_control_source = ""
         operator_author_label = ""
         stored_operator_author_label = ""
-    if telegram_update_id is None and operator_control_source in {"telegram", "max"}:
+    if operator_control_source in {"telegram", "max"}:
         _ensure_customer_visible_responder(
             target,
             user=user,

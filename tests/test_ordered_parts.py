@@ -18,6 +18,7 @@ from django.contrib.auth.models import Group
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.catalog_import.models import AftermarketCatalogPart
 from apps.customers.models import Customer
@@ -165,6 +166,57 @@ def test_unknown_article_is_rejected_without_inventing_a_part(env):
 
     assert PartType.objects.count() == before  # фиктивная карточка не создана
     assert OrderedPart.objects.count() == 0
+
+
+def test_imported_brp_article_is_orderable_before_warehouse_promotion(env):
+    """A catalog row is enough to find an order; stock is still untouched."""
+    BrpCatalogPart.objects.create(
+        material_no="420831074",
+        part_desc="GASKET 0.9",
+        wholesale_price_usd=Decimal("2.50"),
+        source_file="fixture.xlsx",
+        source_row=40099,
+        import_batch="fixture",
+    )
+    before_parts = PartType.objects.count()
+    before_lots = StockLot.objects.count()
+    before_movements = StockMovement.objects.count()
+
+    candidate, result = resolve_ordered_article("420-831-074")
+
+    assert result.status == "not_found"
+    assert candidate.part is None
+    assert candidate.exact_number == "420831074"
+    assert candidate.display_name == "GASKET 0.9"
+    assert candidate.catalog_origin_label == "BRP"
+    assert PartType.objects.count() == before_parts
+
+    order = create_ordered_part(
+        candidate=candidate, customer=_customer(), prepayment="0", by=env["admin"]
+    )
+
+    assert order.article == "420831074"
+    assert order.catalog_source == "brp"
+    assert PartType.objects.count() == before_parts + 1
+    assert StockLot.objects.count() == before_lots
+    assert StockMovement.objects.count() == before_movements
+
+
+def test_imported_catalog_article_with_no_stock_is_available_in_order_form(
+    client, env, make_user
+):
+    BrpCatalogPart.objects.create(
+        material_no="420831074", part_desc="GASKET 0.9", source_file="fixture.xlsx"
+    )
+    _login(client, make_user)
+
+    html = client.get(
+        reverse("ordered_part_create"), {"article": "420 831 074"}
+    ).content.decode()
+
+    assert "GASKET 0.9" in html
+    assert "не найдена" not in html
+    assert PartType.objects.count() == 0
 
 
 # --- 7-8. Разрешение артикула ----------------------------------------------

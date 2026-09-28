@@ -1,8 +1,10 @@
 """Бизнес-правила раздела «Запчасти на заказ». View сюда только оркестрирует.
 
-Артикул разбирается КАНОНИЧЕСКИМ поиском склада (`resolve_part_lookup`), а не
-вторым собственным движком: иначе одна и та же строка находила бы разные детали
-в разных экранах. Здесь только сужение правил под заказ:
+Артикул сначала разбирается КАНОНИЧЕСКИМ поиском складских карточек
+(`resolve_part_lookup`), а затем - теми же нормализованными номерами в
+импортированных справочных каталогах. Второго формата артикулов здесь нет:
+иначе одна и та же строка находила бы разные детали в разных экранах. Здесь
+только сужение правил под заказ:
 
 * заказ оформляется на ОРИГИНАЛЬНУЮ деталь, поэтому позиция из каталога
   аналогов отклоняется явным сообщением, а не превращается молча в оригинал;
@@ -11,11 +13,13 @@
 
 Наличие детали на складе не требуется вовсе: заказывают как раз то, чего нет.
 """
+from dataclasses import dataclass
 from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Q
 
+from apps.catalog.models import normalize_number
 from apps.catalog_import.origin import AFTERMARKET_CATALOG, aftermarket_part_ids
 from apps.core.part_lookup import (
     clean_lookup_value,
@@ -35,6 +39,29 @@ AMBIGUOUS_MESSAGE = "Найдено несколько деталей с так�
 
 class OrderedPartError(ValueError):
     """Заказ оформить нельзя: артикул, клиент или предоплата не проходят правило."""
+
+
+@dataclass
+class OrderedCatalogCandidate:
+    """Imported catalog identity not promoted to a warehouse card yet.
+
+    ``OrderedPart`` keeps a stable PartType snapshot, so promotion is deferred
+    until the operator actually submits the order. A GET/search therefore stays
+    read-only; promotion creates no stock and is the existing catalog-to-card
+    service used later by warehouse workflows.
+    """
+
+    part: object | None
+    catalog_part: object
+    exact_number: str
+    manufacturer: str
+    display_name: str
+    client_price: Decimal | None
+    catalog_origin: str
+
+    @property
+    def catalog_origin_label(self) -> str:
+        return self.catalog_origin
 
 
 def _customs_analog_verdict(part):
@@ -94,6 +121,11 @@ def resolve_ordered_article(raw):
         raise OrderedPartError("Укажите артикул запчасти.")
     result = resolve_part_lookup(query, include_price=True)
     if result.status == "not_found":
+        catalog_candidates = _imported_catalog_candidates(normalize_number(query))
+        if len(catalog_candidates) == 1:
+            return catalog_candidates[0], result
+        if len(catalog_candidates) > 1:
+            raise OrderedPartError(AMBIGUOUS_MESSAGE)
         raise OrderedPartError(
             f"{part_not_found_message(query)} "
             "Деталь с таким артикулом в загруженных каталогах не найдена."
@@ -105,6 +137,97 @@ def resolve_ordered_article(raw):
     if is_aftermarket_part(candidate.part):
         raise OrderedPartError(ANALOG_REJECTED_MESSAGE)
     return candidate, result
+
+
+def _catalog_price(catalog_part, source: str) -> Decimal | None:
+    """Calculate a catalog price without creating missing settings on lookup."""
+    from apps.warehouse.models import ValuationSettings
+
+    valuation = ValuationSettings.objects.order_by("pk").first()
+    if valuation is None:
+        return None
+    if source == "brp":
+        from apps.brp.models import BrpPricingSettings
+        from apps.brp.pricing import catalog_part_price_rub
+
+        settings = BrpPricingSettings.objects.order_by("pk").first()
+        return (
+            catalog_part_price_rub(catalog_part, valuation.current_usd_rate,
+                                   settings.brp_markup_percent)
+            if settings else None
+        )
+    if source == "polaris":
+        from apps.polaris.models import PolarisPricingSettings
+        from apps.polaris.pricing import customer_price_rub
+
+        settings = PolarisPricingSettings.objects.order_by("pk").first()
+        return (
+            customer_price_rub(catalog_part.wholesale_price_usd,
+                               valuation.current_usd_rate,
+                               settings.polaris_markup_percent)
+            if settings else None
+        )
+    return None
+
+
+def _imported_catalog_candidates(norm: str) -> list[OrderedCatalogCandidate]:
+    """Find eligible imported rows without requiring a warehouse PartType."""
+    from apps.brp.models import BrpCatalogPart, BrpPartLink
+    from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
+
+    candidates = []
+    brp = (
+        BrpCatalogPart.objects.filter(material_no_norm=norm, is_current=True)
+        .order_by("pk")
+        .first()
+    )
+    if brp is not None:
+        linked = BrpPartLink.objects.filter(brp_part=brp).select_related("part").first()
+        candidates.append(
+            OrderedCatalogCandidate(
+                part=linked.part if linked else None,
+                catalog_part=brp,
+                exact_number=brp.material_no,
+                manufacturer="BRP",
+                display_name=brp.part_desc or f"BRP {brp.material_no}",
+                client_price=_catalog_price(brp, "brp"),
+                catalog_origin="BRP",
+            )
+        )
+    polaris = PolarisCatalogPart.objects.filter(part_number_norm=norm).order_by("pk").first()
+    if polaris is not None:
+        linked = (
+            PolarisPartLink.objects.filter(polaris_part=polaris)
+            .select_related("part")
+            .first()
+        )
+        candidates.append(
+            OrderedCatalogCandidate(
+                part=linked.part if linked else None,
+                catalog_part=polaris,
+                exact_number=polaris.part_number,
+                manufacturer="POLARIS",
+                display_name=polaris.part_name or f"POLARIS {polaris.part_number}",
+                client_price=_catalog_price(polaris, "polaris"),
+                catalog_origin="POLARIS",
+            )
+        )
+    return candidates
+
+
+def _ensure_ordered_part_card(candidate, *, by=None):
+    """Resolve a catalog candidate to the stable PartType snapshot for an order."""
+    if candidate.part is not None:
+        return candidate.part
+    if candidate.catalog_origin == "BRP":
+        from apps.brp.services import promote_to_warehouse
+
+        return promote_to_warehouse(candidate.catalog_part, by=by)
+    if candidate.catalog_origin == "POLARIS":
+        from apps.polaris.services import promote_to_warehouse
+
+        return promote_to_warehouse(candidate.catalog_part, by=by)
+    raise OrderedPartError("Для этой позиции нет канонической карточки каталога.")
 
 
 def resolve_ordered_part_by_id(part_id):
@@ -140,6 +263,8 @@ def parse_prepayment(raw) -> Decimal:
 
 def _catalog_source(candidate) -> str:
     """Каким каталогом деталь доказана - для снимка в заказе."""
+    if isinstance(candidate, OrderedCatalogCandidate):
+        return candidate.catalog_origin.lower()
     part = candidate.part
     if getattr(part, "brp_link_id", None) or _has_relation(part, "brp_link"):
         return "brp"
@@ -170,13 +295,15 @@ def create_ordered_part(*, candidate, customer, prepayment, by=None) -> OrderedP
         raise OrderedPartError("Выберите клиента.")
     if candidate is None:
         raise OrderedPartError("Выберите деталь по артикулу.")
-    if is_aftermarket_part(candidate.part):
+    part = _ensure_ordered_part_card(candidate, by=by)
+    if is_aftermarket_part(part):
         raise OrderedPartError(ANALOG_REJECTED_MESSAGE)
+    part_name = getattr(candidate, "display_name", None) or candidate.part.name
     return OrderedPart.objects.create(
         customer=customer,
-        part_type=candidate.part,
+        part_type=part,
         article=candidate.exact_number or "",
-        part_name=candidate.part.name,
+        part_name=part_name,
         manufacturer_name=candidate.manufacturer or "",
         catalog_source=_catalog_source(candidate),
         prepayment_rub=parse_prepayment(prepayment),

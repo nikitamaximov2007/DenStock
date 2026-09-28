@@ -369,8 +369,8 @@ def repair_order_complete(request, pk):
         entries = missing_parts([line.part_type for line in lines])
         for entry in entries:
             part_pk = entry["part"].pk
-            entry["gross_weight_g"] = request.POST.get(f"gross_weight_g_{part_pk}", "")
-            entry["net_weight_g"] = request.POST.get(f"net_weight_g_{part_pk}", "")
+            entry["gross_weight_kg"] = request.POST.get(f"gross_weight_kg_{part_pk}", "")
+            entry["net_weight_kg"] = request.POST.get(f"net_weight_kg_{part_pk}", "")
             entry["application_area"] = request.POST.get(f"application_area_{part_pk}", "")
         return render(
             request, "actions/completion_customs_metadata.html",

@@ -64,6 +64,23 @@
               <input type="hidden" name="status" value="completed">
               <button class="btn btn--small btn--secondary" type="submit">Отметить выполненной</button>
             </form>
+            {% if request_sale and request_sale.status == "draft" %}
+              <details class="status-action">
+                <summary class="btn btn--small btn--secondary">Завершить без продажи</summary>
+                <form method="post"
+                      action="{% url 'customer_request_status' customer_request.pk %}{{ action_query }}"
+                      data-idempotent-form>
+                  {% csrf_token %}
+                  <input type="hidden" name="status" value="completed">
+                  <input type="hidden" name="without_sale" value="1">
+                  <label>
+                    Причина
+                    <textarea name="reason" required maxlength="500"></textarea>
+                  </label>
+                  <button class="btn btn--small btn--danger-outline" type="submit">Подтвердить завершение без продажи</button>
+                </form>
+              </details>
+            {% endif %}
           {% endif %}
           <form method="post"
                 action="{% url 'customer_request_status' customer_request.pk %}{{ action_query }}"
@@ -73,6 +90,21 @@
             <button class="btn btn--small btn--danger-outline" type="submit">Отменить заявку</button>
           </form>
         </div>
+      {% endif %}
+      {% if customer_request.status == "completed" %}
+        <details class="status-action">
+          <summary class="btn btn--small btn--secondary">Вернуть в работу</summary>
+          <form method="post"
+                action="{% url 'customer_request_reopen' customer_request.pk %}{{ action_query }}"
+                data-idempotent-form>
+            {% csrf_token %}
+            <label>
+              Причина
+              <textarea name="reason" required maxlength="500">Ошибочно завершена до проведения связанной продажи</textarea>
+            </label>
+            <button class="btn btn--small btn--primary" type="submit">Подтвердить возврат</button>
+          </form>
+        </details>
       {% endif %}
       {% if request_sale %}
         <p>

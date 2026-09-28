@@ -5,10 +5,9 @@ from .services import (
     QUICK_ACTION_APPLICATION_AREAS,
     get_or_create_customs,
     parse_application_area,
-    parse_weight_g,
+    parse_weight_kg,
     record_customs_data_version,
     validate_weight_pair,
-    weight_kg_as_grams,
 )
 
 
@@ -33,26 +32,26 @@ def missing_parts(parts):
             if not valid_pair:
                 if gross is None or net is None:
                     if gross is None:
-                        missing_fields.append("gross_weight_g")
+                        missing_fields.append("gross_weight_kg")
                     if net is None:
-                        missing_fields.append("net_weight_g")
+                        missing_fields.append("net_weight_kg")
                 else:
                     # An invalid pair needs both values visible so the operator
                     # can correct the authoritative weight relationship.
-                    missing_fields.extend(("gross_weight_g", "net_weight_g"))
+                    missing_fields.extend(("gross_weight_kg", "net_weight_kg"))
             if not _has_valid_application_area(area):
                 missing_fields.append("application_area")
             result.append({
                 "part": part,
                 "article": part_exact_number(part),
-                "gross_weight_g": weight_kg_as_grams(gross),
-                "net_weight_g": weight_kg_as_grams(net),
+                "gross_weight_kg": gross,
+                "net_weight_kg": net,
                 "application_area": area,
                 "missing_fields": missing_fields,
                 "missing_labels": [
                     {
-                        "gross_weight_g": "не заполнен вес брутто",
-                        "net_weight_g": "не заполнен вес нетто",
+                        "gross_weight_kg": "не заполнен вес брутто",
+                        "net_weight_kg": "не заполнен вес нетто",
                         "application_area": "не выбрана область применения",
                     }[field]
                     for field in missing_fields
@@ -72,9 +71,17 @@ def save_completion_metadata(post, parts, *, by):
         gross = customs.gross_weight_kg
         net = customs.net_weight_kg
         area = customs.application_area
-        if f"gross_weight_g_{pk}" in post:
+        if f"gross_weight_kg_{pk}" in post:
+            gross = parse_weight_kg(post.get(f"gross_weight_kg_{pk}"))
+        elif f"gross_weight_g_{pk}" in post:
+            # Accept one old rendered form during a rolling deploy, but never
+            # advertise or render grams to operators.
+            from .services import parse_weight_g
             gross = parse_weight_g(post.get(f"gross_weight_g_{pk}"))
-        if f"net_weight_g_{pk}" in post:
+        if f"net_weight_kg_{pk}" in post:
+            net = parse_weight_kg(post.get(f"net_weight_kg_{pk}"))
+        elif f"net_weight_g_{pk}" in post:
+            from .services import parse_weight_g
             net = parse_weight_g(post.get(f"net_weight_g_{pk}"))
         if f"application_area_{pk}" in post:
             area = parse_application_area(post.get(f"application_area_{pk}"))

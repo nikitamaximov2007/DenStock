@@ -271,9 +271,9 @@ def test_a_cancelled_request_still_renders_its_order_for_history(part, db):
     [
         (True, False, True, False, messaging.EVENT_DELIVER),
         (True, True, True, True, messaging.EVENT_DELIVER),
-        # The author of a reply is the only eligible employee: done, no rows.
-        (False, True, True, False, messaging.EVENT_COMPLETE),
-        (False, True, True, True, messaging.EVENT_COMPLETE),
+        # The shared event still waits when nobody is currently reachable.
+        (False, True, True, False, messaging.EVENT_WAIT),
+        (False, True, True, True, messaging.EVENT_EXPIRE),
         # Nobody can receive it yet: wait, then give up.
         (False, False, False, False, messaging.EVENT_WAIT),
         (False, True, False, False, messaging.EVENT_WAIT),
@@ -308,16 +308,15 @@ def _open_or_closed(status, *, withdrawn=False, anonymized=False, reference="95C
 
 @pytest.mark.parametrize(
     "status, expected",
-    [("new", True), ("in_progress", True), ("completed", False), ("canceled", False)],
+    [("new", True), ("in_progress", True), ("completed", True), ("canceled", False)],
 )
-def test_only_new_and_in_progress_requests_take_customer_messages(status, expected):
+def test_only_non_canceled_requests_take_customer_messages(status, expected):
     assert messaging.customer_can_message(_open_or_closed(status)) is expected
 
 
 def test_every_status_is_classified_so_a_new_one_cannot_slip_in_as_messageable():
-    assert messaging.MESSAGEABLE_STATUSES == {"new", "in_progress"}
+    assert messaging.MESSAGEABLE_STATUSES == {"new", "in_progress", "completed"}
     assert set(CustomerRequest.Status.values) - messaging.MESSAGEABLE_STATUSES == {
-        "completed",
         "canceled",
     }
 
@@ -339,24 +338,24 @@ def test_a_closed_current_request_is_reported_and_never_replaced():
     assert routing.open == [open_one]
 
 
-def test_closed_requests_are_left_out_of_routing():
+def test_completed_requests_remain_in_routing():
     first = SimpleNamespace(pk=1, request=_open_or_closed("new"))
     done = SimpleNamespace(pk=2, request=_open_or_closed("completed"))
     third = SimpleNamespace(pk=3, request=_open_or_closed("in_progress"))
 
-    with_one_open = messaging.route_open_request([first, done], active_id=None)
-    assert with_one_open.conversation is first
-    assert with_one_open.closed is None
+    with_one_completed = messaging.route_open_request([first, done], active_id=None)
+    assert with_one_completed.ambiguous is True
+    assert with_one_completed.open == [first, done]
 
     with_two_open = messaging.route_open_request([first, done, third], active_id=None)
     assert with_two_open.ambiguous is True
-    assert with_two_open.open == [first, third]
+    assert with_two_open.open == [first, done, third]
 
 
 def test_the_closed_request_text_offers_a_choice_only_when_one_exists():
     assert messaging.closed_request_text("95CE168E", other_open=True) == (
-        "Заявка №95CE168E уже закрыта.\nВыберите другую активную заявку."
+        "Заявка №95CE168E отменена.\nВыберите другую активную заявку."
     )
     alone = messaging.closed_request_text("95CE168E", other_open=False)
-    assert alone.startswith("Заявка №95CE168E уже закрыта.")
+    assert alone.startswith("Заявка №95CE168E отменена.")
     assert "Выберите другую" not in alone

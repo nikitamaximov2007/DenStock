@@ -17,6 +17,7 @@ from apps.customer_requests.sale_conversion import (
     prepare_request_sale,
 )
 from apps.customer_requests.services import (
+    CustomerRequestError,
     RequestLineInput,
     change_request_status,
     create_customer_request,
@@ -290,9 +291,66 @@ def test_final_sale_rechecks_current_price_and_is_idempotent(sale_scene):
     assert SaleLine.objects.get(sale=sale).unit_price == Decimal("1200")
     assert StockMovement.objects.filter(document_type="sale").count() == before_movements + 1
     request.refresh_from_db()
-    assert request.status == CustomerRequest.Status.COMPLETED
+    assert request.status == CustomerRequest.Status.IN_PROGRESS
     assert request.customer_id == customer.pk
     assert CustomerRequest.objects.filter(sale_id=sale.pk).count() == 1
+
+
+def test_draft_linked_sale_blocks_generic_completion_and_reopen_is_audited(sale_scene):
+    Customer.objects.create(name="Покупатель", phone="+79090000001")
+    request = take(make_request(sale_scene["part"], key="completion-guard"), sale_scene["admin"])
+    sale = prepare_request_sale(request_id=request.pk, by=sale_scene["admin"])
+
+    with pytest.raises(CustomerRequestError, match="непроведённая продажа"):
+        change_request_status(
+            request_id=request.pk,
+            target_status=CustomerRequest.Status.COMPLETED,
+            by=sale_scene["admin"],
+        )
+
+    change_request_status(
+        request_id=request.pk,
+        target_status=CustomerRequest.Status.COMPLETED,
+        by=sale_scene["admin"],
+        allow_without_sale=True,
+        reason="Клиент отказался от покупки без проведения продажи.",
+    )
+    request.refresh_from_db()
+    assert request.status == CustomerRequest.Status.COMPLETED
+    assert sale.status == Sale.Status.DRAFT
+
+    from apps.customer_requests.services import reopen_customer_request
+
+    reopen_customer_request(
+        request_id=request.pk,
+        by=sale_scene["admin"],
+        reason="Ошибочно завершена до проведения связанной продажи.",
+    )
+    request.refresh_from_db()
+    assert request.status == CustomerRequest.Status.IN_PROGRESS
+    assert request.sale_id == sale.pk
+    event = request.status_events.filter(to_status=CustomerRequest.Status.IN_PROGRESS).first()
+    assert event.reason == "Ошибочно завершена до проведения связанной продажи."
+
+
+def test_linked_sale_can_be_finalized_after_accidental_request_completion(sale_scene):
+    Customer.objects.create(name="Покупатель", phone="+79090000001")
+    request = take(make_request(sale_scene["part"], key="completed-draft"), sale_scene["admin"])
+    sale = prepare_request_sale(request_id=request.pk, by=sale_scene["admin"])
+    change_request_status(
+        request_id=request.pk,
+        target_status=CustomerRequest.Status.COMPLETED,
+        by=sale_scene["admin"],
+        allow_without_sale=True,
+        reason="Ошибочное завершение для регрессионного сценария.",
+    )
+
+    completed = complete_request_sale(
+        request_id=request.pk, sale_id=sale.pk, by=sale_scene["admin"]
+    )
+    request.refresh_from_db()
+    assert completed.status == Sale.Status.COMPLETED
+    assert request.status == CustomerRequest.Status.COMPLETED
 
 
 def test_failed_final_sale_rolls_back_stock_and_request(sale_scene):
@@ -396,8 +454,8 @@ def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client,
     form_page = client.get(completion_url)
     form_html = form_page.content.decode()
     assert form_page.status_code == 200
-    assert "Вес брутто, г" in form_html
-    assert "Вес нетто, г" in form_html
+    assert "Вес брутто, кг" in form_html
+    assert "Вес нетто, кг" in form_html
     assert "Область применения" in form_html
     assert "Русское название" not in form_html
     assert "Сохранить данные" in form_html
@@ -407,8 +465,8 @@ def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client,
         {
             "metadata_submit": "1",
             "part_id": str(part.pk),
-            f"gross_weight_g_{part.pk}": "180",
-            f"net_weight_g_{part.pk}": "120",
+            f"gross_weight_kg_{part.pk}": "0.18",
+            f"net_weight_kg_{part.pk}": "0.12",
             f"application_area_{part.pk}": "СНЕГОХОД",
         },
         follow=True,
@@ -452,7 +510,7 @@ def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client,
     sale.refresh_from_db()
     request.refresh_from_db()
     assert sale.status == Sale.Status.COMPLETED
-    assert request.status == CustomerRequest.Status.COMPLETED
+    assert request.status == CustomerRequest.Status.IN_PROGRESS
     assert StockMovement.objects.filter(document_type="sale").count() == before_movements + 1
 
 
@@ -515,8 +573,8 @@ def test_request_sale_customs_completion_handles_multiple_lines_and_permissions(
         {
             "metadata_submit": "1",
             "part_id": str(second.pk),
-            f"gross_weight_g_{second.pk}": "90",
-            f"net_weight_g_{second.pk}": "60",
+            f"gross_weight_kg_{second.pk}": "0.09",
+            f"net_weight_kg_{second.pk}": "0.06",
             f"application_area_{second.pk}": "КАТЕР",
         },
     )

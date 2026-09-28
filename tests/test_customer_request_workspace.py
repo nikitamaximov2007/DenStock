@@ -608,7 +608,7 @@ def test_status_actions_keep_the_stage_0_rule_for_the_customer(part, seller, sta
     result = telegram_service.record_customer_message(
         chat_id=CUSTOMER_CHAT, update_id=next(_updates), text="ещё вопрос"
     )
-    assert f"Заявка №{request.reference} уже закрыта." in result.reply
+    assert f"Заявка №{request.reference} отменена." in result.reply
     assert TelegramMessage.objects.filter(text="ещё вопрос").count() == 0
     assert TelegramMessage.objects.filter(text="первый вопрос").count() == 1
 

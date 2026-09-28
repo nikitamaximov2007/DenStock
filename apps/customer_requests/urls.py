@@ -13,6 +13,7 @@ urlpatterns = [
         name="customer_request_customs",
     ),
     path("<int:pk>/status/", views.customer_request_status, name="customer_request_status"),
+    path("<int:pk>/reopen/", views.customer_request_reopen, name="customer_request_reopen"),
     path("<int:pk>/delete/", views.customer_request_delete, name="customer_request_delete"),
     path("delete-canceled/", views.customer_request_delete_all, name="customer_request_delete_all"),
     path(
