@@ -737,7 +737,9 @@ def test_the_history_does_not_grow_queries_with_rows(client, data, admin):
     with CaptureQueriesContext(connection) as many:
         response = _history(client, busy)
 
-    assert len(response.context["page_obj"].object_list) >= 30
+    visible = response.context["page_obj"].object_list
+    assert len(visible) == 3
+    assert sorted(row["source_count"] for row in visible) == [12, 12, 12]
     assert len(many) <= len(few) + 2, (
         f"запросы растут вместе со строками: {len(few)} против {len(many)}"
     )

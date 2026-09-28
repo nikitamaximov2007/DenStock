@@ -127,16 +127,43 @@
             </td>
             <td>{{ row.kind_label }}</td>
             <td class="table__actions">
-              {% if row.reversible_quantity > 0 %}
-                {% if row.kind == "sale" and can_cancel_sale_lines %}
-                  <a class="btn btn--small btn--danger"
-                     href="{% url 'sale_line_cancel' row.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
-                {% elif row.kind == "repair" and can_cancel_repair_lines %}
-                  <a class="btn btn--small btn--danger"
-                     href="{% url 'repair_line_cancel' row.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+              {% if row.source_count == 1 %}
+                {% if row.reversible_quantity > 0 %}
+                  {% if row.kind == "sale" and can_cancel_sale_lines %}
+                    <a class="btn btn--small btn--danger"
+                       href="{% url 'sale_line_cancel' row.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                  {% elif row.kind == "repair" and can_cancel_repair_lines %}
+                    <a class="btn btn--small btn--danger"
+                       href="{% url 'repair_line_cancel' row.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                  {% endif %}
+                {% else %}
+                  <span class="pill pill--muted">Отменено</span>
                 {% endif %}
               {% else %}
-                <span class="pill pill--muted">Отменено</span>
+                <details>
+                  <summary class="link-muted">Операции: {{ row.source_count }}</summary>
+                  <div class="stacked-list">
+                    {% for source in row.source_rows %}
+                      <div>
+                        <span>{{ source.at|ru_dt }}</span>
+                        {% if row.kind == "sale" %}
+                          <a href="{% url 'sale_detail' source.operation_id %}">Операция</a>
+                        {% else %}
+                          <a href="{% url 'repair_order_detail' source.operation_id %}">Операция</a>
+                        {% endif %}
+                        {% if source.reversible_quantity > 0 %}
+                          {% if row.kind == "sale" and can_cancel_sale_lines %}
+                            <a href="{% url 'sale_line_cancel' source.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                          {% elif row.kind == "repair" and can_cancel_repair_lines %}
+                            <a href="{% url 'repair_line_cancel' source.line_id %}?next={{ request.get_full_path|urlencode }}">Отменить</a>
+                          {% endif %}
+                        {% else %}
+                          <span class="muted">Отменено</span>
+                        {% endif %}
+                      </div>
+                    {% endfor %}
+                  </div>
+                </details>
               {% endif %}
             </td>
           </tr>

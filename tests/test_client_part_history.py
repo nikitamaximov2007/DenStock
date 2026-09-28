@@ -10,6 +10,7 @@
 остались в самих документах и в складской истории.
 """
 import re
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -112,11 +113,15 @@ def _sale(data, *, customer=None, name="", items=(("bolt", 1),), price=UNIT_PRIC
     return complete_sale(sale, by=data["admin"])
 
 
-def _repair(data, *, customer=None, name="", items=(("belt", 1),)):
+def _repair(data, *, customer=None, name="", items=(("belt", 1),), price=None):
     order = create_repair_order(customer=customer, customer_name=name, by=data["admin"])
     for key, qty in items:
         add_stock_lot_to_repair_order(
-            order, data["lots"][key], Decimal(str(qty)), by=data["admin"]
+            order,
+            data["lots"][key],
+            Decimal(str(qty)),
+            customer_unit_price_rub=price,
+            by=data["admin"],
         )
     return complete_repair_order(order, by=data["admin"])
 
@@ -182,6 +187,177 @@ def test_client_history_uses_net_repair_quantity_after_return(data):
     assert rows[0]["quantity"] == Decimal("2")
     assert rows[0]["amount"] == Decimal("1000.00")
     assert rows[0]["cost"] == Decimal("200.00")
+
+
+def _history_rows(customer):
+    return get_client_part_history(resolve_period({"preset": "all"}), customer_id=customer.pk)
+
+
+def test_same_article_date_type_and_price_is_one_history_row(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    first = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    second = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "sale"
+    assert rows[0]["quantity"] == Decimal("2")
+    assert rows[0]["unit_price"] == Decimal("1389")
+    assert rows[0]["amount"] == Decimal("2778")
+    assert rows[0]["source_count"] == 2
+    assert {source["line_id"] for source in rows[0]["source_rows"]} == {
+        first.lines.get().pk, second.lines.get().pk
+    }
+
+
+def test_same_repair_article_date_type_and_price_is_one_history_row(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    first = _repair(
+        data, customer=customer, items=(("bolt", 1),), price=Decimal("1389")
+    )
+    second = _repair(
+        data, customer=customer, items=(("bolt", 1),), price=Decimal("1389")
+    )
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "repair"
+    assert rows[0]["quantity"] == Decimal("2")
+    assert rows[0]["unit_price"] == Decimal("1389")
+    assert rows[0]["amount"] == Decimal("2778")
+    assert {source["line_id"] for source in rows[0]["source_rows"]} == {
+        first.lines.get().pk, second.lines.get().pk
+    }
+
+
+def test_three_same_article_operations_sum_their_quantities(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    for quantity in (1, 2, 3):
+        _sale(data, customer=customer, items=(("bolt", quantity),), price=Decimal("1389"))
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 1
+    assert rows[0]["quantity"] == Decimal("6")
+    assert rows[0]["amount"] == Decimal("8334")
+    assert rows[0]["source_count"] == 3
+
+
+def test_same_date_different_articles_stay_separate(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    _sale(data, customer=customer, items=(("belt", 1),), price=Decimal("1389"))
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 2
+    assert {row["part_type_id"] for row in rows} == {
+        data["parts"]["bolt"].pk, data["parts"]["belt"].pk
+    }
+
+
+def test_same_article_on_different_dates_stays_separate(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    first = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    second = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    Sale.objects.filter(pk=first.pk).update(sold_at=timezone.now() - timezone.timedelta(days=1))
+    Sale.objects.filter(pk=second.pk).update(sold_at=timezone.now())
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 2
+    assert rows[0]["quantity"] == rows[1]["quantity"] == Decimal("1")
+
+
+def test_grouping_uses_the_displayed_perm_calendar_date(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    first = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    second = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    Sale.objects.filter(pk=first.pk).update(
+        sold_at=datetime(2026, 9, 27, 19, 30, tzinfo=UTC)
+    )
+    Sale.objects.filter(pk=second.pk).update(
+        sold_at=datetime(2026, 9, 27, 20, 30, tzinfo=UTC)
+    )
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 1
+    assert rows[0]["quantity"] == Decimal("2")
+
+
+def test_same_article_date_different_operation_types_stay_separate(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    _repair(data, customer=customer, items=(("bolt", 1),))
+
+    rows = _history_rows(customer)
+
+    assert {row["kind"] for row in rows} == {"sale", "repair"}
+    assert len(rows) == 2
+
+
+def test_same_article_date_different_historical_prices_stay_separate(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1000"))
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1500"))
+
+    rows = _history_rows(customer)
+
+    assert len(rows) == 2
+    assert {row["unit_price"] for row in rows} == {Decimal("1000"), Decimal("1500")}
+    assert sum(row["amount"] for row in rows) == Decimal("2500")
+
+
+def test_grouped_history_totals_equal_source_line_totals(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    _repair(data, customer=customer, items=(("belt", 1),))
+
+    rows = _history_rows(customer)
+    source_rows = [source for row in rows for source in row["source_rows"]]
+
+    assert sum(row["amount"] or Decimal("0") for row in rows) == sum(
+        row["amount"] or Decimal("0") for row in source_rows
+    )
+    assert sum(row["quantity"] for row in rows) == sum(row["quantity"] for row in source_rows)
+
+
+def test_grouped_history_keeps_individual_cancellation_links(client, data, admin):
+    _login(client, admin)
+    customer = Customer.objects.create(name="Иванов")
+    first = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    second = _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+
+    body = client.get(
+        reverse("reports_client_timeline"), {"customer_id": customer.pk, "preset": "all"}
+    ).content.decode()
+
+    assert body.count(reverse("sale_line_cancel", args=[first.lines.get().pk])) == 1
+    assert body.count(reverse("sale_line_cancel", args=[second.lines.get().pk])) == 1
+    assert "Операции: 2" in body
+    printed = client.get(
+        reverse("reports_client_timeline_print"),
+        {"customer_id": customer.pk, "preset": "all"},
+    ).content.decode()
+    assert "2 778" in printed
+
+
+def test_history_group_uses_frozen_price_after_catalog_change(data, admin):
+    customer = Customer.objects.create(name="Иванов")
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    _sale(data, customer=customer, items=(("bolt", 1),), price=Decimal("1389"))
+    part = data["parts"]["bolt"]
+    part.recommended_price = Decimal("9999")
+    part.save(update_fields=["recommended_price"])
+
+    row = _history_rows(customer)[0]
+
+    assert row["unit_price"] == Decimal("1389")
+    assert row["amount"] == Decimal("2778")
 
 
 # --- B: дата слева ------------------------------------------------------------------------

@@ -304,7 +304,8 @@ def test_two_repairs_are_not_counted_twice(data):
         row for row in get_client_part_history(resolve_period({}), customer_id=customer.pk)
         if row["kind"] == "repair"
     ]
-    assert len(rows) == 2
+    assert len(rows) == 1
+    assert rows[0]["source_count"] == 2
     total = sum(row["cost"] for row in rows)
     expected = first.lines.get().total_cost_rub + second.lines.get().total_cost_rub
     assert total == expected
@@ -354,11 +355,11 @@ def test_a_new_delivery_does_not_move_a_past_sale(data, admin):
 
 
 def test_two_lots_of_one_part_keep_their_own_costs(data, admin):
-    """Строка выдачи всегда относится к одному лоту, а не к нескольким сразу.
+    """Агрегат сохраняет сумму себестоимости разных исходных лотов.
 
-    Поэтому себестоимость единицы - настоящая историческая величина, а итог
-    строки получается умножением, а не усреднением. Если бы строка собирала
-    несколько лотов, показывать «цену за штуку» было бы нельзя.
+    Исходные строки по-прежнему относятся к своим лотам. На клиентской истории
+    они могут быть одной видимой строкой, потому что себестоимость там не
+    показывается как цена за единицу.
     """
     customer = Customer.objects.create(name="Иванов")
     part = data["parts"]["belt"]
@@ -374,7 +375,9 @@ def test_two_lots_of_one_part_keep_their_own_costs(data, admin):
     assert costs[0] != costs[1], "проверка бессмысленна: себестоимости совпали"
 
     rows = get_client_part_history(resolve_period({}), customer_id=customer.pk)
-    assert sorted(row["cost"] for row in rows) == costs
+    assert len(rows) == 1
+    assert rows[0]["source_count"] == 2
+    assert rows[0]["cost"] == sum(costs)
 
 
 def test_every_line_total_is_exactly_its_unit_cost_times_quantity(data):

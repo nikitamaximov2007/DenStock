@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from apps.actions.models import PartCustomsInfo
 from apps.actions.services import auto_customs_name_ru
+from apps.core.time import PERM_TIMEZONE
 from apps.inventory.models import StockBalance, StockMovement
 from apps.inventory.presentation import identity_for_part_ids
 from apps.procurement.models import money
@@ -842,11 +843,92 @@ def _client_filter(customer_name: str, missing: bool) -> str:
     return "" if missing else (customer_name or "").strip()
 
 
+def _report_calendar_date(value):
+    """Return the calendar date shown by the report for an operation instant."""
+    if value is None:
+        return None
+    if timezone.is_aware(value):
+        value = timezone.localtime(value, PERM_TIMEZONE)
+    return value.date()
+
+
+def _history_price_key(row):
+    """Keep unknown/current-fallback prices separate from frozen prices."""
+    return (
+        row["price_source"],
+        row["unit_price"],
+        row["amount"] is None,
+    )
+
+
+def _aggregate_client_history_rows(rows: list[dict]) -> list[dict]:
+    """Aggregate visible history rows without merging their source records.
+
+    The grouping date is the same local date rendered by ``ru_date``. Price
+    identity is part of the key so two historical prices can never be shown as
+    one false unit price. Every source row remains available under
+    ``source_rows`` for cancellation and audit.
+    """
+    grouped: dict[tuple, dict] = {}
+    for row in rows:
+        key = (
+            _report_calendar_date(row["at"]),
+            row["part_type_id"],
+            row["kind"],
+            _history_price_key(row),
+        )
+        source = dict(row)
+        group = grouped.get(key)
+        if group is None:
+            group = {
+                **source,
+                "source_rows": [source],
+                "source_line_ids": [source["line_id"]],
+                "source_count": 1,
+            }
+            grouped[key] = group
+            continue
+
+        group["source_rows"].append(source)
+        group["source_line_ids"].append(source["line_id"])
+        group["source_count"] += 1
+        group["at"] = max(group["at"], source["at"])
+        for quantity_field in (
+            "quantity",
+            "issued_quantity",
+            "reversed_quantity",
+            "reversible_quantity",
+            "cost",
+        ):
+            if group[quantity_field] is not None and source[quantity_field] is not None:
+                group[quantity_field] += source[quantity_field]
+            else:
+                group[quantity_field] = None
+        if group["amount"] is not None and source["amount"] is not None:
+            group["amount"] += source["amount"]
+        else:
+            group["amount"] = None
+        # A source line id is intentionally ambiguous once rows are grouped.
+        group["line_id"] = None
+
+    result = list(grouped.values())
+    result.sort(
+        key=lambda row: (
+            row["at"] is not None,
+            row["at"],
+            row["part_name"],
+            row["kind"],
+        ),
+        reverse=True,
+    )
+    return result
+
+
 def get_client_part_history(
     period: Period, *, customer_name: str = "", missing: bool = False, customer_id=None,
     include_fully_reversed: bool = False,
 ) -> list[dict]:
-    """Плоская история клиента: строка на каждую деталь, продажи и ремонты вместе.
+    """История клиента с безопасной агрегацией одинаковых видимых операций.
 
     Отвечает на вопрос «что мы давали этому клиенту и когда». Документ здесь не
     показывается: он лишний уровень между вопросом и ответом.
@@ -856,7 +938,9 @@ def get_client_part_history(
     снимок остаётся, а отменённое считается по каноническим возвратам, поэтому
     историю по-прежнему можно доказать: выдано столько, отменено столько.
 
-    Отменённая ЦЕЛИКОМ строка из обычной истории уходит. Ноль в колонке
+    Одинаковые детали объединяются только в представлении по календарной дате
+    PRO-STORE, PartType, типу операции и исторической цене. Отменённая
+    ЦЕЛИКОМ строка из обычной истории уходит. Ноль в колонке
     «Кол-во» отвечал бы на вопрос «что мы давали клиенту» словом «ничего», и
     строка, которой у клиента нет, занимала бы место наравне с настоящими.
     Удалением это не является: SaleLine, документ и возвраты остаются на
@@ -894,6 +978,8 @@ def get_client_part_history(
             # Точная строка документа: отмена из истории обязана знать, что
             # именно отменяет, а не искать источник по артикулу и дате.
             "line_id": line.pk,
+            "operation_id": line.sale_id,
+            "operation_number": line.sale.number,
             "at": line.sale.sold_at,
             "part_type_id": line.part_type_id,
             "part_name": line.part_type.name,
@@ -918,6 +1004,8 @@ def get_client_part_history(
                 "kind": "repair",
                 "kind_label": "Ремонт",
                 "line_id": line.pk,
+                "operation_id": line.repair_order_id,
+                "operation_number": line.repair_order.number,
                 "at": line.repair_order.completed_at,
                 "part_type_id": line.part_type_id,
                 "part_name": line.part_type.name,
@@ -950,10 +1038,9 @@ def get_client_part_history(
         saved = (russian_names.get(row["part_type_id"]) or "").strip()
         row["russian_name"] = saved or auto_customs_name_ru(row["part_name"])
 
-    # Новые сверху. Вторичный ключ по названию делает порядок устойчивым, когда
-    # несколько строк проведены одним документом в одну и ту же секунду.
-    rows.sort(key=lambda row: (row["at"], row["part_name"]), reverse=True)
-    return rows
+    # Агрегация выполняется после возвратов и исторических цен: видимые суммы
+    # и количества остаются действующими, а исходные строки не переписываются.
+    return _aggregate_client_history_rows(rows)
 
 
 def get_client_timeline(
