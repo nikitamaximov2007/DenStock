@@ -582,6 +582,7 @@ def test_scan_template_has_field_autosave_and_no_generic_quantity_save(client, m
     assert ">Сохранить</button>" not in html
     assert 'name="unit_price"' not in html
     assert 'aria-label="Цена"' not in html
+    assert "cartAutosaveQueue = cartAutosaveQueue.then" in html
 
 
 def test_zero_quantity_autosave_keeps_row_and_requests_remove_action(client, make_user, env):

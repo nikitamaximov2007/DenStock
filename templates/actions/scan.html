@@ -437,8 +437,8 @@
       });
     });
 
+    let cartAutosaveQueue = Promise.resolve();
     document.querySelectorAll('[data-cart-row]').forEach((row) => {
-      let saveQueue = Promise.resolve();
       const status = row.querySelector('[data-cart-autosave-status]');
 
       const saveField = (input) => {
@@ -455,7 +455,7 @@
         const form = row.querySelector('.cart-quantity-form');
         const csrf = form.querySelector('[name=csrfmiddlewaretoken]').value;
         status.textContent = 'Сохраняем…';
-        saveQueue = saveQueue.then(async () => {
+        cartAutosaveQueue = cartAutosaveQueue.then(async () => {
           const response = await fetch(row.dataset.cartUpdateUrl, {
             method: 'POST',
             headers: {
