@@ -15,7 +15,13 @@ from django.db.models import F
 from django.utils import timezone
 
 from apps.catalog.models import PartType, PartTypeImage
-from apps.catalog.photo_pipeline import PartPhotoAlreadyExists, upload_primary_part_photo
+from apps.catalog.photo_pipeline import (
+    PartPhotoAlreadyExists,
+    PartPhotoTargetNotFound,
+    replace_part_photo,
+    upload_additional_part_photo,
+    upload_primary_part_photo,
+)
 from apps.catalog.public_photos import PublicPhotoError
 from apps.core.files import validate_image_upload
 from apps.core.time import format_perm_datetime
@@ -508,6 +514,163 @@ def clear_photo_context(*, binding) -> None:
     OwnerPhotoUploadContext.objects.filter(binding=binding).delete()
 
 
+def _active_photo_images(context):
+    return list(
+        PartTypeImage.objects.filter(part_id=context.part_type_id, is_active=True)
+        .order_by("sort_order", "uploaded_at", "pk")
+    )
+
+
+def _photo_actions_markup(binding):
+    return {"inline_keyboard": [
+        [{"text": "Добавить ещё фото", "callback_data": _callback(binding, "pa")}],
+        [{"text": "Заменить фото", "callback_data": _callback(binding, "pr")}],
+        [{"text": "Готово", "callback_data": _callback(binding, "pd")}],
+    ]}
+
+
+def _photo_upload_markup(binding):
+    return {"inline_keyboard": [
+        [{"text": "Отмена", "callback_data": _callback(binding, "x")}],
+    ]}
+
+
+def _photo_target_token(binding, image) -> str:
+    """Return an opaque callback token for one still-active photo target."""
+    return _hash(f"photo-target:{binding.pk}:{image.part_id}:{image.pk}")[:16]
+
+
+def _photo_operation_ref(context) -> str:
+    return f"{context.operation_type}:{context.operation_id}"
+
+
+def _photo_done(*, binding):
+    context = _photo_context(binding)
+    if context is None:
+        return "Сеанс работы с фото уже завершён.", _top_level_markup(binding)
+    operation_ref = _photo_operation_ref(context)
+    clear_photo_context(binding=binding)
+    return "Сеанс работы с фото завершён.", _photo_operation_markup(binding, operation_ref)
+
+
+@transaction.atomic
+def _photo_add_start(*, binding):
+    context = (
+        OwnerPhotoUploadContext.objects.select_for_update()
+        .select_related("part_type")
+        .filter(binding=binding)
+        .first()
+    )
+    if context is None or context.expires_at <= timezone.now():
+        if context is not None:
+            context.delete()
+        return "Сначала выберите деталь в разделе загрузки фото.", _top_level_markup(binding)
+    context.mode = OwnerPhotoUploadContext.Mode.UPLOAD
+    context.target_image = None
+    context.expires_at = timezone.now() + _photo_context_ttl()
+    context.save(update_fields=["mode", "target_image", "expires_at", "updated_at"])
+    return "Пришлите ещё одно фото детали.", _photo_upload_markup(binding)
+
+
+@transaction.atomic
+def _photo_replace_start(*, binding):
+    context = (
+        OwnerPhotoUploadContext.objects.select_for_update()
+        .select_related("part_type")
+        .filter(binding=binding)
+        .first()
+    )
+    if context is None or context.expires_at <= timezone.now():
+        if context is not None:
+            context.delete()
+        return "Сначала выберите деталь в разделе загрузки фото.", _top_level_markup(binding)
+    images = _active_photo_images(context)
+    if not images:
+        context.mode = OwnerPhotoUploadContext.Mode.UPLOAD
+        context.target_image = None
+        context.save(update_fields=["mode", "target_image", "updated_at"])
+        return "У детали ещё нет фото. Пришлите первое фото.", _photo_upload_markup(binding)
+    if len(images) == 1:
+        context.mode = OwnerPhotoUploadContext.Mode.REPLACE_CONFIRM
+        context.target_image = images[0]
+        context.save(update_fields=["mode", "target_image", "updated_at"])
+        return "Заменить текущее фото?", {"inline_keyboard": [[
+            {"text": "Заменить", "callback_data": _callback(binding, "pc")},
+            {"text": "Отмена", "callback_data": _callback(binding, "x")},
+        ]]}
+    context.mode = OwnerPhotoUploadContext.Mode.REPLACE_SELECT
+    context.target_image = None
+    context.save(update_fields=["mode", "target_image", "updated_at"])
+    rows = []
+    for position, image in enumerate(images, start=1):
+        label = f"Фото {position}"
+        if image.is_primary:
+            label += " (главное)"
+        rows.append([{
+            "text": label,
+            "callback_data": _callback(binding, "ps", _photo_target_token(binding, image)),
+        }])
+    rows.append([{"text": "Отмена", "callback_data": _callback(binding, "x")}])
+    return "Выберите фото, которое хотите заменить.", {"inline_keyboard": rows}
+
+
+@transaction.atomic
+def _photo_replace_confirm(*, binding):
+    context = (
+        OwnerPhotoUploadContext.objects.select_for_update()
+        .select_related("part_type")
+        .filter(binding=binding)
+        .first()
+    )
+    if context is None or context.mode != OwnerPhotoUploadContext.Mode.REPLACE_CONFIRM:
+        return "Сеанс выбора фото устарел. Откройте замену ещё раз.", _top_level_markup(binding)
+    images = _active_photo_images(context)
+    if len(images) != 1 or context.target_image_id != images[0].pk:
+        context.target_image = None
+        context.mode = OwnerPhotoUploadContext.Mode.MANAGE
+        context.save(update_fields=["target_image", "mode", "updated_at"])
+        return "Список фото изменился. Откройте замену ещё раз.", _photo_actions_markup(binding)
+    context.mode = OwnerPhotoUploadContext.Mode.REPLACE_UPLOAD
+    context.expires_at = timezone.now() + _photo_context_ttl()
+    context.save(update_fields=["mode", "expires_at", "updated_at"])
+    return "Пришлите новое фото.", _photo_upload_markup(binding)
+
+
+@transaction.atomic
+def _photo_replace_select(*, binding, target_token: str):
+    context = (
+        OwnerPhotoUploadContext.objects.select_for_update()
+        .select_related("part_type")
+        .filter(binding=binding)
+        .first()
+    )
+    if context is None or context.mode != OwnerPhotoUploadContext.Mode.REPLACE_SELECT:
+        return "Сеанс выбора фото устарел. Откройте замену ещё раз.", _top_level_markup(binding)
+    images = _active_photo_images(context)
+    targets = [
+        image for image in images if _photo_target_token(binding, image) == target_token
+    ]
+    if len(targets) != 1:
+        context.target_image = None
+        context.mode = OwnerPhotoUploadContext.Mode.MANAGE
+        context.save(update_fields=["target_image", "mode", "updated_at"])
+        return (
+            "Выбранное фото больше недоступно. Откройте замену ещё раз.",
+            _photo_actions_markup(binding),
+        )
+    context.target_image = targets[0]
+    context.mode = OwnerPhotoUploadContext.Mode.REPLACE_UPLOAD
+    context.expires_at = timezone.now() + _photo_context_ttl()
+    context.save(update_fields=["target_image", "mode", "expires_at", "updated_at"])
+    return "Пришлите новое фото.", _photo_upload_markup(binding)
+
+
+def _photo_manage_response(context, binding, *, prefix: str = ""):
+    count = PartTypeImage.objects.filter(part_id=context.part_type_id, is_active=True).count()
+    text = f"{prefix}\n\nУ детали фото: {count}." if prefix else f"У детали фото: {count}."
+    return text, _photo_actions_markup(binding)
+
+
 @transaction.atomic
 def _photo_selection(*, binding, kind: str, operation_id: int, part_id: int):
     binding = StaffMessengerBinding.objects.select_for_update().get(pk=binding.pk)
@@ -517,11 +680,7 @@ def _photo_selection(*, binding, kind: str, operation_id: int, part_id: int):
         return "Позиция операции не найдена.", photo_operation_page(binding=binding)[1]
     part = PartType.objects.get(pk=part_id)
     article = part_exact_number(part, default="Артикул не указан")
-    if PartTypeImage.objects.filter(part_id=part_id, is_active=True).exists():
-        return (
-            f"Фото уже загружено.\n\nАртикул: {article}\n{part.name}",
-            _photo_operation_markup(binding, f"{kind}:{operation_id}"),
-        )
+    has_images = PartTypeImage.objects.filter(part_id=part_id, is_active=True).exists()
     OwnerPhotoUploadContext.objects.update_or_create(
         binding=binding,
         defaults={
@@ -531,16 +690,25 @@ def _photo_selection(*, binding, kind: str, operation_id: int, part_id: int):
             "article_snapshot": article,
             "part_name_snapshot": part.name,
             "expires_at": timezone.now() + _photo_context_ttl(),
+            "mode": (
+                OwnerPhotoUploadContext.Mode.MANAGE
+                if has_images else OwnerPhotoUploadContext.Mode.UPLOAD
+            ),
+            "target_image": None,
         },
     )
+    if has_images:
+        context = OwnerPhotoUploadContext.objects.get(binding=binding)
+        return _photo_manage_response(
+            context,
+            binding,
+            prefix=f"Артикул: {article}\n{part.name}",
+        )
     return (
         f"Фото отсутствует.\n\nОтправьте фотографию детали.\n"
         f"Она автоматически загрузится для артикула {article}\n"
         "в систему склада и каталог PRO-STOR.",
-        {"inline_keyboard": [
-            [{"text": "Отмена", "callback_data": _callback(binding, "x")}],
-            [{"text": "Назад", "callback_data": _callback(binding, "o", f"{kind}-{operation_id}")}],
-        ]},
+        _photo_upload_markup(binding),
     )
 
 
@@ -548,7 +716,9 @@ def _photo_upload_file(attachment):
     if isinstance(attachment, ValidatedAttachment):
         if not attachment.content_type.startswith("image/"):
             raise AttachmentError("Для этого действия отправьте изображение, а не PDF.")
-        return ContentFile(attachment.content, name=attachment.filename)
+        upload = ContentFile(attachment.content, name=attachment.filename)
+        validate_image_upload(upload)
+        return upload
     if attachment is None:
         raise AttachmentError("Фото не выбрано.")
     validate_image_upload(attachment)
@@ -563,7 +733,11 @@ def _consume_photo_upload(*, binding, external_id: str, attachment):
         binding=binding, external_id=str(external_id)
     ).first()
     if existing is not None:
-        return existing.response_text, _top_level_markup(binding)
+        context = _photo_context(binding)
+        return (
+            existing.response_text,
+            _photo_actions_markup(binding) if context is not None else _top_level_markup(binding),
+        )
     context = OwnerPhotoUploadContext.objects.select_for_update().select_related(
         "part_type"
     ).filter(binding=binding).first()
@@ -571,42 +745,70 @@ def _consume_photo_upload(*, binding, external_id: str, attachment):
         if context is not None:
             context.delete()
         return "Сначала выберите деталь в разделе загрузки фото.", _top_level_markup(binding)
+    if context.mode not in {
+        OwnerPhotoUploadContext.Mode.UPLOAD,
+        OwnerPhotoUploadContext.Mode.REPLACE_UPLOAD,
+    }:
+        return "Сначала выберите действие для фото.", _photo_actions_markup(binding)
     try:
         upload = _photo_upload_file(attachment)
-        result = upload_primary_part_photo(
-            part=context.part_type,
-            upload=upload,
-            source=binding.provider,
-            owner_operator_key=binding.operator_key,
-            operation_type=context.operation_type,
-            operation_id=context.operation_id,
-        )
+        if context.mode == OwnerPhotoUploadContext.Mode.REPLACE_UPLOAD:
+            if context.target_image_id is None:
+                raise PartPhotoTargetNotFound("Фото для замены не выбрано.")
+            result = replace_part_photo(
+                part=context.part_type,
+                target_image_id=context.target_image_id,
+                upload=upload,
+                source=binding.provider,
+                owner_operator_key=binding.operator_key,
+                operation_type=context.operation_type,
+                operation_id=context.operation_id,
+                by=binding.user,
+            )
+        elif PartTypeImage.objects.filter(
+            part_id=context.part_type_id, is_active=True
+        ).exists():
+            result = upload_additional_part_photo(
+                part=context.part_type,
+                upload=upload,
+                source=binding.provider,
+                owner_operator_key=binding.operator_key,
+                operation_type=context.operation_type,
+                operation_id=context.operation_id,
+                by=binding.user,
+            )
+        else:
+            result = upload_primary_part_photo(
+                part=context.part_type,
+                upload=upload,
+                source=binding.provider,
+                owner_operator_key=binding.operator_key,
+                operation_type=context.operation_type,
+                operation_id=context.operation_id,
+                by=binding.user,
+            )
     except (AttachmentError, ValidationError, PublicPhotoError) as exc:
         return str(exc), {
             "inline_keyboard": [[{"text": "Отмена", "callback_data": _callback(binding, "x")}]]
         }
-    except PartPhotoAlreadyExists:
-        text = "Для этой детали фото уже было загружено."
-        clear_photo_context(binding=binding)
-        OwnerPhotoUploadReceipt.objects.create(
-            binding=binding, external_id=str(external_id), part_type=context.part_type,
-            response_text=text,
-        )
-        return text, _photo_operation_markup(
-            binding, f"{context.operation_type}-{context.operation_id}"
-        )
+    except (PartPhotoAlreadyExists, PartPhotoTargetNotFound) as exc:
+        context.mode = OwnerPhotoUploadContext.Mode.MANAGE
+        context.target_image = None
+        context.save(update_fields=["mode", "target_image", "updated_at"])
+        return str(exc), _photo_actions_markup(binding)
     text = (
-        f"Фото загружено.\n\nАртикул: {context.article_snapshot}\n"
+        f"Фото добавлено.\n\nАртикул: {context.article_snapshot}\n"
         f"{context.part_name_snapshot}\n\nФото уже доступно в системе склада и каталоге PRO-STOR."
     )
-    clear_photo_context(binding=binding)
+    context.mode = OwnerPhotoUploadContext.Mode.MANAGE
+    context.target_image = None
+    context.expires_at = timezone.now() + _photo_context_ttl()
+    context.save(update_fields=["mode", "target_image", "expires_at", "updated_at"])
     OwnerPhotoUploadReceipt.objects.create(
         binding=binding, external_id=str(external_id), part_type=result.image.part,
         response_text=text,
     )
-    return text, _photo_operation_markup(
-        binding, f"{context.operation_type}-{context.operation_id}"
-    )
+    return text, _photo_actions_markup(binding)
 
 
 def set_context(*, binding, request_id: int):
@@ -805,10 +1007,15 @@ def handle_text(
             binding=binding, external_id=str(external_id)
         ).first()
         if receipt is not None:
-            return receipt.response_text, _top_level_markup(binding)
-    photo_context = OwnerPhotoUploadContext.objects.filter(binding=binding).first()
-    if photo_context is not None and photo_context.expires_at <= timezone.now():
-        photo_context.delete()
+            photo_context = _photo_context(binding)
+            return (
+                receipt.response_text,
+                _photo_actions_markup(binding)
+                if photo_context is not None else _top_level_markup(binding),
+            )
+    raw_photo_context = OwnerPhotoUploadContext.objects.filter(binding=binding).first()
+    photo_context = _photo_context(binding)
+    if photo_context is None and raw_photo_context is not None:
         return (
             "Срок выбора детали истёк. Сначала выберите деталь в разделе загрузки фото.",
             _top_level_markup(binding),
@@ -821,9 +1028,20 @@ def handle_text(
             return _consume_photo_upload(
                 binding=binding, external_id=external_id, attachment=attachment
             )
+        if photo_context.mode == OwnerPhotoUploadContext.Mode.MANAGE:
+            return "Выберите действие для фото.", _photo_actions_markup(binding)
+        if photo_context.mode == OwnerPhotoUploadContext.Mode.REPLACE_CONFIRM:
+            return "Подтвердите замену или нажмите «Отмена».", {
+                "inline_keyboard": [[
+                    {"text": "Заменить", "callback_data": _callback(binding, "pc")},
+                    {"text": "Отмена", "callback_data": _callback(binding, "x")},
+                ]]
+            }
+        if photo_context.mode == OwnerPhotoUploadContext.Mode.REPLACE_SELECT:
+            return "Выберите фото, которое хотите заменить.", _photo_actions_markup(binding)
         return (
             "Ожидается фотография выбранной детали. Нажмите «Отмена» или отправьте изображение.",
-            {"inline_keyboard": [[{"text": "Отмена", "callback_data": _callback(binding, "x")}]]},
+            _photo_upload_markup(binding),
         )
     if lower in {"/menu", "меню", "рабочее меню"}:
         return owner_panel(binding)
@@ -876,7 +1094,7 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     kind, token = parts[1], parts[2]
     if token != _session_token(binding):
         return "Рабочая сессия устарела. Откройте рабочую панель.", None
-    if kind not in {"m", "l", "n", "x", "c", "r", "p", "o", "q"}:
+    if kind not in {"m", "l", "n", "x", "c", "r", "p", "o", "q", "pa", "pr", "pc", "ps", "pd"}:
         return "Недоступно.", None
     if not binding.operator_mode:
         binding.operator_mode = True
@@ -899,6 +1117,18 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
             ),
             _top_level_markup(binding),
         )
+    if kind == "pa":
+        return _photo_add_start(binding=binding)
+    if kind == "pr":
+        return _photo_replace_start(binding=binding)
+    if kind == "pc":
+        return _photo_replace_confirm(binding=binding)
+    if kind == "ps":
+        if len(value) != 16 or any(char not in "0123456789abcdef" for char in value):
+            return "Фото не найдено.", _photo_actions_markup(binding)
+        return _photo_replace_select(binding=binding, target_token=value)
+    if kind == "pd":
+        return _photo_done(binding=binding)
     if kind == "p":
         page = int(value) if value.isdigit() and len(value) < 6 else 1
         return photo_operation_page(page, binding=binding)
