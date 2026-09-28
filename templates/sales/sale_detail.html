@@ -156,14 +156,17 @@
     </p>
   {% endif %}
   {% if can_sell and is_draft %}
-    <div class="toolbar">
-      <form method="post"
-            action="{% url 'sale_complete' sale.pk %}"
-            class="inline-form">
-        {% csrf_token %}
-        <button type="submit" class="btn btn--primary">Провести продажу</button>
-      </form>
-    </div>
+    {% comment %}
+      form-actions, not toolbar/inline-form: those two reset bare <button>
+      styles with a higher specificity than .btn--primary, which left this
+      main action white until hover.
+    {% endcomment %}
+    <form method="post"
+          action="{% url 'sale_complete' sale.pk %}"
+          class="form-actions">
+      {% csrf_token %}
+      <button type="submit" class="btn btn--primary">Провести продажу</button>
+    </form>
     <h2>Добавить позицию</h2>
     <form method="post" action="{% url 'sale_add_item' sale.pk %}" class="form">
       {% csrf_token %}

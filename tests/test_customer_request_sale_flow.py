@@ -644,3 +644,87 @@ def test_complete_request_sale_accepts_manually_added_oil_volume(oil_sale_scene)
     assert completed_line.total_price == Decimal("75.00")
     assert completed_line.quantity == Decimal("0.300")
     assert completed.status == Sale.Status.COMPLETED
+
+
+# --- «Провести продажу»: the main action is blue before any hover ------------
+
+SALE_BUTTON = "Провести продажу"
+
+
+def _request_draft_sale(sale_scene, key):
+    Customer.objects.create(name="Покупатель", phone="+79090000001")
+    request = take(make_request(sale_scene["part"], key=key), sale_scene["admin"])
+    return request, prepare_request_sale(request_id=request.pk, by=sale_scene["admin"])
+
+
+def test_request_draft_sale_button_is_primary_blue_without_hover(client, sale_scene):
+    from tests.css_cascade_support import find_element, resolved
+
+    _request, sale = _request_draft_sale(sale_scene, "blue-button")
+    client.force_login(sale_scene["admin"])
+    html = client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
+
+    button = find_element(html, "button", SALE_BUTTON)
+    assert {"btn", "btn--primary"} <= button.classes
+    assert button.attrs.get("type") == "submit"
+    assert "style" not in button.attrs
+    assert button.parent.tag == "form"
+    assert button.parent.attrs["action"] == reverse("sale_complete", args=[sale.pk])
+
+    background, winner = resolved(button, "background-color", shorthand="background")
+    assert background == "var(--accent)", f"default background comes from {winner!r}"
+    assert resolved(button, "color")[0] == "#fff"
+    border, winner = resolved(button, "border-color", shorthand="border")
+    assert border == "var(--accent)", f"default border comes from {winner!r}"
+
+
+def test_cascade_check_catches_the_old_white_until_hover_markup(sale_scene):
+    """Negative control: the previous wrapper really resolved to a white button."""
+    from tests.css_cascade_support import find_element, resolved
+
+    old_markup = (
+        '<div class="toolbar"><form method="post" class="inline-form">'
+        f'<button type="submit" class="btn btn--primary">{SALE_BUTTON}</button>'
+        "</form></div>"
+    )
+    button = find_element(old_markup, "button", SALE_BUTTON)
+    background, winner = resolved(button, "background-color", shorthand="background")
+    assert background == "#fff"
+    assert winner == ".inline-form button"
+
+
+def test_sale_button_absent_when_finalization_is_unavailable(client, sale_scene, django_user_model):
+    from django.contrib.auth.models import Group
+
+    from apps.accounts import roles
+
+    request, sale = _request_draft_sale(sale_scene, "button-unavailable")
+    viewer = django_user_model.objects.create_user(username="viewer-sale", password=PASSWORD)
+    viewer.groups.add(Group.objects.get(name=roles.VIEWER))
+    client.force_login(viewer)
+    assert SALE_BUTTON not in client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
+    before = StockMovement.objects.filter(document_type="sale").count()
+    assert client.post(reverse("sale_complete", args=[sale.pk])).status_code == 403
+    sale.refresh_from_db()
+    assert sale.status == Sale.Status.DRAFT
+    assert StockMovement.objects.filter(document_type="sale").count() == before
+
+    client.force_login(sale_scene["admin"])
+    complete_request_sale(request_id=request.pk, sale_id=sale.pk, by=sale_scene["admin"])
+    assert SALE_BUTTON not in client.get(reverse("sale_detail", args=[sale.pk])).content.decode()
+
+
+def test_sale_button_post_finalizes_once_even_when_submitted_twice(client, sale_scene):
+    request, sale = _request_draft_sale(sale_scene, "button-double-submit")
+    client.force_login(sale_scene["admin"])
+    before = StockMovement.objects.filter(document_type="sale").count()
+
+    first = client.post(reverse("sale_complete", args=[sale.pk]))
+    second = client.post(reverse("sale_complete", args=[sale.pk]))
+
+    assert first.status_code == second.status_code == 302
+    sale.refresh_from_db()
+    request.refresh_from_db()
+    assert sale.status == Sale.Status.COMPLETED
+    assert StockMovement.objects.filter(document_type="sale").count() == before + 1
+    assert request.status == CustomerRequest.Status.IN_PROGRESS
