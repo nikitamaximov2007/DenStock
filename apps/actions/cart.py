@@ -167,7 +167,13 @@ def cart_rows(cart) -> list[CartRow]:
             },
         )
         row["quantity"] += line.quantity
-        price = line.unit_price if isinstance(cart, Sale) else line.customer_unit_price_rub
+        price = (
+            line.unit_price
+            if isinstance(cart, Sale)
+            else resolve_effective_inventory_customer_price(
+                line.stock_lot, line.part_type.recommended_price
+            )
+        )
         if price is not None:
             row["unit_prices"].add(price)
             row["total_price"] += money(price * line.quantity)
@@ -220,7 +226,7 @@ def _drop_row_lines(cart, part, location) -> None:
 
 
 @transaction.atomic
-def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None) -> CartRow | None:
+def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | None:
     """Задать итоговое количество детали в ячейке (0 — убрать позицию).
 
     Позиция пересобирается по лотам заново (FIFO): доступность проверяют те же
@@ -251,11 +257,7 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
     try:
         for lot, portion in portions:
             if isinstance(cart, Sale):
-                price = unit_price
-                if price is None:
-                    price = resolve_effective_inventory_customer_price(
-                        lot, part.recommended_price
-                    )
+                price = resolve_effective_inventory_customer_price(lot, part.recommended_price)
                 check_sale_line_price(
                     part,
                     price,
@@ -263,8 +265,12 @@ def set_row_quantity(cart, part, location, quantity, *, unit_price=None, by=None
                 )
                 add_stock_lot_to_sale(cart, lot, portion, unit_price=price, by=by)
             else:
+                # Quick Actions has no manual customer-price override. The
+                # separate repair editor remains the explicit manual-price
+                # workflow. Omitting the argument makes the repair service use
+                # the current PartType price and ignore receipt-time snapshots.
                 add_stock_lot_to_repair_order(
-                    cart, lot, portion, customer_unit_price_rub=unit_price, by=by
+                    cart, lot, portion, by=by
                 )
     except (SaleError, RepairError) as exc:
         raise ActionError(str(exc)) from exc
@@ -425,6 +431,7 @@ def complete_cart(
         customer_comment = customer.name
     if not customer_comment:
         raise ActionError("Выберите карточку клиента.")
+    is_sale = isinstance(cart, Sale)
     rows = cart_rows(cart)
     if not rows:
         raise ActionError(EMPTY_CART_MESSAGE)
@@ -443,8 +450,21 @@ def complete_cart(
     # запомнит: вся функция выполняется в одной транзакции.
     remember_customs_metadata(rows, customs_metadata, by=by)
 
+    if not is_sale:
+        # A draft created before the Quick Actions price field was removed may
+        # still contain an operator-entered price. Normalize that draft to the
+        # current catalog price before the repair is finalized. This changes
+        # only the open draft, never a completed repair line.
+        for line in cart.lines.select_for_update().select_related("part_type", "stock_lot"):
+            current_price = resolve_effective_inventory_customer_price(
+                line.stock_lot, line.part_type.recommended_price
+            )
+            if line.customer_unit_price_rub != current_price:
+                line.customer_unit_price_rub = current_price
+                line.save(update_fields=["customer_unit_price_rub"])
+        rows = cart_rows(cart)
+
     scanned_numbers = scanned_numbers or {}
-    is_sale = isinstance(cart, Sale)
     if is_sale:
         # Черновик мог пролежать с прошлой версии, когда пустая цена молча
         # становилась нулём. Проверяем строки ещё раз перед проведением: в

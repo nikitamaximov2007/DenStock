@@ -141,16 +141,7 @@
                            aria-label="Количество">
                     <span class="cart-quantity-form__available"
                           aria-label="Доступно в выбранной ячейке">/ {{ item.available|quantity_int }}</span>
-                    {% if not panel.is_sale %}
-                      <input name="unit_price"
-                             type="number"
-                             min="0"
-                             step="0.01"
-                             size="6"
-                             value="{{ item.row.unit_price|default_if_none:'' }}"
-                             aria-label="Цена">
-                    {% endif %}
-                    <button type="submit" class="btn btn--small btn--secondary">Сохранить</button>
+                    <button type="submit" class="btn btn--small btn--secondary">Сохранить количество</button>
                   </form>
                 </td>
                 <td class="num--money">
