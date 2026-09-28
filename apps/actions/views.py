@@ -704,14 +704,12 @@ def actions_cart_update(request):
         if customs_input is not None:
             _remember_customs_input(request, kind, part.pk, customs_input)
         try:
-            raw_unit_price = request.POST.get("unit_price")
             row = set_row_quantity(
                 cart,
                 part,
                 location,
                 request.POST.get("quantity", ""),
-                unit_price=(raw_unit_price or None) if kind == KIND_REPAIR else None,
-                preserve_unit_prices="unit_price" not in request.POST,
+                preserve_unit_prices=True,
                 by=request.user,
             )
         except ActionError as exc:
