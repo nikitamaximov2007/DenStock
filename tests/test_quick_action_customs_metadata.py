@@ -413,6 +413,7 @@ def test_application_then_quantity_autosaves_and_survives_reload(client, make_us
 
     assert app_response.status_code == 200 and app_response.json()["ok"]
     assert qty_response.status_code == 200 and qty_response.json()["quantity"] == "2"
+    assert qty_response.json()["cart_total"] == "200"
     html = client.get(reverse("actions_scan") + "?q=700100&kind=sale").content.decode()
     assert 'option value="СНЕГОХОД"' in html
     assert "selected" in html
