@@ -291,14 +291,15 @@ def test_the_draft_names_the_unit_price_and_the_line_total(client, env, kind):
     assert "26 200 ₽" in body.replace(" ", " ")  # итог строки
 
 
-def test_the_repair_draft_still_lets_the_operator_correct_the_price(client, env):
+def test_the_quick_repair_draft_keeps_the_price_read_only(client, env):
     part = _part(env)
     _stock(env, part)
     client.force_login(env["admin"])
     _draft(client, env, part, "repair")
     body = client.get(reverse("actions_scan"), {"kind": "repair"}).content.decode()
-    assert 'name="unit_price"' in body
-    assert 'aria-label="Цена"' in body
+    assert 'name="unit_price"' not in body
+    assert 'aria-label="Цена"' not in body
+    assert "Сохранить количество" in body
 
 
 def test_a_part_without_a_price_shows_a_dash_not_a_zero(client, env):
