@@ -530,6 +530,90 @@ def test_complete_repair_cart_creates_one_order_with_many_lines(data):
 
 
 @pytest.mark.parametrize("kind", [KIND_SALE, KIND_REPAIR])
+def test_quick_actions_ignore_legacy_price_post_and_keep_current_price(
+    client, make_user, data, kind
+):
+    """The old repair price field cannot overwrite a Quick Actions row."""
+    data["bolt"].recommended_price = Decimal("7000")
+    data["bolt"].save(update_fields=["recommended_price"])
+    _login(client, make_user)
+
+    cart = open_cart(kind, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+    session = client.session
+    session[CART_SESSION_KEYS[kind]] = cart.pk
+    session.save()
+
+    response = client.post(
+        reverse("actions_cart_update"),
+        {
+            "kind": kind,
+            "operation": "set",
+            "row_key": f"{data['bolt'].pk}:{data['loc1'].pk}",
+            "quantity": "2",
+            "unit_price": "1",  # stale browser / crafted request
+        },
+    )
+    assert response.status_code == 302
+
+    cart.refresh_from_db()
+    row = cart_rows(cart)[0]
+    assert row.quantity == Decimal("2")
+    assert row.unit_price == Decimal("7000")
+    assert row.total_price == Decimal("14000")
+    data["bolt"].refresh_from_db()
+    assert data["bolt"].recommended_price == Decimal("7000")
+
+
+@pytest.mark.parametrize("kind", [KIND_SALE, KIND_REPAIR])
+def test_quick_actions_price_is_read_only_in_rendered_cart(client, make_user, data, kind):
+    data["bolt"].recommended_price = Decimal("7000")
+    data["bolt"].save(update_fields=["recommended_price"])
+    _login(client, make_user)
+    cart = open_cart(kind, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+    session = client.session
+    session[CART_SESSION_KEYS[kind]] = cart.pk
+    session.save()
+
+    body = client.get(reverse("actions_scan")).content.decode()
+
+    assert 'name="unit_price"' not in body
+    assert "Сохранить количество" in body
+    assert "7 000 ₽" in body.replace(" ", " ")
+
+
+def test_quick_action_repair_normalizes_an_old_draft_price_before_completion(data):
+    data["bolt"].recommended_price = Decimal("7000")
+    data["bolt"].save(update_fields=["recommended_price"])
+    cart = open_cart(KIND_REPAIR, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+    cart.lines.update(customer_unit_price_rub=Decimal("1"))
+
+    complete_cart(cart, customer_comment="Петров", by=data["admin"])
+
+    line = cart.lines.get()
+    assert line.customer_unit_price_rub == Decimal("7000")
+    data["bolt"].refresh_from_db()
+    assert data["bolt"].recommended_price == Decimal("7000")
+
+
+def test_completed_quick_action_repair_price_is_historical(data):
+    data["bolt"].recommended_price = Decimal("7000")
+    data["bolt"].save(update_fields=["recommended_price"])
+    cart = open_cart(KIND_REPAIR, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], by=data["admin"])
+    complete_cart(cart, customer_comment="Петров", by=data["admin"])
+    line = cart.lines.get()
+
+    data["bolt"].recommended_price = Decimal("9000")
+    data["bolt"].save(update_fields=["recommended_price"])
+    line.refresh_from_db()
+
+    assert line.customer_unit_price_rub == Decimal("7000")
+
+
+@pytest.mark.parametrize("kind", [KIND_SALE, KIND_REPAIR])
 def test_complete_cart_uses_selected_customer_card_and_frozen_snapshot(data, kind):
     customer = Customer.objects.create(name="Алексей Иванов", phone="+7 912 123-45-67")
     cart = open_cart(kind, by=data["admin"])
