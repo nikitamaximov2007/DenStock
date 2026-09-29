@@ -4,8 +4,6 @@ from django import forms
 
 from apps.warehouse.models import StorageLocation
 
-from .models import PartItem
-
 
 def _storage_locations():
     """Только места, где разрешено хранение остатка."""
@@ -33,10 +31,19 @@ class PartItemBulkForm(forms.Form):
     note = forms.CharField(max_length=255, required=False, label="Примечание")
 
 
-class PartItemEditForm(forms.ModelForm):
-    class Meta:
-        model = PartItem
-        fields = ["serial_number", "current_location", "note"]
+class PartItemEditForm(forms.Form):
+    """Правка экземпляра: серийный номер и примечание - всегда; место -
+    только пока экземпляр ещё редактируется напрямую (см.
+    `apps.inventory.services.item_is_directly_editable`, которую проверяет и
+    перепроверяет под блокировкой сам `update_part_item` - эта форма не
+    решает, можно ли менять место, только собирает значения).
+    """
+
+    serial_number = forms.CharField(max_length=100, required=False, label="Серийный номер")
+    current_location = forms.ModelChoiceField(
+        queryset=_storage_locations(), required=False, label="Место хранения"
+    )
+    note = forms.CharField(max_length=255, required=False, label="Примечание")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

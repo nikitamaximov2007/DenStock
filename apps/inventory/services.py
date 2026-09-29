@@ -152,6 +152,62 @@ def create_part_items(
     return items
 
 
+ITEM_EDIT_REFUSED = (
+    "Экземпляр уже на складе или участвовал в движениях: место меняется только "
+    "«Переместить». Так изменение попадает в журнал движений."
+)
+
+
+def item_is_directly_editable(item: PartItem) -> bool:
+    """Место экземпляра можно менять напрямую только до первого движения.
+
+    Принятый экземпляр или экземпляр с любым движением уже часть журнала:
+    прямая правка дала бы остаток без движения, а кэш остатков разошёлся бы
+    с экземпляром. Серийный номер и примечание - не складская физика, их
+    правка этим флагом не ограничена (см. `update_part_item`).
+    """
+    return item.status == PartItem.Status.RECEIVING and not item.movements.exists()
+
+
+@transaction.atomic
+def update_part_item(
+    item: PartItem, *, serial_number: str = "", current_location=None, note: str = ""
+) -> PartItem:
+    """Правка экземпляра: серийный номер и примечание - всегда; место - до первого движения.
+
+    Серийный номер и примечание можно поправить в любой момент - это не
+    складская физика. Место эта функция меняет только для экземпляра, ещё
+    находящегося на приёмке и без единого движения (см.
+    `item_is_directly_editable`); для живого экземпляра перенос должен пройти
+    `move_part_item` и оставить движение в журнале.
+    """
+    serial = (serial_number or "").strip()
+    if serial and PartItem.objects.filter(
+        part_type_id=item.part_type_id, serial_number=serial
+    ).exclude(pk=item.pk).exists():
+        raise InventoryError("Серийный номер уже используется для этой детали.")
+    if current_location is not None and not current_location.can_hold_stock():
+        raise InventoryError("Это место не предназначено для хранения остатка.")
+
+    # Порядок блокировок общий со всеми складскими сервисами: экземпляр,
+    # затем ячейки. Проверка «движений ещё нет» идёт под блокировкой
+    # экземпляра: каждый сервис, пишущий движение по экземпляру, сначала
+    # блокирует ту же строку.
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    new_location_id = current_location.pk if current_location is not None else None
+    changes_location = new_location_id != item.current_location_id
+    if changes_location and not item_is_directly_editable(item):
+        raise InventoryError(ITEM_EDIT_REFUSED)
+    ensure_location_operation_allowed(item.current_location)
+    ensure_location_operation_allowed(current_location)
+
+    item.serial_number = serial
+    item.current_location = current_location
+    item.note = note
+    item.save(update_fields=["serial_number", "current_location", "note", "updated_at"])
+    return item
+
+
 # --- Количественные лоты (StockLot) -----------------------------------------
 
 

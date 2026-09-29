@@ -12,23 +12,57 @@ from .models import (
 
 @admin.register(PartItem)
 class PartItemAdmin(admin.ModelAdmin):
+    """Статус и место - складская физика, доступная только через сервисы
+    (`receive_part_item`, `change_part_item_status`, `move_part_item`,
+    `update_part_item`): напрямую в админке их менять нельзя, иначе это
+    второй путь мимо журнала движений и кэша остатков. Серийник и примечание
+    - не складская физика, их можно поправить и здесь.
+
+    Экземпляр создаётся только `create_part_items` (из финансово закрытой
+    строки партии, с номером из `NumberSequence`) - без него `internal_number`
+    остался бы пустым, поэтому создание через админку выключено целиком.
+    """
+
     list_display = (
         "internal_number", "part_type", "status", "serial_number",
         "current_location", "batch", "created_at",
     )
     list_filter = ("status", "part_type", "batch")
     search_fields = ("internal_number", "internal_barcode", "serial_number")
-    readonly_fields = ("internal_number", "internal_barcode", "landed_cost_rub", "batch")
+    readonly_fields = (
+        "internal_number", "internal_barcode", "landed_cost_rub", "batch",
+        "status", "current_location",
+    )
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(StockLot)
 class StockLotAdmin(admin.ModelAdmin):
+    """Количество, статус и ячейка - складская физика, доступная только через
+    сервисы (`receive_stock_lot`, `change_stock_lot_status`, `move_stock_lot`,
+    `adjust_stock_lot_quantity`, `update_stock_lot`): напрямую в админке их
+    менять нельзя, иначе это второй путь мимо журнала движений и кэша
+    остатков.
+
+    Лот создаётся только `create_stock_lot` (из финансово закрытой строки
+    партии, с проверкой лимита строки) - создание через админку выключено
+    целиком.
+    """
+
     list_display = (
         "id", "part_type", "location", "quantity", "status", "batch", "created_at",
     )
     list_filter = ("status", "part_type", "batch")
     search_fields = ("part_type__name", "location__code", "batch__number")
-    readonly_fields = ("initial_quantity", "landed_unit_cost_rub", "batch")
+    readonly_fields = (
+        "initial_quantity", "landed_unit_cost_rub", "batch",
+        "quantity", "status", "location",
+    )
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(NumberSequence)

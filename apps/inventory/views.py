@@ -6,7 +6,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_POST
-from django.views.generic import DetailView, ListView, UpdateView
+from django.views.generic import DetailView, ListView
 
 from apps.catalog.models import PartType
 from apps.core.forms import ImageUploadForm
@@ -51,6 +51,7 @@ from .services import (
     receive_part_item,
     receive_stock_lot,
     remaining_qty,
+    update_part_item,
     update_stock_lot,
 )
 
@@ -67,17 +68,6 @@ class InventoryViewMixin:
         if not request.user.is_authenticated:
             return redirect_to_login(request.get_full_path())
         if not _can_view_inventory(request.user):
-            raise PermissionDenied
-        return super().dispatch(request, *args, **kwargs)
-
-
-class InventoryManageMixin:
-    """Доступ к управлению экземплярами (создание/правка)."""
-
-    def dispatch(self, request, *args, **kwargs):
-        if not request.user.is_authenticated:
-            return redirect_to_login(request.get_full_path())
-        if not request.user.can_manage_inventory:
             raise PermissionDenied
         return super().dispatch(request, *args, **kwargs)
 
@@ -164,22 +154,36 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
         return ctx
 
 
-class PartItemUpdateView(InventoryManageMixin, UpdateView):
-    model = PartItem
-    form_class = PartItemEditForm
-    template_name = "inventory/item_form.html"
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["title"] = f"Экземпляр {self.object.internal_number}"
-        return ctx
-
-    def form_valid(self, form):
-        messages.success(self.request, "Экземпляр сохранён.")
-        return super().form_valid(form)
-
-    def get_success_url(self):
-        return reverse("item_detail", args=[self.object.pk])
+@login_required
+def item_edit(request, pk):
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    item = get_object_or_404(PartItem, pk=pk)
+    if request.method == "POST":
+        form = PartItemEditForm(request.POST)
+        if form.is_valid():
+            try:
+                update_part_item(
+                    item,
+                    serial_number=form.cleaned_data["serial_number"],
+                    current_location=form.cleaned_data["current_location"],
+                    note=form.cleaned_data["note"],
+                )
+            except InventoryError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(request, "Экземпляр сохранён.")
+                return redirect("item_detail", pk=item.pk)
+    else:
+        form = PartItemEditForm(initial={
+            "serial_number": item.serial_number,
+            "current_location": item.current_location_id,
+            "note": item.note,
+        })
+    return render(
+        request, "inventory/item_form.html",
+        {"form": form, "item": item, "title": f"Экземпляр {item.internal_number}"},
+    )
 
 
 @login_required
