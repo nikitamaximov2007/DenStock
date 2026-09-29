@@ -18,9 +18,16 @@ def resolve_effective_inventory_customer_price(inventory, current_price) -> Deci
     ``inventory`` is retained in the signature for callers that already have a
     selected lot or item. Its historical receipt snapshot is intentionally
     ignored; only the current price supplied by the caller is authoritative.
+
+    A negative current price is never a customer charge: it becomes ``None``
+    ("price not set"), so an automated sale refuses it instead of booking
+    negative revenue. Zero passes through unchanged - an explicit zero in the
+    card is a deliberate free sale (see ``check_sale_line_price``).
     """
     del inventory
-    return current_price if current_price is not None else None
+    if current_price is None or current_price < 0:
+        return None
+    return current_price
 
 
 def resolve_current_customer_price(part) -> Decimal | None:

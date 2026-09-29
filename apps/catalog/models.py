@@ -323,6 +323,13 @@ class PartType(Dictionary):
         return super().save(*args, **kwargs)
 
     def clean(self) -> None:
+        # Цена в карточке - деньги клиента: отрицательной она не бывает. Ноль
+        # остаётся допустимым (осознанно бесплатная деталь в продаже, см.
+        # apps.actions.services.check_sale_line_price), пусто - «цена не задана».
+        for field in ("recommended_price", "min_price"):
+            value = getattr(self, field)
+            if value is not None and value < 0:
+                raise ValidationError({field: "Цена не может быть отрицательной."})
         # Минимальная цена не может быть выше рекомендуемой, если заданы обе.
         if (
             self.recommended_price is not None

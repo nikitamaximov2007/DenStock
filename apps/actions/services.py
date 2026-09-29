@@ -110,6 +110,9 @@ SALE_PRICE_STALE_ZERO = (
     "«{name}»: строка добавлена, когда цена ещё не была задана, и осталась "
     "нулевой. Уберите её и добавьте деталь заново."
 )
+SALE_PRICE_NEGATIVE = (
+    "«{name}»: цена отрицательная. Исправьте цену в карточке детали перед продажей."
+)
 
 
 def check_sale_line_price(part, unit_price, *, has_receipt_snapshot=False) -> None:
@@ -121,6 +124,8 @@ def check_sale_line_price(part, unit_price, *, has_receipt_snapshot=False) -> No
     необязательна по своей природе и показывается прочерком.
     """
     canonical = part.recommended_price
+    if unit_price is not None and unit_price < 0:
+        raise ActionError(SALE_PRICE_NEGATIVE.format(name=part.name))
     if unit_price is None or (
         unit_price == 0 and canonical is None and not has_receipt_snapshot
     ):

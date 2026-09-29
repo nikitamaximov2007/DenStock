@@ -73,6 +73,20 @@ def _default_customer_price(inventory, current_price):
     return resolve_effective_inventory_customer_price(inventory, current_price)
 
 
+def _line_customer_price(inventory, current_price, explicit):
+    """Customer price for a new line: explicit if given, else the current one.
+
+    An explicit price follows the same rule as the repair editor
+    (``set_repair_line_customer_price``): never negative.
+    """
+    if explicit is None:
+        return _default_customer_price(inventory, current_price)
+    price = Decimal(explicit)
+    if price < 0:
+        raise RepairError("Цена клиента не может быть отрицательной.")
+    return price
+
+
 # --- Создание / наполнение заказа --------------------------------------------
 
 
@@ -142,10 +156,8 @@ def add_part_item_to_repair_order(
         batch_line=item.batch_line,
         quantity=Decimal("1"),
         note=(note or "").strip(),
-        customer_unit_price_rub=(
-            _default_customer_price(item, item.part_type.recommended_price)
-            if customer_unit_price_rub is None
-            else Decimal(customer_unit_price_rub)
+        customer_unit_price_rub=_line_customer_price(
+            item, item.part_type.recommended_price, customer_unit_price_rub
         ),
     )
 
@@ -180,10 +192,8 @@ def add_stock_lot_to_repair_order(
         batch_line=lot.batch_line,
         quantity=quantity,
         note=(note or "").strip(),
-        customer_unit_price_rub=(
-            _default_customer_price(lot, lot.part_type.recommended_price)
-            if customer_unit_price_rub is None
-            else Decimal(customer_unit_price_rub)
+        customer_unit_price_rub=_line_customer_price(
+            lot, lot.part_type.recommended_price, customer_unit_price_rub
         ),
     )
 

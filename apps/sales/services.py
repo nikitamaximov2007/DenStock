@@ -484,11 +484,28 @@ def _freeze_line_unmarked_price(line: SaleLine) -> None:
     line.unmarked_price_snapshot_note = "sale_completion"
 
 
+SALE_NEGATIVE_PRICE = "Цена продажи не может быть отрицательной."
+
+
+def _ensure_non_negative_price(unit_price) -> Decimal:
+    """Money charged to the customer is never negative, whatever the source.
+
+    Zero stays valid (a deliberate free sale). The manual sale forms already
+    enforce ``min_value=0``; this is the service-level backstop for every
+    other caller (Quick Actions, reservation, request).
+    """
+    unit_price = Decimal(unit_price)
+    if unit_price < 0:
+        raise SaleError(SALE_NEGATIVE_PRICE)
+    return unit_price
+
+
 @transaction.atomic
 def add_part_item_to_sale(sale, item, *, unit_price, by=None) -> SaleLine:
     """Добавить экземпляр в продажу (целиком). Доступность с учётом чужих броней."""
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
     _ensure_sale_draft(sale)
+    unit_price = _ensure_non_negative_price(unit_price)
     item = PartItem.objects.select_for_update().get(pk=item.pk)
     if item.status != PartItem.Status.AVAILABLE:
         raise SaleError("Продать можно только доступный экземпляр.")
@@ -496,7 +513,6 @@ def add_part_item_to_sale(sale, item, *, unit_price, by=None) -> SaleLine:
         raise SaleError("Этот экземпляр уже в продаже.")
     if _item_actively_reserved(item, exclude=sale.reservation):
         raise SaleError("Экземпляр зарезервирован другой бронью.")
-    unit_price = Decimal(unit_price)
     return SaleLine.objects.create(
         sale=sale, part_type=item.part_type, part_item=item,
         batch=item.batch, batch_line=item.batch_line,
@@ -510,6 +526,7 @@ def add_stock_lot_to_sale(sale, lot, quantity, *, unit_price, by=None) -> SaleLi
     """Добавить количество из лота в продажу. Доступно = qty − чужой резерв − уже в продаже."""
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
     _ensure_sale_draft(sale)
+    unit_price = _ensure_non_negative_price(unit_price)
     quantity = Decimal(quantity)
     if quantity <= 0:
         raise SaleError("Количество должно быть больше нуля.")
@@ -527,7 +544,6 @@ def add_stock_lot_to_sale(sale, lot, quantity, *, unit_price, by=None) -> SaleLi
         raise SaleError(
             f"Недостаточно: доступно для продажи {available}, запрошено {quantity}."
         )
-    unit_price = Decimal(unit_price)
     return SaleLine.objects.create(
         sale=sale, part_type=lot.part_type, stock_lot=lot,
         batch=lot.batch, batch_line=lot.batch_line,
@@ -681,6 +697,11 @@ def complete_sale(sale, *, by=None) -> Sale:
     lines = list(sale.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise SaleError("Нельзя завершить пустую продажу.")
+    # A draft may predate the price guards or come from a path that writes
+    # SaleLine directly; negative revenue is refused before any stock moves.
+    for line in lines:
+        if line.unit_price is not None and line.unit_price < 0:
+            raise SaleError(f"«{line.part_type.name}»: {SALE_NEGATIVE_PRICE}")
     from apps.actions.services import ActionError, require_customs_metadata
     try:
         require_customs_metadata([line.part_type for line in lines])
