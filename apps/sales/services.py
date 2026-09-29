@@ -878,6 +878,7 @@ def sale_cancellation_oil_excluded(sale) -> list:
     return oil_lines_needing_owner_decision(lines, returned)
 
 
+@transaction.atomic
 def cancel_sale(sale, *, by=None, reason="", author="", oil_dispositions=None) -> Sale:
     """Cancel a completed sale with canonical compensating inventory movements.
 

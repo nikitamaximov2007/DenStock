@@ -371,6 +371,7 @@ def repair_cancellation_oil_excluded(order) -> list:
     return oil_lines_excluded_from_cancellation(lines, returned)
 
 
+@transaction.atomic
 def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
     """Cancel a draft or a completed repair without rewriting its history."""
     from apps.returns.models import StockReturn
