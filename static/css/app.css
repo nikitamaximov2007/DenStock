@@ -268,8 +268,11 @@ body.app {
    такому заголовку перенос разрешён - стрелку держит неразрывный пробел. */
 .table-sort-link--wrap { white-space: normal; }
 .inline-form { display: inline; margin-left: 8px; }
-.inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
-  border-radius: 6px; background: #fff; }
+/* Reset only bare buttons. :where() adds no specificity, so this stays
+   (0,1,1) for them, while .btn buttons keep their design-system variant
+   (.btn--primary alone is (0,1,0) and used to lose: white text on white). */
+.inline-form button:where(:not(.btn)) { padding: 6px 10px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 .staff-bindings-form { display: grid; gap: 8px; }
 .staff-bindings-form .field__label { margin: 0; }
 .staff-bindings-form input, .staff-bindings-form select { min-width: 0; width: 100%; }
