@@ -222,20 +222,44 @@ def create_stock_lot(
     return lot
 
 
+LOT_EDIT_REFUSED = (
+    "Лот уже на складе или участвовал в движениях: количество меняется только "
+    "«Корректировкой», ячейка - «Переместить». Так изменение попадает в журнал движений."
+)
+
+
+def lot_is_directly_editable(lot: StockLot) -> bool:
+    """Количество и ячейку лота можно править напрямую только до первого движения.
+
+    Принятый лот или лот с любым движением уже часть журнала: прямая правка
+    дала бы остаток без движения, а кэш остатков разошёлся бы с лотом.
+    """
+    return lot.status == StockLot.Status.RECEIVING and not lot.movements.exists()
+
+
 @transaction.atomic
 def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> StockLot:
     """Правка лота до появления движений: место/количество/примечание.
 
     `initial_quantity` при правке не меняется (фиксируется при создании).
+    Количество и ячейку живого лота эта функция не меняет (см.
+    `lot_is_directly_editable`); примечание можно поправить всегда.
     """
     quantity = Decimal(quantity)
     if quantity <= 0:
         raise InventoryError("Количество должно быть больше нуля.")
     if location is None or not location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
+
+    # Порядок блокировок общий со всеми складскими сервисами: лот, ячейки,
+    # строка партии. Проверка «движений ещё нет» идёт под блокировкой лота:
+    # каждый сервис, пишущий движение по лоту, сначала блокирует тот же лот.
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    changes_stock = quantity != lot.quantity or location.pk != lot.location_id
+    if changes_stock and not lot_is_directly_editable(lot):
+        raise InventoryError(LOT_EDIT_REFUSED)
     ensure_location_operation_allowed(lot.location)
     ensure_location_operation_allowed(location)
-
     line = BatchLine.objects.select_for_update().get(pk=lot.batch_line_id)
     others = (
         StockLot.objects.filter(batch_line=line).exclude(pk=lot.pk)
@@ -452,6 +476,32 @@ def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
     )
     _refresh_balance(lot.batch_line, lot.location)
     set_preferred_part_location(lot.part_type, lot.location, by=by)
+    return lot
+
+
+@transaction.atomic
+def change_stock_lot_status(lot: StockLot, new_status: str, *, by=None) -> StockLot:
+    """Сменить статус лота по разрешённому переходу, с кэшем остатков.
+
+    Выход из приёмки - всегда `receive_stock_lot`: движение приёмки, кэш и
+    предпочтительная ячейка пишутся одним кодом, и статус «Доступен» без
+    движения приёмки невозможен. Карантин - статус, а не перемещение: движения
+    нет, но кэш доступного/карантинного остатка пересчитывается тут же.
+    Повтор того же перехода (двойное нажатие) ничего не меняет.
+    """
+    lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if lot.status == new_status:
+        return lot
+    if not lot.can_transition_to(new_status):
+        raise InventoryError("Недопустимый переход статуса.")
+    if lot.status == StockLot.Status.RECEIVING:
+        lot = receive_stock_lot(lot, by=by)
+        if new_status == StockLot.Status.AVAILABLE:
+            return lot
+    ensure_location_operation_allowed(lot.location)
+    lot.status = new_status
+    lot.save(update_fields=["status", "updated_at"])
+    _refresh_balance(lot.batch_line, lot.location)
     return lot
 
 

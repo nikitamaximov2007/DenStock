@@ -37,11 +37,14 @@ from .presentation import (
 )
 from .services import (
     ITEM_PHYSICAL_STATUSES,
+    LOT_EDIT_REFUSED,
     LOT_PHYSICAL_STATUSES,
     InventoryError,
     adjust_stock_lot_quantity,
+    change_stock_lot_status,
     create_part_items,
     create_stock_lot,
+    lot_is_directly_editable,
     move_part_item,
     move_stock_lot,
     receive_part_item,
@@ -347,7 +350,12 @@ class StockLotDetailView(InventoryViewMixin, DetailView):
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
         ctx["can_manage"] = self.request.user.can_manage_inventory
         ctx["can_stocktake"] = self.request.user.can_manage_stocktaking
+        ctx["lot_editable"] = lot_is_directly_editable(self.object)
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
+        if self.object.status == StockLot.Status.RECEIVING:
+            # «Принять» рядом и есть переход в «Доступен»; вторая кнопка с тем
+            # же действием только путала бы.
+            allowed = [s for s in allowed if s != StockLot.Status.AVAILABLE]
         ctx["next_statuses"] = [(s, StockLot.Status(s).label) for s in allowed]
         ctx["movements"] = list(self.object.movements.select_related(
             "from_location", "to_location", "created_by"
@@ -419,6 +427,9 @@ def lot_edit(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
     lot = get_object_or_404(StockLot, pk=pk)
+    if not lot_is_directly_editable(lot):
+        messages.error(request, LOT_EDIT_REFUSED)
+        return redirect("lot_detail", pk=lot.pk)
     if request.method == "POST":
         form = StockLotEditForm(request.POST)
         if form.is_valid():
@@ -448,13 +459,12 @@ def lot_status_change(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
     lot = get_object_or_404(StockLot, pk=pk)
-    new_status = request.POST.get("status", "")
-    if lot.can_transition_to(new_status):
-        lot.status = new_status
-        lot.save(update_fields=["status", "updated_at"])
-        messages.success(request, f"Статус лота: {lot.get_status_display()}.")
+    try:
+        lot = change_stock_lot_status(lot, request.POST.get("status", ""), by=request.user)
+    except InventoryError as exc:
+        messages.error(request, str(exc))
     else:
-        messages.error(request, "Недопустимый переход статуса.")
+        messages.success(request, f"Статус лота: {lot.get_status_display()}.")
     return redirect("lot_detail", pk=pk)
 
 
