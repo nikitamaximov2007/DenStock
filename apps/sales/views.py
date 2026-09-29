@@ -51,7 +51,7 @@ from .services import (
     complete_sale,
     create_reservation,
     create_sale,
-    create_sale_from_reservation,
+    get_or_create_sale_from_reservation,
     remove_reservation_line,
     remove_sale_line,
     reversible_quantity,
@@ -681,9 +681,15 @@ def sale_from_reservation(request, pk):
     _require_sales(request)
     reservation = get_object_or_404(Reservation, pk=pk)
     try:
-        sale = create_sale_from_reservation(reservation, by=request.user)
+        sale, created = get_or_create_sale_from_reservation(reservation, by=request.user)
     except SaleError as exc:
         messages.error(request, str(exc))
         return redirect("reservation_detail", pk=pk)
+    if created:
         messages.success(request, f"Создана продажа {sale.number} из резерва - проверьте цены.")
+    else:
+        messages.info(
+            request,
+            f"Продажа {sale.number} из этого резерва уже создана - открыт тот же черновик.",
+        )
     return redirect("sale_detail", pk=sale.pk)

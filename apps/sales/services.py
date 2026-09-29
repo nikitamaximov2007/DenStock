@@ -599,15 +599,60 @@ def remove_sale_line(line, *, by=None) -> None:
     line.delete()
 
 
-@transaction.atomic
+RESERVATION_PRICE_NOT_SET = (
+    "Нельзя продать из резерва: у детали «{names}» не задана цена. Укажите цену "
+    "в карточке детали и повторите - ноль сам по себе не подставляется."
+)
+
+
 def create_sale_from_reservation(reservation, *, by=None) -> Sale:
-    """Собрать черновик продажи из активного резерва по фактическим источникам."""
+    """Черновик продажи из активного резерва (повторный вызов вернёт тот же)."""
+    sale, _created = get_or_create_sale_from_reservation(reservation, by=by)
+    return sale
+
+
+@transaction.atomic
+def get_or_create_sale_from_reservation(reservation, *, by=None) -> tuple[Sale, bool]:
+    """Собрать черновик продажи из активного резерва по фактическим источникам.
+
+    Один активный резерв - один черновик. Двойной клик, повтор запроса или
+    параллельный запрос возвращают уже созданный черновик, а не второй:
+    все вызовы сначала блокируют одну и ту же строку резерва, поэтому
+    проверка «черновик уже есть» и его создание не расходятся.
+
+    Цена строки - текущая цена детали. Деталь без действующей цены не
+    превращается в строку «0 ₽»: продажа из резерва отказывает целиком, как
+    и быстрая продажа (``check_sale_line_price``). Явный ноль в карточке -
+    осознанно бесплатная деталь - по-прежнему допустим. Склад черновик не
+    трогает: списание - только при проведении (``complete_sale``).
+    """
     reservation = Reservation.objects.select_for_update().get(pk=reservation.pk)
     if reservation.status != Reservation.Status.ACTIVE:
         raise SaleError("Продать можно только из активного резерва.")
+    existing = (
+        Sale.objects.filter(reservation=reservation, status=Sale.Status.DRAFT)
+        .order_by("created_at", "pk")
+        .first()
+    )
+    if existing is not None:
+        return existing, False
     rlines = list(reservation.lines.select_related("part_type", "part_item", "stock_lot"))
     if not rlines:
         raise SaleError("В резерве нет позиций.")
+    prices = {}
+    unpriced = []
+    for rline in rlines:
+        source = rline.part_item if rline.part_item_id else rline.stock_lot
+        price = resolve_effective_inventory_customer_price(
+            source, rline.part_type.recommended_price
+        )
+        if price is None or price < 0:
+            unpriced.append(rline.part_type.name)
+        prices[rline.pk] = price
+    if unpriced:
+        raise SaleError(
+            RESERVATION_PRICE_NOT_SET.format(names="», «".join(dict.fromkeys(unpriced)))
+        )
     sale = create_sale(
         # Снимок наследуется от брони КАК ЕСТЬ: продажа из резерва обязана
         # показывать то, что видел клиент при бронировании. Поэтому карточка
@@ -622,11 +667,7 @@ def create_sale_from_reservation(reservation, *, by=None) -> Sale:
         sale.customer_id = reservation.customer_id
         sale.save(update_fields=["customer", "updated_at"])
     for rline in rlines:
-        source = rline.part_item if rline.part_item_id else rline.stock_lot
-        unit_price = (
-            resolve_effective_inventory_customer_price(source, rline.part_type.recommended_price)
-            or Decimal("0")
-        )
+        unit_price = prices[rline.pk]
         if rline.part_item_id:
             SaleLine.objects.create(
                 sale=sale, part_type=rline.part_type, part_item=rline.part_item,
@@ -641,7 +682,7 @@ def create_sale_from_reservation(reservation, *, by=None) -> Sale:
                 quantity=rline.quantity, unit_price=unit_price,
                 total_price=money(unit_price * rline.quantity),
             )
-    return sale
+    return sale, True
 
 
 def calculate_sale_totals(sale: Sale) -> dict:
