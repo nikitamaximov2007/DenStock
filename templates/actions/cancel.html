@@ -2,7 +2,13 @@
 {% block title %}Отмена продажи · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Отмена продажи</h1>
+    <h1 class="page-title">
+      {% if is_multi_line %}
+        Отмена всей продажи
+      {% else %}
+        Отмена продажи
+      {% endif %}
+    </h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
          href="{% url 'actions_report' %}">К отчёту действий</a>
@@ -13,34 +19,6 @@
       <table class="table">
         <tbody>
           <tr>
-            <th>Номер детали</th>
-            <td>
-              <span class="code-pill">{{ action.part_number|default:action.part_type.name }}</span>
-            </td>
-          </tr>
-          <tr>
-            <th>Название</th>
-            <td>{{ action.part_name|default:action.part_type.name }}</td>
-          </tr>
-          <tr>
-            <th>Ячейка</th>
-            <td>
-              <span class="code-pill">{{ action.location_code|default:action.location.code|short_address }}</span>
-            </td>
-          </tr>
-          <tr>
-            <th>Количество</th>
-            <td>{{ action.quantity|quantity_int }}</td>
-          </tr>
-          <tr>
-            <th>Клиент / комментарий</th>
-            <td>{{ action.customer_comment }}</td>
-          </tr>
-          <tr>
-            <th>Сумма</th>
-            <td>{{ action.total_price_rub|money_int }} ₽</td>
-          </tr>
-          <tr>
             <th>Документ</th>
             <td>
               {% if action.sale %}
@@ -50,10 +28,72 @@
               {% endif %}
             </td>
           </tr>
+          <tr>
+            <th>Клиент / комментарий</th>
+            <td>{{ action.customer_comment }}</td>
+          </tr>
+          <tr>
+            <th>Открыто из строки</th>
+            <td>
+              <span class="code-pill">{{ action.part_number|default:action.part_type.name }}</span>
+              {{ action.part_name|default:action.part_type.name }}
+            </td>
+          </tr>
         </tbody>
       </table>
+      {% if is_multi_line and can_cancel %}
+        {% include "partials/_status_block.html" with kind="warning" text="Отменится ВСЯ продажа, а не только строка, из которой вы открыли этот экран: все позиции ниже вернутся на склад." %}
+      {% endif %}
+      {% if positions %}
+        <h2 class="section-title">Что вернётся на склад</h2>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Артикул</th>
+              <th>Название</th>
+              <th>Вернётся, шт</th>
+              <th>Ячейка возврата</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in positions %}
+              <tr>
+                <td>
+                  <span class="code-pill">{{ p.article }}</span>
+                </td>
+                <td>{{ p.name }}</td>
+                <td>
+                  {% if p.returns %}
+                    {{ p.returns|quantity_int }}
+                  {% else %}
+                    уже возвращено ранее
+                  {% endif %}
+                </td>
+                <td>
+                  {% if p.cell %}
+                    <span class="code-pill">{{ p.cell }}</span>
+                  {% else %}
+                    ·
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
       {% if can_cancel %}
-        {% include "partials/_status_block.html" with kind="warning" text="Отмена вернёт остаток в эту ячейку (движение возврата) и сторнирует продажу. Действие уйдёт из итогов отчёта, таможенного блока и Excel, но останется в аудите." %}
+        {% if is_multi_line %}
+          <p class="muted">
+            Нужно отменить только одну позицию? Это делается частичной отменой строки
+            в документе продажи:
+            {% for p in positions %}
+              {% if p.returns %}
+                <a href="{% url 'sale_line_cancel' p.line.pk %}">{{ p.article }}</a>
+              {% endif %}
+            {% endfor %}
+          </p>
+        {% endif %}
+        {% include "partials/_status_block.html" with kind="warning" text="Отмена вернёт остаток в ячейки из таблицы (движение возврата) и сторнирует продажу. Действие уйдёт из итогов отчёта, таможенного блока и Excel, но останется в аудите." %}
         <form method="post" class="form">
           {% csrf_token %}
           <div class="field">
@@ -67,7 +107,13 @@
                    style="min-width: 320px">
           </div>
           <div class="form-actions">
-            <button type="submit" class="btn btn--danger">Подтвердить отмену</button>
+            <button type="submit" class="btn btn--danger">
+              {% if is_multi_line %}
+                Отменить всю продажу
+              {% else %}
+                Подтвердить отмену
+              {% endif %}
+            </button>
             <a class="btn btn--secondary" href="{% url 'actions_report' %}">Назад</a>
           </div>
         </form>

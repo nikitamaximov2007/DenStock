@@ -28,7 +28,6 @@ from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
 from apps.reports.services import resolve_period
-from apps.warehouse.addresses import short_address
 from apps.warehouse.models import StorageLocation
 
 from .cart import (
@@ -825,35 +824,81 @@ def actions_report_view(request):
     )
 
 
+def _sale_cancel_positions(sale) -> list[dict]:
+    """Every position the whole-sale cancellation returns, and where to.
+
+    Built from the sale's own lines with the same helpers the cancellation
+    uses (`reversible_quantity`, `sale_line_source_location`), so the screen
+    cannot promise anything the service will not do.
+    """
+    from apps.inventory.presentation import part_exact_number
+    from apps.sales.services import reversible_quantity, sale_line_source_location
+
+    positions = []
+    lines = sale.lines.select_related(
+        "part_type", "stock_lot__location", "part_item__current_location"
+    ).order_by("pk")
+    for line in lines:
+        location = sale_line_source_location(line)
+        positions.append({
+            "line": line,
+            "article": part_exact_number(line.part_type, default="Не указан"),
+            "name": line.part_type.name,
+            "sold": line.quantity,
+            "returns": reversible_quantity(line),
+            "cell": location.short_code if location else "",
+        })
+    return positions
+
+
+def _cancel_success_message(sale, positions) -> str:
+    returned = [p for p in positions if p["returns"] > 0]
+    cells = sorted({p["cell"] for p in returned if p["cell"]})
+    total = sum((p["returns"] for p in returned), Decimal("0"))
+    where = ", ".join(cells) if cells else "исходные ячейки"
+    if len(positions) <= 1:
+        return (
+            f"Продажа отменена ({sale.number}): остаток {quantity_int(total)} шт "
+            f"возвращён в ячейку {where}."
+        )
+    return (
+        f"Продажа отменена целиком ({sale.number}): все позиции ({len(positions)}, "
+        f"{quantity_int(total)} шт) возвращены на склад - {where}."
+    )
+
+
 @login_required
 def actions_cancel(request, pk):
     """Отмена ошибочной продажи: GET — подтверждение, POST — возврат остатка.
 
     Доступ — администратор/руководитель. Возврат физического остатка и
     сторно делает сервис (транзакция); здесь только UI и причина.
+
+    Отменяется всегда весь документ продажи, даже если открыли его из одной
+    строки отчёта: многопозиционная продажа сканера - один документ. Экран
+    поэтому перечисляет все позиции, а не только выбранную строку.
     """
     if not (request.user.is_admin or request.user.is_manager):
         raise PermissionDenied
     action = get_object_or_404(
         WarehouseAction.objects.select_related("part_type", "location", "sale"), pk=pk
     )
+    positions = _sale_cancel_positions(action.sale) if action.sale_id else []
     if request.method == "POST":
         try:
             cancel_warehouse_action(action, by=request.user, reason=request.POST.get("reason", ""))
         except ActionError as exc:
             messages.error(request, str(exc))
             return redirect("actions_cancel", pk=pk)
-        messages.success(
-            request,
-            f"Продажа отменена, остаток {quantity_int(action.quantity)} шт "
-            f"возвращён в ячейку {short_address(action.location_code or action.location.code)}.",
-        )
+        messages.success(request, _cancel_success_message(action.sale, positions))
         return redirect("actions_report")
     return render(
         request,
         "actions/cancel.html",
         {
             "action": action,
+            "positions": positions,
+            "is_multi_line": len(positions) > 1,
             "can_cancel": action.status == WarehouseAction.Status.ACTIVE
             and action.action_type == WarehouseAction.Type.SALE,
         },
