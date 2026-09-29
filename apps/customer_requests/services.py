@@ -39,6 +39,16 @@ def _next_human_number() -> int:
     return number
 
 
+REQUEST_WITH_SALE_DELETE_REFUSED = (
+    "Заявку нельзя удалить: по ней создана продажа. Удаление оставило бы продажу "
+    "без истории заявки и переписки."
+)
+REQUEST_SALE_COMPLETED_CANCEL_REFUSED = (
+    "Заявку нельзя отменить: продажа по ней уже проведена. Сначала отмените "
+    "продажу, затем отмените заявку."
+)
+
+
 class CustomerRequestError(ValueError):
     """A customer-facing validation error without sensitive details.
 
@@ -296,6 +306,11 @@ def change_request_status(
     if target_status == request.status:
         return request, False
     _validate_status_transition(request.status, target_status)
+    if target_status == CustomerRequest.Status.CANCELED and request.sale_id:
+        from apps.sales.models import Sale
+
+        if Sale.objects.filter(pk=request.sale_id, status=Sale.Status.COMPLETED).exists():
+            raise CustomerRequestError(REQUEST_SALE_COMPLETED_CANCEL_REFUSED)
     if target_status == CustomerRequest.Status.COMPLETED and request.sale_id:
         from apps.sales.models import Sale
 
@@ -361,6 +376,8 @@ def delete_cancelled_request(*, request_id: int, by=None) -> bool:
     request = CustomerRequest.objects.select_for_update().get(pk=request_id)
     if request.status != CustomerRequest.Status.CANCELED:
         raise CustomerRequestError("Удалять можно только отменённые заявки.")
+    if request.sale_id:
+        raise CustomerRequestError(REQUEST_WITH_SALE_DELETE_REFUSED)
     # Every request-owned relation uses CASCADE. Explicitly clear routing rows
     # first so a selected request can never remain the active destination.
     from .models import MaxCustomerChat, TelegramCustomerChat
@@ -377,10 +394,13 @@ def delete_cancelled_request(*, request_id: int, by=None) -> bool:
 
 @transaction.atomic
 def delete_all_cancelled_requests(*, by=None) -> int:
-    """Lock and delete only rows still cancelled; status races are harmless."""
+    """Lock and delete only rows still cancelled; status races are harmless.
+
+    Requests linked to a sale are kept: see REQUEST_WITH_SALE_DELETE_REFUSED.
+    """
     ids = list(
         CustomerRequest.objects.select_for_update()
-        .filter(status=CustomerRequest.Status.CANCELED)
+        .filter(status=CustomerRequest.Status.CANCELED, sale__isnull=True)
         .values_list("pk", flat=True)
     )
     for request_id in ids:

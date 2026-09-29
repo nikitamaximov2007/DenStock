@@ -143,7 +143,7 @@
             </div>
           </dl>
           <div class="cr-row__action">
-            {% if item.status == "canceled" %}
+            {% if item.status == "canceled" and not item.sale_id %}
               <form method="post"
                     action="{% url 'customer_request_delete' item.pk %}"
                     data-idempotent-form>

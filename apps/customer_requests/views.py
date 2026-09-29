@@ -624,6 +624,15 @@ def customer_request_delete_all(request):
     _require_access(request)
     deleted = delete_all_cancelled_requests(by=request.user)
     messages.success(request, f"Удалено отменённых заявок: {deleted}.")
+    kept = CustomerRequest.objects.filter(
+        status=CustomerRequest.Status.CANCELED, sale__isnull=False
+    ).count()
+    if kept:
+        messages.info(
+            request,
+            f"Не удалено заявок с продажей: {kept}. Они остаются, чтобы продажа "
+            "не потеряла историю заявки.",
+        )
     return redirect(reverse("customer_request_list") + "?tab=canceled")
 
 
