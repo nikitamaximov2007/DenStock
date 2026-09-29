@@ -461,6 +461,34 @@ def receive_part_item(item: PartItem, *, to_location=None, by=None, comment="") 
 
 
 @transaction.atomic
+def change_part_item_status(item: PartItem, new_status: str, *, by=None) -> PartItem:
+    """Сменить статус экземпляра по разрешённому переходу, с кэшем остатков.
+
+    Выход из приёмки - всегда `receive_part_item`: движение приёмки, кэш и
+    предпочтительная ячейка пишутся одним кодом, и статус «Доступен» без
+    движения приёмки невозможен. Если у экземпляра ещё нет ячейки, приёмка
+    сама откажет - ячейку выбирают явно через «Принять в ячейку», не через
+    общую смену статуса. Карантин - статус, а не перемещение: движения нет,
+    но кэш доступного/карантинного остатка пересчитывается тут же. Повтор
+    того же перехода (двойное нажатие) ничего не меняет.
+    """
+    item = PartItem.objects.select_for_update().get(pk=item.pk)
+    if item.status == new_status:
+        return item
+    if not item.can_transition_to(new_status):
+        raise InventoryError("Недопустимый переход статуса.")
+    if item.status == PartItem.Status.RECEIVING:
+        item = receive_part_item(item, by=by)
+        if new_status == PartItem.Status.AVAILABLE:
+            return item
+    ensure_location_operation_allowed(item.current_location)
+    item.status = new_status
+    item.save(update_fields=["status", "updated_at"])
+    _refresh_balance(item.batch_line, item.current_location)
+    return item
+
+
+@transaction.atomic
 def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
     """Провести лот: receiving → available, записать движение (qty = lot.quantity)."""
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)

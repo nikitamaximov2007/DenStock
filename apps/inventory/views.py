@@ -41,6 +41,7 @@ from .services import (
     LOT_PHYSICAL_STATUSES,
     InventoryError,
     adjust_stock_lot_quantity,
+    change_part_item_status,
     change_stock_lot_status,
     create_part_items,
     create_stock_lot,
@@ -134,6 +135,10 @@ class PartItemDetailView(InventoryViewMixin, DetailView):
         ctx["can_print_labels"] = self.request.user.can_print_labels
         ctx["can_manage_images"] = self.request.user.can_manage_images
         allowed = self.object.ALLOWED_TRANSITIONS.get(self.object.status, [])
+        if self.object.status == PartItem.Status.RECEIVING:
+            # «Принять в ячейку» рядом уже есть переход в «Доступен»; вторая
+            # кнопка с тем же действием только путала бы.
+            allowed = [s for s in allowed if s != PartItem.Status.AVAILABLE]
         ctx["next_statuses"] = [(s, PartItem.Status(s).label) for s in allowed]
         ctx["movements"] = list(self.object.movements.select_related(
             "from_location", "to_location", "created_by"
@@ -240,13 +245,12 @@ def item_status_change(request, pk):
     if not request.user.can_manage_inventory:
         raise PermissionDenied
     item = get_object_or_404(PartItem, pk=pk)
-    new_status = request.POST.get("status", "")
-    if item.can_transition_to(new_status):
-        item.status = new_status
-        item.save(update_fields=["status", "updated_at"])
-        messages.success(request, f"Статус экземпляра: {item.get_status_display()}.")
+    try:
+        item = change_part_item_status(item, request.POST.get("status", ""), by=request.user)
+    except InventoryError as exc:
+        messages.error(request, str(exc))
     else:
-        messages.error(request, "Недопустимый переход статуса.")
+        messages.success(request, f"Статус экземпляра: {item.get_status_display()}.")
     return redirect("item_detail", pk=pk)
 
 
