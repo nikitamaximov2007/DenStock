@@ -17,7 +17,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from apps.inventory.models import StockLot
+from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import (
     LOT_PHYSICAL_STATUSES,
     InventoryError,
@@ -98,6 +98,26 @@ def remove_count_line(line, *, by=None) -> None:
 
 # --- Проведение / отмена -----------------------------------------------------
 
+STALE_COUNT_REFUSED = (
+    "Остаток изменился после того, как строки добавили в инвентаризацию: {lots}. "
+    "Уберите эти строки, добавьте их заново и пересчитайте - иначе проведение "
+    "вернуло бы уже ушедшие детали или потеряло пришедшие."
+)
+
+
+def _line_is_stale(line: InventoryCountLine, lot: StockLot) -> bool:
+    """Did the lot change after this line took its snapshot?
+
+    Called with ``lot`` locked. Every movement writer locks the lot row before
+    recording a movement, so a movement committed after the snapshot carries a
+    later ``created_at`` than the line itself.
+    """
+    if lot.quantity != line.expected_quantity or lot.location_id != line.location_id:
+        return True
+    return StockMovement.objects.filter(
+        stock_lot_id=lot.pk, created_at__gt=line.created_at
+    ).exists()
+
 
 @transaction.atomic
 def complete_inventory_count(doc, *, by=None) -> InventoryCountDocument:
@@ -115,8 +135,31 @@ def complete_inventory_count(doc, *, by=None) -> InventoryCountDocument:
     if any(line.counted_quantity is None for line in lines):
         raise StocktakingError("Не все строки сосчитаны - введите фактическое количество.")
 
+    # Pass 1: lock every lot (same order as before) and refuse the whole
+    # document if any lot changed after its line was snapshotted. The count
+    # was taken against that snapshot; a sale, repair, write-off, receipt,
+    # return, adjustment or move recorded since then means the counted figure
+    # can no longer be applied as the lot's absolute quantity - doing so used
+    # to resurrect units that had legitimately left (count 5, sell 2, complete
+    # -> ADJUST_IN +2). The movement check also catches changes that net out
+    # to the same quantity (sell 2, return 2), where the operator may have
+    # counted in between.
+    locked = {}
+    stale = []
     for line in lines:
         lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
+        locked[line.pk] = lot
+        if _line_is_stale(line, lot):
+            stale.append(line)
+    if stale:
+        raise StocktakingError(STALE_COUNT_REFUSED.format(
+            lots=", ".join(
+                f"лот #{line.stock_lot_id} ({line.part_type.name})" for line in stale
+            )
+        ))
+
+    for line in lines:
+        lot = locked[line.pk]
         delta = line.counted_quantity - lot.quantity
         if delta == 0:
             continue  # факт совпал с системой — корректировка не нужна
