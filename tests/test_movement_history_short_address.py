@@ -230,9 +230,9 @@ def test_rendering_creates_no_duplicate_location(client, moved):
 
 def test_a_renamed_cell_still_shows_both_addresses_in_short_form(client, moved):
     """Переименование показывает исторический и текущий адрес - оба короткие."""
-    from apps.warehouse.services import rename_storage_location
+    from apps.warehouse.services import rebind_storage_cell
 
-    rename_storage_location(
+    rebind_storage_cell(
         moved["target"], new_code="S02-D01-C09", expected_code=TO_CODE, by=moved["boss"]
     )
     _login(client, moved)

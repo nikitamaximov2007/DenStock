@@ -51,7 +51,7 @@ from apps.receipts.services import add_line, create_receipt, post_receipt, recei
 from apps.suppliers.models import Supplier
 from apps.warehouse.addresses import compose_address, get_or_create_location
 from apps.warehouse.models import StorageLocation, StorageLocationRenameHistory
-from apps.warehouse.services import rename_storage_location
+from apps.warehouse.services import rebind_storage_cell
 
 PASSWORD = "parol-12345"
 
@@ -361,7 +361,7 @@ def test_counting_rename_button_is_visible_for_manager_in_draft_and_posted(
         html = client.get(reverse("counting_detail", args=[session.pk])).content.decode()
         rename_url = reverse("location_rename", args=[location.pk])
         detail_url = reverse("counting_detail", args=[session.pk])
-        assert "Переименовать ячейку" in html
+        assert "Перенести ячейку" in html
         assert f"{rename_url}?next={detail_url}" in html
 
 
@@ -372,7 +372,7 @@ def test_counting_rename_button_is_hidden_without_warehouse_structure_permission
     _login(client, make_user, role=roles.STOREKEEPER, name="storekeeper")
     response = client.get(reverse("counting_detail", args=[session.pk]))
     assert response.status_code == 200
-    assert "Переименовать ячейку" not in response.content.decode()
+    assert "Перенести ячейку" not in response.content.decode()
 
 
 def test_counting_rename_returns_to_same_posted_session_without_mutating_inventory(
@@ -415,8 +415,9 @@ def test_counting_rename_returns_to_same_posted_session_without_mutating_invento
         rename_url,
         {
             "expected_code": old_code,
-            "new_code": "S04-L03-D02-C08",
+            "new_code": "S04-D02-C08",
             "next": detail_url,
+            "confirm": "1",
         },
     )
     assert response.status_code == 302
@@ -425,7 +426,7 @@ def test_counting_rename_returns_to_same_posted_session_without_mutating_invento
     location.refresh_from_db()
     session.refresh_from_db()
     action.refresh_from_db()
-    assert location.code == "S04-L03-D02-C08"
+    assert location.code == "S04-D02-C08"
     assert session.pk == session_pk
     assert session.full_address == old_code
     assert session.status == InventoryCountingSession.Status.POSTED
@@ -450,7 +451,7 @@ def test_counting_rename_returns_to_same_posted_session_without_mutating_invento
 
     returned = client.get(detail_url)
     assert returned.status_code == 200
-    assert location.code in returned.content.decode()
+    assert location.short_code in returned.content.decode()
 
 
 def test_scan_endpoint_enter_handling(client, make_user, refs, location):
@@ -482,8 +483,8 @@ def test_new_session_creates_location_without_zone(client, make_user, refs):
     assert cell.parent.parent.code == "S01"
 
 
-def test_new_session_resolves_historical_alias_after_location_rename(client, make_user):
-    """A renamed address remains bound to the same physical identity."""
+def test_new_session_at_a_vacated_address_does_not_count_the_moved_cell(client, make_user):
+    """The cell moved from 4-2-7 to 4-2-8; counting 4-2-7 must not count the moved cell."""
     user = make_user("rename-counting", is_superuser=True)
     old_location = StorageLocation.objects.create(
         name="Старая ячейка",
@@ -491,7 +492,7 @@ def test_new_session_resolves_historical_alias_after_location_rename(client, mak
         level=StorageLocation.Level.CELL,
     )
     old_location_id = old_location.pk
-    rename_storage_location(
+    rebind_storage_cell(
         old_location,
         new_code="S04-D02-C08",
         expected_code="S04-D02-C07",
@@ -510,9 +511,12 @@ def test_new_session_resolves_historical_alias_after_location_rename(client, mak
     )
 
     assert response.status_code == 302
-    session = InventoryCountingSession.objects.get(storage_location=old_location_id)
-    assert session.storage_location_id == old_location_id
-    assert session.full_address == "S04-D02-C08"
+    assert not InventoryCountingSession.objects.filter(
+        storage_location=old_location_id
+    ).exists()
+    session = InventoryCountingSession.objects.get()
+    assert session.storage_location.code == "S04-D02-C07"
+    assert session.full_address == "S04-D02-C07"
     old_location.refresh_from_db()
     assert old_location.barcode == "LOC:S04-D02-C08"
 
@@ -1621,13 +1625,13 @@ def test_counting_list_uses_live_location_code_after_rename(client, make_user):
         posted_at=timezone.now(),
     )
     original_location_id = location.pk
-    rename_storage_location(
+    rebind_storage_cell(
         location,
         new_code="S04-D02-C08",
         expected_code="S04-D02-C07",
         by=user,
     )
-    historical_alias = get_or_create_location("S04-D02-C07")
+    reused_old_place = get_or_create_location("S04-D02-C07")
 
     client.force_login(user)
     detail = client.get(reverse("counting_detail", args=[session.pk]))
@@ -1641,7 +1645,8 @@ def test_counting_list_uses_live_location_code_after_rename(client, make_user):
     assert "На момент пересчёта: 4-2-7" in text
     assert session.full_address == "S04-D02-C07"
     assert session.storage_location_id == original_location_id
-    assert historical_alias.pk == original_location_id
+    # the moved cell keeps its session; the old place is a separate new cell
+    assert reused_old_place.pk != original_location_id
 
 
 def test_counting_list_sorting_and_conducted_null_order(client, make_user):

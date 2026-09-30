@@ -11,6 +11,7 @@ from django.views.generic import DetailView, FormView, ListView, UpdateView
 from apps.accounts.permissions import ManageWarehouseMixin
 from apps.inventory.movement import live_stock_rows
 
+from .addresses import short_address
 from .drawer_rename import build_drawer_rename_plan, rename_storage_drawer
 from .forms import (
     StorageAddressV2CreateForm,
@@ -22,8 +23,8 @@ from .models import StorageLocation
 from .services import (
     StorageLocationRemovalError,
     StorageLocationRenameError,
+    rebind_storage_cell,
     remove_or_archive_storage_location,
-    rename_storage_location,
     storage_location_removal_preview,
 )
 
@@ -186,8 +187,20 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
 
     def form_valid(self, form):
         old_code = self.location.code
+        if not form.cleaned_data.get("confirm"):
+            # First step only shows what will happen; nothing is written.
+            if form.cleaned_data["expected_code"] != old_code:
+                form.add_error(
+                    "new_code", "Адрес ячейки уже изменён другим пользователем. Обновите страницу."
+                )
+                return self.form_invalid(form)
+            return self.render_to_response(
+                self.get_context_data(
+                    form=form, confirming=True, new_code=form.cleaned_data["new_code"]
+                )
+            )
         try:
-            location = rename_storage_location(
+            location = rebind_storage_cell(
                 self.location,
                 new_code=form.cleaned_data["new_code"],
                 expected_code=form.cleaned_data["expected_code"],
@@ -197,7 +210,11 @@ class LocationRenameView(ManageWarehouseMixin, FormView):
             form.add_error("new_code", str(exc))
             return self.form_invalid(form)
 
-        messages.success(self.request, f"Ячейка {old_code} переименована в {location.code}.")
+        messages.success(
+            self.request,
+            f"Ячейка перенесена: {short_address(old_code)} -> {location.short_code}. "
+            f"Адрес {short_address(old_code)} освобождён.",
+        )
         messages.warning(self.request, "Распечатайте новую этикетку для ячейки.")
         return redirect(
             _safe_internal_next(self.request, form.cleaned_data.get("next", ""))

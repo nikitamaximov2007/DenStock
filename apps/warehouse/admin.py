@@ -11,7 +11,9 @@ class StorageLocationAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         if obj is not None:
-            return ("code", "barcode")
+            # Address and hierarchy change only through rebind_storage_cell /
+            # the drawer rename, never by editing the row.
+            return ("code", "barcode", "parent")
         return ()
 
 

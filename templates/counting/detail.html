@@ -19,7 +19,7 @@
     {% endif %}
     {% if can_rename_location %}
       <a class="btn btn--secondary btn--small"
-         href="{% url 'location_rename' session.storage_location.pk %}?next={% url 'counting_detail' session.pk %}">Переименовать ячейку</a>
+         href="{% url 'location_rename' session.storage_location.pk %}?next={% url 'counting_detail' session.pk %}">Перенести ячейку</a>
     {% endif %}
   </p>
   {% if is_draft %}

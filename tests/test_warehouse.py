@@ -13,7 +13,7 @@ from apps.accounts import roles
 from apps.actions.models import WarehouseAction
 from apps.catalog.models import Category, PartType, Unit
 from apps.core.scanner import resolve_scan
-from apps.inventory.models import StockBalance, StockMovement
+from apps.inventory.models import StockBalance, StockLot, StockMovement
 from apps.inventory.services import (
     create_part_items,
     create_stock_lot,
@@ -30,7 +30,7 @@ from apps.warehouse.models import (
     StorageLocationAlias,
     StorageLocationRenameHistory,
 )
-from apps.warehouse.services import StorageLocationRenameError, rename_storage_location
+from apps.warehouse.services import StorageLocationRenameError, rebind_storage_cell
 
 PASSWORD = "parol-12345"
 L = StorageLocation.Level
@@ -354,7 +354,7 @@ def test_reuses_retired_historical_code_without_moving_stock(db, make_user):
     receive_stock_lot(lot_b, by=admin)
     movements_before = StockMovement.objects.count()
 
-    rename_storage_location(
+    rebind_storage_cell(
         location_a,
         new_code="S03-D02-C10",
         expected_code="S03-D02-C07",
@@ -363,9 +363,10 @@ def test_reuses_retired_historical_code_without_moving_stock(db, make_user):
     old_alias_a = StorageLocationAlias.objects.get(
         location=location_a, code="S03-D02-C07"
     )
-    assert old_alias_a.is_active is True
+    # physical rebind: the old address is history only and free for reuse
+    assert old_alias_a.is_active is False
 
-    rename_storage_location(
+    rebind_storage_cell(
         location_b,
         new_code="S03-D02-C07",
         expected_code="S03-D02-C08",
@@ -395,7 +396,7 @@ def test_reuses_retired_historical_code_without_moving_stock(db, make_user):
     ).exists()
 
     with pytest.raises(StorageLocationRenameError, match="Ячейка с таким кодом"):
-        rename_storage_location(
+        rebind_storage_cell(
             location_a,
             new_code="S03-D02-C07",
             expected_code="S03-D02-C10",
@@ -404,20 +405,20 @@ def test_reuses_retired_historical_code_without_moving_stock(db, make_user):
     location_a.refresh_from_db()
     assert location_a.code == "S03-D02-C10"
 
-    rename_storage_location(
+    rebind_storage_cell(
         location_b,
         new_code="S03-D02-C11",
         expected_code="S03-D02-C07",
         by=admin,
     )
     assert resolve_scan("S03-D02-C11").id == location_b.pk
-    reused_alias = StorageLocationAlias.objects.get(
-        location=location_b,
-        code="S03-D02-C07",
-        is_active=True,
-    )
-    assert resolve_scan("S03-D02-C07").id == reused_alias.location_id
-    assert resolve_scan("LOC:S03-D02-C07").id == location_b.pk
+    assert StorageLocationAlias.objects.filter(
+        location=location_b, code="S03-D02-C07", is_active=False
+    ).exists()
+    for old in ("S03-D02-C07", "LOC:S03-D02-C07"):
+        scan = resolve_scan(old)
+        assert scan.status == "unknown"
+        assert "Ячейка перенесена: 3-2-7 -> 3-2-11" in scan.message
     assert StorageLocationAlias.objects.filter(
         location=location_a,
         code="S03-D02-C07",
@@ -474,22 +475,22 @@ def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_invent
         item.part_type_id,
     )
 
-    renamed = rename_storage_location(
+    renamed = rebind_storage_cell(
         location,
-        new_code=" s04-l03-d01-c05 ",
+        new_code=" 4-1-5 ",
         expected_code=old_code,
         by=data["admin"],
     )
 
     assert renamed.pk == location.pk
-    assert renamed.code == "S04-L03-D01-C05"
+    assert renamed.code == "S04-D01-C05"
     location.refresh_from_db()
     lot.refresh_from_db()
     balance.refresh_from_db()
     item.refresh_from_db()
     action.refresh_from_db()
     assert original_barcode == "LOC:S04-L03-D01-C04"
-    assert location.barcode == "LOC:S04-L03-D01-C05"
+    assert location.barcode == "LOC:S04-D01-C05"
     assert lot_before == (
         lot.location_id,
         lot.quantity,
@@ -521,27 +522,33 @@ def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_invent
     )
     assert StockMovement.objects.count() == movements_before
     assert action.location_id == location.pk
-    assert action.location.code == "S04-L03-D01-C05"
+    assert action.location.code == "S04-D01-C05"
     assert action.location_code == old_code
     assert action.part_number == "420931285"
     assert StorageLocationRenameHistory.objects.filter(
         location=location,
         old_code=old_code,
-        new_code="S04-L03-D01-C05",
+        new_code="S04-D01-C05",
         renamed_by=data["admin"],
     ).count() == 1
 
-    assert resolve_scan(old_code).id == location.pk
-    assert resolve_scan(old_code).is_alias is True
+    # the old address and old label no longer act as this (or any) live cell
+    for old in (old_code, original_barcode):
+        scan = resolve_scan(old)
+        assert scan.status == "unknown"
+        assert "Ячейка перенесена" in scan.message
     assert resolve_scan(location.code).id == location.pk
-    assert resolve_scan(original_barcode).id == location.pk
     assert resolve_scan(location.barcode).id == location.pk
-    resolved_location = get_or_create_location(old_code, allow_legacy=True)
-    assert resolved_location.pk == location.pk
+    assert location.parent.code == "S04-D01"
+    # the old place is free: it becomes a new, empty cell of its own
+    reused = get_or_create_location(old_code, allow_legacy=True)
+    assert reused.pk != location.pk
+    assert not StockLot.objects.filter(location=reused).exists()
     assert StorageLocationAlias.objects.filter(
         location=location,
         code=old_code,
         barcode=original_barcode,
+        is_active=False,
     ).exists()
     balance.refresh_from_db()
     action.refresh_from_db()
@@ -557,15 +564,16 @@ def test_rename_keeps_location_identity_stock_and_action_snapshot(renamed_invent
 @pytest.mark.parametrize(
     ("new_code", "message"),
     [
-        ("S04 L03", "без пробелов"),
-        ("420931285", "Номер детали"),
-        (" s04-l03-d01-c04 ", "совпадает"),
+        ("S04 L03", "S-D-C"),
+        ("420931285", "S-D-C"),
+        (" s04-l03-d01-c05 ", "S-D-C"),
+        ("S04-D01", "а не стеллаж или ящик"),
     ],
 )
 def test_rename_rejects_invalid_or_unchanged_code(renamed_inventory, new_code, message):
     location = renamed_inventory["location"]
     with pytest.raises(StorageLocationRenameError, match=message):
-        rename_storage_location(
+        rebind_storage_cell(
             location,
             new_code=new_code,
             expected_code=location.code,
@@ -578,18 +586,18 @@ def test_rename_rejects_invalid_or_unchanged_code(renamed_inventory, new_code, m
 
 def test_rename_rejects_occupied_or_stale_code(renamed_inventory):
     location = renamed_inventory["location"]
-    StorageLocation.objects.create(name="Занятая", code="S04-L03-D01-C05")
+    StorageLocation.objects.create(name="Занятая", code="S04-D01-C05")
     with pytest.raises(StorageLocationRenameError, match="уже существует"):
-        rename_storage_location(
+        rebind_storage_cell(
             location,
-            new_code="S04-L03-D01-C05",
+            new_code="S04-D01-C05",
             expected_code=location.code,
             by=renamed_inventory["admin"],
         )
     with pytest.raises(StorageLocationRenameError, match="другим пользователем"):
-        rename_storage_location(
+        rebind_storage_cell(
             location,
-            new_code="S04-L03-D01-C06",
+            new_code="S04-D01-C06",
             expected_code="S04-L03-D01-C03",
             by=renamed_inventory["admin"],
         )
@@ -601,15 +609,15 @@ def test_rename_keeps_custom_barcode(renamed_inventory):
     StorageLocation.objects.filter(pk=location.pk).update(barcode="CUSTOM-WAREHOUSE-24")
     location.refresh_from_db()
 
-    renamed = rename_storage_location(
+    renamed = rebind_storage_cell(
         location,
-        new_code="S04-L03-D01-C05",
+        new_code="S04-D01-C05",
         expected_code=location.code,
         by=renamed_inventory["admin"],
     )
 
     assert renamed.pk == location.pk
-    assert renamed.code == "S04-L03-D01-C05"
+    assert renamed.code == "S04-D01-C05"
     assert renamed.barcode == "CUSTOM-WAREHOUSE-24"
     assert StorageLocationRenameHistory.objects.filter(location=location).count() == 1
 
@@ -619,14 +627,14 @@ def test_rename_assigns_auto_barcode_when_legacy_barcode_is_empty(renamed_invent
     StorageLocation.objects.filter(pk=location.pk).update(barcode="")
     location.refresh_from_db()
 
-    renamed = rename_storage_location(
+    renamed = rebind_storage_cell(
         location,
-        new_code="S04-L03-D01-C05",
+        new_code="S04-D01-C05",
         expected_code=location.code,
         by=renamed_inventory["admin"],
     )
 
-    assert renamed.barcode == "LOC:S04-L03-D01-C05"
+    assert renamed.barcode == "LOC:S04-D01-C05"
 
 
 def test_rename_rejects_conflicting_auto_barcode_without_partial_update(renamed_inventory):
@@ -634,13 +642,13 @@ def test_rename_rejects_conflicting_auto_barcode_without_partial_update(renamed_
     StorageLocation.objects.create(
         name="Чужой штрихкод",
         code="S04-L03-D01-C99",
-        barcode="LOC:S04-L03-D01-C05",
+        barcode="LOC:S04-D01-C05",
     )
 
     with pytest.raises(StorageLocationRenameError, match="Штрихкод"):
-        rename_storage_location(
+        rebind_storage_cell(
             location,
-            new_code="S04-L03-D01-C05",
+            new_code="S04-D01-C05",
             expected_code=location.code,
             by=renamed_inventory["admin"],
         )
@@ -654,13 +662,13 @@ def test_rename_rejects_conflicting_auto_barcode_without_partial_update(renamed_
 def test_rename_converts_concurrent_unique_conflict_to_user_error(renamed_inventory):
     location = renamed_inventory["location"]
     with patch(
-        "apps.warehouse.services._persist_location_rename",
+        "apps.warehouse.services.StorageLocationRenameHistory.objects.create",
         side_effect=IntegrityError,
     ):
-        with pytest.raises(StorageLocationRenameError, match="уже существует"):
-            rename_storage_location(
+        with pytest.raises(StorageLocationRenameError, match="уже занят"):
+            rebind_storage_cell(
                 location,
-                new_code="S04-L03-D01-C05",
+                new_code="S04-D01-C05",
                 expected_code=location.code,
                 by=renamed_inventory["admin"],
             )
@@ -748,14 +756,19 @@ def test_rename_view_permissions_double_post_and_generic_edit_guard(
     assert client.get(rename_url).status_code == 403
     assert client.post(
         rename_url,
-        {"expected_code": location.code, "new_code": "S04-L03-D01-C05"},
+        {"expected_code": location.code, "new_code": "S04-D01-C05"},
     ).status_code == 403
 
     client.force_login(renamed_inventory["admin"])
     page = client.get(rename_url)
     assert page.status_code == 200
-    assert "Текущий код ячейки" in page.content.decode()
-    payload = {"expected_code": location.code, "new_code": "S04-L03-D01-C05"}
+    assert "Текущий адрес ячейки" in page.content.decode()
+    payload = {"expected_code": location.code, "new_code": "S04-D01-C05"}
+    preview = client.post(rename_url, payload)
+    assert preview.status_code == 200
+    assert "Подтвердить перенос" in preview.content.decode()
+    assert StorageLocationRenameHistory.objects.filter(location=location).count() == 0
+    payload["confirm"] = "1"
     assert client.post(rename_url, payload).status_code == 302
     repeated = client.post(rename_url, payload)
     assert repeated.status_code == 200
@@ -769,7 +782,7 @@ def test_rename_view_permissions_double_post_and_generic_edit_guard(
     assert response.status_code == 302
     location.refresh_from_db()
     assert location.name == "Новое имя"
-    assert location.code == "S04-L03-D01-C05"
+    assert location.code == "S04-D01-C05"
 
 
 def test_rename_view_allows_reusing_an_old_alias(make_user, client):
@@ -780,11 +793,11 @@ def test_rename_view_allows_reusing_an_old_alias(make_user, client):
 
     first = client.post(
         reverse("location_rename", args=[location_a.pk]),
-        {"expected_code": "S03-D02-C07", "new_code": "S03-D02-C10"},
+        {"expected_code": "S03-D02-C07", "new_code": "S03-D02-C10", "confirm": "1"},
     )
     second = client.post(
         reverse("location_rename", args=[location_b.pk]),
-        {"expected_code": "S03-D02-C08", "new_code": "S03-D02-C07"},
+        {"expected_code": "S03-D02-C08", "new_code": "S03-D02-C07", "confirm": "1"},
     )
 
     assert first.status_code == 302
@@ -811,7 +824,7 @@ def test_existing_location_edit_keeps_code_and_barcode_server_side(renamed_inven
     html = page.content.decode()
     assert page.status_code == 200
     assert f'value="{original_code}"' in html
-    assert "Код существующего места изменяется через отдельную операцию" in html
+    assert "Адрес существующего места меняется отдельной операцией" in html
     assert reverse("location_rename", args=[location.pk]) in html
     assert f'value="{original_barcode}"' in html
 
@@ -909,8 +922,9 @@ def test_rename_rejects_external_next_url(renamed_inventory, client):
         rename_url,
         {
             "expected_code": location.code,
-            "new_code": "S04-L03-D01-C05",
+            "new_code": "S04-D01-C05",
             "next": "https://evil.example/",
+            "confirm": "1",
         },
     )
     assert response.status_code == 302

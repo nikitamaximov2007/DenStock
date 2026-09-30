@@ -5,6 +5,7 @@ from .models import StorageLocation
 from .services import (
     StorageLocationCreateError,
     StorageLocationRenameError,
+    _require_cell_address,
     normalize_storage_location_code,
 )
 
@@ -126,11 +127,12 @@ class StorageLocationUpdateForm(StorageLocationForm):
 class StorageLocationRenameForm(forms.Form):
     expected_code = forms.CharField(widget=forms.HiddenInput)
     next = forms.CharField(required=False, widget=forms.HiddenInput)
-    new_code = forms.CharField(label="Новый код ячейки", max_length=60)
+    confirm = forms.BooleanField(required=False, widget=forms.HiddenInput)
+    new_code = forms.CharField(label="Новый адрес ячейки", max_length=60)
 
     def clean_new_code(self):
         try:
-            return normalize_storage_location_code(self.cleaned_data["new_code"])
+            return _require_cell_address(self.cleaned_data["new_code"]).code
         except StorageLocationRenameError as exc:
             raise forms.ValidationError(str(exc)) from exc
 

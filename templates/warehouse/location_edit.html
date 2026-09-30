@@ -7,12 +7,12 @@
     <p>
       <label for="location-code">Код места</label>
       <input id="location-code" type="text" value="{{ object.code }}" readonly>
-      <span class="muted">Код существующего места изменяется через отдельную операцию переименования.</span>
+      <span class="muted">Адрес существующего места меняется отдельной операцией: переносом ячейки или переименованием ящика.</span>
     </p>
     {% if object.level == "cell" %}
       <p>
         <a class="btn btn--secondary btn--small"
-           href="{% url 'location_rename' object.pk %}">Переименовать ячейку</a>
+           href="{% url 'location_rename' object.pk %}">Перенести ячейку</a>
       </p>
     {% elif object.level == "drawer" %}
       <p>

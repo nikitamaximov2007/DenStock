@@ -31,7 +31,7 @@ from apps.stocktaking.services import (
 )
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
-from apps.warehouse.services import rename_storage_location
+from apps.warehouse.services import rebind_storage_cell
 
 
 @pytest.fixture
@@ -281,15 +281,15 @@ def test_regular_receipt_guidance_skips_archived_preference_and_rename_keeps_lin
     _received_lot(preferred_data)
     preference = PartPreferredLocation.objects.get(part_type=preferred_data["part"])
     old_code = preferred_data["current"].code
-    renamed = rename_storage_location(
+    renamed = rebind_storage_cell(
         preferred_data["current"],
-        new_code="S03-L03-D02-C19",
+        new_code="S03-D02-C19",
         expected_code=old_code,
         by=preferred_data["user"],
     )
     preference.refresh_from_db()
     assert preference.location_id == renamed.pk
-    assert preference.location.code == "S03-L03-D02-C19"
+    assert preference.location.code == "S03-D02-C19"
 
     renamed.is_active = False
     renamed.save(update_fields=["is_active"])
