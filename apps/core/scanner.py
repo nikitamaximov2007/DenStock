@@ -26,6 +26,7 @@ from apps.procurement.models import Batch
 from apps.warehouse.models import StorageLocation
 from apps.warehouse.services import (
     StorageLocationResolutionError,
+    historical_cell_move,
     resolve_storage_location,
 )
 
@@ -82,6 +83,15 @@ def _item_result(item: PartItem, message: str) -> ScanResult:
     return ScanResult(
         status="found", type="part_item", id=item.pk, label=_item_label(item),
         url=reverse("item_detail", args=[item.pk]), message=message,
+    )
+
+
+def moved_cell_message(old_code: str, current: StorageLocation) -> str:
+    from apps.warehouse.addresses import short_address
+
+    return (
+        f"Ячейка перенесена: {short_address(old_code)} -> {current.short_code}. "
+        "Старый адрес больше не действует, используйте новый."
     )
 
 
@@ -205,6 +215,11 @@ def resolve_scan(raw: str, *, user=None) -> ScanResult:
         return ScanResult(status="ambiguous", message=str(exc))
     if loc:
         return _location_result(loc, is_alias=location_is_alias)
+    # Старая этикетка ячейки, которую перенесли на другой адрес: это не текущее
+    # место хранения, и в операции оно не попадает. Объясняем, куда переехала.
+    moved = historical_cell_move(code)
+    if moved:
+        return ScanResult(status="unknown", message=moved_cell_message(*moved))
 
     # 5. Серийный номер (уникален в пределах вида; между видами может быть много).
     items = list(

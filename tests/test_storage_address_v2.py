@@ -49,7 +49,7 @@ from apps.warehouse.services import (
     StorageLocationCreateError,
     StorageLocationRenameError,
     attach_movement_location_history,
-    rename_storage_location,
+    rebind_storage_cell,
 )
 
 
@@ -142,12 +142,12 @@ def test_drawer_zero_is_a_canonical_v2_identity_not_a_missing_value(db):
         parse_legacy_address("S03-L01-D00-C05")
 
 
-def test_alias_resolves_old_code_and_barcode_to_same_identity(db, admin):
+def test_moved_cell_old_code_and_barcode_are_history_not_a_live_cell(db, admin):
     cell = create_location("S03-D02-C05")
     old_id = cell.pk
     old_code = cell.code
     old_barcode = cell.barcode
-    rename_storage_location(
+    rebind_storage_cell(
         cell,
         new_code="S03-D02-C06",
         expected_code=old_code,
@@ -156,20 +156,21 @@ def test_alias_resolves_old_code_and_barcode_to_same_identity(db, admin):
 
     for raw in (old_code, old_barcode):
         result = resolve_scan(raw)
-        assert result.status == "found"
-        assert result.id == old_id
-        assert result.is_alias is True
-        assert "Текущий адрес: S03-D02-C06" in result.message
-    assert get_or_create_location(old_code).pk == old_id
+        assert result.status == "unknown"
+        assert result.id is None
+        assert "Ячейка перенесена: 3-2-5 -> 3-2-6" in result.message
     destination, error = _resolve_move_destination(old_code)
-    assert error == ""
-    assert destination.pk == old_id
-    assert StorageLocation.objects.count() == 3
+    assert destination is None
+    assert "Ячейка перенесена" in error
+    # the old place is free again: asking for it creates a new, separate cell
+    reused = get_or_create_location(old_code)
+    assert reused.pk != old_id
+    assert StorageLocation.objects.count() == 4
 
 
 def test_destination_search_finds_v2_fragments_and_historical_alias(client, admin):
     cell = create_location("S03-D02-C05")
-    rename_storage_location(
+    rebind_storage_cell(
         cell,
         new_code="S03-D02-C06",
         expected_code=cell.code,
@@ -177,11 +178,14 @@ def test_destination_search_finds_v2_fragments_and_historical_alias(client, admi
     )
     client.force_login(admin)
     url = reverse("scanner_move_locations")
-    for query in ("S03-D02-C06", "D02-C06", "C06", "S03-D02-C05"):
+    for query in ("S03-D02-C06", "D02-C06", "C06"):
         response = client.get(url, {"q": query})
         assert response.status_code == 200
         assert response.json()["results"][0]["id"] == cell.pk
         assert response.json()["results"][0]["code"] == "3-2-6"  # операторский вид
+    # the address the cell was moved away from is not offered as a destination
+    old = client.get(url, {"q": "S03-D02-C05"}).json()["results"]
+    assert all(row["id"] != cell.pk for row in old)
 
 
 def test_address_migration_command_defaults_to_read_only_dry_run(db, tmp_path):
@@ -493,8 +497,8 @@ def test_drawer_cannot_bypass_atomic_rename_through_cell_endpoint(db, admin, cli
     edit_html = client.get(reverse("location_edit", args=[drawer.pk])).content.decode()
     assert reverse("location_drawer_rename", args=[drawer.pk]) in edit_html
     assert reverse("location_rename", args=[drawer.pk]) not in edit_html
-    with pytest.raises(StorageLocationRenameError, match="только для ячейки"):
-        rename_storage_location(
+    with pytest.raises(StorageLocationRenameError, match="можно только ячейку"):
+        rebind_storage_cell(
             drawer,
             new_code="S03-D05",
             expected_code=drawer.code,
@@ -517,7 +521,7 @@ def test_movement_history_keeps_address_at_event_after_rename(db, admin):
         to_location=location,
         created_at=timezone.now(),
     )
-    rename_storage_location(
+    rebind_storage_cell(
         location,
         new_code="S03-D02-C02",
         expected_code=location.code,
@@ -579,7 +583,7 @@ def test_postgresql_concurrent_single_rename_has_one_atomic_winner(admin):
 
     def rename(location):
         return _captured_call(
-            rename_storage_location,
+            rebind_storage_cell,
             location,
             new_code="S03-D02-C09",
             expected_code=location.code,
@@ -593,7 +597,8 @@ def test_postgresql_concurrent_single_rename_has_one_atomic_winner(admin):
     assert sum(isinstance(result, StorageLocationRenameError) for result in results) == 1
     assert StorageLocation.objects.filter(code="S03-D02-C09").count() == 1
     assert StorageLocationRenameHistory.objects.count() == 1
-    assert StorageLocationAlias.objects.filter(is_active=True).count() == 1
+    assert StorageLocationAlias.objects.filter(is_active=True).count() == 0
+    assert StorageLocationAlias.objects.filter(is_active=False).count() == 1
 
 
 @pytest.mark.django_db(transaction=True)

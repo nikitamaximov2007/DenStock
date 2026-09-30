@@ -444,47 +444,110 @@ def _persist_location_rename(
     )
 
 
+def _require_cell_address(raw_code: str):
+    """Parse the operator's target as a canonical S-D-C cell address."""
+    from .addresses import AddressError, normalize_address_input, parse_address
+
+    code = normalize_address_input((raw_code or "").strip().upper())
+    if not code:
+        raise StorageLocationRenameError("Укажите новый адрес ячейки.")
+    try:
+        address = parse_address(code)
+    except AddressError as exc:
+        raise StorageLocationRenameError(
+            "Новый адрес должен быть ячейкой в формате S-D-C, например 3-2-7 или S03-D02-C07."
+        ) from exc
+    if address.cell is None:
+        raise StorageLocationRenameError(
+            "Новый адрес должен указывать ячейку (S-D-C), а не стеллаж или ящик."
+        )
+    return address
+
+
+def historical_cell_move(raw: str):
+    """Describe an address a cell was physically moved away from, if that is all it is.
+
+    Returns ``(old_code, current_location)`` or ``None``. The old address is
+    kept only as a NON-active alias: it never resolves as a live location, but
+    a scan of an old label can explain where the cell went.
+    """
+    from .addresses import normalize_address_input
+
+    value = (raw or "").strip().upper()
+    if not value:
+        return None
+    terms = {value, normalize_address_input(value)}
+    match = Q()
+    for term in terms:
+        match |= Q(code__iexact=term) | Q(barcode__iexact=term)
+    if StorageLocation.objects.filter(match).exists():
+        return None
+    if StorageLocationAlias.objects.filter(match, is_active=True).exists():
+        return None
+    alias = (
+        StorageLocationAlias.objects.filter(
+            match, is_active=False, kind=StorageLocationAlias.Kind.RENAME
+        )
+        .select_related("location")
+        .order_by("-created_at", "-pk")
+        .first()
+    )
+    return (alias.code, alias.location) if alias else None
+
+
 @transaction.atomic
-def rename_storage_location(
+def rebind_storage_cell(
     location: StorageLocation,
     *,
     new_code: str,
     expected_code: str,
     by=None,
 ) -> StorageLocation:
-    """Переименовать одну существующую ячейку, не меняя её идентичность.
+    """Move one physical cell to another S-D-C address: detach old, bind new.
 
-    Связанные остатки и документы продолжают ссылаться на тот же primary key.
-    Отдельный снимок ``WarehouseAction.location_code`` намеренно не меняется.
+    The cell keeps its identity (primary key), so the stock, serial items,
+    balances and preferred-location links that live in it follow it to the new
+    address without any stock movement. The old address stops being a live
+    location: its code and barcode are kept only as a historical, non-active
+    alias, so they never resolve for new stock operations and the old place
+    can be created again as a new cell. The cell is re-parented under the
+    target drawer. An occupied target, including an address another cell still
+    answers to, is refused. Audit: ``StorageLocationRenameHistory``.
     """
+    from apps.inventory.models import StockLocationLock
+
+    from .addresses import _get_or_create_canonical_parent, _sort_order, parse_address
+
     locked_location = StorageLocation.objects.select_for_update().get(pk=location.pk)
     if locked_location.level != StorageLocation.Level.CELL:
         raise StorageLocationRenameError(
-            "Одиночное переименование разрешено только для ячейки. "
+            "Перенести на другой адрес можно только ячейку. "
             "Ящик переименовывается вместе с дочерними ячейками."
         )
     if expected_code != locked_location.code:
         raise StorageLocationRenameError(
-            "Код ячейки уже изменён другим пользователем. Обновите страницу."
+            "Адрес ячейки уже изменён другим пользователем. Обновите страницу."
+        )
+    address = _require_cell_address(new_code)
+    old_code = locked_location.code
+    if address.code == old_code.upper():
+        raise StorageLocationRenameError("Новый адрес совпадает с текущим адресом ячейки.")
+    if StockLocationLock.objects.filter(
+        location=locked_location, released_at__isnull=True
+    ).exists():
+        raise StorageLocationRenameError(
+            "Ячейка сейчас в пересчёте участка. Перенесите её после завершения пересчёта."
         )
 
-    old_code = locked_location.code
     old_barcode = locked_location.barcode
-    normalized_code = normalize_storage_location_code(new_code)
-    if normalized_code == normalize_storage_location_code(old_code):
-        raise StorageLocationRenameError("Новый код совпадает с текущим кодом ячейки.")
     new_barcode = (
-        auto_location_barcode(normalized_code)
+        auto_location_barcode(address.code)
         if is_auto_location_barcode(old_barcode, old_code)
         else None
     )
-    target_identity = Q(code__iexact=normalized_code) | Q(
-        barcode__iexact=normalized_code
-    )
+    target_identity = Q(code__iexact=address.code) | Q(barcode__iexact=address.code)
     if new_barcode:
-        target_identity |= Q(code__iexact=new_barcode) | Q(
-            barcode__iexact=new_barcode
-        )
+        target_identity |= Q(code__iexact=new_barcode) | Q(barcode__iexact=new_barcode)
     list(
         StorageLocation.objects.select_for_update()
         .filter(target_identity)
@@ -496,29 +559,51 @@ def rename_storage_location(
         .filter(target_identity, is_active=True)
         .order_by("pk")
     )
+    # Fail closed: an address another cell still answers to (its current code
+    # or an active alias left by a drawer/V2 relabel) is occupied.
     _assert_location_identity_available(
-        code=normalized_code,
+        code=address.code,
         barcode=new_barcode,
         exclude_location_id=locked_location.pk,
-        allow_alias_reclaim=True,
     )
+    try:
+        parent = _get_or_create_canonical_parent(parse_address(address.parent_code))
+    except StorageLocationCreateError as exc:
+        raise StorageLocationRenameError(str(exc)) from exc
 
     try:
-        # Savepoint leaves the outer transaction usable after a concurrent unique conflict.
         with transaction.atomic():
-            _persist_location_rename(
-                locked_location,
+            StorageLocationAlias.objects.create(
+                location=locked_location,
+                code=old_code,
+                barcode=old_barcode if new_barcode is not None else None,
+                kind=StorageLocationAlias.Kind.RENAME,
+                is_active=False,
+                created_by=by,
+            )
+            StorageLocationAlias.objects.filter(
+                location=locked_location, is_active=True
+            ).filter(target_identity).update(is_active=False)
+            updates = {
+                "code": address.code,
+                "parent": parent,
+                "sort_order": _sort_order(address),
+                "updated_at": timezone.now(),
+            }
+            if new_barcode is not None:
+                updates["barcode"] = new_barcode
+            if locked_location.name.strip().upper() == old_code.upper():
+                updates["name"] = address.code
+            StorageLocation.objects.filter(pk=locked_location.pk).update(**updates)
+            StorageLocationRenameHistory.objects.create(
+                location=locked_location,
                 old_code=old_code,
-                new_code=normalized_code,
-                new_barcode=new_barcode,
-                by=by,
+                new_code=address.code,
+                renamed_by=by,
+                reason=StorageLocationRenameHistory.Reason.MANUAL,
             )
     except IntegrityError as exc:
         raise StorageLocationRenameError(
-            "Ячейка с таким кодом или штрихкодом уже существует."
+            "Адрес или штрихкод уже занят другой ячейкой."
         ) from exc
-
-    locked_location.code = normalized_code
-    if new_barcode is not None:
-        locked_location.barcode = new_barcode
-    return locked_location
+    return StorageLocation.objects.get(pk=locked_location.pk)

@@ -1,25 +1,57 @@
 {% extends "base.html" %}
-{% block title %}Переименование ячейки · DenisStock{% endblock %}
+{% block title %}Перенос ячейки · DenisStock{% endblock %}
 {% block content %}
-  <h1 class="page-title">Переименовать ячейку</h1>
-  <p>Изменится обозначение существующей ячейки. Остатки, документы и связи не перемещаются. Для автоматического штрихкода потребуется новая этикетка.</p>
+  <h1 class="page-title">Перенести ячейку на другой адрес</h1>
+  <p>
+    Ячейка вместе со своим содержимым переезжает на новое место склада. Старый
+    адрес освобождается и больше не работает для новых операций, текущие
+    остатки и экземпляры ячейки числятся по новому адресу, история документов
+    сохраняется.
+  </p>
+  {% if confirming %}
+    <table class="table">
+      <tbody>
+        <tr>
+          <th>Старый адрес</th>
+          <td>
+            <span class="code-pill">{{ location.short_code }}</span> {{ location.code }}
+          </td>
+        </tr>
+        <tr>
+          <th>Новый адрес</th>
+          <td>
+            <span class="code-pill">{{ new_code|short_address }}</span> {{ new_code }}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {% include "partials/_status_block.html" with kind="warning" text="После переноса: старый адрес освободится и перестанет находиться при поиске и сканировании; остатки ячейки будут числиться по новому адресу без складских движений; старые документы и движения сохранят адрес на момент операции. Старая этикетка станет недействительной, распечатайте новую." %}
+  {% endif %}
   <form method="post" class="form">
     {% csrf_token %}
     {{ form.expected_code }}
     {{ form.next }}
-    {% if form.non_field_errors %}
-      {{ form.non_field_errors }}
+    {% if form.non_field_errors %}{{ form.non_field_errors }}{% endif %}
+    <p>
+      <label for="current-code">Текущий адрес ячейки</label>
+      <input id="current-code"
+             type="text"
+             value="{{ location.short_code }} ({{ location.code }})"
+             readonly>
+    </p>
+    {% if confirming %}
+      <input type="hidden" name="new_code" value="{{ new_code }}">
+      <input type="hidden" name="confirm" value="1">
+      <button type="submit" class="btn btn--primary">Подтвердить перенос</button>
+    {% else %}
+      <p>
+        {{ form.new_code.label_tag }}
+        {{ form.new_code }}
+        <span class="muted">Например 3-2-7 или S03-D02-C07.</span>
+        {{ form.new_code.errors }}
+      </p>
+      <button type="submit" class="btn btn--primary">Проверить перенос</button>
     {% endif %}
-    <p>
-      <label for="current-code">Текущий код ячейки</label>
-      <input id="current-code" type="text" value="{{ location.code }}" readonly>
-    </p>
-    <p>
-      {{ form.new_code.label_tag }}
-      {{ form.new_code }}
-      {{ form.new_code.errors }}
-    </p>
-    <button type="submit" class="btn btn--primary">Сохранить новый код</button>
     <a class="btn btn--secondary" href="{{ cancel_url }}">Отмена</a>
   </form>
 {% endblock %}

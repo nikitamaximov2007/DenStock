@@ -58,6 +58,7 @@ from apps.sales.models import Reservation
 from apps.warehouse.models import StorageLocation, StorageLocationAlias
 from apps.warehouse.services import (
     StorageLocationResolutionError,
+    historical_cell_move,
     resolve_storage_location,
 )
 
@@ -882,6 +883,11 @@ def _resolve_move_destination(raw):
     except StorageLocationResolutionError as exc:
         return None, str(exc)
     if location is None:
+        moved = historical_cell_move(code)
+        if moved:
+            from .scanner import moved_cell_message
+
+            return None, moved_cell_message(*moved)
         return None, "Ячейка с таким кодом не найдена."
     if not location.can_hold_stock():
         return None, "Ячейка неактивна или недоступна для хранения остатка."
