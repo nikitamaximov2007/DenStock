@@ -6,6 +6,10 @@ that looked like a legitimate sale. The "check the prices" message meant to
 warn about it sat after a ``return`` and never ran. And the reservation stays
 ACTIVE until the sale is completed, so every repeated "Продать из резерва"
 created another independent draft for the same reservation.
+
+Owner rule (follow-up): the price here is chosen by the system, not typed by
+a human, so it must be > 0. A missing, 0 or negative current price refuses
+the whole conversion; no 0 ₽ draft is created.
 """
 from decimal import Decimal
 
@@ -159,16 +163,53 @@ def test_unpriced_refusal_is_shown_on_the_reservation_page(client, env):
 
     response = client.post(reverse("sale_from_reservation", args=[reservation.pk]), follow=True)
 
-    assert "не задана цена" in response.content.decode()
+    assert "цена не задана" in response.content.decode()
     assert not Sale.objects.exists()
 
 
-def test_explicit_zero_card_price_is_still_a_deliberate_free_line(env):
-    reservation = _reservation(env, _stock(env, _part(env, name="ПОДАРОК", price="0")))
+@pytest.mark.parametrize("price", ["0", "0.00", "-500"])
+def test_non_positive_card_price_is_refused_not_a_zero_or_negative_draft(env, price):
+    lot = _stock(env, _part(env, name="ПОДАРОК"))
+    reservation = _reservation(env, lot)
+    # the card form refuses negatives; a stored bad value arrives some other way
+    PartType.objects.filter(pk=lot.part_type_id).update(recommended_price=Decimal(price))
+    movements = StockMovement.objects.count()
 
+    with pytest.raises(SaleError, match="ПОДАРОК"):
+        create_sale_from_reservation(reservation, by=env["admin"])
+
+    assert not Sale.objects.exists()
+    assert not SaleLine.objects.exists()
+    reservation.refresh_from_db()
+    lot.refresh_from_db()
+    assert reservation.status == Reservation.Status.ACTIVE
+    assert lot.quantity == Decimal("5")
+    assert StockMovement.objects.count() == movements
+
+
+def test_zero_price_refusal_through_the_view_creates_nothing(client, env):
+    reservation = _reservation(env, _stock(env, _part(env, name="ПОДАРОК", price="0")))
+    client.force_login(env["admin"])
+    url = reverse("sale_from_reservation", args=[reservation.pk])
+
+    client.post(url)
+    response = client.post(url, follow=True)
+
+    assert "равна 0" in response.content.decode()
+    assert not Sale.objects.exists()
+
+
+def test_reservation_can_be_sold_once_the_price_is_positive(env):
+    lot = _stock(env, _part(env, name="ПОДАРОК", price="0"))
+    reservation = _reservation(env, lot)
+    with pytest.raises(SaleError):
+        create_sale_from_reservation(reservation, by=env["admin"])
+
+    PartType.objects.filter(pk=lot.part_type_id).update(recommended_price=Decimal("250"))
     sale = create_sale_from_reservation(reservation, by=env["admin"])
 
-    assert sale.lines.get().unit_price == Decimal("0")
+    assert sale.lines.get().unit_price == Decimal("250")
+    assert Sale.objects.count() == 1
 
 
 # --- Completion still moves stock exactly once --------------------------------

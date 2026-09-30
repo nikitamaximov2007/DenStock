@@ -600,8 +600,8 @@ def remove_sale_line(line, *, by=None) -> None:
 
 
 RESERVATION_PRICE_NOT_SET = (
-    "Нельзя продать из резерва: у детали «{names}» не задана цена. Укажите цену "
-    "в карточке детали и повторите - ноль сам по себе не подставляется."
+    "Нельзя продать из резерва: у детали «{names}» цена не задана или равна 0. "
+    "Укажите цену в карточке детали и повторите - ноль сам по себе не подставляется."
 )
 
 
@@ -620,11 +620,11 @@ def get_or_create_sale_from_reservation(reservation, *, by=None) -> tuple[Sale, 
     все вызовы сначала блокируют одну и ту же строку резерва, поэтому
     проверка «черновик уже есть» и его создание не расходятся.
 
-    Цена строки - текущая цена детали. Деталь без действующей цены не
-    превращается в строку «0 ₽»: продажа из резерва отказывает целиком, как
-    и быстрая продажа (``check_sale_line_price``). Явный ноль в карточке -
-    осознанно бесплатная деталь - по-прежнему допустим. Склад черновик не
-    трогает: списание - только при проведении (``complete_sale``).
+    Цена строки - текущая цена детали, и она обязана быть больше нуля: цену
+    здесь автоматически берёт система, а не вводит человек. Пустая, нулевая
+    или отрицательная цена значит «цену нужно уточнить», а не строку «0 ₽»:
+    продажа из резерва отказывает целиком. Склад черновик не трогает:
+    списание - только при проведении (``complete_sale``).
     """
     reservation = Reservation.objects.select_for_update().get(pk=reservation.pk)
     if reservation.status != Reservation.Status.ACTIVE:
@@ -646,7 +646,7 @@ def get_or_create_sale_from_reservation(reservation, *, by=None) -> tuple[Sale, 
         price = resolve_effective_inventory_customer_price(
             source, rline.part_type.recommended_price
         )
-        if price is None or price < 0:
+        if price is None or price <= 0:
             unpriced.append(rline.part_type.name)
         prices[rline.pk] = price
     if unpriced:
