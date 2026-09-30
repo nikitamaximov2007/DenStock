@@ -1,4 +1,4 @@
-"""A negative current customer price is never accepted and never charged.
+"""An automated customer price is always positive; negatives are never accepted.
 
 `PartType.recommended_price` had no lower bound: the card edit form stored a
 negative value, and `resolve_effective_inventory_customer_price` passed it
@@ -8,9 +8,13 @@ from a negative card price. The card now refuses negative prices, the shared
 resolver turns a negative price into "not set", and the sale/repair services
 refuse negative money as a backstop.
 
-The two existing zero rules are kept exactly: an explicit zero in the card is
-a deliberate free sale in Quick Actions, while the public catalog treats a
-non-positive price as unknown ("Уточнить цену").
+Owner rule (follow-up): an automated flow never treats 0 ₽ as a valid current
+customer price. Zero, missing or negative means "price must be clarified" in
+the shared resolver, in Quick Actions (cart and single scan), in PRO-STOR
+("Уточнить цену"), and at ``complete_sale`` for drafts the system priced
+(reservation drafts, Quick Actions carts). A price typed by a human in the
+manual sale or repair editor, including 0, stays an explicit manual override.
+Finalized lines are never rewritten.
 """
 from decimal import Decimal
 
@@ -151,9 +155,11 @@ def test_zero_and_positive_prices_are_still_accepted_by_the_card(env):
 # --- B. No automated path books a negative customer charge --------------------
 
 
-def test_resolver_turns_a_negative_price_into_not_set_and_keeps_zero():
+def test_resolver_turns_a_non_positive_price_into_not_set():
     assert resolve_effective_inventory_customer_price(None, Decimal("-1")) is None
-    assert resolve_effective_inventory_customer_price(None, Decimal("0")) == Decimal("0")
+    assert resolve_effective_inventory_customer_price(None, Decimal("0")) is None
+    assert resolve_effective_inventory_customer_price(None, Decimal("0.00")) is None
+    assert resolve_effective_inventory_customer_price(None, Decimal("0.01")) == Decimal("0.01")
     assert resolve_effective_inventory_customer_price(None, Decimal("10")) == Decimal("10")
     assert resolve_effective_inventory_customer_price(None, None) is None
 
@@ -187,18 +193,86 @@ def test_scanner_action_refuses_a_negative_card_price(env):
     assert Sale.objects.filter(status=Sale.Status.COMPLETED).count() == 0
 
 
-def test_explicit_zero_in_the_card_is_still_a_free_quick_sale(env):
+def test_zero_in_the_card_is_not_a_free_quick_sale(env):
     part = _part(env, name="ПОДАРОК", article="ZERO-2", price="0")
-    _stock(env, part)
+    lot = _stock(env, part)
+    movements = StockMovement.objects.count()
     cart = open_cart("sale", by=env["admin"])
 
-    row = add_scan(cart, part, env["cell"], quantity=Decimal("1"), by=env["admin"])
+    with pytest.raises(ActionError, match="цена не задана"):
+        add_scan(cart, part, env["cell"], quantity=Decimal("1"), by=env["admin"])
 
-    assert row.unit_price == Decimal("0")
+    assert SaleLine.objects.count() == 0
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("5")
+    assert StockMovement.objects.count() == movements
+
+
+def test_scanner_action_refuses_a_zero_card_price(env):
+    part = _part(env, name="ПОДАРОК", article="ZERO-3", price="0")
+    lot = _stock(env, part)
+    remember_customs(part)
+
+    with pytest.raises(ActionError, match="цена не задана"):
+        perform_action(
+            action_type="sale", part=part, location=env["cell"], quantity=Decimal("1"),
+            customer_comment="Иванов", by=env["admin"],
+        )
+
+    assert not SaleLine.objects.exists()
+    assert not Sale.objects.filter(status=Sale.Status.COMPLETED).exists()
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("5")
+
+
+def _zero_line(sale, lot):
+    """A 0 ₽ line written the way an old automated path used to write it."""
+    return SaleLine.objects.create(
+        sale=sale, part_type=lot.part_type, stock_lot=lot, batch=lot.batch,
+        batch_line=lot.batch_line, quantity=Decimal("1"), unit_price=Decimal("0"),
+        total_price=Decimal("0"),
+    )
+
+
+def test_old_quick_actions_cart_with_an_automatic_zero_cannot_be_completed(env):
+    part = _part(env, name="ПОДАРОК", article="ZERO-4", price="0")
+    lot = _stock(env, part)
+    cart = open_cart("sale", by=env["admin"])
+    _zero_line(cart, lot)
     remember_cart_customs(cart)
-    complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
+
+    with pytest.raises(ActionError, match="цена не задана"):
+        complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
+    # nor through the ordinary sale screen, which calls complete_sale directly
+    with pytest.raises(SaleError, match="пришла автоматически"):
+        complete_sale(cart, by=env["admin"])
+
     cart.refresh_from_db()
-    assert cart.status == Sale.Status.COMPLETED
+    lot.refresh_from_db()
+    assert cart.status == Sale.Status.DRAFT
+    assert lot.quantity == Decimal("5")
+
+
+def test_reservation_draft_with_an_automatic_zero_cannot_be_completed(env):
+    part = _part(env)
+    lot = _stock(env, part)
+    reservation = create_reservation(customer_name="Иванов", by=env["admin"])
+    add_stock_lot_to_reservation(reservation, lot, Decimal("1"), by=env["admin"])
+    reservation = activate_reservation(reservation, by=env["admin"])
+    remember_customs(part)
+    sale = create_sale(customer_name="Иванов", by=env["admin"])
+    Sale.objects.filter(pk=sale.pk).update(reservation=reservation)
+    sale.refresh_from_db()
+    _zero_line(sale, lot)
+
+    with pytest.raises(SaleError, match="пришла автоматически"):
+        complete_sale(sale, by=env["admin"])
+
+    reservation.refresh_from_db()
+    lot.refresh_from_db()
+    assert reservation.status == reservation.Status.ACTIVE
+    assert lot.quantity == Decimal("5")
+    assert not StockMovement.objects.filter(document_type="sale").exists()
 
 
 def test_sale_service_refuses_negative_money_from_any_caller(env):
@@ -241,16 +315,34 @@ def test_sale_from_reservation_never_books_negative_revenue(env):
     sale = create_sale_from_reservation(reservation, by=env["admin"])
 
     assert all(line.unit_price >= 0 for line in sale.lines.all())
+    # whatever the draft holds, a non-positive automatic price is never charged
+    remember_customs(part)
+    with pytest.raises(SaleError):
+        complete_sale(sale, by=env["admin"])
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("5")
 
 
-def test_repair_default_price_is_not_set_for_a_negative_card_price(env):
-    part = _poison_price(_part(env), "-500")
+@pytest.mark.parametrize("price", ["-500", "0"])
+def test_repair_default_price_is_not_set_for_a_non_positive_card_price(env, price):
+    part = _poison_price(_part(env), price)
     lot = _stock(env, part)
     order = create_repair_order(customer_name="Иванов", by=env["admin"])
 
     line = add_stock_lot_to_repair_order(order, lot, Decimal("1"), by=env["admin"])
 
     assert line.customer_unit_price_rub is None
+
+
+def test_repair_explicit_manual_zero_is_kept(env):
+    lot = _stock(env, _part(env, price="0"))
+    order = create_repair_order(customer_name="Иванов", by=env["admin"])
+
+    line = add_stock_lot_to_repair_order(
+        order, lot, Decimal("1"), customer_unit_price_rub=Decimal("0"), by=env["admin"]
+    )
+
+    assert line.customer_unit_price_rub == Decimal("0")
 
 
 def test_repair_explicit_negative_price_is_refused(env):
@@ -277,14 +369,16 @@ def test_public_catalog_shows_clarify_for_non_positive_prices(env, price):
 # --- D/E. History and manual overrides ----------------------------------------
 
 
-def test_completed_sale_line_keeps_its_historical_price(env):
+@pytest.mark.parametrize("new_price", ["-500", "0"])
+def test_completed_sale_line_keeps_its_historical_price(env, new_price):
     part = _part(env)
     lot = _stock(env, part)
+    remember_customs(part)
     sale = create_sale(customer_name="Иванов", by=env["admin"])
     add_stock_lot_to_sale(sale, lot, Decimal("1"), unit_price=Decimal("1000"), by=env["admin"])
     complete_sale(sale, by=env["admin"])
 
-    _poison_price(part, "-500")
+    _poison_price(part, new_price)
 
     line = SaleLine.objects.get(sale=sale)
     assert line.unit_price == Decimal("1000")
@@ -303,3 +397,38 @@ def test_manual_sale_price_override_still_works(env):
     )
 
     assert (line.unit_price, free.unit_price) == (Decimal("777"), Decimal("0"))
+
+
+def test_manual_zero_price_sale_still_completes(env):
+    """A human typed 0 in the manual sale editor: an explicit override, kept."""
+    part = _part(env, price="0")
+    lot = _stock(env, part)
+    remember_customs(part)
+    sale = create_sale(customer_name="Иванов", by=env["admin"])
+    add_stock_lot_to_sale(sale, lot, Decimal("1"), unit_price=Decimal("0"), by=env["admin"])
+
+    complete_sale(sale, by=env["admin"])
+
+    sale.refresh_from_db()
+    lot.refresh_from_db()
+    assert sale.status == Sale.Status.COMPLETED
+    assert sale.lines.get().unit_price == Decimal("0")
+    assert lot.quantity == Decimal("4")
+
+
+def test_manual_zero_price_through_the_sale_editor_form(client, env):
+    part = _part(env, price="0")
+    lot = _stock(env, part)
+    remember_customs(part)
+    sale = create_sale(customer_name="Иванов", by=env["admin"])
+    client.force_login(env["admin"])
+
+    client.post(
+        reverse("sale_add_lot", args=[sale.pk]),
+        {"lot": lot.pk, "quantity": "1", "unit_price": "0"},
+    )
+    client.post(reverse("sale_complete", args=[sale.pk]))
+
+    sale.refresh_from_db()
+    assert sale.status == Sale.Status.COMPLETED
+    assert sale.lines.get().unit_price == Decimal("0")

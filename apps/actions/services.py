@@ -115,25 +115,22 @@ SALE_PRICE_NEGATIVE = (
 )
 
 
-def check_sale_line_price(part, unit_price, *, has_receipt_snapshot=False) -> None:
+def check_sale_line_price(part, unit_price) -> None:
     """Не дать провести продажу по цене, которой никто не назначал.
 
     В быстрых действиях цену продажи руками не вводят: она приходит из карточки
-    детали. Значит ноль в строке имеет право быть только тогда, когда в карточке
-    стоит именно ноль. Ремонта это правило не касается: там цена клиента
-    необязательна по своей природе и показывается прочерком.
+    детали автоматически. Автоматическая цена клиента бывает только больше
+    нуля: ноль, пусто или минус - это «цену нужно уточнить», а не бесплатная
+    продажа. Ремонта это правило не касается: там цена клиента необязательна
+    по своей природе и показывается прочерком.
     """
     canonical = part.recommended_price
     if unit_price is not None and unit_price < 0:
         raise ActionError(SALE_PRICE_NEGATIVE.format(name=part.name))
-    if unit_price is None or (
-        unit_price == 0 and canonical is None and not has_receipt_snapshot
-    ):
-        raise ActionError(SALE_PRICE_NOT_SET.format(name=part.name))
-    if unit_price == 0 and canonical != 0 and not (
-        canonical is None and has_receipt_snapshot
-    ):
+    if unit_price == 0 and canonical is not None and canonical > 0:
         raise ActionError(SALE_PRICE_STALE_ZERO.format(name=part.name))
+    if unit_price is None or unit_price <= 0:
+        raise ActionError(SALE_PRICE_NOT_SET.format(name=part.name))
 
 
 # --- Поиск детали и остатков по скану ----------------------------------------------
@@ -377,11 +374,7 @@ def _perform_action_atomic(
                 unit_price = resolve_effective_inventory_customer_price(
                     lot, part.recommended_price
                 )
-                check_sale_line_price(
-                    part,
-                    unit_price,
-                    has_receipt_snapshot=lot.receipt_customer_price_snapshot_rub is not None,
-                )
+                check_sale_line_price(part, unit_price)
                 add_stock_lot_to_sale(sale, lot, portion, unit_price=unit_price, by=by)
             journal_price = sale.lines.aggregate(price=Sum("total_price"))["price"] or Decimal("0")
             journal_price = money(journal_price / quantity)

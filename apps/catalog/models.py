@@ -324,8 +324,9 @@ class PartType(Dictionary):
 
     def clean(self) -> None:
         # Цена в карточке - деньги клиента: отрицательной она не бывает. Ноль
-        # остаётся допустимым (осознанно бесплатная деталь в продаже, см.
-        # apps.actions.services.check_sale_line_price), пусто - «цена не задана».
+        # сохранить можно, но автоматические сценарии (быстрые действия, резерв,
+        # заявка, PRO-STOR) считают ноль и пусто одинаково: «цену нужно
+        # уточнить» (см. apps.inventory.pricing).
         for field in ("recommended_price", "min_price"):
             value = getattr(self, field)
             if value is not None and value < 0:

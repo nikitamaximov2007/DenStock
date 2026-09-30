@@ -1,8 +1,9 @@
 """Незаполненная цена не становится нулём в продаже.
 
 У детали без цены в карточке быстрая продажа раньше подставляла 0.00: деталь
-уходила с прилавка бесплатно, а в отчёте это выглядело обычной продажей. Ноль
-имеет право быть только тогда, когда его действительно проставили в карточке.
+уходила с прилавка бесплатно, а в отчёте это выглядело обычной продажей. По
+решению владельца автоматическая цена клиента бывает только больше нуля: ноль
+в карточке для быстрой продажи значит «цену нужно уточнить», как и пусто.
 
 Правило касается только продажи. У ремонта цена клиента необязательна по
 своей природе и показывается прочерком - там ничего не меняется. Ручной
@@ -143,23 +144,20 @@ def test_the_single_scan_action_refuses_the_same_part(env):
     assert (lot.quantity, StockMovement.objects.count()) == before  # склад не тронут
 
 
-# --- B. Явный ноль остаётся законным ------------------------------------------
+# --- B. Ноль в карточке - не бесплатная быстрая продажа ----------------------
 
 
-def test_an_explicit_zero_price_is_still_allowed(env):
-    """Ноль, проставленный в карточке, - осознанное решение, а не пропуск."""
+def test_a_zero_card_price_is_not_a_free_quick_sale(env):
+    """Быстрая продажа берёт цену автоматически: ноль - это «уточнить цену»."""
     part = _part(env, name="ПОДАРОК", article="ZERO-1", price="0")
     _stock(env, part)
     cart = open_cart("sale", by=env["admin"])
 
-    row = add_scan(cart, part, env["cell"], quantity=Decimal("1"), by=env["admin"])
+    with pytest.raises(ActionError, match="цена не задана"):
+        add_scan(cart, part, env["cell"], quantity=Decimal("1"), by=env["admin"])
 
-    assert row.unit_price == Decimal("0")
-    assert SaleLine.objects.count() == 1
-    remember_cart_customs(cart)
-    complete_cart(cart, customer=Customer.objects.create(name="Иванов"), by=env["admin"])
-    cart.refresh_from_db()
-    assert cart.status == Sale.Status.COMPLETED
+    assert SaleLine.objects.count() == 0
+    assert StockLot.objects.get(part_type=part).quantity == Decimal("5")
 
 
 # --- C. Обычная деталь: цена и сумма ------------------------------------------

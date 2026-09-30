@@ -258,11 +258,7 @@ def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | No
         for lot, portion in portions:
             if isinstance(cart, Sale):
                 price = resolve_effective_inventory_customer_price(lot, part.recommended_price)
-                check_sale_line_price(
-                    part,
-                    price,
-                    has_receipt_snapshot=lot.receipt_customer_price_snapshot_rub is not None,
-                )
+                check_sale_line_price(part, price)
                 add_stock_lot_to_sale(cart, lot, portion, unit_price=price, by=by)
             else:
                 # Quick Actions has no manual customer-price override. The
@@ -466,10 +462,10 @@ def complete_cart(
 
     scanned_numbers = scanned_numbers or {}
     if is_sale:
-        # Черновик мог пролежать с прошлой версии, когда пустая цена молча
-        # становилась нулём. Проверяем строки ещё раз перед проведением: в
-        # быстрой продаже цену руками не задают, поэтому ноль допустим только
-        # когда он стоит в самой карточке детали.
+        # Черновик мог пролежать с прошлой версии, когда пустая или нулевая
+        # цена молча становилась нулём. Проверяем строки ещё раз перед
+        # проведением: в быстрой продаже цену руками не задают, поэтому
+        # автоматическая цена обязана быть больше нуля.
         for row in rows:
             check_sale_line_price(row.part, row.unit_price)
     # Снимки личности собираем ДО проведения: после списания лоты меняются.

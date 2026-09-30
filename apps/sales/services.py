@@ -485,14 +485,30 @@ def _freeze_line_unmarked_price(line: SaleLine) -> None:
 
 
 SALE_NEGATIVE_PRICE = "Цена продажи не может быть отрицательной."
+SALE_AUTOMATIC_ZERO_PRICE = (
+    "Цена 0 ₽ пришла автоматически, а не введена вручную: {parts}. "
+    "Задайте цену в карточке детали, уберите строку и добавьте её заново."
+)
+
+
+def _is_automatically_priced(sale) -> bool:
+    """Lines of a reservation draft or a Quick Actions cart were priced by the system.
+
+    There the operator never typed the price, so a 0 in such a draft is the old
+    "missing price became zero" fallback, not a deliberate free sale.
+    """
+    from apps.actions.cart import CART_COMMENT
+
+    return sale.reservation_id is not None or sale.comment == CART_COMMENT
 
 
 def _ensure_non_negative_price(unit_price) -> Decimal:
     """Money charged to the customer is never negative, whatever the source.
 
-    Zero stays valid (a deliberate free sale). The manual sale forms already
-    enforce ``min_value=0``; this is the service-level backstop for every
-    other caller (Quick Actions, reservation, request).
+    Zero is accepted here only as an explicit price typed by a human in the
+    manual sale editor (forms enforce ``min_value=0``). Automated callers
+    refuse a non-positive current price before they get here, and
+    ``complete_sale`` refuses a 0 line on an automatically priced draft.
     """
     unit_price = Decimal(unit_price)
     if unit_price < 0:
@@ -702,6 +718,10 @@ def complete_sale(sale, *, by=None) -> Sale:
     for line in lines:
         if line.unit_price is not None and line.unit_price < 0:
             raise SaleError(f"«{line.part_type.name}»: {SALE_NEGATIVE_PRICE}")
+    if _is_automatically_priced(sale):
+        zero = [line.part_type.name for line in lines if line.unit_price == 0]
+        if zero:
+            raise SaleError(SALE_AUTOMATIC_ZERO_PRICE.format(parts=", ".join(zero)))
     from apps.actions.services import ActionError, require_customs_metadata
     try:
         require_customs_metadata([line.part_type for line in lines])

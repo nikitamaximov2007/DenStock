@@ -19,13 +19,14 @@ def resolve_effective_inventory_customer_price(inventory, current_price) -> Deci
     selected lot or item. Its historical receipt snapshot is intentionally
     ignored; only the current price supplied by the caller is authoritative.
 
-    A negative current price is never a customer charge: it becomes ``None``
-    ("price not set"), so an automated sale refuses it instead of booking
-    negative revenue. Zero passes through unchanged - an explicit zero in the
-    card is a deliberate free sale (see ``check_sale_line_price``).
+    Only a positive current price is an automated customer charge. Zero,
+    negative or missing becomes ``None`` ("price must be clarified"), exactly
+    like ``resolve_current_customer_price``: an automated flow refuses it
+    instead of booking a 0 ₽ or negative line. A human can still enter a
+    price by hand in the manual sale/repair editors.
     """
     del inventory
-    if current_price is None or current_price < 0:
+    if current_price is None or current_price <= 0:
         return None
     return current_price
 
