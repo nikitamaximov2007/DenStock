@@ -134,6 +134,30 @@ def test_operator_form_is_accepted_and_stored_canonically(env):
     assert moved.code == "S03-D02-C07"
 
 
+def test_legacy_source_cell_can_rebind_to_a_canonical_target(env):
+    legacy = StorageLocation.objects.create(
+        name="S03-L02-D02-C11",
+        code="S03-L02-D02-C11",
+        level=StorageLocation.Level.CELL,
+    )
+
+    moved = rebind_storage_cell(
+        legacy,
+        new_code="S03-D05-C11",
+        expected_code="S03-L02-D02-C11",
+        by=env["admin"],
+    )
+
+    assert moved.pk == legacy.pk
+    assert moved.code == "S03-D05-C11"
+    assert moved.parent.code == "S03-D05"
+    assert not StorageLocation.objects.filter(code="S03-L02-D02-C11").exists()
+    old_alias = StorageLocationAlias.objects.get(location=legacy)
+    assert old_alias.code == "S03-L02-D02-C11"
+    assert old_alias.is_active is False
+    assert resolve_storage_location("S03-L02-D02-C11") == (None, False)
+
+
 def test_moving_to_another_drawer_rebinds_the_parent_and_leaves_siblings(env):
     moved = _move(env, new_code="S03-D05-C01")
 
