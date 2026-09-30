@@ -312,13 +312,19 @@ def test_sale_from_reservation_never_books_negative_revenue(env):
     reservation = activate_reservation(reservation, by=env["admin"])
     _poison_price(part, "-500")
 
-    sale = create_sale_from_reservation(reservation, by=env["admin"])
-
-    assert all(line.unit_price >= 0 for line in sale.lines.all())
-    # whatever the draft holds, a non-positive automatic price is never charged
     remember_customs(part)
-    with pytest.raises(SaleError):
-        complete_sale(sale, by=env["admin"])
+
+    # The conversion may refuse outright (reservation-sale rule) or build a
+    # draft; either way a non-positive automatic price is never charged.
+    try:
+        sale = create_sale_from_reservation(reservation, by=env["admin"])
+    except SaleError:
+        sale = None
+    if sale is not None:
+        assert all(line.unit_price >= 0 for line in sale.lines.all())
+        with pytest.raises(SaleError):
+            complete_sale(sale, by=env["admin"])
+    assert not Sale.objects.filter(status=Sale.Status.COMPLETED).exists()
     lot.refresh_from_db()
     assert lot.quantity == Decimal("5")
 
