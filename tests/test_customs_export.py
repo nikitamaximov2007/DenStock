@@ -455,6 +455,10 @@ def test_location_filter_applied(client, make_user, env):
 def test_missing_price_weights_and_customs_do_not_500(client, make_user, env):
     # нет оптовой цены и весов
     part, _ = _brp(env, material="777000111", retail="0", wholesale="0", customs=False)
+    # Automated sales need a positive customer price (owner rule); zero-wholesale
+    # cards get it by hand. The export below still has no wholesale price.
+    PartType.objects.filter(pk=part.pk).update(recommended_price=Decimal("1500"))
+    part.refresh_from_db()
     _sell(env, part, number="777000111")
     assert not PartCustomsInfo.objects.filter(part_type=part).exists()
     _login(client, make_user)
