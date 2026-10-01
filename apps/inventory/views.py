@@ -510,16 +510,6 @@ class MovementListView(InventoryViewMixin, ListView):
         attach_movement_identity(ctx["movements"])
         attach_movement_location_history(ctx["movements"])
         ctx["show_costs"] = self.request.user.can_view_purchase_cost
-        ctx["types"] = StockMovement.MovementType.choices
-        ctx["parts"] = PartType.objects.filter(movements__isnull=False).distinct()
-        ctx["batches"] = Batch.objects.filter(movements__isnull=False).distinct()
-        ctx["locations"] = StorageLocation.objects.filter(
-            Q(movements_out__isnull=False) | Q(movements_in__isnull=False)
-        ).distinct()
-        ctx["f_type"] = self.request.GET.get("type", "")
-        ctx["f_part"] = self.request.GET.get("part", "")
-        ctx["f_batch"] = self.request.GET.get("batch", "")
-        ctx["f_location"] = self.request.GET.get("location", "")
         return ctx
 
 

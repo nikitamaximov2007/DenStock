@@ -360,6 +360,34 @@ def test_admin_movement_and_balance_locked():
 # --- Экраны и права ----------------------------------------------------------
 
 
+def test_movement_list_has_no_filter_controls_and_keeps_journal(client, refs, admin):
+    client.force_login(admin)
+    empty_html = client.get(reverse("movement_list")).content.decode()
+    assert "Движений нет" in empty_html
+    assert "Измените фильтры" not in empty_html
+
+    line = _finalized_line(refs, admin)
+    lot = create_stock_lot(line, refs["loc1"], Decimal("1"))
+    receive_stock_lot(lot, by=admin)
+    movement = StockMovement.objects.get(stock_lot=lot)
+
+    response = client.get(reverse("movement_list"))
+    html = response.content.decode()
+    assert response.status_code == 200
+    assert "Журнал возвратов" in html
+    assert f'href="{reverse("movement_detail", args=[movement.pk])}"' in html
+    assert '<span class="code-pill">BOLT-001</span>' in html
+    assert '<form method="get" class="toolbar">' not in html
+    for label in (
+        '>Все типы</option>',
+        '>Все детали</option>',
+        '>Все партии</option>',
+        '>Все места</option>',
+        '>Фильтр</button>',
+    ):
+        assert label not in html
+
+
 def test_cost_hidden_in_movements_from_storekeeper(make_user, client, refs, admin):
     line = _finalized_line(refs, admin)  # landed_unit 60
     lot = create_stock_lot(line, refs["loc1"], Decimal("10"))
