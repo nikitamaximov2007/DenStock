@@ -20,6 +20,7 @@ from decimal import Decimal
 
 import pytest
 from django.contrib.auth.models import Group
+from django.db import connection
 from django.urls import reverse
 
 from apps.actions.cart import (
@@ -527,6 +528,24 @@ def test_complete_repair_cart_creates_one_order_with_many_lines(data):
     assert len(actions) == 2
     assert {action.repair_order_id for action in actions} == {cart.pk}
     assert all(action.action_type == WarehouseAction.Type.REPAIR for action in actions)
+
+
+@pytest.mark.postgresql
+def test_repair_cart_completion_locks_line_without_nullable_join(data):
+    """PostgreSQL rejects FOR UPDATE across the nullable stock_lot join."""
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL row-lock behavior")
+
+    cart = open_cart(KIND_REPAIR, by=data["admin"])
+    add_scan(cart, data["bolt"], data["loc1"], quantity=Decimal("1"), by=data["admin"])
+
+    actions = complete_cart(cart, customer_comment="Проверка блокировки", by=data["admin"])
+
+    cart.refresh_from_db()
+    data["bolt_lot"].refresh_from_db()
+    assert cart.status == RepairOrder.Status.COMPLETED
+    assert data["bolt_lot"].quantity == Decimal("9")
+    assert len(actions) == 1
 
 
 @pytest.mark.parametrize("kind", [KIND_SALE, KIND_REPAIR])

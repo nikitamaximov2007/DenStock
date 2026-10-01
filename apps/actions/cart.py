@@ -455,7 +455,9 @@ def complete_cart(
         # still contain an operator-entered price. Normalize that draft to the
         # current catalog price before the repair is finalized. This changes
         # only the open draft, never a completed repair line.
-        for line in cart.lines.select_for_update().select_related("part_type", "stock_lot"):
+        for line in cart.lines.select_for_update(of=("self",)).select_related(
+            "part_type", "stock_lot"
+        ):
             current_price = resolve_effective_inventory_customer_price(
                 line.stock_lot, line.part_type.recommended_price
             )
