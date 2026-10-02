@@ -66,6 +66,15 @@ def menu_button() -> list[list[dict]]:
 # A selector answer re-renders the pressed message instead of sending a new one.
 SELECTOR_DEDUPE_PREFIX = "selector:"
 SELECTION_UNAVAILABLE_TEXT = "Эта заявка недоступна. Отправьте /requests, чтобы выбрать другую."
+NOT_AVAILABLE_TEXT = telegram_service.NOT_AVAILABLE_TEXT
+# Typed navigation is recognised exactly as the Telegram adapter recognises it.
+MY_REQUESTS_TEXTS = telegram_service.MY_REQUESTS_TEXTS
+MY_PURCHASES_TEXTS = telegram_service.MY_PURCHASES_TEXTS
+
+
+def customer_cabinet_enabled() -> bool:
+    from .customer_cabinet import cabinet_enabled
+    return cabinet_enabled()
 
 
 def summary_policy() -> messaging.SummaryPolicy:

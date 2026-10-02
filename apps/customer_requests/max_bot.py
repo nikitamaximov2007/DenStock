@@ -139,6 +139,32 @@ def handle_update(update, *, attachment_loader=None) -> str:
     return "ignored"
 
 
+def _native_buttons(markup) -> list[list[dict]] | None:
+    """Shared console markup as the rows ``MaxMessage.buttons`` stores.
+
+    ``buttons_for_provider`` keeps the ``{"inline_keyboard": rows}`` envelope;
+    the MAX sender expects the rows themselves, exactly like the owner-panel
+    notification path does.
+    """
+    native = operator_console.buttons_for_provider(markup, "max")
+    return (native or {}).get("inline_keyboard") or None
+
+
+# Attachment types that can carry a part photo; Telegram accepts a photo or a
+# document, never a sticker, a location or a shared link.
+OPERATOR_ATTACHMENT_TYPES = ("image", "file")
+
+
+def _staff_answer_stored(*keys: str) -> bool:
+    """A redelivered staff event whose answer is already queued.
+
+    Telegram consumes every update exactly once (the offset commits with it);
+    MAX may redeliver a webhook. The stored answer proves the console already
+    applied this very event, so it must not run a second time.
+    """
+    return MaxMessage.objects.filter(dedupe_key__in=keys).exists()
+
+
 def _user_id(user) -> int | None:
     if not isinstance(user, dict) or user.get("is_bot") is True:
         return None
@@ -193,14 +219,21 @@ def _message_created(update, *, attachment_loader=None) -> str:
         logger.warning("max message ignored: unusable mid (length %s)", len(str(mid or "")))
         return "ignored"
     reply_key = f"reply:{mid}"
+    if _staff_answer_stored(f"operator:{mid}"):
+        return "duplicate"
     text = body.get("text")
     attachment = None
     has_attachment = isinstance(body.get("attachments"), list) and bool(body.get("attachments"))
-    if (
-        has_attachment
-        and operator_console.enabled()
-        and operator_console.binding_for("max", user_id)
+    if has_attachment and not (
+        operator_console.enabled() and operator_console.binding_for("max", user_id)
     ):
+        # Telegram's rule: only a paired employee's attachment is read. A
+        # customer's photo, file or caption is refused as a whole, never stored
+        # as its text alone while the attachment silently disappears.
+        service.queue_message(chat_id=chat_id, text=service.MEDIA_NOT_SUPPORTED_TEXT,
+                              dedupe_key=reply_key)
+        return "media"
+    if has_attachment:
         if attachment_loader is None:
             service.queue_message(
                 chat_id=chat_id,
@@ -228,7 +261,7 @@ def _message_created(update, *, attachment_loader=None) -> str:
         service.queue_message(
             chat_id=chat_id,
             text=reply_text,
-            buttons=operator_console.buttons_for_provider(buttons, "max"),
+            buttons=_native_buttons(buttons),
             dedupe_key=f"operator:{mid}",
             callback_id="",
         )
@@ -257,6 +290,20 @@ def _message_created(update, *, attachment_loader=None) -> str:
             return "selector"
         service.queue_greeting(user_id=user_id, chat_id=chat_id, dedupe_key=reply_key)
         return "greeting"
+    lower = text.lower()
+    if lower in service.MY_REQUESTS_TEXTS or lower in {
+        label.lower() for label in operator_console.INTERNAL_NAVIGATION_LABELS
+    }:
+        # As in Telegram: «Мои заявки» typed (or an internal button label typed
+        # by a customer) is navigation, never a message to the service.
+        service.queue_selector(user_id=user_id, chat_id=chat_id, dedupe_key=reply_key)
+        return "selector"
+    if lower in service.MY_PURCHASES_TEXTS and service.customer_cabinet_enabled():
+        purchases_text, buttons = service.purchase_selector_view(user_id)
+        service.queue_message(
+            chat_id=chat_id, text=purchases_text, buttons=buttons, dedupe_key=reply_key
+        )
+        return "purchases"
     return service.record_customer_message(user_id=user_id, chat_id=chat_id, mid=mid, text=text)
 
 
@@ -265,7 +312,16 @@ def load_operator_attachment(api: MaxBotApi, body: dict):
     attachments = body.get("attachments") if isinstance(body, dict) else None
     if not isinstance(attachments, list) or not attachments:
         raise AttachmentError("Вложение не распознано.")
-    item = attachments[0] if isinstance(attachments[0], dict) else {}
+    item = next(
+        (
+            candidate for candidate in attachments
+            if isinstance(candidate, dict)
+            and candidate.get("type") in OPERATOR_ATTACHMENT_TYPES
+        ),
+        None,
+    )
+    if item is None:
+        raise AttachmentError("Вложение не распознано.")
     payload = item.get("payload") if isinstance(item.get("payload"), dict) else item
     filename = payload.get("filename") or payload.get("file_name") or payload.get("name")
     encoded = payload.get("content_base64")
@@ -323,6 +379,9 @@ def _message_callback(update) -> str:
         "message_callback", callback_id, user_id, payload, callback.get("timestamp")
     )
     if payload.startswith("op:"):
+        operator_key = f"operator-callback:{press_key}"
+        if _staff_answer_stored(operator_key, f"{service.SELECTOR_DEDUPE_PREFIX}{operator_key}"):
+            return "duplicate"
         result = operator_console.handle_callback(
             provider="max", provider_user_id=user_id, payload=payload
         )
@@ -331,11 +390,21 @@ def _message_callback(update) -> str:
         text, buttons = result
         service.queue_message(
             chat_id=chat_id, text=text,
-            buttons=operator_console.buttons_for_provider(buttons, "max"),
+            buttons=_native_buttons(buttons),
             callback_id=callback_id,
-            dedupe_key=f"operator-callback:{press_key}", in_place=True,
+            dedupe_key=operator_key, in_place=True,
         )
         return "operator"
+    if operator_console.enabled() and operator_console.binding_for("max", user_id):
+        # As in Telegram: an active staff identity never falls through to
+        # customer buttons (requests, purchases, reorder).
+        service.queue_message(
+            chat_id=chat_id,
+            text=service.NOT_AVAILABLE_TEXT,
+            callback_id=callback_id,
+            dedupe_key=f"callback:{press_key}",
+        )
+        return "denied"
     if service.is_menu_payload(payload):
         # «Мои заявки»: show what is open now, in the message that was pressed.
         service.queue_selector(
