@@ -51,5 +51,16 @@ the customer greeting, in both messengers, because `operator_console.handle_text
   event, one receipt). A Telegram album arrives as separate updates; after the first photo the
   others are refused with «Сначала выберите действие для фото». The part ends with one new
   photo in both.
-* The legacy `TelegramOperator` inbox is Telegram-only by design: MAX requests are announced
-  through it. MAX staff use the shared console, which offers the same list, card and reply.
+* The legacy `TelegramOperator` inbox is Telegram-only by product decision (confirmed by the
+  owner on 2026-10-02): it stays a legacy Telegram surface and is not ported to MAX. MAX staff
+  use the shared operator panel, which provides the same business capabilities: request list,
+  request card, reply to the customer, attachments, the part-photo workflow, navigation and
+  cancel.
+
+## Release qualification notes
+
+* Rows already queued in production in the old `{"inline_keyboard": rows}` shape are sent as
+  valid MAX keyboards by the fixed sender, and the next queued row is still delivered: no data
+  cleanup is needed (`test_old_envelope_rows_already_queued_are_sent_and_the_sender_continues`).
+* Residual, out of scope (reliability phase 2): an unexpected non-MAX exception inside the MAX
+  sender still stops the worker loop; the known button TypeError is removed.
