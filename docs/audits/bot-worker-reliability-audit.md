@@ -2,7 +2,7 @@
 
 Baseline: `origin/main` 66debcc (2026-10-02). Candidate branch:
 `claude/bot-worker-reliability-audit`. Executable proof:
-`tests/test_bot_worker_reliability.py` (26 of its 27 tests fail on the baseline; the
+`tests/test_bot_worker_reliability.py` (28 of its 29 tests fail on the baseline; the
 remaining one pins the database-fault path that was already correct).
 
 Property: an isolated bad update, row or API answer can fail, but it cannot stop

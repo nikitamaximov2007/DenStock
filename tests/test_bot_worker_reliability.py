@@ -185,6 +185,22 @@ def test_max_failure_after_the_row_is_sent_keeps_it_sent(max_worker, server, mon
     assert server.texts_to(CHAT) == ["A", "B", "C"]
 
 
+def test_max_attachment_cleanup_failure_keeps_the_row_sent(max_worker, server, monkeypatch):
+    rows = [_max_row(text) for text in ("A", "B", "C")]
+    real_cleanup = max_bot.cleanup_attachment
+
+    def cleanup(row):
+        if row.text == "B":
+            raise PermissionError("private storage is read-only")
+        return real_cleanup(row)
+
+    monkeypatch.setattr(max_bot, "cleanup_attachment", cleanup)
+    max_worker.run(once=True)
+
+    assert [_status(row) for row in rows] == [MaxDeliveryStatus.SENT] * 3
+    assert "PermissionError" in MaxBotRuntime.objects.get().last_error
+
+
 def test_max_transient_refusal_and_poison_row_do_not_stop_another_dialog(max_worker, server):
     server.script("/messages", ("status", 503, {"code": "x", "message": "busy"}))
     waiting = _max_row("A")
