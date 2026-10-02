@@ -5,13 +5,15 @@
 `StockLot.quantity` не уменьшается, а `StockBalance.quantity_reserved` — кэш
 поверх активных `ReservationLine`.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
+from threading import Barrier
 from unittest.mock import patch
 
 import pytest
 from django.contrib.auth.models import Group
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, close_old_connections, connection, transaction
 from django.urls import reverse
 from django.utils import timezone
 
@@ -37,6 +39,7 @@ from apps.sales.services import (
     cancel_reservation,
     create_reservation,
     expire_reservations,
+    remove_reservation_line,
     reserved_for,
 )
 from apps.suppliers.models import Supplier
@@ -113,6 +116,71 @@ def _balance(obj, loc):
     return StockBalance.objects.get(batch_line=obj.batch_line, location=loc)
 
 
+@pytest.mark.postgresql
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.parametrize("target_kind", ["part_item", "stock_lot"])
+def test_remove_reservation_line_locks_only_line_with_nullable_target_joins(data, target_kind):
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL row-lock regression test")
+
+    reservation = create_reservation(customer_name="Иван", by=data["admin"])
+    target = data["item"] if target_kind == "part_item" else data["lot"]
+    line = ReservationLine.objects.create(
+        reservation=reservation,
+        part_type=target.part_type,
+        quantity=Decimal("1"),
+        **{target_kind: target},
+    )
+    movements_before = StockMovement.objects.count()
+    lot_quantity_before = data["lot"].quantity
+    data["item"].refresh_from_db()
+    item_status_before = data["item"].status
+
+    remove_reservation_line(line, by=data["admin"])
+
+    assert not ReservationLine.objects.filter(pk=line.pk).exists()
+    data["lot"].refresh_from_db()
+    data["item"].refresh_from_db()
+    assert data["lot"].quantity == lot_quantity_before
+    assert data["item"].status == item_status_before
+    assert StockMovement.objects.count() == movements_before
+
+
+@pytest.mark.postgresql
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+def test_postgresql_duplicate_reservation_line_removal_is_idempotent(data):
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL concurrency regression test")
+
+    reservation = create_reservation(customer_name="Иван", by=data["admin"])
+    line = ReservationLine.objects.create(
+        reservation=reservation,
+        part_type=data["bulk"],
+        stock_lot=data["lot"],
+        quantity=Decimal("1"),
+    )
+    movements_before = StockMovement.objects.count()
+    barrier = Barrier(2)
+
+    def remove_same_line():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+            remove_reservation_line(ReservationLine(pk=line.pk))
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(remove_same_line) for _ in range(2)]
+        for future in futures:
+            future.result(timeout=10)
+
+    assert not ReservationLine.objects.filter(pk=line.pk).exists()
+    data["lot"].refresh_from_db()
+    assert data["lot"].quantity == Decimal("5")
+    assert StockMovement.objects.count() == movements_before
+
+
 # --- Создание / активация ----------------------------------------------------
 
 
@@ -125,6 +193,25 @@ def test_create_reservation_draft(data):
 def test_create_reservation_requires_customer(data):
     with pytest.raises(ReservationError):
         create_reservation(customer_name="  ", by=data["admin"])
+
+
+def test_removing_active_reservation_line_releases_reserved_quantity_only(data):
+    reservation = create_reservation(customer_name="Иван", by=data["admin"])
+    line = add_stock_lot_to_reservation(reservation, data["lot"], Decimal("2"))
+    activate_reservation(reservation, by=data["admin"])
+    balance_before = _balance(data["lot"], data["loc"])
+    movements_before = StockMovement.objects.count()
+
+    remove_reservation_line(line, by=data["admin"])
+
+    balance_after = _balance(data["lot"], data["loc"])
+    data["lot"].refresh_from_db()
+    assert balance_before.quantity_reserved == Decimal("2")
+    assert balance_after.quantity_physical == Decimal("5")
+    assert balance_after.quantity_reserved == Decimal("0")
+    assert balance_after.quantity_available == Decimal("5")
+    assert data["lot"].quantity == Decimal("5")
+    assert StockMovement.objects.count() == movements_before
 
 
 def test_cannot_activate_empty_reservation(data):

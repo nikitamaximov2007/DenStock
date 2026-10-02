@@ -262,17 +262,32 @@ def add_stock_lot_to_reservation(reservation, lot, quantity, *, by=None) -> Rese
 @transaction.atomic
 def remove_reservation_line(line, *, by=None) -> None:
     """Снять позицию из брони (черновик/активная); активная — освобождает остаток."""
-    line = (
-        ReservationLine.objects.select_for_update()
-        .select_related("reservation", "part_item", "stock_lot")
-        .get(pk=line.pk)
+    line_ref = (
+        ReservationLine.objects.filter(pk=line.pk).values("reservation_id").first()
     )
-    reservation = line.reservation
+    if line_ref is None:
+        return
+    try:
+        reservation = Reservation.objects.select_for_update().get(
+            pk=line_ref["reservation_id"]
+        )
+    except Reservation.DoesNotExist:
+        # A concurrent cancellation/deletion already removed this line.
+        return
     _ensure_open(reservation)
+    try:
+        line = (
+            ReservationLine.objects.select_for_update(of=("self",))
+            .select_related("part_item", "stock_lot")
+            .get(pk=line.pk, reservation_id=reservation.pk)
+        )
+    except ReservationLine.DoesNotExist:
+        # A duplicate submit may have won while this request waited for the header.
+        return
     was_active = reservation.status == Reservation.Status.ACTIVE
     pair = _line_pair(line)
     if was_active and pair is not None:
-        ensure_location_operation_allowed(pair[1])
+        ensure_location_operation_allowed(StorageLocation.objects.get(pk=pair[1]))
     line.delete()
     if was_active and pair is not None:
         _recompute_pairs([pair])
