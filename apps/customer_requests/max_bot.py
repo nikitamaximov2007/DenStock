@@ -35,6 +35,7 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import F
 from django.utils import timezone
 
+from apps.core.observability import exception_trace
 from apps.customer_accounts import messenger_hooks as account_hooks
 from apps.operations.models import MaxBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
@@ -48,7 +49,7 @@ from .attachments import (
     read_attachment,
     validate_attachment,
 )
-from .max_api import MaxApiError, MaxBotApi, MaxError, MaxNetworkError
+from .max_api import MaxApiError, MaxBotApi, MaxError, MaxNetworkError, inline_keyboard
 from .messengers import MessengerLinkError, consume_max_start
 from .models import (
     MaxDeliveryStatus,
@@ -672,81 +673,117 @@ class MaxBotWorker:
         rows = MaxMessage.objects.select_related("conversation__request").filter(pk__in=ids)
         held: dict[int, object] = {}
         for row in rows.order_by("pk"):
-            chat_id = row.recipient_chat_id
-            if chat_id in held:
-                # An earlier message of this dialog must retry first: keep order.
-                self._postpone(row, until=held[chat_id], count_attempt=False)
-                continue
-            conversation = row.conversation
-            if conversation is not None and (
-                not conversation.is_linked
-                or conversation.customer_chat_id != chat_id
-                or not messaging.customer_contact_allowed(conversation.request)
-            ):
-                self._finish(row, MaxDeliveryStatus.FAILED,
-                             error="Клиент недоступен для сообщений")
-                continue
-            if row.dedupe_key.startswith(service.SELECTOR_DEDUPE_PREFIX) and row.callback_id:
-                # A selector the customer pressed: re-render that same message.
-                if self._update_pressed_message(row):
-                    continue
-                # MAX refused the edit; fall through and send it as a message.
-            elif row.callback_id:
-                self._answer_callback(row)
-            self.pacer.wait(chat_id)
+            dispatched = False
             try:
-                if row.attachment:
-                    if row.max_attachment_token:
-                        result = self.api.send_file_token(
-                            chat_id=chat_id,
-                            token=row.max_attachment_token,
-                            content_type=row.attachment_content_type,
-                            caption=row.text,
-                        )
+                chat_id = row.recipient_chat_id
+                if chat_id in held:
+                    # An earlier message of this dialog must retry first: keep order.
+                    self._postpone(row, until=held[chat_id], count_attempt=False)
+                    continue
+                conversation = row.conversation
+                if conversation is not None and (
+                    not conversation.is_linked
+                    or conversation.customer_chat_id != chat_id
+                    or not messaging.customer_contact_allowed(conversation.request)
+                ):
+                    self._finish(row, MaxDeliveryStatus.FAILED,
+                                 error="Клиент недоступен для сообщений")
+                    continue
+                # A keyboard MAX cannot be given fails here, before anything is sent.
+                inline_keyboard(row.buttons)
+                if row.dedupe_key.startswith(service.SELECTOR_DEDUPE_PREFIX) and row.callback_id:
+                    # A selector the customer pressed: re-render that same message.
+                    dispatched = True
+                    if self._update_pressed_message(row):
+                        continue
+                    # MAX refused the edit; fall through and send it as a message.
+                elif row.callback_id:
+                    self._answer_callback(row)
+                self.pacer.wait(chat_id)
+                try:
+                    if row.attachment:
+                        if row.max_attachment_token:
+                            dispatched = True
+                            result = self.api.send_file_token(
+                                chat_id=chat_id,
+                                token=row.max_attachment_token,
+                                content_type=row.attachment_content_type,
+                                caption=row.text,
+                            )
+                        else:
+                            content = read_attachment(row.attachment)
+                            token = self.api.upload_file(
+                                content=content,
+                                filename=(
+                                    row.attachment_name
+                                    or row.attachment.name.rsplit("/", 1)[-1]
+                                ),
+                                content_type=row.attachment_content_type,
+                            )
+                            row.max_attachment_token = token
+                            row.save(update_fields=["max_attachment_token"])
+                            dispatched = True
+                            result = self.api.send_file_token(
+                                chat_id=chat_id,
+                                token=token,
+                                content_type=row.attachment_content_type,
+                                caption=row.text,
+                            )
                     else:
-                        content = read_attachment(row.attachment)
-                        token = self.api.upload_file(
-                            content=content,
-                            filename=(
-                                row.attachment_name
-                                or row.attachment.name.rsplit("/", 1)[-1]
-                            ),
-                            content_type=row.attachment_content_type,
+                        dispatched = True
+                        result = self.api.send_message(
+                            chat_id=chat_id, text=row.text, buttons=row.buttons
                         )
-                        row.max_attachment_token = token
-                        row.save(update_fields=["max_attachment_token"])
-                        result = self.api.send_file_token(
-                            chat_id=chat_id,
-                            token=token,
-                            content_type=row.attachment_content_type,
-                            caption=row.text,
-                        )
-                else:
-                    result = self.api.send_message(
-                        chat_id=chat_id, text=row.text, buttons=row.buttons
-                    )
-            except AttachmentStorageError as exc:
-                self._finish(row, MaxDeliveryStatus.FAILED, error=exc)
-                continue
-            except MaxApiError as exc:
-                if exc.status == 401:
-                    self._postpone(row, until=timezone.now(), error=exc, count_attempt=False)
-                    for pending in rows.filter(pk__gt=row.pk):
-                        self._postpone(pending, until=timezone.now(), count_attempt=False)
-                    raise SingleInstanceError(str(exc)) from None
-                until = self._fail(row, exc)
-                if until is not None:
-                    held[chat_id] = until
-                continue
-            except MaxError as exc:
-                until = self._fail(row, exc)
-                if until is not None:
-                    held[chat_id] = until
-                continue
-            body = (result or {}).get("body") or {}
-            self._finish(row, MaxDeliveryStatus.SENT, mid=body.get("mid"))
-            operator_replies.confirm_responder_transition(row)
+                except AttachmentStorageError as exc:
+                    self._finish(row, MaxDeliveryStatus.FAILED, error=exc)
+                    continue
+                except MaxApiError as exc:
+                    if exc.status == 401:
+                        self._postpone(row, until=timezone.now(), error=exc, count_attempt=False)
+                        for pending in rows.filter(pk__gt=row.pk):
+                            self._postpone(pending, until=timezone.now(), count_attempt=False)
+                        raise SingleInstanceError(str(exc)) from None
+                    until = self._fail(row, exc)
+                    if until is not None:
+                        held[chat_id] = until
+                    continue
+                except MaxError as exc:
+                    until = self._fail(row, exc)
+                    if until is not None:
+                        held[chat_id] = until
+                    continue
+                body = (result or {}).get("body") or {}
+                self._finish(row, MaxDeliveryStatus.SENT, mid=body.get("mid"))
+                operator_replies.confirm_responder_transition(row)
+            except (DatabaseError, BusinessWriteBlocked, SingleInstanceError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - row isolation boundary, see _contain
+                self._contain(row, exc, dispatched=dispatched)
         return len(ids)
+
+    def _contain(self, row, exc: Exception, *, dispatched: bool) -> None:
+        """One row failed unexpectedly: log where, never mark it sent, never resend it.
+
+        The other rows of the batch go on. A row still ``sending`` ends as
+        ``failed`` when nothing reached MAX, or ``uncertain`` when a send had
+        started; a row that already has its outcome (sent, failed, waiting for
+        a retry) keeps it. A database fault is not handled here: the worker
+        loop recovers from it.
+        """
+        logger.error("max send %s failed: %s", row.pk, exception_trace(exc))
+        self.record_error(f"Сообщение {row.pk}: {type(exc).__name__}")
+        current = MaxMessage.objects.filter(pk=row.pk).values_list(
+            "delivery_status", flat=True
+        ).first()
+        if current != MaxDeliveryStatus.SENDING:
+            return
+        name = type(exc).__name__
+        if dispatched:
+            self._finish(row, MaxDeliveryStatus.UNCERTAIN,
+                         error=f"Сбой при отправке ({name}); повторно не отправлялось.")
+        else:
+            self._finish(row, MaxDeliveryStatus.FAILED,
+                         error=f"Внутренняя ошибка отправки ({name})")
 
     def _update_pressed_message(self, row) -> bool:
         """Draw the selector in place; ``False`` means "send it as a message".
@@ -791,37 +828,57 @@ class MaxBotWorker:
             return 0
         rows = operator_console.claim_notifications("max", limit)
         for row in rows:
+            dispatched = False
             try:
-                delivery = operator_console.prepare_notification_delivery(
-                    notification_id=row.pk, provider="max"
-                )
-            except Exception as exc:
-                operator_console.retry_notification(row, exc)
-                continue
-            if delivery is None:
-                continue
-            self.pacer.wait(delivery.delivery_chat_id)
-            try:
+                try:
+                    delivery = operator_console.prepare_notification_delivery(
+                        notification_id=row.pk, provider="max"
+                    )
+                except Exception as exc:  # noqa: BLE001 - retried with backoff, then failed
+                    logger.error("max notification %s not prepared: %s", row.pk,
+                                 exception_trace(exc))
+                    operator_console.retry_notification(row, exc)
+                    continue
+                if delivery is None:
+                    continue
+                self.pacer.wait(delivery.delivery_chat_id)
                 max_markup = operator_console.buttons_for_provider(delivery.buttons, "max")
-                result = self.api.send_message(
-                    chat_id=delivery.delivery_chat_id,
-                    text=delivery.text,
-                    buttons=(max_markup or {}).get("inline_keyboard", []),
+                buttons = (max_markup or {}).get("inline_keyboard", [])
+                inline_keyboard(buttons)
+                try:
+                    dispatched = True
+                    result = self.api.send_message(
+                        chat_id=delivery.delivery_chat_id,
+                        text=delivery.text,
+                        buttons=buttons,
+                    )
+                except MaxError as exc:
+                    if isinstance(exc, MaxNetworkError) and exc.ambiguous:
+                        operator_console.finish_notification(
+                            row, status=operator_console.OperatorNotification.Status.UNCERTAIN,
+                            error=exc,
+                        )
+                        continue
+                    operator_console.retry_notification(row, exc)
+                    continue
+                body = (result or {}).get("body") or {}
+                operator_console.finish_notification(
+                    row, status=operator_console.OperatorNotification.Status.SENT,
+                    external_id=body.get("mid", ""),
                 )
-            except MaxError as exc:
-                if isinstance(exc, MaxNetworkError) and exc.ambiguous:
+            except (DatabaseError, BusinessWriteBlocked, SingleInstanceError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - row isolation boundary
+                logger.error("max notification %s failed: %s", row.pk, exception_trace(exc))
+                self.record_error(f"Уведомление {row.pk}: {type(exc).__name__}")
+                if dispatched:
+                    # Possibly delivered: shown as uncertain, never sent again.
                     operator_console.finish_notification(
                         row, status=operator_console.OperatorNotification.Status.UNCERTAIN,
-                        error=exc,
+                        error=f"Сбой при отправке ({type(exc).__name__})",
                     )
-                    continue
-                operator_console.retry_notification(row, exc)
-                continue
-            body = (result or {}).get("body") or {}
-            operator_console.finish_notification(
-                row, status=operator_console.OperatorNotification.Status.SENT,
-                external_id=body.get("mid", ""),
-            )
+                else:
+                    operator_console.retry_notification(row, type(exc).__name__)
         return len(rows)
 
     def has_due_work(self) -> bool:
@@ -913,15 +970,30 @@ class MaxBotWorker:
         self.purge_ephemeral()
         self._touch_heartbeat()
 
+    def _cycle_failed(self, exc: Exception) -> None:
+        """A defect outside any one row stopped this cycle: show it, then go on.
+
+        Rows the cycle left ``sending`` are marked uncertain by the recovery at
+        the start of the next cycle and never resent; nothing counts as sent.
+        """
+        logger.error("max bot cycle failed: %s", exception_trace(exc))
+        self._needs_recovery = True
+        try:
+            self.record_error(f"Цикл: {type(exc).__name__}")
+        except DatabaseError:
+            connection.close()
+
     def run(self, *, once: bool = False) -> None:
         failures = 0
         try:
             if not self.start_with_retry():
                 return
             while not self.stop.is_set():
+                idle = False
                 try:
                     self.iterate()
                     failures = 0
+                    idle = not self.has_due_work()
                 except BusinessWriteBlocked:
                     logger.warning("business writes are blocked; max bot paused")
                     self.stop.wait(30)
@@ -936,9 +1008,15 @@ class MaxBotWorker:
                     self._needs_recovery = True
                     connection.close()
                     self.stop.wait(min(60, 2**failures))
+                except SingleInstanceError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the worker outlives one bad cycle
+                    failures += 1
+                    self._cycle_failed(exc)
+                    self.stop.wait(min(60, 2**failures))
                 if once:
                     break
-                if not self.has_due_work():
+                if idle:
                     self.stop.wait(IDLE_SECONDS)
         finally:
             try:

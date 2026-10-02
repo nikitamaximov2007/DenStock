@@ -28,6 +28,7 @@ directly, never through another integration's proxy.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import re
 import secrets
@@ -229,6 +230,9 @@ class MaxBotApi:
             raise MaxNetworkError(
                 _scrub(type(exc).__name__, self._token), ambiguous=may_duplicate
             ) from None
+        except http.client.HTTPException as exc:
+            # A garbled status line or a body cut short: the request may have been read.
+            raise MaxNetworkError(type(exc).__name__, ambiguous=may_duplicate) from None
         try:
             data = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -323,7 +327,8 @@ class MaxBotApi:
         try:
             with self._upload_opener(request, timeout=self._timeout) as response:
                 uploaded = json.loads(response.read().decode("utf-8"))
-        except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (OSError, TimeoutError, http.client.HTTPException, UnicodeDecodeError,
+                json.JSONDecodeError) as exc:
             raise MaxNetworkError(type(exc).__name__, ambiguous=True) from None
         token = uploaded.get("token") if isinstance(uploaded, dict) else None
         if not token and kind == "image" and isinstance(uploaded, dict):
@@ -364,7 +369,7 @@ class MaxBotApi:
                 if len(content) > MAX_ATTACHMENT_BYTES:
                     raise MaxApiError(413, "attachment.too_large", "attachment exceeds 10 MiB")
                 content = bytes(content)
-        except (OSError, TimeoutError) as exc:
+        except (OSError, TimeoutError, http.client.HTTPException) as exc:
             raise MaxNetworkError(type(exc).__name__, ambiguous=False) from None
         if not content:
             raise MaxNetworkError("empty attachment response", ambiguous=False)

@@ -21,6 +21,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from apps.catalog.public_contracts import resolve_current_customer_prices
+from apps.core.observability import exception_trace
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import with_part_identity
 from apps.operations.models import TelegramBotRuntime
@@ -748,11 +749,15 @@ def max_webhook(request):
     except BusinessWriteBlocked:
         return HttpResponse(status=503)
     except DatabaseError as exc:
-        logger.warning("max webhook storage failed: %s", type(exc).__name__)
+        # Logged at error level: the production "apps" logger drops warnings.
+        logger.error("max webhook storage failed: %s", type(exc).__name__)
         return HttpResponse(status=503)
     except Exception as exc:  # noqa: BLE001 - one poisoned update must not be retried forever
+        # Rolled back and acknowledged. The frames show where, the message is
+        # left out: it can carry the customer's text or a link token.
         logger.error(
-            "max webhook update %s failed: %s", update.get("update_type")[:32], type(exc).__name__
+            "max webhook update %s failed: %s", update.get("update_type")[:32],
+            exception_trace(exc),
         )
     return JsonResponse({"ok": True})
 

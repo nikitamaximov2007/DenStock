@@ -12,6 +12,7 @@ module goes through ``_scrub``.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import secrets
 import urllib.error
@@ -153,6 +154,9 @@ class TelegramBotApi:
             raise TelegramNetworkError(
                 _scrub(type(exc).__name__, self._token), ambiguous=False
             ) from None
+        except http.client.HTTPException as exc:
+            # A garbled status line or a body cut short: the request may have been read.
+            raise TelegramNetworkError(type(exc).__name__, ambiguous=may_duplicate) from None
         try:
             data = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -199,7 +203,7 @@ class TelegramBotApi:
         try:
             with self._opener(request, timeout=self._timeout) as response:
                 content = response.read()
-        except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise TelegramNetworkError(
                 _scrub(type(exc).__name__, self._token), ambiguous=False
             ) from None
@@ -275,7 +279,7 @@ class TelegramBotApi:
         try:
             with self._opener(request, timeout=self._timeout) as response:
                 raw = response.read()
-        except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        except (TimeoutError, urllib.error.URLError, OSError, http.client.HTTPException) as exc:
             raise TelegramNetworkError(
                 _scrub(type(exc).__name__, self._token), ambiguous=True
             ) from None
@@ -283,11 +287,13 @@ class TelegramBotApi:
             data = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise TelegramNetworkError("invalid response", ambiguous=True) from None
-        if not isinstance(data, dict) or data.get("ok") is not True:
-            raise TelegramApiError(
-                int(data.get("error_code") or 400),
-                _scrub(data.get("description"), self._token),
-            )
+        if not isinstance(data, dict):
+            raise TelegramNetworkError("invalid response", ambiguous=True)
+        if data.get("ok") is not True:
+            error_code = data.get("error_code")
+            if not isinstance(error_code, int) or isinstance(error_code, bool):
+                raise TelegramNetworkError("invalid response", ambiguous=True)
+            raise TelegramApiError(error_code, _scrub(data.get("description"), self._token))
         return data.get("result") or {}
 
     def edit_message_text(

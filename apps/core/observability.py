@@ -14,6 +14,7 @@ DEBUG в бою выключен, и до этого модуля падение
 """
 import logging
 import re
+import traceback
 import uuid
 from contextvars import ContextVar
 
@@ -115,3 +116,18 @@ class RedactingFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         return redact(super().format(record))
+
+
+def exception_trace(exc: BaseException, *, limit: int = 12) -> str:
+    """Класс исключения и где оно возникло, без текста самого исключения.
+
+    Текст ошибки бота может нести сообщение клиента, токен ссылки или ответ
+    мессенджера, поэтому в журнал идут только кадры стека: файл, строка и
+    функция, от места падения наружу. Этого достаточно, чтобы найти ошибку.
+    """
+    frames = traceback.extract_tb(exc.__traceback__)[-limit:]
+    where = " <- ".join(
+        f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} {frame.name}"
+        for frame in reversed(frames)
+    )
+    return f"{type(exc).__name__} at {where or '?'}"

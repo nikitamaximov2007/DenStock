@@ -23,10 +23,11 @@ from pathlib import Path
 
 from django.conf import settings
 from django.core.files.base import ContentFile
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, InterfaceError, OperationalError, connection, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from apps.core.observability import exception_trace
 from apps.customer_accounts import messenger_hooks as account_hooks
 from apps.operations.models import TelegramBotRuntime
 from apps.operations.write_guard import BusinessWriteBlocked
@@ -65,6 +66,8 @@ BATCH = 20
 STARTUP_BACKOFF_BASE_SECONDS = 5
 STARTUP_BACKOFF_MAX_SECONDS = 300
 LEASE_RENEW_SLICE_SECONDS = 30
+# A database fault on one update is retried this many cycles, then the update is skipped.
+UPDATE_DATABASE_ATTEMPTS = 3
 
 
 class SingleInstanceError(RuntimeError):
@@ -403,6 +406,7 @@ class TelegramBotWorker:
         )
         self._holds_lock = False
         self._needs_recovery = False
+        self._update_database_failures: tuple[int, int] | None = None
 
     # Single instance -------------------------------------------------------------------
 
@@ -512,15 +516,32 @@ class TelegramBotWorker:
             except BusinessWriteBlocked:
                 raise
             except Exception as exc:  # noqa: BLE001 - one poisoned update must not stop the bot
-                logger.error("update %s failed: %s", update_id, type(exc).__name__)
+                if isinstance(exc, (OperationalError, InterfaceError)) and self._retry_update(
+                    update_id
+                ):
+                    # The database, not the update: keep the offset, read it again.
+                    raise
+                logger.error("update %s failed: %s", update_id, exception_trace(exc))
                 self.record_error(f"Обновление {update_id}: {type(exc).__name__}")
                 with transaction.atomic():
                     self._advance(update_id)
                 outgoing = []
+            self._update_database_failures = None
             runtime.last_update_id = update_id
             processed += 1
             self._send_ephemeral(outgoing)
         return processed
+
+    def _retry_update(self, update_id: int) -> bool:
+        """Whether a database fault on this update leaves it for another cycle.
+
+        Bounded, so an update that keeps failing is skipped like any poisoned
+        one instead of blocking every update behind it.
+        """
+        previous = self._update_database_failures
+        attempts = previous[1] + 1 if previous and previous[0] == update_id else 1
+        self._update_database_failures = (update_id, attempts)
+        return attempts < UPDATE_DATABASE_ATTEMPTS
 
     def _advance(self, update_id: int) -> None:
         TelegramBotRuntime.objects.filter(pk=TelegramBotRuntime.SINGLETON_PK).update(
@@ -659,6 +680,29 @@ class TelegramBotWorker:
             last_error=str(exc)[:255],
         )
 
+    def _contain(self, row, status_field: str, exc: Exception, *, dispatched: bool) -> None:
+        """One row failed unexpectedly: log where, never mark it sent, never resend it.
+
+        The other rows of the batch go on. A row still ``sending`` ends as
+        ``failed`` when nothing reached Telegram, or ``uncertain`` when a send
+        had started; a row that already has its outcome keeps it. A database
+        fault is not handled here: the worker loop recovers from it.
+        """
+        logger.error("%s %s failed: %s", type(row).__name__, row.pk, exception_trace(exc))
+        self.record_error(f"Отправка {row.pk}: {type(exc).__name__}")
+        current = type(row).objects.filter(pk=row.pk).values_list(
+            status_field, flat=True
+        ).first()
+        if current != TelegramDeliveryStatus.SENDING:
+            return
+        name = type(exc).__name__
+        if dispatched:
+            self._finish(row, status_field, TelegramDeliveryStatus.UNCERTAIN,
+                         error=f"Сбой при отправке ({name}); повторно не отправлялось.")
+        else:
+            self._finish(row, status_field, TelegramDeliveryStatus.FAILED,
+                         error=f"Внутренняя ошибка отправки ({name})")
+
     def send_customer_messages(self, limit: int = BATCH) -> int:
         outbound = Q(
             direction__in=[TelegramMessage.Direction.OPERATOR, TelegramMessage.Direction.SYSTEM]
@@ -666,44 +710,73 @@ class TelegramBotWorker:
         ids = self._claim(TelegramMessage, "delivery_status", outbound, limit)
         rows = TelegramMessage.objects.select_related("conversation__request").filter(pk__in=ids)
         for row in rows.order_by("pk"):
-            conversation = row.conversation
-            if not conversation.is_linked or not service.customer_contact_allowed(
-                conversation.request
-            ):
-                self._finish(
-                    row, "delivery_status", TelegramDeliveryStatus.FAILED,
-                    error="Клиент недоступен для сообщений",
-                )
-                continue
+            dispatched = False
             try:
-                if row.attachment:
-                    content = read_attachment(row.attachment)
-                    result = self.api.send_file(
-                        chat_id=conversation.customer_chat_id,
-                        content=content,
-                        filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
-                        content_type=row.attachment_content_type,
-                        caption=row.text,
-                        reply_markup=service.customer_keyboard(),
+                conversation = row.conversation
+                if not conversation.is_linked or not service.customer_contact_allowed(
+                    conversation.request
+                ):
+                    self._finish(
+                        row, "delivery_status", TelegramDeliveryStatus.FAILED,
+                        error="Клиент недоступен для сообщений",
                     )
-                else:
-                    result = self.api.send_message(
-                        chat_id=conversation.customer_chat_id,
-                        text=row.text,
-                        reply_markup=service.customer_keyboard(),
-                    )
-            except AttachmentStorageError as exc:
-                self._finish(row, "delivery_status", TelegramDeliveryStatus.FAILED, error=exc)
-                continue
+                    continue
+                keyboard = service.customer_keyboard()
+                try:
+                    if row.attachment:
+                        content = read_attachment(row.attachment)
+                        dispatched = True
+                        result = self.api.send_file(
+                            chat_id=conversation.customer_chat_id,
+                            content=content,
+                            filename=row.attachment_name or row.attachment.name.rsplit("/", 1)[-1],
+                            content_type=row.attachment_content_type,
+                            caption=row.text,
+                            reply_markup=keyboard,
+                        )
+                    else:
+                        dispatched = True
+                        result = self.api.send_message(
+                            chat_id=conversation.customer_chat_id,
+                            text=row.text,
+                            reply_markup=keyboard,
+                        )
+                except AttachmentStorageError as exc:
+                    self._finish(row, "delivery_status", TelegramDeliveryStatus.FAILED, error=exc)
+                    continue
+                except TelegramError as exc:
+                    self._fail(row, "delivery_status", exc)
+                    continue
+                self._finish(
+                    row, "delivery_status", TelegramDeliveryStatus.SENT,
+                    message_id=(result or {}).get("message_id"),
+                )
+                operator_replies.confirm_responder_transition(row)
+            except (DatabaseError, BusinessWriteBlocked, SingleInstanceError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - row isolation boundary, see _contain
+                self._contain(row, "delivery_status", exc, dispatched=dispatched)
+        return len(ids)
+
+    def _send_operator_card(self, row, chat_id: int, content) -> None:
+        """One operator notification row; its unexpected failure stays its own."""
+        dispatched = False
+        try:
+            text, markup = content(row.event)
+            try:
+                dispatched = True
+                result = self.api.send_message(chat_id=chat_id, text=text, reply_markup=markup)
             except TelegramError as exc:
-                self._fail(row, "delivery_status", exc)
-                continue
+                self._fail(row, "status", exc)
+                return
             self._finish(
-                row, "delivery_status", TelegramDeliveryStatus.SENT,
+                row, "status", TelegramDeliveryStatus.SENT,
                 message_id=(result or {}).get("message_id"),
             )
-            operator_replies.confirm_responder_transition(row)
-        return len(ids)
+        except (DatabaseError, BusinessWriteBlocked, SingleInstanceError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - row isolation boundary, see _contain
+            self._contain(row, "status", exc, dispatched=dispatched)
 
     def send_operator_deliveries(self, limit: int = BATCH) -> int:
         ids = self._claim(TelegramDelivery, "status", Q(), limit)
@@ -715,18 +788,7 @@ class TelegramBotWorker:
                 self._finish(row, "status", TelegramDeliveryStatus.FAILED,
                              error="Сотрудник отключён")
                 continue
-            text, markup = service.delivery_content(row.event)
-            try:
-                result = self.api.send_message(
-                    chat_id=row.operator.telegram_user_id, text=text, reply_markup=markup
-                )
-            except TelegramError as exc:
-                self._fail(row, "status", exc)
-                continue
-            self._finish(
-                row, "status", TelegramDeliveryStatus.SENT,
-                message_id=(result or {}).get("message_id"),
-            )
+            self._send_operator_card(row, row.operator.telegram_user_id, service.delivery_content)
         return len(ids)
 
     def send_max_operator_deliveries(self, limit: int = BATCH) -> int:
@@ -748,18 +810,7 @@ class TelegramBotWorker:
                 self._finish(row, "status", TelegramDeliveryStatus.FAILED,
                              error="Сотрудник отключён")
                 continue
-            text, markup = max_service.delivery_content(row.event)
-            try:
-                result = self.api.send_message(
-                    chat_id=operator.telegram_user_id, text=text, reply_markup=markup
-                )
-            except TelegramError as exc:
-                self._fail(row, "status", exc)
-                continue
-            self._finish(
-                row, "status", TelegramDeliveryStatus.SENT,
-                message_id=(result or {}).get("message_id"),
-            )
+            self._send_operator_card(row, operator.telegram_user_id, max_service.delivery_content)
         return len(ids)
 
     def send_operator_console_notifications(self, limit: int = BATCH) -> int:
@@ -767,34 +818,53 @@ class TelegramBotWorker:
             return 0
         rows = operator_console.claim_notifications("telegram", limit)
         for row in rows:
+            dispatched = False
             try:
-                delivery = operator_console.prepare_notification_delivery(
-                    notification_id=row.pk, provider="telegram"
+                try:
+                    delivery = operator_console.prepare_notification_delivery(
+                        notification_id=row.pk, provider="telegram"
+                    )
+                except Exception as exc:  # noqa: BLE001 - retried with backoff, then failed
+                    logger.error("telegram notification %s not prepared: %s", row.pk,
+                                 exception_trace(exc))
+                    operator_console.retry_notification(row, exc)
+                    continue
+                if delivery is None:
+                    continue
+                try:
+                    dispatched = True
+                    result = self.api.send_message(
+                        chat_id=delivery.provider_user_id,
+                        text=delivery.text,
+                        reply_markup=delivery.buttons,
+                    )
+                except TelegramError as exc:
+                    if isinstance(exc, TelegramNetworkError) and exc.ambiguous:
+                        operator_console.finish_notification(
+                            row, status=operator_console.OperatorNotification.Status.UNCERTAIN,
+                            error=exc,
+                        )
+                        continue
+                    operator_console.retry_notification(row, exc)
+                    continue
+                operator_console.finish_notification(
+                    row, status=operator_console.OperatorNotification.Status.SENT,
+                    external_id=(result or {}).get("message_id", ""),
                 )
-            except Exception as exc:
-                operator_console.retry_notification(row, exc)
-                continue
-            if delivery is None:
-                continue
-            try:
-                result = self.api.send_message(
-                    chat_id=delivery.provider_user_id,
-                    text=delivery.text,
-                    reply_markup=delivery.buttons,
-                )
-            except TelegramError as exc:
-                if isinstance(exc, TelegramNetworkError) and exc.ambiguous:
+            except (DatabaseError, BusinessWriteBlocked, SingleInstanceError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - row isolation boundary
+                logger.error("telegram notification %s failed: %s", row.pk,
+                             exception_trace(exc))
+                self.record_error(f"Уведомление {row.pk}: {type(exc).__name__}")
+                if dispatched:
+                    # Possibly delivered: shown as uncertain, never sent again.
                     operator_console.finish_notification(
                         row, status=operator_console.OperatorNotification.Status.UNCERTAIN,
-                        error=exc,
+                        error=f"Сбой при отправке ({type(exc).__name__})",
                     )
-                    continue
-                operator_console.retry_notification(row, exc)
-                continue
-            operator_console.finish_notification(
-                row, status=operator_console.OperatorNotification.Status.SENT,
-                external_id=(result or {}).get("message_id", ""),
-            )
+                else:
+                    operator_console.retry_notification(row, type(exc).__name__)
         return len(rows)
 
     def has_due_work(self) -> bool:
@@ -914,6 +984,20 @@ class TelegramBotWorker:
         self.drain_outbox()
         self._touch_heartbeat()
 
+    def _cycle_failed(self, exc: Exception) -> None:
+        """A defect outside any one row stopped this cycle: show it, then go on.
+
+        Rows the cycle left ``sending`` are marked uncertain by the recovery at
+        the start of the next cycle and never resent. The update offset moves
+        only together with a handled update, so no update is skipped here.
+        """
+        logger.error("telegram bot cycle failed: %s", exception_trace(exc))
+        self._needs_recovery = True
+        try:
+            self.record_error(f"Цикл: {type(exc).__name__}")
+        except DatabaseError:
+            connection.close()
+
     def run(self, *, once: bool = False) -> None:
         failures = 0
         try:
@@ -945,6 +1029,12 @@ class TelegramBotWorker:
                     logger.error("database error: %s", type(exc).__name__)
                     self._needs_recovery = True
                     connection.close()
+                    self.stop.wait(min(60, 2**failures))
+                except SingleInstanceError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the worker outlives one bad cycle
+                    failures += 1
+                    self._cycle_failed(exc)
                     self.stop.wait(min(60, 2**failures))
                 if once:
                     break
