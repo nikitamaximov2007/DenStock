@@ -671,3 +671,91 @@ def test_max_sticker_or_location_is_not_a_part_photo(staff_world):
     adapter.deliver(event)
     assert _state(staff_world["part_a"])["active"] == []
     assert _context(binding).mode == OwnerPhotoUploadContext.Mode.UPLOAD
+
+
+def test_old_envelope_rows_already_queued_are_sent_and_the_sender_continues(db):
+    """Release-critical: production may hold rows queued before the fix.
+
+    A staff answer stored as ``{"inline_keyboard": rows}`` is sent as a valid
+    MAX keyboard, and the next queued row in the same pass is still delivered.
+    """
+    from django.utils import timezone
+
+    old = MaxMessage.objects.create(
+        dedupe_key="operator:legacy-envelope",
+        direction=MaxMessage.Direction.SYSTEM,
+        text="Панель администратора PRO-STORE",
+        buttons={"inline_keyboard": [[{"text": "Все заявки", "payload": "op:l:abc:1"}]]},
+        recipient_chat_id=55_001,
+        delivery_status=MaxDeliveryStatus.PENDING,
+        next_attempt_at=timezone.now(),
+    )
+    following = MaxMessage.objects.create(
+        dedupe_key="operator:after-legacy",
+        direction=MaxMessage.Direction.SYSTEM,
+        text="Следующее сообщение",
+        buttons=[[{"text": "Новые заявки", "payload": "op:n:abc:1"}]],
+        recipient_chat_id=55_002,
+        delivery_status=MaxDeliveryStatus.PENDING,
+        next_attempt_at=timezone.now(),
+    )
+    server = FakeMaxServer()
+    server.start()
+    try:
+        api = MaxBotApi(FAKE_MAX_TOKEN, base_url=server.base_url, timeout=2)
+        worker = max_bot.MaxBotWorker(api, worker_id="legacy", heartbeat_file="")
+        worker.pacer.wait = lambda _chat_id: None
+        assert worker.send_customer_messages() == 2
+    finally:
+        server.stop()
+    old.refresh_from_db()
+    following.refresh_from_db()
+    assert old.delivery_status == MaxDeliveryStatus.SENT
+    assert following.delivery_status == MaxDeliveryStatus.SENT
+    sent = {item["chat_id"]: item for item in server.sent}
+    assert sent[55_001]["attachments"] == [{
+        "type": "inline_keyboard",
+        "payload": {"buttons": [[
+            {"type": "callback", "text": "Все заявки", "payload": "op:l:abc:1"}
+        ]]},
+    }]
+    assert sent[55_002]["attachments"][0]["payload"]["buttons"][0][0]["payload"] == (
+        "op:n:abc:1"
+    )
+
+
+@pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
+def test_redelivered_staff_reply_event_creates_one_customer_message(adapter_cls, staff_world):
+    adapter, _binding = staff_world["make"](adapter_cls)
+    request = _linked_request(
+        adapter.name, key=f"redeliver{adapter.name}".ljust(32, "D")
+    )
+    listing = adapter.send("Все заявки")
+    card = adapter.press(listing.buttons[next(
+        label for label in listing.buttons if request.reference in label
+    )])
+    adapter.press(card.buttons["Ответить"])
+    event = adapter.text_event("Деталь отложена для вас.")
+    adapter.deliver(event)
+    adapter.deliver(event)  # the same messenger event again
+    texts = [row["text"] for row in _outbound(request)]
+    assert texts.count("Деталь отложена для вас.") == 1
+
+
+@pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
+def test_same_staff_button_event_twice_has_one_effect(adapter_cls, staff_world):
+    adapter, binding = staff_world["make"](adapter_cls)
+    request = _linked_request("telegram", key=f"twice{adapter.name}".ljust(32, "W"))
+    listing = adapter.send("Все заявки")
+    press = adapter.press_event(listing.buttons[next(
+        label for label in listing.buttons if request.reference in label
+    )])
+    adapter.deliver(press)
+    context = OperatorConversationContext.objects.get(binding=binding)
+    first_stamp = context.updated_at
+    adapter.deliver(press)
+    context.refresh_from_db()
+    assert context.request_id == request.pk
+    if adapter_cls is MaxAdapter:
+        # A MAX redelivery is recognised and not applied a second time.
+        assert context.updated_at == first_stamp
