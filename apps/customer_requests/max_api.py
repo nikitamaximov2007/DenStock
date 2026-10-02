@@ -153,6 +153,10 @@ def direct_opener(context: ssl.SSLContext):
 
 def inline_keyboard(buttons) -> list[dict]:
     """``[[{"text", "payload"}]]`` rows as the MAX inline keyboard attachment."""
+    if isinstance(buttons, dict):
+        # Rows queued before the adapter stored native rows kept the shared
+        # ``{"inline_keyboard": rows}`` envelope; unwrap instead of failing.
+        buttons = buttons.get("inline_keyboard")
     rows = []
     for row in buttons or []:
         rows.append(
