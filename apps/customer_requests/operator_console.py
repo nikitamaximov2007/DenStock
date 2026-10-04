@@ -23,8 +23,8 @@ from apps.catalog.photo_pipeline import (
     upload_primary_part_photo,
 )
 from apps.catalog.public_photos import PublicPhotoError
+from apps.catalog.quantity_units import format_quantity
 from apps.core.files import validate_image_upload
-from apps.core.templatetags.number_format import quantity_int
 from apps.core.time import format_perm_datetime
 from apps.inventory.presentation import part_exact_number
 from apps.repairs.models import RepairIssueLine, RepairOrder
@@ -376,7 +376,10 @@ def request_by_hex(value: str):
     if not isinstance(value, str) or len(value) != 32:
         return None
     try:
-        return CustomerRequest.objects.prefetch_related("lines").filter(public_id=value).first()
+        return (
+            CustomerRequest.objects.prefetch_related("lines__part_type")
+            .filter(public_id=value).first()
+        )
     except (TypeError, ValueError):
         return None
 
@@ -890,10 +893,11 @@ def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
         "",
     ]
     total = 0
-    for line in request.lines.all():
+    for line in request.lines.select_related("part_type"):
         price = "цена уточняется" if line.price_seen is None else f"{line.price_seen:.0f} ₽"
-        # The shared quantity format: 1.000 -> "1"; a fractional 2.500 stays "2,5".
-        lines.append(f"{line.part_name} · {quantity_int(line.quantity_requested)} × {price}")
+        # Pieces as whole numbers (1.000 -> "1"), oil liters as decimals ("1,5").
+        quantity = format_quantity(line.quantity_requested, line.part_type)
+        lines.append(f"{line.part_name} · {quantity} × {price}")
         if line.price_seen is not None:
             total += line.price_seen * line.quantity_requested
     lines.extend([f"Итого: {total:.0f} ₽" if total else "Итого: цена уточняется",

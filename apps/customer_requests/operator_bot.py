@@ -20,7 +20,8 @@ from django.conf import settings
 from django.db.models import Count, Q
 from django.urls import reverse
 
-from apps.core.templatetags.number_format import money_int, quantity_int
+from apps.catalog.quantity_units import format_quantity
+from apps.core.templatetags.number_format import money_int
 
 from . import workspace
 from .models import CustomerRequest, TelegramConversation
@@ -44,7 +45,7 @@ def request_by_hex(value) -> CustomerRequest | None:
     if not isinstance(value, str) or not HEX_RE.fullmatch(value):
         return None
     identifier = uuid.UUID(hex=value)
-    queryset = CustomerRequest.objects.prefetch_related("lines")
+    queryset = CustomerRequest.objects.prefetch_related("lines__part_type")
     request = queryset.filter(public_id=identifier).first()
     if request is not None:
         return request
@@ -123,7 +124,9 @@ def card_text(request: CustomerRequest, *, heading: str = "ЗАЯВКА", target
     priced = False
     rendered = []
     for number, line in enumerate(lines, start=1):
-        quantity = f"{quantity_int(line.quantity_requested)} {line.unit_short_name}".strip()
+        quantity = (
+            f"{format_quantity(line.quantity_requested, line.part_type)} {line.unit_short_name}"
+        ).strip()
         head = f"{number}. {line.article or 'без артикула'} · {line.part_name}"
         if line.is_supply_inquiry:
             head += " · запрос о поставке"

@@ -14,7 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from apps.core.templatetags.number_format import money_int, quantity_int
+from apps.catalog.quantity_units import format_quantity
+from apps.core.templatetags.number_format import money_int
 
 from .models import CustomerRequest
 
@@ -54,7 +55,7 @@ def summary_line(line) -> tuple[str, Decimal | None]:
     unit = (line.unit_short_name or "").strip()
     if unit == "шт":
         unit = "шт."
-    quantity = f"{quantity_int(line.quantity_requested)} {unit}".strip()
+    quantity = f"{format_quantity(line.quantity_requested, line.part_type)} {unit}".strip()
     if line.price_seen is None:
         return f"{article} - {name}\n{quantity} - {UNKNOWN_PRICE_TEXT}", None
     total = line.quantity_requested * line.price_seen
@@ -71,7 +72,7 @@ def request_summary_messages(request: CustomerRequest, policy: SummaryPolicy) ->
     spans several messages. A total is only claimed when every line has a
     price: "Итого: 0 ₽" would read as free, not as unknown.
     """
-    lines = list(request.lines.order_by("pk"))
+    lines = list(request.lines.select_related("part_type").order_by("pk"))
     heading = policy.linked_text.format(reference=request.reference) + f"\n\n{ORDER_HEADING}"
     messages: list[str] = []
     current = heading

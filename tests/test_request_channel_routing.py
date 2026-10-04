@@ -278,44 +278,98 @@ def test_staff_in_either_messenger_still_answers_a_max_customer_in_max(staff):
     assert result.message.recipient_chat_id == MAX_CUSTOMER_CHAT
 
 
-# --- Quantity in the staff request card (Telegram and MAX share it) ----------------------
+# --- Quantity: pieces as whole numbers, oil liters as decimals --------------------------
+#
+# What a quantity measures comes from PartType.is_oil (apps.catalog.quantity_units),
+# never from whether the Decimal happens to have a fractional part.
 
 
-def _card(request, provider, staff):
-    binding = staff["tg"][0] if provider == "telegram" else staff["max"][0]
-    return operator_console.card(request, binding=binding)[0]
+def _oil_part():
+    from apps.catalog.models import Category, PartNumber, PartType, Unit
 
-
-@console_on
-@pytest.mark.parametrize("provider", ["telegram", "max"])
-@pytest.mark.parametrize(("stored", "shown"), [("1", "1"), ("2", "2"), ("15", "15")])
-def test_request_card_shows_whole_quantities_without_decimals(staff, provider, stored, shown):
-    request = _request(build_part(), key=f"{provider[0]}{stored}".ljust(32, "q"),
-                       messenger=CustomerRequest.Messenger.TELEGRAM)
-    CustomerRequestLine.objects.filter(request=request).update(
-        quantity_requested=Decimal(stored)
+    part = PartType.objects.create(
+        name="МАСЛО МОТОРНОЕ",
+        category=Category.objects.get_or_create(name="Масла", parent=None)[0],
+        unit=Unit.objects.get_or_create(name="Литр", defaults={"short_name": "л"})[0],
+        tracking_mode=PartType.TrackingMode.BULK,
+        is_oil=True,
+        oil_package_volume_l=Decimal("4"),
+        recommended_price=Decimal("4000"),
     )
-    line = CustomerRequestLine.objects.get(request=request)
-    assert line.quantity_requested == Decimal(f"{stored}.000")  # stored with 3 places
-
-    text = _card(CustomerRequest.objects.get(pk=request.pk), provider, staff)
-
-    assert f"{line.part_name} · {shown} × " in text
-    assert f"{stored}.000" not in text
-    assert f"{stored},000" not in text
+    PartNumber.objects.create(part=part, value="OIL-ROUTE-1", is_primary=True)
+    return part
 
 
-@console_on
-@pytest.mark.parametrize("provider", ["telegram", "max"])
-def test_request_card_never_truncates_a_fractional_quantity(staff, provider):
-    """A repeat purchase of oil sold by the litre can ask for 2.5: it stays 2,5."""
-    request = _request(build_part(), key=f"{provider}-frac".ljust(32, "z"),
-                       messenger=CustomerRequest.Messenger.MAX)
+def _request_with(part, quantity, key):
+    request = _request(build_part(), key=key, messenger=CustomerRequest.Messenger.TELEGRAM)
     CustomerRequestLine.objects.filter(request=request).update(
-        quantity_requested=Decimal("2.500")
+        part_type=part, quantity_requested=Decimal(quantity), part_name=part.name
     )
+    return CustomerRequest.objects.get(pk=request.pk)
 
-    text = _card(CustomerRequest.objects.get(pk=request.pk), provider, staff)
 
-    assert " · 2,5 × " in text
-    assert " · 2 × " not in text and "2.500" not in text
+def _all_renderings(request, staff):
+    """The staff card in Telegram and in MAX, the customer summary, the legacy card."""
+    from apps.customer_requests import messaging, operator_bot
+
+    return {
+        "telegram card": operator_console.card(request, binding=staff["tg"][0])[0],
+        "max card": operator_console.card(request, binding=staff["max"][0])[0],
+        "customer summary": "\n".join(
+            messaging.summary_line(line)[0] for line in request.lines.all()
+        ),
+        "legacy operator card": operator_bot.card_text(request),
+    }
+
+
+@pytest.mark.parametrize(
+    ("stored", "shown"),
+    [("1.000", "1"), ("2.000", "2"), ("15.000", "15")],
+)
+def test_piece_quantities_are_whole_numbers_everywhere(staff, stored, shown):
+    part = build_part()
+    request = _request_with(part, stored, key=f"piece-{stored}".ljust(32, "p"))
+    assert CustomerRequestLine.objects.get(request=request).quantity_requested == Decimal(stored)
+
+    for surface, text in _all_renderings(request, staff).items():
+        assert f" {shown} " in f" {text} ".replace("\n", " "), surface
+        for wrong in (stored, stored.replace(".", ","), f"{shown},0", f"{shown}.0"):
+            assert wrong not in text, (surface, wrong)
+
+
+@pytest.mark.parametrize(
+    ("stored", "shown"),
+    [("0.500", "0,5"), ("1.500", "1,5"), ("2.750", "2,75"), ("2.000", "2")],
+)
+def test_oil_liters_keep_their_decimals_without_trailing_zeros(staff, stored, shown):
+    part = _oil_part()
+    request = _request_with(part, stored, key=f"oil-{stored}".ljust(32, "o"))
+
+    for surface, text in _all_renderings(request, staff).items():
+        assert f" {shown} " in f" {text} ".replace("\n", " "), surface
+        assert stored not in text and stored.replace(".", ",") not in text, surface
+
+
+def test_a_fractional_piece_quantity_is_never_turned_into_a_wrong_whole_number(staff):
+    """1.5 of a piece part is invalid data (see the report); it stays visible as 1,5."""
+    part = build_part()
+    request = _request_with(part, "1.500", key="piece-fraction".ljust(32, "f"))
+
+    for surface, text in _all_renderings(request, staff).items():
+        flat = f" {text} ".replace("\n", " ")
+        assert " 1,5 " in flat, surface
+        assert " 1 " not in flat and " 2 " not in flat and "1.500" not in flat, surface
+
+
+def test_format_quantity_is_decided_by_the_part_not_by_the_number():
+    from apps.catalog.models import PartType
+    from apps.catalog.quantity_units import format_quantity
+
+    piece = PartType(is_oil=False)
+    oil = PartType(is_oil=True)
+    assert format_quantity(Decimal("15.000"), piece) == "15"
+    assert format_quantity(Decimal("1.000"), piece) == "1"
+    assert format_quantity(Decimal("1.500"), oil) == "1,5"
+    assert format_quantity(Decimal("2.750"), oil) == "2,75"
+    assert format_quantity(Decimal("100.000"), oil) == "100"
+    assert format_quantity(Decimal("1000.000"), piece) == "1000"
