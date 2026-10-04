@@ -17,6 +17,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import (
     InventoryError,
@@ -137,6 +138,8 @@ def quick_write_off(
         raise WriteOffError("Укажите корректное количество списания.") from exc
     if quantity <= 0:
         raise WriteOffError("Количество списания должно быть больше нуля.")
+    if error := validate_part_quantity(quantity, part):
+        raise WriteOffError(error)
     code = (scanned_code or "").strip()
     item = (
         PartItem.objects.select_for_update()
@@ -224,6 +227,8 @@ def add_stock_lot_to_write_off(doc, lot, quantity, *, note="", by=None) -> Write
     if quantity <= 0:
         raise WriteOffError("Количество должно быть больше нуля.")
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if error := validate_part_quantity(quantity, lot.part_type):
+        raise WriteOffError(error)
     if lot.status not in _LOT_WRITE_OFF_SOURCES:
         raise WriteOffError("Списать можно только доступный или карантинный лот.")
     reserved = active_reserved_for_lot(lot)

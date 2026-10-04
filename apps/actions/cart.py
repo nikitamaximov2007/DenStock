@@ -26,6 +26,7 @@ from decimal import Decimal
 
 from django.db import transaction
 
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.customers.models import Customer
 from apps.inventory.models import StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
@@ -245,6 +246,8 @@ def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | No
             "считаются иначе. Добавьте масло прямо в продаже/ремонте."
         )
     quantity = parse_quantity(quantity, allow_zero=True)
+    if error := validate_part_quantity(quantity, part):
+        raise ActionError(error)
     _drop_row_lines(cart, part, location)
     if quantity == 0:
         return None

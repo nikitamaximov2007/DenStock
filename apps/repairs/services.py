@@ -19,6 +19,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.catalog.models import PartType
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
@@ -161,6 +162,8 @@ def add_stock_lot_to_repair_order(
     if quantity <= 0:
         raise RepairError("Количество должно быть больше нуля.")
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if error := validate_part_quantity(quantity, lot.part_type):
+        raise RepairError(error)
     if lot.status != StockLot.Status.AVAILABLE:
         raise RepairError("Выдать в ремонт можно только доступный лот.")
     reserved = active_reserved_for_lot(lot)
@@ -286,6 +289,10 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
     lines = list(order.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise RepairError("Нельзя провести пустой заказ.")
+    for line in lines:
+        # A draft saved before the piece rule may still hold 1.5.
+        if error := validate_part_quantity(line.quantity, line.part_type):
+            raise RepairError(f"{line.part_type.name}: {error}")
     from apps.actions.services import ActionError, require_customs_metadata
     try:
         require_customs_metadata([line.part_type for line in lines])

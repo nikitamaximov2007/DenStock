@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from apps.catalog.models import PartType
 from apps.catalog.public_contracts import resolve_current_customer_prices
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.customer_accounts.models import CustomerIdentity, Provider
 from apps.customers.models import Customer
 from apps.inventory.availability import available_totals
@@ -90,6 +91,12 @@ class ReorderPreview:
     def total(self) -> Decimal | None:
         values = [line.current_total for line in self.available_lines]
         return sum(values, ZERO) if values and all(value is not None for value in values) else None
+
+
+FRACTIONAL_PIECE_REASON = (
+    "Количество в прошлой покупке дробное, повторить его автоматически нельзя:"
+    " уточните у менеджера."
+)
 
 
 class CabinetAccessError(ValueError):
@@ -224,6 +231,24 @@ def build_reorder_preview(
         available = quantities.get(part.pk, ZERO)
         repeatable = historical_line.repeatable_quantity
         requested = min(repeatable, available) if available > ZERO else ZERO
+        if validate_part_quantity(repeatable, part) or validate_part_quantity(requested, part):
+            # A piece count of 1.5 is not repeated as 1 or 2: the customer asks.
+            result.append(
+                ReorderLine(
+                    part_id=part.pk,
+                    name=part.name,
+                    article=part_exact_number(part, default=""),
+                    historical_quantity=repeatable,
+                    requested_quantity=ZERO,
+                    historical_unit_price=historical_line.unit_price,
+                    current_unit_price=None,
+                    available_quantity=available,
+                    available=False,
+                    supply_inquiry=False,
+                    reason=FRACTIONAL_PIECE_REASON,
+                )
+            )
+            continue
         price = prices[part.pk].price_rub
         result.append(
             ReorderLine(

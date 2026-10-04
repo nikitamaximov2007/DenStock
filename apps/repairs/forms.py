@@ -4,6 +4,7 @@ from django import forms
 
 from apps.catalog.forms import CommaDecimalField
 from apps.catalog.models import VehicleType
+from apps.catalog.quantity_units import clean_lot_form_quantity
 from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
 from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
@@ -134,6 +135,11 @@ class AddRepairLotForm(forms.Form):
             .select_related("part_type", "location")
             .order_by("part_type__name", "location__code")
         )
+
+    def clean(self):
+        cleaned = super().clean()
+        clean_lot_form_quantity(self)
+        return cleaned
 
 
 class AddOilRepairLotForm(forms.Form):

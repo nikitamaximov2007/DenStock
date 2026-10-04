@@ -13,6 +13,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from apps.catalog.public_contracts import resolve_current_customer_prices
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.core.phones import canonical_phone_text, normalize_phone
 from apps.customers.models import Customer
 from apps.inventory.models import PartItem, StockLot
@@ -123,12 +124,21 @@ def _customer_from_selection(
     )
 
 
+def _ensure_whole_piece_quantity(request_line) -> None:
+    # A piece request line stored before the shared rule existed may hold 1.5.
+    # It is refused by name, never rounded into a sale of 1 or 2 pieces.
+    error = validate_part_quantity(request_line.quantity_requested, request_line.part_type)
+    if error:
+        raise CustomerRequestSaleError(f"{request_line.part_name}: {error}")
+
+
 def _add_request_stock_lines(sale: Sale, request: CustomerRequest, *, by=None) -> None:
     lines = list(request.lines.select_related("part_type", "part_type__unit").order_by("pk"))
     if not lines:
         raise CustomerRequestSaleError("В заявке нет позиций для продажи.")
     prices = resolve_current_customer_prices({line.part_type for line in lines})
     for request_line in lines:
+        _ensure_whole_piece_quantity(request_line)
         price = prices[request_line.part_type_id].price_rub
         if price is None or price <= 0:
             raise CustomerRequestSaleError(
@@ -225,6 +235,8 @@ def prepare_request_sale(
 
 def _validate_request_sale_lines(request: CustomerRequest, sale: Sale) -> dict[int, Decimal]:
     request_lines = [line for line in request.lines.all() if not line.is_supply_inquiry]
+    for line in request_lines:
+        _ensure_whole_piece_quantity(line)
     # Масло: заявка считает упаковками, строка продажи - литрами (её вручную
     # добавляет оператор через apps.sales.services.add_oil_volume_to_sale) -
     # эти числа НИКОГДА не совпадут по построению, поэтому для масла

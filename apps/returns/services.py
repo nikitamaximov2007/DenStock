@@ -17,6 +17,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.actions.models import WarehouseAction
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import (
@@ -294,6 +295,10 @@ def _add_line(ret, source_line, quantity, *, to_location, restock_status) -> Sto
         raise ReturnError(
             f"Нельзя вернуть {quantity}: доступно к возврату {available}."
         )
+    # Pieces come back whole. Only the full remainder of a legacy fractional
+    # line may be returned as it is, so such a line can still be closed out.
+    if quantity != available and (error := validate_part_quantity(quantity, source_line.part_type)):
+        raise ReturnError(error)
 
     unit_cost = source_line.unit_cost_rub
     fields = dict(

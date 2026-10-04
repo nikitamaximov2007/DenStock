@@ -12,6 +12,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from apps.catalog.quantity_units import piece_quantity_form_error
 from apps.core.part_lookup import resolve_part_lookup
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
@@ -243,7 +244,9 @@ def write_off_add_lot(request, pk):
     doc = get_object_or_404(WriteOffDocument, pk=pk)
     form = AddWriteOffLotForm(request.POST)
     if not form.is_valid():
-        messages.error(request, "Проверьте лот и количество.")
+        messages.error(
+            request, piece_quantity_form_error(form) or "Проверьте лот и количество."
+        )
         return redirect("write_off_detail", pk=pk)
     try:
         add_stock_lot_to_write_off(

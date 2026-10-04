@@ -73,3 +73,39 @@ def parse_quantity_input(raw) -> Decimal:
     if not text:
         raise InvalidOperation("empty quantity")
     return Decimal(text)
+
+
+PIECE_QUANTITY_ERROR = "Для штучной детали количество должно быть целым."
+
+
+def validate_part_quantity(quantity, part_type) -> str | None:
+    """The quantity rule every document line shares; None when it holds.
+
+    Oil keeps its liters at 0.001 L precision. Any other part is counted in
+    pieces, so its quantity must be a whole number: 1.5 is refused, never
+    rounded, floored or ceiled into a different count. Callers raise their own
+    domain error with the returned text and keep their own positivity checks.
+    """
+    if is_oil_quantity(part_type):
+        return None
+    value = Decimal(str(quantity))
+    if not value.is_finite() or value != value.to_integral_value():
+        return PIECE_QUANTITY_ERROR
+    return None
+
+
+def piece_quantity_form_error(form) -> str | None:
+    """The piece-quantity refusal a lot form found, for the view's message."""
+    errors = form.errors.get("quantity") or ()
+    return PIECE_QUANTITY_ERROR if PIECE_QUANTITY_ERROR in errors else None
+
+
+def clean_lot_form_quantity(form) -> None:
+    """Mirror validate_part_quantity in a form that picks a lot and a quantity."""
+    lot = form.cleaned_data.get("lot")
+    quantity = form.cleaned_data.get("quantity")
+    if lot is None or quantity is None:
+        return
+    error = validate_part_quantity(quantity, lot.part_type)
+    if error:
+        form.add_error("quantity", error)

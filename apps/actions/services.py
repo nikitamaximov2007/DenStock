@@ -24,6 +24,7 @@ from apps.catalog.models import (
     VehicleType,
     normalize_number,
 )
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.catalog.services import MANUAL_CATEGORY_NAME
 from apps.catalog_import.models import AftermarketCatalogPart
 from apps.core.part_lookup import (
@@ -335,6 +336,8 @@ def _perform_action_atomic(
     if not customer_comment:
         raise ActionError("Укажите клиента или комментарий.")
     quantity = parse_quantity(quantity)
+    if error := validate_part_quantity(quantity, part):
+        raise ActionError(error)
     if action_type in {WarehouseAction.Type.SALE, WarehouseAction.Type.REPAIR}:
         require_customs_metadata([part])
     token = _request_token(request_token)

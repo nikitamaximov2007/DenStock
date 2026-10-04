@@ -14,6 +14,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
@@ -234,6 +235,8 @@ def add_stock_lot_to_reservation(reservation, lot, quantity, *, by=None) -> Rese
     if quantity <= 0:
         raise ReservationError("Количество должно быть больше нуля.")
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if error := validate_part_quantity(quantity, lot.part_type):
+        raise ReservationError(error)
     if lot.status != StockLot.Status.AVAILABLE:
         raise ReservationError("Зарезервировать можно только доступный лот.")
     ensure_location_operation_allowed(lot.location)
@@ -529,6 +532,8 @@ def add_stock_lot_to_sale(sale, lot, quantity, *, unit_price, by=None) -> SaleLi
     if quantity <= 0:
         raise SaleError("Количество должно быть больше нуля.")
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
+    if error := validate_part_quantity(quantity, lot.part_type):
+        raise SaleError(error)
     if lot.status != StockLot.Status.AVAILABLE:
         raise SaleError("Продать можно только доступный лот.")
     reserved_others = _active_reserved_for_lot(lot, exclude=sale.reservation)
@@ -696,6 +701,10 @@ def complete_sale(sale, *, by=None) -> Sale:
     lines = list(sale.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise SaleError("Нельзя завершить пустую продажу.")
+    for line in lines:
+        # A draft or reservation saved before the piece rule may still hold 1.5.
+        if error := validate_part_quantity(line.quantity, line.part_type):
+            raise SaleError(f"{line.part_type.name}: {error}")
     from apps.actions.services import ActionError, require_customs_metadata
     try:
         require_customs_metadata([line.part_type for line in lines])

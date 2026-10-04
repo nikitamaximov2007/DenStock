@@ -3,6 +3,7 @@ from decimal import Decimal
 from django import forms
 
 from apps.catalog.forms import CommaDecimalField
+from apps.catalog.quantity_units import clean_lot_form_quantity
 from apps.customers.forms import CustomerSelectionMixin
 from apps.inventory.models import StockLot
 from apps.inventory.presentation import ExactLotChoiceField, with_part_identity
@@ -62,6 +63,11 @@ class AddLotForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields["lot"].queryset = _available_lots()
 
+    def clean(self):
+        cleaned = super().clean()
+        clean_lot_form_quantity(self)
+        return cleaned
+
 
 class SaleForm(CustomerSelectionMixin):
     class Meta:
@@ -116,6 +122,11 @@ class AddSaleLotForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["lot"].queryset = _available_lots()
+
+    def clean(self):
+        cleaned = super().clean()
+        clean_lot_form_quantity(self)
+        return cleaned
 
 
 class AddOilSaleLotForm(forms.Form):

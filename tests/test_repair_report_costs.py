@@ -34,6 +34,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.repairs.models import RepairOrder
 from apps.repairs.services import (
+    add_oil_volume_to_repair_order,
     add_part_item_to_repair_order,
     add_stock_lot_to_repair_order,
     cancel_repair_order,
@@ -504,9 +505,21 @@ def test_a_repair_just_before_midnight_of_the_previous_day_is_excluded(data):
 
 
 def test_a_fractional_quantity_is_rounded_to_kopecks(data):
-    """Дробное количество не должно давать хвост из лишних знаков."""
+    """Дробное количество не должно давать хвост из лишних знаков.
+
+    Дробным бывает только масло (литры): штучная деталь выдаётся целым числом.
+    """
     customer = Customer.objects.create(name="Иванов")
-    order = _repair(data, customer=customer, items=(("filter", "0.333"),))
+    oil = PartType.objects.create(
+        name="Масло", category=Category.objects.first(), unit=Unit.objects.get(name="Литр"),
+        tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("999"),
+        is_oil=True, oil_package_volume_l=Decimal("4"),
+    )
+    remember_customs(oil)
+    lot = _lot(oil, data["loc"], 20, data["sup"], data["admin"], unit_cost="155")
+    order = create_repair_order(customer=customer, customer_name="", by=data["admin"])
+    add_oil_volume_to_repair_order(order, lot, Decimal("0.333"), by=data["admin"])
+    order = complete_repair_order(order, by=data["admin"])
     line = order.lines.get()
 
     assert line.total_cost_rub == line.total_cost_rub.quantize(Decimal("0.01"))

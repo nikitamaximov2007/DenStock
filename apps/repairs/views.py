@@ -17,6 +17,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from apps.actions.models import PartCustomsInfo
+from apps.catalog.quantity_units import piece_quantity_form_error
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
     attach_document_composition,
@@ -264,7 +265,9 @@ def repair_order_add_lot(request, pk):
     order = get_object_or_404(RepairOrder, pk=pk)
     form = AddRepairLotForm(request.POST)
     if not form.is_valid():
-        messages.error(request, "Проверьте лот и количество.")
+        messages.error(
+            request, piece_quantity_form_error(form) or "Проверьте лот и количество."
+        )
         return redirect("repair_order_detail", pk=pk)
     try:
         add_stock_lot_to_repair_order(

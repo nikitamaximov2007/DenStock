@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.catalog.models import PartType
 from apps.catalog.public_contracts import resolve_current_customer_prices
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.core.phones import canonical_phone_text, canonical_ru_mobile, normalize_phone
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number, with_part_identity
@@ -215,6 +216,8 @@ def create_customer_request(
         part = parts[line.part_id]
         current_available = availability[line.part_id]
         label = part_exact_number(part, default="") or part.name
+        if error := validate_part_quantity(line.quantity, part):
+            raise CustomerRequestError(f"{label}: {error}")
         if line.supply_inquiry:
             if current_available > ZERO:
                 raise CustomerRequestError(

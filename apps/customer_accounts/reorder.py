@@ -18,6 +18,7 @@ from decimal import Decimal
 
 from apps.catalog.public_cart import MAX_CART_QUANTITY, read_cart
 from apps.catalog.public_catalog import cards_by_id, public_parts
+from apps.catalog.quantity_units import validate_part_quantity
 
 from .history import Purchase
 
@@ -28,6 +29,7 @@ SHORT = "short"  # public, in stock but less than before
 INQUIRY = "inquiry"  # public, none in stock: becomes a supply request
 NOT_PUBLIC = "not_public"  # exists, but is not in the public catalog now
 MISSING = "missing"  # no such part any more
+FRACTION = "fraction"  # a piece part bought in a fractional count: never rounded
 
 LINE_NOTES = {
     OK: "",
@@ -35,6 +37,7 @@ LINE_NOTES = {
     INQUIRY: "Сейчас нет в наличии - отправим запрос о поставке.",
     NOT_PUBLIC: "Эта позиция сейчас недоступна.",
     MISSING: "Эта позиция сейчас недоступна.",
+    FRACTION: "Количество в прошлой покупке дробное: уточните его у менеджера.",
 }
 
 
@@ -48,6 +51,7 @@ class ReorderLine:
     current_price: Decimal | None  # None: «Цена уточняется», never 0 ₽
     public_id: str = ""
     available: Decimal = ZERO
+    historical_quantity: Decimal | None = None
 
     @property
     def usable(self) -> bool:
@@ -56,6 +60,13 @@ class ReorderLine:
     @property
     def note(self) -> str:
         return LINE_NOTES[self.state]
+
+    @property
+    def shown_quantity(self) -> str | int:
+        """A fractional piece count is shown exactly as bought, never rounded."""
+        if self.state == FRACTION and self.historical_quantity is not None:
+            return _quantity_text(self.historical_quantity)
+        return self.proposed_quantity
 
     @property
     def price_changed(self) -> bool:
@@ -69,6 +80,10 @@ class ReorderLine:
         return self.proposed_quantity
 
 
+def _quantity_text(value: Decimal) -> str:
+    return format(value.normalize(), "f").replace(".", ",")
+
+
 def _proposed(quantity: Decimal) -> int:
     """The historical quantity as a whole cart quantity the customer can edit."""
     return max(1, min(MAX_CART_QUANTITY, math.ceil(quantity)))
@@ -80,11 +95,26 @@ def preview(purchase: Purchase) -> list[ReorderLine]:
     cards = cards_by_id([pid for pid in part_ids if pid in public_ids])
     from apps.catalog.models import PartType
 
-    existing = set(PartType.objects.filter(pk__in=part_ids).values_list("pk", flat=True))
+    parts = PartType.objects.filter(pk__in=part_ids).only("pk", "is_oil").in_bulk()
+    existing = set(parts)
     result = []
     for line in purchase.lines:
         proposed = _proposed(line.quantity)
         card = cards.get(line.part_type_id)
+        part = parts.get(line.part_type_id)
+        if card is not None and validate_part_quantity(line.quantity, part):
+            result.append(
+                ReorderLine(
+                    name=card.display_name,
+                    article=card.facts.article,
+                    state=FRACTION,
+                    proposed_quantity=proposed,
+                    historical_unit_price=line.unit_price,
+                    current_price=None,
+                    historical_quantity=line.quantity,
+                )
+            )
+            continue
         if card is None:
             state = NOT_PUBLIC if line.part_type_id in existing else MISSING
             result.append(

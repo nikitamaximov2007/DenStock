@@ -15,6 +15,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from apps.actions.models import PartCustomsInfo
+from apps.catalog.quantity_units import piece_quantity_form_error
 from apps.inventory.models import PartItem
 from apps.inventory.presentation import (
     attach_document_composition,
@@ -234,7 +235,9 @@ def reservation_add_lot(request, pk):
     reservation = get_object_or_404(Reservation, pk=pk)
     form = AddLotForm(request.POST)
     if not form.is_valid():
-        messages.error(request, "Проверьте лот и количество.")
+        messages.error(
+            request, piece_quantity_form_error(form) or "Проверьте лот и количество."
+        )
         return redirect("reservation_detail", pk=pk)
     try:
         add_stock_lot_to_reservation(
@@ -442,7 +445,9 @@ def sale_add_lot(request, pk):
     sale = get_object_or_404(Sale, pk=pk)
     form = AddSaleLotForm(request.POST)
     if not form.is_valid():
-        messages.error(request, "Проверьте лот, количество и цену.")
+        messages.error(
+            request, piece_quantity_form_error(form) or "Проверьте лот, количество и цену."
+        )
         return redirect("sale_detail", pk=pk)
     try:
         add_stock_lot_to_sale(

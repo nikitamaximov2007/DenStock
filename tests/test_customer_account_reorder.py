@@ -266,10 +266,31 @@ def test_a_manually_created_part_follows_the_same_public_rules(public_catalog, b
 
 
 @pytest.mark.django_db
-def test_a_fractional_historical_quantity_becomes_a_whole_cart_quantity(bought):
+def test_a_fractional_piece_quantity_is_never_rounded_into_the_cart(bought):
+    # A piece part is counted in whole pieces; 2.4 is a legacy anomaly. It is
+    # shown as bought and left to the manager, never turned into 2 or 3.
     SaleLine.objects.filter(sale=bought["sale"]).update(quantity=Decimal("2.4"))
     with public_account_runtime():
-        assert _lines(bought)[0].proposed_quantity == 3
+        line = _lines(bought)[0]
+        assert line.state == reorder.FRACTION and not line.usable
+        assert line.shown_quantity == "2,4"
+        page = bought["client"].get(
+            reverse("customer_account_reorder", args=[bought["sale"].number])
+        )
+        assert "уточните его у менеджера" in page.content.decode()
+        refused = bought["client"].post(
+            reverse("customer_account_reorder", args=[bought["sale"].number])
+        )
+        assert refused.status_code == 302
+        body = bought["client"].get(reverse("public_catalog_cart")).content.decode()
+        assert "PISTON ASSY" not in body
+
+
+@pytest.mark.django_db
+def test_a_whole_historical_quantity_still_goes_into_the_cart_unchanged(bought):
+    with public_account_runtime():
+        line = _lines(bought)[0]
+        assert line.state == reorder.OK and line.shown_quantity == 2
 
 
 @pytest.mark.django_db
