@@ -24,6 +24,7 @@ from apps.catalog.photo_pipeline import (
 )
 from apps.catalog.public_photos import PublicPhotoError
 from apps.core.files import validate_image_upload
+from apps.core.templatetags.number_format import quantity_int
 from apps.core.time import format_perm_datetime
 from apps.inventory.presentation import part_exact_number
 from apps.repairs.models import RepairIssueLine, RepairOrder
@@ -891,7 +892,8 @@ def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
     total = 0
     for line in request.lines.all():
         price = "цена уточняется" if line.price_seen is None else f"{line.price_seen:.0f} ₽"
-        lines.append(f"{line.part_name} · {line.quantity_requested:g} × {price}")
+        # The shared quantity format: 1.000 -> "1"; a fractional 2.500 stays "2,5".
+        lines.append(f"{line.part_name} · {quantity_int(line.quantity_requested)} × {price}")
         if line.price_seen is not None:
             total += line.price_seen * line.quantity_requested
     lines.extend([f"Итого: {total:.0f} ₽" if total else "Итого: цена уточняется",
@@ -1233,6 +1235,20 @@ def queue_owner_panel(*, binding, refresh: bool = False):
     return row, created
 
 
+def alert_bindings(bindings, provider):
+    """Staff alerts stay in the customer's messenger (channel affinity).
+
+    A Telegram customer's request or message alerts Telegram staff bindings
+    only, a MAX customer's only MAX ones; the other messenger gets nothing.
+    Lists, cards and replies are unaffected: staff can still open and answer
+    any request from either messenger. A provider this code does not know is
+    left as before (every binding), never guessed.
+    """
+    if provider not in StaffMessengerBinding.Provider.values:
+        return list(bindings)
+    return [binding for binding in bindings if binding.provider == provider]
+
+
 def queue_new_request_notifications(*, since):
     if not enabled() or since is None:
         return 0
@@ -1241,7 +1257,7 @@ def queue_new_request_notifications(*, since):
     for request in CustomerRequest.objects.filter(
         status=CustomerRequest.Status.NEW, created_at__gte=since
     ).iterator():
-        for binding in bindings:
+        for binding in alert_bindings(bindings, request.preferred_messenger):
             if binding.user.can_manage_sales:
                 notification_for(request, binding)
                 total += 1
@@ -1254,17 +1270,20 @@ def queue_operator_notifications(*, since):
     if not enabled() or since is None:
         return total
     bindings = list(StaffMessengerBinding.objects.filter(is_active=True, user__is_active=True))
+    # The messenger a customer message arrived through decides who is alerted.
     sources = (
-        (TelegramMessage, TelegramMessage.Direction.CUSTOMER),
-        (MaxMessage, MaxMessage.Direction.CUSTOMER),
+        (TelegramMessage, TelegramMessage.Direction.CUSTOMER,
+         StaffMessengerBinding.Provider.TELEGRAM),
+        (MaxMessage, MaxMessage.Direction.CUSTOMER, StaffMessengerBinding.Provider.MAX),
     )
-    for model, direction in sources:
+    for model, direction, provider in sources:
+        recipients = alert_bindings(bindings, provider)
         for message in model.objects.select_related("conversation__request").filter(
             direction=direction, created_at__gte=since
         ).iterator():
             request = message.conversation.request
             preview = (message.text or "Вложение")[:700]
-            for binding in bindings:
+            for binding in recipients:
                 if binding.user.can_manage_sales:
                     notification_for(
                         request, binding,

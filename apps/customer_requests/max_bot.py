@@ -623,6 +623,14 @@ class MaxBotWorker:
                 ).order_by("pk")[:limit]
             )
             for event in events:
+                if operator_console.enabled():
+                    # Channel affinity: with the staff console on, MAX staff
+                    # bindings are alerted in MAX (operator_console). The
+                    # operators' Telegram bot no longer repeats MAX activity.
+                    event.status = MaxOutboxEvent.Status.DISPATCHED
+                    event.dispatched_at = now
+                    event.save(update_fields=["status", "dispatched_at"])
+                    continue
                 recipients = service.eligible_recipients()
                 outcome = messaging.operator_event_outcome(
                     has_recipients=bool(recipients),

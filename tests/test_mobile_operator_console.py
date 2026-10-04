@@ -1313,7 +1313,8 @@ def test_responder_is_confirmed_only_after_intro_delivery(db, django_user_model)
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
 def test_new_request_notification_is_one_per_binding(db, django_user_model):
     part = build_part()
-    request = _request(part, key="N" * 32, messenger=CustomerRequest.Messenger.TELEGRAM)
+    # A MAX binding is alerted about MAX requests only (channel affinity).
+    request = _request(part, key="N" * 32, messenger=CustomerRequest.Messenger.MAX)
     user = _operator(django_user_model, 99006, username="notify").user
     binding = StaffMessengerBinding.objects.create(
         user=user, provider="max", provider_user_id=99006, customer_visible_label="Владислав"
@@ -1336,7 +1337,8 @@ def test_max_operator_notification_uses_delivery_chat_not_provider_user_id(db, d
             return {"body": {"mid": "operator-notice-1"}}
 
     part = build_part()
-    request = _request(part, key="Q" * 32, messenger=CustomerRequest.Messenger.TELEGRAM)
+    # A MAX binding is alerted about MAX requests only (channel affinity).
+    request = _request(part, key="Q" * 32, messenger=CustomerRequest.Messenger.MAX)
     user = _operator(django_user_model, 99035, username="max-notify").user
     binding = StaffMessengerBinding.objects.create(
         user=user, provider="max", provider_user_id=94001, delivery_chat_id=777777777,
