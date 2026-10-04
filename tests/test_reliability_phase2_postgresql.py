@@ -669,3 +669,21 @@ def test_found_stock_posting_racing_a_transfer_from_the_same_cell_never_deadlock
     assert part_physical(world.part_x) == Decimal("6")
     in_b = StockLot.objects.get(part_type=world.part_x, location=world.loc_b)
     assert in_b.quantity == Decimal("2")
+
+
+def test_inventory_count_racing_a_found_stock_posting_never_hides_the_addition(world):
+    """COUNT-1: a count snapshotted before the +1 cannot erase it."""
+    lot = world.make_lot(world.part_x, world.loc_a, 5)
+    count = create_inventory_count(scope_location=world.loc_a, by=world.admin)
+    count_line = add_stock_lot_count_line(count, lot, by=world.admin)
+    update_counted_quantity(count_line, Decimal("5"), by=world.admin)
+
+    results = race(
+        _found_posting(world, world.part_x, world.loc_a, "found-count-1"),
+        lambda: complete_inventory_count(count, by=world.admin),
+    )
+    assert_no_unexpected(results, (InventoryError, StocktakingError))
+    assert not isinstance(results[0], Exception)
+    # Found first: the count is stale and refused. Count first: no change, then +1.
+    assert lot_qty(lot) == Decimal("6")
+    assert movement_count(document_type="inventory_count") == 0

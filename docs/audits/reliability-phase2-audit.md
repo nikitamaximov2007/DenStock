@@ -3,9 +3,10 @@
 Baseline: `origin/main` 66debcc (2026-10-04). Candidate branch: `claude/reliability-phase2`.
 Executable proof, all reading the database fresh after every scenario:
 
-* `tests/test_reliability_phase2_faults.py`: 97 fault-injection cases (SQLite and PostgreSQL).
+* `tests/test_reliability_phase2_faults.py`: 111 fault-injection cases (SQLite and PostgreSQL),
+  lot and serial-item paths.
 * `tests/test_reliability_phase2.py`: expected conflicts, duplicate submits, stale pages.
-* `tests/test_reliability_phase2_postgresql.py`: 22 real PostgreSQL 16 races, with the
+* `tests/test_reliability_phase2_postgresql.py`: 23 real PostgreSQL 16 races, with the
   interleaving forced at the exact lock statement (`connection.execute_wrapper`).
 
 ## Lock order (the rule after this phase)
@@ -37,7 +38,7 @@ No `except Exception` was added. Unexpected defects still surface as errors.
 
 ## What held on main already
 
-Every operation's own transaction boundary: 88 of the 97 fault cases pass on main
+Every operation's own transaction boundary: 102 of the 111 fault cases pass on main
 unchanged (the 9 others need the new duplicate guards of rows 7 and 8). Repeated
 completion and cancellation are idempotent or refused. Stale inventory counts are
 refused. Reservation versus reservation, reservation removal versus conversion,

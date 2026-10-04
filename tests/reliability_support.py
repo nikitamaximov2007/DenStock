@@ -61,6 +61,26 @@ class World:
         remember_customs(part)
         return part
 
+    def make_serial_part(self, number, name, *, price="500"):
+        part = self.make_part(number, name, price=price)
+        part.tracking_mode = PartType.TrackingMode.SERIAL
+        part.save(update_fields=["tracking_mode"])
+        return part
+
+    def make_items(self, part, location, count) -> list[PartItem]:
+        """Serial items received the normal way: a posted receipt."""
+        from apps.receipts.services import add_line, create_receipt, post_receipt
+
+        receipt = create_receipt(supplier=self.supplier, by=self.admin)
+        add_line(receipt, part_type=part, quantity=str(count), unit_cost_rub=Decimal("10"),
+                 location=location)
+        post_receipt(receipt, by=self.admin)
+        return list(
+            PartItem.objects.filter(
+                part_type=part, current_location=location, status=PartItem.Status.AVAILABLE
+            ).order_by("pk")
+        )
+
     def make_lot(self, part, location, quantity, *, cost="10") -> StockLot:
         batch = Batch.objects.create(supplier=self.supplier, shipping_cost=Decimal("0"))
         line = BatchLine.objects.create(

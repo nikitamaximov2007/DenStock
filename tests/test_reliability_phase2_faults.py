@@ -180,6 +180,8 @@ STAGES = {
     "after_movement": (_insert("inventory_stockmovement"), False),
     "after_balance": (_write("inventory_stockbalance"), False),
     "after_action": (_insert("actions_warehouseaction"), False),
+    "after_item_change": (_update("inventory_partitem"), False),
+    "after_item_insert": (_insert("inventory_partitem"), False),
 }
 
 
@@ -600,6 +602,92 @@ def scenario_inventory_count(w):
     ), check
 
 
+def _item_statuses(items):
+    from apps.inventory.models import PartItem
+
+    return [PartItem.objects.get(pk=item.pk).status for item in items]
+
+
+def scenario_serial_sale(w):
+    from apps.inventory.models import PartItem
+    from apps.sales.services import add_part_item_to_sale
+
+    part = w.make_serial_part("SN-300", "Блок серийный")
+    items = w.make_items(part, w.loc_a, 2)
+    sale = create_sale(customer_name="Клиент", by=w.admin)
+    for item in items:
+        add_part_item_to_sale(sale, item, unit_price=Decimal("500"), by=w.admin)
+
+    def check():
+        assert Sale.objects.get(pk=sale.pk).status == Sale.Status.COMPLETED
+        assert _item_statuses(items) == [PartItem.Status.SOLD] * 2
+        assert StockMovement.objects.filter(document_type="sale", document_id=sale.pk).count() == 2
+
+    return (lambda: complete_sale(Sale.objects.get(pk=sale.pk), by=w.admin)), check
+
+
+def scenario_serial_sale_cancel(w):
+    from apps.inventory.models import PartItem
+    from apps.sales.services import add_part_item_to_sale
+
+    part = w.make_serial_part("SN-301", "Блок серийный")
+    items = w.make_items(part, w.loc_a, 2)
+    sale = create_sale(customer_name="Клиент", by=w.admin)
+    for item in items:
+        add_part_item_to_sale(sale, item, unit_price=Decimal("500"), by=w.admin)
+    complete_sale(sale, by=w.admin)
+
+    def check():
+        assert Sale.objects.get(pk=sale.pk).status == Sale.Status.CANCELED
+        assert _item_statuses(items) == [PartItem.Status.AVAILABLE] * 2
+
+    return (
+        lambda: cancel_sale(
+            Sale.objects.get(pk=sale.pk), by=w.admin, reason="Ошибка", author="Денис"
+        )
+    ), check
+
+
+def scenario_serial_receipt(w):
+    from apps.inventory.models import PartItem
+
+    part = w.make_serial_part("SN-302", "Блок серийный")
+    receipt = create_receipt(supplier=w.supplier, by=w.admin)
+    add_line(receipt, part_type=part, quantity="2", unit_cost_rub=Decimal("50"),
+             location=w.loc_c)
+
+    def check():
+        assert Receipt.objects.get(pk=receipt.pk).status == Receipt.Status.POSTED
+        items = PartItem.objects.filter(part_type=part)
+        assert items.count() == 2
+        assert {item.status for item in items} == {PartItem.Status.AVAILABLE}
+        assert {item.current_location_id for item in items} == {w.loc_c.pk}
+
+    return (lambda: post_receipt(Receipt.objects.get(pk=receipt.pk), by=w.admin)), check
+
+
+def scenario_serial_transfer(w):
+    from apps.inventory.models import PartItem
+
+    part = w.make_serial_part("SN-303", "Блок серийный")
+    item = w.make_items(part, w.loc_a, 1)[0]
+
+    def op():
+        return perform_stock_transfer(
+            part=part, part_item=PartItem.objects.get(pk=item.pk), from_location=w.loc_a,
+            to_location=w.loc_b, quantity="1", stock_state=StockTransfer.StockState.SERIAL,
+            token="fault-serial-move", by=w.admin,
+        )
+
+    def check():
+        moved = PartItem.objects.get(pk=item.pk)
+        assert moved.current_location_id == w.loc_b.pk
+        assert moved.status == PartItem.Status.AVAILABLE
+        assert StockTransfer.objects.count() == 1
+
+    return op, check
+
+
 STOCK_OUT = ["after_stock_read", "after_stock_change", "after_movement", "after_balance"]
 MATRIX = [
     (scenario_manual_sale, [*STOCK_OUT, _status_stage("sales_sale")]),
@@ -658,6 +746,19 @@ MATRIX = [
         _header_stage("procurement_batch"), _header_stage("procurement_batchline"),
         "after_stock_insert", "after_movement", "after_balance",
         _status_stage("receipts_receipt"),
+    ]),
+    (scenario_serial_sale, [
+        "after_item_change", "after_movement", "after_balance", _status_stage("sales_sale"),
+    ]),
+    (scenario_serial_sale_cancel, [
+        "after_item_change", "after_movement", _status_stage("sales_sale"),
+    ]),
+    (scenario_serial_receipt, [
+        "after_item_insert", "after_item_change", "after_movement",
+        _status_stage("receipts_receipt"),
+    ]),
+    (scenario_serial_transfer, [
+        _header_stage("inventory_stocktransfer"), "after_item_change", "after_movement",
     ]),
     (scenario_inventory_count, [
         "after_stock_change", "after_movement", _status_stage("stocktaking_inventorycountdocument"),

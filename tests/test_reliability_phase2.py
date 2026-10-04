@@ -374,3 +374,21 @@ def test_a_malformed_remaining_value_is_a_controlled_refusal(world, boss):
     response = boss.post(reverse("sale_line_cancel", args=[line.pk]), _cancel_form("три"))
     assert response.status_code == 200
     assert lot_qty(lot) == Decimal("2")
+
+
+def test_completion_without_customs_metadata_leaves_no_effect(world):
+    from apps.actions.models import PartCustomsInfo
+    from apps.sales.services import SaleError, complete_sale
+
+    lot = world.make_lot(world.part_x, world.loc_a, 5)
+    sale = create_sale(customer_name="Клиент", by=world.admin)
+    add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("100"))
+    PartCustomsInfo.objects.filter(part_type=world.part_x).update(
+        gross_weight_kg=None, net_weight_kg=None, application_area=""
+    )
+
+    with pytest.raises(SaleError):
+        complete_sale(sale, by=world.admin)
+    assert Sale.objects.get(pk=sale.pk).status == Sale.Status.DRAFT
+    assert lot_qty(lot) == Decimal("5")
+    assert movement_count(document_type="sale") == 0
