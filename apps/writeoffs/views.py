@@ -5,6 +5,8 @@
 Hidden/query-параметры недоверенные: объект всегда перечитывается из БД,
 права/статус/резерв/доступность/количество проверяет сервис.
 """
+import uuid
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -184,6 +186,7 @@ def write_off_quick(request):
                     quantity=request.POST.get("quantity", "1"),
                     location_id=request.POST.get("location_id") or None,
                     by=request.user,
+                    request_token=request.POST.get("request_token"),
                 )
             except WriteOffError as exc:
                 messages.error(request, str(exc))
@@ -210,6 +213,8 @@ def write_off_quick(request):
             "locations": locations,
             "not_found": bool(q and part is None and not lookup.candidates),
             "lookup_candidates": lookup.candidates if lookup and part is None else [],
+            # One token per rendered form: a repeated POST of this form is one write-off.
+            "request_token": uuid.uuid4().hex,
         },
     )
 

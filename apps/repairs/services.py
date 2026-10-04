@@ -23,8 +23,10 @@ from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
+    InventoryError,
     issue_part_item,
     issue_stock_lot,
+    lock_stock_sources,
     return_part_item,
     return_stock_lot_quantity,
 )
@@ -293,6 +295,11 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
         raise RepairError(str(exc)) from exc
 
     now = timezone.now()
+    # Every stock row of the order before any cell (see lock_stock_sources).
+    lock_stock_sources(
+        item_ids=[line.part_item_id for line in lines],
+        lot_ids=[line.stock_lot_id for line in lines],
+    )
     for line in lines:
         if line.part_item_id:
             item = PartItem.objects.select_for_update().get(pk=line.part_item_id)
@@ -311,7 +318,12 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
                     "oil_customer_amount_rub_snapshot",
                 ]
             )
-            issue_part_item(item, by=by, document_id=order.pk, comment=f"Ремонт {order.number}")
+            try:
+                issue_part_item(
+                    item, by=by, document_id=order.pk, comment=f"Ремонт {order.number}"
+                )
+            except InventoryError as exc:
+                raise RepairError(str(exc)) from exc
         else:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status != StockLot.Status.AVAILABLE:
@@ -331,9 +343,13 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
                     "oil_customer_amount_rub_snapshot",
                 ]
             )
-            issue_stock_lot(
-                lot, line.quantity, by=by, document_id=order.pk, comment=f"Ремонт {order.number}"
-            )
+            try:
+                issue_stock_lot(
+                    lot, line.quantity, by=by, document_id=order.pk,
+                    comment=f"Ремонт {order.number}",
+                )
+            except InventoryError as exc:
+                raise RepairError(str(exc)) from exc
 
     order.cost_total = calculate_repair_costs(order)
     order.status = RepairOrder.Status.COMPLETED
@@ -413,19 +429,22 @@ def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
         for allocation in cancellation_allocations(lines, returned):
             line = allocation.line
             comment = f"Отмена ремонта {order.number}: {reason}"[:255]
-            if allocation.is_unit_item:
-                return_part_item(
-                    line.part_item, allocation.location,
-                    restock_status=PartItem.Status.AVAILABLE, by=by,
-                    document_type="repair_order", document_id=order.pk, comment=comment,
-                )
-            else:
-                return_stock_lot_quantity(
-                    line.batch_line, allocation.location, allocation.quantity,
-                    unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
-                    restock_status=StockLot.Status.AVAILABLE, by=by,
-                    document_type="repair_order", document_id=order.pk, comment=comment,
-                )
+            try:
+                if allocation.is_unit_item:
+                    return_part_item(
+                        line.part_item, allocation.location,
+                        restock_status=PartItem.Status.AVAILABLE, by=by,
+                        document_type="repair_order", document_id=order.pk, comment=comment,
+                    )
+                else:
+                    return_stock_lot_quantity(
+                        line.batch_line, allocation.location, allocation.quantity,
+                        unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
+                        restock_status=StockLot.Status.AVAILABLE, by=by,
+                        document_type="repair_order", document_id=order.pk, comment=comment,
+                    )
+            except InventoryError as exc:
+                raise RepairError(str(exc)) from exc
     order.status = RepairOrder.Status.CANCELED
     order.canceled_at = timezone.now()
     order.canceled_by = by
@@ -472,13 +491,20 @@ def reversible_quantity(repair_line: RepairIssueLine) -> Decimal:
 
 
 @transaction.atomic
-def cancel_repair_line_quantity(repair_line, quantity, *, reason="", author="", by=None):
+def cancel_repair_line_quantity(
+    repair_line, quantity, *, reason="", author="", by=None, expected_remaining=None
+):
     """Вернуть часть точной проведённой строки ремонта из отчёта.
 
     Это не отдельная складская ветка: создаётся и сразу проводится штатный
     возврат из ремонта. Он сохраняет источник ``RepairIssueLine``, исходный
     лот/экземпляр и ячейку, а отчёты пересчитывают действующие количество,
     цену клиента и себестоимость по проведённым строкам возврата.
+
+    ``expected_remaining`` is the quantity the confirmation page showed. If
+    the line changed since (a repeated submit of the same form, another
+    cancellation or return), nothing is cancelled: the operator sees the new
+    remaining quantity and decides again.
     """
     from apps.returns.models import StockReturn, StockReturnLine
     from apps.returns.services import (
@@ -513,6 +539,11 @@ def cancel_repair_line_quantity(repair_line, quantity, *, reason="", author="", 
     )
     if order.status != RepairOrder.Status.COMPLETED:
         raise RepairError("Отменить позицию можно только в проведённом ремонтном заказе.")
+    if expected_remaining is not None:
+        from apps.sales.services import LINE_CHANGED_MESSAGE, _seen_quantity
+
+        if reversible_quantity(repair_line) != _seen_quantity(expected_remaining, RepairError):
+            raise RepairError(LINE_CHANGED_MESSAGE)
     if repair_line.part_item_id and quantity != Decimal("1"):
         raise RepairError("Серийный экземпляр можно отменить только целиком.")
     if StockReturn.objects.filter(

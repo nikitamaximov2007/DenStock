@@ -13,13 +13,14 @@
 """
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import (
     InventoryError,
+    lock_stock_sources,
     restore_written_off_part_item,
     restore_written_off_stock_lot_quantity,
     write_off_part_item,
@@ -115,28 +116,93 @@ def available_quantities_by_location(part):
     return list(result.values())
 
 
-@transaction.atomic
+def _quick_request_token(value) -> str | None:
+    token = str(value or "").strip()
+    if len(token) > 64:
+        raise WriteOffError("Некорректный токен запроса.")
+    return token or None
+
+
+def _replayed_quick_write_off(token, *, part, reason, business_author, quantity, by):
+    """The document this form submission already created, if any."""
+    doc = WriteOffDocument.objects.filter(request_token=token).first()
+    if doc is None:
+        return None
+    lines = list(doc.lines.all())
+    same = (
+        doc.comment == reason
+        and doc.business_author == business_author
+        and lines
+        and all(line.part_type_id == part.pk for line in lines)
+        and sum((line.quantity for line in lines), Decimal("0")) == quantity
+        and (by is None or doc.created_by_id == by.pk)
+    )
+    if not same:
+        raise WriteOffError("Токен запроса уже использован для другого списания.")
+    return doc
+
+
 def quick_write_off(
-    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), location_id=None, by=None
+    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), location_id=None,
+    by=None, request_token=None,
 ) -> WriteOffDocument:
     """Write off a scanned quantity without exposing lot internals.
 
     Allocation is FIFO across canonical available lots in one selected source
     cell. The final write goes through ``complete_write_off`` so StockMovement,
     cost snapshots and locks retain exactly the normal document semantics.
+    A repeated submission of the same form (same ``request_token``) returns
+    the document it already created and writes nothing off again.
     """
-    reason = (reason or "").strip()
-    business_author = (business_author or "").strip()
-    if not reason:
-        raise WriteOffError("Укажите причину списания.")
-    if not business_author:
-        raise WriteOffError("Укажите автора списания.")
+    token = _quick_request_token(request_token)
+    try:
+        return _quick_write_off_atomic(
+            part=part, scanned_code=scanned_code, reason=reason,
+            business_author=business_author, quantity=quantity, location_id=location_id,
+            by=by, request_token=token,
+        )
+    except IntegrityError:
+        # A simultaneous duplicate won the unique token; this one rolled back whole.
+        if token is None:
+            raise
+        doc = _replayed_quick_write_off(
+            token, part=part, reason=(reason or "").strip(),
+            business_author=(business_author or "").strip(),
+            quantity=_parse_quick_quantity(quantity), by=by,
+        )
+        if doc is None:
+            raise
+        return doc
+
+
+def _parse_quick_quantity(quantity) -> Decimal:
     try:
         quantity = Decimal(str(quantity))
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise WriteOffError("Укажите корректное количество списания.") from exc
     if quantity <= 0:
         raise WriteOffError("Количество списания должно быть больше нуля.")
+    return quantity
+
+
+@transaction.atomic
+def _quick_write_off_atomic(
+    *, part, scanned_code, reason, business_author, quantity, location_id, by, request_token
+) -> WriteOffDocument:
+    reason = (reason or "").strip()
+    business_author = (business_author or "").strip()
+    if not reason:
+        raise WriteOffError("Укажите причину списания.")
+    if not business_author:
+        raise WriteOffError("Укажите автора списания.")
+    quantity = _parse_quick_quantity(quantity)
+    if request_token:
+        replayed = _replayed_quick_write_off(
+            request_token, part=part, reason=reason, business_author=business_author,
+            quantity=quantity, by=by,
+        )
+        if replayed is not None:
+            return replayed
     code = (scanned_code or "").strip()
     item = (
         PartItem.objects.select_for_update()
@@ -154,6 +220,7 @@ def quick_write_off(
         business_author=business_author,
         created_by=by,
         status=WriteOffDocument.Status.DRAFT,
+        request_token=request_token,
     )
     if part.tracking_mode == part.TrackingMode.SERIAL:
         if quantity != Decimal("1"):
@@ -271,6 +338,11 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
         raise WriteOffError("Нельзя провести пустое списание.")
 
     now = timezone.now()
+    # Every stock row of the document before any cell (see lock_stock_sources).
+    lock_stock_sources(
+        item_ids=[line.part_item_id for line in lines],
+        lot_ids=[line.stock_lot_id for line in lines],
+    )
     for line in lines:
         if line.part_item_id:
             item = PartItem.objects.select_for_update().get(pk=line.part_item_id)
@@ -294,9 +366,12 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
                     "source_location",
                 ]
             )
-            write_off_part_item(
-                item, by=by, document_id=doc.pk, comment=f"Списание {doc.number}"
-            )
+            try:
+                write_off_part_item(
+                    item, by=by, document_id=doc.pk, comment=f"Списание {doc.number}"
+                )
+            except InventoryError as exc:
+                raise WriteOffError(str(exc)) from exc
         else:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status not in _LOT_WRITE_OFF_SOURCES:
@@ -321,10 +396,13 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
                     "source_location",
                 ]
             )
-            write_off_stock_lot_quantity(
-                lot, line.quantity, by=by, document_id=doc.pk,
-                comment=f"Списание {doc.number}",
-            )
+            try:
+                write_off_stock_lot_quantity(
+                    lot, line.quantity, by=by, document_id=doc.pk,
+                    comment=f"Списание {doc.number}",
+                )
+            except InventoryError as exc:
+                raise WriteOffError(str(exc)) from exc
 
     doc.cost_total = calculate_write_off_costs(doc)
     doc.status = WriteOffDocument.Status.COMPLETED

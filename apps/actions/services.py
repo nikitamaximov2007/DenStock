@@ -512,9 +512,12 @@ def cancel_warehouse_action(action: WarehouseAction, *, by=None, reason="") -> W
 
     # Report and action entry points must use the same service: it restores
     # serial items too and subtracts already completed customer returns.
-    from apps.sales.services import cancel_sale
+    from apps.sales.services import SaleError, cancel_sale
 
-    cancel_sale(sale, by=by, reason=reason, author=str(by or "Система"))
+    try:
+        cancel_sale(sale, by=by, reason=reason, author=str(by or "Система"))
+    except SaleError as exc:
+        raise ActionError(str(exc)) from exc
     # Keep the historical action endpoint's public document status compatible.
     # Both CANCELED and VOIDED are excluded from commercial reports.
     sale.status = Sale.Status.VOIDED

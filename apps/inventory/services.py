@@ -54,6 +54,29 @@ def ensure_location_operation_allowed(location, *, section_recount_id=None) -> N
         )
 
 
+def lock_stock_sources(*, item_ids=(), lot_ids=()) -> None:
+    """Lock stock rows in the one order every writer shares: items, lots, then cells.
+
+    A document that consumes or holds several rows takes them all here first,
+    each kind in primary-key order, before any storage cell is locked (cells
+    are locked later by ``ensure_location_operation_allowed``). Two documents
+    sharing rows then wait for each other instead of deadlocking on
+    PostgreSQL. Re-locking the same rows afterwards is free.
+    """
+    item_ids = sorted({pk for pk in item_ids if pk is not None})
+    lot_ids = sorted({pk for pk in lot_ids if pk is not None})
+    if item_ids:
+        list(
+            PartItem.objects.select_for_update().filter(pk__in=item_ids)
+            .order_by("pk").values_list("pk", flat=True)
+        )
+    if lot_ids:
+        list(
+            StockLot.objects.select_for_update().filter(pk__in=lot_ids)
+            .order_by("pk").values_list("pk", flat=True)
+        )
+
+
 def set_preferred_part_location(
     part, location, *, by=None, section_recount_id=None
 ) -> PartPreferredLocation:
@@ -785,6 +808,25 @@ def _perform_stock_transfer(
     if not token or len(token) > 64:
         raise InventoryError("Некорректный токен перемещения.")
     quantity = _parse_transfer_quantity(quantity)
+    if from_location is not None and to_location is not None:
+        # Stock rows before cells, like every consuming writer: a sale holding
+        # a lot of this cell must not wait for a cell this transfer holds.
+        if part_item is not None:
+            lock_stock_sources(item_ids=[part_item.pk])
+        else:
+            source_lots = StockLot.objects.filter(
+                part_type=part, location_id=from_location.pk, status=stock_state,
+                quantity__gt=0,
+            )
+            lock_stock_sources(
+                lot_ids=StockLot.objects.filter(
+                    Q(pk__in=source_lots.values("pk"))
+                    | Q(
+                        location_id=to_location.pk,
+                        batch_line_id__in=source_lots.values("batch_line_id"),
+                    )
+                ).values_list("pk", flat=True)
+            )
     source, target = _lock_transfer_locations(from_location, to_location)
     item_id = getattr(part_item, "pk", None)
     expected = (part.pk, item_id, source.pk, target.pk, stock_state, quantity)

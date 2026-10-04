@@ -38,9 +38,10 @@
         Деталь вернётся в исходную ячейку. Выдача, цена клиента и себестоимость
         остаются историческими снимками, а действующие значения считаются с учётом отмены.
       </p>
-      <form method="post" class="form">
+      <form method="post" class="form" data-idempotent-form>
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ next }}">
+        <input type="hidden" name="remaining_seen" value="{{ remaining_seen }}">
         {{ form.as_p }}
         <button type="submit" class="btn btn--primary">Отменить позицию</button>
       </form>

@@ -644,6 +644,7 @@ def sale_line_cancel(request, pk):
                     reason=form.cleaned_data["reason"],
                     author=form.cleaned_data["author"],
                     by=request.user,
+                    expected_remaining=request.POST.get("remaining_seen") or None,
                 )
             except SaleError as exc:
                 messages.error(request, str(exc))
@@ -665,6 +666,8 @@ def sale_line_cancel(request, pk):
             # оператор подтверждать отмену не должен.
             "article": part_exact_number(line.part_type, default="Не указан"),
             "remaining": remaining,
+            # What this page shows; a repeated or stale submit is refused by it.
+            "remaining_seen": format(remaining.normalize(), "f"),
             # Ячейку возврата считает та же функция, которой пользуется само
             # проведение (sale_line_source_location), поэтому обещанное экраном
             # и произошедшее на складе совпадают по построению.

@@ -20,6 +20,7 @@ from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
     InventoryError,
     ensure_location_operation_allowed,
+    lock_stock_sources,
     recompute_balance_row,
     return_part_item,
     return_stock_lot_quantity,
@@ -198,6 +199,14 @@ def create_reservation(
     )
 
 
+def _ensure_cell_open(location) -> None:
+    """A cell under recount is an expected refusal of the reservation, not a crash."""
+    try:
+        ensure_location_operation_allowed(location)
+    except InventoryError as exc:
+        raise ReservationError(str(exc)) from exc
+
+
 def _ensure_open(reservation: Reservation) -> None:
     if reservation.status not in (Reservation.Status.DRAFT, Reservation.Status.ACTIVE):
         raise ReservationError("Резерв закрыт - изменять состав нельзя.")
@@ -211,7 +220,7 @@ def add_part_item_to_reservation(reservation, item, *, by=None) -> ReservationLi
     item = PartItem.objects.select_for_update().get(pk=item.pk)
     if item.status != PartItem.Status.AVAILABLE:
         raise ReservationError("Зарезервировать можно только доступный экземпляр.")
-    ensure_location_operation_allowed(item.current_location)
+    _ensure_cell_open(item.current_location)
     if ReservationLine.objects.filter(reservation=reservation, part_item=item).exists():
         raise ReservationError("Этот экземпляр уже в этом резерве.")
     if _item_actively_reserved(item, exclude=reservation):
@@ -236,7 +245,7 @@ def add_stock_lot_to_reservation(reservation, lot, quantity, *, by=None) -> Rese
     lot = StockLot.objects.select_for_update().get(pk=lot.pk)
     if lot.status != StockLot.Status.AVAILABLE:
         raise ReservationError("Зарезервировать можно только доступный лот.")
-    ensure_location_operation_allowed(lot.location)
+    _ensure_cell_open(lot.location)
     committed = _active_reserved_for_lot(lot)
     if reservation.status == Reservation.Status.DRAFT:
         # Активные брони не включают черновик — добавим уже намеченное в нём.
@@ -287,7 +296,7 @@ def remove_reservation_line(line, *, by=None) -> None:
     was_active = reservation.status == Reservation.Status.ACTIVE
     pair = _line_pair(line)
     if was_active and pair is not None:
-        ensure_location_operation_allowed(StorageLocation.objects.get(pk=pair[1]))
+        _ensure_cell_open(StorageLocation.objects.get(pk=pair[1]))
     line.delete()
     if was_active and pair is not None:
         _recompute_pairs([pair])
@@ -305,11 +314,16 @@ def activate_reservation(reservation, *, by=None) -> Reservation:
     if not lines:
         raise ReservationError("Нельзя активировать пустой резерв.")
 
+    # Stock rows first, cells after: the order a sale uses for the same rows.
+    lock_stock_sources(
+        item_ids=[line.part_item_id for line in lines],
+        lot_ids=[line.stock_lot_id for line in lines],
+    )
     for line in lines:
         location = (
             line.part_item.current_location if line.part_item_id else line.stock_lot.location
         )
-        ensure_location_operation_allowed(location)
+        _ensure_cell_open(location)
 
     # Блокируем и проверяем каждый объект; суммируем количество по лотам.
     lot_demand: dict[int, Decimal] = {}
@@ -357,7 +371,7 @@ def cancel_reservation(reservation, *, by=None, reason="") -> Reservation:
             location = (
                 line.part_item.current_location if line.part_item_id else line.stock_lot.location
             )
-            ensure_location_operation_allowed(location)
+            _ensure_cell_open(location)
     reservation.status = Reservation.Status.CANCELED
     reservation.canceled_at = timezone.now()
     reservation.save(update_fields=["status", "canceled_at", "updated_at"])
@@ -710,6 +724,11 @@ def complete_sale(sale, *, by=None) -> Sale:
         own_reservation.status = Reservation.Status.CONVERTED
         own_reservation.save(update_fields=["status", "updated_at"])
 
+    # Every stock row of the document before any cell (see lock_stock_sources).
+    lock_stock_sources(
+        item_ids=[line.part_item_id for line in lines],
+        lot_ids=[line.stock_lot_id for line in lines],
+    )
     for line in lines:
         if line.part_item_id:
             item = PartItem.objects.select_for_update().get(pk=line.part_item_id)
@@ -728,7 +747,12 @@ def complete_sale(sale, *, by=None) -> Sale:
                 "unmarked_usd_rate_snapshot", "unmarked_price_source",
                 "unmarked_price_snapshot_note",
             ])
-            sell_part_item(item, by=by, document_id=sale.pk, comment=f"Продажа {sale.number}")
+            try:
+                sell_part_item(
+                    item, by=by, document_id=sale.pk, comment=f"Продажа {sale.number}"
+                )
+            except InventoryError as exc:
+                raise SaleError(str(exc)) from exc
         else:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status != StockLot.Status.AVAILABLE:
@@ -745,9 +769,13 @@ def complete_sale(sale, *, by=None) -> Sale:
                 "unmarked_usd_rate_snapshot", "unmarked_price_source",
                 "unmarked_price_snapshot_note",
             ])
-            sell_stock_lot(
-                lot, line.quantity, by=by, document_id=sale.pk, comment=f"Продажа {sale.number}"
-            )
+            try:
+                sell_stock_lot(
+                    lot, line.quantity, by=by, document_id=sale.pk,
+                    comment=f"Продажа {sale.number}",
+                )
+            except InventoryError as exc:
+                raise SaleError(str(exc)) from exc
 
     if own_reservation is not None:
         # Освободить reserved для позиций резерва, не попавших в продажу (если такие есть).
@@ -767,6 +795,19 @@ def complete_sale(sale, *, by=None) -> Sale:
         "sold_by", "updated_at",
     ])
     return sale
+
+
+LINE_CHANGED_MESSAGE = (
+    "Позиция изменилась после открытия страницы: проверьте, сколько осталось, "
+    "и подтвердите отмену заново."
+)
+
+
+def _seen_quantity(value, error_class) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise error_class("Некорректные данные формы: обновите страницу.") from exc
 
 
 def sale_line_source_location(sale_line):
@@ -795,7 +836,9 @@ def reversible_quantity(sale_line) -> Decimal:
 
 
 @transaction.atomic
-def cancel_sale_line_quantity(sale_line, quantity, *, reason="", author="", by=None):
+def cancel_sale_line_quantity(
+    sale_line, quantity, *, reason="", author="", by=None, expected_remaining=None
+):
     """Отменить часть проданного по одной строке продажи.
 
     Отдельного складского механизма здесь нет и быть не должно: сторнирование
@@ -804,6 +847,11 @@ def cancel_sale_line_quantity(sale_line, quantity, *, reason="", author="", by=N
     писать канонические движения RETURN_*. Сам документ продажи не меняется:
     его количества и цены остаются снимком, а сколько из него отменено,
     считается по возвратам.
+
+    ``expected_remaining`` is the quantity the confirmation page showed. If
+    the line changed since (a repeated submit of the same form, another
+    cancellation or return), nothing is cancelled: the operator sees the new
+    remaining quantity and decides again.
     """
     from apps.returns.models import StockReturn, StockReturnLine
     from apps.returns.services import (
@@ -819,14 +867,21 @@ def cancel_sale_line_quantity(sale_line, quantity, *, reason="", author="", by=N
         raise SaleError("Укажите причину отмены.")
     if not author:
         raise SaleError("Укажите, кто отменяет.")
+    # Document first, then its exact line: the order of a whole-sale
+    # cancellation, so the two serialize instead of deadlocking.
+    sale_id = SaleLine.objects.filter(pk=sale_line.pk).values_list("sale_id", flat=True).get()
+    sale = Sale.objects.select_for_update().get(pk=sale_id)
     sale_line = (
         SaleLine.objects.select_for_update(of=("self",))
         .select_related("sale", "stock_lot__location", "part_item__current_location", "part_type")
-        .get(pk=sale_line.pk)
+        .get(pk=sale_line.pk, sale=sale)
     )
-    sale = Sale.objects.select_for_update().get(pk=sale_line.sale_id)
     if sale.status != Sale.Status.COMPLETED:
         raise SaleError("Отменить позицию можно только в проведённой продаже.")
+    if expected_remaining is not None and reversible_quantity(sale_line) != _seen_quantity(
+        expected_remaining, SaleError
+    ):
+        raise SaleError(LINE_CHANGED_MESSAGE)
     try:
         quantity = Decimal(str(quantity))
     except (InvalidOperation, TypeError, ValueError) as exc:
@@ -958,19 +1013,22 @@ def cancel_sale(sale, *, by=None, reason="", author="", oil_dispositions=None) -
     for allocation in cancellation_allocations(lines, returned):
         line = allocation.line
         comment = f"Отмена продажи {sale.number}: {reason}"[:255]
-        if allocation.is_unit_item:
-            return_part_item(
-                line.part_item, allocation.location,
-                restock_status=PartItem.Status.AVAILABLE, by=by,
-                document_type="sale", document_id=sale.pk, comment=comment,
-            )
-        else:
-            return_stock_lot_quantity(
-                line.batch_line, allocation.location, allocation.quantity,
-                unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
-                restock_status=StockLot.Status.AVAILABLE, by=by,
-                document_type="sale", document_id=sale.pk, comment=comment,
-            )
+        try:
+            if allocation.is_unit_item:
+                return_part_item(
+                    line.part_item, allocation.location,
+                    restock_status=PartItem.Status.AVAILABLE, by=by,
+                    document_type="sale", document_id=sale.pk, comment=comment,
+                )
+            else:
+                return_stock_lot_quantity(
+                    line.batch_line, allocation.location, allocation.quantity,
+                    unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
+                    restock_status=StockLot.Status.AVAILABLE, by=by,
+                    document_type="sale", document_id=sale.pk, comment=comment,
+                )
+        except InventoryError as exc:
+            raise SaleError(str(exc)) from exc
     for line in pending_oil:
         disposition = normalized_dispositions[line.pk]
         if disposition == SaleOilCancellationDecision.Disposition.RETURN_TO_STOCK:

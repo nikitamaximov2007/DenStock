@@ -449,6 +449,7 @@ def repair_line_cancel(request, pk):
                     reason=form.cleaned_data["reason"],
                     author=form.cleaned_data["author"],
                     by=request.user,
+                    expected_remaining=request.POST.get("remaining_seen") or None,
                 )
             except RepairError as exc:
                 messages.error(request, str(exc))
@@ -468,6 +469,8 @@ def repair_line_cancel(request, pk):
             "line": line,
             "article": part_exact_number(line.part_type, default="Не указан"),
             "remaining": remaining,
+            # What this page shows; a repeated or stale submit is refused by it.
+            "remaining_seen": format(remaining.normalize(), "f"),
             "form": form,
             "next": back,
         },

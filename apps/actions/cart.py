@@ -124,6 +124,18 @@ def _ensure_draft(cart) -> None:
         raise ActionError("Документ уже проведён или отменён - корзину менять нельзя.")
 
 
+def _lock_draft(cart) -> None:
+    """Lock the document and re-read its status: the page may predate completion.
+
+    The document comes before its lines and lots, as in ``complete_cart``, so
+    a row edit and a completion of the same cart serialize instead of the
+    edit deleting lines of a document that has just been completed.
+    """
+    locked = type(cart).objects.select_for_update().get(pk=cart.pk)
+    _ensure_draft(locked)
+    cart.status = locked.status
+
+
 def _lines(cart):
     return cart.lines.select_related("part_type", "stock_lot", "stock_lot__location")
 
@@ -233,7 +245,7 @@ def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | No
     сервисы документа, что и раньше. Склад при этом не меняется — в черновике
     есть только строки.
     """
-    _ensure_draft(cart)
+    _lock_draft(cart)
     if part.is_oil:
         # Корзина сканера ценит по part.recommended_price как цене ЗА ШТУКУ;
         # для масла это цена ЗА УПАКОВКУ - подстановка её как цены за литр
@@ -280,7 +292,7 @@ def set_row_quantity(cart, part, location, quantity, *, by=None) -> CartRow | No
 @transaction.atomic
 def add_scan(cart, part, location, *, quantity=Decimal("1"), by=None) -> CartRow:
     """Добавить скан: та же деталь в той же ячейке — плюс к существующей позиции."""
-    _ensure_draft(cart)
+    _lock_draft(cart)
     quantity = parse_quantity(quantity)
     current = find_row(cart, part, location)
     already = current.quantity if current else Decimal("0")
@@ -290,21 +302,21 @@ def add_scan(cart, part, location, *, quantity=Decimal("1"), by=None) -> CartRow
 @transaction.atomic
 def remove_row(cart, part, location, *, by=None) -> None:
     """Убрать позицию целиком."""
-    _ensure_draft(cart)
+    _lock_draft(cart)
     _drop_row_lines(cart, part, location)
 
 
 @transaction.atomic
 def clear_cart(cart, *, by=None) -> None:
     """Очистить корзину, сам черновик остаётся открытым."""
-    _ensure_draft(cart)
+    _lock_draft(cart)
     cart.lines.all().delete()
 
 
 @transaction.atomic
 def discard_cart(cart, *, by=None) -> None:
     """Удалить пустой/ненужный черновик-корзину. Склад не затронут."""
-    _ensure_draft(cart)
+    _lock_draft(cart)
     cart.lines.all().delete()
     cart.delete()
 

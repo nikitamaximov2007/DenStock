@@ -34,6 +34,18 @@ def _ensure_draft(receipt: Receipt) -> None:
         raise ReceiptError("Проведённое поступление изменять нельзя.")
 
 
+def _lock_draft(receipt_id) -> Receipt:
+    """Lock the receipt and re-read its status before any change of the draft.
+
+    ``post_receipt`` holds the same lock while it receives the lines, so an
+    edit sent from a page opened before posting waits and is then refused,
+    instead of changing a line that was already received differently.
+    """
+    receipt = Receipt.objects.select_for_update().get(pk=receipt_id)
+    _ensure_draft(receipt)
+    return receipt
+
+
 def _validate_line_values(part_type, quantity, unit_cost_rub, location) -> Decimal:
     """Общая проверка позиции. Возвращает нормализованное количество."""
     if part_type is None:
@@ -67,8 +79,10 @@ def create_receipt(*, supplier=None, received_at=None, comment="", by=None) -> R
     )
 
 
+@transaction.atomic
 def update_receipt(receipt: Receipt, *, supplier, received_at, comment) -> Receipt:
-    _ensure_draft(receipt)
+    locked = _lock_draft(receipt.pk)
+    receipt.status = locked.status
     receipt.supplier = supplier
     receipt.received_at = received_at
     receipt.comment = (comment or "").strip()
@@ -76,10 +90,11 @@ def update_receipt(receipt: Receipt, *, supplier, received_at, comment) -> Recei
     return receipt
 
 
+@transaction.atomic
 def add_line(
     receipt: Receipt, *, part_type, quantity, unit_cost_rub, location, comment=""
 ) -> ReceiptLine:
-    _ensure_draft(receipt)
+    receipt = _lock_draft(receipt.pk)
     quantity = _validate_line_values(part_type, quantity, unit_cost_rub, location)
     return ReceiptLine.objects.create(
         receipt=receipt,
@@ -91,10 +106,13 @@ def add_line(
     )
 
 
+@transaction.atomic
 def update_line(
     line: ReceiptLine, *, part_type, quantity, unit_cost_rub, location, comment=""
 ) -> ReceiptLine:
-    _ensure_draft(line.receipt)
+    receipt = _lock_draft(line.receipt_id)
+    if not ReceiptLine.objects.filter(pk=line.pk, receipt=receipt).exists():
+        raise ReceiptError("Позиция уже удалена из поступления.")
     quantity = _validate_line_values(part_type, quantity, unit_cost_rub, location)
     line.part_type = part_type
     line.quantity = quantity
@@ -105,9 +123,10 @@ def update_line(
     return line
 
 
+@transaction.atomic
 def remove_line(line: ReceiptLine) -> None:
-    _ensure_draft(line.receipt)
-    line.delete()
+    receipt = _lock_draft(line.receipt_id)
+    ReceiptLine.objects.filter(pk=line.pk, receipt=receipt).delete()
 
 
 def receipt_totals(receipt: Receipt) -> dict:

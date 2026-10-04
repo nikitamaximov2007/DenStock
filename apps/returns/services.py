@@ -421,6 +421,31 @@ def update_return_line_restock_status(line, *, restock_status, by=None) -> Stock
 # --- Проведение --------------------------------------------------------------
 
 
+def _lock_completed_source(ret) -> None:
+    """Lock the source document and require it to be still completed.
+
+    A cancelled sale or repair has already restored everything not returned
+    before: completing a return drafted meanwhile would restore it twice.
+    The document comes before its lines, as in the cancellations themselves.
+    """
+    if ret.source_type == StockReturn.SourceType.SALE:
+        status = (
+            Sale.objects.select_for_update().filter(pk=ret.source_id)
+            .values_list("status", flat=True).first()
+        )
+        completed = status == Sale.Status.COMPLETED
+    else:
+        status = (
+            RepairOrder.objects.select_for_update().filter(pk=ret.source_id)
+            .values_list("status", flat=True).first()
+        )
+        completed = status == RepairOrder.Status.COMPLETED
+    if not completed:
+        raise ReturnError(
+            "Документ-источник уже отменён или не проведён: провести возврат нельзя."
+        )
+
+
 def _return_line_locking_queryset(ret):
     """The lock query must stay free of nullable-relation joins for PostgreSQL."""
     return (
@@ -447,6 +472,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
         return ret
     if ret.status != StockReturn.Status.DRAFT:
         raise ReturnError("Возврат уже проведён.")
+    _lock_completed_source(ret)
     line_ids = _locked_return_line_ids(ret)
     lines = list(
         StockReturnLine.objects.filter(pk__in=line_ids).select_related(

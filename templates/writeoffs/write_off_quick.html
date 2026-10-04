@@ -4,8 +4,9 @@
   <div class="page-header">
     <h1 class="page-title">Быстрое списание</h1>
   </div>
-  <form method="post" class="form action-panel">
+  <form method="post" class="form action-panel" data-idempotent-form>
     {% csrf_token %}
+    <input type="hidden" name="request_token" value="{{ request_token }}">
     <p>
       <label for="quick-write-off-reason">Причина</label>
       <br>
