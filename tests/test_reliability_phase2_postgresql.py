@@ -617,3 +617,55 @@ def test_cart_row_edit_racing_cart_completion_never_deadlocks(world):
     sold = sum(line.quantity for line in SaleLine.objects.filter(sale=sale))
     assert lot_qty(lot) == Decimal("5") - sold
     assert movement_count(document_type="sale", document_id=sale.pk) == 1
+
+
+def _found_posting(world, part, location, token):
+    from apps.inventory.services import post_found_stock_group
+
+    return lambda: post_found_stock_group(
+        entries=[{
+            "source": "warehouse", "source_id": part.pk,
+            "exact_number": "RX-100", "quantity": 1,
+        }],
+        location=location, token=token, by=world.admin,
+    )
+
+
+def test_found_stock_posting_racing_a_sale_in_the_same_cell_never_deadlocks(world):
+    """RECEIVE-1 / SALE-1: +1 found and -1 sold, each exactly once."""
+    lot = world.make_lot(world.part_x, world.loc_a, 5)
+    sale = _sale(world, lot)
+    meet = Rendezvous()
+
+    results = race(
+        _paused(lambda: complete_sale(sale, by=world.admin), locks("inventory_stocklot"), meet),
+        _paused(_found_posting(world, world.part_x, world.loc_a, "found-race-1"),
+                locks("warehouse_storagelocation"), meet),
+    )
+    assert_no_unexpected(results, (SaleError, InventoryError))
+    assert Sale.objects.get(pk=sale.pk).status == Sale.Status.COMPLETED
+    assert lot_qty(lot) == Decimal("5")
+    assert movement_count(document_type="found_addition") == 1
+
+
+def test_found_stock_posting_racing_a_transfer_from_the_same_cell_never_deadlocks(world):
+    """MOVE-1: total physical quantity = initial + found, nothing lost or doubled."""
+    world.make_lot(world.part_x, world.loc_a, 5)
+    meet = Rendezvous()
+
+    def transfer():
+        return perform_stock_transfer(
+            part=world.part_x, from_location=world.loc_a, to_location=world.loc_b,
+            quantity="2", stock_state=StockLot.Status.AVAILABLE, token="found-move-1",
+            by=world.admin,
+        )
+
+    results = race(
+        _paused(transfer, locks("inventory_stocklot"), meet),
+        _paused(_found_posting(world, world.part_x, world.loc_a, "found-race-2"),
+                locks("warehouse_storagelocation"), meet),
+    )
+    assert_no_unexpected(results, (InventoryError,))
+    assert part_physical(world.part_x) == Decimal("6")
+    in_b = StockLot.objects.get(part_type=world.part_x, location=world.loc_b)
+    assert in_b.quantity == Decimal("2")

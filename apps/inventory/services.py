@@ -994,6 +994,23 @@ def _positive_integer(value) -> int:
     return integer
 
 
+def _found_part_hint(entry: dict):
+    """Plain read of the card an entry points to; None while no card exists yet."""
+    from apps.brp.models import BrpPartLink
+    from apps.polaris.models import PolarisPartLink
+
+    source, source_id = entry.get("source"), entry.get("source_id")
+    if source == "warehouse":
+        return source_id
+    if source == "brp":
+        links = BrpPartLink.objects.filter(brp_part_id=source_id)
+    elif source == "polaris":
+        links = PolarisPartLink.objects.filter(polaris_part_id=source_id)
+    else:
+        return None
+    return links.values_list("part_id", flat=True).first()
+
+
 def _found_part_from_entry(entry: dict, *, by=None):
     """Resolve/promote one trusted queue reference inside the posting transaction."""
     from apps.brp.models import BrpCatalogPart, BrpPartLink
@@ -1088,6 +1105,16 @@ def _post_found_stock_group(*, entries, location, token: str, by=None):
         raise InventoryError("Группа пакетной приёмки пуста.")
 
     with transaction.atomic():
+        # The lots this posting may add to come before the cell, as in every
+        # other stock writer; the part cards are locked later, after the cell.
+        hinted = {pk for pk in (_found_part_hint(entry) for entry, _q in prepared) if pk}
+        if hinted:
+            lock_stock_sources(
+                lot_ids=StockLot.objects.filter(
+                    part_type_id__in=hinted, location_id=location.pk,
+                    status=StockLot.Status.AVAILABLE,
+                ).values_list("pk", flat=True)
+            )
         location = StorageLocation.objects.select_for_update().filter(pk=location.pk).first()
         if location is None or not location.can_hold_stock():
             raise InventoryError("Ячейка не предназначена для хранения остатка.")
