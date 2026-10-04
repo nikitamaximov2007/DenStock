@@ -30,7 +30,7 @@ from apps.inventory.presentation import part_exact_number
 from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.sales.models import Sale, SaleLine
 
-from . import operator_replies, workspace
+from . import messaging, operator_replies, workspace
 from .attachments import AttachmentError, ValidatedAttachment
 from .models import (
     CustomerRequest,
@@ -377,7 +377,7 @@ def request_by_hex(value: str):
         return None
     try:
         return (
-            CustomerRequest.objects.prefetch_related("lines__part_type")
+            CustomerRequest.objects.prefetch_related(messaging.lines_prefetch())
             .filter(public_id=value).first()
         )
     except (TypeError, ValueError):

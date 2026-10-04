@@ -23,7 +23,7 @@ from django.urls import reverse
 from apps.catalog.quantity_units import format_quantity
 from apps.core.templatetags.number_format import money_int
 
-from . import workspace
+from . import messaging, workspace
 from .models import CustomerRequest, TelegramConversation
 from .operator_replies import CHANNEL_LABELS, reply_target
 
@@ -45,7 +45,7 @@ def request_by_hex(value) -> CustomerRequest | None:
     if not isinstance(value, str) or not HEX_RE.fullmatch(value):
         return None
     identifier = uuid.UUID(hex=value)
-    queryset = CustomerRequest.objects.prefetch_related("lines__part_type")
+    queryset = CustomerRequest.objects.prefetch_related(messaging.lines_prefetch())
     request = queryset.filter(public_id=identifier).first()
     if request is not None:
         return request

@@ -575,11 +575,13 @@ def test_long_start_summary_splits_only_between_complete_lines(monkeypatch):
             quantity_requested=Decimal("1"),
             unit_short_name="шт.",
             price_seen=Decimal("88"),
+            part_type=SimpleNamespace(is_oil=False),
         )
         for i in range(12)
     ]
+    ordered = SimpleNamespace(order_by=lambda *_: lines)
     request = SimpleNamespace(
-        reference="ABCD1234", lines=SimpleNamespace(order_by=lambda *_: lines)
+        reference="ABCD1234", lines=SimpleNamespace(select_related=lambda *_: ordered)
     )
     monkeypatch.setattr(telegram_service, "MAX_MESSAGE_CHARS", 420)
 

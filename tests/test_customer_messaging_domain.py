@@ -62,13 +62,19 @@ def _line(article="A1", name="ДЕТАЛЬ", quantity="1", price="88", unit="ш�
         quantity_requested=Decimal(quantity),
         unit_short_name=unit,
         price_seen=None if price is None else Decimal(price),
+        # The part says what the quantity measures: pieces here, not oil liters.
+        part_type=SimpleNamespace(is_oil=False),
     )
+
+
+def _lines_manager(lines):
+    """A stand-in for request.lines: the summary loads the parts with the lines."""
+    ordered = SimpleNamespace(order_by=lambda *_: list(lines))
+    return SimpleNamespace(select_related=lambda *_: ordered)
 
 
 def _fake_request(*lines, reference="ABCD1234"):
-    return SimpleNamespace(
-        reference=reference, lines=SimpleNamespace(order_by=lambda *_: list(lines))
-    )
+    return SimpleNamespace(reference=reference, lines=_lines_manager(lines))
 
 
 # --- Request summary ---------------------------------------------------------------------

@@ -255,7 +255,7 @@ def anonymize_conversation(request: CustomerRequest) -> None:
 def linked_conversations(user_id: int) -> list[MaxConversation]:
     return list(
         MaxConversation.objects.select_related("request")
-        .prefetch_related("request__lines")
+        .prefetch_related(messaging.lines_prefetch("request__lines"))
         .filter(customer_user_id=user_id, status=MaxConversation.Status.LINKED)
         .order_by("-linked_at", "-pk")[:SELECTOR_LIMIT]
     )
@@ -671,7 +671,7 @@ def notification_operator(user):
 def _conversation_for(event: MaxOutboxEvent) -> MaxConversation | None:
     return (
         MaxConversation.objects.select_related("request")
-        .prefetch_related("request__lines")
+        .prefetch_related(messaging.lines_prefetch("request__lines"))
         .filter(request_id=event.request_id)
         .first()
     )

@@ -243,7 +243,7 @@ def operator_display_name(user) -> str:
 
 def _conversation_queryset():
     return TelegramConversation.objects.select_related("request").prefetch_related(
-        "request__lines"
+        messaging.lines_prefetch("request__lines")
     )
 
 
@@ -420,7 +420,7 @@ class CustomerResult:
 def _linked_conversations(chat_id: int) -> list[TelegramConversation]:
     return list(
         TelegramConversation.objects.select_related("request")
-        .prefetch_related("request__lines")
+        .prefetch_related(messaging.lines_prefetch("request__lines"))
         .filter(customer_chat_id=chat_id, status=TelegramConversation.Status.LINKED)
         .order_by("-linked_at", "-pk")[:20]
     )

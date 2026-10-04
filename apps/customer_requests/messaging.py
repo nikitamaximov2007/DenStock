@@ -14,10 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from django.db.models import Prefetch
+
 from apps.catalog.quantity_units import format_quantity
 from apps.core.templatetags.number_format import money_int
 
-from .models import CustomerRequest
+from .models import CustomerRequest, CustomerRequestLine
 
 # The bot says this once per request conversation, never on later messages.
 CUSTOMER_ACK_TEXT = "Сообщение передано в сервис PRO-STOR."
@@ -41,6 +43,16 @@ class SummaryPolicy:
 
     linked_text: str
     message_limit: int
+
+
+def lines_prefetch(path: str = "lines") -> Prefetch:
+    """Prefetch request lines with their part in the same query.
+
+    The part decides what a quantity measures (pieces or oil liters, see
+    apps.catalog.quantity_units.format_quantity); loading it with the lines
+    keeps every card and summary free of one query per line.
+    """
+    return Prefetch(path, queryset=CustomerRequestLine.objects.select_related("part_type"))
 
 
 def summary_line(line) -> tuple[str, Decimal | None]:
