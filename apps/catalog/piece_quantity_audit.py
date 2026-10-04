@@ -1,5 +1,9 @@
 """Find stored piece quantities that are not whole numbers. Read only.
 
+Covers customer documents (sales, requests, repairs, reservations, write-offs),
+physical stock (lots, movements, transfers) and stock intake or correction
+(receipts, batches, inventory counts, section recounts).
+
 A part that is not oil is counted in pieces (apps.catalog.quantity_units), so a
 stored 1.500 on such a part is a legacy anomaly from before the shared rule.
 This module only reads: it never rounds, edits or deletes a row. The report
@@ -42,6 +46,20 @@ SOURCES = (
         "write_off_id", "write_off__status",
     ),
     Source("Остатки лотов", "inventory.StockLot", "quantity", "", "status"),
+    Source(
+        "Строки поступлений", "receipts.ReceiptLine", "quantity", "receipt_id", "receipt__status",
+    ),
+    Source("Строки партий", "procurement.BatchLine", "quantity", "batch_id", "batch__status"),
+    Source("Перемещения", "inventory.StockTransfer", "quantity", "", "stock_state"),
+    Source(
+        "Факт инвентаризаций", "stocktaking.InventoryCountLine", "counted_quantity",
+        "count_document_id", "count_document__status",
+    ),
+    Source(
+        "Строки пересчёта участка", "stocktaking.SectionRecountLine", "quantity",
+        "recount_id", "recount__status",
+    ),
+    Source("Движения склада", "inventory.StockMovement", "quantity", "", "movement_type"),
 )
 
 

@@ -9,6 +9,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.catalog.quantity_units import validate_part_quantity
+
 from .models import Batch, money
 
 
@@ -94,6 +96,9 @@ def finalize_cost(batch: Batch, user) -> Batch:
         raise LandedCostError("Рассчитать себестоимость можно только для принятой партии.")
     if batch.cost_finalized:
         raise LandedCostError("Себестоимость уже зафиксирована.")
+    for line in batch.lines.select_related("part_type"):
+        if error := validate_part_quantity(line.quantity, line.part_type):
+            raise LandedCostError(f"{line.part_type}: {error}")
 
     computed = compute_landed_cost(batch)
     for row in computed["lines"]:

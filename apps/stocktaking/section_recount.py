@@ -16,6 +16,7 @@ from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.catalog.models import PartType
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
 from apps.inventory.models import (
     PartItem,
@@ -564,6 +565,8 @@ def set_section_line_quantity(line: SectionRecountLine, quantity, *, by=None):
         raise SectionRecountError("Количество должно быть числом.") from exc
     if value < 0:
         raise SectionRecountError("Количество не может быть отрицательным.")
+    if error := validate_part_quantity(value, line.part_type):
+        raise SectionRecountError(error)
     line.quantity = value
     line.save(update_fields=["quantity", "updated_at"])
     if line.cell.status == SectionRecountCell.Status.COMPLETED:
@@ -702,6 +705,8 @@ def allocate_section_line(
         raise SectionRecountError("Количество партии должно быть числом.") from exc
     if quantity <= 0:
         raise SectionRecountError("Распределение партии должно быть больше нуля.")
+    if error := validate_part_quantity(quantity, line.part_type):
+        raise SectionRecountError(error)
     # BatchLine is the stable row shared by every allocation competing for the
     # same global source quantity. Lock it before reading the aggregate so a
     # second recount line waits and then observes the committed allocation.

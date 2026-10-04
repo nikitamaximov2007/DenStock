@@ -10,6 +10,7 @@ from django.db.models import DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 
 from apps.catalog.models import PartType
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.procurement.models import BatchLine
 from apps.warehouse.models import StorageLocation
 
@@ -211,6 +212,12 @@ def update_part_item(
 # --- Количественные лоты (StockLot) -----------------------------------------
 
 
+def _ensure_piece_quantity(quantity, part_type) -> None:
+    """Stock of a piece part is a whole count; oil keeps its liters."""
+    if error := validate_part_quantity(quantity, part_type):
+        raise InventoryError(error)
+
+
 def distributed_qty(line: BatchLine) -> Decimal:
     """Сколько количества строки уже распределено по лотам."""
     agg = StockLot.objects.filter(batch_line=line).aggregate(s=Sum("quantity"))
@@ -246,6 +253,7 @@ def create_stock_lot(
     quantity = Decimal(quantity)
     if quantity <= 0:
         raise InventoryError("Количество должно быть больше нуля.")
+    _ensure_piece_quantity(quantity, line.part_type)
     if location is None or not location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
     ensure_location_operation_allowed(location)
@@ -278,6 +286,13 @@ def create_stock_lot(
     return lot
 
 
+LEGACY_FRACTIONAL_LOT = (
+    "В ячейке есть лот штучной детали с дробным остатком (старые данные): целое "
+    "количество разложилось бы на дробные части. Сначала исправьте остаток "
+    "инвентаризацией ячейки."
+)
+
+
 LOT_EDIT_REFUSED = (
     "Лот уже на складе или участвовал в движениях: количество меняется только "
     "«Корректировкой», ячейка - «Переместить». Так изменение попадает в журнал движений."
@@ -304,6 +319,7 @@ def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> St
     quantity = Decimal(quantity)
     if quantity <= 0:
         raise InventoryError("Количество должно быть больше нуля.")
+    _ensure_piece_quantity(quantity, lot.part_type)
     if location is None or not location.can_hold_stock():
         raise InventoryError("Это место не предназначено для хранения остатка.")
 
@@ -785,6 +801,7 @@ def _perform_stock_transfer(
     if not token or len(token) > 64:
         raise InventoryError("Некорректный токен перемещения.")
     quantity = _parse_transfer_quantity(quantity)
+    _ensure_piece_quantity(quantity, part)
     source, target = _lock_transfer_locations(from_location, to_location)
     item_id = getattr(part_item, "pk", None)
     expected = (part.pk, item_id, source.pk, target.pk, stock_state, quantity)
@@ -857,6 +874,9 @@ def _perform_stock_transfer(
             break
     if remaining > 0:
         raise InventoryError("Недостаточно доступного количества в исходной ячейке.")
+    if any(validate_part_quantity(portion, part) for _lot, portion in portions):
+        # A legacy fractional lot would split a whole transfer into 0.5 + 1.5.
+        raise InventoryError(LEGACY_FRACTIONAL_LOT)
 
     transfer = StockTransfer.objects.create(
         token=token,
@@ -920,6 +940,7 @@ def add_found_stock(
     quantity = Decimal(quantity)
     if quantity <= 0:
         raise InventoryError("Количество должно быть больше нуля.")
+    _ensure_piece_quantity(quantity, part_type)
     if location is None or not location.can_hold_stock():
         raise InventoryError("Ячейка не предназначена для хранения остатка.")
     lot = (
@@ -1204,6 +1225,13 @@ def adjust_stock_lot_quantity(
     if new_qty < 0:
         raise InventoryError(
             f"Корректировка уводит количество в минус: остаток {lot.quantity}, дельта {delta}."
+        )
+    if validate_part_quantity(new_qty, lot.part_type):
+        # The result must be whole. A fractional delta is therefore accepted
+        # only when it brings a legacy fractional lot back to a whole count.
+        raise InventoryError(
+            "Для штучной детали количество должно быть целым: после корректировки "
+            f"в лоте было бы {new_qty}."
         )
     if delta > 0:
         movement_type = StockMovement.MovementType.ADJUST_IN

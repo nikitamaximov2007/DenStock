@@ -1,7 +1,9 @@
 # Quantity domain audit: pieces vs oil, packages vs litres
 
 Base: `d2adede` (request channel routing). Candidate branch: `claude/request-quantity-domain`.
-Executable proof: `tests/test_piece_quantity_invariant.py` (SQLite and PostgreSQL 16).
+Executable proof: `tests/test_piece_quantity_invariant.py` (documents),
+`tests/test_piece_stock_boundary.py` (stock intake and correction) and
+`tests/test_piece_stock_boundary_postgresql.py` (PostgreSQL 16 rollback and races).
 
 ## 1. The authoritative quantity model
 
@@ -45,7 +47,7 @@ fractional semantics; the only fractional domain in code is oil.
 | Partial cancellation / return (`returns._add_line`) | Decimal | > 0, <= returnable | `StockReturnLine` | YES (0.5 of 2) | refused | none | VALIDATION GAP (feeds reorder) | refused, except the full remainder of a legacy line |
 | `complete_sale` / `complete_repair_order` | draft | none | completed document | YES | litres | none | VALIDATION GAP | final gate refuses |
 | Staff edit of a request line quantity | none | n/a | n/a | n/a | n/a | n/a | NOT REACHABLE (no such flow) | n/a |
-| Receipt (BULK), transfer, stocktaking count | Decimal | > 0 | `StockLot` | YES | litres | none | VALIDATION GAP, not changed | see section 6 |
+| Stock intake and correction (receipts, batches, lots, adjustments, found stock, transfers, counts, recounts, counting sessions) | Decimal | > 0 | `StockLot` | YES | litres | none | VALIDATION GAP | closed, see section 7 |
 
 Classification run on unmodified `d2adede`: 22 of 31 cases failed, every one a
 "DID NOT RAISE" on a fractional piece, including a legacy 1.5-piece request
@@ -65,7 +67,9 @@ generic one. No migration, no data change, oil untouched.
 ## 4. Legacy data (read only)
 
 `python manage.py audit_piece_quantities` lists non-oil fractional rows in
-sales, customer requests, repairs, reservations, write-offs and stock lots, by
+sales, customer requests, repairs, reservations, write-offs, stock lots, receipt
+lines, batch lines, transfers, inventory counts, section recount lines and stock
+movements, by
 table, row id, document id, status, part id, unit and quantity, with counts of
 parts per unit for pieces and oil. It prints no customer names or phones and
 changes nothing. Production was NOT checked from this session. Equivalent SQL
@@ -126,17 +130,66 @@ packages, messenger repeat lines are litres), so only an explicit unit on the
 line removes the ambiguity, and it keeps the catalog in the packages customers
 actually buy.
 
-**OWNER DECISION REQUIRED: OIL REQUEST UNIT.** Until then no oil row, catalog
-semantics or Request -> Sale oil conversion was changed; O1 to O4 remain open.
+Owner decision (2026-10-04): Option C. The implementation design is in
+`docs/design/oil-request-unit.md`; it is NOT implemented yet, so no oil row,
+catalog semantics or Request -> Sale oil conversion was changed and O1 to O4
+remain open.
 
 ## 6. Remaining gaps and risks
 
-* Receipts (BULK non-oil), transfers and stocktaking counts still accept
-  fractional piece quantities and can create fractional lots. Not changed here:
-  stocktaking is the correction tool for legacy lots.
 * A legacy fractional lot can make an integer FIFO split (Quick Actions, quick
   write-off, Request -> Sale) produce a fractional portion; that is refused
   explicitly, and the lot needs a stocktaking correction.
 * Any non-oil part sold by м or кг with fractions is now refused. Run
   `audit_piece_quantities` (parts per unit) before release.
 * Production has not been checked from this session.
+
+## 7. Physical stock boundary
+
+Every writer of `StockLot.quantity` was traced. Intake and correction paths
+take a NEW quantity from a person and now refuse a fractional piece count in the
+service; reversal paths restore exactly what a recorded document moved and are
+guarded by that document instead.
+
+| Path | Service | Rule now | Error |
+|---|---|---|---|
+| Receipt line add / edit / post | `receipts._validate_line_values` (shared by `add_line`, `update_line`, `post_receipt`) | whole pieces; post re-checks every line before any batch is created | `ReceiptError` |
+| Procurement batch line | `BatchLine.clean` (form) and `procurement.finalize_cost` | whole pieces; a batch with a fractional piece line is not costed | `ValidationError`, `LandedCostError` |
+| Lot from a batch line, direct lot edit | `inventory.create_stock_lot`, `update_stock_lot` | whole pieces | `InventoryError` |
+| Manual adjustment, stocktaking apply, section recount apply, found stock | `inventory.adjust_stock_lot_quantity` | the lot's resulting quantity must be whole; a fractional delta is accepted only when it brings a legacy lot back to a whole count | `InventoryError` (mapped by each caller) |
+| Found stock (single, scanner group) | `add_found_stock`, `_post_found_stock_group` | whole pieces (the group already required integers); oil still refused by the group | `InventoryError` |
+| Transfer | `inventory._perform_stock_transfer` | whole pieces; a split over a legacy fractional lot is refused | `InventoryError` |
+| Inventory count | `stocktaking.update_counted_quantity` | whole count (0 allowed) | `StocktakingError` |
+| Section / cell recount | `set_section_line_quantity`, `allocate_section_line` | whole count | `SectionRecountError` |
+| Counting session -> receipt | `counting.set_line_quantity`, `convert_to_receipt`, `post_session` | whole count, checked before any card or receipt is created; receipt refusals mapped | `CountingError` |
+| Serial items | `create_part_items` | always an integer count of instances | already enforced |
+| Whole-lot move | `move_stock_lot` | moves the lot as it is, never changes a quantity | unchanged |
+| Sale / repair / write-off consumption | `_consume_stock_lot` | quantities come from documents validated in section 3 | unchanged |
+| Return, write-off cancellation, return cancellation | `return_stock_lot_quantity`, `restore_written_off_stock_lot_quantity`, `reverse_stock_return_lot` | restore exactly the recorded document quantity; new documents are whole, legacy ones can be closed out | unchanged |
+| Catalog imports | `catalog_import` | write catalog data (package quantity metadata), never stock | n/a |
+
+Proof: the 26 cases of `tests/test_piece_stock_boundary.py` were run against the
+previous commit `71910f3`: 25 failed (every fractional piece was accepted), only
+the oil receipt passed. All pass on the candidate. On PostgreSQL 16 a receipt
+with one legacy line, and a found-stock group whose second entry hits a legacy
+lot, commit nothing (lots, movements, batches and the idempotency row unchanged);
+a refused fractional adjustment racing a valid one on the same lot releases its
+lock and the valid one completes; racing fractional and whole transfers move only
+whole pieces.
+
+Legacy fractional stock:
+
+* found by `audit_piece_quantities` (lots, movements, transfers, receipts,
+  batches, counts, recounts);
+* reconciled by an inventory count or section recount to a whole number, which
+  records the exact fractional difference as a movement;
+* a whole-lot move still works;
+* blocked until reconciled, with an explicit message: adding found stock on top
+  of the lot, a transfer whose FIFO split would cut it, a FIFO sale or write-off
+  that would take a fractional portion, and creating the last fractional
+  remainder of a legacy batch line (that remainder was never physical);
+* a legacy receipt draft or batch with a fractional line is fixed by editing the
+  line, then posts normally.
+
+Production was not checked from this session (no database or server access). Run
+`python manage.py audit_piece_quantities` there before release; it is read only.

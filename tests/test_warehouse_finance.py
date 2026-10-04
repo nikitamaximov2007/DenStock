@@ -87,6 +87,15 @@ def _stock(part, location, qty, sup, admin):
     return lot
 
 
+def _legacy_fraction(lot, quantity):
+    """A fractional piece balance stored before whole-piece validation existed.
+
+    New stock of a piece part is always whole; the valuation must still sum
+    such legacy rows exactly, in Decimal.
+    """
+    StockLot.objects.filter(pk=lot.pk).update(quantity=Decimal(quantity))
+
+
 def _brp_part(
     env, *, material="219800345", retail="10", wholesale=None, replacement="", desc="BELT"
 ):
@@ -147,8 +156,8 @@ def test_brp_category_sale_value_matches_total(env):
 
 def test_multiple_lots_of_same_brp_part_are_summed_once(env):
     part, _brp = _brp_part(env, retail="10")
-    _stock(part, env["loc"], Decimal("1.25"), env["sup"], env["admin"])
-    _stock(part, env["loc"], Decimal("2.75"), env["sup"], env["admin"])
+    _legacy_fraction(_stock(part, env["loc"], 1, env["sup"], env["admin"]), "1.25")
+    _legacy_fraction(_stock(part, env["loc"], 3, env["sup"], env["admin"]), "2.75")
 
     valuation = get_warehouse_valuation()
 
@@ -405,7 +414,7 @@ def test_missing_sale_price_notice_is_rendered(client, make_user, env):
 def test_fractional_quantity_uses_decimal_and_category_rounding(env):
     category = Category.objects.create(name="Дробные")
     part = _manual_part(name="Дробная деталь", category=category, price=Decimal("10.01"))
-    _stock(part, env["loc"], Decimal("1.111"), env["sup"], env["admin"])
+    _legacy_fraction(_stock(part, env["loc"], 1, env["sup"], env["admin"]), "1.111")
 
     valuation = get_warehouse_valuation()
 

@@ -15,6 +15,7 @@ from apps.brp.models import BrpCatalogPart, BrpPricingSettings
 from apps.brp.pricing import catalog_part_price_rub as brp_catalog_part_price_rub
 from apps.brp.services import promote_to_warehouse
 from apps.catalog.models import PartType, normalize_number
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.catalog_import.origin import (
     AFTERMARKET_CATALOG,
     aftermarket_part_ids,
@@ -32,7 +33,7 @@ from apps.polaris.services import (
     promote_to_warehouse as promote_polaris,
 )
 from apps.receipts.models import Receipt
-from apps.receipts.services import add_line, create_receipt, post_receipt
+from apps.receipts.services import ReceiptError, add_line, create_receipt, post_receipt
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import ValuationSettings
 
@@ -431,6 +432,8 @@ def set_line_quantity(line: InventoryCountingLine, quantity) -> None:
     if quantity <= 0:
         line.delete()
         return
+    if error := validate_part_quantity(quantity, line.warehouse_part):
+        raise CountingError(error)
     line.quantity_counted = quantity
     line.save(update_fields=["quantity_counted"])
 
@@ -708,6 +711,11 @@ def convert_to_receipt(
         unit_cost = Decimal("0")
     if unit_cost < 0:
         raise CountingError("Себестоимость не может быть отрицательной.")
+    for line in lines:
+        # Catalog lines become new non-oil cards, so only a linked oil part
+        # may carry liters. Checked before any card or receipt is created.
+        if error := validate_part_quantity(line.quantity_counted, line.warehouse_part):
+            raise CountingError(f"«{line.scanned_value}»: {error}")
 
     receipt = create_receipt(
         supplier=_intake_supplier(),
@@ -795,7 +803,10 @@ def post_session(session: InventoryCountingSession, *, by=None) -> Receipt:
     if receipt is None:
         receipt = convert_to_receipt(session, by=by)
         session.refresh_from_db()
-    post_receipt(receipt, by=by)
+    try:
+        post_receipt(receipt, by=by)
+    except ReceiptError as exc:
+        raise CountingError(str(exc)) from exc
     # Остаток появился по адресу сессии: строки, известные до этого только по
     # каталогу аналогов, теперь действительно лежат в ячейке.
     session.lines.filter(source=InventoryCountingLine.Source.AFTERMARKET).update(

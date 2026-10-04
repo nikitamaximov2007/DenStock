@@ -421,8 +421,14 @@ def test_movement_list_shows_exact_article_and_whole_values(client, refs, admin)
 
 
 def test_movement_list_preserves_fractional_quantities(client, refs, admin):
+    # Fractional stock is oil (liters); a piece part is always counted whole.
+    oil = PartType.objects.create(
+        name="Масло", category=refs["bulk"].category, unit=refs["bulk"].unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        is_oil=True, oil_package_volume_l=Decimal("4"),
+    )
     line = _finalized_line(
-        refs, admin, quantity="1.5", unit_cost="100", shipping="0"
+        refs, admin, part=oil, quantity="1.5", unit_cost="100", shipping="0"
     )
     lot = create_stock_lot(line, refs["loc1"], Decimal("1.5"))
     receive_stock_lot(lot, by=admin)

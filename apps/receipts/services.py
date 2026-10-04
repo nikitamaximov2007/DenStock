@@ -12,6 +12,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.catalog.models import PartType
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.inventory.services import (
     create_part_items,
     create_stock_lot,
@@ -55,6 +56,8 @@ def _validate_line_values(part_type, quantity, unit_cost_rub, location) -> Decim
         raise ReceiptError(
             f"«{part_type}» учитывается поштучно: количество должно быть целым."
         )
+    if error := validate_part_quantity(quantity, part_type):
+        raise ReceiptError(f"«{part_type}»: {error}")
     return quantity
 
 

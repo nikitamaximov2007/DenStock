@@ -1,6 +1,7 @@
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 
 KOPECKS = Decimal("0.01")
@@ -200,3 +201,11 @@ class BatchLine(models.Model):
         self.total_cost_currency = money(self.quantity * self.unit_cost_currency)
         self.total_cost_rub = money(self.quantity * self.unit_cost_rub)
         super().save(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        from apps.catalog.quantity_units import validate_part_quantity
+
+        if self.part_type_id and self.quantity is not None:
+            if error := validate_part_quantity(self.quantity, self.part_type):
+                raise ValidationError({"quantity": error})

@@ -17,6 +17,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.catalog.quantity_units import validate_part_quantity
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import (
     LOT_PHYSICAL_STATUSES,
@@ -79,6 +80,8 @@ def update_counted_quantity(line, counted, *, by=None) -> InventoryCountLine:
     counted = Decimal(counted)
     if counted < 0:
         raise StocktakingError("Фактическое количество не может быть отрицательным.")
+    if error := validate_part_quantity(counted, line.part_type):
+        raise StocktakingError(error)
     line.counted_quantity = counted
     line.save(update_fields=["counted_quantity"])
     return line
