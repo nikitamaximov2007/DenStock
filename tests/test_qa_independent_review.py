@@ -20,6 +20,7 @@ from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
+from tests.customs_support import link_brp_catalog
 
 PASSWORD = "parol-12345"
 Area = PartCustomsInfo.ApplicationArea
@@ -74,6 +75,9 @@ def env(db, admin):
         tracking_mode=PartType.TrackingMode.BULK, recommended_price=Decimal("100"),
     )
     PartNumber.objects.create(part=part, value="700100", kind=PartNumber.Kind.OEM)
+    # Оригиналом для таможни бывает только импортированная деталь: та же
+    # связь с BRP-каталогом, что оставляет продвижение из прайса.
+    link_brp_catalog(part, "700100")
     _stock(part, loc, 10, sup, admin)
     return {"sup": sup, "admin": admin, "loc": loc, "part": part}
 
