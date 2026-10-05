@@ -500,3 +500,56 @@ def test_customs_orders_list_offers_both_send_actions(client, env):
     assert f"{selection}?order_type=analog" in html
     assert "Отправить в заказ оригинал" in html
     assert "Отправить в заказ аналоги" in html
+
+
+# --- Аудит: группа таможни по происхождению (read-only) -----------------------------
+
+
+def test_classification_audit_reports_provenance_groups_without_writing(env):
+    import json
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from apps.catalog.models import PartType, Unit
+
+    imported_brp = _imported_brp(env, "AUD-BRP")
+    _card(imported_brp, manufacturer="BRP")
+    imported_prox = _import_aftermarket([("PROX", "AUD-PROX")])["AUD-PROX"]
+    _card(imported_prox, manufacturer="PROX")
+    manual_brp = create_manual_part(
+        name="РУЧНАЯ BRP", article="AUD-M-BRP", price="1000", manufacturer_name="BRP",
+    )
+    _card(manual_brp, manufacturer="BRP")
+    manual_prox = create_manual_part(
+        name="РУЧНАЯ PROX", article="AUD-M-PROX", price="1000", manufacturer_name="PROX",
+    )
+    _card(manual_prox, manufacturer="PROX")
+    legacy = PartType.objects.create(
+        name="СТАРАЯ BRP", category=Category.objects.create(name="Вариатор"),
+        manufacturer=Manufacturer.objects.get_or_create(name="BRP")[0],
+        unit=Unit.objects.get(name="Штука"), tracking_mode=PartType.TrackingMode.BULK,
+    )
+    _card(legacy, manufacturer="BRP")
+    before = list(PartCustomsInfo.objects.order_by("pk").values_list("pk", "manufacturer"))
+
+    out = StringIO()
+    call_command("audit_customs_manufacturer_classification", "--json", "--list", "0", stdout=out)
+    payload = json.loads(out.getvalue())
+
+    assert payload["imported_brp_original"] == 1
+    assert payload["imported_prox_original"] == 1
+    assert payload["brp_labelled_without_import"] == 2  # ручная BRP + старая BRP
+    assert payload["prox_labelled_without_import"] == 1
+    assert payload["brp_prox_manual_to_analog"] == 2
+    assert payload["brp_prox_legacy_unproven_needs_owner_review"] == 1
+    assert payload["imported_brp_prox_label_not_original"] == 0
+    assert list(
+        PartCustomsInfo.objects.order_by("pk").values_list("pk", "manufacturer")
+    ) == before
+
+    listing = StringIO()
+    call_command("audit_customs_manufacturer_classification", "--list", "10", stdout=listing)
+    text = listing.getvalue()
+    assert f"PartType #{legacy.pk} " in text
+    assert f"PartType #{manual_brp.pk} " in text

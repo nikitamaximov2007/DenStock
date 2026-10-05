@@ -27,6 +27,15 @@ PartCustomsDataVersion. Она отвечает на один вопрос — �
 (то, что реально уйдёт в Excel/заказ) расходится с доказанной категорией.
 Такие строки чаще всего - наследие старого default'а и кандидаты на
 последующий ручной аудит/backfill (в этой RC-задаче backfill не выполняется).
+
+Раздел «группа таможни по происхождению» отвечает на правило оригинал/аналог
+(apps.actions.services.customs_group): оригинал - только ИМПОРТИРОВАННАЯ
+деталь (связь BrpPartLink / PolarisPartLink / AftermarketCatalogPart /
+ArcticCatCatalogPart) с производителем BRP или PROX; ручная деталь - всегда
+аналог. Детали с меткой BRP/PROX без связи импорта делятся на две части:
+в категории «Добавлено вручную» (заведены вручную - корректно станут
+аналогами) и вне неё (наследие, происхождение которого система не доказывает -
+решение владельца).
 """
 import json
 
@@ -36,13 +45,15 @@ from apps.actions.services import (
     _normalized_manufacturer,
     authoritative_manufacturer,
     catalog_or_explicit_manufacturer,
+    customs_group,
+    imported_part_ids,
     is_brp_export_eligible,
     manual_part_name_ru,
 )
 from apps.brp.models import BrpCatalogPart, BrpPartLink
 from apps.catalog.models import PartNumber, PartType, normalize_number
 from apps.catalog.services import MANUAL_CATEGORY_NAME
-from apps.catalog_import.models import AftermarketCatalogPart
+from apps.catalog_import.models import AftermarketCatalogPart, ArcticCatCatalogPart
 from apps.inventory.presentation import part_exact_number
 from apps.polaris.models import PolarisCatalogPart, PolarisPartLink
 
@@ -78,6 +89,9 @@ class ClassificationFacts:
         for part_id, number, manufacturer in aftermarket_rows:
             self.aftermarket_by_part[part_id] = manufacturer
             self.aftermarket_by_number.setdefault(number, manufacturer)
+        self.arctic_cat_parts = set(
+            ArcticCatCatalogPart.objects.values_list("part_id", flat=True)
+        )
         self.brp_numbers = set(
             BrpCatalogPart.objects.filter(is_current=True).values_list(
                 "material_no_norm", flat=True
@@ -106,6 +120,10 @@ class ClassificationFacts:
             or part.pk in self.polaris_by_part
             or part.pk in self.aftermarket_by_part
         )
+
+    def is_imported(self, part) -> bool:
+        """То же происхождение, что apps.actions.services.imported_part_ids."""
+        return self.has_direct_catalog(part) or part.pk in self.arctic_cat_parts
 
     def resolved_manufacturer(self, part, number: str) -> str:
         if part.pk in self.brp_by_part:
@@ -171,8 +189,22 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
     else:
         live = authoritative_manufacturer(part, declared, number)
     stale_brp = _normalized_manufacturer(declared) == "BRP" and declared != live
+    imported = (
+        facts.is_imported(part) if facts is not None else part.pk in imported_part_ids([part.pk])
+    )
+    labels = {
+        _normalized_manufacturer(value)
+        for value in (
+            part.manufacturer.name if part.manufacturer_id else "", declared, resolved, live,
+        )
+        if value
+    }
     return {
         "part": part,
+        "imported": imported,
+        "customs_group": customs_group(live, imported=imported),
+        "labelled_brp": "BRP" in labels,
+        "labelled_prox": "PROX" in labels,
         "is_manual": is_manual,
         "resolved_manufacturer": resolved,
         "declared_manufacturer": declared,
@@ -230,7 +262,11 @@ class Command(BaseCommand):
             .order_by("pk")
         )
         limit = options["list_limit"]
-        samples = {"unproven_manual_brp": [], "misclassified": [], "name_gap": []}
+        samples = {
+            "unproven_manual_brp": [], "misclassified": [], "name_gap": [],
+            "brp_prox_manual_to_analog": [], "brp_prox_legacy_unproven": [],
+            "imported_brp_prox_not_original": [],
+        }
         totals = {key: 0 for key in samples}
         manual_part_types_total = 0
         manual_with_customs_info = 0
@@ -241,6 +277,10 @@ class Command(BaseCommand):
         should_be_eligible = 0
         stale_high = 0
         stale_ambiguous = 0
+        provenance = {
+            "imported_brp_original": 0, "imported_prox_original": 0,
+            "brp_labelled_without_import": 0, "prox_labelled_without_import": 0,
+        }
 
         def collect(key, row):
             totals[key] += 1
@@ -265,6 +305,23 @@ class Command(BaseCommand):
                     collect("name_gap", row)
                 if row["currently_marked_brp"] and row["is_manual"] and row["bucket"] != "brp":
                     collect("unproven_manual_brp", row)
+            labelled = row["labelled_brp"] or row["labelled_prox"]
+            if row["imported"]:
+                if row["customs_group"] == "original":
+                    live = _normalized_manufacturer(row["live_manufacturer"])
+                    provenance[
+                        "imported_prox_original" if live == "PROX" else "imported_brp_original"
+                    ] += 1
+                elif labelled and row["has_customs_info"]:
+                    collect("imported_brp_prox_not_original", row)
+            elif labelled:
+                provenance["brp_labelled_without_import"] += row["labelled_brp"]
+                provenance["prox_labelled_without_import"] += row["labelled_prox"]
+                collect(
+                    "brp_prox_manual_to_analog" if row["is_manual"]
+                    else "brp_prox_legacy_unproven",
+                    row,
+                )
 
         payload = {
             "part_types_total": sum(bucket_counts.values()),
@@ -284,6 +341,11 @@ class Command(BaseCommand):
             "stale_brp_high_confidence": stale_high,
             "stale_brp_ambiguous_needs_owner_review": stale_ambiguous,
             "export_rows_missing_name_ru_with_usable_manual_name": totals["name_gap"],
+            # Группа таможни по происхождению (customs_group).
+            **provenance,
+            "brp_prox_manual_to_analog": totals["brp_prox_manual_to_analog"],
+            "brp_prox_legacy_unproven_needs_owner_review": totals["brp_prox_legacy_unproven"],
+            "imported_brp_prox_label_not_original": totals["imported_brp_prox_not_original"],
         }
 
         if options["as_json"]:
@@ -309,6 +371,22 @@ class Command(BaseCommand):
             self._list_section(
                 "Строки с готовым ручным русским названием, но пустым customs_name_ru",
                 samples["name_gap"], totals["name_gap"], limit,
+            )
+            self._list_section(
+                "Ручные детали с меткой BRP/PROX: для таможни станут аналогами",
+                samples["brp_prox_manual_to_analog"], totals["brp_prox_manual_to_analog"],
+                limit,
+            )
+            self._list_section(
+                "Метка BRP/PROX без связи импорта и вне «Добавлено вручную» "
+                "(происхождение не доказано; решение владельца)",
+                samples["brp_prox_legacy_unproven"], totals["brp_prox_legacy_unproven"],
+                limit,
+            )
+            self._list_section(
+                "Импортированные детали с меткой BRP/PROX, которые не идут в оригиналы",
+                samples["imported_brp_prox_not_original"],
+                totals["imported_brp_prox_not_original"], limit,
             )
 
     def _list_section(self, title, rows, total, limit):
