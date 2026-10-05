@@ -42,9 +42,13 @@ from apps.receipts.services import (
     post_receipt,
     update_line,
 )
+from apps.stocktaking.models import SectionRecount
 from apps.stocktaking.section_recount import (
     SectionRecountError,
     allocate_section_line,
+    apply_section_recount,
+    complete_section_cell,
+    mark_section_ready,
     record_section_scan,
     set_section_line_quantity,
 )
@@ -326,6 +330,22 @@ def test_a_section_recount_takes_whole_pieces_only(section_data):  # noqa: F811
     line.refresh_from_db()
     assert line.quantity == Decimal("1")
     assert set_section_line_quantity(line, "3").quantity == Decimal("3")
+
+
+def test_a_section_recount_apply_reconciles_a_legacy_lot_to_whole(section_data):  # noqa: F811
+    lot = section_data["lot"]
+    StockLot.objects.filter(pk=lot.pk).update(quantity=Decimal("4.5"))  # legacy
+    doc = _start(section_data)
+    record_section_scan(doc, cell_number=2, raw_value="RC-0001", by=section_data["admin"])
+    for number in range(1, 11):
+        complete_section_cell(doc, cell_number=number)
+    applied = apply_section_recount(mark_section_ready(doc), by=section_data["admin"])
+
+    assert applied.status == SectionRecount.Status.COMPLETED
+    quantities = StockLot.objects.filter(batch_line=section_data["batch_line"]).values_list(
+        "quantity", flat=True
+    )
+    assert sorted(quantities) == [Decimal("0"), Decimal("1")]  # every lot whole again
 
 
 def test_a_counting_session_takes_whole_pieces_before_any_receipt_exists(stock):

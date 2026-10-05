@@ -37,10 +37,11 @@ from apps.procurement.models import Batch
 from apps.receipts.models import Receipt
 from apps.receipts.services import ReceiptError, add_line, create_receipt, post_receipt
 from apps.repairs.admin import RepairIssueLineInline
-from apps.repairs.models import RepairOrder
+from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.repairs.services import (
     RepairError,
     add_stock_lot_to_repair_order,
+    cancel_repair_order,
     complete_repair_order,
     create_repair_order,
 )
@@ -269,6 +270,15 @@ def test_cancelling_a_legacy_fractional_write_off_restores_it_exactly(parts):
     complete_write_off(doc, by=parts["admin"])  # lot 10 -> 8
     WriteOffLine.objects.filter(write_off=doc).update(quantity=Decimal("1.5"))
     cancel_write_off(doc, by=parts["admin"])
+    assert _lot_quantity(parts["piece_lot"]) == Decimal("9.5")
+
+
+def test_cancelling_a_legacy_fractional_repair_restores_exactly_what_it_recorded(parts):
+    order = create_repair_order(customer_name="Клиент", by=parts["admin"])
+    add_stock_lot_to_repair_order(order, parts["piece_lot"], Decimal("2"))
+    complete_repair_order(order, by=parts["admin"])  # lot 10 -> 8
+    RepairIssueLine.objects.filter(repair_order=order).update(quantity=Decimal("1.5"))
+    cancel_repair_order(order, reason="Ошибка", author="Денис", by=parts["admin"])
     assert _lot_quantity(parts["piece_lot"]) == Decimal("9.5")
 
 
