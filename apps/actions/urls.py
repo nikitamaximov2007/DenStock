@@ -8,6 +8,7 @@ urlpatterns = [
     path("actions/perform/", views.actions_perform, name="actions_perform"),
     path("actions/cart/add/", views.actions_cart_add, name="actions_cart_add"),
     path("actions/cart/update/", views.actions_cart_update, name="actions_cart_update"),
+    path("actions/cart/autosave/", views.actions_cart_autosave, name="actions_cart_autosave"),
     path("actions/cart/<str:kind>/clear/", views.actions_cart_clear, name="actions_cart_clear"),
     path("actions/cart/complete/", views.actions_cart_complete, name="actions_cart_complete"),
     path("actions/report/", views.actions_report_view, name="actions_report"),

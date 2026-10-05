@@ -47,7 +47,15 @@
     </p>
   </div>
   {% for panel in cart_panels %}
-    <div class="card">
+    {% comment %}
+      Черновик корзины сохраняется на сервере при каждом изменении поля
+      (static/js/quick_actions_autosave.js): кнопка «Провести» сначала
+      дожидается последних сохранений и проводит то, что сохранено.
+    {% endcomment %}
+    <div class="card"
+         data-cart-autosave
+         data-autosave-url="{% url 'actions_cart_autosave' %}"
+         data-kind="{{ panel.kind }}">
       <div class="card__header">
         <h2 class="card__title">Корзина · {{ panel.title }}</h2>
         <a class="btn btn--small btn--secondary" href="{{ panel.clear_url }}">Очистить корзину</a>
@@ -99,8 +107,12 @@
                          type="text"
                          inputmode="decimal"
                          size="5"
-                         value="{{ item.customs.gross_weight_kg|default_if_none:''|unlocalize }}"
+                         data-autosave-group="customs"
+                         data-part-id="{{ item.row.part.pk }}"
+                         {% if item.customs.rejected.gross_weight_kg %}value="{{ item.customs.rejected.gross_weight_kg.raw }}" aria-invalid="true"{% else %}value="{{ item.customs.gross_weight_kg|default_if_none:''|unlocalize }}"{% endif %}
                          aria-label="Вес брутто, кг">
+                  <span class="cart-autosave__error"
+                        data-autosave-error="gross_weight_kg">{{ item.customs.rejected.gross_weight_kg.error|default:'' }}</span>
                 </td>
                 <td class="num--qty">
                   <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
@@ -108,12 +120,18 @@
                          type="text"
                          inputmode="decimal"
                          size="5"
-                         value="{{ item.customs.net_weight_kg|default_if_none:''|unlocalize }}"
+                         data-autosave-group="customs"
+                         data-part-id="{{ item.row.part.pk }}"
+                         {% if item.customs.rejected.net_weight_kg %}value="{{ item.customs.rejected.net_weight_kg.raw }}" aria-invalid="true"{% else %}value="{{ item.customs.net_weight_kg|default_if_none:''|unlocalize }}"{% endif %}
                          aria-label="Вес нетто, кг">
+                  <span class="cart-autosave__error"
+                        data-autosave-error="net_weight_kg">{{ item.customs.rejected.net_weight_kg.error|default:'' }}</span>
                 </td>
                 <td>
                   <select form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
                           name="application_area"
+                          data-autosave-group="customs"
+                          data-part-id="{{ item.row.part.pk }}"
                           aria-label="Область применения">
                     <option value=""
                             {% if not item.customs.application_area %}selected{% endif %}>{{ item.customs.application_unset_label }}</option>
@@ -122,6 +140,8 @@
                               {% if item.customs.application_area == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                   </select>
+                  <span class="cart-autosave__error"
+                        data-autosave-error="application_area">{{ item.customs.rejected.application_area.error|default:'' }}</span>
                 </td>
                 <td class="num--qty">
                   <form method="post"
@@ -137,11 +157,21 @@
                            type="text"
                            inputmode="decimal"
                            size="4"
-                           value="{{ item.row.quantity|quantity_int }}"
+                           data-autosave-group="quantity"
+                           data-row-key="{{ item.row.key }}"
+                           {% if item.quantity_rejected %}value="{{ item.quantity_rejected.raw }}" aria-invalid="true"{% else %}value="{{ item.row.quantity|quantity_int }}"{% endif %}
                            aria-label="Количество">
                     <span class="cart-quantity-form__available"
                           aria-label="Доступно в выбранной ячейке">/ {{ item.available|quantity_int }}</span>
-                    <button type="submit" class="btn btn--small btn--secondary">Сохранить количество</button>
+                    {% comment %}
+                      Без скрипта поля сохраняет эта кнопка. Со скриптом всё
+                      сохраняется само, и кнопка скрыта.
+                    {% endcomment %}
+                    <button type="submit"
+                            class="btn btn--small btn--secondary"
+                            data-autosave-fallback>Сохранить количество</button>
+                    <span class="cart-autosave__error"
+                          data-autosave-error="quantity">{{ item.quantity_rejected.error|default:'' }}</span>
                   </form>
                 </td>
                 <td class="num--money">
@@ -151,7 +181,7 @@
                     <span class="muted">-</span>
                   {% endif %}
                 </td>
-                <td class="num--money">
+                <td class="num--money" data-row-total="{{ item.row.key }}">
                   {% if item.row.total_price is not None %}
                     {{ item.row.total_price|money_int }} ₽
                   {% else %}
@@ -177,18 +207,25 @@
         <p class="muted">
           Позиций: {{ panel.positions }}.
           Сумма:
-          {% if panel.total is not None %}
-            {{ panel.total|money_int }} ₽
-          {% else %}
-            не указана
-          {% endif %}
+          <span data-panel-total>
+            {% if panel.total is not None %}
+              {{ panel.total|money_int }} ₽
+            {% else %}
+              не указана
+            {% endif %}
+          </span>
           .
           Склад изменится только при проведении.
+          <span class="cart-autosave__status muted"
+                data-autosave-status
+                role="status"
+                aria-live="polite"></span>
         </p>
         <form method="post"
               action="{% url 'actions_cart_complete' %}"
               class="form"
-              data-idempotent-form>
+              data-idempotent-form
+              data-autosave-complete>
           {% csrf_token %}
           <input type="hidden" name="kind" value="{{ panel.kind }}">
           <input type="hidden" name="q" value="{{ q }}">
@@ -208,12 +245,14 @@
             <select id="customer-select-{{ panel.kind }}"
                     name="customer_id"
                     required
+                    data-autosave-group="customer"
+                    data-saved-value="{{ panel.customer_id }}"
                     style="min-width: 280px">
               <option value="">Выберите карточку клиента</option>
               {% for customer in customers %}
                 <option value="{{ customer.pk }}"
                         data-customer-search="{{ customer.name|lower }} {{ customer.phone|lower }}"
-                        {% if selected_customer_id == customer.pk|stringformat:'s' %}selected{% endif %}>
+                        {% if panel.selected_customer_id == customer.pk|stringformat:'s' %}selected{% endif %}>
                   {{ customer.name }}
                   {% if customer.phone %}
                     · {{ customer.phone }}
@@ -223,6 +262,8 @@
                 </option>
               {% endfor %}
             </select>
+            <span class="cart-autosave__error"
+                  data-autosave-error="customer">{{ panel.customer_rejected.error|default:'' }}</span>
             <br>
             <a class="btn btn--secondary btn--small"
                href="{% url 'customer_create' %}?next={% url 'actions_scan' %}%3Fkind%3D{{ panel.kind|urlencode }}">Создать клиента</a>
