@@ -77,7 +77,8 @@ transfer_groups AS (
 ),
 candidates AS (
     SELECT l.id, l.batch_id, l.batch_line_id, l.status, l.part_type_id, l.initial_quantity,
-           l.created_at, coalesce(f.from_location_id, l.location_id) AS original_location_id
+           l.created_at, coalesce(f.from_location_id, l.location_id) AS original_location_id,
+           nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id
     FROM inventory_stocklot l
     LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
     WHERE l.status <> 'receiving'
@@ -96,7 +97,13 @@ JOIN inventory_stockmovement m
  AND m.movement_type = 'move_lot' AND m.document_type = 'stock_transfer'
  AND m.to_location_id = c.original_location_id
  AND m.quantity = c.initial_quantity
- AND m.created_at >= c.created_at AND m.created_at - c.created_at <= interval '1 second'
+ AND (
+      c.origin_transfer_id = m.document_id
+      OR (
+          m.created_at >= c.created_at
+          AND m.created_at - c.created_at <= interval '1 second'
+      )
+ )
 JOIN inventory_stocktransfer t
   ON t.id = m.document_id
 JOIN inventory_stocklot source_lot ON source_lot.id = m.stock_lot_id
@@ -117,16 +124,71 @@ WHERE t.part_item_id IS NULL
   AND origin_line.batch_id = m.batch_id
   AND m.from_location_id = t.from_location_id
   AND t.to_location_id = c.original_location_id
-  AND t.created_at <= c.created_at
+  AND (c.origin_transfer_id = t.id OR t.created_at <= c.created_at)
   AND g.moved_quantity = t.quantity
   AND g.rows_consistent
-  AND (
-      SELECT count(*)
-      FROM procurement_batchline target_identity
-      WHERE target_identity.batch_id = c.batch_id
-        AND target_identity.part_type_id = c.part_type_id
-  ) = 1
 ORDER BY c.id, m.id;
+
+-- name: return_origin_evidence
+-- A later return into an existing lot is stock flow, not lot origin. New lots
+-- carry an explicit immutable origin line. Legacy inference requires the exact
+-- return line, exact typed movement, and creation-time first movement together.
+WITH first_lot_movement AS (
+    SELECT DISTINCT ON (stock_lot_id) stock_lot_id, id, created_at
+    FROM inventory_stockmovement
+    WHERE stock_lot_id IS NOT NULL
+    ORDER BY stock_lot_id, created_at, id
+), first_whole_move AS (
+    SELECT DISTINCT ON (stock_lot_id) stock_lot_id, from_location_id
+    FROM inventory_stockmovement
+    WHERE movement_type = 'move_lot' AND document_type = '' AND stock_lot_id IS NOT NULL
+    ORDER BY stock_lot_id, created_at, id
+), candidates AS (
+    SELECT l.id AS lot_id, l.batch_id, l.batch_line_id, l.part_type_id,
+           coalesce(f.from_location_id, l.location_id) AS original_location_id,
+           l.initial_quantity, l.created_at,
+           nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id
+    FROM inventory_stocklot l
+    LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
+    WHERE NOT EXISTS (
+        SELECT 1 FROM inventory_stockmovement receipt
+        WHERE receipt.stock_lot_id = l.id
+          AND receipt.movement_type = 'receive_lot'
+          AND NOT (receipt.comment = 'Открывающий остаток' AND receipt.document_type = '')
+    )
+)
+SELECT DISTINCT c.lot_id, rl.id AS return_line_id
+FROM candidates c
+JOIN returns_stockreturnline rl
+  ON rl.returned_lot_id = c.lot_id
+ AND (c.origin_return_line_id IS NULL OR c.origin_return_line_id = rl.id)
+JOIN returns_stockreturn r ON r.id = rl.stock_return_id
+ AND r.status IN ('completed', 'canceled') AND r.completed_at IS NOT NULL
+JOIN inventory_stockmovement m
+  ON m.stock_lot_id = c.lot_id
+ AND m.movement_type = 'return_lot'
+ AND m.document_type = 'stock_return'
+ AND m.document_id = r.id
+ AND m.batch_id = c.batch_id
+ AND m.batch_line_id = c.batch_line_id
+ AND m.part_type_id = c.part_type_id
+ AND m.to_location_id = rl.to_location_id
+ AND m.quantity = rl.quantity
+ AND m.quantity = c.initial_quantity
+JOIN first_lot_movement first_m ON first_m.stock_lot_id = c.lot_id
+WHERE rl.batch_id = c.batch_id
+  AND rl.batch_line_id = c.batch_line_id
+  AND rl.part_type_id = c.part_type_id
+  AND rl.to_location_id = c.original_location_id
+  AND rl.quantity = c.initial_quantity
+  AND (
+      c.origin_return_line_id = rl.id
+      OR (
+          first_m.id = m.id
+          AND abs(extract(epoch FROM (m.created_at - c.created_at))) <= 1
+      )
+  )
+ORDER BY c.lot_id, rl.id;
 
 -- name: reassigned_receipts
 -- Receipts whose lot now sits on another batch line (admin re-assignment before

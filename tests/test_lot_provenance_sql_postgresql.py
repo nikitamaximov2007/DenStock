@@ -15,7 +15,11 @@ from django.conf import settings
 from django.db import connection, transaction
 
 from apps.inventory.lot_provenance import (
+    LEGACY_PRIMARY,
+    PENDING_RECEIPT,
+    PRIMARY_RECEIPT,
     REASSIGNED,
+    RETURN_DERIVED,
     TRANSFER_DERIVED,
     UNKNOWN,
     line_provenance_detail,
@@ -28,6 +32,9 @@ from apps.inventory.services import (
     receive_stock_lot,
 )
 from apps.procurement.models import BatchLine
+from apps.returns.services import add_sale_line_return, complete_return, create_return
+from apps.sales.models import Sale
+from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.warehouse.models import StorageLocation
 from tests.test_lot_provenance_adversarial import (  # noqa: F401
     _age,
@@ -66,7 +73,7 @@ def test_the_file_only_reads():
     text = SQL.read_text(encoding="utf-8")
     assert set(_queries()) == {
         "lot_inventory", "transfer_evidence", "reassigned_receipts",
-        "old_backfill_receipts", "receipts_over_line",
+        "old_backfill_receipts", "receipts_over_line", "return_origin_evidence",
     }
     code = "\n".join(line for line in text.splitlines() if not line.startswith("--"))
     assert not re.search(
@@ -146,6 +153,61 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
         location=cells[4], token="sql-found",
     )
 
+    # A new return-created lot has explicit origin evidence. A later return
+    # into an old supplier lot must not appear as return origin.
+    return_line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(return_line, cells[0], Decimal("10")))
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, source, Decimal("2"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    ret = create_return(source=Sale.objects.get(pk=sale.pk), reason="SQL parity", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=cells[1], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+    returned_lot = ret.lines.get().returned_lot
+    assert returned_lot.origin_return_line_id == ret.lines.get().pk
+
+    # Existing primary and legacy lots receive later returns. Their origin is
+    # unchanged and neither may appear in return-origin SQL.
+    reused_primary_line = _finalized_line(env, env["part"], "5")
+    reused_primary = receive_stock_lot(
+        create_stock_lot(reused_primary_line, cells[2], Decimal("5"))
+    )
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, reused_primary, Decimal("1"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    reused_ret = create_return(
+        source=Sale.objects.get(pk=sale.pk), reason="Existing primary", by=env["admin"]
+    )
+    add_sale_line_return(
+        reused_ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=cells[2], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(reused_ret, by=env["admin"])
+
+    reused_legacy_line = _finalized_line(env, env["part"], "5")
+    reused_legacy = _flip(
+        create_stock_lot(reused_legacy_line, cells[3], Decimal("5"))
+    )
+    _age(reused_legacy, 3600)
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, reused_legacy, Decimal("1"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    reused_ret = create_return(
+        source=Sale.objects.get(pk=sale.pk), reason="Existing legacy", by=env["admin"]
+    )
+    add_sale_line_return(
+        reused_ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=cells[3], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(reused_ret, by=env["admin"])
+
+    # A pending supplier lot near a same-part transfer is not transfer evidence.
+    pending_line = _finalized_line(env, env["part"], "5")
+    pending = create_stock_lot(pending_line, cells[1], Decimal("2"))
+
     classified = [
         lot
         for line in BatchLine.objects.filter(pk__in=StockLot.objects.values("batch_line_id"))
@@ -155,8 +217,16 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     for lot in classified:
         by_class.setdefault(lot.provenance, set()).add(lot.lot_id)
     assert by_class[TRANSFER_DERIVED] == {
-        target.pk, moved.pk,
+        target.pk, moved.pk, broken_target.pk,
     }
+    assert by_class[RETURN_DERIVED] == {returned_lot.pk}
+    assert next(
+        row.provenance for row in classified if row.lot_id == reused_primary.pk
+    ) == PRIMARY_RECEIPT
+    assert next(
+        row.provenance for row in classified if row.lot_id == reused_legacy.pk
+    ) == LEGACY_PRIMARY
+    assert next(row.provenance for row in classified if row.lot_id == pending.pk) == PENDING_RECEIPT
     assert next(
         item.provenance for item in classified if item.lot_id == rebound_target.pk
     ) == UNKNOWN
@@ -165,6 +235,7 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     ) == UNKNOWN
 
     assert {row["lot_id"] for row in _run("transfer_evidence")} == by_class[TRANSFER_DERIVED]
+    assert {row["lot_id"] for row in _run("return_origin_evidence")} == by_class[RETURN_DERIVED]
     assert {row["lot_id"] for row in _run("reassigned_receipts")} == by_class[REASSIGNED]
     backfill = _run("old_backfill_receipts")
     assert [(row["lot_id"], row["lot_also_has_real_receipt"]) for row in backfill] == [

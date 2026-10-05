@@ -509,7 +509,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
                     unit_cost_rub=line.unit_cost_rub, restock_status=line.restock_status,
                     stock_lot=line.stock_lot if isinstance(source, RepairIssueLine) else None,
                     by=by, document_id=ret.pk, comment=f"Возврат {ret.number}",
-                    compensates=line,
+                    compensates=line, origin_return_line=line,
                 )
                 line.returned_lot = returned_lot
                 line.save(

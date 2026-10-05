@@ -340,20 +340,31 @@ def _receipt_paused_between_reads(receipt, writer):
     return outcome
 
 
-def test_single_attempt_negative_control_fails_closed_at_the_real_lot_read(
+def test_reread_bracket_negative_control_changes_the_sale_race_decision(
     line_8_of_10, public_catalog, monkeypatch
 ):
-    """Bypassing a retry after a forced between-read write cannot over-admit.
-
-    This is the negative control for the consistency bracket: the barrier is
-    at the real full StockLot row read; forcing one attempt must fail closed,
-    rather than classify the stale lot snapshot as supplier intake.
-    """
+    """The correct reread accepts exact remaining capacity; one stale attempt refuses."""
     from apps.inventory import lot_provenance
-    from apps.inventory.services import InventoryError, adjust_stock_lot_quantity
+    from apps.inventory.services import InventoryError
+    from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
+    from tests.customs_support import remember_customs
 
-    line, lot = _legacy_line(line_8_of_10, public_catalog)
+    remember_customs(line_8_of_10["line"].part_type)
     cell = line_8_of_10["cells"][2]
+    line, lot = _legacy_line(line_8_of_10, public_catalog)
+    sale = create_sale(customer_name="Клиент", by=public_catalog.user)
+    add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("100"))
+    correct = _receipt_paused_between_reads(
+        lambda: receive_stock_lot(create_stock_lot(line, cell, Decimal("4"))),
+        lambda: complete_sale(sale, by=public_catalog.user),
+    )
+    assert correct["writer"][0] == "ok", correct
+    assert correct["receipt"][0] == "ok", correct
+    assert remaining_qty(line) == Decimal("0")
+
+    line, lot = _legacy_line(line_8_of_10, public_catalog, cell_code="S09-D03-C09")
+    sale = create_sale(customer_name="Клиент", by=public_catalog.user)
+    add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("100"))
     original = lot_provenance.line_provenance_detail
 
     def one_attempt(target_line, **kwargs):
@@ -361,8 +372,8 @@ def test_single_attempt_negative_control_fails_closed_at_the_real_lot_read(
 
     monkeypatch.setattr(lot_provenance, "line_provenance_detail", one_attempt)
     outcome = _receipt_paused_between_reads(
-        lambda: receive_stock_lot(create_stock_lot(line, cell, Decimal("5"))),
-        lambda: adjust_stock_lot_quantity(lot, Decimal("-1"), comment="Сверка"),
+        lambda: receive_stock_lot(create_stock_lot(line, cell, Decimal("4"))),
+        lambda: complete_sale(sale, by=public_catalog.user),
     )
 
     assert outcome["writer"][0] == "ok", outcome
@@ -371,7 +382,7 @@ def test_single_attempt_negative_control_fails_closed_at_the_real_lot_read(
     assert not StockLot.objects.filter(batch_line=line, location=cell).exists()
 
 
-def _legacy_line(line_8_of_10, public_catalog):
+def _legacy_line(line_8_of_10, public_catalog, *, cell_code="S09-D03-C07"):
     """A second line whose only lot was received by the pre-108b5ad status flip:
     its intake is rebuilt from the ledger, so a half-seen sale would matter."""
     part = line_8_of_10["line"].part_type
@@ -384,7 +395,7 @@ def _legacy_line(line_8_of_10, public_catalog):
     finalize_cost(batch, public_catalog.user)
     line = BatchLine.objects.select_related("batch", "part_type").get(pk=line.pk)
     cell = StorageLocation.objects.create(
-        name="Cap 7", code="S09-D03-C07", storage_allowed=True, is_active=True
+        name="Cap legacy", code=cell_code, storage_allowed=True, is_active=True
     )
     lot = create_stock_lot(line, cell, Decimal("6"))
     StockLot.objects.filter(pk=lot.pk).update(status=StockLot.Status.AVAILABLE)

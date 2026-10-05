@@ -11,6 +11,8 @@ from decimal import Decimal
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.db import connection
+from django.db.models.deletion import ProtectedError
 
 from apps.inventory.lot_provenance import (
     FOUND_STOCK,
@@ -36,7 +38,12 @@ from apps.inventory.services import (
 )
 from apps.procurement.models import Batch, BatchLine
 from apps.returns.models import StockReturn, StockReturnLine
-from apps.returns.services import add_sale_line_return, complete_return, create_return
+from apps.returns.services import (
+    add_sale_line_return,
+    cancel_return,
+    complete_return,
+    create_return,
+)
 from apps.sales.models import Sale
 from apps.sales.services import (
     add_stock_lot_to_sale,
@@ -103,6 +110,26 @@ def _lot_at(line, cell):
     return StockLot.objects.get(batch_line=line, location=cell)
 
 
+def _corrupt_lot_for_adversarial_test(lot, **fields):
+    """Bypass the app guard only to model pre-existing/direct-DB corruption."""
+    columns = {
+        "origin_transfer": "origin_transfer_id",
+        "origin_return_line": "origin_return_line_id",
+        "note": "note",
+    }
+    if not fields or set(fields) - columns.keys():
+        raise AssertionError("Unexpected test-only corruption field")
+    assignments = ", ".join(
+        f"{connection.ops.quote_name(columns[name])} = %s" for name in fields
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"UPDATE {connection.ops.quote_name(StockLot._meta.db_table)} "
+            f"SET {assignments} WHERE id = %s",
+            [*fields.values(), lot.pk],
+        )
+
+
 # --- B. LEGACY_PRIMARY: true positives through every kind of later history ------------
 
 
@@ -113,6 +140,7 @@ def _legacy_line(env, quantity="6"):
 
 def test_legacy_survives_sale_return_cancellation_adjust_writeoff_and_moves(env):
     line, lot = _legacy_line(env)
+    _age(lot, 3600)
     sale = _sell(env, lot, "2")
     stock_return = create_return(source=sale, reason="Возврат", by=env["admin"])
     add_sale_line_return(
@@ -137,6 +165,156 @@ def test_legacy_survives_sale_return_cancellation_adjust_writeoff_and_moves(env)
 
     assert _cls(line, lot) == (LEGACY_PRIMARY, Decimal("6"))
     assert remaining_qty(line) == Decimal("4")
+
+
+def test_later_return_into_legacy_lot_does_not_reopen_supplier_receipt_capacity(env):
+    line = _finalized_line(env, env["part"], "16")
+    legacy = _flip(create_stock_lot(line, env["cells"][0], Decimal("6")))
+    _age(legacy, 3600)
+    receive_stock_lot(create_stock_lot(line, env["cells"][1], Decimal("10")))
+    assert remaining_qty(line) == Decimal("0")
+
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, legacy, Decimal("6"), unit_price=Decimal("100"))
+    complete_sale(sale, by=env["admin"])
+    ret = create_return(source=Sale.objects.get(pk=sale.pk), reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("6"),
+        to_location=env["cells"][0], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+
+    assert _cls(line, legacy) == (LEGACY_PRIMARY, Decimal("6"))
+    legacy.refresh_from_db()
+    assert legacy.origin_return_line_id is None
+    assert remaining_qty(line) == Decimal("0")
+    with pytest.raises(InventoryError):
+        receive_stock_lot(create_stock_lot(line, env["cells"][2], Decimal("6")))
+
+
+def test_later_return_does_not_change_primary_or_transfer_origin(env):
+    primary_line = _finalized_line(env, env["part"], "10")
+    primary = receive_stock_lot(
+        create_stock_lot(primary_line, env["cells"][0], Decimal("10"))
+    )
+    sale = _sell(env, primary, "2")
+    ret = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=env["cells"][0], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+    assert _cls(primary_line, primary) == (PRIMARY_RECEIPT, Decimal("10"))
+    primary.refresh_from_db()
+    assert primary.origin_return_line_id is None
+
+    transfer_line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(transfer_line, env["cells"][2], Decimal("10")))
+    _transfer(env, "4", env["cells"][2], env["cells"][3], "round4-return-transfer")
+    target = _lot_at(transfer_line, env["cells"][3])
+    sale = _sell(env, target, "1")
+    ret = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=env["cells"][3], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+    target.refresh_from_db()
+    assert target.origin_return_line_id is None
+    assert _cls(transfer_line, target) == (TRANSFER_DERIVED, Decimal("0"))
+
+
+def test_return_created_origin_survives_later_adjustment(env):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    sale = _sell(env, source, "2")
+    ret = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=env["cells"][1], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+    returned = ret.lines.get().returned_lot
+    adjust_stock_lot_quantity(returned, Decimal("1"), comment="Сверка +")
+    _transfer(env, "1", env["cells"][1], env["cells"][2], "round4-return-onward")
+
+    assert returned.origin_return_line_id == ret.lines.get().pk
+    assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
+    returned.origin_return_line_id = None
+    with pytest.raises(ValidationError):
+        returned.save(update_fields=["origin_return_line"])
+
+
+def test_historical_return_origin_requires_linked_first_exact_movement(env):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    sale = _sell(env, source, "2")
+    ret = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=env["cells"][1], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+    returned = ret.lines.get().returned_lot
+    _corrupt_lot_for_adversarial_test(returned, origin_return_line=None)
+
+    assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
+
+
+def test_cancelling_return_does_not_rewrite_return_created_lot_origin(env):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    sale = _sell(env, source, "2")
+    ret = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=env["cells"][1], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+    returned = ret.lines.get().returned_lot
+
+    cancel_return(ret, by=env["admin"], reason="Ошибка оформления")
+
+    returned.refresh_from_db()
+    assert returned.quantity == Decimal("0")
+    assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
+
+
+def test_sale_cancellation_restores_sold_out_legacy_lot_origin_and_capacity(env):
+    line, lot = _legacy_line(env)
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, lot, Decimal("6"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+
+    cancel_sale(sale, reason="Проверка", author="Денис", by=env["admin"])
+
+    lot.refresh_from_db()
+    assert lot.quantity == Decimal("6")
+    assert _cls(line, lot) == (LEGACY_PRIMARY, Decimal("6"))
+    assert remaining_qty(line) == Decimal("4")
+
+
+def test_completed_transfer_record_cannot_be_deleted_without_origin_fk(env):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "1", env["cells"][0], env["cells"][1], "round4-delete")
+    target = _lot_at(line, env["cells"][1])
+    _corrupt_lot_for_adversarial_test(target, origin_transfer=None)
+    with pytest.raises(ProtectedError):
+        transfer.delete()
+    with pytest.raises(ProtectedError):
+        StockTransfer.objects.filter(pk=transfer.pk).delete()
+    assert StockTransfer.objects.filter(pk=transfer.pk).exists()
+
+
+def test_origin_transfer_cannot_be_repointed_through_model_save(env):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    _transfer(env, "1", env["cells"][0], env["cells"][1], "round4-immutable")
+    target = _lot_at(line, env["cells"][1])
+    target.origin_transfer_id = None
+    with pytest.raises(ValidationError):
+        target.save(update_fields=["origin_transfer"])
 
 
 def test_received_sale_lot_reset_to_receiving_does_not_reopen_capacity(env):
@@ -471,12 +649,12 @@ def test_damaged_transfer_evidence_never_upgrades_target_to_legacy(env, damage):
             document_type="",
             document_id=None,
         )
-        StockLot.objects.filter(pk=target.pk).update(origin_transfer=None)
-        StockTransfer.objects.filter(pk=transfer.pk).delete()
+        _corrupt_lot_for_adversarial_test(target, origin_transfer=None)
+        StockTransfer.objects.filter(pk=transfer.pk)._raw_delete(using="default")
     else:
         StockMovement.objects.filter(pk=move.pk).delete()
-        StockLot.objects.filter(pk=target.pk).update(origin_transfer=None)
-        StockTransfer.objects.filter(pk=transfer.pk).delete()
+        _corrupt_lot_for_adversarial_test(target, origin_transfer=None)
+        StockTransfer.objects.filter(pk=transfer.pk)._raw_delete(using="default")
 
     expected = TRANSFER_DERIVED if damage in {"target_clock", "document_clock"} else UNKNOWN
     assert _cls(line, target)[0] == expected
@@ -496,7 +674,7 @@ def test_historical_unlinked_transfer_outside_clock_window_fails_closed(env):
     # Simulate a historical row without the new direct FK and a damaged clock
     # ordering that would make the old initial-quantity reconstruction look
     # like a supplier lot. The transfer-shaped movement must block that fallback.
-    StockLot.objects.filter(pk=target.pk).update(origin_transfer=None, note="")
+    _corrupt_lot_for_adversarial_test(target, origin_transfer=None, note="")
     StockTransfer.objects.filter(pk=transfer.pk).update(
         created_at=target.created_at + timedelta(seconds=3)
     )
@@ -571,17 +749,18 @@ def test_damaged_return_evidence_never_upgrades_target_to_legacy(env, damage):
 
     if damage == "missing_move":
         StockMovement.objects.filter(pk=movement.pk).delete()
-        expected = RETURN_DERIVED  # completed return line still points to this lot
+        expected = UNKNOWN  # origin relation without its required ledger proof fails closed
     elif damage == "retyped_move":
         StockMovement.objects.filter(pk=movement.pk).update(
             movement_type=StockMovement.MovementType.MOVE_LOT,
             document_type="",
             document_id=None,
         )
-        expected = RETURN_DERIVED
+        expected = UNKNOWN
     elif damage == "missing_document":
+        _corrupt_lot_for_adversarial_test(target, origin_return_line=None)
         StockReturn.objects.filter(pk=stock_return.pk).delete()
-        expected = RETURN_DERIVED  # the surviving typed movement proves the inflow
+        expected = RETURN_DERIVED  # exact first typed movement remains as origin evidence
     else:
         StockReturnLine.objects.filter(pk=return_line.pk).update(batch_line=source.batch_line)
         StockReturnLine.objects.filter(pk=return_line.pk).update(quantity=Decimal("1"))

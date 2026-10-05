@@ -61,6 +61,7 @@ class StockLotAdmin(admin.ModelAdmin):
     # create an invalid piece balance, so the lot's identity is read-only too.
     readonly_fields = (
         "initial_quantity", "landed_unit_cost_rub", "batch", "origin_transfer",
+        "origin_return_line",
         "quantity", "status", "location", "part_type", "batch_line",
     )
 

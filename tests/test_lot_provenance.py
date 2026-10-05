@@ -131,6 +131,7 @@ def test_return_recount_and_found_lots_are_classified_by_their_movements(env):
     classes = _classes(line)
     returned = StockLot.objects.get(batch_line=line, location=env["cells"][1])
     assert classes[returned.pk] == (RETURN_DERIVED, Decimal("0"))
+    assert returned.origin_return_line_id == stock_return.lines.get().pk
     assert classes[recount.pk] == (RECOUNT_DERIVED, Decimal("0"))
     assert remaining_qty(line) == Decimal("0")
 

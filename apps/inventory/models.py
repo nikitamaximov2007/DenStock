@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
+from django.db.models.deletion import ProtectedError
 
 from apps.core.models import BaseImage
 from apps.procurement.models import money
@@ -317,6 +318,13 @@ class FoundStockPosting(models.Model):
         return f"{self.location.code}: {self.quantity} шт."
 
 
+class StockTransferQuerySet(models.QuerySet):
+    def delete(self):
+        if self.filter(target_lots__isnull=True).exists():
+            raise ProtectedError("Исторические перемещения нельзя удалять.", list(self))
+        return super().delete()
+
+
 class StockTransfer(models.Model):
     """One atomic warehouse transfer initiated by the movement scanner.
 
@@ -375,6 +383,8 @@ class StockTransfer(models.Model):
     )
     created_at = models.DateTimeField("Проведено", auto_now_add=True, db_index=True)
 
+    objects = StockTransferQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Перемещение склада"
         verbose_name_plural = "Перемещения склада"
@@ -394,6 +404,11 @@ class StockTransfer(models.Model):
             f"{self.part_number} x {self.quantity}: "
             f"{self.from_location_code} -> {self.to_location_code}"
         )
+
+    def delete(self, *args, **kwargs):
+        if not self.target_lots.exists():
+            raise ProtectedError("Исторические перемещения нельзя удалять.", [self])
+        return super().delete(*args, **kwargs)
 
 
 class StockLocationLock(models.Model):
@@ -425,6 +440,22 @@ class StockLocationLock(models.Model):
 
     def __str__(self) -> str:
         return f"{self.location.code}: пересчёт {self.section_code} #{self.document_id}"
+
+
+class StockLotQuerySet(models.QuerySet):
+    _origin_fields = {
+        "origin_transfer", "origin_transfer_id", "origin_return_line", "origin_return_line_id",
+    }
+
+    def update(self, **kwargs):
+        if self._origin_fields.intersection(kwargs):
+            raise ValidationError("Происхождение созданного складского лота неизменяемо.")
+        return super().update(**kwargs)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        if self._origin_fields.intersection(fields):
+            raise ValidationError("Происхождение созданного складского лота неизменяемо.")
+        return super().bulk_update(objs, fields, batch_size=batch_size)
 
 
 class StockBalance(models.Model):
@@ -572,6 +603,15 @@ class StockLot(models.Model):
         editable=False,
         related_name="target_lots",
     )
+    origin_return_line = models.ForeignKey(
+        "returns.StockReturnLine",
+        verbose_name="Строка возврата, создавшая лот",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name="origin_lots",
+    )
     location = models.ForeignKey(
         "warehouse.StorageLocation", verbose_name="Место",
         on_delete=models.PROTECT, related_name="stock_lots",
@@ -595,6 +635,8 @@ class StockLot(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    objects = StockLotQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Складской лот"
         verbose_name_plural = "Складские лоты"
@@ -615,6 +657,18 @@ class StockLot(models.Model):
 
     def __str__(self) -> str:
         return f"{self.part_type} × {self.quantity} @ {self.location.code}"
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values(
+                "origin_transfer_id", "origin_return_line_id"
+            ).first()
+            if previous and (
+                previous["origin_transfer_id"] != self.origin_transfer_id
+                or previous["origin_return_line_id"] != self.origin_return_line_id
+            ):
+                raise ValidationError("Происхождение созданного складского лота неизменяемо.")
+        super().save(*args, **kwargs)
 
     @property
     def effective_customer_price(self):

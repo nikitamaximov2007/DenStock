@@ -644,10 +644,11 @@ def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
                 (
                     "returns",
                     "0004_stockreturn_cancel_reason_stockreturn_canceled_at_and_more",
-                ),
-                ("actions", "0008_warehouseaction_request_token"),
-            ]
-        )
+                    ),
+                    ("actions", "0008_warehouseaction_request_token"),
+                    ("inventory", "0017_stocklot_origin_return_line"),
+                ]
+            )
         ret = StockReturn.objects.get(pk=ret_id)
         line = StockReturnLine.objects.get(pk=line_id)
         assert ret.status == StockReturn.Status.DRAFT

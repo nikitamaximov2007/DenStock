@@ -1714,7 +1714,7 @@ def return_part_item(item, to_location, *, restock_status, by=None,
 def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_rub,
                               restock_status, stock_lot=None, by=None, document_id=None,
                               document_type="stock_return", comment="",
-                              compensates=None) -> StockLot:
+                              compensates=None, origin_return_line=None) -> StockLot:
     """Вернуть количество в лот ячейки `to_location` по правилу «найти/оживить/
     создать» под UniqueConstraint(batch_line, location):
 
@@ -1752,6 +1752,7 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
             part_type=batch_line.part_type, batch=batch_line.batch, batch_line=batch_line,
             location=to_location, quantity=quantity, initial_quantity=quantity,
             landed_unit_cost_rub=unit_cost_rub, status=restock_status,
+            origin_return_line=origin_return_line,
         )
     else:
         if lot.status == StockLot.Status.DEPLETED or lot.status == restock_status:

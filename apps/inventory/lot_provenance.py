@@ -133,36 +133,31 @@ def _reconstructed_start(lot, own, line_movements, timeline) -> Decimal:
 
 
 def _transfer_candidates(lot, own, nearby_moves, nearby_transfers, transfers):
-    """Find secondary-origin evidence around lot creation, not just healthy moves."""
+    """Find transfer evidence tied to this exact lot identity near its creation."""
+    if lot.status == StockLot.Status.RECEIVING:
+        return []
     original_location = _location_timeline(lot, own)[0][1]
     possible = []
     represented_transfers = set()
     for movement in nearby_moves:
-        if movement.stock_lot_id == lot.pk or not _same_transaction(
-            movement.created_at, lot.created_at
-        ):
+        if movement.stock_lot_id == lot.pk:
             continue
         transfer = transfers.get(movement.document_id) if movement.document_id else None
-        if movement.created_at < lot.created_at:
-            continue
-        if transfer is not None and transfer.created_at > lot.created_at:
-            continue
-        if movement.document_type == TRANSFER_DOC or (
+        exact_identity = (
             movement.movement_type == M.MOVE_LOT
+            and movement.document_type == TRANSFER_DOC
+            and movement.batch_id == lot.batch_id
+            and movement.batch_line_id == lot.batch_line_id
+            and movement.part_type_id == lot.part_type_id
             and movement.to_location_id == original_location
-        ):
-            possible.append((movement, transfer, original_location))
-            if transfer is not None:
-                represented_transfers.add(transfer.pk)
-    for transfer in nearby_transfers:
-        if (
-            transfer.pk not in represented_transfers
-            and transfer.to_location_id == original_location
+            and movement.quantity == lot.initial_quantity
+            and transfer is not None
             and transfer.part_type_id == lot.part_type_id
-            and transfer.created_at <= lot.created_at
-            and _same_transaction(transfer.created_at, lot.created_at)
-        ):
-            possible.append((None, transfer, original_location))
+            and transfer.to_location_id == original_location
+        )
+        if exact_identity and _same_transaction(movement.created_at, lot.created_at):
+            possible.append((movement, transfer, original_location))
+            represented_transfers.add(transfer.pk)
     return possible
 
 
@@ -209,55 +204,84 @@ def _transfer_is_consistent(
     return True
 
 
-def _valid_return_document(lot, rows, own):
-    """Recognize a return from its immutable document-to-target-lot relation."""
-    if not rows:
-        return False
+def _return_origin_matches(lot, row, own, *, explicit):
+    """Validate a return as the lot's creation event, not merely later inflow."""
     original_location = _location_timeline(lot, own)[0][1]
-    for row in rows:
-        ret = row.stock_return
-        linked_movements = [
-            movement for movement in own
-            if movement.movement_type == M.RETURN_LOT
-            and movement.document_type == "stock_return"
-            and movement.document_id == ret.pk
-        ]
-        # A document FK can prove a damaged/missing ledger row only if the
-        # surviving document agrees with the lot's original quantity. If a
-        # surviving ledger row for this document contradicts it, fail closed.
-        if linked_movements and (
-            len(linked_movements) != 1
-            or linked_movements[0].quantity != row.quantity
-            or linked_movements[0].batch_id != row.batch_id
-            or linked_movements[0].batch_line_id != row.batch_line_id
-            or linked_movements[0].part_type_id != row.part_type_id
-            or linked_movements[0].to_location_id != row.to_location_id
-        ):
-            continue
-        if not (
-            ret.status == ret.Status.COMPLETED
-            and row.batch_id == lot.batch_id
-            and row.batch_line_id == lot.batch_line_id
-            and row.part_type_id == lot.part_type_id
-            and row.to_location_id == original_location
-            and row.quantity == lot.initial_quantity
-        ):
-            continue
-        movements = [
-            movement for movement in own
-            if movement.movement_type == M.RETURN_LOT
-            and movement.document_type == "stock_return"
-            and movement.document_id == ret.pk
+    ret = row.stock_return
+    if not (
+        row.returned_lot_id == lot.pk
+        and ret.status in (ret.Status.COMPLETED, ret.Status.CANCELED)
+        and ret.completed_at is not None
+        and row.batch_id == lot.batch_id
+        and row.batch_line_id == lot.batch_line_id
+        and row.part_type_id == lot.part_type_id
+        and row.to_location_id == original_location
+        and row.quantity == lot.initial_quantity
+    ):
+        return False
+    linked = [
+        movement for movement in own
+        if movement.document_type == "stock_return"
+        and movement.document_id == ret.pk
+    ]
+    matching = [
+        movement for movement in linked
+        if (
+            movement.movement_type == M.RETURN_LOT
             and movement.batch_id == row.batch_id
             and movement.batch_line_id == row.batch_line_id
             and movement.part_type_id == row.part_type_id
             and movement.to_location_id == row.to_location_id
             and movement.quantity == row.quantity
+        )
+    ]
+    if explicit:
+        return bool(matching)
+    return bool(
+        len(matching) == 1
+        and own
+        and own[0].pk == matching[0].pk
+        and _same_transaction(matching[0].created_at, lot.created_at)
+    )
+
+
+def _return_origin_state(lot, rows, own):
+    """Return True for proven creation, False for no origin evidence, None if damaged."""
+    explicit_id = getattr(lot, "origin_return_line_id", None)
+    if explicit_id:
+        row = next((item for item in rows if item.pk == explicit_id), None)
+        return bool(row and _return_origin_matches(lot, row, own, explicit=True))
+    creation_time_rows = [
+        row for row in rows
+        if row.returned_lot_id == lot.pk
+        and _same_transaction(row.created_at, lot.created_at)
+    ]
+    candidates = [
+        row for row in creation_time_rows
+        if _return_origin_matches(lot, row, own, explicit=False)
+    ]
+    if len(candidates) == 1:
+        return True
+    if not rows:
+        original_location = _location_timeline(lot, own)[0][1]
+        movement_only = [
+            movement for movement in own
+            if movement.movement_type == M.RETURN_LOT
+            and movement.document_type == "stock_return"
+            and movement.document_id is not None
+            and movement.batch_id == lot.batch_id
+            and movement.batch_line_id == lot.batch_line_id
+            and movement.part_type_id == lot.part_type_id
+            and movement.to_location_id == original_location
+            and movement.quantity == lot.initial_quantity
+            and own
+            and own[0].pk == movement.pk
+            and _same_transaction(movement.created_at, lot.created_at)
         ]
-        # The completed return line's returned_lot FK is authoritative even
-        # when its append-only ledger row is damaged or missing.
-        if movements or row.returned_lot_id == lot.pk:
+        if len(movement_only) == 1:
             return True
+    if creation_time_rows:
+        return None
     return False
 
 
@@ -323,38 +347,29 @@ def classify_lot(
             return result(TRANSFER_DERIVED, Decimal("0"), f"перемещение #{transfer_id}")
         return result(UNKNOWN, None, "связь лота с документом перемещения повреждена")
 
-    initial_return_rows = [row for row in return_rows if row.quantity == lot.initial_quantity]
-    initial_return_moves = [
-        movement for movement in own
-        if movement.movement_type == M.RETURN_LOT
-        and movement.quantity == lot.initial_quantity
-    ]
-    initial_return_ids = {movement.document_id for movement in initial_return_moves}
-    contradictory_return_rows = [
-        row for row in return_rows
-        if row.stock_return_id in initial_return_ids and row.quantity != lot.initial_quantity
-    ]
-    if contradictory_return_rows:
-        return result(UNKNOWN, None, "документ возврата противоречит движению")
-    if initial_return_rows or initial_return_moves:
-        if _valid_return_document(lot, initial_return_rows, own):
-            return result(RETURN_DERIVED, Decimal("0"), "завершённый возврат связан с лотом")
-        if initial_return_rows:
-            return result(UNKNOWN, None, "документ возврата противоречит лоту")
-        original_location = _location_timeline(lot, own)[0][1]
-        valid_return_move = any(
-            m.document_type == "stock_return"
-            and m.document_id is not None
-            and m.batch_id == lot.batch_id
-            and m.batch_line_id == lot.batch_line_id
-            and m.part_type_id == lot.part_type_id
-            and m.to_location_id == original_location
-            and m.quantity == lot.initial_quantity
-            for m in initial_return_moves
+    return_origin = _return_origin_state(lot, return_rows, own)
+    if return_origin is True:
+        return result(RETURN_DERIVED, Decimal("0"), "строка возврата создала лот")
+    if return_origin is None or getattr(lot, "origin_return_line_id", None):
+        return result(UNKNOWN, None, "свидетельство происхождения возврата повреждено")
+    old_backfill = any(
+        movement.movement_type == M.RECEIVE_LOT
+        and movement.comment == OLD_BACKFILL_COMMENT
+        and not movement.document_type
+        for movement in own
+    )
+    if lot.status == StockLot.Status.RECEIVING:
+        non_backfill_history = any(
+            not (
+                movement.movement_type == M.RECEIVE_LOT
+                and movement.comment == OLD_BACKFILL_COMMENT
+                and not movement.document_type
+            )
+            for movement in own
         )
-        if valid_return_move:
-            return result(RETURN_DERIVED, Decimal("0"), "движение подтверждает возврат")
-        return result(UNKNOWN, None, "движение возврата не подтверждает происхождение лота")
+        if non_backfill_history:
+            return result(UNKNOWN, None, "статус приёмки противоречит журналу движений")
+        return result(PENDING_RECEIPT, lot.quantity, "лот на приёмке без истории приёмки")
     candidates = _transfer_candidates(
         lot, own, nearby_moves, nearby_transfers, transfers
     )
@@ -402,13 +417,6 @@ def classify_lot(
             "есть перемещение подходящего количества, но его связь с созданием лота не доказана",
         )
     first = own[0] if own else None
-    if (
-        first is not None
-        and first.movement_type == M.RETURN_LOT
-        and first.quantity == lot.initial_quantity
-        and _same_transaction(first.created_at, lot.created_at)
-    ):
-        return result(RETURN_DERIVED, Decimal("0"), f"возврат: движение #{first.pk}")
     if lot.initial_quantity == 0 and first is not None and first.movement_type == M.ADJUST_IN:
         if first.document_type == "section_recount":
             return result(RECOUNT_DERIVED, Decimal("0"), f"пересчёт #{first.document_id}")
@@ -419,24 +427,6 @@ def classify_lot(
                 FOUND_STOCK, lot.batch_line.quantity,
                 f"найденные детали: строка {lot.batch_line_id}",
             )
-    old_backfill = any(
-        movement.movement_type == M.RECEIVE_LOT
-        and movement.comment == OLD_BACKFILL_COMMENT
-        and not movement.document_type
-        for movement in own
-    )
-    if lot.status == StockLot.Status.RECEIVING:
-        non_backfill_history = any(
-            not (
-                movement.movement_type == M.RECEIVE_LOT
-                and movement.comment == OLD_BACKFILL_COMMENT
-                and not movement.document_type
-            )
-            for movement in own
-        )
-        if non_backfill_history:
-            return result(UNKNOWN, None, "статус приёмки противоречит журналу движений")
-        return result(PENDING_RECEIPT, lot.quantity, "лот на приёмке без истории приёмки")
     if old_backfill:
         return result(UNKNOWN, None, "открывающая запись журнала не доказывает приёмку")
     if lot.initial_quantity > 0:
@@ -485,7 +475,7 @@ def _read_line(line, exclude_lot):
     lots = list(
         StockLot.objects.filter(batch_line=line)
         .exclude(pk=getattr(exclude_lot, "pk", None))
-        .select_related("batch_line", "origin_transfer")
+        .select_related("batch_line", "origin_transfer", "origin_return_line")
     )
     lot_ids = [lot.pk for lot in lots]
     movements = list(
@@ -511,7 +501,7 @@ def _lot_signature(lot):
     return (
         lot.pk, lot.batch_id, lot.batch_line_id, lot.part_type_id, lot.location_id,
         lot.quantity, lot.initial_quantity, lot.status, lot.created_at,
-        lot.origin_transfer_id,
+        lot.origin_transfer_id, lot.origin_return_line_id,
     )
 
 
@@ -561,16 +551,18 @@ def _nearby_transfer_documents(lots, own):
 
 
 def _possible_unanchored_transfer_lots(lots, own):
-    """Find transfer-shaped intake evidence without relying on event clocks.
+    """Find transfer evidence that predates a lot with the exact target identity.
 
-    For historical lots without the direct origin FK, an exact same-line,
-    same-batch, same-part, same-cell transfer portion equal to initial
-    quantity is ambiguous if its creation-time bracket is gone. It must not
-    fall through to LEGACY_PRIMARY.
+    A transfer written before a lot exists cannot be a later inflow to it. Since
+    the physical key is (BatchLine, cell), the same exact destination identity
+    is strong contradictory evidence even when clocks were shifted by more
+    than the normal transaction window. Transfers after lot creation are flows.
     """
     query = Q(pk__in=[])
     lot_by_key = {}
     for lot in lots:
+        if lot.status == StockLot.Status.RECEIVING:
+            continue
         location_id = _location_timeline(lot, own.get(lot.pk, []))[0][1]
         key = (
             lot.batch_id, lot.batch_line_id, lot.part_type_id, location_id,
@@ -582,16 +574,19 @@ def _possible_unanchored_transfer_lots(lots, own):
             document_type=TRANSFER_DOC, quantity=key[4],
         )
         lot_by_key.setdefault(key, []).append(lot)
-    matching = StockMovement.objects.filter(query).values_list(
-        "batch_id", "batch_line_id", "part_type_id", "to_location_id", "quantity"
-    ).distinct()
-    matching_keys = set(matching)
+    matching = list(StockMovement.objects.filter(query).values_list(
+        "batch_id", "batch_line_id", "part_type_id", "to_location_id", "quantity", "created_at"
+    ))
     return {
         lot.pk
         for key, group in lot_by_key.items()
-        if key in matching_keys
         for lot in group
-        if not lot.origin_transfer_id and not _has_transfer_note(lot)
+        if not lot.origin_transfer_id
+        and not _has_transfer_note(lot)
+        and any(
+            row[:5] == key and row[5] < lot.created_at
+            for row in matching
+        )
     }
 
 
@@ -615,6 +610,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
             lot_query.order_by("pk").values_list(
                 "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
                 "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
+                "origin_return_line_id",
             )
         )
         line_movement_query = StockMovement.objects.filter(batch_line=line)
@@ -627,6 +623,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
             lot_query.order_by("pk").values_list(
                 "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
                 "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
+                "origin_return_line_id",
             )
         )
         after = _movement_snapshot(line_movement_query)
