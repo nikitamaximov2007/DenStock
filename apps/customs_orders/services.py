@@ -43,7 +43,12 @@ def line_rub(row, rate):
 def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
     """One row per stable source, with membership excluded in SQL when requested."""
     from apps.actions.customs_history import canonical_customs_lines, line_chronological_key
-    from apps.actions.services import CUSTOMS_ANALOG, _customs_rows_from_lines, customs_group
+    from apps.actions.services import (
+        CUSTOMS_ANALOG,
+        _customs_rows_from_lines,
+        customs_group,
+        imported_part_ids,
+    )
     from apps.ordered_parts.customs import ordered_parts_customs_lines
 
     filters = dict(filters or {})
@@ -59,6 +64,7 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
     profiles = {
         row["source_key"]: row for row in _customs_rows_from_lines(lines)
     }
+    imported = imported_part_ids(line["part_id"] for line in lines)
     result = []
     for line in lines:
         marker = (line["kind"], line["line_id"])
@@ -82,7 +88,9 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
         # история заказа не переписывается сменой производителя.
         is_analog = (
             member.is_analog if member is not None
-            else customs_group(row.get("manufacturer")) == CUSTOMS_ANALOG
+            else customs_group(
+                row.get("manufacturer"), imported=line["part_id"] in imported
+            ) == CUSTOMS_ANALOG
         )
         row.update(
             source=marker[0], source_id=marker[1], occurred_at=line["occurred_at"],
@@ -101,8 +109,9 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
 def eligible_customs_sources(order_type=CustomsOrder.OrderType.ORIGINAL) -> list[dict]:
     """Unassigned source queue of exactly one customs group.
 
-    «Отправить в заказ оригинал» берёт BRP и PROX, «... аналоги» - всё
-    остальное (BRONCO, другие бренды, ручные детали, пустой производитель).
+    «Отправить в заказ оригинал» берёт импортированные BRP и PROX, «... аналоги» -
+    всё остальное (ручные детали всегда, BRONCO, другие бренды, пустой
+    производитель).
     Группа - apps.actions.services.customs_group, тот же классификатор, что
     делит «Экспорт в Excel оригинал/аналоги», поэтому набор строк заказа и
     выгрузки одной группы совпадает.

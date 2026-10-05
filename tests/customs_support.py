@@ -92,3 +92,50 @@ def legacy_customs_completion(*parts):
                 rows.update(gross_weight_kg=gross, net_weight_kg=net, application_area=area)
             else:
                 rows.delete()
+
+
+def link_brp_catalog(part, number=None):
+    """Связать готовую карточку с позицией BRP-каталога, как это делает импорт.
+
+    Для таможни ручная деталь - всегда аналог; оригиналом может быть только
+    импортированная. Происхождение «импорт» - запись ``BrpPartLink``, которую
+    в рабочем коде создаёт только ``apps.brp.services.promote_to_warehouse``.
+    Тесты, которым нужна оригинальная BRP-деталь на собственной карточке,
+    ставят ту же связь здесь.
+    """
+    from apps.brp.models import BrpCatalogPart, BrpPartLink
+
+    if number is None:
+        primary = part.numbers.order_by("-is_primary", "pk").first()
+        number = primary.value if primary else f"BRP-{part.pk}"
+    brp_part, _ = BrpCatalogPart.objects.get_or_create(
+        material_no=number, defaults={"part_desc": part.name[:200]},
+    )
+    BrpPartLink.objects.create(
+        part=part, brp_part=brp_part,
+        usd_rate_used=Decimal("100"), markup_percent_used=Decimal("0"),
+    )
+    return part
+
+
+def link_aftermarket_catalog(part, manufacturer_name, number=None):
+    """Связать карточку с записью каталога аналогов (PROX, BRONCO, ...).
+
+    То же происхождение, что оставляет импорт
+    ``apps.catalog_import.aftermarket_catalog.apply_file``: запись
+    ``AftermarketCatalogPart`` с производителем каталога.
+    """
+    from apps.catalog.models import Manufacturer, normalize_number
+    from apps.catalog_import.models import AftermarketCatalogPart
+
+    if number is None:
+        primary = part.numbers.order_by("-is_primary", "pk").first()
+        number = primary.value if primary else f"AM-{part.pk}"
+    manufacturer, _ = Manufacturer.objects.get_or_create(name=manufacturer_name)
+    AftermarketCatalogPart.objects.create(
+        source=AftermarketCatalogPart.SOURCE_DEALER_2023, part=part,
+        manufacturer=manufacturer, manufacturer_number=number,
+        normalized_manufacturer_number=normalize_number(number),
+        source_description=part.name[:200],
+    )
+    return part

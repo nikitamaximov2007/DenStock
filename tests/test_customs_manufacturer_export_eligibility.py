@@ -42,7 +42,7 @@ from apps.actions.services import (
 )
 from apps.brp.models import BrpCatalogPart
 from apps.brp.services import promote_to_warehouse
-from apps.catalog.models import Category, PartNumber, PartType, Unit
+from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
 from apps.catalog.services import create_manual_part
 from apps.customs_orders.models import CustomsOrder
 from apps.customs_orders.services import customs_sources, eligible_customs_sources
@@ -54,7 +54,11 @@ from apps.repairs.models import RepairOrder
 from apps.sales.models import Sale
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
-from tests.customs_support import legacy_customs_completion
+from tests.customs_support import (
+    legacy_customs_completion,
+    link_aftermarket_catalog,
+    link_brp_catalog,
+)
 
 PASSWORD = "parol-12345"
 ApplicationArea = PartCustomsInfo.ApplicationArea
@@ -115,6 +119,19 @@ def _catalog_part(env, *, name, article):
     PartNumber.objects.create(part=part, value=article, kind=PartNumber.Kind.OEM, is_primary=True)
     _receive(env, part)
     return part
+
+
+def _imported_part(env, *, name, article, manufacturer_name):
+    """Деталь, пришедшая импортом каталога: для таможни только такая может
+    быть оригиналом. BRP - связь с BRP-каталогом, остальные бренды (PROX,
+    BRONCO, ...) - запись каталога аналогов, как после импорта прайса."""
+    part = _catalog_part(env, name=name, article=article)
+    manufacturer, _ = Manufacturer.objects.get_or_create(name=manufacturer_name)
+    part.manufacturer = manufacturer
+    part.save(update_fields=["manufacturer"])
+    if manufacturer_name == "BRP":
+        return link_brp_catalog(part, article)
+    return link_aftermarket_catalog(part, manufacturer_name, article)
 
 
 def _declare_customs(part, *, by):
@@ -223,13 +240,13 @@ def test_unknown_manual_part_is_excluded_from_brp_export(env):
 
 def test_brp_and_pro_x_are_eligible_bronco_spi_motul_are_not(env):
     parts = {
-        "BRP": _manual_part(env, name="BRP ДЕТАЛЬ", article="A-BRP", manufacturer_name="BRP"),
-        "PROX": _manual_part(env, name="PROX ДЕТАЛЬ", article="A-PROX", manufacturer_name="PROX"),
-        "BRONCO": _manual_part(
+        "BRP": _imported_part(env, name="BRP ДЕТАЛЬ", article="A-BRP", manufacturer_name="BRP"),
+        "PROX": _imported_part(env, name="PROX ДЕТАЛЬ", article="A-PROX", manufacturer_name="PROX"),
+        "BRONCO": _imported_part(
             env, name="BRONCO ДЕТАЛЬ", article="A-BRONCO", manufacturer_name="BRONCO"
         ),
-        "SPI": _manual_part(env, name="SPI ДЕТАЛЬ", article="A-SPI", manufacturer_name="SPI"),
-        "MOTUL": _manual_part(
+        "SPI": _imported_part(env, name="SPI ДЕТАЛЬ", article="A-SPI", manufacturer_name="SPI"),
+        "MOTUL": _imported_part(
             env, name="MOTUL ДЕТАЛЬ", article="A-MOTUL", manufacturer_name="MOTUL"
         ),
     }
@@ -239,13 +256,27 @@ def test_brp_and_pro_x_are_eligible_bronco_spi_motul_are_not(env):
         _declare_customs(part, by=env["admin"])
         _sell(env, part, number=article)
 
+    # Ручная деталь - всегда аналог, даже с производителем BRP или PROX.
+    for article, brand in (("M-BRP", "BRP"), ("M-PROX", "PROX")):
+        manual = _manual_part(
+            env, name=f"РУЧНАЯ {brand}", article=article, manufacturer_name=brand,
+        )
+        _declare_customs(manual, by=env["admin"])
+        _sell(env, manual, number=article)
+
     eligible_articles = {row["number"] for row in eligible_customs_sources()}
     assert eligible_articles == {"A-BRP", "A-PROX"}
+    analog_articles = {
+        row["number"] for row in eligible_customs_sources(CustomsOrder.OrderType.ANALOG)
+    }
+    assert analog_articles == {"A-BRONCO", "A-SPI", "A-MOTUL", "M-BRP", "M-PROX"}
 
     all_history_articles = {row["number"] for row in customs_sources()}
     # «История» показывает всё - допуск к отправке не то же самое, что
     # видимость очереди.
-    assert all_history_articles == {"A-BRP", "A-PROX", "A-BRONCO", "A-SPI", "A-MOTUL"}
+    assert all_history_articles == {
+        "A-BRP", "A-PROX", "A-BRONCO", "A-SPI", "A-MOTUL", "M-BRP", "M-PROX",
+    }
 
 
 # --- ORDERING: 1-5, включая фикстуру из раздела 11 задания -------------------
@@ -270,7 +301,9 @@ def test_excel_export_is_chronological_not_alphabetical(env):
     at_08776 = _manual_part(
         env, name="BRONCO TIE ТЯГА END", article="AT-08776", manufacturer_name="BRONCO",
     )
-    roller = _manual_part(env, name="РОЛИК ШКИВА", article="AA-ROLLER", manufacturer_name="BRP")
+    roller = _imported_part(
+        env, name="РОЛИК ШКИВА", article="AA-ROLLER", manufacturer_name="BRP",
+    )
     for part in (at_08776, roller):
         _declare_customs(part, by=env["admin"])
     _sell(env, at_08776, number="AT-08776", at=_at(10, 15))
@@ -287,10 +320,10 @@ def test_excel_export_is_chronological_not_alphabetical(env):
 
 
 def test_repeated_article_operations_preserve_chronology_and_are_not_deduplicated(env):
-    part = _manual_part(env, name="ПОВТОР", article="REPEAT-1", manufacturer_name="BRP")
+    part = _imported_part(env, name="ПОВТОР", article="REPEAT-1", manufacturer_name="BRP")
     _declare_customs(part, by=env["admin"])
     _sell(env, part, quantity="1", number="REPEAT-1", at=_at(9))
-    other = _manual_part(env, name="МЕЖДУ", article="BETWEEN-1", manufacturer_name="BRP")
+    other = _imported_part(env, name="МЕЖДУ", article="BETWEEN-1", manufacturer_name="BRP")
     _declare_customs(other, by=env["admin"])
     _sell(env, other, number="BETWEEN-1", at=_at(10))
     _sell(env, part, quantity="1", number="REPEAT-1", at=_at(12))
@@ -309,8 +342,8 @@ def test_same_timestamp_ties_break_deterministically(env):
     (SaleLine), а не по случайному порядку выборки: строка, проведённая
     раньше, остаётся выше, даже если её дата операции совпала с другой."""
     same_moment = _at(10)
-    first = _manual_part(env, name="ПЕРВАЯ", article="TIE-1", manufacturer_name="BRP")
-    second = _manual_part(env, name="ВТОРАЯ", article="TIE-2", manufacturer_name="BRP")
+    first = _imported_part(env, name="ПЕРВАЯ", article="TIE-1", manufacturer_name="BRP")
+    second = _imported_part(env, name="ВТОРАЯ", article="TIE-2", manufacturer_name="BRP")
     for part in (first, second):
         _declare_customs(part, by=env["admin"])
     action_first = _sell(env, first, number="TIE-1", at=same_moment)
@@ -337,7 +370,7 @@ def test_brp_pro_x_shipment_keeps_relative_order_after_excluding_other_brands(en
     ]
     parts = {}
     for _day, article, brand, _eligible in specs:
-        part = _manual_part(
+        part = _imported_part(
             env, name=f"{brand} {article}", article=article, manufacturer_name=brand,
         )
         _declare_customs(part, by=env["admin"])

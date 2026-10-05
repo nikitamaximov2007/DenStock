@@ -34,7 +34,6 @@ from django.test.utils import CaptureQueriesContext
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
     CUSTOMS_ANALOG,
-    CUSTOMS_ORIGINAL,
     authoritative_manufacturer,
     historical_analog_customs_rows,
     historical_customs_rows,
@@ -141,16 +140,16 @@ def test_stale_brp_resolves_to_the_proven_brand(env, brand, eligible):
     assert info.manufacturer == "BRP"  # сохранённое значение - именно "BRP"
     _sell(env, part, number=f"STALE-{brand}")
 
-    # Группа выгрузки определяется только производителем: BRP и PROX -
-    # «Экспорт в Excel оригинал», всё остальное - «Экспорт в Excel аналоги».
-    rows = historical_customs_rows() if eligible else historical_analog_customs_rows()
-    row = _row_for(rows, f"STALE-{brand}")
+    # Производитель разрешён по доказательству, но деталь заведена вручную:
+    # для таможни ручная деталь - всегда аналог, даже PROX.
+    row = _row_for(historical_analog_customs_rows(), f"STALE-{brand}")
     assert row["manufacturer"] == brand  # не "BRP"
     assert is_brp_export_eligible(row["manufacturer"]) is eligible
-    assert row["customs_group"] == (CUSTOMS_ORIGINAL if eligible else CUSTOMS_ANALOG)
+    assert row["customs_group"] == CUSTOMS_ANALOG
+    assert f"STALE-{brand}" not in {r["number"] for r in historical_customs_rows()}
 
     articles = {r["number"] for r in eligible_customs_sources()}
-    assert (f"STALE-{brand}" in articles) is eligible
+    assert f"STALE-{brand}" not in articles
     # «История» показывает всё независимо от допуска.
     assert f"STALE-{brand}" in {r["number"] for r in customs_sources()}
 
@@ -350,7 +349,8 @@ def test_history_and_excel_use_the_same_tie_break_for_equal_timestamps(env):
     )
 
     history_order = [row["number"] for row in customs_sources()]
-    excel_order = [row["number"] for row in historical_customs_rows()]
+    # Обе детали ручные, значит обе в выгрузке аналогов.
+    excel_order = [row["number"] for row in historical_analog_customs_rows()]
     assert history_order == excel_order == ["TIE-A", "TIE-B"]
 
     # And the canonical key itself is the single source both call.
@@ -378,7 +378,7 @@ def test_russian_name_precedence_explicit_confirmed_wins_over_manual_fallback(en
         application_area=ApplicationArea.SNOWMOBILE,
     )
     _sell(env, part, number="10F")
-    row = _row_for(historical_customs_rows(), "10F")
+    row = _row_for(historical_analog_customs_rows(), "10F")  # ручная - аналог
     # Явно подтверждённое название сильнее собственного name детали.
     assert row["name_ru"] == "ПОДТВЕРЖДЁННОЕ НАЗВАНИЕ"
     assert row["name_ru_confirmed"] is True

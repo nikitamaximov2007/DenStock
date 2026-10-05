@@ -48,7 +48,7 @@ from apps.returns.services import add_sale_line_return, complete_return, create_
 from apps.sales.services import cancel_sale, cancel_sale_line_quantity
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
-from tests.customs_support import legacy_customs_completion
+from tests.customs_support import legacy_customs_completion, link_brp_catalog
 
 PASSWORD = "parol-12345"
 ApplicationArea = PartCustomsInfo.ApplicationArea
@@ -106,7 +106,9 @@ def _prove_brp(part):
     manufacturer, _ = Manufacturer.objects.get_or_create(name="BRP")
     part.manufacturer = manufacturer
     part.save(update_fields=["manufacturer"])
-    return part
+    # Для таможни оригинал - только импортированная деталь: связь с
+    # BRP-каталогом, как после продвижения из прайса.
+    return link_brp_catalog(part)
 
 
 def _card(part, **overrides):

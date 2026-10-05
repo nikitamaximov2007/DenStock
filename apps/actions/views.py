@@ -905,7 +905,7 @@ def actions_export(request):
 
 @login_required
 def actions_analog_export(request):
-    """Скачать форму для заказа по аналогам: всё, что не BRP и не PROX."""
+    """Скачать форму для заказа по аналогам: ручные детали и всё, что не BRP/PROX."""
     _require_access(request)
     if not request.user.can_view_purchase_cost:
         raise PermissionDenied

@@ -884,15 +884,62 @@ CUSTOMS_ORIGINAL = "original"
 CUSTOMS_ANALOG = "analog"
 
 
-def customs_group(manufacturer: str) -> str:
+def imported_part_ids(part_ids) -> set[int]:
+    """Детали, заведённые импортом из каталога поставщика, а не вручную.
+
+    Доказательство происхождения - запись связи с каталогом, которую создают
+    только сервисы импорта и продвижения: ``BrpPartLink`` (BRP-каталог),
+    ``PolarisPartLink`` (Polaris), ``AftermarketCatalogPart`` (каталог
+    аналогов: PROX и другие бренды) и ``ArcticCatCatalogPart``. Каждая из них
+    OneToOne к детали, создаётся вместе с новой карточкой и не заводится ни
+    формой детали, ни админкой. ``create_manual_part`` (кнопка «Добавить
+    деталь», «Добавить аналог», импорт подшипников и аналогов) такой связи
+    не создаёт никогда. Поэтому деталь без связи - ручная, и это решает
+    именно связь, а не категория «Добавлено вручную» (её можно сменить в
+    карточке), не пустой производитель и не название.
+    """
+    from apps.catalog_import.models import ArcticCatCatalogPart
+
+    ids = {pk for pk in part_ids if pk is not None}
+    if not ids:
+        return set()
+    imported = set(BrpPartLink.objects.filter(part_id__in=ids).values_list("part_id", flat=True))
+    for model in (PolarisPartLink, AftermarketCatalogPart, ArcticCatCatalogPart):
+        imported.update(
+            model.objects.filter(part_id__in=ids - imported).values_list("part_id", flat=True)
+        )
+    return imported
+
+
+def customs_group(manufacturer: str, *, imported: bool) -> str:
     """Единственное решение «оригинал или аналог» для таможни.
 
-    Оригинал - только производитель BRP или PROX (в той же нормализации, что
-    и допуск к BRP/PRO-X выгрузке). Всё остальное - аналог: BRONCO, любой
-    другой бренд, ручная деталь без производителя, пустой производитель.
-    Решает производитель строки выгрузки - тот, что уходит в колонку Excel.
+    1. Ручная деталь (``imported=False``, см. ``imported_part_ids``) - всегда
+       аналог, даже если ей позже записали производителя BRP или PROX.
+    2. Импортированная деталь с производителем BRP или PROX (в той же
+       нормализации, что и допуск к BRP/PRO-X выгрузке) - оригинал.
+    3. Всё остальное - аналог: BRONCO, POLARIS, SPI, MOTUL, любой другой
+       бренд, пустой производитель.
+    Производитель - тот, что уходит в колонку Excel.
     """
+    if not imported:
+        return CUSTOMS_ANALOG
     return CUSTOMS_ORIGINAL if is_brp_export_eligible(manufacturer) else CUSTOMS_ANALOG
+
+
+def _row_part_id(row: dict):
+    part = row.get("part")
+    return part.pk if part is not None else None
+
+
+def assign_customs_groups(rows: list[dict]) -> list[dict]:
+    """Проставить ``customs_group`` строкам выгрузки одним запросом на связи."""
+    imported = imported_part_ids(_row_part_id(row) for row in rows)
+    for row in rows:
+        row["customs_group"] = customs_group(
+            row["manufacturer"], imported=_row_part_id(row) in imported
+        )
+    return rows
 
 
 def resolve_customs_country(part: PartType, explicit_country: str = "", number: str = "") -> str:
@@ -1782,8 +1829,9 @@ def customs_export_rows(
     списания сюда не входят: клиенту эти детали не уходили.
 
     Полнота карточки строку не вычёркивает: незаполненные поля уходят в Excel
-    пустыми. Группу («оригинал»/«аналог») решает только ``customs_group`` по
-    производителю строки, поэтому каждая строка ровно в одной группе.
+    пустыми. Группу («оригинал»/«аналог») решает только ``customs_group``:
+    ручная деталь - всегда аналог, импортированная - по производителю строки,
+    поэтому каждая строка ровно в одной группе.
 
     Продажи/ремонты и запчасти на заказ идут в одном хронологическом порядке:
     старые операции сверху, новые снизу.
@@ -1795,8 +1843,7 @@ def customs_export_rows(
     }
     rows = _customs_rows_from_lines(canonical_customs_lines(**filters))
     rows += ordered_customs_rows(**filters)
-    for row in rows:
-        row["customs_group"] = customs_group(row["manufacturer"])
+    assign_customs_groups(rows)
     return sorted(rows, key=lambda row: row["_chronological_key"])
 
 
@@ -1808,7 +1855,7 @@ def customs_group_rows(group: str, **filters) -> list[dict]:
 
 
 def historical_customs_rows(**filters) -> list[dict]:
-    """«Экспорт в Excel оригинал»: только BRP и PROX."""
+    """«Экспорт в Excel оригинал»: только импортированные BRP и PROX."""
     return customs_group_rows(CUSTOMS_ORIGINAL, **filters)
 
 
@@ -1824,7 +1871,7 @@ def ordered_customs_rows(**filters) -> list[dict]:
 
 
 def historical_analog_customs_rows(**filters) -> list[dict]:
-    """«Экспорт в Excel аналоги»: всё, что не BRP и не PROX."""
+    """«Экспорт в Excel аналоги»: ручные детали и всё, что не BRP и не PROX."""
     return customs_group_rows(CUSTOMS_ANALOG, **filters)
 
 
@@ -1871,8 +1918,7 @@ def customs_export_reconciliation(
     }
     lines = canonical_customs_lines(**filters)
     rows = _customs_rows_from_lines(lines)
-    for row in rows:
-        row["customs_group"] = customs_group(row["manufacturer"])
+    assign_customs_groups(rows)
     rows_by_key = {row["source_key"]: row for row in rows}
 
     effective = [line for line in lines if line["quantity"] > 0]
