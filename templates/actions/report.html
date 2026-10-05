@@ -4,18 +4,30 @@
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Отчёт действий со склада</h1>
-    <div class="page-actions">
-      <a class="btn btn--small btn--secondary" href="{% url 'actions_scan' %}">Сканер действий</a>
-      <a class="btn btn--small btn--primary"
-         data-full-navigation
-         href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel для таможни</a>
-      <a class="btn btn--small btn--secondary"
-         data-full-navigation
-         href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Таможенный экспорт аналогов</a>
-      {% if user.can_view_purchase_cost %}
-        <a class="btn btn--small btn--secondary"
-           href="{% url 'customs_order_selection' %}">Отправить в заказ</a>
-      {% endif %}
+    {% comment %}
+      Две группы - оригиналы (BRP, PROX) и аналоги (всё остальное). У каждой
+      выгрузка и отправка в заказ стоят столбиком и берут один и тот же набор
+      строк (apps.actions.services.customs_group).
+    {% endcomment %}
+    <div class="page-actions customs-export-actions">
+      <div class="customs-export-group" data-customs-group="original">
+        <a class="btn btn--small btn--primary"
+           data-full-navigation
+           href="{% url 'actions_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel оригинал</a>
+        {% if user.can_view_purchase_cost %}
+          <a class="btn btn--small btn--secondary"
+             href="{% url 'customs_order_selection' %}?order_type=original">Отправить в заказ оригинал</a>
+        {% endif %}
+      </div>
+      <div class="customs-export-group" data-customs-group="analog">
+        <a class="btn btn--small btn--primary"
+           data-full-navigation
+           href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel аналоги</a>
+        {% if user.can_view_purchase_cost %}
+          <a class="btn btn--small btn--secondary"
+             href="{% url 'customs_order_selection' %}?order_type=analog">Отправить в заказ аналоги</a>
+        {% endif %}
+      </div>
     </div>
   </div>
   <p class="page-subtitle">

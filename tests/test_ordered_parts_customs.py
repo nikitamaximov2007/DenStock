@@ -24,8 +24,8 @@ from apps.actions.services import (
     ORDERED_PROVENANCE,
     SALES_REPAIRS_PROVENANCE,
     customs_export_reconciliation,
+    customs_export_rows,
     export_customs_xlsx,
-    historical_customs_rows,
     perform_action,
 )
 from apps.brp.models import BrpCatalogPart
@@ -160,7 +160,7 @@ def test_an_ordered_original_part_appears_in_the_normal_customs_source(env):
     _part(env, number="219800345", name="РЕМЕНЬ")
     _order(env, "219800345")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
 
     ordered = [row for row in rows if row["provenance"] == ORDERED_PROVENANCE]
     assert len(ordered) == 1
@@ -178,14 +178,14 @@ def test_an_analog_part_never_reaches_the_ordered_customs_source(env):
         _order(env, "SM-09374")
 
     assert ordered_parts_customs_rows() == []
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
 
 
 def test_the_article_cell_of_an_ordered_row_is_green(env):
     _part(env, number="219800345")
     _order(env, "219800345")
 
-    sheet = _sheet(export_customs_xlsx(rows=historical_customs_rows()))
+    sheet = _sheet(export_customs_xlsx(rows=customs_export_rows()))
 
     assert sheet[f"B{DATA_ROW}"].value == "219800345"
     assert _fill(sheet[f"B{DATA_ROW}"]) == GREEN
@@ -199,7 +199,7 @@ def test_a_normal_sale_row_article_is_not_green(env):
     _receive(env, part)
     _scanner_sell(env, part, quantity="2", number="219800345")
 
-    sheet = _sheet(export_customs_xlsx(rows=historical_customs_rows()))
+    sheet = _sheet(export_customs_xlsx(rows=customs_export_rows()))
 
     assert sheet[f"B{DATA_ROW}"].value == "219800345"
     assert _fill(sheet[f"B{DATA_ROW}"]) != GREEN
@@ -209,7 +209,7 @@ def test_green_marking_does_not_break_formulas_or_the_totals_row(env):
     _part(env, number="219800345")
     _order(env, "219800345")
 
-    sheet = _sheet(export_customs_xlsx(rows=historical_customs_rows()))
+    sheet = _sheet(export_customs_xlsx(rows=customs_export_rows()))
 
     assert sheet[f"I{DATA_ROW}"].value == f"=J{DATA_ROW}*G{DATA_ROW}"
     assert sheet[f"L{DATA_ROW}"].value == f"=K{DATA_ROW}*J{DATA_ROW}"
@@ -224,7 +224,7 @@ def test_ordered_customs_quantity_is_one_unit_per_record(env):
     _part(env, number="219800345")
     _order(env, "219800345")
 
-    row = [r for r in historical_customs_rows() if r["provenance"] == ORDERED_PROVENANCE][0]
+    row = [r for r in customs_export_rows() if r["provenance"] == ORDERED_PROVENANCE][0]
 
     assert row["quantity"] == Decimal("1")
 
@@ -235,7 +235,7 @@ def test_several_ordered_records_of_one_article_keep_their_quantity(env):
     for name in ("Иванов", "Петров", "Сидоров"):
         _order(env, "219800345", _customer(name))
 
-    ordered = [r for r in historical_customs_rows() if r["provenance"] == ORDERED_PROVENANCE]
+    ordered = [r for r in customs_export_rows() if r["provenance"] == ORDERED_PROVENANCE]
 
     assert len(ordered) == 1
     assert ordered[0]["quantity"] == Decimal("3")
@@ -248,7 +248,7 @@ def test_ordered_and_sold_same_article_stay_separate_rows(env):
     _scanner_sell(env, part, quantity="2", number="219800345")
     _order(env, "219800345")
 
-    rows = [r for r in historical_customs_rows() if r["number"] == "219800345"]
+    rows = [r for r in customs_export_rows() if r["number"] == "219800345"]
 
     assert len(rows) == 2
     by_provenance = {row["provenance"]: row["quantity"] for row in rows}
@@ -256,7 +256,7 @@ def test_ordered_and_sold_same_article_stay_separate_rows(env):
         SALES_REPAIRS_PROVENANCE: Decimal("2"), ORDERED_PROVENANCE: Decimal("1")
     }
 
-    sheet = _sheet(export_customs_xlsx(rows=historical_customs_rows()))
+    sheet = _sheet(export_customs_xlsx(rows=customs_export_rows()))
     greens = {
         sheet[f"J{DATA_ROW + offset}"].value: _fill(sheet[f"B{DATA_ROW + offset}"])
         for offset in range(2)
@@ -278,7 +278,7 @@ def test_the_ordered_row_uses_the_catalog_resolver_not_the_prepayment(env):
     )
     _order(env, "420931284", prepayment="50000")
 
-    row = [r for r in historical_customs_rows() if r["provenance"] == ORDERED_PROVENANCE][0]
+    row = [r for r in customs_export_rows() if r["provenance"] == ORDERED_PROVENANCE][0]
 
     assert row["usd_price"] == Decimal("19.63")
     assert row["usd_price"] != Decimal("50000")
@@ -291,7 +291,7 @@ def test_missing_customs_fields_do_not_break_the_ordered_row(env):
     _part(env, number="219800345", brand=None)
     _order(env, "219800345")
 
-    sheet = _sheet(export_customs_xlsx(rows=historical_customs_rows()))
+    sheet = _sheet(export_customs_xlsx(rows=customs_export_rows()))
 
     assert sheet[f"B{DATA_ROW}"].value == "219800345"
     assert Decimal(str(sheet[f"J{DATA_ROW}"].value)) == Decimal("1")
@@ -345,7 +345,7 @@ def test_the_combined_customs_universe_decomposes_by_provenance(env):
     _part(env, number="219800346", name="ВТОРАЯ")
     _order(env, "219800346")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
     sales = [r for r in rows if r["provenance"] == SALES_REPAIRS_PROVENANCE]
     ordered = [r for r in rows if r["provenance"] == ORDERED_PROVENANCE]
 
@@ -364,7 +364,7 @@ def test_every_row_key_is_unique_across_the_whole_export(env):
     _order(env, "219800345")
     _order(env, "219800345")
 
-    keys = [row["source_key"] for row in historical_customs_rows()]
+    keys = [row["source_key"] for row in customs_export_rows()]
 
     assert len(keys) == len(set(keys))
 
@@ -375,9 +375,9 @@ def test_warehouse_only_filters_exclude_ordered_rows(env):
     _sell(env, _receive(env, part), quantity="2")
     _order(env, "219800345")
 
-    assert len(historical_customs_rows()) == 2
-    by_location = historical_customs_rows(location_code="S01-D01")
-    by_type = historical_customs_rows(action_type="sale")
+    assert len(customs_export_rows()) == 2
+    by_location = customs_export_rows(location_code="S01-D01")
+    by_type = customs_export_rows(action_type="sale")
 
     assert [r["provenance"] for r in by_location] == [SALES_REPAIRS_PROVENANCE]
     assert [r["provenance"] for r in by_type] == [SALES_REPAIRS_PROVENANCE]

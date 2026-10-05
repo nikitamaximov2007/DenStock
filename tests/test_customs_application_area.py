@@ -499,11 +499,18 @@ def test_full_workbook_stays_valid_with_mixed_sources(client, make_user, env):
     _sell(env, pol, number="3610075")
 
     _login(client, make_user)
+    # BRP - в выгрузке оригиналов, POLARIS - в выгрузке аналогов; обе книги
+    # открываются без предупреждений о повреждении.
     resp = client.get(reverse("actions_export"))
     assert resp.status_code == 200
-    workbook = openpyxl.load_workbook(BytesIO(resp.content))  # без предупреждений о повреждении
-    sheet = workbook[SHEET]
-    values = [sheet[f"M{DATA_ROW + i}"].value for i in range(3)]
-    assert "АВТОМОБИЛЬ" in values
-    assert "ГИДРОЦИКЛ" in values
-    assert None not in values  # готовая выгрузка пустых применимостей не содержит
+    sheet = openpyxl.load_workbook(BytesIO(resp.content))[SHEET]
+    values = [sheet[f"M{DATA_ROW + i}"].value for i in range(2)]
+    assert sorted(values) == ["АВТОМОБИЛЬ", "ГИДРОЦИКЛ"]
+    assert sheet[f"B{DATA_ROW + 2}"].value in (None, "")
+
+    resp = client.get(reverse("actions_analog_export"))
+    assert resp.status_code == 200
+    sheet = openpyxl.load_workbook(BytesIO(resp.content))[SHEET]
+    assert sheet[f"B{DATA_ROW}"].value == "3610075"
+    assert sheet[f"M{DATA_ROW}"].value == "ГИДРОЦИКЛ"
+    assert sheet[f"B{DATA_ROW + 1}"].value in (None, "")

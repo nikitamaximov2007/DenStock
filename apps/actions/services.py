@@ -877,6 +877,24 @@ def is_brp_export_eligible(manufacturer: str) -> bool:
     return _normalized_manufacturer(manufacturer) in BRP_EXPORT_MANUFACTURERS
 
 
+# Две группы таможенной выгрузки и таможенных заказов. Значения совпадают с
+# CustomsOrder.OrderType, чтобы «Экспорт в Excel ...» и «Отправить в заказ ...»
+# одной группы были одним и тем же набором строк.
+CUSTOMS_ORIGINAL = "original"
+CUSTOMS_ANALOG = "analog"
+
+
+def customs_group(manufacturer: str) -> str:
+    """Единственное решение «оригинал или аналог» для таможни.
+
+    Оригинал - только производитель BRP или PROX (в той же нормализации, что
+    и допуск к BRP/PRO-X выгрузке). Всё остальное - аналог: BRONCO, любой
+    другой бренд, ручная деталь без производителя, пустой производитель.
+    Решает производитель строки выгрузки - тот, что уходит в колонку Excel.
+    """
+    return CUSTOMS_ORIGINAL if is_brp_export_eligible(manufacturer) else CUSTOMS_ANALOG
+
+
 def resolve_customs_country(part: PartType, explicit_country: str = "", number: str = "") -> str:
     """Сохранённая страна имеет приоритет; только BRP получает fallback.
 
@@ -1752,44 +1770,46 @@ def _customs_rows_from_lines(lines) -> list[dict]:
     return sorted(rows, key=lambda row: row["_chronological_key"])
 
 
-def historical_customs_rows(
+def customs_export_rows(
     *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
     unassigned_only=False,
 ) -> list[dict]:
-    """Исторический таможенный расход по сохранённым профилям деталей.
+    """Весь таможенный расход: каждая строка помечена своей группой.
 
     Источник - те же канонические строки документов, что и в отчёте «Продажи и
     ремонты»: строки проведённых продаж и проведённых ремонтов с действующим
-    количеством. Приёмки, перемещения, корректировки и списания сюда не входят:
-    клиенту эти детали не уходили.
+    количеством, плюс запчасти на заказ. Приёмки, перемещения, корректировки и
+    списания сюда не входят: клиенту эти детали не уходили.
 
-    Сохранённая страна имеет приоритет; пустая страна BRP заполняется
-    утверждённым правилом компании. Остальные незаполненные поля остаются
-    пустыми, но саму операцию из выгрузки не вычёркивают - ни производитель,
-    ни полнота карточки не решают, попадает ли фактически произошедшая
-    операция в эту выгрузку. Допуск к самой BRP/PRO-X отправке решается
-    отдельно, при формировании таможенного заказа (см.
-    apps.customs_orders.services.eligible_customs_sources), а не здесь.
+    Полнота карточки строку не вычёркивает: незаполненные поля уходят в Excel
+    пустыми. Группу («оригинал»/«аналог») решает только ``customs_group`` по
+    производителю строки, поэтому каждая строка ровно в одной группе.
 
-    Продажи/ремонты и запчасти на заказ сливаются в один хронологический
-    порядок - тот же принцип, что и у «Истории для таможенных заказов»
-    (customs_sources): старые операции сверху, новые снизу, а не два
-    раздельных блока.
+    Продажи/ремонты и запчасти на заказ идут в одном хронологическом порядке:
+    старые операции сверху, новые снизу.
     """
     filters = {
         "date_from": date_from, "date_to": date_to, "action_type": action_type,
         "q": q, "part_number": part_number, "location_code": location_code,
         "unassigned_only": unassigned_only,
     }
-    sales_rows = _customs_rows_from_lines(
-        [line for line in canonical_customs_lines(
-            date_from=date_from, date_to=date_to, action_type=action_type, q=q,
-            part_number=part_number, location_code=location_code,
-            unassigned_only=unassigned_only,
-        ) if not line.get("is_analog")]
-    )
-    rows = sales_rows + ordered_customs_rows(**filters)
+    rows = _customs_rows_from_lines(canonical_customs_lines(**filters))
+    rows += ordered_customs_rows(**filters)
+    for row in rows:
+        row["customs_group"] = customs_group(row["manufacturer"])
     return sorted(rows, key=lambda row: row["_chronological_key"])
+
+
+def customs_group_rows(group: str, **filters) -> list[dict]:
+    """Строки одной группы - то, что выгружает «Экспорт в Excel» этой группы."""
+    if group not in (CUSTOMS_ORIGINAL, CUSTOMS_ANALOG):
+        raise ValueError(f"Неизвестная таможенная группа: {group}")
+    return [row for row in customs_export_rows(**filters) if row["customs_group"] == group]
+
+
+def historical_customs_rows(**filters) -> list[dict]:
+    """«Экспорт в Excel оригинал»: только BRP и PROX."""
+    return customs_group_rows(CUSTOMS_ORIGINAL, **filters)
 
 
 def ordered_customs_rows(**filters) -> list[dict]:
@@ -1803,18 +1823,9 @@ def ordered_customs_rows(**filters) -> list[dict]:
     )
 
 
-def historical_analog_customs_rows(
-    *, date_from=None, date_to=None, action_type="", q="", part_number="", location_code="",
-    unassigned_only=False,
-) -> list[dict]:
-    """Исторический таможенный расход только явно связанных аналогов."""
-    return _customs_rows_from_lines(
-        [line for line in canonical_customs_lines(
-            date_from=date_from, date_to=date_to, action_type=action_type, q=q,
-            part_number=part_number, location_code=location_code,
-            unassigned_only=unassigned_only,
-        ) if line.get("is_analog")]
-    )
+def historical_analog_customs_rows(**filters) -> list[dict]:
+    """«Экспорт в Excel аналоги»: всё, что не BRP и не PROX."""
+    return customs_group_rows(CUSTOMS_ANALOG, **filters)
 
 
 def _report_all_time_totals() -> dict:
@@ -1860,6 +1871,8 @@ def customs_export_reconciliation(
     }
     lines = canonical_customs_lines(**filters)
     rows = _customs_rows_from_lines(lines)
+    for row in rows:
+        row["customs_group"] = customs_group(row["manufacturer"])
     rows_by_key = {row["source_key"]: row for row in rows}
 
     effective = [line for line in lines if line["quantity"] > 0]

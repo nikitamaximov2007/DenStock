@@ -302,7 +302,7 @@ def test_polaris_exports_exact_part_number(client, make_user, env):
     part, _ = _polaris(env, number="3610075")
     _sell(env, part, number="3610075")
     _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
     assert "3610075" in _b_column(sheet)
     assert sheet[f"E{DATA_ROW}"].value == "POLARIS"
 
@@ -315,7 +315,7 @@ def test_polaris_superseded_does_not_replace_number(client, make_user, env):
     part, _ = _polaris(env, number="2222222", retail="0", wholesale="0", superseded="1111111")
     _sell(env, part, number="2222222")
     _login(client, make_user)
-    numbers = _b_column(_sheet(client.get(reverse("actions_export")).content))
+    numbers = _b_column(_sheet(client.get(reverse("actions_analog_export")).content))
     assert "2222222" in numbers
     assert "1111111" not in numbers
 
@@ -325,7 +325,7 @@ def test_warehouse_only_uses_snapshot_number(client, make_user, env):
     action = _sell(env, part, number="WH-500")
     assert action.part_number == "WH-500"
     _login(client, make_user)
-    assert "WH-500" in _b_column(_sheet(client.get(reverse("actions_export")).content))
+    assert "WH-500" in _b_column(_sheet(client.get(reverse("actions_analog_export")).content))
 
 
 # --- Группировка -----------------------------------------------------------------------
@@ -347,7 +347,7 @@ def test_different_exact_numbers_of_same_part_not_merged(client, make_user, env)
     _sell(env, part, number="WH-100")
     _sell(env, part, number="WH-200")
     _login(client, make_user)
-    numbers = _b_column(_sheet(client.get(reverse("actions_export")).content))
+    numbers = _b_column(_sheet(client.get(reverse("actions_analog_export")).content))
     assert "WH-100" in numbers and "WH-200" in numbers  # не слиты в одну строку
 
 
@@ -357,11 +357,18 @@ def test_same_number_brp_and_polaris_not_merged(client, make_user, env):
     _sell(env, brp_part, number="5555555")
     _sell(env, pol_part, number="5555555")
     _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
-    rows = [
-        (sheet[f"B{DATA_ROW + i}"].value, sheet[f"E{DATA_ROW + i}"].value) for i in range(2)
+    # Один номер у двух производителей - две разные строки, и каждая в своей
+    # группе: BRP - в «оригинал», POLARIS - в «аналоги».
+    original = _sheet(client.get(reverse("actions_export")).content)
+    analog = _sheet(client.get(reverse("actions_analog_export")).content)
+    assert [(original[f"B{DATA_ROW}"].value, original[f"E{DATA_ROW}"].value)] == [
+        ("5555555", "BRP")
     ]
-    assert sorted(rows) == [("5555555", "BRP"), ("5555555", "POLARIS")]
+    assert original[f"B{DATA_ROW + 1}"].value in (None, "")
+    assert [(analog[f"B{DATA_ROW}"].value, analog[f"E{DATA_ROW}"].value)] == [
+        ("5555555", "POLARIS")
+    ]
+    assert analog[f"B{DATA_ROW + 1}"].value in (None, "")
 
 
 # --- Фильтры отчёта --------------------------------------------------------------------
@@ -631,8 +638,12 @@ def test_country_is_latin_canada_for_every_row(client, make_user, env):
     _sell(env, pol, number="3610075")
     _login(client, make_user)
     sheet = _sheet(client.get(reverse("actions_export")).content)
-    for offset in range(5):
+    for offset in range(4):
         assert sheet[f"F{DATA_ROW + offset}"].value == "CANADA"
+    # POLARIS - аналог, его строка в выгрузке аналогов, страна та же.
+    analog = _sheet(client.get(reverse("actions_analog_export")).content)
+    assert analog[f"B{DATA_ROW}"].value == "3610075"
+    assert analog[f"F{DATA_ROW}"].value == "CANADA"
 
 
 def test_no_cyrillic_kanada_anywhere_in_file(client, make_user, env):
@@ -679,7 +690,7 @@ def test_polaris_catalog_price_not_used_for_customs(client, make_user, env):
     _card(part, manufacturer="POLARIS", customs_unit_price_usd=Decimal("11"))
     _sell(env, part, number="3610075")
     _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
     assert _price(sheet) == Decimal("11")
     assert _price(sheet) != Decimal("6")
 
@@ -694,7 +705,7 @@ def test_polaris_superseded_only_supplies_wholesale(client, make_user, env):
     _card(part, manufacturer="POLARIS", customs_unit_price_usd=Decimal("9.50"))
     _sell(env, part, number="2222222")
     _login(client, make_user)
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
     assert "2222222" in _b_column(sheet)  # exact part_number не подменён
     assert "1111111" not in _b_column(sheet)
     assert _price(sheet) == Decimal("9.50")  # введено пользователем

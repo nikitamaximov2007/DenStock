@@ -30,7 +30,10 @@ import pytest
 
 from apps.actions.models import PartCustomsInfo
 from apps.actions.services import (
+    CUSTOMS_ANALOG,
+    CUSTOMS_ORIGINAL,
     apply_system_customs_facts,
+    customs_export_rows,
     get_or_create_customs,
     historical_customs_rows,
     is_brp_export_eligible,
@@ -273,10 +276,14 @@ def test_excel_export_is_chronological_not_alphabetical(env):
     _sell(env, at_08776, number="AT-08776", at=_at(10, 15))
     _sell(env, roller, number="AA-ROLLER", at=_at(17, 12))
 
-    numbers = [row["number"] for row in historical_customs_rows()]
+    rows = customs_export_rows()
+    numbers = [row["number"] for row in rows]
     # Алфавитный порядок поставил бы AA-ROLLER выше AT-08776 - здесь наоборот,
-    # потому что AT-08776 продан раньше.
+    # потому что AT-08776 продан раньше. Общий поток обеих групп хронологичен,
+    # а каждая выгрузка (оригинал / аналоги) - его подмножество в том же порядке.
     assert numbers == ["AT-08776", "AA-ROLLER"]
+    assert [row["customs_group"] for row in rows] == [CUSTOMS_ANALOG, CUSTOMS_ORIGINAL]
+    assert [row["number"] for row in historical_customs_rows()] == ["AA-ROLLER"]
 
 
 def test_repeated_article_operations_preserve_chronology_and_are_not_deduplicated(env):
@@ -353,7 +360,9 @@ def test_manual_russian_name_flows_into_export_uppercased(env):
     part = _manual_part(env, name="Гильза маслонасоса", article="10F", manufacturer_name="BRP")
     _sell(env, part, number="10F")  # ни разу не открывали таможенную карточку
 
-    row = _row_for(historical_customs_rows(), "10F")
+    # Карточку не заполняли: производителя в строке нет, поэтому строка в
+    # группе аналогов; название при этом подставляется одинаково.
+    row = _row_for(customs_export_rows(), "10F")
     assert row["name_ru"] == "ГИЛЬЗА МАСЛОНАСОСА"
     assert row["name_ru_confirmed"] is False  # подстановка - не подтверждение
 
@@ -368,7 +377,7 @@ def test_manual_russian_name_helper_ignores_catalog_linked_parts(env):
 def test_missing_russian_name_is_not_fabricated_for_non_manual_parts(env):
     part = _catalog_part(env, name="НАЗВАНИЕ ИЗ КАТАЛОГА", article="700100700")
     _sell(env, part, number="700100700")
-    row = _row_for(historical_customs_rows(), "700100700")
+    row = _row_for(customs_export_rows(), "700100700")
     assert row["name_ru"] == ""
 
 

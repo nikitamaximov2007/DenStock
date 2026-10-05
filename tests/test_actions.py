@@ -553,8 +553,15 @@ def test_export_xlsx_structure(client, make_user, data):
     assert Decimal(str(sheet["K10"].value)) == Decimal("20")  # введено пользователем
     assert sheet["L10"].value == "=K10*J10"
     assert sheet["M10"].value  # применимость введена оператором
-    assert str(sheet["B11"].value) == "700100"
-    assert Decimal(str(sheet["K11"].value)) == Decimal("20")
+    # Складская деталь без доказанного производителя BRP/PROX - аналог: в
+    # выгрузке оригиналов её нет, она уходит в «Экспорт в Excel аналоги».
+    assert sheet["B11"].value in (None, "")
+    resp = client.get(reverse("actions_analog_export"))
+    assert resp.status_code == 200
+    analog_sheet = openpyxl.load_workbook(BytesIO(resp.content))["Лист1"]
+    assert str(analog_sheet["B10"].value) == "700100"
+    assert Decimal(str(analog_sheet["K10"].value)) == Decimal("20")
+    assert analog_sheet["B11"].value in (None, "")
 
 
 def test_report_page_shows_warnings_and_export_button(client, make_user, data):
@@ -570,12 +577,13 @@ def test_report_page_shows_warnings_and_export_button(client, make_user, data):
     html = client.get(reverse("actions_report")).content.decode()
     # Новая продажа проводится только с полной карточкой, но сама ссылка
     # экспорта остаётся доступной для уже созданных исторических документов.
-    assert "Экспорт в Excel для таможни" in html
+    assert "Экспорт в Excel оригинал" in html
+    assert "Экспорт в Excel аналоги" in html
     assert "Экспорт заблокирован" not in html
 
     # Неполная карточка выгрузку не отменяет: причина названа, кнопка осталась.
     html = client.get(reverse("actions_report")).content.decode()
-    assert "Экспорт в Excel для таможни" in html
+    assert "Экспорт в Excel аналоги" in html
     assert "нет веса брутто" in html
 
     # Правка карточки сегодня не достраивает вчерашнюю декларацию: расход

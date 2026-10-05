@@ -634,6 +634,11 @@ th.num, td.num, .table th.num, .table td.num,
 /* --- Заголовок страницы --- */
 .page-subtitle { margin: -4px 0 16px; color: var(--muted); font-size: 14px; max-width: 72ch; }
 .page-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Отчёт действий: оригиналы и аналоги - два столбца, отправка в заказ под
+   выгрузкой своей группы. */
+.customs-export-actions { gap: 12px; align-items: flex-start; }
+.customs-export-group { display: grid; gap: 8px; }
+.customs-export-group .btn { text-align: center; }
 
 /* --- Filter toolbar: единый продуктовый ряд фильтров ---
    Работает и для существующих .toolbar / .form (фильтры списков). */
