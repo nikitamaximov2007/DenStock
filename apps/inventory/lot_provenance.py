@@ -316,6 +316,17 @@ def classify_lot(
             return result(UNKNOWN, None, "текущая строка партии не доказывает происхождение лота")
         start = _reconstructed_start(lot, own, line_movements, timeline)
         if start == lot.initial_quantity:
+            historical_lines = {
+                movement.batch_line_id
+                for movement in own
+                if movement.stock_lot_id == lot.pk and movement.batch_line_id is not None
+            }
+            if historical_lines - {lot.batch_line_id}:
+                return result(
+                    UNKNOWN,
+                    None,
+                    "история лота ссылается на другую строку партии",
+                )
             return result(
                 LEGACY_PRIMARY, lot.initial_quantity,
                 f"приёмка без движения; журнал восстанавливает {start} = исходному",
@@ -332,6 +343,9 @@ class LineProvenance:
     lots: list
     # Receipts naming this line whose lot now belongs to another line.
     receipts_elsewhere: Decimal
+    # Legacy movements still name a line after their lot was rebound elsewhere.
+    # Without a RECEIVE_LOT, the source line's lifetime intake is unprovable.
+    has_unproven_detached_history: bool = False
 
 
 def _read_line(line, exclude_lot):
@@ -457,6 +471,21 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         ),
         Decimal("0"),
     )
+    detached_lot_ids = set(
+        StockMovement.objects.filter(batch_line=line, stock_lot__isnull=False)
+        .exclude(stock_lot__batch_line=line)
+        .values_list("stock_lot_id", flat=True)
+    )
+    proven_detached_receipts = set(
+        StockMovement.objects.filter(
+            stock_lot_id__in=detached_lot_ids,
+            batch_line=line,
+            movement_type=M.RECEIVE_LOT,
+        )
+        .exclude(comment=OLD_BACKFILL_COMMENT, document_type="")
+        .values_list("stock_lot_id", flat=True)
+    )
+    unproven_detached_history = bool(detached_lot_ids - proven_detached_receipts)
     rows = [
         classify_lot(
             lot, own.get(lot.pk, []), movements, transfers, nearby_moves,
@@ -465,7 +494,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         )
         for lot in lots
     ]
-    return LineProvenance(rows, elsewhere)
+    return LineProvenance(rows, elsewhere, unproven_detached_history)
 
 
 def line_provenance(line, *, exclude_lot=None) -> list[LotProvenance]:

@@ -303,7 +303,8 @@ def received_quantity(line: BatchLine, *, exclude_lot=None) -> tuple[Decimal, bo
     from .lot_provenance import line_provenance_detail
 
     detail = line_provenance_detail(line, exclude_lot=exclude_lot)
-    total, proven = detail.receipts_elsewhere, True
+    total = detail.receipts_elsewhere
+    proven = not detail.has_unproven_detached_history
     for lot in detail.lots:
         if lot.intake is None:
             proven = False

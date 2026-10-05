@@ -370,6 +370,66 @@ def test_a_transfer_target_rebound_to_another_line_is_unknown(env):
     assert remaining_qty(destination_line) == Decimal("0")
 
 
+@pytest.mark.parametrize("movement_kind", ["sale", "adjustment", "writeoff"])
+@pytest.mark.parametrize("rebind", ["batch_line_only", "batch_and_line", "same_batch_line"])
+def test_rebound_legacy_lot_with_origin_movements_is_unknown_and_closes_both_lines(
+    env, movement_kind, rebind
+):
+    origin, lot = _legacy_line(env)
+    if movement_kind == "sale":
+        _sell(env, lot, "1")
+    elif movement_kind == "adjustment":
+        adjust_stock_lot_quantity(lot, Decimal("1"), comment="Сверка +")
+        adjust_stock_lot_quantity(lot, Decimal("-1"), comment="Сверка -")
+    else:
+        document = create_write_off(reason=WriteOffDocument.Reason.OTHER, by=env["admin"])
+        add_stock_lot_to_write_off(document, lot, Decimal("1"))
+        complete_write_off(document, by=env["admin"])
+
+    if rebind == "same_batch_line":
+        destination = origin.__class__.objects.create(
+            batch=origin.batch,
+            part_type=origin.part_type,
+            quantity=Decimal("10"),
+            unit_cost_currency=Decimal("1"),
+        )
+        # Same-batch duplicate lines are themselves ambiguous; the movement
+        # mismatch must still be treated as non-provenance.
+        StockLot.objects.filter(pk=lot.pk).update(batch_line=destination)
+    else:
+        destination = _finalized_line(env, env["part"], "10")
+        updates = {"batch_line": destination}
+        if rebind == "batch_and_line":
+            updates["batch"] = destination.batch
+        StockLot.objects.filter(pk=lot.pk).update(**updates)
+
+    lot.refresh_from_db()
+    assert _cls(destination, lot) == (UNKNOWN, None)
+    assert remaining_qty(destination) == Decimal("0")  # no phantom intake
+    assert remaining_qty(origin) == Decimal("0")  # no reopened source capacity
+    assert StockMovement.objects.filter(stock_lot=lot, batch_line=origin).exists()
+
+
+def test_rebound_legacy_lot_batch_only_keeps_origin_line_closed(env):
+    origin, lot = _legacy_line(env)
+    adjust_stock_lot_quantity(lot, Decimal("1"), comment="Сверка +")
+    adjust_stock_lot_quantity(lot, Decimal("-1"), comment="Сверка -")
+    destination = _finalized_line(env, env["part"], "10")
+    StockLot.objects.filter(pk=lot.pk).update(batch=destination.batch)
+
+    lot.refresh_from_db()
+    assert _cls(origin, lot) == (UNKNOWN, None)
+    assert remaining_qty(origin) == Decimal("0")
+    assert remaining_qty(destination) == Decimal("10")
+
+
+def test_untouched_legacy_primary_still_proves_its_intake(env):
+    line, lot = _legacy_line(env)
+
+    assert _cls(line, lot) == (LEGACY_PRIMARY, Decimal("6"))
+    assert remaining_qty(line) == Decimal("4")
+
+
 @pytest.mark.parametrize("rebound", ["movement", "source", "target", "all"])
 def test_same_batch_same_part_batchline_rebind_breaks_transfer_lineage(env, rebound):
     line = _finalized_line(env, env["part"], "10")
