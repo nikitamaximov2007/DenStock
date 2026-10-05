@@ -43,7 +43,7 @@ def line_rub(row, rate):
 def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
     """One row per stable source, with membership excluded in SQL when requested."""
     from apps.actions.customs_history import canonical_customs_lines, line_chronological_key
-    from apps.actions.services import _customs_rows_from_lines, is_brp_export_eligible
+    from apps.actions.services import CUSTOMS_ANALOG, _customs_rows_from_lines, customs_group
     from apps.ordered_parts.customs import ordered_parts_customs_lines
 
     filters = dict(filters or {})
@@ -77,14 +77,21 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
             version = line["version"]
             key = (line["part_id"], version.pk if version is not None else None, line["number"])
             row = dict(profiles[key])
+        # Группа строки - тот же customs_group, что делит «Экспорт в Excel».
+        # У строки, уже вошедшей в заказ, остаётся её замороженная группа:
+        # история заказа не переписывается сменой производителя.
+        is_analog = (
+            member.is_analog if member is not None
+            else customs_group(row.get("manufacturer")) == CUSTOMS_ANALOG
+        )
         row.update(
             source=marker[0], source_id=marker[1], occurred_at=line["occurred_at"],
-            quantity=line["quantity"], is_analog=bool(line.get("is_analog")),
+            quantity=line["quantity"], is_analog=is_analog,
+            customs_group=CustomsOrder.OrderType.ANALOG if is_analog
+            else CustomsOrder.OrderType.ORIGINAL,
             provenance="ordered" if marker[0] == "ordered" else "sales_repairs",
             membership=member, document_number=line["document_number"],
-            # Для "Истории для таможенных заказов": видно всё, но допуск в
-            # BRP/PRO-X выгрузку - отдельный явный признак, а не производитель.
-            export_eligible=is_brp_export_eligible(row.get("manufacturer")),
+            export_eligible=not is_analog,
             _chronological_key=line_chronological_key(line),
         )
         result.append(row)
@@ -92,22 +99,19 @@ def customs_sources(filters=None, *, unassigned_only=False) -> list[dict]:
 
 
 def eligible_customs_sources(order_type=CustomsOrder.OrderType.ORIGINAL) -> list[dict]:
-    """Unassigned source queue limited to one canonical classification.
+    """Unassigned source queue of exactly one customs group.
 
-    Also limited to BRP/PRO-X: a таможенный заказ built from this queue is the
-    same BRP customs shipment as the plain Excel export
-    (apps.actions.services.historical_customs_rows). BRONCO/SPI/MOTUL and any
-    unproven manual manufacturer stay visible in customs_sources("История")
-    but can never be selected into an order here.
+    «Отправить в заказ оригинал» берёт BRP и PROX, «... аналоги» - всё
+    остальное (BRONCO, другие бренды, ручные детали, пустой производитель).
+    Группа - apps.actions.services.customs_group, тот же классификатор, что
+    делит «Экспорт в Excel оригинал/аналоги», поэтому набор строк заказа и
+    выгрузки одной группы совпадает.
     """
-    from apps.actions.services import is_brp_export_eligible
-
     if order_type not in CustomsOrder.OrderType.values:
         raise CustomsOrderError("Выберите тип таможенного заказа.")
-    analog = order_type == CustomsOrder.OrderType.ANALOG
     return [
         row for row in customs_sources(unassigned_only=True)
-        if row["is_analog"] == analog and is_brp_export_eligible(row["manufacturer"])
+        if row["customs_group"] == order_type
     ]
 
 

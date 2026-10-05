@@ -59,6 +59,7 @@ from .services import (
     ActionError,
     actions_report,
     cancel_warehouse_action,
+    customs_export_rows,
     get_or_create_customs,
     historical_analog_customs_rows,
     historical_customs_rows,
@@ -774,8 +775,10 @@ def actions_report_view(request):
             row["source_label"] = labels[row["source"]]
     actions, totals = actions_report(include_cancelled=show_cancelled, **filters)
     actions = list(actions[:500])
-    export_rows = historical_customs_rows(**filters, unassigned_only=True)
-    analog_export_rows = historical_analog_customs_rows(**filters, unassigned_only=True)
+    # Обе выгрузки строятся из одного набора: оригиналы и аналоги делят его без
+    # пересечений, а готовность данных показывается по всем строкам, потому что
+    # веса и область применения нужны обеим выгрузкам.
+    export_rows = customs_export_rows(**filters, unassigned_only=True)
     ready = [r for r in export_rows if not r["warnings"]]
     # Готовность к таможенному экспорту (Layer 33.1): область применения +
     # оба веса одной штуки. Цена и название сюда не входят - у них своя
@@ -808,9 +811,6 @@ def actions_report_view(request):
             "initialization_required": not CustomsOrder.objects.exists(),
             "types": WarehouseAction.Type.choices,
             "export_rows": export_rows,
-            "analog_export_rows": analog_export_rows,
-            "normal_export_count": len(export_rows),
-            "analog_export_count": len(analog_export_rows),
             "ready_count": len(ready),
             "warning_count": len(export_rows) - len(ready),
             "customs_ready_count": len(export_rows) - len(customs_missing),
@@ -887,7 +887,9 @@ def actions_export(request):
     # поэтому оператор получает объяснение, а не книгу без строк.
     rows = historical_customs_rows(**filters, unassigned_only=True)
     if not rows:
-        messages.info(request, "Нет деталей, ещё не включённых в таможенный заказ.")
+        messages.info(
+            request, "Нет оригиналов (BRP, PROX), ещё не включённых в таможенный заказ."
+        )
         return redirect("actions_report")
     buffer = export_customs_xlsx(rows=rows)
     date_from = filters["date_from"] or datetime.date.today()
@@ -903,7 +905,7 @@ def actions_export(request):
 
 @login_required
 def actions_analog_export(request):
-    """Скачать форму для заказа только по явно связанным аналогам."""
+    """Скачать форму для заказа по аналогам: всё, что не BRP и не PROX."""
     _require_access(request)
     if not request.user.can_view_purchase_cost:
         raise PermissionDenied
@@ -912,7 +914,7 @@ def actions_analog_export(request):
     filters = _report_filters(request)
     rows = historical_analog_customs_rows(**filters, unassigned_only=True)
     if not rows:
-        messages.info(request, "Нет деталей, ещё не включённых в таможенный заказ.")
+        messages.info(request, "Нет аналогов, ещё не включённых в таможенный заказ.")
         return redirect("actions_report")
     buffer = export_customs_xlsx(rows=rows)
     date_from = filters["date_from"] or datetime.date.today()
@@ -973,7 +975,7 @@ def _next_unresolved_customs_part(filters: dict, *, after_part_id: int) -> int |
     возвращаемся к началу списка - так обход не застревает и не пропускает
     строки, стоящие выше по списку.
     """
-    rows = historical_customs_rows(**filters)
+    rows = customs_export_rows(**filters)
     unresolved = []
     seen = set()
     for row in rows:

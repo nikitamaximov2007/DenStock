@@ -23,7 +23,7 @@ from apps.actions.services import (
     CUSTOMS_COUNTRY,
     catalog_customs_usd,
     catalog_english_name,
-    historical_customs_rows,
+    customs_export_rows,
     part_export_data,
     perform_action,
     system_customs_facts,
@@ -285,7 +285,7 @@ def test_a_missing_system_value_fails_closed(client, env, admin):
 
     _save(client, part, **_complete())
 
-    row = historical_customs_rows()[0]
+    row = customs_export_rows()[0]
     assert row["customs_ready"] is False
     assert "не заполнено английское название" in row["customs_missing_reasons"]
     assert "нет таможенной цены в USD" in row["customs_missing_reasons"]
@@ -314,7 +314,7 @@ def test_a_suggested_name_is_not_confirmed_by_itself(client, env, admin):
     customs = PartCustomsInfo.objects.get(part_type=part)
     assert customs.customs_name_ru == "РОЛИК ШКИВА"
     assert customs.customs_name_ru_confirmed is False
-    row = historical_customs_rows()[0]
+    row = customs_export_rows()[0]
     assert row["customs_ready"] is False
     assert "русское название не подтверждено" in row["customs_missing_reasons"]
 
@@ -326,7 +326,7 @@ def test_a_confirmed_name_makes_the_row_ready(client, env, admin):
 
     _save(client, part, **_complete())
 
-    row = historical_customs_rows()[0]
+    row = customs_export_rows()[0]
     assert row["customs_ready"] is True
     assert row["customs_missing_reasons"] == []
     assert row["name_ru"] == "РОЛИК ШКИВА"
@@ -493,7 +493,7 @@ def test_a_missing_manual_value_blocks_the_row(client, env, admin, missing, reas
 
     _save(client, part, **_complete(**{missing: ""}))
 
-    row = historical_customs_rows()[0]
+    row = customs_export_rows()[0]
     assert row["customs_ready"] is False
     assert reason in row["customs_missing_reasons"]
 

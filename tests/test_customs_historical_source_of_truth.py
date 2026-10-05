@@ -31,8 +31,8 @@ from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
     customs_data_version_for,
     customs_export_reconciliation,
+    customs_export_rows,
     export_customs_xlsx,
-    historical_customs_rows,
     parse_customs_usd,
     perform_action,
 )
@@ -253,7 +253,7 @@ def test_opening_the_form_does_not_record_a_version(client, env, make_user):
     _card(part, customs_unit_price_usd=Decimal("12.50"))
     versions = PartCustomsDataVersion.objects.filter(part_type=part)
     assert [v.version for v in versions] == [1]  # первая версия - настоящий ввод
-    row = _row_for(historical_customs_rows(), "219800345")
+    row = _row_for(customs_export_rows(), "219800345")
     assert row["version_number"] == 1
     assert row["usd_price"] == Decimal("12.50")  # история не перехвачена пустышкой
 
@@ -352,7 +352,7 @@ def test_first_version_covers_movements_made_before_it(env):
     _receive(env, part)
     _sell(env, part, quantity="2", number="219800345")
     _card(part, customs_unit_price_usd=Decimal("12.50"))  # заведена уже потом
-    row = _row_for(historical_customs_rows(), "219800345")
+    row = _row_for(customs_export_rows(), "219800345")
     assert row["version_number"] == 1
     assert row["usd_price"] == Decimal("12.50")
     assert row["quantity"] == Decimal("2")
@@ -364,7 +364,7 @@ def test_later_version_does_not_rewrite_an_earlier_write_off(env):
     card = _card(part, customs_unit_price_usd=Decimal("10"))
     _sell(env, part, quantity="2", number="219800345")
     _edit(card, customs_unit_price_usd=Decimal("99"))
-    row = _row_for(historical_customs_rows(), "219800345")
+    row = _row_for(customs_export_rows(), "219800345")
     assert row["version_number"] == 1
     assert row["usd_price"] == Decimal("10")  # не 99
 
@@ -377,7 +377,7 @@ def test_write_offs_under_two_versions_stay_separate_rows(env):
     _edit(card, customs_unit_price_usd=Decimal("20"))
     _sell(env, part, quantity="3", number="219800345")
 
-    rows = [r for r in historical_customs_rows() if r["number"] == "219800345"]
+    rows = [r for r in customs_export_rows() if r["number"] == "219800345"]
     assert len(rows) == 2
     by_version = {r["version_number"]: r for r in rows}
     assert by_version[1]["quantity"] == Decimal("2")
@@ -415,7 +415,7 @@ def test_period_report_keeps_each_sale_under_its_own_number(env):
     assert (first.part_number, second.part_number) == ("WH-100", "WH-200")
 
     # Обе продажи разом: две отдельные строки, номера не слиты.
-    numbers = sorted(row["number"] for row in historical_customs_rows())
+    numbers = sorted(row["number"] for row in customs_export_rows())
     assert numbers == ["WH-100", "WH-200"]
 
     # Отчёт со сдвинутым началом периода: первая продажа отодвинута в прошлое,
@@ -427,7 +427,7 @@ def test_period_report_keeps_each_sale_under_its_own_number(env):
 
     # Начало окна - сегодняшняя дата пользователя, а не дата по UTC: ночью
     # они расходятся, и вчерашняя продажа возвращалась в отчёт.
-    rows = historical_customs_rows(date_from=timezone.localdate())
+    rows = customs_export_rows(date_from=timezone.localdate())
     assert [row["number"] for row in rows] == ["WH-200"]
     assert rows[0]["quantity"] == Decimal("3")
 
@@ -443,7 +443,7 @@ def test_return_reduces_the_version_the_goods_left_under(env):
     action = _sell(env, part, quantity="5", number="219800345")
     _edit(card, customs_unit_price_usd=Decimal("20"))  # правка ПОСЛЕ продажи
     _return(env, action, "2")
-    rows = [r for r in historical_customs_rows() if r["number"] == "219800345"]
+    rows = [r for r in customs_export_rows() if r["number"] == "219800345"]
     assert len(rows) == 1  # фантомной строки по второй версии не появилось
     assert rows[0]["version_number"] == 1
     assert rows[0]["quantity"] == Decimal("3")  # 5 - 2, по своей версии
@@ -455,7 +455,7 @@ def test_partial_return_leaves_the_remainder(env):
     _card(part)
     action = _sell(env, part, quantity="5", number="219800345")
     _return(env, action, "2")
-    assert _row_for(historical_customs_rows(), "219800345")["quantity"] == Decimal("3")
+    assert _row_for(customs_export_rows(), "219800345")["quantity"] == Decimal("3")
 
 
 def test_full_return_removes_the_row(env):
@@ -464,7 +464,7 @@ def test_full_return_removes_the_row(env):
     _card(part)
     action = _sell(env, part, quantity="4", number="219800345")
     _return(env, action, "4")
-    assert [r for r in historical_customs_rows() if r["number"] == "219800345"] == []
+    assert [r for r in customs_export_rows() if r["number"] == "219800345"] == []
 
 
 def test_return_does_not_reduce_another_part(env):
@@ -477,7 +477,7 @@ def test_return_does_not_reduce_another_part(env):
     _sell(env, kept, quantity="3", number="111000111")
     action = _sell(env, given_back, quantity="3", number="222000222")
     _return(env, action, "3")
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
     assert _row_for(rows, "111000111")["quantity"] == Decimal("3")  # чужой расход цел
     assert [r for r in rows if r["number"] == "222000222"] == []
 
@@ -491,7 +491,7 @@ def test_cancelled_sale_leaves_no_customs_consumption(env):
     bad = _sell(env, part, quantity="2", number="219800345")
     _sell(env, part, quantity="3", number="219800345")
     cancel_warehouse_action(bad, by=env["admin"], reason="Дубль")
-    assert _row_for(historical_customs_rows(), "219800345")["quantity"] == Decimal("3")
+    assert _row_for(customs_export_rows(), "219800345")["quantity"] == Decimal("3")
 
 
 def test_customer_filter_narrows_the_declaration(env):
@@ -515,14 +515,14 @@ def test_customer_filter_narrows_the_declaration(env):
         customer_comment="Петров", scanned_number="222000222", by=env["admin"],
     )
 
-    assert sorted(r["number"] for r in historical_customs_rows()) == [
+    assert sorted(r["number"] for r in customs_export_rows()) == [
         "111000111", "222000222",
     ]
-    only_ivanov = historical_customs_rows(q="Иванов")
+    only_ivanov = customs_export_rows(q="Иванов")
     assert [r["number"] for r in only_ivanov] == ["111000111"]
     assert only_ivanov[0]["quantity"] == Decimal("2")
-    assert [r["number"] for r in historical_customs_rows(q="Петров")] == ["222000222"]
-    assert historical_customs_rows(q="Сидоров") == []  # никого не нашли - пусто
+    assert [r["number"] for r in customs_export_rows(q="Петров")] == ["222000222"]
+    assert customs_export_rows(q="Сидоров") == []  # никого не нашли - пусто
 
 
 # --- 13-17. Канонический журнал: что считается выбытием ---------------------
@@ -532,7 +532,7 @@ def test_receipt_is_not_customs_consumption(env):
     part = _part(env, number="219800345")
     _card(part)
     _receive(env, part, quantity="10")
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
 
 
 def test_relocation_is_not_customs_consumption(env):
@@ -542,7 +542,7 @@ def test_relocation_is_not_customs_consumption(env):
     _card(part)
     lot = _receive(env, part, quantity="10")
     move_stock_lot(lot, env["loc2"], by=env["admin"])
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
 
 
 def test_stocktaking_adjustment_is_not_customs_consumption(env):
@@ -554,7 +554,7 @@ def test_stocktaking_adjustment_is_not_customs_consumption(env):
         part_type=part, stock_lot=lot, quantity=Decimal("3"),
         from_location=env["loc"], created_by=env["admin"],
     )
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
 
 
 def test_a_write_off_is_not_a_customs_row(env):
@@ -573,7 +573,7 @@ def test_a_write_off_is_not_a_customs_row(env):
     lot = _receive(env, part, quantity="10")
     write_off_stock_lot_quantity(lot, Decimal("2"), by=env["admin"], comment="Брак")
 
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
     reconciliation = customs_export_reconciliation()
     assert reconciliation["lines"] == []
     assert reconciliation["delta"] == {"quantity": Decimal("0"), "amount": Decimal("0.00")}
@@ -587,7 +587,7 @@ def test_repair_issue_is_customs_consumption(env):
         part=part, location=env["loc"], action_type="repair", quantity="2",
         customer_comment="Сидоров", scanned_number="219800345", by=env["admin"],
     )
-    assert _row_for(historical_customs_rows(), "219800345")["quantity"] == Decimal("2")
+    assert _row_for(customs_export_rows(), "219800345")["quantity"] == Decimal("2")
 
 
 # --- 18-21. Подстановки только из подтверждённых источников ------------------
@@ -606,7 +606,7 @@ def test_unentered_price_comes_from_catalog_wholesale_not_retail(env):
     _receive(env, part, quantity="10")
     _card(part, customs_unit_price_usd=None)
     _sell(env, part, quantity="1", number="219800345")
-    row = _row_for(historical_customs_rows(), "219800345")
+    row = _row_for(customs_export_rows(), "219800345")
     assert row["usd_price"] == Decimal("28.15")  # оптовая, не розничная 35.99
 
 
@@ -615,7 +615,7 @@ def test_country_is_not_hardcoded_to_canada(env):
     _receive(env, part, quantity="10")
     _card(part, country_of_origin="")
     _sell(env, part, quantity="1", number="219800345")
-    row = _row_for(historical_customs_rows(), "219800345")
+    row = _row_for(customs_export_rows(), "219800345")
     assert row["country"] == ""  # прежний хардкод «CANADA» исчез
     assert "не заполнена страна производства" in row["warnings"]
 
@@ -623,7 +623,7 @@ def test_country_is_not_hardcoded_to_canada(env):
     _receive(env, other, quantity="10")
     _card(other, country_of_origin="AUSTRIA")
     _sell(env, other, quantity="1", number="700100700")
-    assert _row_for(historical_customs_rows(), "700100700")["country"] == "AUSTRIA"
+    assert _row_for(customs_export_rows(), "700100700")["country"] == "AUSTRIA"
 
 
 def test_catalog_name_never_substitutes(env):
@@ -631,7 +631,7 @@ def test_catalog_name_never_substitutes(env):
     _receive(env, part, quantity="10")
     _card(part, customs_name_ru="", customs_name_en="")
     _sell(env, part, quantity="1", number="219800345")
-    row = _row_for(historical_customs_rows(), "219800345")
+    row = _row_for(customs_export_rows(), "219800345")
     assert row["name_ru"] == "" and row["name_en"] == ""
     assert "НАЗВАНИЕ ИЗ КАТАЛОГА" not in (row["name_ru"], row["name_en"])
 
@@ -742,7 +742,7 @@ def test_excel_carries_the_same_version_the_preview_showed(client, env, make_use
     _edit(card, customs_unit_price_usd=Decimal("99"), country_of_origin="AUSTRIA")
     _login(client, make_user)
     sheet = openpyxl.load_workbook(
-        BytesIO(client.get(reverse("actions_export")).content)
+        BytesIO(client.get(reverse("actions_analog_export")).content)
     )[SHEET]
     assert sheet[f"F{DATA_ROW}"].value == "CANADA"
     assert Decimal(str(sheet[f"K{DATA_ROW}"].value)) == Decimal("10")
@@ -754,7 +754,7 @@ def test_export_works_when_nothing_was_ever_entered(client, env, make_user):
     _receive(env, part, quantity="10")
     _sell(env, part, quantity="1", number="219800345")
     _login(client, make_user)
-    resp = client.get(reverse("actions_export"))
+    resp = client.get(reverse("actions_analog_export"))
     assert resp.status_code == 200
     sheet = openpyxl.load_workbook(BytesIO(resp.content))[SHEET]
     assert sheet[f"B{DATA_ROW}"].value == "219800345"  # операция на месте
@@ -771,7 +771,7 @@ def test_incomplete_customs_data_leaves_blanks_but_keeps_the_row(client, env, ma
     _sell(env, part, quantity="2", number="219800345")
 
     _login(client, make_user)
-    response = client.get(reverse("actions_export"))
+    response = client.get(reverse("actions_analog_export"))
     assert response.status_code == 200
     sheet = openpyxl.load_workbook(BytesIO(response.content))[SHEET]
     assert sheet[f"B{DATA_ROW}"].value == "219800345"

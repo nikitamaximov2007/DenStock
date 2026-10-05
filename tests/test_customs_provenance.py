@@ -188,7 +188,7 @@ def _return_sale(env, action, quantity):
 
 def test_the_article_follows_the_snapshot_after_the_card_is_renamed(env):
     """Деталь переименовали после продажи: в выгрузке остаётся прежний номер."""
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _receive(env, part)
     _card(part)
     _sell(env, part, quantity="2", number="219800345")
@@ -202,7 +202,7 @@ def test_the_article_follows_the_snapshot_after_the_card_is_renamed(env):
 
 def test_a_later_supersession_does_not_rewrite_history(env):
     """Замена номера по BRP приходит позже и историю не переписывает."""
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _receive(env, part)
     _card(part)
     _sell(env, part, quantity="3", number="219800345")
@@ -218,7 +218,7 @@ def test_a_later_supersession_does_not_rewrite_history(env):
 
 def test_two_numbers_of_one_part_never_merge(env):
     """Один и тот же товар уходил под двумя номерами: две отдельные строки."""
-    part = _part(env, number="WH-100")
+    part = _prove_brp(_part(env, number="WH-100"))
     PartNumber.objects.create(part=part, value="WH-200", kind=PartNumber.Kind.ARTICLE)
     _receive(env, part)
     _card(part)
@@ -230,7 +230,7 @@ def test_two_numbers_of_one_part_never_merge(env):
 
 
 def test_an_alias_does_not_replace_the_number_the_goods_left_under(env):
-    part = _part(env, number="UCP-OLD")
+    part = _prove_brp(_part(env, number="UCP-OLD"))
     _receive(env, part)
     _card(part)
     _sell(env, part, quantity="2", number="UCP-OLD")
@@ -249,7 +249,7 @@ def test_an_outbound_without_a_snapshot_is_never_named_by_the_current_card(env):
     историей не является. Раньше выбор был между выдумкой и потерей строки;
     теперь операция сохраняется, а недоказанное поле остаётся пустым.
     """
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _card(part)
     lot = _receive(env, part)
     _document_sale(env, lot, quantity="2", price="500")
@@ -468,7 +468,7 @@ def test_every_canonical_line_lands_in_the_export(env):
 def test_the_xlsx_is_produced_even_when_the_article_is_unproven(client, env, admin):
     from django.urls import reverse
 
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _card(part)
     lot = _receive(env, part)
     _document_sale(env, lot, quantity="4", price="500")
@@ -485,7 +485,7 @@ def test_the_xlsx_is_produced_even_when_the_article_is_unproven(client, env, adm
 def test_the_xlsx_is_produced_when_everything_is_proven(client, env, admin):
     from django.urls import reverse
 
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _receive(env, part)
     _card(part)
     _sell(env, part, quantity="2", number="219800345")
@@ -500,7 +500,7 @@ def test_the_xlsx_is_produced_when_everything_is_proven(client, env, admin):
 
 
 def test_the_preview_and_the_file_stand_on_the_same_rows(env):
-    part = _part(env, number="219800345")
+    part = _prove_brp(_part(env, number="219800345"))
     _receive(env, part)
     _card(part)
     _sell(env, part, quantity="2", number="219800345")
@@ -513,24 +513,33 @@ def test_the_preview_and_the_file_stand_on_the_same_rows(env):
     assert result["rows"] == rows
 
 
-def test_partanalog_direction_splits_original_and_analog_exports(env):
+def test_manufacturer_not_partanalog_direction_splits_original_and_analog_exports(env):
+    """Группу решает только производитель: BRP/PROX - оригинал, остальное - аналог.
+
+    Связь PartAnalog больше не делает сторону «original» оригиналом для
+    таможни: без доказанного BRP/PROX деталь идёт в выгрузку аналогов.
+    """
     original = _part(env, name="ОРИГИНАЛ", number="ORIG-1")
     analog = _part(env, name="АНАЛОГ", number="ALT-1")
     PartAnalog.objects.create(original=original, analog=analog)
+    proven = _prove_brp(_part(env, name="BRP", number="BRP-1"))
+    _card(proven)
     _receive(env, original, quantity="3")
     _receive(env, analog, quantity="4")
+    _receive(env, proven, quantity="2")
     _sell(env, original, quantity="2", number="ORIG-1")
     _sell(env, analog, quantity="3", number="ALT-1")
+    _sell(env, proven, quantity="1", number="BRP-1")
 
     normal = historical_customs_rows()
     analog_rows = historical_analog_customs_rows()
 
-    assert {row["source_key"][0] for row in normal} == {original.pk}
-    assert {row["source_key"][0] for row in analog_rows} == {analog.pk}
+    assert {row["source_key"][0] for row in normal} == {proven.pk}
+    assert {row["source_key"][0] for row in analog_rows} == {original.pk, analog.pk}
     normal_parts = {row["source_key"][0] for row in normal}
     analog_parts = {row["source_key"][0] for row in analog_rows}
     assert not normal_parts & analog_parts
-    assert sum((row["quantity"] for row in normal + analog_rows), Decimal("0")) == Decimal("5")
+    assert sum((row["quantity"] for row in normal + analog_rows), Decimal("0")) == Decimal("6")
 
 
 def test_spi_manufacturer_is_analog_only(env):

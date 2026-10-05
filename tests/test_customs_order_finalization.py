@@ -26,6 +26,7 @@ def _row(source_id, *, quantity="1.000", price="10.00", occurred_at=None, analog
         "quantity": Decimal(quantity),
         "usd_price": Decimal(price) if price is not None else None,
         "is_analog": analog,
+        "customs_group": "analog" if analog else "original",
         "provenance": "sales_repairs",
         "occurred_at": occurred_at,
     }

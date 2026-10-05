@@ -3,7 +3,12 @@
 {% block content %}
   <div class="page-header">
     <h1 class="page-title">Таможенные заказы</h1>
-    <a class="btn btn--primary" href="{% url 'customs_order_selection' %}">Отправить в заказ</a>
+    <div class="page-actions">
+      <a class="btn btn--primary"
+         href="{% url 'customs_order_selection' %}?order_type=original">Отправить в заказ оригинал</a>
+      <a class="btn btn--primary"
+         href="{% url 'customs_order_selection' %}?order_type=analog">Отправить в заказ аналоги</a>
+    </div>
   </div>
   {% include "customs_orders/_bootstrap_warning.html" %}
   <p class="page-subtitle">Состав, курс и стоимость сохраняются при создании заказа.</p>

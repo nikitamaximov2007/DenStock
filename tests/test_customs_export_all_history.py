@@ -29,7 +29,7 @@ from apps.accounts import roles
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
     customs_export_reconciliation,
-    historical_customs_rows,
+    customs_export_rows,
     perform_action,
 )
 from apps.catalog.models import Category, Manufacturer, PartNumber, PartType, Unit
@@ -253,7 +253,7 @@ def test_export_works_when_customs_data_is_complete(client, env, make_user):
     _scanner_sale(env, part, quantity="2", number="219800345")
     _login(client, make_user)
 
-    response = client.get(reverse("actions_export"))
+    response = client.get(reverse("actions_analog_export"))
 
     assert response.status_code == 200
     sheet = _sheet(response.content)
@@ -268,7 +268,7 @@ def test_export_also_works_when_customs_data_is_missing(client, env, make_user):
     _scanner_sale(env, part, quantity="2", number="219800345")
     _login(client, make_user)
 
-    response = client.get(reverse("actions_export"))
+    response = client.get(reverse("actions_analog_export"))
 
     assert response.status_code == 200
     assert response["Content-Type"].startswith(
@@ -284,7 +284,7 @@ def test_missing_customs_fields_become_blank_cells(client, env, make_user):
     _scanner_sale(env, part, quantity="2", number="219800345")
     _login(client, make_user)
 
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
 
     for column in "FGHKM":  # страна, брутто, нетто, цена, область применения
         assert sheet[f"{column}{DATA_ROW}"].value is None
@@ -298,7 +298,7 @@ def test_no_fake_or_default_customs_values_appear(client, env, make_user):
     _scanner_sale(env, part, quantity="1", number="219800345")
     _login(client, make_user)
 
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
 
     row = _rows_in(sheet, 1)[0]
     assert row["B"] == "219800345"
@@ -319,7 +319,7 @@ def test_an_incomplete_row_is_never_omitted(env):
     _scanner_sale(env, complete, quantity="2", number="COMPLETE-1")
     _scanner_sale(env, incomplete, quantity="3", number="INCOMPLETE-1")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
 
     assert {row["number"] for row in rows} == {"COMPLETE-1", "INCOMPLETE-1"}
     assert sum(row["quantity"] for row in rows) == Decimal("5")
@@ -334,7 +334,7 @@ def test_a_sale_line_is_exported(env):
     _card(part)
     _document_sale(env, lot, quantity="4", price="250")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
 
     assert len(rows) == 1
     assert rows[0]["quantity"] == Decimal("4")
@@ -346,7 +346,7 @@ def test_a_repair_issue_line_is_exported(env):
     _card(part)
     _document_repair(env, lot, quantity="3", price="800")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
 
     assert len(rows) == 1
     assert rows[0]["quantity"] == Decimal("3")
@@ -364,7 +364,7 @@ def test_a_legacy_document_line_without_a_scanner_snapshot_is_exported(env):
     _card(part)
     _document_sale(env, lot, quantity="6", price="150")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
 
     assert len(rows) == 1
     assert rows[0]["number"] == ""  # не «LEGACY-1» из текущего каталога
@@ -385,7 +385,7 @@ def test_a_full_cancellation_is_treated_like_the_report(env):
 
     quantity, amount = _report_totals()
     assert quantity == Decimal("0")
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
     assert customs_export_reconciliation()["totals"]["quantity"] == quantity
     assert customs_export_reconciliation()["totals"]["amount"] == amount
 
@@ -435,7 +435,7 @@ def test_a_cancelled_repair_order_is_treated_like_the_report(env):
 
     quantity, _amount = _report_totals()
     assert quantity == Decimal("0")
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
 
 
 def test_return_semantics_match_the_report(env):
@@ -483,7 +483,7 @@ def test_mixed_provenance_keeps_both_kinds_of_row(env):
     _scanner_sale(env, part, quantity="2", number="MIXED-1")
     _document_sale(env, lot, quantity="3", price="500")
 
-    rows = historical_customs_rows()
+    rows = customs_export_rows()
 
     assert {row["number"] for row in rows} == {"MIXED-1", ""}
     assert sum(row["quantity"] for row in rows) == Decimal("5")
@@ -497,7 +497,7 @@ def test_a_write_off_is_not_part_of_the_customs_universe(env):
 
     quantity, _amount = _report_totals()
     assert quantity == Decimal("0")  # списания нет и в «Продажах и ремонтах»
-    assert historical_customs_rows() == []
+    assert customs_export_rows() == []
 
 
 # --- 13-15. Сверка за всё время --------------------------------------------
@@ -706,22 +706,22 @@ def test_period_and_type_filters_still_work(client, env, make_user):
     sale = _document_sale(env, _receive(env, sold), quantity="2", price="100")
     _document_repair(env, _receive(env, issued), quantity="3", price="100")
 
-    assert len(historical_customs_rows()) == 2
-    assert len(historical_customs_rows(action_type="sale")) == 1
-    assert len(historical_customs_rows(action_type="repair")) == 1
-    assert historical_customs_rows(action_type="reserve") == []
+    assert len(customs_export_rows()) == 2
+    assert len(customs_export_rows(action_type="sale")) == 1
+    assert len(customs_export_rows(action_type="repair")) == 1
+    assert customs_export_rows(action_type="reserve") == []
 
     yesterday = datetime.date.today() - datetime.timedelta(days=1)
     Sale.objects.filter(pk=sale.pk).update(
         sold_at=sale.sold_at - datetime.timedelta(days=2)
     )
-    assert len(historical_customs_rows(date_from=yesterday)) == 1
+    assert len(customs_export_rows(date_from=yesterday)) == 1
 
-    assert len(historical_customs_rows(part_number="FILTER-SALE")) == 1
-    assert len(historical_customs_rows(location_code="S01-D01")) == 2
-    assert historical_customs_rows(location_code="S02-D02") == []
-    assert len(historical_customs_rows(q="Петров")) == 1
-    assert historical_customs_rows(q="Никого") == []
+    assert len(customs_export_rows(part_number="FILTER-SALE")) == 1
+    assert len(customs_export_rows(location_code="S01-D01")) == 2
+    assert customs_export_rows(location_code="S02-D02") == []
+    assert len(customs_export_rows(q="Петров")) == 1
+    assert customs_export_rows(q="Никого") == []
 
 
 def test_permissions_are_still_enforced(client, env, make_user):
@@ -752,7 +752,7 @@ def test_the_workbook_opens_with_the_expected_headers_and_rows(client, env, make
     _scanner_sale(env, second, quantity="3", number="BBB-2")
     _login(client, make_user)
 
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
 
     assert [row["B"] for row in _rows_in(sheet, 2)] == ["AAA-1", "BBB-2"]
     assert [row["C"] for row in _rows_in(sheet, 2)] == ["РЕМЕНЬ", "ФИЛЬТР"]
@@ -771,7 +771,7 @@ def test_the_export_writes_nothing_to_the_database(client, env, make_user):
         PartCustomsDataVersion.objects.count(),
     )
 
-    assert client.get(reverse("actions_export")).status_code == 200
+    assert client.get(reverse("actions_analog_export")).status_code == 200
 
     assert (
         PartCustomsInfo.objects.count(),
@@ -824,7 +824,7 @@ def test_the_report_page_counts_incomplete_positions_itself(client, env, make_us
     _scanner_sale(env, second, quantity="1", number="UI-MISSING-2")
     html = client.get(reverse("actions_report")).content.decode()
     assert "У 2 позиций таможенные данные заполнены не" in html
-    assert "Экспорт в Excel для таможни" in html
+    assert "Экспорт в Excel оригинал" in html
 
 
 def test_the_report_page_names_rows_whose_article_is_unproven(client, env, make_user):
@@ -837,7 +837,7 @@ def test_the_report_page_names_rows_whose_article_is_unproven(client, env, make_
     html = client.get(reverse("actions_report")).content.decode()
 
     assert "У 1 позиций не сохранён артикул" in html
-    assert "Экспорт в Excel для таможни" in html
+    assert "Экспорт в Excel оригинал" in html
 
 
 def test_every_canonical_row_is_written_even_beyond_the_template_limit(
@@ -851,7 +851,7 @@ def test_every_canonical_row_is_written_even_beyond_the_template_limit(
         _document_sale(env, lot, quantity="1", price="100")
     _login(client, make_user)
 
-    sheet = _sheet(client.get(reverse("actions_export")).content)
+    sheet = _sheet(client.get(reverse("actions_analog_export")).content)
 
     written = [
         sheet[f"J{DATA_ROW + offset}"].value for offset in range(150)

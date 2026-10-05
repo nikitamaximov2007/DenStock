@@ -33,6 +33,8 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
 from apps.actions.services import (
+    CUSTOMS_ANALOG,
+    CUSTOMS_ORIGINAL,
     authoritative_manufacturer,
     historical_analog_customs_rows,
     historical_customs_rows,
@@ -139,14 +141,13 @@ def test_stale_brp_resolves_to_the_proven_brand(env, brand, eligible):
     assert info.manufacturer == "BRP"  # сохранённое значение - именно "BRP"
     _sell(env, part, number=f"STALE-{brand}")
 
-    # SPI - единственный бренд, который canonical_customs_lines сам считает
-    # аналогом (см. _is_analog_part), поэтому его строка идёт в аналоговую
-    # выгрузку, а не в обычную - это существующее, отдельно проверенное
-    # правило, не связанное с этим фиксом.
-    rows = historical_analog_customs_rows() if brand == "SPI" else historical_customs_rows()
+    # Группа выгрузки определяется только производителем: BRP и PROX -
+    # «Экспорт в Excel оригинал», всё остальное - «Экспорт в Excel аналоги».
+    rows = historical_customs_rows() if eligible else historical_analog_customs_rows()
     row = _row_for(rows, f"STALE-{brand}")
     assert row["manufacturer"] == brand  # не "BRP"
     assert is_brp_export_eligible(row["manufacturer"]) is eligible
+    assert row["customs_group"] == (CUSTOMS_ORIGINAL if eligible else CUSTOMS_ANALOG)
 
     articles = {r["number"] for r in eligible_customs_sources()}
     assert (f"STALE-{brand}" in articles) is eligible
@@ -160,7 +161,7 @@ def test_stale_brp_with_no_evidence_is_not_treated_as_proven(env):
     part = _stale_brp_part(env, name="ЗАГАДКА", article="STALE-UNKNOWN")
     _sell(env, part, number="STALE-UNKNOWN")
 
-    row = _row_for(historical_customs_rows(), "STALE-UNKNOWN")
+    row = _row_for(historical_analog_customs_rows(), "STALE-UNKNOWN")
     assert row["manufacturer"] == ""  # не "BRP" - недоказано
     assert not is_brp_export_eligible(row["manufacturer"])
     assert "STALE-UNKNOWN" not in {r["number"] for r in eligible_customs_sources()}
@@ -200,7 +201,7 @@ def test_export_is_correct_even_without_ever_running_the_repair_command(env):
     # Ремонт carточки НЕ запускался - только чтение.
     assert PartCustomsInfo.objects.get(part_type=part).manufacturer == "BRP"
     assert "AT-08776" not in {r["number"] for r in eligible_customs_sources()}
-    assert _row_for(historical_customs_rows(), "AT-08776")["manufacturer"] == "BRONCO"
+    assert _row_for(historical_analog_customs_rows(), "AT-08776")["manufacturer"] == "BRONCO"
 
 
 # --- 5, 12: UI resolver does not confidently expose known-wrong stale BRP ----
@@ -312,7 +313,7 @@ def test_repair_never_rewrites_the_frozen_historical_version(env):
     # Historical export row for the ALREADY-SOLD line still resolves correctly
     # (via authoritative_manufacturer on the frozen version), independent of
     # the live-card repair.
-    row = _row_for(historical_customs_rows(), "AT-08776")
+    row = _row_for(historical_analog_customs_rows(), "AT-08776")
     assert row["manufacturer"] == "BRONCO"
 
 
@@ -395,6 +396,7 @@ def test_russian_name_precedence_manual_fallback_only_when_nothing_else_confirme
         application_area=ApplicationArea.SNOWMOBILE,
     )
     _sell(env, part, number="10F")
-    row = _row_for(historical_customs_rows(), "10F")
+    # Без производителя деталь - аналог, строка в «Экспорт в Excel аналоги».
+    row = _row_for(historical_analog_customs_rows(), "10F")
     assert row["name_ru"] == "ГИЛЬЗА МАСЛОНАСОСА"
     assert row["name_ru_confirmed"] is False
