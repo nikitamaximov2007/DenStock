@@ -41,18 +41,41 @@ GROUP BY 1, 2, 3, 4
 ORDER BY 1, 2, 3, 4;
 
 -- name: transfer_evidence
--- Lots without receipt evidence that a stock transfer opened: the MOVE_LOT of
--- another lot of the same line, into this lot's original cell, for exactly its
--- initial quantity, written within 1 s after the lot, whose StockTransfer row
--- (same part, same target cell) was created before the lot.
+-- Lots without receipt evidence that a stock transfer opened. The matching
+-- MOVE_LOT is journaled on its source lot, so do not require its current
+-- BatchLine FK to equal the target's current BatchLine. Prove part identity on
+-- the source lot, movement, transfer, target lot and both BatchLines, and prove
+-- the complete transfer movement group agrees with its document.
 WITH first_whole_move AS (
     SELECT DISTINCT ON (stock_lot_id) stock_lot_id, from_location_id
     FROM inventory_stockmovement
     WHERE movement_type = 'move_lot' AND document_type = '' AND stock_lot_id IS NOT NULL
     ORDER BY stock_lot_id, created_at, id
 ),
+transfer_groups AS (
+    SELECT t.id AS transfer_id,
+           sum(m.quantity) AS moved_quantity,
+           bool_and(
+               m.movement_type = 'move_lot'
+               AND m.document_type = 'stock_transfer'
+               AND m.part_type_id = t.part_type_id
+               AND m.from_location_id = t.from_location_id
+               AND m.to_location_id = t.to_location_id
+               AND s.part_type_id = t.part_type_id
+               AND m.batch_id = s.batch_id
+               AND origin_line.part_type_id = t.part_type_id
+               AND origin_line.batch_id = m.batch_id
+           ) AS rows_consistent
+    FROM inventory_stocktransfer t
+    JOIN inventory_stockmovement m
+      ON m.document_id = t.id AND m.document_type = 'stock_transfer'
+     AND m.movement_type = 'move_lot'
+    JOIN inventory_stocklot s ON s.id = m.stock_lot_id
+    JOIN procurement_batchline origin_line ON origin_line.id = m.batch_line_id
+    GROUP BY t.id
+),
 candidates AS (
-    SELECT l.id, l.batch_line_id, l.status, l.part_type_id, l.initial_quantity,
+    SELECT l.id, l.batch_id, l.batch_line_id, l.status, l.part_type_id, l.initial_quantity,
            l.created_at, coalesce(f.from_location_id, l.location_id) AS original_location_id
     FROM inventory_stocklot l
     LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
@@ -68,13 +91,32 @@ SELECT DISTINCT ON (c.id)
        m.id AS movement_id, m.stock_lot_id AS source_lot_id, t.id AS transfer_id
 FROM candidates c
 JOIN inventory_stockmovement m
-  ON m.batch_line_id = c.batch_line_id AND m.stock_lot_id <> c.id
+  ON m.stock_lot_id <> c.id
  AND m.movement_type = 'move_lot' AND m.document_type = 'stock_transfer'
- AND m.to_location_id = c.original_location_id AND m.quantity = c.initial_quantity
+ AND m.to_location_id = c.original_location_id
+ AND m.quantity = c.initial_quantity
  AND m.created_at >= c.created_at AND m.created_at - c.created_at <= interval '1 second'
 JOIN inventory_stocktransfer t
-  ON t.id = m.document_id AND t.part_type_id = c.part_type_id
- AND t.to_location_id = c.original_location_id AND t.created_at <= c.created_at
+  ON t.id = m.document_id
+JOIN inventory_stocklot source_lot ON source_lot.id = m.stock_lot_id
+JOIN procurement_batchline origin_line ON origin_line.id = m.batch_line_id
+JOIN procurement_batchline current_line ON current_line.id = c.batch_line_id
+JOIN transfer_groups g ON g.transfer_id = t.id
+WHERE t.part_item_id IS NULL
+  AND t.stock_state IN ('available', 'quarantine')
+  AND t.part_type_id = c.part_type_id
+  AND m.part_type_id = c.part_type_id
+  AND source_lot.part_type_id = c.part_type_id
+  AND m.batch_id = c.batch_id
+  AND current_line.part_type_id = c.part_type_id
+  AND origin_line.part_type_id = c.part_type_id
+  AND m.batch_id = source_lot.batch_id
+  AND origin_line.batch_id = m.batch_id
+  AND m.from_location_id = t.from_location_id
+  AND t.to_location_id = c.original_location_id
+  AND t.created_at <= c.created_at
+  AND g.moved_quantity = t.quantity
+  AND g.rows_consistent
 ORDER BY c.id, m.id;
 
 -- name: reassigned_receipts

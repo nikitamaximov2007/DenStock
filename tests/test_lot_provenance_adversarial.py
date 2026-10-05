@@ -208,6 +208,24 @@ def test_transfer_targets_through_partials_merges_and_round_trips(env):
     assert remaining_qty(line) == Decimal("0")
 
 
+def test_transfer_split_targets_match_their_own_source_portions(env):
+    first_line = _finalized_line(env, env["part"], "5")
+    second_line = _finalized_line(env, env["part"], "5")
+    receive_stock_lot(create_stock_lot(first_line, env["cells"][0], Decimal("1")))
+    receive_stock_lot(create_stock_lot(second_line, env["cells"][0], Decimal("2")))
+
+    _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-split-transfer")
+
+    first_target = StockLot.objects.get(batch_line=first_line, location=env["cells"][1])
+    second_target = StockLot.objects.get(batch_line=second_line, location=env["cells"][1])
+    assert first_target.initial_quantity == Decimal("1")
+    assert second_target.initial_quantity == Decimal("2")
+    assert _cls(first_line, first_target) == (TRANSFER_DERIVED, Decimal("0"))
+    assert _cls(second_line, second_target) == (TRANSFER_DERIVED, Decimal("0"))
+    assert remaining_qty(first_line) == Decimal("4")
+    assert remaining_qty(second_line) == Decimal("3")
+
+
 def test_a_transfer_movement_needs_its_stock_transfer_row(env):
     line = _finalized_line(env, env["part"], "10")
     receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
@@ -216,7 +234,72 @@ def test_a_transfer_movement_needs_its_stock_transfer_row(env):
     # A movement pointing at another transfer's id or cell is not evidence.
     StockTransfer.objects.filter(pk=transfer.pk).update(to_location=env["cells"][3])
 
-    assert _cls(line, target)[0] != TRANSFER_DERIVED
+    assert _cls(line, target)[0] == UNKNOWN
+
+
+def test_a_transfer_movement_without_its_document_is_unknown(env):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-no-document")
+    target = _lot_at(line, env["cells"][1])
+    StockTransfer.objects.filter(pk=transfer.pk).delete()
+
+    assert _cls(line, target)[0] == UNKNOWN
+
+
+def test_legacy_lot_on_non_unique_same_batch_line_is_unknown(env):
+    line = _finalized_line(env, env["part"], "10")
+    duplicate = line.__class__.objects.create(
+        batch=line.batch,
+        part_type=line.part_type,
+        quantity=Decimal("10"),
+        unit_cost_currency=Decimal("1"),
+    )
+    lot = _flip(create_stock_lot(line, env["cells"][0], Decimal("6")))
+
+    assert _cls(line, lot) == (UNKNOWN, None)
+    assert remaining_qty(line) == Decimal("0")
+    assert duplicate.part_type_id == lot.part_type_id
+
+
+def test_a_transfer_target_rebound_to_another_line_keeps_zero_intake(env):
+    original = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(original, env["cells"][0], Decimal("10")))
+    _transfer(env, "2", env["cells"][0], env["cells"][1], "adv-rebind-target")
+    target = _lot_at(original, env["cells"][1])
+    destination_line = _finalized_line(env, env["part"], "10")
+    StockLot.objects.filter(pk=target.pk).update(batch_line=destination_line)
+
+    assert _cls(destination_line, target) == (TRANSFER_DERIVED, Decimal("0"))
+    assert _cls(original, source) == (PRIMARY_RECEIPT, Decimal("10"))
+    assert remaining_qty(original) == Decimal("0")
+    assert remaining_qty(destination_line) == Decimal("10")
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["move_part", "source_part", "target_part", "move_batchline"],
+)
+def test_transfer_identity_mismatch_is_unknown(env, public_catalog, tamper):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], f"adv-id-{tamper}")
+    target = _lot_at(line, env["cells"][1])
+    other_part = public_catalog.part("Другая деталь", article="ADV-2", price="100")
+    other_line = _finalized_line(env, other_part, "10")
+    move = StockMovement.objects.get(document_type="stock_transfer", document_id=transfer.pk)
+
+    if tamper == "move_part":
+        StockMovement.objects.filter(pk=move.pk).update(part_type=other_part)
+    elif tamper == "source_part":
+        StockLot.objects.filter(pk=source.pk).update(part_type=other_part)
+    elif tamper == "target_part":
+        StockLot.objects.filter(pk=target.pk).update(part_type=other_part)
+    else:
+        StockMovement.objects.filter(pk=move.pk).update(batch_line=other_line)
+
+    assert _cls(line, target)[0] == UNKNOWN
+    assert remaining_qty(line) == Decimal("0")
 
 
 # --- D. Found stock never touches a supplier line --------------------------------------------

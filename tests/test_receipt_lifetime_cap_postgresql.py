@@ -101,6 +101,52 @@ def _race_on_line(line_pk, *, holder, contender):
     return outcome
 
 
+def _race_under_exclusive_line_lock(line_pk, operations):
+    """Hold a real PostgreSQL row lock until every contender is observed waiting."""
+    locked, release = Event(), Event()
+    pids, outcomes = {}, {}
+
+    def blocker():
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                BatchLine.objects.select_for_update().get(pk=line_pk)
+                locked.set()
+                if not release.wait(20):
+                    raise AssertionError("test did not release the line lock")
+        finally:
+            close_old_connections()
+
+    def contender(key, fn):
+        close_old_connections()
+        try:
+            pids[key] = _backend_pid()
+            outcomes[key] = ("ok", fn())
+        except Exception as exc:  # asserted after every thread joins
+            outcomes[key] = ("error", exc)
+        finally:
+            close_old_connections()
+
+    blocker_thread = Thread(target=blocker)
+    blocker_thread.start()
+    assert locked.wait(20), "exclusive line lock was not acquired"
+    threads = [Thread(target=contender, args=(key, fn)) for key, fn in operations.items()]
+    for thread in threads:
+        thread.start()
+    for key in operations:
+        deadline = time.monotonic() + 20
+        while key not in pids and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert key in pids, f"{key} did not connect to PostgreSQL"
+        assert _waits_on_lock(pids[key]), f"{key} never waited on the held batch-line lock"
+    release.set()
+    for thread in [*threads, blocker_thread]:
+        thread.join(60)
+        assert not thread.is_alive(), "PostgreSQL contention test deadlocked"
+    assert all(result[0] == "ok" for result in outcomes.values()), outcomes
+    return outcomes
+
+
 def test_two_concurrent_plus_two_receipts_on_8_of_10_let_exactly_one_through(line_8_of_10):
     line, cells = line_8_of_10["line"], line_8_of_10["cells"]
 
@@ -120,6 +166,75 @@ def test_two_concurrent_plus_two_receipts_on_8_of_10_let_exactly_one_through(lin
     assert not StockLot.objects.filter(batch_line=line, location=cells[2]).exists()
     assert StockMovement.objects.filter(batch_line=line).count() == 2
     assert remaining_qty(line) == Decimal("0")
+
+
+def test_sale_and_receipt_wait_on_real_pg_lock_without_over_receipt(
+    line_8_of_10, public_catalog
+):
+    from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
+    from tests.customs_support import remember_customs
+
+    line, cells = line_8_of_10["line"], line_8_of_10["cells"]
+    lot = StockLot.objects.get(batch_line=line, location=cells[0])
+    remember_customs(line.part_type)
+    sale = create_sale(customer_name="Клиент", by=public_catalog.user)
+    add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("100"))
+    outcomes = _race_under_exclusive_line_lock(
+        line.pk,
+        {
+            "sale": lambda: complete_sale(sale, by=public_catalog.user),
+            "receipt": lambda: receive_stock_lot(
+                create_stock_lot(line, cells[2], Decimal("2"))
+            ),
+        },
+    )
+    assert set(outcomes) == {"sale", "receipt"}
+    assert remaining_qty(line) == Decimal("0")
+    assert StockMovement.objects.filter(batch_line=line).count() == 3
+
+
+def test_reconciliation_and_receipt_wait_on_real_pg_lock_without_stale_capacity(
+    line_8_of_10
+):
+    from apps.inventory.services import adjust_stock_lot_quantity
+
+    line, cells = line_8_of_10["line"], line_8_of_10["cells"]
+    lot = StockLot.objects.get(batch_line=line, location=cells[0])
+    outcomes = _race_under_exclusive_line_lock(
+        line.pk,
+        {
+            "reconciliation": lambda: adjust_stock_lot_quantity(
+                lot, Decimal("-1"), comment="Пересчёт"
+            ),
+            "receipt": lambda: receive_stock_lot(
+                create_stock_lot(line, cells[2], Decimal("2"))
+            ),
+        },
+    )
+    assert set(outcomes) == {"reconciliation", "receipt"}
+    assert remaining_qty(line) == Decimal("0")
+    assert StockMovement.objects.filter(batch_line=line).count() == 3
+
+
+def test_transfer_and_receipt_wait_on_real_pg_lock_without_over_receipt(line_8_of_10):
+    from apps.inventory.services import perform_stock_transfer
+
+    line, cells = line_8_of_10["line"], line_8_of_10["cells"]
+    outcomes = _race_under_exclusive_line_lock(
+        line.pk,
+        {
+            "transfer": lambda: perform_stock_transfer(
+                part=line.part_type, from_location=cells[0], to_location=cells[1],
+                quantity="2", stock_state=StockLot.Status.AVAILABLE, token="pg-line-lock-transfer",
+            ),
+            "receipt": lambda: receive_stock_lot(
+                create_stock_lot(line, cells[2], Decimal("2"))
+            ),
+        },
+    )
+    assert set(outcomes) == {"transfer", "receipt"}
+    assert remaining_qty(line) == Decimal("0")
+    assert StockMovement.objects.filter(batch_line=line).count() == 3
 
 
 def test_editing_a_pending_lot_upward_waits_and_respects_the_other_receipt(line_8_of_10):

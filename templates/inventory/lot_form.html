@@ -3,14 +3,20 @@
 {% block content %}
   <h1 class="page-title">{{ title }}</h1>
   {% if line %}
-    <p class="muted">
-      Партия {{ line.batch.number }} · {{ line.part_type }} · количество {{ line.quantity|quantity_int }} ·
-      остаток для распределения {{ remaining }}
-    </p>
+    {% if provenance_error %}
+      <p class="alert alert--error">{{ provenance_error }}</p>
+    {% else %}
+      <p class="muted">
+        Партия {{ line.batch.number }} · {{ line.part_type }} · количество {{ line.quantity|quantity_int }} ·
+        остаток для распределения {{ remaining }}
+      </p>
+    {% endif %}
   {% endif %}
-  <form method="post" class="form">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit" class="btn btn--primary">Сохранить</button>
-  </form>
+  {% if not provenance_error %}
+    <form method="post" class="form">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button type="submit" class="btn btn--primary">Сохранить</button>
+    </form>
+  {% endif %}
 {% endblock %}

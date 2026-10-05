@@ -11,6 +11,7 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.urls import reverse
 
 from apps.inventory.lot_provenance import (
     FOUND_STOCK,
@@ -176,6 +177,32 @@ def test_an_untracked_edit_leaves_the_lot_unknown_and_the_line_closed(env):
     assert remaining_qty(line) == Decimal("0")
     with pytest.raises(InventoryError, match="audit_lot_provenance"):
         create_stock_lot(line, env["cells"][1], Decimal("1"))
+
+
+def test_remaining_route_reports_unknown_provenance_without_zero_quantity_error(
+    env, client
+):
+    line = _finalized_line(env, env["part"], "10")
+    lot = _status_flip(create_stock_lot(line, env["cells"][0], Decimal("6")))
+    StockLot.objects.filter(pk=lot.pk).update(quantity=Decimal("9"))
+    before = (StockLot.objects.count(), StockMovement.objects.count())
+    client.force_login(env["admin"])
+
+    url = reverse("lot_create_remaining", args=[line.pk])
+    page = client.get(url)
+    assert page.status_code == 200
+    assert "происхождение которого журнал не доказывает" in page.content.decode()
+    assert "остаток для распределения 0" not in page.content.decode()
+
+    response = client.post(
+        url, {"location": env["cells"][1].pk, "note": ""}, follow=True
+    )
+    body = response.content.decode()
+    assert response.status_code == 200
+    assert "происхождение которого журнал не доказывает" in body
+    assert "Количество должно быть больше нуля" not in body
+    assert (StockLot.objects.count(), StockMovement.objects.count()) == before
+    assert StockLot.objects.get(pk=lot.pk).quantity == Decimal("9")
 
 
 def test_a_pending_lot_holds_its_quantity(env):

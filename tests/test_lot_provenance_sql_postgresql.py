@@ -17,6 +17,7 @@ from django.db import connection, transaction
 from apps.inventory.lot_provenance import (
     REASSIGNED,
     TRANSFER_DERIVED,
+    UNKNOWN,
     line_provenance_detail,
 )
 from apps.inventory.models import StockLot, StockMovement
@@ -27,6 +28,7 @@ from apps.inventory.services import (
     receive_stock_lot,
 )
 from apps.procurement.models import BatchLine
+from apps.warehouse.models import StorageLocation
 from tests.test_lot_provenance_adversarial import (  # noqa: F401
     _age,
     _flip,
@@ -91,7 +93,48 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     broken_line = _finalized_line(env, env["part"], "10")
     receive_stock_lot(create_stock_lot(broken_line, cells[3], Decimal("4")))
     _transfer(env, "2", cells[3], cells[5], "sql-t3")
-    _age(StockLot.objects.get(batch_line=broken_line, location=cells[5]), 60)
+    broken_target = StockLot.objects.get(batch_line=broken_line, location=cells[5])
+    _age(broken_target, 60)
+    # Transfer evidence follows the source movement even after the target FK is
+    # rebound to another line. The destination receives no supplier intake.
+    rebound_source_line = _finalized_line(env, env["part"], "5")
+    rebound_source_cell = StorageLocation.objects.create(
+        name="Rebound source", code="S09-D04-C09", storage_allowed=True, is_active=True
+    )
+    receive_stock_lot(
+        create_stock_lot(rebound_source_line, rebound_source_cell, Decimal("5"))
+    )
+    rebound_cell = StorageLocation.objects.create(
+        name="Rebound target", code="S09-D04-C07", storage_allowed=True, is_active=True
+    )
+    _transfer(env, "2", rebound_source_cell, rebound_cell, "sql-rebound")
+    rebound_target = StockLot.objects.get(batch_line=rebound_source_line, location=rebound_cell)
+    rebound_line = _finalized_line(env, env["part"], "5")
+    StockLot.objects.filter(pk=rebound_target.pk).update(batch_line=rebound_line)
+    # A transfer whose MOVE_LOT product identity disagrees with its source and
+    # document is ambiguous, not transfer-derived.
+    tampered_line = _finalized_line(env, env["part"], "5")
+    tampered_source_cell = StorageLocation.objects.create(
+        name="Tampered source", code="S09-D04-C10", storage_allowed=True, is_active=True
+    )
+    tampered_source = receive_stock_lot(
+        create_stock_lot(tampered_line, tampered_source_cell, Decimal("5"))
+    )
+    tampered_cell = StorageLocation.objects.create(
+        name="Tampered target", code="S09-D04-C08", storage_allowed=True, is_active=True
+    )
+    tampered_transfer = _transfer(
+        env, "2", tampered_source_cell, tampered_cell, "sql-tampered-identity"
+    )
+    tampered_target = StockLot.objects.get(batch_line=tampered_line, location=tampered_cell)
+    other_part = env["part"].__class__.objects.create(
+        name="Другой артикул", category=env["part"].category, unit=env["part"].unit,
+        recommended_price=Decimal("100"), tracking_mode=env["part"].tracking_mode,
+    )
+    StockMovement.objects.filter(
+        document_type="stock_transfer", document_id=tampered_transfer.pk,
+        stock_lot=tampered_source,
+    ).update(part_type=other_part)
     # A pending lot, a lot re-assigned to another line, and found stock.
     create_stock_lot(_finalized_line(env, env["part"], "5"), cells[5], Decimal("5"))
     reassigned = receive_stock_lot(
@@ -112,7 +155,12 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     by_class = {}
     for lot in classified:
         by_class.setdefault(lot.provenance, set()).add(lot.lot_id)
-    assert by_class[TRANSFER_DERIVED] == {target.pk, moved.pk}  # the scenario is what we think
+    assert by_class[TRANSFER_DERIVED] == {
+        target.pk, moved.pk, rebound_target.pk,
+    }  # includes the current-FK-rebound target
+    assert next(
+        item.provenance for item in classified if item.lot_id == tampered_target.pk
+    ) == UNKNOWN
 
     assert {row["lot_id"] for row in _run("transfer_evidence")} == by_class[TRANSFER_DERIVED]
     assert {row["lot_id"] for row in _run("reassigned_receipts")} == by_class[REASSIGNED]

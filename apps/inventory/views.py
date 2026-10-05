@@ -39,6 +39,7 @@ from .services import (
     ITEM_PHYSICAL_STATUSES,
     LOT_EDIT_REFUSED,
     LOT_PHYSICAL_STATUSES,
+    RECEIVE_HISTORY_UNPROVEN,
     InventoryError,
     adjust_stock_lot_quantity,
     change_part_item_status,
@@ -50,6 +51,7 @@ from .services import (
     move_stock_lot,
     receive_part_item,
     receive_stock_lot,
+    received_quantity,
     remaining_qty,
     update_part_item,
     update_stock_lot,
@@ -412,8 +414,12 @@ def lot_create_remaining(request, line_pk):
         form = StockLotQuickForm(request.POST)
         if form.is_valid():
             try:
+                received, proven = received_quantity(line)
+                if not proven:
+                    raise InventoryError(RECEIVE_HISTORY_UNPROVEN)
                 create_stock_lot(
-                    line, form.cleaned_data["location"], remaining_qty(line),
+                    line, form.cleaned_data["location"],
+                    max(line.quantity - received, 0),
                     note=form.cleaned_data["note"],
                 )
             except InventoryError as exc:
@@ -423,10 +429,16 @@ def lot_create_remaining(request, line_pk):
             return redirect("batch_detail", pk=line.batch_id)
     else:
         form = StockLotQuickForm()
+    received, proven = received_quantity(line)
     return render(
         request, "inventory/lot_form.html",
-        {"form": form, "line": line, "remaining": remaining_qty(line),
-         "title": f"Лот на остаток - {line.part_type}"},
+        {
+            "form": form,
+            "line": line,
+            "remaining": max(line.quantity - received, 0) if proven else None,
+            "provenance_error": None if proven else RECEIVE_HISTORY_UNPROVEN,
+            "title": f"Лот на остаток - {line.part_type}",
+        },
     )
 
 
