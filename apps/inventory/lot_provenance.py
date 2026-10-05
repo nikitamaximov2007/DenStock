@@ -21,6 +21,7 @@ transfer targets and pending lots false receipts), and a lot's current batch
 line when a receipt says otherwise (before 2c64484 admin could reassign a
 lot to another line). A receipt belongs to the line its movement names.
 """
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -71,9 +72,25 @@ def _same_transaction(a, b) -> bool:
     return abs(a - b) <= SAME_TRANSACTION
 
 
+def _transfer_note_id(lot):
+    """Return the persisted transfer-document reference carried by a new target lot."""
+    match = re.match(r"^Перемещение #(\d+) из ", lot.note or "")
+    return int(match.group(1)) if match else None
+
+
+def _has_transfer_note(lot) -> bool:
+    return (lot.note or "").startswith("Перемещение #")
+
+
 def _location_timeline(lot, own):
     """(time, location) pairs: where the lot stood, changed only by whole-lot moves."""
-    whole_moves = [m for m in own if m.movement_type == M.MOVE_LOT and not m.document_type]
+    whole_moves = [
+        m for m in own
+        if m.movement_type == M.MOVE_LOT
+        and not m.document_type
+        and m.from_location_id is not None
+        and m.to_location_id is not None
+    ]
     start = whole_moves[0].from_location_id if whole_moves else lot.location_id
     timeline = [(lot.created_at, start)]
     timeline += [(m.created_at, m.to_location_id) for m in whole_moves]
@@ -149,38 +166,27 @@ def _transfer_candidates(lot, own, nearby_moves, nearby_transfers, transfers):
     return possible
 
 
-def _transfer_is_consistent(lot, candidate, transfer_movements, unique_line_keys) -> bool:
-    movement, transfer, original_location = candidate
-    if movement is None or transfer is None:
-        return False
-    if not (
-        movement.movement_type == M.MOVE_LOT
-        and movement.document_type == TRANSFER_DOC
-        and transfer.part_item_id is None
+def _transfer_is_consistent(
+    lot, transfer, rows, original_location, conflicting_source_lots=frozenset()
+) -> bool:
+    """Validate transfer lineage by document/line/cell relationships, not clocks."""
+    if transfer is None or not (
+        transfer.part_item_id is None
         and transfer.stock_state in (StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE)
-        and movement.quantity == lot.initial_quantity
-        and movement.to_location_id == original_location
+        and transfer.part_type_id == lot.part_type_id
         and transfer.to_location_id == original_location
-        and movement.from_location_id == transfer.from_location_id
-        and transfer.created_at <= lot.created_at <= movement.created_at
-        and _same_transaction(transfer.created_at, lot.created_at)
-        and _same_transaction(movement.created_at, lot.created_at)
-        and movement.part_type_id == transfer.part_type_id == lot.part_type_id
-        and movement.batch_id == lot.batch_id
-        and (lot.batch_id, lot.part_type_id) in unique_line_keys
         and lot.batch_line.part_type_id == lot.part_type_id
-        and movement.batch_line_id == lot.batch_line_id
-        and movement.batch_line_id is not None
-        and movement.stock_lot.batch_line_id == movement.batch_line_id
-        and movement.batch_line.part_type_id == movement.part_type_id
-        and movement.batch_id == movement.stock_lot.batch_id
-        and movement.batch_line.batch_id == movement.batch_id
-        and movement.stock_lot.part_type_id == movement.part_type_id
+        and rows
     ):
         return False
-
-    rows = transfer_movements.get(transfer.pk, [])
     if not rows or sum((row.quantity for row in rows), Decimal("0")) != transfer.quantity:
+        return False
+    target_rows = [
+        row for row in rows
+        if row.batch_line_id == lot.batch_line_id
+        and row.to_location_id == original_location
+    ]
+    if sum((row.quantity for row in target_rows), Decimal("0")) != lot.initial_quantity:
         return False
     for row in rows:
         source = row.stock_lot
@@ -197,9 +203,62 @@ def _transfer_is_consistent(lot, candidate, transfer_movements, unique_line_keys
             and row.batch_line_id is not None
             and row.batch_line.part_type_id == transfer.part_type_id
             and row.batch_line.batch_id == row.batch_id
+            and source.pk not in conflicting_source_lots
         ):
             return False
     return True
+
+
+def _valid_return_document(lot, rows, own):
+    """Recognize a return from its immutable document-to-target-lot relation."""
+    if not rows:
+        return False
+    original_location = _location_timeline(lot, own)[0][1]
+    for row in rows:
+        ret = row.stock_return
+        linked_movements = [
+            movement for movement in own
+            if movement.movement_type == M.RETURN_LOT
+            and movement.document_type == "stock_return"
+            and movement.document_id == ret.pk
+        ]
+        # A document FK can prove a damaged/missing ledger row only if the
+        # surviving document agrees with the lot's original quantity. If a
+        # surviving ledger row for this document contradicts it, fail closed.
+        if linked_movements and (
+            len(linked_movements) != 1
+            or linked_movements[0].quantity != row.quantity
+            or linked_movements[0].batch_id != row.batch_id
+            or linked_movements[0].batch_line_id != row.batch_line_id
+            or linked_movements[0].part_type_id != row.part_type_id
+            or linked_movements[0].to_location_id != row.to_location_id
+        ):
+            continue
+        if not (
+            ret.status == ret.Status.COMPLETED
+            and row.batch_id == lot.batch_id
+            and row.batch_line_id == lot.batch_line_id
+            and row.part_type_id == lot.part_type_id
+            and row.to_location_id == original_location
+            and row.quantity == lot.initial_quantity
+        ):
+            continue
+        movements = [
+            movement for movement in own
+            if movement.movement_type == M.RETURN_LOT
+            and movement.document_type == "stock_return"
+            and movement.document_id == ret.pk
+            and movement.batch_id == row.batch_id
+            and movement.batch_line_id == row.batch_line_id
+            and movement.part_type_id == row.part_type_id
+            and movement.to_location_id == row.to_location_id
+            and movement.quantity == row.quantity
+        ]
+        # The completed return line's returned_lot FK is authoritative even
+        # when its append-only ledger row is damaged or missing.
+        if movements or row.returned_lot_id == lot.pk:
+            return True
+    return False
 
 
 def is_receipt_evidence(movement) -> bool:
@@ -210,7 +269,8 @@ def is_receipt_evidence(movement) -> bool:
 
 def classify_lot(
     lot, own, line_movements, transfers, nearby_moves, nearby_transfers,
-    transfer_movements, legacy_line_keys,
+    transfer_movements, legacy_line_keys, return_rows=(),
+    conflicting_source_lots=frozenset(), unanchored_transfer_lots=frozenset(),
 ) -> LotProvenance:
     """Classify one lot on its current line.
 
@@ -233,6 +293,68 @@ def classify_lot(
             PRIMARY_RECEIPT, sum((m.quantity for m in here), Decimal("0")),
             f"RECEIVE_LOT x{len(here)}",
         )
+    if lot.origin_transfer_id or _has_transfer_note(lot):
+        transfer_id = lot.origin_transfer_id or _transfer_note_id(lot)
+        note_transfer_id = _transfer_note_id(lot)
+        transfer = transfers.get(transfer_id) if transfer_id is not None else None
+        rows = transfer_movements.get(transfer_id, []) if transfer_id is not None else []
+        original_location = _location_timeline(lot, own)[0][1]
+        explicitly_linked = lot.origin_transfer_id is not None
+        if explicitly_linked and note_transfer_id is not None and note_transfer_id != transfer_id:
+            return result(UNKNOWN, None, "ссылка лота противоречит примечанию перемещения")
+        # New lots carry a direct FK to their creating transfer. For historical
+        # lots, a note is only a hint; clocks remain a narrow compatibility
+        # fallback and can never turn contradictory evidence into provenance.
+        time_supports_legacy_link = explicitly_linked or (
+            transfer is not None
+            and transfer.created_at <= lot.created_at
+            and _same_transaction(transfer.created_at, lot.created_at)
+            and any(
+                movement.created_at >= lot.created_at
+                and _same_transaction(movement.created_at, lot.created_at)
+                for movement in rows
+                if movement.batch_line_id == lot.batch_line_id
+                and movement.to_location_id == original_location
+            )
+        )
+        if time_supports_legacy_link and _transfer_is_consistent(
+            lot, transfer, rows, original_location, conflicting_source_lots
+        ):
+            return result(TRANSFER_DERIVED, Decimal("0"), f"перемещение #{transfer_id}")
+        return result(UNKNOWN, None, "связь лота с документом перемещения повреждена")
+
+    initial_return_rows = [row for row in return_rows if row.quantity == lot.initial_quantity]
+    initial_return_moves = [
+        movement for movement in own
+        if movement.movement_type == M.RETURN_LOT
+        and movement.quantity == lot.initial_quantity
+    ]
+    initial_return_ids = {movement.document_id for movement in initial_return_moves}
+    contradictory_return_rows = [
+        row for row in return_rows
+        if row.stock_return_id in initial_return_ids and row.quantity != lot.initial_quantity
+    ]
+    if contradictory_return_rows:
+        return result(UNKNOWN, None, "документ возврата противоречит движению")
+    if initial_return_rows or initial_return_moves:
+        if _valid_return_document(lot, initial_return_rows, own):
+            return result(RETURN_DERIVED, Decimal("0"), "завершённый возврат связан с лотом")
+        if initial_return_rows:
+            return result(UNKNOWN, None, "документ возврата противоречит лоту")
+        original_location = _location_timeline(lot, own)[0][1]
+        valid_return_move = any(
+            m.document_type == "stock_return"
+            and m.document_id is not None
+            and m.batch_id == lot.batch_id
+            and m.batch_line_id == lot.batch_line_id
+            and m.part_type_id == lot.part_type_id
+            and m.to_location_id == original_location
+            and m.quantity == lot.initial_quantity
+            for m in initial_return_moves
+        )
+        if valid_return_move:
+            return result(RETURN_DERIVED, Decimal("0"), "движение подтверждает возврат")
+        return result(UNKNOWN, None, "движение возврата не подтверждает происхождение лота")
     candidates = _transfer_candidates(
         lot, own, nearby_moves, nearby_transfers, transfers
     )
@@ -254,20 +376,31 @@ def classify_lot(
             ):
                 return result(UNKNOWN, None, "неоднозначная цепочка перемещения")
             candidates = identified
+        candidate_transfer_ids = {
+            candidate[1].pk for candidate in candidates if candidate[1] is not None
+        }
         valid = [
-            candidate
-            for candidate in candidates
+            transfer_id for transfer_id in candidate_transfer_ids
             if _transfer_is_consistent(
-                lot, candidate, transfer_movements, legacy_line_keys
+                lot,
+                transfers.get(transfer_id),
+                transfer_movements.get(transfer_id, []),
+                _location_timeline(lot, own)[0][1],
+                conflicting_source_lots,
             )
         ]
-        if len(candidates) == 1 and len(valid) == 1:
-            m, transfer, _location = valid[0]
+        if len(candidate_transfer_ids) == 1 and len(valid) == 1:
+            transfer = transfers[valid[0]]
             return result(
                 TRANSFER_DERIVED, Decimal("0"),
-                f"перемещение #{transfer.pk}: движение #{m.pk} исходного лота #{m.stock_lot_id}",
+                f"перемещение #{transfer.pk}: документ и движения согласованы",
             )
         return result(UNKNOWN, None, "неоднозначная или повреждённая цепочка перемещения")
+    if lot.pk in unanchored_transfer_lots:
+        return result(
+            UNKNOWN, None,
+            "есть перемещение подходящего количества, но его связь с созданием лота не доказана",
+        )
     first = own[0] if own else None
     if (
         first is not None
@@ -352,7 +485,7 @@ def _read_line(line, exclude_lot):
     lots = list(
         StockLot.objects.filter(batch_line=line)
         .exclude(pk=getattr(exclude_lot, "pk", None))
-        .select_related("batch_line")
+        .select_related("batch_line", "origin_transfer")
     )
     lot_ids = [lot.pk for lot in lots]
     movements = list(
@@ -372,6 +505,33 @@ def _group_own_movements(movements, foreign):
         if movement.stock_lot_id:
             own.setdefault(movement.stock_lot_id, []).append(movement)
     return own
+
+
+def _lot_signature(lot):
+    return (
+        lot.pk, lot.batch_id, lot.batch_line_id, lot.part_type_id, lot.location_id,
+        lot.quantity, lot.initial_quantity, lot.status, lot.created_at,
+        lot.origin_transfer_id,
+    )
+
+
+def _movement_signature(movement):
+    return (
+        movement.pk, movement.movement_type, movement.stock_lot_id,
+        movement.batch_id, movement.batch_line_id, movement.part_type_id,
+        movement.quantity, movement.from_location_id, movement.to_location_id,
+        movement.document_type, movement.document_id, movement.created_at,
+    )
+
+
+def _movement_snapshot(queryset):
+    return list(
+        queryset.order_by("pk").values_list(
+            "pk", "movement_type", "stock_lot_id", "batch_id", "batch_line_id",
+            "part_type_id", "quantity", "from_location_id", "to_location_id",
+            "document_type", "document_id", "created_at",
+        )
+    )
 
 
 def _nearby_origin_movements(lots):
@@ -400,6 +560,41 @@ def _nearby_transfer_documents(lots, own):
     return list(StockTransfer.objects.filter(transfer_windows).order_by("created_at", "pk"))
 
 
+def _possible_unanchored_transfer_lots(lots, own):
+    """Find transfer-shaped intake evidence without relying on event clocks.
+
+    For historical lots without the direct origin FK, an exact same-line,
+    same-batch, same-part, same-cell transfer portion equal to initial
+    quantity is ambiguous if its creation-time bracket is gone. It must not
+    fall through to LEGACY_PRIMARY.
+    """
+    query = Q(pk__in=[])
+    lot_by_key = {}
+    for lot in lots:
+        location_id = _location_timeline(lot, own.get(lot.pk, []))[0][1]
+        key = (
+            lot.batch_id, lot.batch_line_id, lot.part_type_id, location_id,
+            lot.initial_quantity,
+        )
+        query |= Q(
+            batch_id=key[0], batch_line_id=key[1], part_type_id=key[2],
+            to_location_id=key[3], movement_type=M.MOVE_LOT,
+            document_type=TRANSFER_DOC, quantity=key[4],
+        )
+        lot_by_key.setdefault(key, []).append(lot)
+    matching = StockMovement.objects.filter(query).values_list(
+        "batch_id", "batch_line_id", "part_type_id", "to_location_id", "quantity"
+    ).distinct()
+    matching_keys = set(matching)
+    return {
+        lot.pk
+        for key, group in lot_by_key.items()
+        if key in matching_keys
+        for lot in group
+        if not lot.origin_transfer_id and not _has_transfer_note(lot)
+    }
+
+
 def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvenance:
     """Classify every lot of a line from one consistent picture of the ledger.
 
@@ -409,28 +604,67 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
     candidate lot's creation are checked before and after the reads; otherwise
     the picture is retried.
     """
+    if attempts < 1:
+        raise ValueError("attempts must be at least one")
+    consistent_snapshot = False
     for _attempt in range(attempts):
         lot_query = StockLot.objects.filter(batch_line=line).exclude(
             pk=getattr(exclude_lot, "pk", None)
         )
-        lots_before = set(lot_query.values_list("pk", flat=True))
-        before = set(StockMovement.objects.filter(batch_line=line).values_list("pk", flat=True))
+        lots_before = list(
+            lot_query.order_by("pk").values_list(
+                "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
+                "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
+            )
+        )
+        line_movement_query = StockMovement.objects.filter(batch_line=line)
+        before = _movement_snapshot(line_movement_query)
         lots, movements, foreign = _read_line(line, exclude_lot)
         own = _group_own_movements(movements, foreign)
         nearby_moves = _nearby_origin_movements(lots)
         nearby_transfers = _nearby_transfer_documents(lots, own)
-        lots_after = set(lot_query.values_list("pk", flat=True))
-        after = set(StockMovement.objects.filter(batch_line=line).values_list("pk", flat=True))
+        lots_after = list(
+            lot_query.order_by("pk").values_list(
+                "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
+                "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
+            )
+        )
+        after = _movement_snapshot(line_movement_query)
         nearby_after = _nearby_origin_movements(lots)
         transfers_after = _nearby_transfer_documents(lots, own)
-        if (
-            {lot.pk for lot in lots} == lots_before == lots_after
-            and {m.pk for m in movements} == before == after
-            and {m.pk for m in nearby_moves} == {m.pk for m in nearby_after}
-            and {t.pk for t in nearby_transfers} == {t.pk for t in transfers_after}
-        ):
+        consistent_snapshot = (
+            sorted(_lot_signature(lot) for lot in lots) == lots_before == lots_after
+            and sorted(_movement_signature(m) for m in movements) == before == after
+            and sorted(_movement_signature(m) for m in nearby_moves)
+            == sorted(_movement_signature(m) for m in nearby_after)
+            and sorted(
+                (t.pk, t.part_type_id, t.quantity, t.from_location_id,
+                 t.to_location_id, t.stock_state, t.created_at)
+                for t in nearby_transfers
+            ) == sorted(
+                (t.pk, t.part_type_id, t.quantity, t.from_location_id,
+                 t.to_location_id, t.stock_state, t.created_at)
+                for t in transfers_after
+            )
+        )
+        if consistent_snapshot:
             break
+    if not consistent_snapshot:
+        # Never classify an unstable mixture of lots and journal rows as
+        # primary intake. A caller can retry the business operation later.
+        uncertain = [
+            LotProvenance(lot.pk, lot.batch_line_id, lot.status, UNKNOWN, None,
+                          "журнал изменился во время проверки происхождения")
+            for lot in lots
+        ]
+        return LineProvenance(uncertain, Decimal("0"), True)
     own = _group_own_movements(movements, foreign)
+    unanchored_transfer_lots = _possible_unanchored_transfer_lots(lots, own)
+    hinted_transfer_ids = {
+        transfer_id
+        for lot in lots
+        if (transfer_id := (lot.origin_transfer_id or _transfer_note_id(lot))) is not None
+    }
     transfers = StockTransfer.objects.in_bulk(
         {m.document_id for m in movements if m.document_type == TRANSFER_DOC and m.document_id}
     )
@@ -443,6 +677,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         if m.document_id and m.document_type == TRANSFER_DOC
     }
     transfer_ids.update(transfer.pk for transfer in nearby_transfers)
+    transfer_ids.update(hinted_transfer_ids)
     transfers.update(StockTransfer.objects.in_bulk(transfer_ids))
     transfer_rows = list(
         StockMovement.objects.filter(
@@ -453,6 +688,27 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
     transfer_movements: dict[int, list] = {}
     for movement in transfer_rows:
         transfer_movements.setdefault(movement.document_id, []).append(movement)
+    source_lot_ids = {
+        movement.stock_lot_id for movement in transfer_rows if movement.stock_lot_id
+    }
+    source_lots = StockLot.objects.in_bulk(source_lot_ids)
+    source_history = StockMovement.objects.filter(
+        stock_lot_id__in=source_lot_ids, batch_line__isnull=False
+    ).values_list("stock_lot_id", "batch_line_id")
+    conflicting_source_lots = {
+        lot_id for lot_id, historical_line_id in source_history
+        if lot_id in source_lots and historical_line_id != source_lots[lot_id].batch_line_id
+    }
+    lot_ids = {lot.pk for lot in lots}
+    from apps.returns.models import StockReturnLine
+
+    return_rows_by_lot = {}
+    for return_line in (
+        StockReturnLine.objects.filter(returned_lot_id__in=lot_ids)
+        .select_related("stock_return")
+        .order_by("pk")
+    ):
+        return_rows_by_lot.setdefault(return_line.returned_lot_id, []).append(return_line)
     line_counts = BatchLine.objects.filter(
         batch_id__in={lot.batch_id for lot in lots},
         part_type_id__in={lot.part_type_id for lot in lots},
@@ -462,7 +718,6 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         for row in line_counts
         if row["n"] == 1
     }
-    lot_ids = {lot.pk for lot in lots}
     elsewhere = sum(
         (
             m.quantity for m in movements
@@ -490,7 +745,8 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         classify_lot(
             lot, own.get(lot.pk, []), movements, transfers, nearby_moves,
             nearby_transfers,
-            transfer_movements, legacy_line_keys,
+            transfer_movements, legacy_line_keys, return_rows_by_lot.get(lot.pk, ()),
+            conflicting_source_lots, unanchored_transfer_lots,
         )
         for lot in lots
     ]

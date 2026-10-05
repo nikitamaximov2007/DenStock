@@ -874,6 +874,7 @@ def _move_locked_lot_portion(lot, target_location, quantity, *, transfer, by=Non
             part_type=lot.part_type,
             batch=lot.batch,
             batch_line=lot.batch_line,
+            origin_transfer=transfer,
             location=target_location,
             quantity=quantity,
             initial_quantity=quantity,

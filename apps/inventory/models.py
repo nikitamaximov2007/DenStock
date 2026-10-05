@@ -563,6 +563,15 @@ class StockLot(models.Model):
         "procurement.BatchLine", verbose_name="Строка партии",
         on_delete=models.PROTECT, related_name="lots",
     )
+    origin_transfer = models.ForeignKey(
+        "inventory.StockTransfer",
+        verbose_name="Перемещение, создавшее лот",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name="target_lots",
+    )
     location = models.ForeignKey(
         "warehouse.StorageLocation", verbose_name="Место",
         on_delete=models.PROTECT, related_name="stock_lots",

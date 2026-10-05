@@ -137,6 +137,7 @@ def test_stocklot_admin_warehouse_fields_are_not_editable():
     assert "status" in admin_site.readonly_fields
     assert "location" in admin_site.readonly_fields
     assert admin_site.has_add_permission(None) is False
+    assert admin_site.has_delete_permission(None) is False
 
 
 def test_stocklot_admin_change_page_cannot_rewrite_quantity_status_or_location(
@@ -175,6 +176,47 @@ def test_stocklot_admin_add_is_unreachable(client, admin):
     client.force_login(admin)
     response = client.get(reverse("admin:inventory_stocklot_add"))
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize("kind", ["legacy_pending", "transfer_target"])
+def test_stocklot_admin_cannot_delete_unjournaled_or_transfer_lot(
+    client, refs, admin, kind
+):
+    from apps.inventory.services import perform_stock_transfer
+
+    source = _live_lot(refs, admin)
+    if kind == "legacy_pending":
+        # A pending draft lot has no movement but occupies lifetime receipt
+        # capacity. Admin deletion must not silently reopen that capacity.
+        pending_line = _line(refs, admin, part=refs["bulk"], quantity="11")
+        lot = create_stock_lot(pending_line, refs["other"], Decimal("1"))
+    else:
+        perform_stock_transfer(
+            part=source.part_type,
+            from_location=refs["cell"],
+            to_location=refs["other"],
+            quantity="2",
+            stock_state=StockLot.Status.AVAILABLE,
+            token="admin-delete-integrity",
+        )
+        lot = StockLot.objects.get(batch_line=source.batch_line, location=refs["other"])
+    before_quantity = lot.quantity
+    before_moves = StockMovement.objects.filter(stock_lot=lot).count()
+    balance_before = check_stock_balance()
+    client.force_login(admin)
+
+    response = client.post(
+        reverse("admin:inventory_stocklot_delete", args=[lot.pk]),
+        {"post": "yes"},
+        follow=True,
+    )
+
+    assert response.status_code == 403
+    assert StockLot.objects.filter(pk=lot.pk).exists()
+    lot.refresh_from_db()
+    assert lot.quantity == before_quantity
+    assert StockMovement.objects.filter(stock_lot=lot).count() == before_moves
+    assert check_stock_balance() == balance_before
 
 
 # --- C. Movement journal itself stays untouched by any of the above ---------

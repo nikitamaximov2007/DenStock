@@ -34,6 +34,8 @@ from apps.inventory.services import (
     receive_stock_lot,
     remaining_qty,
 )
+from apps.procurement.models import Batch, BatchLine
+from apps.returns.models import StockReturn, StockReturnLine
 from apps.returns.services import add_sale_line_return, complete_return, create_return
 from apps.sales.models import Sale
 from apps.sales.services import (
@@ -195,9 +197,9 @@ def test_a_transfer_target_with_broken_evidence_is_unknown_not_legacy(env):
     receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
     _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-f1")
     target = _lot_at(line, env["cells"][1])
-    _age(target, 60)  # evidence no longer in one transaction
+    _age(target, 60)  # timestamps are not the creating-transfer identity
 
-    assert _cls(line, target)[0] == UNKNOWN
+    assert _cls(line, target)[0] == TRANSFER_DERIVED
 
 
 def test_a_return_lot_with_broken_evidence_is_unknown_not_legacy(env):
@@ -214,7 +216,7 @@ def test_a_return_lot_with_broken_evidence_is_unknown_not_legacy(env):
     assert _cls(line, returned)[0] == RETURN_DERIVED
     _age(returned, 60)
 
-    assert _cls(line, returned)[0] == UNKNOWN
+    assert _cls(line, returned)[0] == RETURN_DERIVED
 
 
 def test_a_merge_into_a_young_legacy_lot_is_not_mistaken_for_its_creation(env):
@@ -229,7 +231,7 @@ def test_a_merge_into_a_young_legacy_lot_is_not_mistaken_for_its_creation(env):
     provenance, intake = _cls(line, young)
     assert provenance != TRANSFER_DERIVED
     assert _cls(line, source) == (PRIMARY_RECEIPT, Decimal("4"))
-    assert remaining_qty(line) == Decimal("4")  # 4 + 2 received, never 4 + 0
+    assert remaining_qty(line) == Decimal("0")  # corrupted provenance fails closed
 
 
 # --- C. TRANSFER_DERIVED -------------------------------------------------------------------
@@ -286,9 +288,13 @@ def test_a_transfer_movement_without_its_document_is_unknown(env):
     receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
     transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-no-document")
     target = _lot_at(line, env["cells"][1])
-    StockTransfer.objects.filter(pk=transfer.pk).delete()
+    from django.db.models.deletion import ProtectedError
 
-    assert _cls(line, target)[0] == UNKNOWN
+    with pytest.raises(ProtectedError):
+        StockTransfer.objects.filter(pk=transfer.pk).delete()
+
+    assert _cls(line, target)[0] == TRANSFER_DERIVED
+    assert StockTransfer.objects.filter(pk=transfer.pk).exists()
 
 
 @pytest.mark.parametrize(
@@ -428,6 +434,161 @@ def test_untouched_legacy_primary_still_proves_its_intake(env):
 
     assert _cls(line, lot) == (LEGACY_PRIMARY, Decimal("6"))
     assert remaining_qty(line) == Decimal("4")
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "target_clock",
+        "document_clock",
+        "repointed_document",
+        "retyped_movement_and_deleted_document",
+        "deleted_movement_and_document",
+    ],
+)
+def test_damaged_transfer_evidence_never_upgrades_target_to_legacy(env, damage):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], f"f1-{damage}")
+    target = _lot_at(line, env["cells"][1])
+    move = StockMovement.objects.get(document_type="stock_transfer", document_id=transfer.pk)
+
+    if damage == "target_clock":
+        _age(target, 60)
+    elif damage == "document_clock":
+        StockTransfer.objects.filter(pk=transfer.pk).update(
+            created_at=transfer.created_at + timedelta(seconds=60)
+        )
+        StockMovement.objects.filter(pk=move.pk).update(
+            created_at=move.created_at + timedelta(seconds=120)
+        )
+    elif damage == "repointed_document":
+        StockTransfer.objects.filter(pk=transfer.pk).update(to_location=env["cells"][2])
+        StockMovement.objects.filter(pk=move.pk).update(to_location=env["cells"][2])
+    elif damage == "retyped_movement_and_deleted_document":
+        StockMovement.objects.filter(pk=move.pk).update(
+            movement_type=StockMovement.MovementType.ADJUST_OUT,
+            document_type="",
+            document_id=None,
+        )
+        StockLot.objects.filter(pk=target.pk).update(origin_transfer=None)
+        StockTransfer.objects.filter(pk=transfer.pk).delete()
+    else:
+        StockMovement.objects.filter(pk=move.pk).delete()
+        StockLot.objects.filter(pk=target.pk).update(origin_transfer=None)
+        StockTransfer.objects.filter(pk=transfer.pk).delete()
+
+    expected = TRANSFER_DERIVED if damage in {"target_clock", "document_clock"} else UNKNOWN
+    assert _cls(line, target)[0] == expected
+    if expected == UNKNOWN:
+        assert _cls(line, target)[1] is None
+    assert remaining_qty(line) == Decimal("0")
+    source.refresh_from_db()
+    assert source.quantity == Decimal("7")
+
+
+def test_historical_unlinked_transfer_outside_clock_window_fails_closed(env):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], "f1-clock-outside")
+    target = _lot_at(line, env["cells"][1])
+    move = StockMovement.objects.get(document_type="stock_transfer", document_id=transfer.pk)
+    # Simulate a historical row without the new direct FK and a damaged clock
+    # ordering that would make the old initial-quantity reconstruction look
+    # like a supplier lot. The transfer-shaped movement must block that fallback.
+    StockLot.objects.filter(pk=target.pk).update(origin_transfer=None, note="")
+    StockTransfer.objects.filter(pk=transfer.pk).update(
+        created_at=target.created_at + timedelta(seconds=3)
+    )
+    StockMovement.objects.filter(pk=move.pk).update(
+        created_at=target.created_at - timedelta(seconds=3)
+    )
+
+    assert _cls(line, target) == (UNKNOWN, None)
+    assert remaining_qty(line) == Decimal("0")
+
+
+def test_two_same_part_lines_in_one_batch_keep_exact_transfer_provenance(env):
+    batch = Batch.objects.create(supplier=env["supplier"], shipping_cost=Decimal("0"))
+    first = BatchLine.objects.create(
+        batch=batch,
+        part_type=env["part"],
+        quantity=Decimal("10"),
+        unit_cost_currency=Decimal("1"),
+    )
+    second = BatchLine.objects.create(
+        batch=batch,
+        part_type=env["part"],
+        quantity=Decimal("5"),
+        unit_cost_currency=Decimal("1"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    from apps.procurement.services import finalize_cost
+
+    finalize_cost(batch, env["admin"])
+    first.refresh_from_db()
+    second.refresh_from_db()
+    source_a = receive_stock_lot(create_stock_lot(first, env["cells"][0], Decimal("4")))
+    source_b = receive_stock_lot(create_stock_lot(second, env["cells"][0], Decimal("3")))
+
+    _transfer(env, "5", env["cells"][0], env["cells"][1], "f1-same-batch-same-part")
+
+    target_a = _lot_at(first, env["cells"][1])
+    target_b = _lot_at(second, env["cells"][1])
+    assert _cls(first, target_a) == (TRANSFER_DERIVED, Decimal("0"))
+    assert _cls(second, target_b) == (TRANSFER_DERIVED, Decimal("0"))
+    assert remaining_qty(first) == Decimal("6")
+    assert remaining_qty(second) == Decimal("2")
+    source_a.refresh_from_db()
+    source_b.refresh_from_db()
+    assert source_a.quantity == Decimal("0")
+    assert source_b.quantity == Decimal("2")
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["missing_move", "retyped_move", "missing_document", "contradictory_document"],
+)
+def test_damaged_return_evidence_never_upgrades_target_to_legacy(env, damage):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    sale = _sell(env, source, "2")
+    stock_return = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        stock_return,
+        Sale.objects.get(pk=sale.pk).lines.get(),
+        Decimal("2"),
+        to_location=env["cells"][1],
+        restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(stock_return, by=env["admin"])
+    return_line = stock_return.lines.get()
+    target = return_line.returned_lot
+    movement = StockMovement.objects.get(
+        stock_lot=target, movement_type=StockMovement.MovementType.RETURN_LOT
+    )
+
+    if damage == "missing_move":
+        StockMovement.objects.filter(pk=movement.pk).delete()
+        expected = RETURN_DERIVED  # completed return line still points to this lot
+    elif damage == "retyped_move":
+        StockMovement.objects.filter(pk=movement.pk).update(
+            movement_type=StockMovement.MovementType.MOVE_LOT,
+            document_type="",
+            document_id=None,
+        )
+        expected = RETURN_DERIVED
+    elif damage == "missing_document":
+        StockReturn.objects.filter(pk=stock_return.pk).delete()
+        expected = RETURN_DERIVED  # the surviving typed movement proves the inflow
+    else:
+        StockReturnLine.objects.filter(pk=return_line.pk).update(batch_line=source.batch_line)
+        StockReturnLine.objects.filter(pk=return_line.pk).update(quantity=Decimal("1"))
+        expected = UNKNOWN
+
+    assert _cls(line, target)[0] == expected
+    assert remaining_qty(line) == Decimal("0")
 
 
 @pytest.mark.parametrize("rebound", ["movement", "source", "target", "all"])

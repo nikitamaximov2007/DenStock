@@ -304,6 +304,10 @@ def _receipt_paused_between_reads(receipt, writer):
             and sql.startswith("SELECT")
             and 'FROM "inventory_stocklot"' in sql
             and '"inventory_stocklot"."batch_line_id" =' in sql
+            # The old predicate paused on lots_before (a pk-only ID probe).
+            # This is the actual model-row read consumed by _read_line, where
+            # provenance snapshots the lot state before reading its ledger.
+            and '"inventory_stocklot"."note"' in sql
         ):
             paused.set()
             resume.wait(20)
@@ -334,6 +338,37 @@ def _receipt_paused_between_reads(receipt, writer):
         thread.join(60)
     assert not writer_waited, f"the writer waited for the receipt: {outcome}"
     return outcome
+
+
+def test_single_attempt_negative_control_fails_closed_at_the_real_lot_read(
+    line_8_of_10, public_catalog, monkeypatch
+):
+    """Bypassing a retry after a forced between-read write cannot over-admit.
+
+    This is the negative control for the consistency bracket: the barrier is
+    at the real full StockLot row read; forcing one attempt must fail closed,
+    rather than classify the stale lot snapshot as supplier intake.
+    """
+    from apps.inventory import lot_provenance
+    from apps.inventory.services import InventoryError, adjust_stock_lot_quantity
+
+    line, lot = _legacy_line(line_8_of_10, public_catalog)
+    cell = line_8_of_10["cells"][2]
+    original = lot_provenance.line_provenance_detail
+
+    def one_attempt(target_line, **kwargs):
+        return original(target_line, attempts=1, **kwargs)
+
+    monkeypatch.setattr(lot_provenance, "line_provenance_detail", one_attempt)
+    outcome = _receipt_paused_between_reads(
+        lambda: receive_stock_lot(create_stock_lot(line, cell, Decimal("5"))),
+        lambda: adjust_stock_lot_quantity(lot, Decimal("-1"), comment="Сверка"),
+    )
+
+    assert outcome["writer"][0] == "ok", outcome
+    assert outcome["receipt"][0] == "error", outcome
+    assert isinstance(outcome["receipt"][1], InventoryError)
+    assert not StockLot.objects.filter(batch_line=line, location=cell).exists()
 
 
 def _legacy_line(line_8_of_10, public_catalog):

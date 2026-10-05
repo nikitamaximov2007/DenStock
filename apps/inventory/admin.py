@@ -60,11 +60,16 @@ class StockLotAdmin(admin.ModelAdmin):
     # measure): reassigning a fractional oil lot to a piece part here would
     # create an invalid piece balance, so the lot's identity is read-only too.
     readonly_fields = (
-        "initial_quantity", "landed_unit_cost_rub", "batch",
+        "initial_quantity", "landed_unit_cost_rub", "batch", "origin_transfer",
         "quantity", "status", "location", "part_type", "batch_line",
     )
 
     def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        # Deleting a lot bypasses the movement ledger and can erase stock or
+        # reopen the lifetime receipt capacity of its supplier line.
         return False
 
 
