@@ -572,3 +572,48 @@ def test_classification_audit_uses_catalog_fallback_for_blank_prox_label(env):
 
     assert payload["imported_prox_original"] == 1
     assert payload["imported_brp_prox_label_not_original"] == 0
+
+
+def test_audit_separates_owner_reviewed_legacy_analog_from_unresolved(env, monkeypatch):
+    import json
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    from apps.actions.management.commands import audit_customs_manufacturer_classification as audit
+    from apps.catalog.models import PartType, Unit
+
+    assert audit.OWNER_REVIEWED_LEGACY_ANALOGS[29].startswith("Owner-approved:")
+    category = Category.objects.create(name="Старая категория")
+    manufacturer = Manufacturer.objects.get_or_create(name="BRP")[0]
+    reviewed = PartType.objects.create(
+        name="Проверенная старая карточка",
+        category=category,
+        manufacturer=manufacturer,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    unresolved = PartType.objects.create(
+        name="Непроверенная старая карточка",
+        category=category,
+        manufacturer=manufacturer,
+        unit=Unit.objects.get(name="Штука"),
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+    _card(reviewed, manufacturer="BRP")
+    _card(unresolved, manufacturer="BRP")
+    monkeypatch.setattr(
+        audit,
+        "OWNER_REVIEWED_LEGACY_ANALOGS",
+        {reviewed.pk: "Owner-approved: classify as analog without import evidence."},
+    )
+
+    out = StringIO()
+    call_command("audit_customs_manufacturer_classification", "--json", "--list", "10", stdout=out)
+    payload = json.loads(out.getvalue().split("\n\n", maxsplit=1)[0])
+
+    assert payload["owner_reviewed_legacy_analog"] == 1
+    assert payload["brp_prox_legacy_unproven_needs_owner_review"] == 1
+    assert f"PartType #{reviewed.pk} " in out.getvalue()
+    assert "owner decision: Owner-approved" in out.getvalue()
+    assert PartCustomsInfo.objects.get(part_type=reviewed).manufacturer == "BRP"

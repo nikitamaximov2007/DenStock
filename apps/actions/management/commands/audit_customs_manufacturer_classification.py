@@ -69,6 +69,13 @@ _BUCKET_LABELS = {
 _NAME_BY_BUCKET = {
     "brp": "BRP", "pro_x": "PROX", "bronco": "BRONCO", "spi": "SPI", "motul": "MOTUL",
 }
+# Explicit owner adjudications for legacy cards whose import provenance cannot
+# be reconstructed. This records a classification decision, not import evidence
+# and must never be used by imported_part_ids() or customs_group().
+OWNER_REVIEWED_LEGACY_ANALOGS = {
+    29: "Owner-approved: legacy provenance is unknown; classify as analog. "
+    "Do not create catalog links or alter manufacturer/category to imply import.",
+}
 
 
 class ClassificationFacts:
@@ -192,6 +199,16 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
     imported = (
         facts.is_imported(part) if facts is not None else part.pk in imported_part_ids([part.pk])
     )
+    owner_review_reason = OWNER_REVIEWED_LEGACY_ANALOGS.get(part.pk, "")
+    owner_reviewed_legacy_analog = bool(
+        owner_review_reason
+        and not imported
+        and not is_manual
+        and (
+            _normalized_manufacturer(declared) in {"BRP", "PROX"}
+            or _normalized_manufacturer(resolved) in {"BRP", "PROX"}
+        )
+    )
     labels = {
         _normalized_manufacturer(value)
         for value in (
@@ -202,6 +219,8 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
     return {
         "part": part,
         "imported": imported,
+        "owner_reviewed_legacy_analog": owner_reviewed_legacy_analog,
+        "owner_review_reason": owner_review_reason if owner_reviewed_legacy_analog else "",
         "customs_group": customs_group(live, imported=imported),
         "labelled_brp": "BRP" in labels,
         "labelled_prox": "PROX" in labels,
@@ -265,6 +284,7 @@ class Command(BaseCommand):
         samples = {
             "unproven_manual_brp": [], "misclassified": [], "name_gap": [],
             "brp_prox_manual_to_analog": [], "brp_prox_legacy_unproven": [],
+            "owner_reviewed_legacy_analog": [],
             "imported_brp_prox_not_original": [],
         }
         totals = {key: 0 for key in samples}
@@ -317,11 +337,12 @@ class Command(BaseCommand):
             elif labelled:
                 provenance["brp_labelled_without_import"] += row["labelled_brp"]
                 provenance["prox_labelled_without_import"] += row["labelled_prox"]
-                collect(
-                    "brp_prox_manual_to_analog" if row["is_manual"]
-                    else "brp_prox_legacy_unproven",
-                    row,
-                )
+                if row["is_manual"]:
+                    collect("brp_prox_manual_to_analog", row)
+                elif row["owner_reviewed_legacy_analog"]:
+                    collect("owner_reviewed_legacy_analog", row)
+                else:
+                    collect("brp_prox_legacy_unproven", row)
 
         payload = {
             "part_types_total": sum(bucket_counts.values()),
@@ -345,6 +366,7 @@ class Command(BaseCommand):
             **provenance,
             "brp_prox_manual_to_analog": totals["brp_prox_manual_to_analog"],
             "brp_prox_legacy_unproven_needs_owner_review": totals["brp_prox_legacy_unproven"],
+            "owner_reviewed_legacy_analog": totals["owner_reviewed_legacy_analog"],
             "imported_brp_prox_label_not_original": totals["imported_brp_prox_not_original"],
         }
 
@@ -384,6 +406,11 @@ class Command(BaseCommand):
                 limit,
             )
             self._list_section(
+                "Старые карточки BRP/PROX без связи импорта, решение владельца: аналог",
+                samples["owner_reviewed_legacy_analog"],
+                totals["owner_reviewed_legacy_analog"], limit,
+            )
+            self._list_section(
                 "Импортированные детали с меткой BRP/PROX, которые не идут в оригиналы",
                 samples["imported_brp_prox_not_original"],
                 totals["imported_brp_prox_not_original"], limit,
@@ -402,5 +429,7 @@ class Command(BaseCommand):
                 f"declared={row['declared_manufacturer'] or '-'} "
                 f"resolved={row['resolved_manufacturer'] or '-'} bucket={row['bucket']}"
             )
+            if row.get("owner_review_reason"):
+                self.stdout.write(f"    owner decision: {row['owner_review_reason']}")
         if total > len(rows):
             self.stdout.write(f"  ... и ещё {total - len(rows)}")
