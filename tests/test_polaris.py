@@ -9,6 +9,7 @@ from django.urls import reverse
 from apps.accounts import roles
 from apps.actions.services import (
     export_customs_xlsx,
+    historical_analog_customs_rows,
     historical_customs_rows,
     perform_action,
 )
@@ -296,8 +297,10 @@ def test_customs_export_polaris_uses_entered_data_not_catalog(db, admin):
     # не содержать применимость, а read-only экспорт обязан её пережить.
     PartCustomsInfo.objects.filter(part_type=part).update(application_area="")
     PartCustomsDataVersion.objects.filter(part_type=part).update(application_area="")
+    # POLARIS - не BRP и не PROX, поэтому строка в выгрузке аналогов.
+    assert historical_customs_rows() == []
     sheet = openpyxl.load_workbook(
-        export_customs_xlsx(rows=historical_customs_rows())
+        export_customs_xlsx(rows=historical_analog_customs_rows())
     )["Лист1"]
     assert str(sheet["B10"].value) == "420931285"  # личность детали не подменена
     assert sheet["D10"].value == "SEAL RING"  # введено человеком
