@@ -509,6 +509,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
                     unit_cost_rub=line.unit_cost_rub, restock_status=line.restock_status,
                     stock_lot=line.stock_lot if isinstance(source, RepairIssueLine) else None,
                     by=by, document_id=ret.pk, comment=f"Возврат {ret.number}",
+                    compensates=line,
                 )
                 line.returned_lot = returned_lot
                 line.save(
@@ -632,6 +633,7 @@ def cancel_return(ret, *, by=None, reason="") -> StockReturn:
                         by=by,
                         document_id=ret.pk,
                         comment=comment,
+                        compensates=line,
                     )
             except InventoryError as exc:
                 raise ReturnError(str(exc)) from exc

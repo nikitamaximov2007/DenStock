@@ -1,9 +1,11 @@
 from django.contrib import admin
 
+from apps.core.admin_mixins import ReadOnlyDocumentLinesMixin
+
 from .models import Reservation, ReservationLine, Sale, SaleLine
 
 
-class ReservationLineInline(admin.TabularInline):
+class ReservationLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = ReservationLine
     extra = 0
     autocomplete_fields = ["part_type", "part_item", "stock_lot"]
@@ -18,7 +20,7 @@ class ReservationAdmin(admin.ModelAdmin):
     inlines = [ReservationLineInline]
 
 
-class SaleLineInline(admin.TabularInline):
+class SaleLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = SaleLine
     extra = 0
     autocomplete_fields = ["part_type", "part_item", "stock_lot"]

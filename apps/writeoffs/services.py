@@ -21,6 +21,7 @@ from apps.catalog.quantity_units import validate_part_quantity
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.services import (
     InventoryError,
+    legacy_fractional_lot_error,
     restore_written_off_part_item,
     restore_written_off_stock_lot_quantity,
     write_off_part_item,
@@ -306,6 +307,8 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status not in _LOT_WRITE_OFF_SOURCES:
                 raise WriteOffError(f"Лот #{lot.pk} нельзя списать.")
+            if error := legacy_fractional_lot_error(lot):
+                raise WriteOffError(f"Лот #{lot.pk}: {error}")
             reserved = active_reserved_for_lot(lot)
             if line.quantity > lot.quantity - reserved:
                 raise WriteOffError(
@@ -326,10 +329,13 @@ def complete_write_off(doc, *, by=None) -> WriteOffDocument:
                     "source_location",
                 ]
             )
-            write_off_stock_lot_quantity(
-                lot, line.quantity, by=by, document_id=doc.pk,
-                comment=f"Списание {doc.number}",
-            )
+            try:
+                write_off_stock_lot_quantity(
+                    lot, line.quantity, by=by, document_id=doc.pk,
+                    comment=f"Списание {doc.number}",
+                )
+            except InventoryError as exc:
+                raise WriteOffError(str(exc)) from exc
 
     doc.cost_total = calculate_write_off_costs(doc)
     doc.status = WriteOffDocument.Status.COMPLETED
@@ -381,6 +387,7 @@ def cancel_write_off(doc, *, by=None) -> WriteOffDocument:
                         by=by,
                         document_id=doc.pk,
                         comment=comment,
+                        compensates=line,
                     )
         except InventoryError as exc:
             raise WriteOffError(str(exc)) from exc

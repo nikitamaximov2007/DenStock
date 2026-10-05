@@ -4,8 +4,9 @@ Covers customer documents (sales, requests, repairs, reservations, write-offs),
 physical stock (lots, movements, transfers) and stock intake or correction
 (receipts, batches, inventory counts, section recounts).
 
-A part that is not oil is counted in pieces (apps.catalog.quantity_units), so a
-stored 1.500 on such a part is a legacy anomaly from before the shared rule.
+A PIECE part (apps.catalog.quantity_units.quantity_domain: not oil, unit not
+л/кг/м) is counted in whole pieces, so a stored 1.500 on such a part is a legacy
+anomaly from before the shared rule. MEASURED parts are not reported.
 This module only reads: it never rounds, edits or deletes a row. The report
 names rows by table, id, document id, status, part id, unit and quantity, and
 never by customer name or phone.
@@ -79,11 +80,23 @@ class PieceQuantityReport:
     rows: list[FractionalRow] = field(default_factory=list)
     by_source: dict[str, dict[str, int]] = field(default_factory=dict)
     piece_parts_by_unit: dict[str, int] = field(default_factory=dict)
+    measured_parts_by_unit: dict[str, int] = field(default_factory=dict)
     oil_parts_by_unit: dict[str, int] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
         return len(self.rows)
+
+
+def measured_unit_ids() -> list[int]:
+    """Units whose parts are MEASURED (л, кг, м): their fractions are valid."""
+    from apps.catalog.models import Unit
+    from apps.catalog.quantity_units import QuantityDomain, unit_quantity_domain
+
+    return [
+        unit.pk for unit in Unit.objects.all()
+        if unit_quantity_domain(unit) == QuantityDomain.MEASURED
+    ]
 
 
 def fractional_piece_rows(source: Source):
@@ -97,6 +110,7 @@ def fractional_piece_rows(source: Source):
         values.append(source.document_field)
     return (
         model.objects.filter(part_type__is_oil=False)
+        .exclude(part_type__unit_id__in=measured_unit_ids())
         .annotate(_whole=Floor(quantity))
         .exclude(**{quantity: F("_whole")})
         .order_by("pk")
@@ -125,10 +139,17 @@ def audit_piece_quantities() -> PieceQuantityReport:
                 )
             )
         report.by_source[source.label] = statuses
-    for is_oil, target in ((False, report.piece_parts_by_unit), (True, report.oil_parts_by_unit)):
+    measured = measured_unit_ids()
+    groups = (
+        (PartType.objects.filter(is_oil=False).exclude(unit_id__in=measured),
+         report.piece_parts_by_unit),
+        (PartType.objects.filter(is_oil=False, unit_id__in=measured),
+         report.measured_parts_by_unit),
+        (PartType.objects.filter(is_oil=True), report.oil_parts_by_unit),
+    )
+    for queryset, target in groups:
         for item in (
-            PartType.objects.filter(is_oil=is_oil)
-            .values("unit__short_name")
+            queryset.values("unit__short_name")
             .annotate(parts=Count("pk"))
             .order_by("unit__short_name")
         ):

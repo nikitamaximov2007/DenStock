@@ -2,27 +2,43 @@
 
 Base: `d2adede` (request channel routing). Candidate branch: `claude/request-quantity-domain`.
 Executable proof: `tests/test_piece_quantity_invariant.py` (documents),
-`tests/test_piece_stock_boundary.py` (stock intake and correction) and
-`tests/test_piece_stock_boundary_postgresql.py` (PostgreSQL 16 rollback and races).
+`tests/test_piece_stock_boundary.py` (stock intake and correction),
+`tests/test_quantity_domain_writers.py` (domains, consumption, compensation,
+admin) and `tests/test_piece_stock_boundary_postgresql.py` (PostgreSQL 16 forced
+lock races and rollbacks). Revised after the independent Astra audit; its full
+document was not available in this session, its findings were applied as given.
 
 ## 1. The authoritative quantity model
 
-`apps/catalog/quantity_units.py` decides what a quantity number means, from
-`PartType.is_oil` only. Every quantity column is `Decimal(12, 3)`.
+Correction after the Astra audit: `is_oil=False` does NOT mean "whole pieces".
+Production has non-oil parts in л and кг (no stock history yet), and the owner's
+rule is that fractions are legitimate for products measured by a physical
+measure. The domain is decided once, in `apps/catalog/quantity_units.py`:
 
-| Use | Ordinary part (`is_oil=False`) | Oil (`is_oil=True`) |
+| Domain | Parts | Quantity |
 |---|---|---|
-| Storage (`StockLot.quantity`, movements) | pieces | litres, 0.001 L |
-| Staff sale (`SaleLine.quantity`) | pieces | litres (`add_oil_volume_to_sale`, price = package price / package volume, snapshots frozen) |
-| Repair (`RepairIssueLine.quantity`) | pieces | litres (`add_oil_volume_to_repair_order`) |
-| Reservation (`ReservationLine.quantity`) | pieces | litres |
-| Write-off (`WriteOffLine.quantity`) | pieces | litres |
-| Public catalog cart | whole pieces 1..99 | whole PACKAGES 1..99 (price shown "за упаковку") |
-| Customer request (`CustomerRequestLine.quantity_requested`) | pieces | PACKAGES from the public catalog; LITRES from the messenger repeat purchase (see O3) |
-| Package | none | `oil_package_volume_l` `Decimal(8, 3)` litres, mandatory iff oil (`parttype_oil_package_volume_required_iff_oil`); `recommended_price` is the package price. No package count, no pack multiplicity. |
+| PIECE | not oil, unit шт / компл / упак, or any unit not classified as a measure | whole numbers |
+| MEASURED | oil (always, liters), and parts whose unit is Литр/л, Килограмм/кг, Метр/м | 0.001 precision |
 
-Units seeded by `catalog 0002`: шт, компл, м, кг, л, упак. No code gives м or кг
-fractional semantics; the only fractional domain in code is oil.
+Oil is a subtype of MEASURED (liters of stock). Its PACKAGE is a separate
+commercial concept used only by customer requests and prices (section 5 and
+`docs/design/oil-request-unit.md`); it is not a quantity domain.
+
+The existing unit model has no fractional semantics: `Unit` is a staff-editable
+name and short name. The classifier therefore reads the seeded measured units by
+name (`MEASURED_UNITS`); any other or new unit counts pieces until classified in
+code, which is the safe default for stock. Two guards keep the classification
+stable: a part with stock or history cannot change its unit across the PIECE /
+MEASURED line (`PartType.clean`), and a unit used by such parts cannot be renamed
+across it (`Unit.clean`). A sturdier classifier is a `Unit.quantity_kind` field;
+that needs a migration and is proposed, not done.
+
+| Use | PIECE | MEASURED (non-oil) | Oil |
+|---|---|---|---|
+| Stock, movements | pieces | measure, 0.001 | liters, 0.001 |
+| Sale, repair, reservation, write-off lines | pieces | measure | liters (oil volume flows) |
+| Public catalog cart | whole pieces | whole units of measure | whole PACKAGES |
+| Customer request | pieces | measure | packages (catalog) or liters (repeat, O3) |
 
 ## 2. Entry-point matrix
 
@@ -57,31 +73,44 @@ completing into a real Sale. Oil and whole-piece cases passed on both.
 
 `validate_part_quantity(quantity, part_type)` returns
 "Для штучной детали количество должно быть целым." for a non-integral quantity
-of a non-oil part, `None` otherwise. It never rounds. Each service raises its own
-domain error (`CustomerRequestError`, `SaleError`, `ReservationError`,
-`RepairError`, `WriteOffError`, `ActionError`, `ReturnError`), which the
-existing views already turn into a message; the lot forms mirror the rule in
-`clean()` (`clean_lot_form_quantity`) and the views show that text instead of the
-generic one. No migration, no data change, oil untouched.
+of a PIECE part and `None` otherwise (a whole number never needs the domain, so it
+costs no query). It never rounds. Each service raises its own domain error
+(`CustomerRequestError`, `SaleError`, `ReservationError`, `RepairError`,
+`WriteOffError`, `ActionError`, `ReturnError`, `ReceiptError`, `StocktakingError`,
+`SectionRecountError`, `CountingError`, `LandedCostError`, `InventoryError`),
+which the views turn into a message; the lot forms mirror the rule in `clean()`.
+No migration, no data change, oil untouched.
 
 ## 4. Legacy data (read only)
 
-`python manage.py audit_piece_quantities` lists non-oil fractional rows in
+`python manage.py audit_piece_quantities` lists fractional PIECE rows (not oil,
+unit not л/кг/м) in
 sales, customer requests, repairs, reservations, write-offs, stock lots, receipt
 lines, batch lines, transfers, inventory counts, section recount lines and stock
 movements, by
 table, row id, document id, status, part id, unit and quantity, with counts of
-parts per unit for pieces and oil. It prints no customer names or phones and
-changes nothing. Production was NOT checked from this session. Equivalent SQL
-(PostgreSQL, read only):
+parts per unit for pieces, measured parts and oil. It prints no customer names
+or phones and
+changes nothing. Production was NOT checked from this session; the Astra
+read-only production audit reported 0 fractional non-oil rows in every checked
+table, 0 oil parts and 0 oil request rows. Repeat it immediately before
+deployment. Equivalent SQL (PostgreSQL, read only; `m` excludes measured units):
 
 ```sql
-SELECT 'sales_saleline' AS t, count(*) FROM sales_saleline l JOIN catalog_parttype p ON p.id = l.part_type_id WHERE NOT p.is_oil AND l.quantity <> floor(l.quantity)
-UNION ALL SELECT 'customer_requests_customerrequestline', count(*) FROM customer_requests_customerrequestline l JOIN catalog_parttype p ON p.id = l.part_type_id WHERE NOT p.is_oil AND l.quantity_requested <> floor(l.quantity_requested)
-UNION ALL SELECT 'repairs_repairissueline', count(*) FROM repairs_repairissueline l JOIN catalog_parttype p ON p.id = l.part_type_id WHERE NOT p.is_oil AND l.quantity <> floor(l.quantity)
-UNION ALL SELECT 'sales_reservationline', count(*) FROM sales_reservationline l JOIN catalog_parttype p ON p.id = l.part_type_id WHERE NOT p.is_oil AND l.quantity <> floor(l.quantity)
-UNION ALL SELECT 'writeoffs_writeoffline', count(*) FROM writeoffs_writeoffline l JOIN catalog_parttype p ON p.id = l.part_type_id WHERE NOT p.is_oil AND l.quantity <> floor(l.quantity)
-UNION ALL SELECT 'inventory_stocklot', count(*) FROM inventory_stocklot l JOIN catalog_parttype p ON p.id = l.part_type_id WHERE NOT p.is_oil AND l.quantity <> floor(l.quantity);
+WITH m AS (SELECT id FROM catalog_unit WHERE lower(rtrim(name, '.')) IN ('литр','л','килограмм','кг','метр','м') OR lower(rtrim(short_name, '.')) IN ('литр','л','килограмм','кг','метр','м')),
+piece AS (SELECT id FROM catalog_parttype WHERE NOT is_oil AND unit_id NOT IN (SELECT id FROM m))
+SELECT 'sales_saleline' AS t, count(*) FROM sales_saleline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'customer_requests_customerrequestline', count(*) FROM customer_requests_customerrequestline WHERE part_type_id IN (SELECT id FROM piece) AND quantity_requested <> floor(quantity_requested)
+UNION ALL SELECT 'repairs_repairissueline', count(*) FROM repairs_repairissueline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'sales_reservationline', count(*) FROM sales_reservationline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'writeoffs_writeoffline', count(*) FROM writeoffs_writeoffline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'inventory_stocklot', count(*) FROM inventory_stocklot WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'inventory_stockmovement', count(*) FROM inventory_stockmovement WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'inventory_stocktransfer', count(*) FROM inventory_stocktransfer WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'receipts_receiptline', count(*) FROM receipts_receiptline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'procurement_batchline', count(*) FROM procurement_batchline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity)
+UNION ALL SELECT 'stocktaking_inventorycountline', count(*) FROM stocktaking_inventorycountline WHERE part_type_id IN (SELECT id FROM piece) AND counted_quantity <> floor(counted_quantity)
+UNION ALL SELECT 'stocktaking_sectionrecountline', count(*) FROM stocktaking_sectionrecountline WHERE part_type_id IN (SELECT id FROM piece) AND quantity <> floor(quantity);
 
 SELECT u.short_name, p.is_oil, count(*) FROM catalog_parttype p JOIN catalog_unit u ON u.id = p.unit_id GROUP BY 1, 2 ORDER BY 2, 1;
 
@@ -137,59 +166,79 @@ remain open.
 
 ## 6. Remaining gaps and risks
 
-* A legacy fractional lot can make an integer FIFO split (Quick Actions, quick
-  write-off, Request -> Sale) produce a fractional portion; that is refused
-  explicitly, and the lot needs a stocktaking correction.
-* Any non-oil part sold by м or кг with fractions is now refused. Run
-  `audit_piece_quantities` (parts per unit) before release.
+* The PIECE / MEASURED classifier reads seeded unit names. A unit staff create
+  later (for example "Грамм") counts pieces until it is added to
+  `MEASURED_UNITS`; a `Unit.quantity_kind` field would remove that dependency but
+  needs a migration (proposed, not done).
+* A legacy fractional PIECE lot blocks every write that would leave it
+  fractional (sale, repair, write-off, found stock, transfer split or merge)
+  until a count or recount brings it to a whole number. Production currently has
+  none (Astra audit); repeat the audit before release.
+* A whole compensation into a legacy fractional lot (for example cancelling a
+  whole sale whose lot was later corrupted to 0.5) is refused: provenance only
+  covers a fractional line restoring its own fraction. Reconcile the lot first.
+* Customer-request oil defects O1 to O4 stay open until Option C is implemented.
+* Admin document headers (status fields) remain editable; only the quantity
+  paths (lines, lot identity) were closed here.
 * Production has not been checked from this session.
 
-## 7. Physical stock boundary
+## 7. Physical stock writers
 
-Every writer of `StockLot.quantity` was traced. Intake and correction paths
-take a NEW quantity from a person and now refuse a fractional piece count in the
-service; reversal paths restore exactly what a recorded document moved and are
-guarded by that document instead.
+Rule: no write may leave a PIECE lot fractional, and a quantity a write moves for
+a PIECE part must be whole. Two exceptions, both explicit:
 
-| Path | Service | Rule now | Error |
-|---|---|---|---|
-| Receipt line add / edit / post | `receipts._validate_line_values` (shared by `add_line`, `update_line`, `post_receipt`) | whole pieces; post re-checks every line before any batch is created | `ReceiptError` |
-| Procurement batch line | `BatchLine.clean` (form) and `procurement.finalize_cost` | whole pieces; a batch with a fractional piece line is not costed | `ValidationError`, `LandedCostError` |
-| Lot from a batch line, direct lot edit | `inventory.create_stock_lot`, `update_stock_lot` | whole pieces | `InventoryError` |
-| Manual adjustment, stocktaking apply, section recount apply, found stock | `inventory.adjust_stock_lot_quantity` | the lot's resulting quantity must be whole; a fractional delta is accepted only when it brings a legacy lot back to a whole count | `InventoryError` (mapped by each caller) |
-| Found stock (single, scanner group) | `add_found_stock`, `_post_found_stock_group` | whole pieces (the group already required integers); oil still refused by the group | `InventoryError` |
-| Transfer | `inventory._perform_stock_transfer` | whole pieces; a split over a legacy fractional lot is refused | `InventoryError` |
-| Inventory count | `stocktaking.update_counted_quantity` | whole count (0 allowed) | `StocktakingError` |
-| Section / cell recount | `set_section_line_quantity`, `allocate_section_line` | whole count | `SectionRecountError` |
-| Counting session -> receipt | `counting.set_line_quantity`, `convert_to_receipt`, `post_session` | whole count, checked before any card or receipt is created; receipt refusals mapped | `CountingError` |
-| Serial items | `create_part_items` | always an integer count of instances | already enforced |
-| Whole-lot move | `move_stock_lot` | moves the lot as it is, never changes a quantity | unchanged |
-| Sale / repair / write-off consumption | `_consume_stock_lot` | quantities come from documents validated in section 3 | unchanged |
-| Return, write-off cancellation, return cancellation | `return_stock_lot_quantity`, `restore_written_off_stock_lot_quantity`, `reverse_stock_return_lot` | restore exactly the recorded document quantity; new documents are whole, legacy ones can be closed out | unchanged |
-| Catalog imports | `catalog_import` | write catalog data (package quantity metadata), never stock | n/a |
+* B, reconciliation: `adjust_stock_lot_quantity` (manual adjustment, stocktaking
+  apply, section recount apply, found stock) judges only the RESULTING balance,
+  so a documented -0.5 that brings a legacy 1.5 to 1 is allowed.
+* C, compensation: `return_stock_lot_quantity`, `restore_written_off_stock_lot_quantity`
+  and `_consume_stock_lot` (return cancellation) accept a fractional quantity only
+  with `compensates=<line>`: a persisted line of the same part that is itself
+  fractional (and, for a return line, whose source sale or repair line is too),
+  with the quantity not exceeding it. There is no bypass flag.
 
-Proof: the 26 cases of `tests/test_piece_stock_boundary.py` were run against the
-previous commit `71910f3`: 25 failed (every fractional piece was accepted), only
-the oil receipt passed. All pass on the candidate. On PostgreSQL 16 a receipt
-with one legacy line, and a found-stock group whose second entry hits a legacy
-lot, commit nothing (lots, movements, batches and the idempotency row unchanged);
-a refused fractional adjustment racing a valid one on the same lot releases its
-lock and the valid one completes; racing fractional and whole transfers move only
-whole pieces.
+The guard (`_ensure_piece_stock`) sits at each mutation point; domain services
+validate earlier and map `InventoryError` to their own error.
 
-Legacy fractional stock:
+| Writer | Domain input | Service layer | Physical mutation point | Validation | Error the caller sees | HTTP behavior | Transaction | Legacy recovery | Test |
+|---|---|---|---|---|---|---|---|---|---|
+| Receipt draft add / edit | part's domain | `receipts.add_line`, `update_line` | none (draft) | `_validate_line_values` | `ReceiptError` | message | row | edit the line | boundary: receipt add/edit |
+| Receipt posting | part's domain | `post_receipt` | `BatchLine` create, `finalize_cost`, `create_stock_lot`, `create_part_items` | all lines re-validated before the batch; `InventoryError`, `LandedCostError` mapped | `ReceiptError` | message | `post_receipt` atomic | fix the line, then post | boundary: legacy draft; writers: stock error mapped; PG: commits nothing |
+| Procurement batch line | part's domain | `BatchLineForm` (ModelForm, admin) | none until costing | `BatchLine.clean`; `save()` alone does not validate, so costing and lot creation re-check | form error | form redisplay | row | edit in draft batch | boundary: batch line form |
+| Batch finalization | part's domain | `procurement.finalize_cost` | landed cost on lines | every line before any write | `LandedCostError` | message | atomic | edit the line | boundary: batch not costed |
+| Direct lot create / remainder / edit | part's domain | `create_stock_lot`, `update_stock_lot` | new or edited lot | moved quantity | `InventoryError` | message | atomic | a legacy batch remainder (0.5) cannot be stocked: it was never physical | boundary: lot create/edit |
+| Transfer (split / merge) | part's domain | `perform_stock_transfer` | source lot down, target lot created or merged | quantity, every FIFO portion, source and target balances | `InventoryError` | message | atomic | refused until the legacy lot is reconciled; whole-lot move allowed | boundary: transfer; writers: merge into legacy |
+| Whole-lot move | unchanged | `move_stock_lot` | location only | none needed (quantity unchanged) | `InventoryError` | message | atomic | moves a legacy lot as it is | boundary: legacy move |
+| Manual adjustment | part's domain | `adjust_stock_lot_quantity` | lot quantity | resulting balance (B) | `InventoryError` | message | atomic | B: correct to whole | boundary: adjust; PG: two reconciliations |
+| Stocktaking count / apply | part's domain | `update_counted_quantity`, `complete_inventory_count` | via adjustment | counted whole; adjustment guard | `StocktakingError` | message | atomic | count to whole (B) | boundary: count, legacy reconciled |
+| Section / cell recount | part's domain | `set_section_line_quantity`, `allocate_section_line`, `apply_section_recount` | via adjustment and recount lots (created at 0) | line and allocation whole; adjustment guard | `SectionRecountError` (apply marks FAILED, full rollback) | message | atomic | recount to whole (B) | boundary: section recount |
+| Counting session | warehouse part's domain (catalog lines: PIECE) | `set_line_quantity`, `convert_to_receipt`, `post_session` | via receipt posting | before any card or receipt; `ReceiptError` mapped | `CountingError` | message | atomic | fix the count | boundary: counting session |
+| Found stock (single, scanner group) | part's domain; oil refused in group | `add_found_stock`, `post_found_stock_group` | via adjustment; first lot created at 0 | quantity; adjustment guard | `InventoryError` | message | atomic (group all or nothing) | blocked until reconciled | boundary: found; PG: group rollback releases lock |
+| Sale consumption | part's domain | `complete_sale` (also Quick Actions, Request -> Sale, reservation -> sale) | `sell_stock_lot` -> `_consume_stock_lot` | line whole (document gate), legacy lot check before writes, guard | `SaleError` (`ActionError`, `CustomerRequestSaleError` upstream) | message | atomic | blocked until reconciled | writers: legacy lot; PG: sale after reconciliation |
+| Repair consumption | part's domain | `complete_repair_order` | `issue_stock_lot` | same | `RepairError` | message | atomic | same | writers: legacy lot |
+| Reservation activation | part's domain | `activate_reservation` | none (balance cache only) | every line whole | `ReservationError` | message | atomic | edit the draft | writers: reservation gate |
+| Write-off | part's domain | `add_stock_lot_to_write_off`, `complete_write_off`, `quick_write_off` | `write_off_stock_lot_quantity` | line whole, legacy lot check, guard | `WriteOffError` | message | atomic | write-off of a legacy fraction goes through a count instead | writers: legacy lot |
+| Write-off restore (cancellation) | historical line | `cancel_write_off` | `restore_written_off_stock_lot_quantity` | guard with `compensates=line` (C) | `WriteOffError` | message | atomic | exact restore of a legacy line | writers: legacy write-off cancel |
+| Return, partial cancellation | historical line | `returns._add_line`, `complete_return`, `cancel_sale_line_quantity` | `return_stock_lot_quantity` | whole, or the full remainder of a legacy fractional line; guard with `compensates=line` | `ReturnError` / `SaleError` | message | atomic | exact restore | invariant: legacy line cancelled in full; writers: return and its cancellation |
+| Return cancellation | historical line | `cancel_return` | `reverse_stock_return_lot` -> `_consume_stock_lot` | guard with `compensates=line` | `ReturnError` | message | atomic | exact reversal | writers: return cancellation |
+| Whole sale / repair cancellation | historical lines | `cancel_sale`, `cancel_repair_order` | `return_stock_lot_quantity` | guard with `compensates=line`; now mapped | `SaleError` / `RepairError` | message | atomic | exact restore | writers: legacy sale cancel; no provenance refused |
+| Serial items | always 1 | `create_part_items`, status services | instance status | integer count by construction | n/a | n/a | atomic | n/a | existing suites |
+| Admin | n/a | Django admin | document line inlines, lot / item identity, part unit, unit name | inlines read-only; lot and item `part_type`, `batch_line` read-only (quantity, status, location already were); `PartType.clean` and `Unit.clean` refuse a domain change with history | admin form error | form error | n/a | n/a | writers: admin |
+| Management commands, imports | n/a | `seed_public_catalog_demo` (via `create_stock_lot`, whole), `import_preset` (catalog only), price backfills (price fields only), `backfill_opening_movements` / `rebuild_stock_balance` (read lots) | none new | through services | n/a | n/a | per command | n/a | n/a |
+| Direct ORM / SQL | any | none | any | not guarded (`QuerySet.update` bypasses models); found only in tests | n/a | n/a | n/a | the audit finds the result | audit |
 
-* found by `audit_piece_quantities` (lots, movements, transfers, receipts,
-  batches, counts, recounts);
-* reconciled by an inventory count or section recount to a whole number, which
-  records the exact fractional difference as a movement;
-* a whole-lot move still works;
-* blocked until reconciled, with an explicit message: adding found stock on top
-  of the lot, a transfer whose FIFO split would cut it, a FIFO sale or write-off
-  that would take a fractional portion, and creating the last fractional
-  remainder of a legacy batch line (that remainder was never physical);
-* a legacy receipt draft or batch with a fractional line is fixed by editing the
-  line, then posts normally.
+Proof runs:
 
-Production was not checked from this session (no database or server access). Run
-`python manage.py audit_piece_quantities` there before release; it is read only.
+* `tests/test_piece_stock_boundary.py` (26) against `71910f3`: 25 failed.
+* `tests/test_quantity_domain_writers.py` against `b1b2106` (without the new domain
+  API tests): 19 failed, 3 compensation tests passed (compensation already worked;
+  they now guard that the new rule keeps it working).
+* PostgreSQL 16 (`tests/test_piece_stock_boundary_postgresql.py`): every race is
+  forced and fails unless `pg_stat_activity` shows the contender blocked on the lot
+  lock. A fractional adjustment queued behind a valid one is refused on the fresh
+  balance; two reconciliations of one legacy lot cannot both apply; a sale queued
+  behind a reconciliation sells from the whole balance; a refused found-stock group
+  rolls back its earlier +1 and releases its lock to a waiting adjustment; a receipt
+  with one legacy line commits nothing. The fixtures create their units and number
+  sequences, so the tests also pass with `--reuse-db`, where migration-seeded rows
+  are gone: a version that seeded only units failed 2 of 5 there
+  (`NumberSequence` missing) before reaching the race.

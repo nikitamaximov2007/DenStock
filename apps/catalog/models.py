@@ -102,6 +102,28 @@ class Unit(Dictionary):
     def __str__(self) -> str:
         return self.short_name or self.name
 
+    def clean(self) -> None:
+        super().clean()
+        # The unit decides whether its parts count whole pieces or a measure
+        # (apps.catalog.quantity_units). Renaming it across that line would
+        # silently reinterpret every stored quantity of parts already in stock.
+        if not self.pk:
+            return
+        from apps.catalog.quantity_units import unit_quantity_domain
+
+        previous = type(self).objects.filter(pk=self.pk).first()
+        if previous is None or unit_quantity_domain(previous) == unit_quantity_domain(self):
+            return
+        if any(part.has_stock_or_history() for part in self.parts.all()):
+            raise ValidationError(
+                {
+                    "name": (
+                        "Нельзя менять единицу между штучной и измеряемой (л, кг, м): "
+                        "у деталей с этой единицей уже есть остатки или история."
+                    )
+                }
+            )
+
 
 class VehicleType(Dictionary):
     name = models.CharField("Название", max_length=100, unique=True)
@@ -354,6 +376,7 @@ class PartType(Dictionary):
             )
 
         if self.pk:
+            self._refuse_quantity_domain_change()
             previous_is_oil, previous_volume = (
                 type(self)
                 .objects.filter(pk=self.pk)
@@ -385,6 +408,34 @@ class PartType(Dictionary):
                             )
                         }
                     )
+
+    def _refuse_quantity_domain_change(self) -> None:
+        """A part with stock or history keeps its quantity domain.
+
+        Changing the unit between a piece unit and a measured one (л, кг, м)
+        would turn a stored 1.5 kg into an invalid 1.5 pieces, or whole pieces
+        into a measure. The oil flag has its own guard below.
+        """
+        from apps.catalog.quantity_units import unit_quantity_domain
+
+        previous_unit_id = (
+            type(self).objects.filter(pk=self.pk).values_list("unit_id", flat=True).first()
+        )
+        if previous_unit_id is None or previous_unit_id == self.unit_id:
+            return
+        previous = Unit.objects.filter(pk=previous_unit_id).first()
+        current = self.unit if self.unit_id else None
+        if unit_quantity_domain(previous) == unit_quantity_domain(current):
+            return
+        if self.has_stock_or_history():
+            raise ValidationError(
+                {
+                    "unit": (
+                        "Нельзя менять единицу между штучной и измеряемой (л, кг, м) - "
+                        "по детали уже есть остатки, движения, продажи или ремонты."
+                    )
+                }
+            )
 
     def has_stock_or_history(self) -> bool:
         """True если по детали уже есть остатки, движения, продажи или ремонты.

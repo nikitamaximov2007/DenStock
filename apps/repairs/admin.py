@@ -1,9 +1,11 @@
 from django.contrib import admin
 
+from apps.core.admin_mixins import ReadOnlyDocumentLinesMixin
+
 from .models import RepairIssueLine, RepairOrder
 
 
-class RepairIssueLineInline(admin.TabularInline):
+class RepairIssueLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = RepairIssueLine
     extra = 0
     autocomplete_fields = ["part_type", "part_item", "stock_lot"]

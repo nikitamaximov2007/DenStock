@@ -1,5 +1,8 @@
 """Single source of truth for what a PartType's quantity NUMBER means.
 
+Two quantity domains (``quantity_domain``): PIECE, a whole count, and
+MEASURED, a physical measure at 0.001 precision. Oil is MEASURED in liters.
+
 шт. (pieces) for a normal part, л (liters) for oil - this module is the only
 place that decision is made. Every template/service that needs a unit label
 or needs to parse/format an operator-entered quantity should go through here
@@ -78,20 +81,68 @@ def parse_quantity_input(raw) -> Decimal:
 PIECE_QUANTITY_ERROR = "Для штучной детали количество должно быть целым."
 
 
-def validate_part_quantity(quantity, part_type) -> str | None:
-    """The quantity rule every document line shares; None when it holds.
+class QuantityDomain:
+    """What a quantity number measures, independent of how it is sold.
 
-    Oil keeps its liters at 0.001 L precision. Any other part is counted in
-    pieces, so its quantity must be a whole number: 1.5 is refused, never
-    rounded, floored or ceiled into a different count. Callers raise their own
-    domain error with the returned text and keep their own positivity checks.
+    PIECE counts whole things: шт., компл., упак. MEASURED is a physical
+    measure with 0.001 precision: liters, kilograms, meters. Oil is MEASURED
+    (liters of stock); its packages are a separate commercial concept used
+    only for customer requests and prices, not a quantity domain.
     """
-    if is_oil_quantity(part_type):
-        return None
+
+    PIECE = "piece"
+    MEASURED = "measured"
+
+
+# The measured units seeded by catalog 0002 (name and short name). Any other
+# unit, including one staff create later, is counted in pieces until it is
+# classified here: whole numbers are the safe default for stock.
+MEASURED_UNITS = frozenset({"литр", "л", "килограмм", "кг", "метр", "м"})
+
+
+def _unit_key(value) -> str:
+    return str(value or "").strip().lower().rstrip(".")
+
+
+def unit_quantity_domain(unit) -> str:
+    """Domain of a unit by its name or short name."""
+    if unit is None:
+        return QuantityDomain.PIECE
+    if {_unit_key(unit.name), _unit_key(unit.short_name)} & MEASURED_UNITS:
+        return QuantityDomain.MEASURED
+    return QuantityDomain.PIECE
+
+
+def quantity_domain(part_type) -> str:
+    """PIECE or MEASURED for a PartType; oil is always MEASURED (liters)."""
+    if part_type is None:
+        return QuantityDomain.PIECE
+    if part_type.is_oil:
+        return QuantityDomain.MEASURED
+    return unit_quantity_domain(part_type.unit if part_type.unit_id else None)
+
+
+def is_whole_quantity(quantity) -> bool:
     value = Decimal(str(quantity))
-    if not value.is_finite() or value != value.to_integral_value():
-        return PIECE_QUANTITY_ERROR
-    return None
+    return value.is_finite() and value == value.to_integral_value()
+
+
+def validate_part_quantity(quantity, part_type) -> str | None:
+    """The quantity rule every document line and stock change shares.
+
+    A MEASURED part (oil, or a part counted in л/кг/м) keeps its 0.001
+    precision. A PIECE part must be a whole number: 1.5 is refused, never
+    rounded, floored or ceiled into a different count. Returns the refusal
+    text, or None; callers raise their own domain error with it. A whole
+    number never needs the domain, so it costs no query.
+    """
+    if is_whole_quantity(quantity):
+        return None
+    if Decimal(str(quantity)).is_finite() and (
+        quantity_domain(part_type) == QuantityDomain.MEASURED
+    ):
+        return None
+    return PIECE_QUANTITY_ERROR
 
 
 def piece_quantity_form_error(form) -> str | None:

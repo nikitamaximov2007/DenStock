@@ -10,7 +10,13 @@ from django.db.models import DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
 
 from apps.catalog.models import PartType
-from apps.catalog.quantity_units import validate_part_quantity
+from apps.catalog.quantity_units import (
+    PIECE_QUANTITY_ERROR,
+    QuantityDomain,
+    is_whole_quantity,
+    quantity_domain,
+    validate_part_quantity,
+)
 from apps.procurement.models import BatchLine
 from apps.warehouse.models import StorageLocation
 
@@ -213,9 +219,68 @@ def update_part_item(
 
 
 def _ensure_piece_quantity(quantity, part_type) -> None:
-    """Stock of a piece part is a whole count; oil keeps its liters."""
+    """Stock of a piece part is a whole count; measured parts keep 0.001."""
     if error := validate_part_quantity(quantity, part_type):
         raise InventoryError(error)
+
+
+def _compensation_source(record):
+    """The historical document line a compensation finally reverses."""
+    for field in ("source_sale_line", "source_repair_line"):
+        if getattr(record, f"{field}_id", None):
+            return getattr(record, field)
+    return record
+
+
+def _proves_compensation(part_type_id, moved, record) -> bool:
+    """Only an exact reversal of a recorded fractional line may move a fraction.
+
+    The record (sale, repair or write-off line, or a return line and the sale
+    or repair line it returns) must be persisted, of this part, itself
+    fractional - which only legacy rows from before the whole-piece rule can
+    be - and the moved quantity cannot exceed it.
+    """
+    if record is None or record.pk is None or record.part_type_id != part_type_id:
+        return False
+    source = _compensation_source(record)
+    return (
+        not is_whole_quantity(record.quantity)
+        and not is_whole_quantity(source.quantity)
+        and Decimal(moved) <= record.quantity
+    )
+
+
+def _ensure_piece_stock(owner, *, moved=None, balance=None, compensates=None) -> None:
+    """The physical invariant: no write leaves a PIECE lot fractional.
+
+    `owner` is the lot (or batch line) whose part decides the domain. `moved`
+    is the quantity this write takes or adds, `balance` the lot quantity it
+    would leave. An adjustment passes only `balance`, so a documented
+    fractional correction is allowed exactly when it restores a whole count.
+    `compensates` lets the exact reversal of a historical fractional line
+    restore the state it recorded (see _proves_compensation). Whole numbers
+    return before the part is even loaded.
+    """
+    fractional_moved = moved is not None and not is_whole_quantity(moved)
+    fractional_balance = balance is not None and not is_whole_quantity(balance)
+    if not (fractional_moved or fractional_balance):
+        return
+    if quantity_domain(owner.part_type) == QuantityDomain.MEASURED:
+        return
+    if fractional_moved and _proves_compensation(owner.part_type_id, moved, compensates):
+        return
+    if fractional_moved:
+        raise InventoryError(PIECE_QUANTITY_ERROR)
+    raise InventoryError(PIECE_BALANCE_REFUSED.format(balance=Decimal(balance).normalize()))
+
+
+def legacy_fractional_lot_error(lot) -> str | None:
+    """Refusal text when a PIECE lot holds a legacy fractional balance."""
+    if is_whole_quantity(lot.quantity):
+        return None
+    if validate_part_quantity(lot.quantity, lot.part_type):
+        return LEGACY_FRACTIONAL_LOT
+    return None
 
 
 def distributed_qty(line: BatchLine) -> Decimal:
@@ -284,6 +349,12 @@ def create_stock_lot(
     )
     lot.save()
     return lot
+
+
+PIECE_BALANCE_REFUSED = (
+    "Для штучной детали количество должно быть целым: после операции в лоте "
+    "было бы {balance}."
+)
 
 
 LEGACY_FRACTIONAL_LOT = (
@@ -740,6 +811,10 @@ def _move_locked_lot_portion(lot, target_location, quantity, *, transfer, by=Non
         .filter(batch_line=lot.batch_line, location=target_location)
         .first()
     )
+    # Split and merge are both physical writes: neither side may end fractional.
+    _ensure_piece_stock(lot, moved=quantity, balance=lot.quantity - quantity)
+    if target is not None:
+        _ensure_piece_stock(lot, balance=target.quantity + quantity)
     if target is None:
         target = StockLot.objects.create(
             part_type=lot.part_type,
@@ -1226,13 +1301,9 @@ def adjust_stock_lot_quantity(
         raise InventoryError(
             f"Корректировка уводит количество в минус: остаток {lot.quantity}, дельта {delta}."
         )
-    if validate_part_quantity(new_qty, lot.part_type):
-        # The result must be whole. A fractional delta is therefore accepted
-        # only when it brings a legacy fractional lot back to a whole count.
-        raise InventoryError(
-            "Для штучной детали количество должно быть целым: после корректировки "
-            f"в лоте было бы {new_qty}."
-        )
+    # The result must be whole. A fractional delta is therefore accepted only
+    # when it brings a legacy fractional lot back to a whole count.
+    _ensure_piece_stock(lot, balance=new_qty)
     if delta > 0:
         movement_type = StockMovement.MovementType.ADJUST_IN
         from_location, to_location = None, lot.location
@@ -1348,7 +1419,7 @@ def _consume_stock_lot(
     positive_msg, unavailable_msg, over_msg,
     allowed_statuses=(StockLot.Status.AVAILABLE,),
     zero_status=StockLot.Status.DEPLETED,
-    by=None, document_id=None, comment="",
+    by=None, document_id=None, comment="", compensates=None,
 ) -> StockLot:
     """Списать количество из лота: quantity↓, при нуле → zero_status, расходное
     движение. Частичный расход разрешён; лот не дробится. `allowed_statuses` —
@@ -1363,6 +1434,9 @@ def _consume_stock_lot(
         raise InventoryError(unavailable_msg)
     if quantity > lot.quantity:
         raise InventoryError(over_msg.format(quantity=quantity, in_lot=lot.quantity))
+    _ensure_piece_stock(
+        lot, moved=quantity, balance=lot.quantity - quantity, compensates=compensates
+    )
     lot.quantity = lot.quantity - quantity
     if lot.quantity == 0:
         lot.status = zero_status
@@ -1503,7 +1577,8 @@ def restore_written_off_part_item(
 
 @transaction.atomic
 def restore_written_off_stock_lot_quantity(
-    lot, quantity, to_location, *, restock_status, by=None, document_id=None, comment=""
+    lot, quantity, to_location, *, restock_status, by=None, document_id=None, comment="",
+    compensates=None,
 ) -> StockLot:
     """Compensate a completed write-off into the exact original lot and cell."""
     quantity = Decimal(quantity)
@@ -1518,6 +1593,9 @@ def restore_written_off_stock_lot_quantity(
         raise InventoryError("Исходный лот больше не находится в исходной ячейке.")
     if lot.status not in (StockLot.Status.WRITTEN_OFF, restock_status):
         raise InventoryError("Лот уже изменён после списания; отмена недоступна.")
+    _ensure_piece_stock(
+        lot, moved=quantity, balance=lot.quantity + quantity, compensates=compensates
+    )
     lot.quantity = lot.quantity + quantity
     lot.status = restock_status
     lot.save(update_fields=["quantity", "status", "updated_at"])
@@ -1577,7 +1655,8 @@ def return_part_item(item, to_location, *, restock_status, by=None,
 @transaction.atomic
 def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_rub,
                               restock_status, stock_lot=None, by=None, document_id=None,
-                              document_type="stock_return", comment="") -> StockLot:
+                              document_type="stock_return", comment="",
+                              compensates=None) -> StockLot:
     """Вернуть количество в лот ячейки `to_location` по правилу «найти/оживить/
     создать» под UniqueConstraint(batch_line, location):
 
@@ -1605,6 +1684,11 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
             .filter(batch_line=batch_line, location=to_location)
             .first()
         )
+    _ensure_piece_stock(
+        batch_line, moved=quantity,
+        balance=quantity + (lot.quantity if lot is not None else Decimal("0")),
+        compensates=compensates,
+    )
     if lot is None:
         lot = StockLot.objects.create(
             part_type=batch_line.part_type, batch=batch_line.batch, batch_line=batch_line,
@@ -1662,7 +1746,8 @@ def reverse_stock_return_part_item(
 
 
 def reverse_stock_return_lot(
-    lot, quantity, *, source_document_type, by=None, document_id=None, comment=""
+    lot, quantity, *, source_document_type, by=None, document_id=None, comment="",
+    compensates=None,
 ) -> StockLot:
     """Compensate a bulk return through the existing consume engine."""
     if source_document_type == "sale":
@@ -1683,6 +1768,7 @@ def reverse_stock_return_lot(
         by=by,
         document_id=document_id,
         comment=comment,
+        compensates=compensates,
     )
 
 

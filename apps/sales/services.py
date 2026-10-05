@@ -21,6 +21,7 @@ from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
     InventoryError,
     ensure_location_operation_allowed,
+    legacy_fractional_lot_error,
     recompute_balance_row,
     return_part_item,
     return_stock_lot_quantity,
@@ -304,9 +305,13 @@ def activate_reservation(reservation, *, by=None) -> Reservation:
         return reservation
     if reservation.status != Reservation.Status.DRAFT:
         raise ReservationError("Активировать можно только черновик.")
-    lines = list(reservation.lines.select_related("part_item", "stock_lot"))
+    lines = list(reservation.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise ReservationError("Нельзя активировать пустой резерв.")
+    for line in lines:
+        # A draft saved before the piece rule may still hold 1.5.
+        if error := validate_part_quantity(line.quantity, line.part_type):
+            raise ReservationError(f"{line.part_type.name}: {error}")
 
     for line in lines:
         location = (
@@ -742,6 +747,8 @@ def complete_sale(sale, *, by=None) -> Sale:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status != StockLot.Status.AVAILABLE:
                 raise SaleError(f"Лот #{lot.pk} недоступен.")
+            if error := legacy_fractional_lot_error(lot):
+                raise SaleError(f"Лот #{lot.pk}: {error}")
             reserved_others = _active_reserved_for_lot(lot, exclude=own_reservation)
             if line.quantity > lot.quantity - reserved_others:
                 raise SaleError(f"Лот #{lot.pk}: недостаточно для продажи.")
@@ -754,9 +761,13 @@ def complete_sale(sale, *, by=None) -> Sale:
                 "unmarked_usd_rate_snapshot", "unmarked_price_source",
                 "unmarked_price_snapshot_note",
             ])
-            sell_stock_lot(
-                lot, line.quantity, by=by, document_id=sale.pk, comment=f"Продажа {sale.number}"
-            )
+            try:
+                sell_stock_lot(
+                    lot, line.quantity, by=by, document_id=sale.pk,
+                    comment=f"Продажа {sale.number}",
+                )
+            except InventoryError as exc:
+                raise SaleError(str(exc)) from exc
 
     if own_reservation is not None:
         # Освободить reserved для позиций резерва, не попавших в продажу (если такие есть).
@@ -974,12 +985,16 @@ def cancel_sale(sale, *, by=None, reason="", author="", oil_dispositions=None) -
                 document_type="sale", document_id=sale.pk, comment=comment,
             )
         else:
-            return_stock_lot_quantity(
-                line.batch_line, allocation.location, allocation.quantity,
-                unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
-                restock_status=StockLot.Status.AVAILABLE, by=by,
-                document_type="sale", document_id=sale.pk, comment=comment,
-            )
+            try:
+                return_stock_lot_quantity(
+                    line.batch_line, allocation.location, allocation.quantity,
+                    unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
+                    restock_status=StockLot.Status.AVAILABLE, by=by,
+                    document_type="sale", document_id=sale.pk, comment=comment,
+                    compensates=line,
+                )
+            except InventoryError as exc:
+                raise SaleError(str(exc)) from exc
     for line in pending_oil:
         disposition = normalized_dispositions[line.pk]
         if disposition == SaleOilCancellationDecision.Disposition.RETURN_TO_STOCK:
@@ -1001,6 +1016,7 @@ def cancel_sale(sale, *, by=None, reason="", author="", oil_dispositions=None) -
                     document_type="sale",
                     document_id=sale.pk,
                     comment=f"Отмена продажи {sale.number}: {reason}"[:255],
+                    compensates=line,
                 )
             except InventoryError as exc:
                 raise SaleError(str(exc)) from exc

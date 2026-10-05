@@ -1,9 +1,11 @@
 from django.contrib import admin
 
+from apps.core.admin_mixins import ReadOnlyDocumentLinesMixin
+
 from .models import StockReturn, StockReturnLine
 
 
-class StockReturnLineInline(admin.TabularInline):
+class StockReturnLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = StockReturnLine
     extra = 0
     autocomplete_fields = ["part_type", "part_item", "stock_lot", "to_location"]

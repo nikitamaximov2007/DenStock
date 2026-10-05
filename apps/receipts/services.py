@@ -14,6 +14,7 @@ from django.utils import timezone
 from apps.catalog.models import PartType
 from apps.catalog.quantity_units import validate_part_quantity
 from apps.inventory.services import (
+    InventoryError,
     create_part_items,
     create_stock_lot,
     ensure_location_operation_allowed,
@@ -21,7 +22,7 @@ from apps.inventory.services import (
     receive_stock_lot,
 )
 from apps.procurement.models import Batch, BatchLine, money
-from apps.procurement.services import finalize_cost
+from apps.procurement.services import LandedCostError, finalize_cost
 
 from .models import Receipt, ReceiptLine
 
@@ -164,31 +165,38 @@ def post_receipt(receipt: Receipt, *, by=None) -> Receipt:
     #    поэтому landed cost за единицу равен введённой цене).
     batch.status = Batch.Status.ACCEPTED
     batch.save(update_fields=["status", "updated_at"])
-    batch = finalize_cost(batch, by)  # возвращает свежий экземпляр (select_for_update)
+    try:
+        batch = finalize_cost(batch, by)  # возвращает свежий экземпляр (select_for_update)
+    except LandedCostError as exc:
+        raise ReceiptError(str(exc)) from exc
 
     # 3. Приход на склад существующими сервисами (движения + остатки там).
-    for line in lines:
-        line.batch_line.refresh_from_db()
-        note = f"Поступление {receipt.number}"
-        # Capture the canonical customer price exactly once, while this receipt
-        # is accepted.  Older inventory is deliberately left NULL by migration.
-        receipt_price = line.part_type.recommended_price
-        if line.part_type.tracking_mode == PartType.TrackingMode.SERIAL:
-            items = create_part_items(
-                line.batch_line,
-                int(line.quantity),
-                receipt_customer_price_snapshot_rub=receipt_price,
-            )
-            for item in items:
-                receive_part_item(item, to_location=line.location, by=by, comment=note)
-        else:
-            lot = create_stock_lot(
-                line.batch_line,
-                line.location,
-                line.quantity,
-                receipt_customer_price_snapshot_rub=receipt_price,
-            )
-            receive_stock_lot(lot, by=by, comment=note)
+    try:
+        for line in lines:
+            line.batch_line.refresh_from_db()
+            note = f"Поступление {receipt.number}"
+            # Capture the canonical customer price exactly once, while this receipt
+            # is accepted.  Older inventory is deliberately left NULL by migration.
+            receipt_price = line.part_type.recommended_price
+            if line.part_type.tracking_mode == PartType.TrackingMode.SERIAL:
+                items = create_part_items(
+                    line.batch_line,
+                    int(line.quantity),
+                    receipt_customer_price_snapshot_rub=receipt_price,
+                )
+                for item in items:
+                    receive_part_item(item, to_location=line.location, by=by, comment=note)
+            else:
+                lot = create_stock_lot(
+                    line.batch_line,
+                    line.location,
+                    line.quantity,
+                    receipt_customer_price_snapshot_rub=receipt_price,
+                )
+                receive_stock_lot(lot, by=by, comment=note)
+    except InventoryError as exc:
+        # The whole posting rolls back; the operator sees the receipt's own error.
+        raise ReceiptError(str(exc)) from exc
 
     receipt.batch = batch
     receipt.status = Receipt.Status.POSTED

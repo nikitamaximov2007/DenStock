@@ -31,7 +31,7 @@ class PartItemAdmin(admin.ModelAdmin):
     search_fields = ("internal_number", "internal_barcode", "serial_number")
     readonly_fields = (
         "internal_number", "internal_barcode", "landed_cost_rub", "batch",
-        "status", "current_location",
+        "status", "current_location", "part_type", "batch_line",
     )
 
     def has_add_permission(self, request):
@@ -56,9 +56,12 @@ class StockLotAdmin(admin.ModelAdmin):
     )
     list_filter = ("status", "part_type", "batch")
     search_fields = ("part_type__name", "location__code", "batch__number")
+    # The part and batch line decide what the quantity means (pieces or a
+    # measure): reassigning a fractional oil lot to a piece part here would
+    # create an invalid piece balance, so the lot's identity is read-only too.
     readonly_fields = (
         "initial_quantity", "landed_unit_cost_rub", "batch",
-        "quantity", "status", "location",
+        "quantity", "status", "location", "part_type", "batch_line",
     )
 
     def has_add_permission(self, request):

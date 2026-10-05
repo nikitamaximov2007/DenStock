@@ -1,190 +1,170 @@
 # Oil request unit: Option C implementation design
 
 Status: DESIGN READY, IMPLEMENTATION PENDING. Nothing below is implemented.
-Owner decision (2026-10-04): Option C. The customer keeps buying packages; every
-request line records its unit explicitly, snapshots the package volume, and so
-carries an unambiguous physical quantity in litres.
+Owner decision: Option C. The customer keeps buying packages; each request line
+records its unit and package volume explicitly, so the line has an unambiguous
+physical quantity in liters. Revised after the independent Astra audit
+(O1 confirmed, O2 conditionally true, O3 confirmed, O4 confirmed).
 
-Defects this closes (see `docs/audits/piece-quantity-domain-audit.md`, section 5):
-O1 packages compared with litres in cart and request availability; O2 operator
-card prints "6 л" for 6 packages; O3 messenger repeat bills litres at the
-package price; O4 web repeat ceils litres into packages.
+Quantity domains are already decided by `apps.catalog.quantity_units`:
+PIECE (whole count) and MEASURED (0.001 precision: oil, and parts counted in
+л/кг/м). Oil packages are a commercial unit on top of the MEASURED liters, not a
+third domain.
 
-## 1. Fields on `CustomerRequestLine`
+Production evidence (Astra, read only): 0 oil PartTypes, 0 oil request rows,
+0 fractional non-oil rows. Repeat the audit before any rollout; do not rely on it.
 
-All additive and nullable, so the schema migration is safe on a live table and
-old rows stay valid until the backfill decides them.
+## 1. Fields
 
-| Field | Type | Null | Meaning |
-|---|---|---|---|
-| `quantity_unit` | `CharField(max_length=16, choices=QuantityUnit)` | yes | What `quantity_requested` counts. `piece`, `oil_package`, `oil_liter`. NULL = recorded before explicit units. |
-| `package_volume_l_snapshot` | `DecimalField(max_digits=8, decimal_places=3)` | yes | Litres in one package at request time (copy of `PartType.oil_package_volume_l`). Only for `oil_package`. |
-| `base_quantity_l` | `DecimalField(max_digits=12, decimal_places=3)` | yes | Physical litres this line represents. `oil_package`: `quantity_requested x package_volume_l_snapshot`; `oil_liter`: `quantity_requested`; `piece`: NULL. |
-| `quantity_unit_source` | `CharField(max_length=32, blank=True, default="")` | no | Provenance: `explicit` (written at creation), `backfill_piece`, `backfill_catalog_package_current_volume`, `backfill_repeat_liters`. Empty only on rows not yet decided. |
+Three fields carry the meaning. A fourth, `base_quantity`, was evaluated and
+removed (see 1.4).
 
-`QuantityUnit` lives in `apps/catalog/quantity_units.py` next to
-`validate_part_quantity`, so the unit decision stays in one module.
+### 1.1 `quantity_requested` (existing)
 
-Existing fields keep their meaning:
+| Aspect | Decision |
+|---|---|
+| Django type | `DecimalField(max_digits=12, decimal_places=3)` (unchanged) |
+| Null | no |
+| Lifetime | immutable after creation (snapshot of the customer's choice) |
+| DB constraints | existing `custreq_line_quantity_positive` (> 0) |
+| Meaning | a count in `quantity_unit`: pieces, a measure, or packages |
+| Validation | service: whole for `piece` and `oil_package`, 0.001 for `measured` |
+| Migration | none |
+| Pricing | `price_seen` is per `quantity_unit`; shown total = `quantity_requested x price_seen` |
+| Request -> Sale | see section 4 |
 
-* `quantity_requested` stays the number the customer chose, in `quantity_unit`.
-* `price_seen` stays the customer price per `quantity_unit` at creation (the
-  package price for `oil_package`). Informational, never a contract, never
-  rewritten.
-* `unit_name` / `unit_short_name` become the display snapshot of
-  `quantity_unit` ("Упаковка"/"упак." for `oil_package`), not of `PartType.unit`.
+### 1.2 `quantity_unit` (new)
 
-## 2. Constraints
+| Aspect | Decision |
+|---|---|
+| Django type | `CharField(max_length=16, choices=RequestQuantityUnit)`: `piece`, `measured`, `oil_package` |
+| Null | yes. NULL means the unit of a legacy row cannot be proven. Never set by guessing |
+| Lifetime | immutable; written once by `create_customer_request` from the part, never from the client |
+| DB constraints | `custreq_line_unit_known`: NULL or one of the three values |
+| Migration | additive nullable column, no default; then the backfill command (section 2) |
+| Pricing | defines what `price_seen` is per (piece, unit of measure, package) |
+| Request -> Sale | selects the conversion in section 4 |
 
-Expressed as `CheckConstraint`s, tested on SQLite and PostgreSQL 16:
+### 1.3 `oil_package_volume_l_snapshot` (new)
 
-1. `custreq_line_unit_known`: `quantity_unit IS NULL OR quantity_unit IN ('piece','oil_package','oil_liter')`.
-2. `custreq_line_package_volume_iff_package`: `oil_package` has
-   `package_volume_l_snapshot > 0`; every other unit (and NULL) has it NULL.
-3. `custreq_line_base_liters_iff_oil`: `oil_package` / `oil_liter` have
-   `base_quantity_l > 0`; `piece` and NULL have it NULL.
-4. `custreq_line_unit_source_matches`: `quantity_unit IS NULL` iff
-   `quantity_unit_source = ''`.
+| Aspect | Decision |
+|---|---|
+| Django type | `DecimalField(max_digits=8, decimal_places=3)` (same as `PartType.oil_package_volume_l`) |
+| Null | yes; required exactly for `oil_package` |
+| Lifetime | immutable; copied from `PartType.oil_package_volume_l` at creation; later volume changes never rewrite it |
+| DB constraints | `custreq_line_package_volume_iff_package`: `quantity_unit = 'oil_package'` requires a value > 0; any other unit (and NULL) requires NULL |
+| Migration | additive nullable column; never backfilled (the historical volume was not recorded) |
+| Pricing | `price_seen` for a package line is the package price; liter price = `price_seen / volume` |
+| Request -> Sale | liters = `quantity_requested x oil_package_volume_l_snapshot` |
 
-Whole-number rules (`piece` and `oil_package` quantities are integers,
-`base_quantity_l = quantity x volume` exactly) are enforced in the service by the
-shared validator, not in SQL: an integer check needs `FLOOR` in a CHECK
-constraint, which SQLite only provides through a function Django registers per
-connection. A follow-up migration may add a PostgreSQL-only `RunSQL` check
-after the backfill.
+### 1.4 `base_quantity`: removed
 
-A later migration, once the backfill leaves no NULL, makes `quantity_unit` NOT NULL.
+`base_quantity` (liters for oil, the count otherwise) is fully determined by the
+three immutable values above. Storing it would add a second copy that must stay
+equal to `quantity_requested x volume`, an equality SQLite cannot check in a
+constraint. A model property `base_quantity` computes it (and a query can
+annotate the same expression), so integrity is preserved with one source of
+truth. The earlier `quantity_unit_source` field is also dropped: NULL already
+means "not proven", and no row is ever filled by assumption.
 
-## 3. Migration and backfill
+`unit_name` / `unit_short_name` stay display snapshots; for `oil_package` they
+become "Упаковка" / "упак." at creation.
 
-1. Schema migration `customer_requests 00xx_request_line_quantity_unit`: add the
-   four fields (nullable / empty default) and constraints 1 to 4. No data step,
-   no lock-heavy rewrite. Reversible.
-2. Backfill is a management command, not a migration data step, so the owner
-   sees the counts before anything is written:
-   `python manage.py backfill_request_quantity_units` (dry run by default,
-   `--apply` to write, idempotent, only touches rows with `quantity_unit IS NULL`,
-   prints counts per bucket, no customer data).
+## 2. Migration and backfill
 
-Buckets for old rows:
+1. Schema migration (`customer_requests 00xx`): add the two nullable columns and
+   the two constraints. Reversible, no data step, no table rewrite.
+2. `python manage.py backfill_request_quantity_units`: dry run by default,
+   `--apply` to write, idempotent, only rows with `quantity_unit IS NULL`, prints
+   counts per bucket, never customer data. It never changes `quantity_requested`,
+   `price_seen` or any other snapshot.
 
-| Old row | Decision | Written |
+| Existing row | Decision | Why it is not a guess |
 |---|---|---|
-| Part not oil | unambiguous | `piece`, `backfill_piece` |
-| Oil, request source `public_catalog` | the number was packages (V1 contract) | `oil_package`, volume = CURRENT `oil_package_volume_l`, `base_quantity_l` = qty x volume, `backfill_catalog_package_current_volume` |
-| Oil, request source `messenger_repeat` | the number was litres copied from a sale | `oil_liter`, `base_quantity_l` = qty, `backfill_repeat_liters` |
-| Oil part without a package volume (should not exist: model constraint) | cannot decide | left NULL, reported |
+| Part is not oil, the line's own unit snapshot is л/кг/м | `measured` | read from the row's recorded unit |
+| Part is not oil, any other unit snapshot | `piece` | read from the row's recorded unit |
+| Part is oil (any source) | stays NULL, listed for manual review | public rows were packages, messenger repeat rows were liters, and the package volume at request time was never stored: the number cannot be proven |
 
-## 4. Old ambiguous rows
+3. If the dry run on production shows 0 rows left NULL (expected from the Astra
+   evidence), a later migration makes `quantity_unit` NOT NULL. If any oil row is
+   left, the column stays nullable and those rows keep the legacy behavior.
 
-* The package volume at request time was never stored. A backfilled
-  `oil_package` row uses today's volume and says so through
-  `quantity_unit_source`; staff screens show "объём упаковки взят из текущей
-  карточки" next to it.
-* A backfilled `oil_liter` row (messenger repeat) has a `price_seen` that is a
-  package price recorded against litres (O3). It is not rewritten; its money
-  total is shown as "цена уточняется" instead of `qty x price_seen`.
-* Rows left NULL display as today, with "единица не зафиксирована".
-* Completed, cancelled and anonymised requests are backfilled the same way:
-  the command never changes `quantity_requested`, `price_seen` or any other
-  snapshot, only adds the unit facts.
+4. Close the remaining reclassification hole first: `PartType.has_stock_or_history`
+   must also count customer request lines, so the oil flag cannot flip after a
+   request exists (today only stock, movements, sales and repairs block it).
 
-## 5. Flows
+## 3. Old ambiguous rows
 
-### Catalog creation
+Rows left NULL are displayed with "единица не зафиксирована", their money total
+as "цена уточняется" for oil, and Request -> Sale keeps today's manual oil step
+(the operator enters liters; completion checks that an oil line is present). No
+automatic conversion ever runs on them.
 
-* The cart keeps whole packages (`public_cart.parse_quantity`, unchanged).
-* `set_line` and `create_customer_request` compare `packages x volume` with
-  available litres (fixes O1). The message names both: "доступно 4 упак. (20 л)",
-  where the package count shown is how many FULL packages the litres hold; it
-  is a display of capacity, never a stored or rounded request quantity.
-* `create_customer_request` decides the unit server-side from the part, never
-  from the client: `piece` for non-oil, `oil_package` for oil, and writes
-  `package_volume_l_snapshot`, `base_quantity_l`, `quantity_unit_source=explicit`
-  and the unit display snapshot. `oil_package` quantities must be whole.
+## 4. Request -> Sale
 
-### Messenger repeat purchase
+| `quantity_unit` | Draft line | Completion check |
+|---|---|---|
+| `piece` | `quantity_requested` pieces (today's flow) | equal count, whole |
+| `measured` | `quantity_requested` of the measure (today's flow, fractions allowed) | equal quantity |
+| `oil_package` | pre-filled `add_oil_volume_to_sale(liters)` with liters = `quantity_requested x snapshot`, split over lots, draft only | sale oil liters equal the request's liters |
+| `oil_package`, volume changed since the request | no pre-fill; operator enters liters; both volumes shown | operator-confirmed liters |
+| NULL (legacy) | today's manual oil step | oil line present |
 
-* Historical oil sale lines are litres. Packages = litres / CURRENT package
-  volume. Only an exact whole result is proposed; otherwise the line is
-  unavailable with "уточните у менеджера" (no rounding, same rule as fractional
-  pieces). The request line is `oil_package` at the current package price.
+Money is the existing rule: the sale is priced from the current package price per
+liter (`add_oil_volume_to_sale`); `price_seen` stays a historical display.
 
-### Web repeat purchase
+## 5. Flows that create lines
 
-* Same conversion replaces `math.ceil` for oil in `customer_accounts.reorder`;
-  the cart receives whole packages or the line becomes a `fraction`-style state
-  with the same note (fixes O4).
-
-### Request -> Sale
-
-* `oil_package` / `oil_liter` rows with an explicit unit: `prepare_request_sale`
-  pre-fills the draft with `add_oil_volume_to_sale(lot, base_quantity_l)` (draft
-  only, no stock change), splitting over lots like pieces.
-* If `package_volume_l_snapshot` differs from the part's current volume, the oil
-  line is NOT pre-filled; the operator enters litres as today and sees both
-  volumes.
-* `_validate_request_sale_lines` compares oil litres like piece counts for
-  explicit rows: the customer agreed to N packages, a different volume is a
-  different deal and needs the request changed first. NULL-unit rows keep
-  today's rule (an oil line must be present).
-* Money stays the current rule: the sale is priced from the current package
-  price per litre (`add_oil_volume_to_sale`), `price_seen` stays historical.
+* Catalog: the cart keeps whole packages; `set_line` and `create_customer_request`
+  compare `packages x volume` with available liters (fixes O1). The message shows
+  both ("доступно 4 упак. (20 л)"); the package count shown is how many full
+  packages the liters hold, a display of capacity, never a stored or rounded
+  quantity.
+* Messenger repeat purchase: historical oil sale lines are liters; packages =
+  liters / current volume, proposed only when exact; otherwise the line is
+  unavailable with "уточните у менеджера" (fixes O3, no rounding).
+* Web repeat purchase: the same rule replaces `math.ceil` for oil (fixes O4).
+* All three write `quantity_unit` and, for oil, the volume snapshot.
 
 ## 6. Display
 
-Staff (request card, operator console, Telegram/MAX operator card, sale-from-
-request draft):
-
-* piece: `2 шт.`
-* oil_package: `2 упак. x 4 л = 8 л`, price `4 000 ₽ за упак.`
-* oil_liter (backfilled repeat): `2,5 л`, price "уточняется"
-* NULL: `2` plus "единица не зафиксирована"
-
-Customer (catalog, cart, request confirmation, bot summary, cabinet history):
-`2 упак. по 4 л`, total from `price_seen x packages`; never litres alone for a
-package line.
-
-All formatting goes through `quantity_units` (`format_quantity` gains a unit
-argument), so `messaging.summary_line` and the console stop reading
-`PartType.unit` directly.
+* piece `2 шт.`; measured `1,5 кг`; oil_package `2 упак. x 4 л = 8 л`, price
+  `4 000 ₽ за упак.`; NULL `2` with "единица не зафиксирована" (fixes O2).
+* Customer surfaces never show liters alone for a package line.
+* One formatter in `quantity_units` takes the line's unit; `messaging.summary_line`
+  and the operator console stop reading `PartType.unit` directly.
 
 ## 7. Package volume changes after creation
 
-The request keeps `package_volume_l_snapshot` and `base_quantity_l`; changing
-`PartType.oil_package_volume_l` never rewrites them. Sale pre-fill stops (see
-section 5) and staff see "было 4 л, сейчас 5 л". Catalog shows the new volume
-for new requests only.
+`PartType.oil_package_volume_l` cannot change once the part has history (existing
+guard). If it changes on a part with only requests, the request keeps its
+snapshot; Request -> Sale stops pre-filling (section 4).
 
 ## 8. Tests needed
 
-1. Schema: constraints 1 to 4 accept the four valid shapes and reject each
-   invalid one, on SQLite and PostgreSQL 16.
-2. Catalog: 6 packages of 4 L against 20 L is refused; 5 accepted; line stores
-   `oil_package`, volume 4, base 20 L, `explicit`, unit snapshot "упак.".
-3. Request service bypassing forms: fractional packages refused; a client
-   cannot choose the unit.
-4. Messenger repeat: 8 L sold, volume 4 -> 2 packages; 2.5 L -> unavailable with
-   reason; total = 2 x current package price.
-5. Web repeat: same two cases; nothing is ceiled.
-6. Request -> Sale: pre-filled 8 L priced from the current package price;
-   volume changed after creation -> no pre-fill; edited volume -> completion
-   refused; NULL-unit rows behave exactly as today.
-7. Display: card, console, both bots and the cabinet show the strings in
-   section 6 (no "6 л" for packages).
-8. Backfill command: dry run writes nothing; apply fills each bucket, is
-   idempotent, never changes `quantity_requested` / `price_seen`, prints no
-   customer data.
-9. Regression: piece requests unchanged; oil sale/repair litres unchanged;
-   `audit_piece_quantities` unchanged.
+1. Constraints: valid shapes accepted, each invalid shape refused, SQLite and
+   PostgreSQL 16.
+2. Catalog: 6 packages of 4 L against 20 L refused, 5 accepted; line stores
+   `oil_package`, volume 4, "упак."; the client cannot choose the unit.
+3. Service bypass: fractional packages and fractional pieces refused, fractional
+   measure accepted.
+4. Messenger and web repeat: 8 L sold -> 2 packages; 2.5 L -> unavailable; nothing
+   ceiled; total = packages x current package price.
+5. Request -> Sale for each row of the table in section 4, including the changed
+   volume and the NULL legacy row.
+6. Display strings on card, console, both bots and the cabinet.
+7. Backfill: dry run writes nothing; apply fills only proven buckets; oil rows stay
+   NULL; idempotent; snapshots untouched; no customer data printed.
+8. Regression: piece and measured requests unchanged; oil sale and repair liters
+   unchanged; `audit_piece_quantities` unchanged.
 
 ## 9. Rollout order
 
-1. Schema migration plus model fields, with no behavior change. Deploy and verify.
-2. Write path: explicit units on every new line (catalog, messenger repeat, web
-   repeat), litre-based availability, display with NULL fallback. Deploy.
-3. On production: `backfill_request_quantity_units` dry run, owner reviews the
-   counts, then `--apply`.
-4. Request -> Sale oil pre-fill and litre equality for explicit rows.
-5. Once no NULL remains: migration making `quantity_unit` NOT NULL (and the
-   optional PostgreSQL integer check).
+1. `has_stock_or_history` counts request lines (section 2.4). Deploy.
+2. Schema migration and model fields, no behavior change. Deploy.
+3. Write path: explicit unit on every new line; liter-based availability; display
+   with NULL fallback. Deploy.
+4. Production: read-only `audit_piece_quantities`, then the backfill dry run;
+   owner reviews counts; `--apply`.
+5. Request -> Sale oil pre-fill for `oil_package` rows.
+6. NOT NULL migration only if no legacy NULL row remains.

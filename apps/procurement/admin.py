@@ -1,9 +1,11 @@
 from django.contrib import admin
 
+from apps.core.admin_mixins import ReadOnlyDocumentLinesMixin
+
 from .models import Batch, BatchLine
 
 
-class BatchLineInline(admin.TabularInline):
+class BatchLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = BatchLine
     extra = 0
     readonly_fields = (

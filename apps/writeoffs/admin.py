@@ -1,9 +1,11 @@
 from django.contrib import admin
 
+from apps.core.admin_mixins import ReadOnlyDocumentLinesMixin
+
 from .models import WriteOffDocument, WriteOffLine
 
 
-class WriteOffLineInline(admin.TabularInline):
+class WriteOffLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = WriteOffLine
     extra = 0
     autocomplete_fields = ["part_type", "part_item", "stock_lot"]

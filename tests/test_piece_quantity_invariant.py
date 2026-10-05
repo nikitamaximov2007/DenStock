@@ -1,6 +1,7 @@
-"""Piece parts are counted in whole numbers; only oil is fractional (liters).
+"""Piece parts are counted in whole numbers; measured parts (oil in liters, and
+parts in л/кг/м) keep their fractions.
 
-What a quantity measures comes from PartType.is_oil (apps.catalog.quantity_units).
+What a quantity measures comes from quantity_domain (apps.catalog.quantity_units).
 Every entry point that creates a request, sale, reservation, repair or write-off
 line for a piece part refuses 0.5 / 1.5 / 2.001 explicitly - never rounding,
 flooring or ceiling them - while oil keeps its 0.001 L precision. Historical

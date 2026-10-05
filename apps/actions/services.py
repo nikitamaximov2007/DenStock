@@ -401,7 +401,9 @@ def _perform_action_atomic(
     except Exception as exc:
         # Понятная ошибка вместо текстов внутренних сервисов, если гонка
         # съела доступность между расчётом порций и проведением.
-        if exc.__class__.__name__ in ("SaleError", "ReservationError", "RepairError"):
+        if exc.__class__.__name__ in (
+            "SaleError", "ReservationError", "RepairError", "InventoryError",
+        ):
             raise ActionError(str(exc)) from exc
         raise
 

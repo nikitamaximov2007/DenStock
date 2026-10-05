@@ -1,9 +1,11 @@
 from django.contrib import admin
 
+from apps.core.admin_mixins import ReadOnlyDocumentLinesMixin
+
 from .models import InventoryCountDocument, InventoryCountLine
 
 
-class InventoryCountLineInline(admin.TabularInline):
+class InventoryCountLineInline(ReadOnlyDocumentLinesMixin, admin.TabularInline):
     model = InventoryCountLine
     extra = 0
     autocomplete_fields = ["stock_lot", "part_type", "location"]

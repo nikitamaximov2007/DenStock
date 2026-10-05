@@ -24,8 +24,10 @@ from apps.customers.services import customer_snapshot
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
+    InventoryError,
     issue_part_item,
     issue_stock_lot,
+    legacy_fractional_lot_error,
     return_part_item,
     return_stock_lot_quantity,
 )
@@ -323,6 +325,8 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
             lot = StockLot.objects.select_for_update().get(pk=line.stock_lot_id)
             if lot.status != StockLot.Status.AVAILABLE:
                 raise RepairError(f"Лот #{lot.pk} недоступен.")
+            if error := legacy_fractional_lot_error(lot):
+                raise RepairError(f"Лот #{lot.pk}: {error}")
             reserved = active_reserved_for_lot(lot)
             if line.quantity > lot.quantity - reserved:
                 raise RepairError(
@@ -338,9 +342,13 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
                     "oil_customer_amount_rub_snapshot",
                 ]
             )
-            issue_stock_lot(
-                lot, line.quantity, by=by, document_id=order.pk, comment=f"Ремонт {order.number}"
-            )
+            try:
+                issue_stock_lot(
+                    lot, line.quantity, by=by, document_id=order.pk,
+                    comment=f"Ремонт {order.number}",
+                )
+            except InventoryError as exc:
+                raise RepairError(str(exc)) from exc
 
     order.cost_total = calculate_repair_costs(order)
     order.status = RepairOrder.Status.COMPLETED
@@ -427,12 +435,16 @@ def cancel_repair_order(order, *, by=None, reason="", author="") -> RepairOrder:
                     document_type="repair_order", document_id=order.pk, comment=comment,
                 )
             else:
-                return_stock_lot_quantity(
-                    line.batch_line, allocation.location, allocation.quantity,
-                    unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
-                    restock_status=StockLot.Status.AVAILABLE, by=by,
-                    document_type="repair_order", document_id=order.pk, comment=comment,
-                )
+                try:
+                    return_stock_lot_quantity(
+                        line.batch_line, allocation.location, allocation.quantity,
+                        unit_cost_rub=line.unit_cost_rub, stock_lot=line.stock_lot,
+                        restock_status=StockLot.Status.AVAILABLE, by=by,
+                        document_type="repair_order", document_id=order.pk, comment=comment,
+                        compensates=line,
+                    )
+                except InventoryError as exc:
+                    raise RepairError(str(exc)) from exc
     order.status = RepairOrder.Status.CANCELED
     order.canceled_at = timezone.now()
     order.canceled_by = by
