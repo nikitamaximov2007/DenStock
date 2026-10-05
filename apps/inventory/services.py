@@ -3,7 +3,6 @@
 Создаёт физические экземпляры из строки уже финансово закрытой партии. Без
 складских движений (`StockMovement`/`StockBalance` — Слой 10) и без сканера.
 """
-import re
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
@@ -285,69 +284,30 @@ def legacy_fractional_lot_error(lot) -> str | None:
     return None
 
 
-RECEIVE_LOT_TYPE = StockMovement.MovementType.RECEIVE_LOT
-RETURN_LOT_TYPE = StockMovement.MovementType.RETURN_LOT
-TRANSFER_LOT_NOTE = re.compile(r"^Перемещение #(\d+) из ")
-
-
-def _lot_intake(lot, own_movements, transfers) -> Decimal | None:
-    """What one lot took in from its batch line; None if history cannot prove it."""
-    if lot.status == StockLot.Status.RECEIVING:
-        # A pending receipt, still editable: it already holds its capacity.
-        return lot.quantity
-    received = [m for m in own_movements if m.movement_type == RECEIVE_LOT_TYPE]
-    if received:
-        return sum((m.quantity for m in received), Decimal("0"))
-    if lot.initial_quantity == 0:
-        return Decimal("0")  # opened at 0 by a recount or found stock, filled by ADJUST_IN
-    if own_movements and own_movements[0].movement_type == RETURN_LOT_TYPE:
-        return Decimal("0")  # opened by a return of stock already received
-    match = TRANSFER_LOT_NOTE.match(lot.note or "")
-    if match and int(match.group(1)) in transfers.get(lot.part_type_id, set()):
-        return Decimal("0")  # opened by a transfer of stock already received
-    return None
-
-
 def received_quantity(line: BatchLine, *, exclude_lot=None) -> tuple[Decimal, bool]:
     """Lifetime quantity received from a batch line, and whether history proves it.
 
     The receivable capacity of a line is its quantity minus everything ever
     received from it - never minus what is still on the shelf. Selling,
     issuing, writing off, moving, returning or adjusting stock leaves this
-    figure alone, so consumption can never reopen capacity (AUD-01). Per lot:
+    figure alone, so consumption can never reopen capacity (AUD-01).
 
-    * still on receiving: its current quantity (a pending receipt);
-    * received: its immutable RECEIVE_LOT movements;
-    * opened by a recount, found stock, return or transfer: nothing - that
-      stock was received through another lot already;
-    * anything else (a lot older than the movement ledger, never backfilled
-      by `backfill_opening_movements`): unknown, reported as not proven.
-
-    Receipts have no reversal and lots are never deleted, so the figure only
-    grows. Capacity checks hold the batch line row lock (`select_for_update`).
+    What each lot took in is decided from ledger evidence only
+    (`apps.inventory.lot_provenance`): a pending or received lot counts its
+    receipt; a lot a transfer, return or recount opened counts nothing; a lot
+    received before 108b5ad without a RECEIVE_LOT counts its initial quantity
+    only when the ledger rebuilds exactly that. Any other lot is UNKNOWN and
+    makes the line unprovable. Nothing is written. Receipts have no reversal,
+    so the figure only grows. Capacity checks hold the batch line row lock.
     """
-    lots = list(
-        StockLot.objects.filter(batch_line=line).exclude(pk=getattr(exclude_lot, "pk", None))
-    )
-    movements: dict[int, list] = {}
-    for movement in (
-        StockMovement.objects.filter(stock_lot__in=lots)
-        .only("stock_lot_id", "movement_type", "quantity", "created_at")
-        .order_by("created_at", "pk")
-    ):
-        movements.setdefault(movement.stock_lot_id, []).append(movement)
-    transfers: dict[int, set[int]] = {}
-    for transfer_id, part_type_id in StockTransfer.objects.filter(
-        part_type_id__in={lot.part_type_id for lot in lots}
-    ).values_list("pk", "part_type_id"):
-        transfers.setdefault(part_type_id, set()).add(transfer_id)
+    from .lot_provenance import line_provenance
+
     total, proven = Decimal("0"), True
-    for lot in lots:
-        intake = _lot_intake(lot, movements.get(lot.pk, []), transfers)
-        if intake is None:
+    for lot in line_provenance(line, exclude_lot=exclude_lot):
+        if lot.intake is None:
             proven = False
         else:
-            total += intake
+            total += lot.intake
     return total, proven
 
 
@@ -370,9 +330,10 @@ RECEIVE_CAP_REFUSED = (
     "освобождают место для повторной приёмки."
 )
 RECEIVE_HISTORY_UNPROVEN = (
-    "По строке партии есть лот без истории приёмки (старые данные): сколько уже "
-    "принято, доказать нельзя, поэтому новая приёмка по этой строке закрыта. "
-    "Выполните backfill_opening_movements и повторите."
+    "По строке партии есть лот, происхождение которого журнал не доказывает "
+    "(старые данные): сколько уже принято, неизвестно, поэтому новая приёмка по "
+    "этой строке закрыта. Отчёт: manage.py audit_lot_provenance; решение по "
+    "такому лоту принимает владелец. Не запускайте backfill_opening_movements."
 )
 
 
@@ -1955,10 +1916,18 @@ def check_stock_balance() -> list[str]:
 
 @transaction.atomic
 def backfill_opening_movements(*, by=None) -> int:
-    """Создать открывающее движение для первички без движений. Идемпотентна.
+    """Создать открывающее движение для экземпляров без движений. Идемпотентна.
 
     Не меняет статусы/количества — только пишет историю. Корректный баланс
     обеспечивает `rebuild_stock_balance`, эта команда необязательна.
+
+    Лоты НЕ обрабатываются: «у лота нет движений» не доказывает приёмку.
+    Без собственного движения живут лоты, открытые перемещением (MOVE_LOT
+    пишется на исходный лот), лоты на приёмке (им RECEIVE_LOT запишет
+    `receive_stock_lot`) и лоты, принятые до 108b5ad сменой статуса. Записать
+    им RECEIVE_LOT значило бы выдать перемещённый остаток за новую приёмку.
+    Происхождение лота доказывает `apps.inventory.lot_provenance` по журналу,
+    ничего не записывая (`manage.py audit_lot_provenance`).
     """
     created = 0
     items = PartItem.objects.filter(
@@ -1970,15 +1939,6 @@ def backfill_opening_movements(*, by=None) -> int:
         _record_movement(
             item, StockMovement.MovementType.RECEIVE_ITEM, Decimal("1"),
             to_location=item.current_location, by=by, comment="Открывающий остаток",
-        )
-        created += 1
-    lots = StockLot.objects.filter(
-        status__in=LOT_PHYSICAL_STATUSES, movements__isnull=True
-    ).select_related("part_type", "batch", "batch_line", "location")
-    for lot in lots:
-        _record_movement(
-            lot, StockMovement.MovementType.RECEIVE_LOT, lot.quantity,
-            to_location=lot.location, by=by, comment="Открывающий остаток",
         )
         created += 1
     return created

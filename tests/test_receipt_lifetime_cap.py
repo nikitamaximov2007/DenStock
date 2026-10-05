@@ -14,7 +14,6 @@ from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import (
     InventoryError,
     adjust_stock_lot_quantity,
-    backfill_opening_movements,
     change_stock_lot_status,
     create_stock_lot,
     get_or_create_section_recount_lot,
@@ -188,7 +187,10 @@ def test_no_consumption_or_correction_reopens_capacity(cap):
     recount_lot = get_or_create_section_recount_lot(
         line, cap["cells"][4], lot_status=StockLot.Status.AVAILABLE
     )
-    adjust_stock_lot_quantity(recount_lot, Decimal("3"), comment="Найдено при пересчёте")
+    adjust_stock_lot_quantity(  # as section recount apply writes it
+        recount_lot, Decimal("3"), comment="Найдено при пересчёте",
+        document_type="section_recount",
+    )
     assert remaining_qty(line) == 0
 
     before = _state(line)
@@ -209,21 +211,3 @@ def test_a_received_lot_cannot_return_to_receiving(cap):
     with pytest.raises(InventoryError):
         change_stock_lot_status(lot, StockLot.Status.RECEIVING)
     assert remaining_qty(line) == Decimal("4")
-
-
-def test_a_lot_without_receipt_history_closes_intake_until_backfilled(cap):
-    """A lot older than the movement ledger cannot prove what it took in: the
-    line refuses new intake instead of guessing, and the existing backfill
-    command makes the history explicit again."""
-    line = _finalized_line(cap, cap["part"], "10")
-    lot = _receive(line, cap["cells"][0], "6")
-    StockMovement.objects.filter(stock_lot=lot).delete()  # a lot older than the ledger
-    assert remaining_qty(line) == Decimal("0")
-    with pytest.raises(InventoryError, match="без истории приёмки"):
-        create_stock_lot(line, cap["cells"][1], Decimal("1"))
-
-    backfill_opening_movements()
-
-    assert remaining_qty(line) == Decimal("4")
-    create_stock_lot(line, cap["cells"][1], Decimal("4"))
-    assert remaining_qty(line) == Decimal("0")

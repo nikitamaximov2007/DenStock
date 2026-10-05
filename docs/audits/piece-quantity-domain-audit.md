@@ -260,15 +260,9 @@ legitimate. There is no receipt reversal: a posted receipt cannot be cancelled,
 a lot never returns to `receiving`, lots are never deleted. Serial items already
 used a lifetime count (`existing_count`) and were not affected.
 
-Invariant: `remaining = line.quantity - received_quantity(line)`, where received
-is, per lot of the line: a lot still on receiving counts its current quantity (a
-pending receipt holds its capacity, so two open ones cannot both exceed the line);
-a received lot counts its RECEIVE_LOT movements; a lot opened by a recount or
-found stock (at 0), a return (first own movement RETURN_LOT) or a transfer (its
-creation note names an existing StockTransfer) counts nothing. A lot that fits
-none of these (older than the movement ledger, never backfilled) makes the
-history unprovable: intake on that line is refused until
-`backfill_opening_movements` records it. No migration and no cached counter.
+Invariant: `remaining = line.quantity - received_quantity(line)`. What each lot
+took in is decided from ledger evidence only (`apps/inventory/lot_provenance.py`,
+section 9); nothing is inferred from a lot merely having no movement.
 
 Concurrency: every capacity check runs after `select_for_update` on the batch
 line row (create: line after the target cell check; edit: lot, cells, line, as
@@ -277,3 +271,34 @@ committed history. Forced PostgreSQL 16 races (contender seen blocked in
 `pg_stat_activity`): two +2 on 8 of 10, exactly one passes; a pending lot edited
 upward while another intake commits is refused; a sale committing while an
 intake waits does not reopen capacity (this one fails on `c5847f2`).
+
+## 9. Lot provenance: lots without RECEIVE_LOT
+
+Astra's read-only production audit (954 lots, 199 without RECEIVE_LOT, 5 active
+transfer lots without any movement) showed that "no movement" does not mean
+"unrecorded receipt". The code history explains every case:
+
+| Origin | Since | Own movements | Evidence used |
+|---|---|---|---|
+| Transfer target | 627a84b (2026-07-15) | none; its MOVE_LOT is recorded on the SOURCE lot | a `stock_transfer` MOVE_LOT of another lot of the same line, into this lot's original cell, for exactly `initial_quantity`, written in the same transaction (the note and `StockTransfer` row corroborate) |
+| Return into a new cell | layer 18 | RETURN_LOT first | first own movement RETURN_LOT for exactly `initial_quantity`, same transaction |
+| Section recount | 7bdcdd5 | ADJUST_IN `section_recount` first, opened at 0 | that first movement |
+| Found stock (scanner group) | 877fd0b | ADJUST_IN `found_addition` first, opened at 0 | that first movement; it IS the intake of its own synthetic batch line |
+| Pending receipt | always | none yet | status `receiving` |
+| Received by status flip | before 108b5ad (2026-09-29) | no RECEIVE_LOT; later sales etc. are recorded | the ledger rebuilds the lot's starting quantity (own in/out, transfer portions out, transfer merges in) and it equals `initial_quantity` |
+| Anything else (for example quantity edited without a movement before 108b5ad / 2c64484) | | | none: UNKNOWN, intake unproven, the line stays closed |
+
+`backfill_opening_movements` used to write RECEIVE_LOT for every physical lot
+without movements: transfer targets (recording moved stock as a new receipt),
+pending lots (a second RECEIVE_LOT when they are received) and status-flipped
+lots (a receipt dated today). It no longer touches lots at all. Lot provenance is
+read from the ledger by `received_quantity` and reported by the read-only
+`python manage.py audit_lot_provenance` (class totals, active and movement-less
+counts, closed lines, lines with more proven intake than their quantity, and per
+lot evidence; no customer data). Do not run the old backfill on production: the
+deployed code still has the old behavior.
+
+Defects of 0ba1416 found by this review (proven by tests run against it): a
+found-stock batch line left its whole quantity receivable again (duplicate
+intake); a status-flipped legacy lot closed its line; the backfill wrote three
+false receipts.

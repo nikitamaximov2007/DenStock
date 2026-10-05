@@ -335,8 +335,10 @@ def test_backfill_opening_movements_idempotent(refs, admin):
     item = create_part_items(serial_line, 1, current_location=refs["loc1"])[0]
 
     created = backfill_opening_movements()
-    assert created == 2
-    assert StockMovement.objects.filter(stock_lot=lot).count() == 1
+    assert created == 1
+    # A lot is never given a receipt just for having no movement: this one is
+    # still on receiving, and receive_stock_lot will write its RECEIVE_LOT.
+    assert StockMovement.objects.filter(stock_lot=lot).count() == 0
     assert StockMovement.objects.filter(part_item=item).count() == 1
     # Повторный прогон ничего не дублирует.
     assert backfill_opening_movements() == 0
