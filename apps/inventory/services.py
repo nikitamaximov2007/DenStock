@@ -300,10 +300,11 @@ def received_quantity(line: BatchLine, *, exclude_lot=None) -> tuple[Decimal, bo
     makes the line unprovable. Nothing is written. Receipts have no reversal,
     so the figure only grows. Capacity checks hold the batch line row lock.
     """
-    from .lot_provenance import line_provenance
+    from .lot_provenance import line_provenance_detail
 
-    total, proven = Decimal("0"), True
-    for lot in line_provenance(line, exclude_lot=exclude_lot):
+    detail = line_provenance_detail(line, exclude_lot=exclude_lot)
+    total, proven = detail.receipts_elsewhere, True
+    for lot in detail.lots:
         if lot.intake is None:
             proven = False
         else:
@@ -387,7 +388,11 @@ def create_stock_lot(
 
     # Блокируем строку, чтобы лимит соблюдался при параллельных запросах:
     # второй запрос ждёт здесь и считает принятое уже с учётом первого.
-    line = BatchLine.objects.select_for_update().get(pk=line.pk)
+    # NO KEY UPDATE: приёмки по строке идут строго по одной, но проверка внешних
+    # ключей (FOR KEY SHARE) у продаж, перемещений и корректировок этой строки
+    # не ждёт приёмку. Иначе перемещение, держащее карточку детали, и приёмка,
+    # держащая строку, ждали бы друг друга (взаимная блокировка в PostgreSQL).
+    line = BatchLine.objects.select_for_update(no_key=True).get(pk=line.pk)
     _ensure_receivable(line, quantity)
     if StockLot.objects.filter(batch_line=line, location=location).exists():
         raise InventoryError("Лот для этой строки в данной ячейке уже существует.")
@@ -459,7 +464,7 @@ def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> St
         raise InventoryError(LOT_EDIT_REFUSED)
     ensure_location_operation_allowed(lot.location)
     ensure_location_operation_allowed(location)
-    line = BatchLine.objects.select_for_update().get(pk=lot.batch_line_id)
+    line = BatchLine.objects.select_for_update(no_key=True).get(pk=lot.batch_line_id)
     _ensure_receivable(line, quantity, exclude_lot=lot)
     if (
         StockLot.objects.filter(batch_line=line, location=location)
@@ -970,8 +975,11 @@ def _perform_stock_transfer(
 
     if stock_state not in (StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE):
         raise InventoryError("Недопустимое состояние остатка для перемещения.")
+    # Lock the lots only: a bare FOR UPDATE over this join would also lock the
+    # Batch row and then wait for the BatchLine a receipt holds, while that
+    # receipt's commit waits for the Batch row (deadlock).
     lots = list(
-        StockLot.objects.select_for_update()
+        StockLot.objects.select_for_update(of=("self",))
         .filter(
             part_type=part,
             location=source,

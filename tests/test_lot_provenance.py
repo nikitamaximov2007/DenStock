@@ -226,4 +226,10 @@ def test_the_audit_reports_classes_and_closed_lines_without_writing(env):
     assert "primary_receipt: 3 / 3 / 0" in text  # this line's source and the fixture's two
     assert "unknown: 1 / 1 / 1" in text
     assert f"закрыто для приёмки (есть unknown): 1\n  {closed.pk}" in text
+    # The old rule (line minus shelf) left 1 open on the unknown line; now 0.
+    assert (
+        "от прежнего правила (количество минус текущий остаток лотов): 1\n"
+        f"  строка {closed.pk}: было 1, теперь 0"
+    ) in text
+    assert "RECEIVE_LOT старого backfill (не считаются приёмкой): 0" in text
     assert (StockMovement.objects.count(), BatchLine.objects.count()) == before

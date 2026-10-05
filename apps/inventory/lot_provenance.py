@@ -14,12 +14,18 @@ production also holds lots without one, for reasons the code history explains:
 
 Each lot is classified only from evidence; nothing is inferred from a lot
 merely having no movement, and nothing is written. UNKNOWN stays unknown.
+
+Two kinds of history are never taken as evidence: a RECEIVE_LOT written by
+the old `backfill_opening_movements` (comment "Открывающий остаток"; it gave
+transfer targets and pending lots false receipts), and a lot's current batch
+line when a receipt says otherwise (before 2c64484 admin could reassign a
+lot to another line). A receipt belongs to the line its movement names.
 """
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 
-from .models import StockLot, StockMovement
+from .models import StockLot, StockMovement, StockTransfer
 
 PENDING_RECEIPT = "pending_receipt"
 PRIMARY_RECEIPT = "primary_receipt"
@@ -28,15 +34,18 @@ TRANSFER_DERIVED = "transfer_derived"
 RETURN_DERIVED = "return_derived"
 RECOUNT_DERIVED = "recount_derived"
 FOUND_STOCK = "found_stock"
+REASSIGNED = "received_on_another_line"
 UNKNOWN = "unknown"
 
 CLASSES = (
     PENDING_RECEIPT, PRIMARY_RECEIPT, LEGACY_PRIMARY, TRANSFER_DERIVED,
-    RETURN_DERIVED, RECOUNT_DERIVED, FOUND_STOCK, UNKNOWN,
+    RETURN_DERIVED, RECOUNT_DERIVED, FOUND_STOCK, REASSIGNED, UNKNOWN,
 )
 
-# A lot and the movement that opened it are written in one transaction.
-SAME_TRANSACTION = timedelta(seconds=5)
+# A lot and the movement that opened it are written in one transaction
+# (milliseconds); a person cannot create, receive and merge into a lot that fast.
+SAME_TRANSACTION = timedelta(seconds=1)
+OLD_BACKFILL_COMMENT = "Открывающий остаток"
 
 M = StockMovement.MovementType
 INFLOW = {M.ADJUST_IN, M.RETURN_LOT, M.WRITE_OFF_CANCEL_LOT}
@@ -102,32 +111,54 @@ def _reconstructed_start(lot, own, line_movements, timeline) -> Decimal:
     return lot.quantity - net
 
 
-def classify_lot(lot, own, line_movements) -> LotProvenance:
-    """Classify one lot; `own` and `line_movements` are ordered by time."""
+def is_receipt_evidence(movement) -> bool:
+    return movement.movement_type == M.RECEIVE_LOT and not (
+        movement.comment == OLD_BACKFILL_COMMENT and not movement.document_type
+    )
+
+
+def classify_lot(lot, own, line_movements, transfers) -> LotProvenance:
+    """Classify one lot on its current line.
+
+    `own`: every movement of the lot, whatever line it names, by time.
+    `line_movements`: every movement naming the lot's line, by time.
+    `transfers`: StockTransfer rows by id.
+    """
     def result(provenance, intake, evidence):
         return LotProvenance(lot.pk, lot.batch_line_id, lot.status, provenance, intake, evidence)
 
     if lot.status == StockLot.Status.RECEIVING:
         return result(PENDING_RECEIPT, lot.quantity, "лот на приёмке")
-    receipts = [m for m in own if m.movement_type == M.RECEIVE_LOT]
+    receipts = [m for m in own if is_receipt_evidence(m)]
     if receipts:
+        here = [m for m in receipts if m.batch_line_id == lot.batch_line_id]
+        if not here:
+            lines = sorted({m.batch_line_id for m in receipts})
+            return result(REASSIGNED, Decimal("0"), f"принят по строке {lines}")
         return result(
-            PRIMARY_RECEIPT, sum((m.quantity for m in receipts), Decimal("0")),
-            f"RECEIVE_LOT x{len(receipts)}",
+            PRIMARY_RECEIPT, sum((m.quantity for m in here), Decimal("0")),
+            f"RECEIVE_LOT x{len(here)}",
         )
     timeline = _location_timeline(lot, own)
     for m in line_movements:
+        transfer = transfers.get(m.document_id)
         if (
             m.stock_lot_id != lot.pk
             and m.movement_type == M.MOVE_LOT
             and m.document_type == TRANSFER_DOC
+            and transfer is not None
+            and transfer.part_type_id == lot.part_type_id
+            and transfer.to_location_id == timeline[0][1]
             and m.to_location_id == timeline[0][1]
             and m.quantity == lot.initial_quantity
+            # Created inside the transfer: after its StockTransfer row, before
+            # the movement. A lot that existed before the transfer was merged into.
+            and transfer.created_at <= lot.created_at <= m.created_at
             and _same_transaction(m.created_at, lot.created_at)
         ):
             return result(
                 TRANSFER_DERIVED, Decimal("0"),
-                f"перемещение #{m.document_id}: движение #{m.pk} исходного лота #{m.stock_lot_id}",
+                f"перемещение #{transfer.pk}: движение #{m.pk} исходного лота #{m.stock_lot_id}",
             )
     first = own[0] if own else None
     if (
@@ -141,13 +172,11 @@ def classify_lot(lot, own, line_movements) -> LotProvenance:
         if first.document_type == "section_recount":
             return result(RECOUNT_DERIVED, Decimal("0"), f"пересчёт #{first.document_id}")
         if first.document_type == "found_addition":
-            found = [
-                m for m in own
-                if m.movement_type == M.ADJUST_IN and m.document_type == "found_addition"
-            ]
+            # Opened by a found-stock posting on the synthetic batch line made
+            # for it: that posting is the whole intake of its own line.
             return result(
-                FOUND_STOCK, sum((m.quantity for m in found), Decimal("0")),
-                f"найденные детали x{len(found)}",
+                FOUND_STOCK, lot.batch_line.quantity,
+                f"найденные детали: строка {lot.batch_line_id}",
             )
     if lot.initial_quantity > 0:
         start = _reconstructed_start(lot, own, line_movements, timeline)
@@ -163,15 +192,63 @@ def classify_lot(lot, own, line_movements) -> LotProvenance:
     return result(UNKNOWN, None, "нет доказательства происхождения")
 
 
-def line_provenance(line, *, exclude_lot=None) -> list[LotProvenance]:
+@dataclass(frozen=True)
+class LineProvenance:
+    lots: list
+    # Receipts naming this line whose lot now belongs to another line.
+    receipts_elsewhere: Decimal
+
+
+def _read_line(line, exclude_lot):
     lots = list(
-        StockLot.objects.filter(batch_line=line).exclude(pk=getattr(exclude_lot, "pk", None))
+        StockLot.objects.filter(batch_line=line)
+        .exclude(pk=getattr(exclude_lot, "pk", None))
+        .select_related("batch_line")
     )
+    lot_ids = [lot.pk for lot in lots]
     movements = list(
         StockMovement.objects.filter(batch_line=line).order_by("created_at", "pk")
     )
+    foreign = list(
+        StockMovement.objects.filter(stock_lot_id__in=lot_ids)
+        .exclude(batch_line=line)
+        .order_by("created_at", "pk")
+    )
+    return lots, movements, foreign
+
+
+def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvenance:
+    """Classify every lot of a line from one consistent picture of the ledger.
+
+    Lots and movements are separate reads. Every quantity change of a lot
+    writes a movement in the same transaction, so if the set of the line's
+    movements is the same before and after the lots are read, no change
+    committed in between; otherwise the reads are repeated.
+    """
+    for _attempt in range(attempts):
+        before = set(StockMovement.objects.filter(batch_line=line).values_list("pk", flat=True))
+        lots, movements, foreign = _read_line(line, exclude_lot)
+        if {m.pk for m in movements} == before:
+            break
     own: dict[int, list] = {}
-    for m in movements:
+    for m in sorted([*movements, *foreign], key=lambda m: (m.created_at, m.pk)):
         if m.stock_lot_id:
             own.setdefault(m.stock_lot_id, []).append(m)
-    return [classify_lot(lot, own.get(lot.pk, []), movements) for lot in lots]
+    transfers = StockTransfer.objects.in_bulk(
+        {m.document_id for m in movements if m.document_type == TRANSFER_DOC and m.document_id}
+    )
+    lot_ids = {lot.pk for lot in lots}
+    elsewhere = sum(
+        (
+            m.quantity for m in movements
+            if is_receipt_evidence(m) and m.stock_lot_id not in lot_ids
+            and (exclude_lot is None or m.stock_lot_id != exclude_lot.pk)
+        ),
+        Decimal("0"),
+    )
+    rows = [classify_lot(lot, own.get(lot.pk, []), movements, transfers) for lot in lots]
+    return LineProvenance(rows, elsewhere)
+
+
+def line_provenance(line, *, exclude_lot=None) -> list[LotProvenance]:
+    return line_provenance_detail(line, exclude_lot=exclude_lot).lots

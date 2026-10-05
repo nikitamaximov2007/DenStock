@@ -264,13 +264,28 @@ Invariant: `remaining = line.quantity - received_quantity(line)`. What each lot
 took in is decided from ledger evidence only (`apps/inventory/lot_provenance.py`,
 section 9); nothing is inferred from a lot merely having no movement.
 
-Concurrency: every capacity check runs after `select_for_update` on the batch
-line row (create: line after the target cell check; edit: lot, cells, line, as
+Concurrency: every capacity check runs after locking the batch line row FOR NO
+KEY UPDATE (create: line after the target cell check; edit: lot, cells, line, as
 documented in `update_stock_lot`), so a second intake waits and re-reads the
 committed history. Forced PostgreSQL 16 races (contender seen blocked in
 `pg_stat_activity`): two +2 on 8 of 10, exactly one passes; a pending lot edited
 upward while another intake commits is refused; a sale committing while an
 intake waits does not reopen capacity (this one fails on `c5847f2`).
+
+Why NO KEY UPDATE and not FOR UPDATE: sales, adjustments and transfers never lock
+the batch line, but every lot and movement row they write references it, and
+PostgreSQL checks that reference at COMMIT with FOR KEY SHARE. Under FOR UPDATE
+those commits waited for the receipt, and a transfer deadlocked with it: the
+transfer held the part card (`set_preferred_part_location`) and waited for the
+line at COMMIT while the receipt held the line and needed the part card. The
+transfer's source lot lock also locked Batch and BatchLine through its join; it
+now locks the lots only (`of=("self",)`). Both are reproduced against the old
+locks in `tests/test_receipt_lifetime_cap_postgresql.py`. These writers now commit
+while a receipt is reading; the receipt stays consistent because
+`line_provenance_detail` repeats its reads when the line's movement set changed in
+between (every quantity change writes a movement in the same transaction). With
+that bracket disabled the sale and reconciliation races fail with a false
+"unproven history" refusal.
 
 ## 9. Lot provenance: lots without RECEIVE_LOT
 
@@ -280,13 +295,17 @@ transfer lots without any movement) showed that "no movement" does not mean
 
 | Origin | Since | Own movements | Evidence used |
 |---|---|---|---|
-| Transfer target | 627a84b (2026-07-15) | none; its MOVE_LOT is recorded on the SOURCE lot | a `stock_transfer` MOVE_LOT of another lot of the same line, into this lot's original cell, for exactly `initial_quantity`, written in the same transaction (the note and `StockTransfer` row corroborate) |
+| Transfer target | 627a84b (2026-07-15) | none; its MOVE_LOT is recorded on the SOURCE lot | a `stock_transfer` MOVE_LOT of another lot of the same line, into this lot's original cell, for exactly `initial_quantity`, written at most 1 s after the lot; its `StockTransfer` row exists, names the same part and target cell and was created before the lot (a lot older than its transfer was merged into, not opened by it). The note is not evidence |
 | Return into a new cell | layer 18 | RETURN_LOT first | first own movement RETURN_LOT for exactly `initial_quantity`, same transaction |
 | Section recount | 7bdcdd5 | ADJUST_IN `section_recount` first, opened at 0 | that first movement |
-| Found stock (scanner group) | 877fd0b | ADJUST_IN `found_addition` first, opened at 0 | that first movement; it IS the intake of its own synthetic batch line |
+| Found stock (scanner group) | 877fd0b | ADJUST_IN `found_addition` first, opened at 0 | that first movement; the posting IS the intake of its own synthetic batch line, so the whole line quantity counts (later additions into the same lot are not new intake) |
 | Pending receipt | always | none yet | status `receiving` |
 | Received by status flip | before 108b5ad (2026-09-29) | no RECEIVE_LOT; later sales etc. are recorded | the ledger rebuilds the lot's starting quantity (own in/out, transfer portions out, transfer merges in) and it equals `initial_quantity` |
+| Lot re-assigned to another line (admin, before 2c64484) | | its RECEIVE_LOT names the original line | the receipt counts for the line the movement names (`received_on_another_line`, intake 0 on the current line) |
 | Anything else (for example quantity edited without a movement before 108b5ad / 2c64484) | | | none: UNKNOWN, intake unproven, the line stays closed |
+
+A RECEIVE_LOT with comment "Открывающий остаток" and no document was written by
+the old backfill, never by a receipt, and is not taken as receipt evidence.
 
 `backfill_opening_movements` used to write RECEIVE_LOT for every physical lot
 without movements: transfer targets (recording moved stock as a new receipt),
@@ -302,3 +321,52 @@ Defects of 0ba1416 found by this review (proven by tests run against it): a
 found-stock batch line left its whole quantity receivable again (duplicate
 intake); a status-flipped legacy lot closed its line; the backfill wrote three
 false receipts.
+
+## 10. Adversarial self-review of eade473
+
+Astra was unavailable; eade473 was attacked by its author with
+`tests/test_lot_provenance_adversarial.py` (fixed scenarios plus a seeded
+property test of random receive, flip, sell, transfer, adjust, write-off,
+cancellation and move histories against an oracle of what was really
+received). Blockers reproduced on eade473 and fixed after it:
+
+1. A transfer merging into a young legacy lot made that lot TRANSFER_DERIVED:
+   its real intake was lost and the line reopened (undercount, AUD-01 breach).
+   Fixed by requiring the StockTransfer row to predate the lot.
+2. The StockTransfer row was not checked (part, target cell).
+3. A found-stock lot counted every found addition into it as intake of its
+   line, so a later found addition into the same lot was counted again
+   (overcount). Intake is now the line quantity the posting created.
+4. An old-backfill RECEIVE_LOT on a transfer target counted as a receipt
+   (overcount, line closed for no reason).
+5. A pending lot that got an old-backfill RECEIVE_LOT and was then received
+   counted twice.
+6. A lot re-assigned by admin to another line took its receipt with it: the
+   original line reopened (AUD-01 breach).
+7. Found by forced PostgreSQL races, pre-existing on main: transfer vs receipt
+   deadlock (section 8).
+
+Recovery for UNKNOWN: the line stays closed and the operator sees a business
+error pointing to `audit_lot_provenance` and an owner decision; nothing is
+inferred and nothing is written. New goods are received through a new receipt,
+which creates its own batch line, so a closed old line does not block intake.
+An in-app owner classification would need a new table (a migration) and is not
+part of this change.
+
+### Read-only production package
+
+Not verified on production from this review: there was no production access.
+
+* `docs/audits/lot-provenance-readonly.sql`: SELECT-only queries for the
+  deployed schema (run in `BEGIN TRANSACTION READ ONLY`): lot inventory by
+  status and evidence, transfer evidence for lots without receipts, receipts on
+  re-assigned lots, old-backfill receipts, lines whose receipts alone exceed the
+  line. `tests/test_lot_provenance_sql_postgresql.py` keeps them equal to the
+  classifier.
+* `python manage.py audit_lot_provenance --show 500` from the candidate code,
+  pointed at the production database, writes nothing. It prints: lots per class
+  (total / active / without any movement), UNKNOWN among them, lines closed by
+  UNKNOWN, lines whose proven intake exceeds their quantity, lines whose
+  receivable remainder differs from the old rule (with both values), the count of
+  old-backfill receipts, and per lot evidence for every lot that is not a plain
+  receipt. Only ids, statuses, quantities and times; no customer data.

@@ -161,3 +161,149 @@ def test_a_sale_committing_while_a_receipt_waits_does_not_reopen_capacity(
     assert outcome["contender"][0] == "error"
     assert not StockLot.objects.filter(batch_line=line, location=cells[2]).exists()
     assert remaining_qty(line) == Decimal("0")
+
+
+
+# --- A receipt reading the line vs. ledger writers on the same line ---------------------
+#
+# A sale, adjustment or transfer never takes the batch line lock. The receipt
+# holds the line FOR NO KEY UPDATE, so their commit-time foreign key checks
+# (FOR KEY SHARE) do not wait for it: they commit while the receipt is between
+# its reads of the line's lots and movements, and the receipt must still decide
+# on one consistent picture (the movement-set bracket in line_provenance_detail).
+# With a FOR UPDATE line lock a transfer deadlocked with the receipt instead:
+# the transfer held the part card (preferred cell) and waited for the line at
+# COMMIT, while the receipt held the line and waited for the part card.
+
+
+def _receipt_paused_between_reads(receipt, writer):
+    """Run `receipt` in its own transaction, paused right after it read the
+    line's lots; meanwhile `writer` runs and must commit without waiting."""
+    paused, resume = Event(), Event()
+    outcome = {"receipt": None, "writer": None}
+
+    def pause_after_lots_read(execute, sql, params, many, context):
+        result = execute(sql, params, many, context)
+        if (
+            not paused.is_set()
+            and sql.startswith("SELECT")
+            and 'FROM "inventory_stocklot"' in sql
+            and '"inventory_stocklot"."batch_line_id" =' in sql
+        ):
+            paused.set()
+            resume.wait(20)
+        return result
+
+    def run(fn, key, wrapper=None):
+        close_old_connections()
+        try:
+            if wrapper is None:
+                outcome[key] = ("ok", fn())
+            else:
+                with connection.execute_wrapper(wrapper), transaction.atomic():
+                    outcome[key] = ("ok", fn())
+        except Exception as exc:  # each side's outcome is asserted by the test
+            outcome[key] = ("error", exc)
+        finally:
+            close_old_connections()
+
+    receipt_thread = Thread(target=run, args=(receipt, "receipt", pause_after_lots_read))
+    receipt_thread.start()
+    assert paused.wait(20), "the receipt never reached its read of the line's lots"
+    writer_thread = Thread(target=run, args=(writer, "writer"))
+    writer_thread.start()
+    writer_thread.join(10)
+    writer_waited = writer_thread.is_alive()
+    resume.set()
+    for thread in (writer_thread, receipt_thread):
+        thread.join(60)
+    assert not writer_waited, f"the writer waited for the receipt: {outcome}"
+    return outcome
+
+
+def _legacy_line(line_8_of_10, public_catalog):
+    """A second line whose only lot was received by the pre-108b5ad status flip:
+    its intake is rebuilt from the ledger, so a half-seen sale would matter."""
+    part = line_8_of_10["line"].part_type
+    batch = Batch.objects.create(supplier=public_catalog.supplier)
+    line = BatchLine.objects.create(
+        batch=batch, part_type=part, quantity=Decimal("10"), unit_cost_currency=Decimal("1")
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, public_catalog.user)
+    line = BatchLine.objects.select_related("batch", "part_type").get(pk=line.pk)
+    cell = StorageLocation.objects.create(
+        name="Cap 7", code="S09-D03-C07", storage_allowed=True, is_active=True
+    )
+    lot = create_stock_lot(line, cell, Decimal("6"))
+    StockLot.objects.filter(pk=lot.pk).update(status=StockLot.Status.AVAILABLE)
+    lot.refresh_from_db()
+    return line, lot
+
+
+def test_a_sale_committed_between_the_receipt_reads_is_not_misread(
+    line_8_of_10, public_catalog
+):
+    from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
+    from tests.customs_support import remember_customs
+
+    remember_customs(line_8_of_10["line"].part_type)
+    line, lot = _legacy_line(line_8_of_10, public_catalog)
+    sale = create_sale(customer_name="Клиент", by=public_catalog.user)
+    add_stock_lot_to_sale(sale, lot, Decimal("2"), unit_price=Decimal("100"))
+    cell = line_8_of_10["cells"][2]
+
+    outcome = _receipt_paused_between_reads(
+        lambda: receive_stock_lot(create_stock_lot(line, cell, Decimal("4"))),  # 6 + 4
+        lambda: complete_sale(sale, by=public_catalog.user),
+    )
+
+    assert outcome["writer"][0] == "ok", outcome
+    assert outcome["receipt"][0] == "ok", outcome  # the half-seen sale did not block it
+    assert StockLot.objects.get(pk=lot.pk).quantity == Decimal("4")
+    assert remaining_qty(line) == Decimal("0")  # and did not reopen anything
+
+
+def test_a_reconciliation_committed_between_the_receipt_reads_is_not_misread(
+    line_8_of_10, public_catalog
+):
+    from apps.inventory.services import adjust_stock_lot_quantity
+
+    line, lot = _legacy_line(line_8_of_10, public_catalog)
+    cell = line_8_of_10["cells"][2]
+
+    outcome = _receipt_paused_between_reads(
+        lambda: receive_stock_lot(create_stock_lot(line, cell, Decimal("5"))),  # 6 + 5 > 10
+        lambda: adjust_stock_lot_quantity(lot, Decimal("-1"), comment="Пересчёт"),
+    )
+
+    assert outcome["writer"][0] == "ok", outcome
+    assert outcome["receipt"][0] == "error", outcome
+    assert "можно принять ещё 4" in str(outcome["receipt"][1]), outcome  # not "unproven"
+    assert StockLot.objects.get(pk=lot.pk).quantity == Decimal("5")
+    assert remaining_qty(line) == Decimal("4")
+
+
+def test_a_transfer_during_a_receipt_neither_deadlocks_nor_takes_capacity(line_8_of_10):
+    from apps.inventory.lot_provenance import TRANSFER_DERIVED, line_provenance
+    from apps.inventory.services import perform_stock_transfer
+
+    line, cells = line_8_of_10["line"], line_8_of_10["cells"]
+
+    outcome = _receipt_paused_between_reads(
+        lambda: receive_stock_lot(create_stock_lot(line, cells[2], Decimal("2"))),  # 8 + 2
+        lambda: perform_stock_transfer(
+            part=line.part_type, from_location=cells[0], to_location=cells[1],
+            quantity="3", stock_state=StockLot.Status.AVAILABLE, token="pg-cap-transfer",
+        ),
+    )
+
+    assert outcome["writer"][0] == "ok", outcome
+    assert outcome["receipt"][0] == "ok", outcome
+    target = StockLot.objects.get(batch_line=line, location=cells[1])
+    classes = {row.lot_id: row.provenance for row in line_provenance(line)}
+    assert classes[target.pk] == TRANSFER_DERIVED
+    assert remaining_qty(line) == Decimal("0")
+    with pytest.raises(InventoryError, match="можно принять ещё 0"):
+        create_stock_lot(line, cells[1], Decimal("1"))

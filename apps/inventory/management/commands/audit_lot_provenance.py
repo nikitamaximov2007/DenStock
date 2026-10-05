@@ -3,10 +3,15 @@ from collections import Counter
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
-from django.db.models import Count
+from django.db.models import Count, Sum
 
-from apps.inventory.lot_provenance import CLASSES, UNKNOWN, line_provenance
-from apps.inventory.models import StockLot
+from apps.inventory.lot_provenance import (
+    CLASSES,
+    OLD_BACKFILL_COMMENT,
+    UNKNOWN,
+    line_provenance_detail,
+)
+from apps.inventory.models import StockLot, StockMovement
 from apps.procurement.models import BatchLine
 
 ACTIVE = {StockLot.Status.RECEIVING, StockLot.Status.AVAILABLE, StockLot.Status.QUARANTINE}
@@ -31,11 +36,17 @@ class Command(BaseCommand):
             StockLot.objects.annotate(n=Count("movements")).values_list("pk", "n")
         )
         by_class, active_by_class, no_movement_by_class = Counter(), Counter(), Counter()
-        unknown_lines, over_received, rows = set(), [], []
+        unknown_lines, over_received, rows, changed = set(), [], [], []
+        on_shelf = dict(
+            StockLot.objects.values("batch_line_id")
+            .annotate(s=Sum("quantity"))
+            .values_list("batch_line_id", "s")
+        )
         line_ids = StockLot.objects.values_list("batch_line_id", flat=True).distinct()
         for line in BatchLine.objects.filter(pk__in=line_ids).order_by("pk"):
-            received, proven = Decimal("0"), True
-            for lot in line_provenance(line):
+            detail = line_provenance_detail(line)
+            received, proven = detail.receipts_elsewhere, True
+            for lot in detail.lots:
                 by_class[lot.provenance] += 1
                 if lot.status in ACTIVE:
                     active_by_class[lot.provenance] += 1
@@ -51,6 +62,11 @@ class Command(BaseCommand):
                 unknown_lines.add(line.pk)
             elif received > line.quantity:
                 over_received.append((line.pk, line.quantity, received))
+            # Before AUD-01 the cap was the line minus what is on the shelf now.
+            before = max(line.quantity - (on_shelf.get(line.pk) or Decimal("0")), Decimal("0"))
+            now = max(line.quantity - received, Decimal("0")) if proven else Decimal("0")
+            if before != now:
+                changed.append((line.pk, before, now))
 
         write("Происхождение лотов: только чтение, ничего не записано")
         write(f"Лотов всего: {sum(by_class.values())}")
@@ -66,7 +82,20 @@ class Command(BaseCommand):
         write(f"Строк, где доказанная приёмка больше количества строки: {len(over_received)}")
         for pk, expected, received in over_received:
             write(f"  строка {pk}: количество {expected}, принято {received}")
+        write(
+            "Строк, где остаток к приёмке отличается от прежнего правила "
+            f"(количество минус текущий остаток лотов): {len(changed)}"
+        )
         show = max(options["show"], 0)
+        for pk, before, now in changed[:show]:
+            write(f"  строка {pk}: было {before.normalize():f}, теперь {now.normalize():f}")
+        if len(changed) > show:
+            write(f"  ... и ещё {len(changed) - show}")
+        old_backfill = StockMovement.objects.filter(
+            movement_type=StockMovement.MovementType.RECEIVE_LOT,
+            stock_lot__isnull=False, comment=OLD_BACKFILL_COMMENT, document_type="",
+        ).count()
+        write(f"RECEIVE_LOT старого backfill (не считаются приёмкой): {old_backfill}")
         if show and rows:
             write("")
             write("Лоты без RECEIVE_LOT (лот; строка; статус; класс; учтено; доказательство):")
