@@ -3,6 +3,7 @@
 Создаёт физические экземпляры из строки уже финансово закрытой партии. Без
 складских движений (`StockMovement`/`StockBalance` — Слой 10) и без сканера.
 """
+import re
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
@@ -13,6 +14,7 @@ from apps.catalog.models import PartType
 from apps.catalog.quantity_units import (
     PIECE_QUANTITY_ERROR,
     QuantityDomain,
+    format_quantity,
     is_whole_quantity,
     quantity_domain,
     validate_part_quantity,
@@ -283,15 +285,114 @@ def legacy_fractional_lot_error(lot) -> str | None:
     return None
 
 
+RECEIVE_LOT_TYPE = StockMovement.MovementType.RECEIVE_LOT
+RETURN_LOT_TYPE = StockMovement.MovementType.RETURN_LOT
+TRANSFER_LOT_NOTE = re.compile(r"^Перемещение #(\d+) из ")
+
+
+def _lot_intake(lot, own_movements, transfers) -> Decimal | None:
+    """What one lot took in from its batch line; None if history cannot prove it."""
+    if lot.status == StockLot.Status.RECEIVING:
+        # A pending receipt, still editable: it already holds its capacity.
+        return lot.quantity
+    received = [m for m in own_movements if m.movement_type == RECEIVE_LOT_TYPE]
+    if received:
+        return sum((m.quantity for m in received), Decimal("0"))
+    if lot.initial_quantity == 0:
+        return Decimal("0")  # opened at 0 by a recount or found stock, filled by ADJUST_IN
+    if own_movements and own_movements[0].movement_type == RETURN_LOT_TYPE:
+        return Decimal("0")  # opened by a return of stock already received
+    match = TRANSFER_LOT_NOTE.match(lot.note or "")
+    if match and int(match.group(1)) in transfers.get(lot.part_type_id, set()):
+        return Decimal("0")  # opened by a transfer of stock already received
+    return None
+
+
+def received_quantity(line: BatchLine, *, exclude_lot=None) -> tuple[Decimal, bool]:
+    """Lifetime quantity received from a batch line, and whether history proves it.
+
+    The receivable capacity of a line is its quantity minus everything ever
+    received from it - never minus what is still on the shelf. Selling,
+    issuing, writing off, moving, returning or adjusting stock leaves this
+    figure alone, so consumption can never reopen capacity (AUD-01). Per lot:
+
+    * still on receiving: its current quantity (a pending receipt);
+    * received: its immutable RECEIVE_LOT movements;
+    * opened by a recount, found stock, return or transfer: nothing - that
+      stock was received through another lot already;
+    * anything else (a lot older than the movement ledger, never backfilled
+      by `backfill_opening_movements`): unknown, reported as not proven.
+
+    Receipts have no reversal and lots are never deleted, so the figure only
+    grows. Capacity checks hold the batch line row lock (`select_for_update`).
+    """
+    lots = list(
+        StockLot.objects.filter(batch_line=line).exclude(pk=getattr(exclude_lot, "pk", None))
+    )
+    movements: dict[int, list] = {}
+    for movement in (
+        StockMovement.objects.filter(stock_lot__in=lots)
+        .only("stock_lot_id", "movement_type", "quantity", "created_at")
+        .order_by("created_at", "pk")
+    ):
+        movements.setdefault(movement.stock_lot_id, []).append(movement)
+    transfers: dict[int, set[int]] = {}
+    for transfer_id, part_type_id in StockTransfer.objects.filter(
+        part_type_id__in={lot.part_type_id for lot in lots}
+    ).values_list("pk", "part_type_id"):
+        transfers.setdefault(part_type_id, set()).add(transfer_id)
+    total, proven = Decimal("0"), True
+    for lot in lots:
+        intake = _lot_intake(lot, movements.get(lot.pk, []), transfers)
+        if intake is None:
+            proven = False
+        else:
+            total += intake
+    return total, proven
+
+
 def distributed_qty(line: BatchLine) -> Decimal:
-    """Сколько количества строки уже распределено по лотам."""
-    agg = StockLot.objects.filter(batch_line=line).aggregate(s=Sum("quantity"))
-    return agg["s"] or Decimal("0")
+    """Lifetime received quantity of the line (see `received_quantity`)."""
+    return received_quantity(line)[0]
 
 
 def remaining_qty(line: BatchLine) -> Decimal:
-    """Нераспределённый остаток строки."""
-    return line.quantity - distributed_qty(line)
+    """Сколько строки ещё можно принять: количество строки минус принятое за всё время."""
+    received, proven = received_quantity(line)
+    if not proven:
+        return Decimal("0")
+    return max(line.quantity - received, Decimal("0"))
+
+
+RECEIVE_CAP_REFUSED = (
+    "Нельзя принять {quantity}: по строке партии уже принято {received} из "
+    "{expected}, можно принять ещё {remaining}. Продажи и списания не "
+    "освобождают место для повторной приёмки."
+)
+RECEIVE_HISTORY_UNPROVEN = (
+    "По строке партии есть лот без истории приёмки (старые данные): сколько уже "
+    "принято, доказать нельзя, поэтому новая приёмка по этой строке закрыта. "
+    "Выполните backfill_opening_movements и повторите."
+)
+
+
+def _ensure_receivable(line: BatchLine, quantity, *, exclude_lot=None) -> None:
+    """Refuse intake above the line's quantity. Call with the line row locked."""
+    received, proven = received_quantity(line, exclude_lot=exclude_lot)
+    if not proven:
+        raise InventoryError(RECEIVE_HISTORY_UNPROVEN)
+    if received + quantity > line.quantity:
+        def text(value):
+            return format_quantity(value, line.part_type)
+
+        raise InventoryError(
+            RECEIVE_CAP_REFUSED.format(
+                quantity=text(quantity),
+                received=text(received),
+                expected=text(line.quantity),
+                remaining=text(max(line.quantity - received, Decimal("0"))),
+            )
+        )
 
 
 def _validate_bulk_line(line: BatchLine) -> None:
@@ -323,16 +424,10 @@ def create_stock_lot(
         raise InventoryError("Это место не предназначено для хранения остатка.")
     ensure_location_operation_allowed(location)
 
-    # Блокируем строку, чтобы лимит соблюдался при параллельных запросах.
+    # Блокируем строку, чтобы лимит соблюдался при параллельных запросах:
+    # второй запрос ждёт здесь и считает принятое уже с учётом первого.
     line = BatchLine.objects.select_for_update().get(pk=line.pk)
-    already = (
-        StockLot.objects.filter(batch_line=line).aggregate(s=Sum("quantity"))["s"]
-        or Decimal("0")
-    )
-    if already + quantity > line.quantity:
-        raise InventoryError(
-            f"Нельзя распределить {quantity}: остаток строки {line.quantity - already}."
-        )
+    _ensure_receivable(line, quantity)
     if StockLot.objects.filter(batch_line=line, location=location).exists():
         raise InventoryError("Лот для этой строки в данной ячейке уже существует.")
 
@@ -404,15 +499,7 @@ def update_stock_lot(lot: StockLot, *, location, quantity, note: str = "") -> St
     ensure_location_operation_allowed(lot.location)
     ensure_location_operation_allowed(location)
     line = BatchLine.objects.select_for_update().get(pk=lot.batch_line_id)
-    others = (
-        StockLot.objects.filter(batch_line=line).exclude(pk=lot.pk)
-        .aggregate(s=Sum("quantity"))["s"]
-        or Decimal("0")
-    )
-    if others + quantity > line.quantity:
-        raise InventoryError(
-            f"Нельзя установить {quantity}: остаток строки {line.quantity - others}."
-        )
+    _ensure_receivable(line, quantity, exclude_lot=lot)
     if (
         StockLot.objects.filter(batch_line=line, location=location)
         .exclude(pk=lot.pk)

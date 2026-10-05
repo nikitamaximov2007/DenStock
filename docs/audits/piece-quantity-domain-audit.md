@@ -244,3 +244,36 @@ Proof runs:
   (`NumberSequence` missing) before reaching the race. Other PostgreSQL suites
   still rely on migration-seeded rows: run them with `--create-db`, because
   transactional tests flush those rows and `--reuse-db` cannot restore them.
+
+## 8. AUD-01: lifetime receipt cap
+
+Root cause: `create_stock_lot`, `update_stock_lot` and `remaining_qty` limited a
+batch line by the SUM OF ITS LOTS' CURRENT QUANTITY. Selling 2 of 10 left 8 on
+the shelf, so another 2 could be received against the same line (a second lot in
+another cell, or "Лот на остаток").
+
+Model: `BatchLine.quantity` is the expected quantity. Intake is a lot created
+from the line (`create_stock_lot`, also used by receipt posting, which creates
+its own batch line per posting) and received by `receive_stock_lot`, which
+writes an immutable RECEIVE_LOT movement. Partial intake into several cells is
+legitimate. There is no receipt reversal: a posted receipt cannot be cancelled,
+a lot never returns to `receiving`, lots are never deleted. Serial items already
+used a lifetime count (`existing_count`) and were not affected.
+
+Invariant: `remaining = line.quantity - received_quantity(line)`, where received
+is, per lot of the line: a lot still on receiving counts its current quantity (a
+pending receipt holds its capacity, so two open ones cannot both exceed the line);
+a received lot counts its RECEIVE_LOT movements; a lot opened by a recount or
+found stock (at 0), a return (first own movement RETURN_LOT) or a transfer (its
+creation note names an existing StockTransfer) counts nothing. A lot that fits
+none of these (older than the movement ledger, never backfilled) makes the
+history unprovable: intake on that line is refused until
+`backfill_opening_movements` records it. No migration and no cached counter.
+
+Concurrency: every capacity check runs after `select_for_update` on the batch
+line row (create: line after the target cell check; edit: lot, cells, line, as
+documented in `update_stock_lot`), so a second intake waits and re-reads the
+committed history. Forced PostgreSQL 16 races (contender seen blocked in
+`pg_stat_activity`): two +2 on 8 of 10, exactly one passes; a pending lot edited
+upward while another intake commits is refused; a sale committing while an
+intake waits does not reopen capacity (this one fails on `c5847f2`).
