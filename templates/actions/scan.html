@@ -111,8 +111,7 @@
                          data-part-id="{{ item.row.part.pk }}"
                          {% if item.customs.rejected.gross_weight_kg %}value="{{ item.customs.rejected.gross_weight_kg.raw }}" aria-invalid="true"{% else %}value="{{ item.customs.gross_weight_kg|default_if_none:''|unlocalize }}"{% endif %}
                          aria-label="Вес брутто, кг">
-                  <span class="cart-autosave__error"
-                        data-autosave-error="gross_weight_kg">{{ item.customs.rejected.gross_weight_kg.error|default:'' }}</span>
+                  <span class="cart-autosave__error" data-autosave-error="gross_weight_kg">{{ item.customs.rejected.gross_weight_kg.error|default:'' }}</span>
                 </td>
                 <td class="num--qty">
                   <input form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
@@ -124,8 +123,7 @@
                          data-part-id="{{ item.row.part.pk }}"
                          {% if item.customs.rejected.net_weight_kg %}value="{{ item.customs.rejected.net_weight_kg.raw }}" aria-invalid="true"{% else %}value="{{ item.customs.net_weight_kg|default_if_none:''|unlocalize }}"{% endif %}
                          aria-label="Вес нетто, кг">
-                  <span class="cart-autosave__error"
-                        data-autosave-error="net_weight_kg">{{ item.customs.rejected.net_weight_kg.error|default:'' }}</span>
+                  <span class="cart-autosave__error" data-autosave-error="net_weight_kg">{{ item.customs.rejected.net_weight_kg.error|default:'' }}</span>
                 </td>
                 <td>
                   <select form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
@@ -140,8 +138,7 @@
                               {% if item.customs.application_area == value %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                   </select>
-                  <span class="cart-autosave__error"
-                        data-autosave-error="application_area">{{ item.customs.rejected.application_area.error|default:'' }}</span>
+                  <span class="cart-autosave__error" data-autosave-error="application_area">{{ item.customs.rejected.application_area.error|default:'' }}</span>
                 </td>
                 <td class="num--qty">
                   <form method="post"
@@ -170,8 +167,7 @@
                     <button type="submit"
                             class="btn btn--small btn--secondary"
                             data-autosave-fallback>Сохранить количество</button>
-                    <span class="cart-autosave__error"
-                          data-autosave-error="quantity">{{ item.quantity_rejected.error|default:'' }}</span>
+                    <span class="cart-autosave__error" data-autosave-error="quantity">{{ item.quantity_rejected.error|default:'' }}</span>
                   </form>
                 </td>
                 <td class="num--money">
@@ -262,8 +258,7 @@
                 </option>
               {% endfor %}
             </select>
-            <span class="cart-autosave__error"
-                  data-autosave-error="customer">{{ panel.customer_rejected.error|default:'' }}</span>
+            <span class="cart-autosave__error" data-autosave-error="customer">{{ panel.customer_rejected.error|default:'' }}</span>
             <br>
             <a class="btn btn--secondary btn--small"
                href="{% url 'customer_create' %}?next={% url 'actions_scan' %}%3Fkind%3D{{ panel.kind|urlencode }}">Создать клиента</a>
