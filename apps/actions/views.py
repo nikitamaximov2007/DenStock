@@ -14,14 +14,14 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.http import HttpResponse, HttpResponseNotAllowed, QueryDict
+from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
 
 from apps.catalog.models import PartType
 from apps.core.part_lookup import resolve_part_lookup
-from apps.core.templatetags.number_format import quantity_int
+from apps.core.templatetags.number_format import money_int, quantity_int
 from apps.customers.models import Customer
 from apps.customers.services import customers_by_recent_activity
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
@@ -42,6 +42,7 @@ from .cart import (
     complete_cart,
     discard_cart,
     effective_customs_metadata,
+    find_row,
     load_cart,
     open_cart,
     parse_row_key,
@@ -63,6 +64,7 @@ from .services import (
     historical_analog_customs_rows,
     historical_customs_rows,
     parse_application_area,
+    parse_quantity,
     parse_weight_kg,
     perform_action,
     stock_overview,
@@ -110,6 +112,25 @@ CART_SCANS_SESSION_KEY = "actions_cart_scans"
 # Канонические данные детали меняет ТОЛЬКО успешное проведение, поэтому до него
 # введённое живёт рядом с корзиной, а не в карточке.
 CART_CUSTOMS_SESSION_KEY = "actions_cart_customs"
+# Черновик корзины целиком живёт на сервере: количество - в строках документа,
+# вес и область - в CART_CUSTOMS_SESSION_KEY, выбранный клиент - здесь. Кнопка
+# «Провести» читает именно это состояние, а не то, что пришло в её POST.
+CART_CUSTOMER_SESSION_KEY = "actions_cart_customer"
+# Значения, которые сотрудник ввёл, но сервер отклонил (некорректный вес,
+# количество больше остатка и т.п.). Пока такое значение есть, корзину не
+# провести: иначе проведение молча взяло бы прежнее сохранённое значение.
+CART_REJECTED_SESSION_KEY = "actions_cart_rejected"
+# Номер последнего принятого автосохранения страницы: ответ на более старый
+# запрос не может перезаписать более новое значение.
+CART_AUTOSAVE_REV_SESSION_KEY = "actions_cart_autosave_rev"
+AUTOSAVE_FIELD_LABELS = {
+    "quantity": "количество",
+    "gross_weight_kg": "вес брутто",
+    "net_weight_kg": "вес нетто",
+    "application_area": "область применения",
+    "customer": "клиент",
+}
+CUSTOMS_INPUT_FIELDS = ("gross_weight_kg", "net_weight_kg", "application_area")
 
 
 def _allowed_actions(user) -> list:
@@ -179,16 +200,27 @@ def actions_scan(request):
     selected_action_kind = request.GET.get("kind", "")
     if selected_action_kind not in {value for value, _label in allowed_actions}:
         selected_action_kind = ""
+    cart_panels = _cart_panels(request)
+    customers = list(customers_by_recent_activity(limit=500))
+    # Клиент, сохранённый в черновике, должен остаться выбранным, даже если он
+    # не попал в список недавних.
+    listed = {customer.pk for customer in customers}
+    saved = {int(panel["customer_id"]) for panel in cart_panels if panel["customer_id"]}
+    customers += list(Customer.objects.filter(pk__in=saved - listed).order_by("name"))
+    # Только что созданный клиент (?customer_id=) важнее сохранённого: скрипт
+    # страницы сразу сохранит этот выбор в черновик.
+    for panel in cart_panels:
+        panel["selected_customer_id"] = request.GET.get("customer_id") or panel["customer_id"]
     ctx = {
         "q": q,
         "searched": bool(q),
         "allowed_actions": allowed_actions,
         "not_found_message": NOT_FOUND_MESSAGE,
         "multi_location_message": MULTI_LOCATION_MESSAGE,
-        "cart_panels": _cart_panels(request),
+        "cart_panels": cart_panels,
         "cart_token": secrets.token_urlsafe(32),
         "selected_action_kind": selected_action_kind,
-        "customers": customers_by_recent_activity(limit=500),
+        "customers": customers,
         "selected_customer_id": request.GET.get("customer_id", ""),
     }
     if q:
@@ -368,6 +400,60 @@ def _forget_cart(request, kind: str) -> None:
     request.session.pop(CART_SESSION_KEYS[kind], None)
     _drop_scans(request, kind)
     _drop_customs_input(request, kind)
+    _set_draft_customer(request, kind, None)
+    _drop_rejected(request, kind)
+    revs = request.session.get(CART_AUTOSAVE_REV_SESSION_KEY) or {}
+    if revs.pop(kind, None) is not None:
+        request.session[CART_AUTOSAVE_REV_SESSION_KEY] = revs
+
+
+def _draft_customer_id(request, kind: str) -> int | None:
+    return (request.session.get(CART_CUSTOMER_SESSION_KEY) or {}).get(kind)
+
+
+def _set_draft_customer(request, kind: str, customer_id) -> None:
+    stored = request.session.get(CART_CUSTOMER_SESSION_KEY) or {}
+    if customer_id is None:
+        if stored.pop(kind, None) is None:
+            return
+    else:
+        stored[kind] = int(customer_id)
+    request.session[CART_CUSTOMER_SESSION_KEY] = stored
+
+
+def _rejected_key(kind: str, field: str, part_id=None, location_id=None) -> str:
+    return ":".join(str(bit) for bit in (kind, field, part_id, location_id) if bit is not None)
+
+
+def _rejected_for(request, kind: str) -> dict:
+    prefix = f"{kind}:"
+    stored = request.session.get(CART_REJECTED_SESSION_KEY) or {}
+    return {key: value for key, value in stored.items() if key.startswith(prefix)}
+
+
+def _mark_rejected(request, key: str, raw, error: str, label: str) -> None:
+    stored = request.session.get(CART_REJECTED_SESSION_KEY) or {}
+    stored[key] = {"raw": str(raw or ""), "error": error, "label": label}
+    request.session[CART_REJECTED_SESSION_KEY] = stored
+
+
+def _clear_rejected(request, key: str) -> None:
+    stored = request.session.get(CART_REJECTED_SESSION_KEY) or {}
+    if stored.pop(key, None) is not None:
+        request.session[CART_REJECTED_SESSION_KEY] = stored
+
+
+def _drop_rejected(request, kind: str, part_id=None) -> None:
+    stored = request.session.get(CART_REJECTED_SESSION_KEY) or {}
+    prefix = f"{kind}:"
+    kept = {
+        key: value
+        for key, value in stored.items()
+        if not key.startswith(prefix)
+        or (part_id is not None and key.split(":")[2:3] != [str(part_id)])
+    }
+    if kept != stored:
+        request.session[CART_REJECTED_SESSION_KEY] = kept
 
 
 def _scan_key(kind: str, row_key: str) -> str:
@@ -450,13 +536,24 @@ def _customs_input_for(request, kind: str) -> dict:
 
 
 def _cart_customs_context(request, kind: str, part) -> dict:
-    """Что показать в строке корзины: введённое, иначе запомненное, иначе пусто."""
+    """Что показать в строке корзины: введённое, иначе запомненное, иначе пусто.
+
+    Отклонённый ввод показывается как есть, с причиной: сотрудник видит своё
+    значение и то, что оно не сохранено.
+    """
     pending = _customs_input_for(request, kind).get(part.pk)
     values = effective_customs_metadata(part, pending)
+    rejected = _rejected_for(request, kind)
+    errors = {
+        field: rejected[_rejected_key(kind, field, part.pk)]
+        for field in CUSTOMS_INPUT_FIELDS
+        if _rejected_key(kind, field, part.pk) in rejected
+    }
     return {
         "gross_weight_kg": values["gross_weight_kg"],
         "net_weight_kg": values["net_weight_kg"],
         "application_area": values["application_area"],
+        "rejected": errors,
         "application_choices": [
             (str(area), area.label) for area in QUICK_ACTION_APPLICATION_AREAS
         ],
@@ -517,9 +614,16 @@ def _cart_panels(request) -> list:
                 "clear_url": clear_url + (f"?{urlencode({'q': q})}" if q else ""),
                 "document": cart,
                 "is_sale": kind == KIND_SALE,
+                "customer_id": str(_draft_customer_id(request, kind) or ""),
+                "customer_rejected": _rejected_for(request, kind).get(
+                    _rejected_key(kind, "customer")
+                ),
                 "rows": [
                     {
                         "row": row,
+                        "quantity_rejected": _rejected_for(request, kind).get(
+                            _rejected_key(kind, "quantity", row.part.pk, row.location.pk)
+                        ),
                         "identity": identities.get(row.part.pk),
                         "available": availability_by_part_location.get(
                             (row.part.pk, row.location.pk), 0
@@ -615,6 +719,7 @@ def actions_cart_update(request):
         remove_row(cart, part, location, by=request.user)
         _forget_scan(request, kind, row_key)
         _drop_customs_input(request, kind, part.pk)
+        _drop_rejected(request, kind, part.pk)
         messages.success(request, f"Позиция убрана из корзины: {part.name}.")
     elif operation == "set":
         try:
@@ -624,6 +729,8 @@ def actions_cart_update(request):
             return redirect(back)
         if customs_input is not None:
             _remember_customs_input(request, kind, part.pk, customs_input)
+            for field in customs_input:
+                _clear_rejected(request, _rejected_key(kind, field, part.pk))
         try:
             row = set_row_quantity(
                 cart,
@@ -635,9 +742,11 @@ def actions_cart_update(request):
         except ActionError as exc:
             messages.error(request, str(exc))
             return redirect(back)
+        _clear_rejected(request, _rejected_key(kind, "quantity", part.pk, location.pk))
         if row is None:
             _forget_scan(request, kind, row_key)
             _drop_customs_input(request, kind, part.pk)
+            _drop_rejected(request, kind, part.pk)
             messages.success(request, f"Позиция убрана из корзины: {part.name}.")
         else:
             messages.success(
@@ -651,6 +760,179 @@ def actions_cart_update(request):
         discard_cart(cart, by=request.user)
         _forget_cart(request, kind)
     return redirect(back)
+
+
+def _autosave_is_stale(request, kind: str) -> bool:
+    """Ответ на более ранний запрос той же страницы не перезаписывает новый.
+
+    Страница нумерует автосохранения по порядку (client + rev). Принятый номер
+    запоминается; запрос со МЕНЬШИМ номером от той же страницы устарел. Новая
+    страница (перезагрузка, другая вкладка) начинает свою нумерацию.
+    """
+    client = (request.POST.get("client") or "")[:64]
+    try:
+        rev = int(request.POST.get("rev") or 0)
+    except ValueError:
+        rev = 0
+    if not client or rev <= 0:
+        return False
+    revs = request.session.get(CART_AUTOSAVE_REV_SESSION_KEY) or {}
+    last_client, last_rev = (revs.get(kind) or [None, 0])
+    if last_client == client and rev < last_rev:
+        return True
+    revs[kind] = [client, rev]
+    request.session[CART_AUTOSAVE_REV_SESSION_KEY] = revs
+    return False
+
+
+def _row_payload(cart, kind: str, part, location) -> dict:
+    row = find_row(cart, part, location)
+    if row is None:
+        return {}
+    return {
+        "quantity": quantity_int(row.quantity),
+        "total": f"{money_int(row.total_price)} ₽" if row.total_price is not None else "-",
+        "panel_total": (
+            f"{money_int(cart_total(cart))} ₽" if kind == KIND_SALE else None
+        ),
+    }
+
+
+def _autosave_quantity(request, cart, kind: str) -> tuple[dict, dict]:
+    part_id, location_id = parse_row_key(request.POST.get("row_key", ""))
+    part = get_object_or_404(PartType, pk=part_id)
+    location = get_object_or_404(StorageLocation, pk=location_id)
+    if find_row(cart, part, location) is None:
+        raise ActionError("Позиция уже убрана из корзины. Обновите страницу.")
+    key = _rejected_key(kind, "quantity", part.pk, location.pk)
+    raw = request.POST.get("quantity", "")
+    try:
+        if parse_quantity(raw, allow_zero=True) == 0:
+            raise ActionError("Чтобы убрать позицию, нажмите «Убрать».")
+        set_row_quantity(cart, part, location, raw, by=request.user)
+    except ActionError as exc:
+        _mark_rejected(request, key, raw, str(exc), f"{part.name}: количество")
+        return {}, {key: str(exc)}
+    _clear_rejected(request, key)
+    return _row_payload(cart, kind, part, location), {}
+
+
+def _autosave_customs(request, cart, kind: str) -> tuple[dict, dict]:
+    try:
+        part_id = int(request.POST.get("part_id") or "")
+    except ValueError as exc:
+        raise ActionError("Некорректная позиция корзины.") from exc
+    part = next((row.part for row in cart_rows(cart) if row.part.pk == part_id), None)
+    if part is None:
+        raise ActionError("Позиция уже убрана из корзины. Обновите страницу.")
+    parsers = {
+        "gross_weight_kg": parse_weight_kg,
+        "net_weight_kg": parse_weight_kg,
+        "application_area": parse_application_area,
+    }
+    values, errors, raws = {}, {}, {}
+    for field in CUSTOMS_INPUT_FIELDS:
+        if field not in request.POST:
+            continue
+        raws[field] = request.POST.get(field, "")
+        try:
+            values[field] = parsers[field](raws[field])
+        except ValueError as exc:
+            errors[field] = str(exc)
+    gross = values.get("gross_weight_kg", _UNSET)
+    net = values.get("net_weight_kg", _UNSET)
+    if gross is _UNSET or net is _UNSET:
+        stored = effective_customs_metadata(part, _customs_input_for(request, kind).get(part.pk))
+        gross = stored["gross_weight_kg"] if gross is _UNSET else gross
+        net = stored["net_weight_kg"] if net is _UNSET else net
+    try:
+        validate_weight_pair(gross, net)
+    except ValueError as exc:
+        # Пара проверяется вместе: ни один вес из неё не запоминается.
+        for field in ("gross_weight_kg", "net_weight_kg"):
+            if field in raws and field not in errors:
+                errors[field] = str(exc)
+                values.pop(field, None)
+    if values:
+        _remember_customs_input(request, kind, part.pk, values)
+    keyed = {}
+    for field in raws:
+        key = _rejected_key(kind, field, part.pk)
+        if field in errors:
+            label = f"{part.name}: {AUTOSAVE_FIELD_LABELS[field]}"
+            _mark_rejected(request, key, raws[field], errors[field], label)
+            keyed[key] = errors[field]
+        else:
+            _clear_rejected(request, key)
+    return {}, keyed
+
+
+def _autosave_customer(request, kind: str) -> tuple[dict, dict]:
+    key = _rejected_key(kind, "customer")
+    raw = (request.POST.get("customer_id") or "").strip()
+    if not raw:
+        _set_draft_customer(request, kind, None)
+        _clear_rejected(request, key)
+        return {}, {}
+    valid_id = raw.isascii() and raw.isdigit() and len(raw) <= 18
+    customer = Customer.objects.filter(pk=int(raw)).first() if valid_id else None
+    if customer is None:
+        error = "Карточка клиента не найдена. Выберите клиента из списка."
+        _mark_rejected(request, key, raw, error, "Клиент")
+        return {}, {key: error}
+    _set_draft_customer(request, kind, customer.pk)
+    _clear_rejected(request, key)
+    return {"customer": customer.name}, {}
+
+
+@login_required
+def actions_cart_autosave(request):
+    """Сохранить одно изменённое поле черновика корзины сразу, без кнопки.
+
+    Ответ - JSON. Ожидаемая ошибка ввода возвращается как 400 с текстом по
+    полю, а не 500; введённое сотрудником остаётся видимым и помечается как
+    не сохранённое, и пока оно не исправлено, корзину не провести.
+    """
+    _require_access(request)
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        kind = _check_cart_kind(request, request.POST.get("kind", ""))
+    except ActionError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+    cart = _cart_for(request, kind)
+    if cart is None:
+        return JsonResponse(
+            {"ok": False, "error": "Корзина уже проведена или пуста. Обновите страницу."},
+            status=409,
+        )
+    if _autosave_is_stale(request, kind):
+        return JsonResponse({"ok": True, "stale": True})
+    group = request.POST.get("group", "")
+    try:
+        if group == "quantity":
+            saved, errors = _autosave_quantity(request, cart, kind)
+        elif group == "customs":
+            saved, errors = _autosave_customs(request, cart, kind)
+        elif group == "customer":
+            saved, errors = _autosave_customer(request, kind)
+        else:
+            return JsonResponse({"ok": False, "error": "Неизвестное поле."}, status=400)
+    except ActionError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=409)
+    if errors:
+        return JsonResponse({"ok": False, "saved": saved, "errors": errors}, status=400)
+    return JsonResponse({"ok": True, "saved": saved, "errors": {}})
+
+
+def _rejected_message(request, kind: str) -> str:
+    rejected = _rejected_for(request, kind)
+    if not rejected:
+        return ""
+    details = " ".join(
+        f"{item['label']} «{item['raw']}»: {item['error']}" for item in rejected.values()
+    )
+    return f"Не сохранено: {details} Исправьте значение и проведите снова."
 
 
 @login_required
@@ -705,8 +987,17 @@ def actions_cart_complete(request):
     if cart is None:
         messages.error(request, "Корзина пуста: отсканируйте хотя бы одну деталь.")
         return redirect(back)
+    # Клиент из формы - это тоже правка черновика: сохраняем её так же, как
+    # автосохранение (форма без скрипта). Проводим дальше только черновик.
+    if "customer_id" in request.POST:
+        _autosave_customer(request, kind)
     try:
-        customer = get_object_or_404(Customer, pk=request.POST.get("customer_id"))
+        rejected = _rejected_message(request, kind)
+        if rejected:
+            raise ActionError(rejected)
+        customer = Customer.objects.filter(pk=_draft_customer_id(request, kind)).first()
+        if customer is None:
+            raise ActionError("Выберите карточку клиента.")
         actions = complete_cart(
             cart,
             customer=customer,
