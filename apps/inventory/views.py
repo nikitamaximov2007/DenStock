@@ -52,7 +52,6 @@ from .services import (
     receive_part_item,
     receive_stock_lot,
     received_quantity,
-    remaining_qty,
     update_part_item,
     update_stock_lot,
 )
@@ -381,8 +380,21 @@ def lot_create(request, line_pk):
     line = get_object_or_404(
         BatchLine.objects.select_related("batch", "part_type"), pk=line_pk
     )
+    received, proven = received_quantity(line)
+    provenance_error = None if proven else RECEIVE_HISTORY_UNPROVEN
     if request.method == "POST":
         form = StockLotCreateForm(request.POST)
+        if not proven:
+            return render(
+                request, "inventory/lot_form.html",
+                {
+                    "form": form,
+                    "line": line,
+                    "remaining": None,
+                    "provenance_error": provenance_error,
+                    "title": f"Лот - {line.part_type}",
+                },
+            )
         if form.is_valid():
             try:
                 create_stock_lot(
@@ -398,8 +410,13 @@ def lot_create(request, line_pk):
         form = StockLotCreateForm()
     return render(
         request, "inventory/lot_form.html",
-        {"form": form, "line": line, "remaining": remaining_qty(line),
-         "title": f"Лот - {line.part_type}"},
+        {
+            "form": form,
+            "line": line,
+            "remaining": max(line.quantity - received, 0) if proven else None,
+            "provenance_error": provenance_error,
+            "title": f"Лот - {line.part_type}",
+        },
     )
 
 

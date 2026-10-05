@@ -63,6 +63,7 @@ transfer_groups AS (
                AND m.to_location_id = t.to_location_id
                AND s.part_type_id = t.part_type_id
                AND m.batch_id = s.batch_id
+               AND m.batch_line_id = s.batch_line_id
                AND origin_line.part_type_id = t.part_type_id
                AND origin_line.batch_id = m.batch_id
            ) AS rows_consistent
@@ -107,7 +108,9 @@ WHERE t.part_item_id IS NULL
   AND t.part_type_id = c.part_type_id
   AND m.part_type_id = c.part_type_id
   AND source_lot.part_type_id = c.part_type_id
+  AND source_lot.batch_line_id = m.batch_line_id
   AND m.batch_id = c.batch_id
+  AND c.batch_line_id = m.batch_line_id
   AND current_line.part_type_id = c.part_type_id
   AND origin_line.part_type_id = c.part_type_id
   AND m.batch_id = source_lot.batch_id
@@ -117,6 +120,12 @@ WHERE t.part_item_id IS NULL
   AND t.created_at <= c.created_at
   AND g.moved_quantity = t.quantity
   AND g.rows_consistent
+  AND (
+      SELECT count(*)
+      FROM procurement_batchline target_identity
+      WHERE target_identity.batch_id = c.batch_id
+        AND target_identity.part_type_id = c.part_type_id
+  ) = 1
 ORDER BY c.id, m.id;
 
 -- name: reassigned_receipts

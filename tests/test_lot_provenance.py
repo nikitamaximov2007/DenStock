@@ -205,6 +205,27 @@ def test_remaining_route_reports_unknown_provenance_without_zero_quantity_error(
     assert StockLot.objects.get(pk=lot.pk).quantity == Decimal("9")
 
 
+def test_regular_lot_route_fails_closed_for_unknown_provenance(env, client):
+    line = _finalized_line(env, env["part"], "10")
+    lot = _status_flip(create_stock_lot(line, env["cells"][0], Decimal("6")))
+    StockLot.objects.filter(pk=lot.pk).update(quantity=Decimal("9"))
+    client.force_login(env["admin"])
+    before = (StockLot.objects.count(), StockMovement.objects.count())
+    url = reverse("lot_create", args=[line.pk])
+
+    for method in (client.get, lambda target: client.post(target, {"broken": "form"})):
+        response = method(url)
+        body = response.content.decode()
+        assert response.status_code == 200
+        assert "происхождение которого журнал не доказывает" in body
+        assert "остаток для распределения 0" not in body
+        assert "Сохранить" not in body
+        assert "Количество должно быть больше нуля" not in body
+
+    assert (StockLot.objects.count(), StockMovement.objects.count()) == before
+    assert StockLot.objects.get(pk=lot.pk).quantity == Decimal("9")
+
+
 def test_a_pending_lot_holds_its_quantity(env):
     line = _finalized_line(env, env["part"], "10")
     lot = create_stock_lot(line, env["cells"][0], Decimal("4"))

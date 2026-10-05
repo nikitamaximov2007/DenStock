@@ -95,8 +95,7 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     _transfer(env, "2", cells[3], cells[5], "sql-t3")
     broken_target = StockLot.objects.get(batch_line=broken_line, location=cells[5])
     _age(broken_target, 60)
-    # Transfer evidence follows the source movement even after the target FK is
-    # rebound to another line. The destination receives no supplier intake.
+    # A target whose line FK is rebound no longer has provable line identity.
     rebound_source_line = _finalized_line(env, env["part"], "5")
     rebound_source_cell = StorageLocation.objects.create(
         name="Rebound source", code="S09-D04-C09", storage_allowed=True, is_active=True
@@ -156,8 +155,11 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     for lot in classified:
         by_class.setdefault(lot.provenance, set()).add(lot.lot_id)
     assert by_class[TRANSFER_DERIVED] == {
-        target.pk, moved.pk, rebound_target.pk,
-    }  # includes the current-FK-rebound target
+        target.pk, moved.pk,
+    }
+    assert next(
+        item.provenance for item in classified if item.lot_id == rebound_target.pk
+    ) == UNKNOWN
     assert next(
         item.provenance for item in classified if item.lot_id == tampered_target.pk
     ) == UNKNOWN

@@ -137,6 +137,50 @@ def test_legacy_survives_sale_return_cancellation_adjust_writeoff_and_moves(env)
     assert remaining_qty(line) == Decimal("4")
 
 
+def test_received_sale_lot_reset_to_receiving_does_not_reopen_capacity(env):
+    line = _finalized_line(env, env["part"], "10")
+    lot = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    _sell(env, lot, "2")
+    StockLot.objects.filter(pk=lot.pk).update(status=StockLot.Status.RECEIVING)
+
+    assert _cls(line, lot) == (PRIMARY_RECEIPT, Decimal("10"))
+    assert remaining_qty(line) == Decimal("0")
+
+
+def test_received_writeoff_lot_reset_to_receiving_does_not_reopen_capacity(env):
+    line = _finalized_line(env, env["part"], "10")
+    lot = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    document = create_write_off(reason=WriteOffDocument.Reason.OTHER, by=env["admin"])
+    add_stock_lot_to_write_off(document, lot, Decimal("2"))
+    complete_write_off(document, by=env["admin"])
+    StockLot.objects.filter(pk=lot.pk).update(status=StockLot.Status.RECEIVING)
+
+    assert _cls(line, lot) == (PRIMARY_RECEIPT, Decimal("10"))
+    assert remaining_qty(line) == Decimal("0")
+
+
+def test_received_transfer_source_reset_to_receiving_does_not_reopen_capacity(env):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-status-transfer")
+    target = _lot_at(line, env["cells"][1])
+    StockLot.objects.filter(pk=source.pk).update(status=StockLot.Status.RECEIVING)
+
+    assert _cls(line, source) == (PRIMARY_RECEIPT, Decimal("10"))
+    assert _cls(line, target) == (TRANSFER_DERIVED, Decimal("0"))
+    assert remaining_qty(line) == Decimal("0")
+
+
+def test_receiving_status_conflicting_with_unproven_movement_is_unknown(env):
+    line = _finalized_line(env, env["part"], "10")
+    lot = _flip(create_stock_lot(line, env["cells"][0], Decimal("6")))
+    adjust_stock_lot_quantity(lot, Decimal("-1"), comment="Сверка")
+    StockLot.objects.filter(pk=lot.pk).update(status=StockLot.Status.RECEIVING)
+
+    assert _cls(line, lot) == (UNKNOWN, None)
+    assert remaining_qty(line) == Decimal("0")
+
+
 # --- B. LEGACY_PRIMARY: false positives must not happen ------------------------------------
 
 
@@ -247,6 +291,56 @@ def test_a_transfer_movement_without_its_document_is_unknown(env):
     assert _cls(line, target)[0] == UNKNOWN
 
 
+@pytest.mark.parametrize(
+    "replacement",
+    [StockMovement.MovementType.ADJUST_OUT, StockMovement.MovementType.SALE_LOT],
+)
+def test_damaged_transfer_movement_cannot_fall_through_to_legacy(env, replacement):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], f"adv-damaged-{replacement}")
+    target = _lot_at(line, env["cells"][1])
+    StockMovement.objects.filter(
+        document_type="stock_transfer", document_id=transfer.pk
+    ).update(movement_type=replacement)
+
+    assert _cls(line, target) == (UNKNOWN, None)
+    assert remaining_qty(line) == Decimal("0")
+
+
+def test_missing_transfer_movement_keeps_target_unknown(env):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-missing-move")
+    target = _lot_at(line, env["cells"][1])
+    StockMovement.objects.filter(
+        document_type="stock_transfer", document_id=transfer.pk
+    ).delete()
+
+    assert _cls(line, target) == (UNKNOWN, None)
+    assert remaining_qty(line) == Decimal("0")
+
+
+def test_incomplete_and_conflicting_transfer_evidence_fail_closed(env):
+    line = _finalized_line(env, env["part"], "10")
+    receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], "adv-incomplete")
+    target = _lot_at(line, env["cells"][1])
+    StockTransfer.objects.filter(pk=transfer.pk).update(quantity=Decimal("4"))
+    assert _cls(line, target) == (UNKNOWN, None)
+
+    # A second nearby transfer into the same target cell is conflicting creation evidence.
+    conflicting, _created = perform_stock_transfer(
+        part=env["part"], from_location=env["cells"][0], to_location=env["cells"][1],
+        quantity="1", stock_state=StockLot.Status.AVAILABLE, token="adv-conflicting",
+    )
+    StockTransfer.objects.filter(pk=conflicting.pk).update(created_at=target.created_at)
+    StockMovement.objects.filter(
+        document_type="stock_transfer", document_id=conflicting.pk
+    ).update(created_at=target.created_at + timedelta(milliseconds=100))
+    assert _cls(line, target) == (UNKNOWN, None)
+
+
 def test_legacy_lot_on_non_unique_same_batch_line_is_unknown(env):
     line = _finalized_line(env, env["part"], "10")
     duplicate = line.__class__.objects.create(
@@ -262,7 +356,7 @@ def test_legacy_lot_on_non_unique_same_batch_line_is_unknown(env):
     assert duplicate.part_type_id == lot.part_type_id
 
 
-def test_a_transfer_target_rebound_to_another_line_keeps_zero_intake(env):
+def test_a_transfer_target_rebound_to_another_line_is_unknown(env):
     original = _finalized_line(env, env["part"], "10")
     source = receive_stock_lot(create_stock_lot(original, env["cells"][0], Decimal("10")))
     _transfer(env, "2", env["cells"][0], env["cells"][1], "adv-rebind-target")
@@ -270,10 +364,36 @@ def test_a_transfer_target_rebound_to_another_line_keeps_zero_intake(env):
     destination_line = _finalized_line(env, env["part"], "10")
     StockLot.objects.filter(pk=target.pk).update(batch_line=destination_line)
 
-    assert _cls(destination_line, target) == (TRANSFER_DERIVED, Decimal("0"))
+    assert _cls(destination_line, target) == (UNKNOWN, None)
     assert _cls(original, source) == (PRIMARY_RECEIPT, Decimal("10"))
     assert remaining_qty(original) == Decimal("0")
-    assert remaining_qty(destination_line) == Decimal("10")
+    assert remaining_qty(destination_line) == Decimal("0")
+
+
+@pytest.mark.parametrize("rebound", ["movement", "source", "target", "all"])
+def test_same_batch_same_part_batchline_rebind_breaks_transfer_lineage(env, rebound):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    transfer = _transfer(env, "3", env["cells"][0], env["cells"][1], f"adv-line-rebind-{rebound}")
+    target = _lot_at(line, env["cells"][1])
+    replacement = line.__class__.objects.create(
+        batch=line.batch,
+        part_type=line.part_type,
+        quantity=Decimal("10"),
+        unit_cost_currency=Decimal("1"),
+    )
+    move_query = StockMovement.objects.filter(
+        document_type="stock_transfer", document_id=transfer.pk
+    )
+    if rebound in {"movement", "all"}:
+        move_query.update(batch_line=replacement)
+    if rebound in {"source", "all"}:
+        StockLot.objects.filter(pk=source.pk).update(batch_line=replacement)
+    if rebound in {"target", "all"}:
+        StockLot.objects.filter(pk=target.pk).update(batch_line=replacement)
+
+    target.refresh_from_db()
+    assert _cls(target.batch_line, target) == (UNKNOWN, None)
 
 
 @pytest.mark.parametrize(
