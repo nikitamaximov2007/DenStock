@@ -162,12 +162,10 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
       (``PartCustomsInfo.manufacturer``) без какой-либо перепроверки. Только
       для «currently_marked_brp» - состояние данных как есть, до любого чтения.
     * ``live`` - что реально увидит сотрудник и что реально попадёт в
-      Excel/заказ ПРЯМО СЕЙЧАС, без единой записи в базу: тот же
-      ``authoritative_manufacturer``, что использует History/Excel/заказ.
-      Для declared="BRP" без доказательства live отличается от declared -
-      устаревший default уже не побеждает при чтении. Для любого другого
-      declared live совпадает с declared (см. authoritative_manufacturer:
-      небрендовый default не существовал).
+      Excel/заказ ПРЯМО СЕЙЧАС, без единой записи в базу: declared manufacturer
+      с теми же fallback-правилами, что authoritative_manufacturer и экспорт.
+      Пустая метка берёт производителя из каталога/карточки; устаревшая BRP
+      метка перепроверяется по тем же данным.
     """
     is_manual = part.category.name == MANUAL_CATEGORY_NAME
     number = facts.number_for(part) if facts is not None else part_exact_number(part, default="")
@@ -181,13 +179,15 @@ def classify_part(part: PartType, *, facts: ClassificationFacts | None = None) -
     declared = (info.manufacturer.strip().upper() if info is not None else "")
     if info is None:
         live = ""
-    elif facts is not None:
-        # authoritative_manufacturer() only re-proves the legacy BRP default;
-        # every other declared value is already authoritative.  Keep the bulk
-        # path query-free while preserving that exact read-time rule.
-        live = resolved if _normalized_manufacturer(declared) == "BRP" else declared
     else:
-        live = authoritative_manufacturer(part, declared, number)
+        # Export uses catalog evidence for a blank saved manufacturer too,
+        # not only for stale BRP defaults. ``resolved`` comes from the same
+        # catalog/explicit fallback semantics in both bulk and single-row mode.
+        live = (
+            resolved
+            if not declared or _normalized_manufacturer(declared) == "BRP"
+            else authoritative_manufacturer(part, declared, number)
+        )
     stale_brp = _normalized_manufacturer(declared) == "BRP" and declared != live
     imported = (
         facts.is_imported(part) if facts is not None else part.pk in imported_part_ids([part.pk])

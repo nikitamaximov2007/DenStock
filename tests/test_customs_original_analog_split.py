@@ -553,3 +553,22 @@ def test_classification_audit_reports_provenance_groups_without_writing(env):
     text = listing.getvalue()
     assert f"PartType #{legacy.pk} " in text
     assert f"PartType #{manual_brp.pk} " in text
+
+
+def test_classification_audit_uses_catalog_fallback_for_blank_prox_label(env):
+    import json
+    from io import StringIO
+
+    from django.core.management import call_command
+
+    imported_prox = _import_aftermarket([("PROX", "AUD-PROX-BLANK-CUSTOMS")])[
+        "AUD-PROX-BLANK-CUSTOMS"
+    ]
+    _card(imported_prox, manufacturer="")
+
+    out = StringIO()
+    call_command("audit_customs_manufacturer_classification", "--json", "--list", "0", stdout=out)
+    payload = json.loads(out.getvalue())
+
+    assert payload["imported_prox_original"] == 1
+    assert payload["imported_brp_prox_label_not_original"] == 0
