@@ -131,8 +131,10 @@ ORDER BY c.id, m.id;
 
 -- name: return_origin_evidence
 -- A later return into an existing lot is stock flow, not lot origin. New lots
--- carry an explicit immutable origin line. Legacy inference requires the exact
--- return line, exact typed movement, and creation-time first movement together.
+-- carry an explicit immutable origin line. For historical NULL-origin lots,
+-- the return draft line's created_at is deliberately irrelevant: inference
+-- requires the exact returned_lot relation, completed return document, exact
+-- typed first movement, and movement time matching lot creation.
 WITH first_lot_movement AS (
     SELECT DISTINCT ON (stock_lot_id) stock_lot_id, id, created_at
     FROM inventory_stockmovement
@@ -156,10 +158,10 @@ WITH first_lot_movement AS (
           AND receipt.movement_type = 'receive_lot'
           AND NOT (receipt.comment = 'Открывающий остаток' AND receipt.document_type = '')
     )
-)
-SELECT DISTINCT c.lot_id, rl.id AS return_line_id
-FROM candidates c
-JOIN returns_stockreturnline rl
+), matching_return_lines AS (
+    SELECT c.lot_id, rl.id AS return_line_id
+    FROM candidates c
+    JOIN returns_stockreturnline rl
   ON rl.returned_lot_id = c.lot_id
  AND (c.origin_return_line_id IS NULL OR c.origin_return_line_id = rl.id)
 JOIN returns_stockreturn r ON r.id = rl.stock_return_id
@@ -188,7 +190,14 @@ WHERE rl.batch_id = c.batch_id
           AND abs(extract(epoch FROM (m.created_at - c.created_at))) <= 1
       )
   )
-ORDER BY c.lot_id, rl.id;
+GROUP BY c.lot_id, rl.id
+HAVING count(DISTINCT m.id) = 1
+)
+SELECT lot_id, min(return_line_id) AS return_line_id
+FROM matching_return_lines
+GROUP BY lot_id
+HAVING count(*) = 1
+ORDER BY lot_id;
 
 -- name: reassigned_receipts
 -- Receipts whose lot now sits on another batch line (admin re-assignment before

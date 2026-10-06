@@ -13,6 +13,7 @@ import pytest
 from django.core.exceptions import ValidationError
 from django.db import connection
 from django.db.models.deletion import ProtectedError
+from django.utils import timezone
 
 from apps.inventory.lot_provenance import (
     FOUND_STOCK,
@@ -256,6 +257,30 @@ def test_historical_return_origin_requires_linked_first_exact_movement(env):
     )
     complete_return(ret, by=env["admin"])
     returned = ret.lines.get().returned_lot
+    _corrupt_lot_for_adversarial_test(returned, origin_return_line=None)
+
+    assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
+
+
+@pytest.mark.parametrize("draft_delay_seconds", [0, 10, 600, 30 * 24 * 60 * 60])
+def test_historical_return_origin_uses_completion_event_not_draft_line_time(
+    env, draft_delay_seconds
+):
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    sale = _sell(env, source, "2")
+    ret = create_return(source=sale, reason="Отложенный возврат", by=env["admin"])
+    return_line = add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=env["cells"][1], restock_status=StockLot.Status.AVAILABLE,
+    )
+    if draft_delay_seconds:
+        StockReturnLine.objects.filter(pk=return_line.pk).update(
+            created_at=timezone.now() - timedelta(seconds=draft_delay_seconds)
+        )
+
+    complete_return(ret, by=env["admin"])
+    returned = StockReturnLine.objects.get(pk=return_line.pk).returned_lot
     _corrupt_lot_for_adversarial_test(returned, origin_return_line=None)
 
     assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
@@ -726,45 +751,79 @@ def test_two_same_part_lines_in_one_batch_keep_exact_transfer_provenance(env):
 
 @pytest.mark.parametrize(
     "damage",
-    ["missing_move", "retyped_move", "missing_document", "contradictory_document"],
+    [
+        "missing_move", "retyped_move", "document_link_cleared", "missing_document",
+        "wrong_batch_line", "wrong_part", "wrong_cell", "wrong_quantity",
+        "draft_return", "returned_lot_changed", "multiple_returns",
+    ],
 )
-def test_damaged_return_evidence_never_upgrades_target_to_legacy(env, damage):
+@pytest.mark.parametrize("draft_delay_seconds", [0, 600])
+def test_damaged_return_evidence_never_upgrades_target_to_legacy(
+    env, damage, draft_delay_seconds
+):
     line = _finalized_line(env, env["part"], "10")
     source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
     sale = _sell(env, source, "2")
     stock_return = create_return(source=sale, reason="Возврат", by=env["admin"])
-    add_sale_line_return(
+    return_line = add_sale_line_return(
         stock_return,
         Sale.objects.get(pk=sale.pk).lines.get(),
         Decimal("2"),
         to_location=env["cells"][1],
         restock_status=StockLot.Status.AVAILABLE,
     )
+    if draft_delay_seconds:
+        StockReturnLine.objects.filter(pk=return_line.pk).update(
+            created_at=timezone.now() - timedelta(seconds=draft_delay_seconds)
+        )
     complete_return(stock_return, by=env["admin"])
     return_line = stock_return.lines.get()
     target = return_line.returned_lot
     movement = StockMovement.objects.get(
         stock_lot=target, movement_type=StockMovement.MovementType.RETURN_LOT
     )
+    _corrupt_lot_for_adversarial_test(target, origin_return_line=None)
 
     if damage == "missing_move":
         StockMovement.objects.filter(pk=movement.pk).delete()
-        expected = UNKNOWN  # origin relation without its required ledger proof fails closed
+    elif damage == "document_link_cleared":
+        StockMovement.objects.filter(pk=movement.pk).update(document_id=None)
     elif damage == "retyped_move":
         StockMovement.objects.filter(pk=movement.pk).update(
             movement_type=StockMovement.MovementType.MOVE_LOT,
             document_type="",
             document_id=None,
         )
-        expected = UNKNOWN
     elif damage == "missing_document":
-        _corrupt_lot_for_adversarial_test(target, origin_return_line=None)
         StockReturn.objects.filter(pk=stock_return.pk).delete()
-        expected = RETURN_DERIVED  # exact first typed movement remains as origin evidence
-    else:
-        StockReturnLine.objects.filter(pk=return_line.pk).update(batch_line=source.batch_line)
+    elif damage == "wrong_batch_line":
+        other_line = _finalized_line(env, env["part"], "10")
+        StockReturnLine.objects.filter(pk=return_line.pk).update(
+            batch=other_line.batch, batch_line=other_line,
+        )
+    elif damage == "wrong_part":
+        other_part = env["part"].__class__.objects.create(
+            name="Другая деталь", category=env["part"].category, unit=env["part"].unit,
+            tracking_mode=env["part"].tracking_mode,
+        )
+        StockReturnLine.objects.filter(pk=return_line.pk).update(part_type=other_part)
+    elif damage == "wrong_cell":
+        StockReturnLine.objects.filter(pk=return_line.pk).update(to_location=env["cells"][2])
+    elif damage == "wrong_quantity":
         StockReturnLine.objects.filter(pk=return_line.pk).update(quantity=Decimal("1"))
-        expected = UNKNOWN
+    elif damage == "draft_return":
+        StockReturn.objects.filter(pk=stock_return.pk).update(
+            status=StockReturn.Status.DRAFT, completed_at=None,
+        )
+    elif damage == "returned_lot_changed":
+        decoy_line = _finalized_line(env, env["part"], "10")
+        decoy = create_stock_lot(decoy_line, env["cells"][2], Decimal("2"))
+        StockReturnLine.objects.filter(pk=return_line.pk).update(returned_lot=decoy)
+    else:
+        duplicate = StockReturnLine.objects.get(pk=return_line.pk)
+        duplicate.pk = None
+        duplicate.save()
+    expected = UNKNOWN
 
     assert _cls(line, target)[0] == expected
     assert remaining_qty(line) == Decimal("0")

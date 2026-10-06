@@ -7,6 +7,7 @@ every evidence case, and must name exactly the lots the classifier names.
 """
 import re
 from collections import Counter
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -38,6 +39,7 @@ from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sal
 from apps.warehouse.models import StorageLocation
 from tests.test_lot_provenance_adversarial import (  # noqa: F401
     _age,
+    _corrupt_lot_for_adversarial_test,
     _flip,
     _old_backfill_receipt,
     _transfer,
@@ -56,15 +58,23 @@ pytestmark = [
 SQL = Path(settings.BASE_DIR) / "docs" / "audits" / "lot-provenance-readonly.sql"
 
 
-def _queries():
-    parts = re.split(r"^-- name: (\w+)\n", SQL.read_text(encoding="utf-8"), flags=re.M)
+def _queries(*, pre_origin_schema=False):
+    text = SQL.read_text(encoding="utf-8")
+    if pre_origin_schema:
+        # Exercise the legacy evidence path as if 0016/0017 columns were absent.
+        text = text.replace(
+            "nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint", "NULL::bigint"
+        ).replace(
+            "nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint", "NULL::bigint"
+        )
+    parts = re.split(r"^-- name: (\w+)\n", text, flags=re.M)
     return dict(zip(parts[1::2], parts[2::2], strict=True))
 
 
-def _run(name):
+def _run(name, *, pre_origin_schema=False):
     with transaction.atomic(), connection.cursor() as cursor:
         cursor.execute("SET TRANSACTION READ ONLY")
-        cursor.execute(_queries()[name])
+        cursor.execute(_queries(pre_origin_schema=pre_origin_schema)[name])
         columns = [c.name for c in cursor.description]
         return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
@@ -169,6 +179,33 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     returned_lot = ret.lines.get().returned_lot
     assert returned_lot.origin_return_line_id == ret.lines.get().pk
 
+    # A detectable contradiction in historical return evidence must be
+    # UNKNOWN in Python and absent from the operational positive-evidence SQL.
+    damaged_line = _finalized_line(env, env["part"], "4")
+    damaged_source = receive_stock_lot(
+        create_stock_lot(damaged_line, cells[5], Decimal("4"))
+    )
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, damaged_source, Decimal("1"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    damaged_return = create_return(
+        source=Sale.objects.get(pk=sale.pk), reason="Damaged historical return", by=env["admin"]
+    )
+    damaged_return_line = add_sale_line_return(
+        damaged_return, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=cells[4], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(damaged_return, by=env["admin"])
+    damaged_target = damaged_return.lines.get().returned_lot
+    _corrupt_lot_for_adversarial_test(damaged_target, origin_return_line=None)
+    type(damaged_return_line).objects.filter(pk=damaged_return_line.pk).update(
+        quantity=Decimal("0.5")
+    )
+    assert next(
+        item.provenance for item in line_provenance_detail(damaged_line).lots
+        if item.lot_id == damaged_target.pk
+    ) == UNKNOWN
+
     # Existing primary and legacy lots receive later returns. Their origin is
     # unchanged and neither may appear in return-origin SQL.
     reused_primary_line = _finalized_line(env, env["part"], "5")
@@ -204,6 +241,49 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     )
     complete_return(reused_ret, by=env["admin"])
 
+    # A transfer-origin lot later receives a customer return into that same
+    # lot. The return is a later flow and must not change the lot's origin.
+    transfer_return_line = _finalized_line(env, env["part"], "5")
+    address_index = 1
+    while any(
+        StorageLocation.objects.filter(code=f"S99-D99-C{address_index + offset:02d}").exists()
+        for offset in (0, 1)
+    ):
+        address_index += 2
+    isolated_source = StorageLocation.objects.create(
+        name="Transfer return source", code=f"S99-D99-C{address_index:02d}",
+        storage_allowed=True, is_active=True,
+    )
+    isolated_target = StorageLocation.objects.create(
+        name="Transfer return target", code=f"S99-D99-C{address_index + 1:02d}",
+        storage_allowed=True, is_active=True,
+    )
+    transfer_source = receive_stock_lot(
+        create_stock_lot(transfer_return_line, isolated_source, Decimal("5"))
+    )
+    _transfer(env, "5", isolated_source, isolated_target, "sql-transfer-later-return")
+    transfer_target = StockLot.objects.get(
+        batch_line=transfer_return_line, location=isolated_target
+    )
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, transfer_target, Decimal("1"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    transfer_return = create_return(
+        source=Sale.objects.get(pk=sale.pk), reason="Transfer later return", by=env["admin"]
+    )
+    add_sale_line_return(
+        transfer_return, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=isolated_target, restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(transfer_return, by=env["admin"])
+    transfer_target.refresh_from_db()
+    assert transfer_target.origin_transfer_id is not None
+    assert transfer_target.origin_return_line_id is None
+    assert next(
+        item.provenance for item in line_provenance_detail(transfer_return_line).lots
+        if item.lot_id == transfer_source.pk
+    ) == PRIMARY_RECEIPT
+
     # A pending supplier lot near a same-part transfer is not transfer evidence.
     pending_line = _finalized_line(env, env["part"], "5")
     pending = create_stock_lot(pending_line, cells[1], Decimal("2"))
@@ -217,7 +297,7 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     for lot in classified:
         by_class.setdefault(lot.provenance, set()).add(lot.lot_id)
     assert by_class[TRANSFER_DERIVED] == {
-        target.pk, moved.pk, broken_target.pk,
+        target.pk, moved.pk, broken_target.pk, transfer_target.pk,
     }
     assert by_class[RETURN_DERIVED] == {returned_lot.pk}
     assert next(
@@ -235,7 +315,11 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     ) == UNKNOWN
 
     assert {row["lot_id"] for row in _run("transfer_evidence")} == by_class[TRANSFER_DERIVED]
-    assert {row["lot_id"] for row in _run("return_origin_evidence")} == by_class[RETURN_DERIVED]
+    for pre_origin_schema in (False, True):
+        assert {
+            row["lot_id"]
+            for row in _run("return_origin_evidence", pre_origin_schema=pre_origin_schema)
+        } == by_class[RETURN_DERIVED] == {returned_lot.pk}
     assert {row["lot_id"] for row in _run("reassigned_receipts")} == by_class[REASSIGNED]
     backfill = _run("old_backfill_receipts")
     assert [(row["lot_id"], row["lot_also_has_real_receipt"]) for row in backfill] == [
@@ -251,3 +335,46 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     assert no_movement[True] == StockLot.objects.exclude(
         pk__in=StockMovement.objects.filter(stock_lot__isnull=False).values("stock_lot")
     ).count()
+
+
+@pytest.mark.parametrize("draft_delay_seconds", [0, 10, 600, 30 * 24 * 60 * 60])
+def test_delayed_historical_return_python_sql_parity(  # noqa: F811
+    units, env, draft_delay_seconds  # noqa: F811
+):
+    from django.utils import timezone
+
+    line = _finalized_line(env, env["part"], "10")
+    source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, source, Decimal("2"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    ret = create_return(
+        source=Sale.objects.get(pk=sale.pk),
+        reason="Отложенный возврат",
+        by=env["admin"],
+    )
+    return_line = add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("2"),
+        to_location=env["cells"][1], restock_status=StockLot.Status.AVAILABLE,
+    )
+    if draft_delay_seconds:
+        type(return_line).objects.filter(pk=return_line.pk).update(
+            created_at=timezone.now() - timedelta(seconds=draft_delay_seconds)
+        )
+    complete_return(ret, by=env["admin"])
+    returned = ret.lines.get().returned_lot
+    # Model a pre-0017 historical lot while retaining the delayed draft evidence.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"UPDATE {connection.ops.quote_name(StockLot._meta.db_table)} "
+            f"SET {connection.ops.quote_name('origin_return_line_id')} = NULL WHERE id = %s",
+            [returned.pk],
+        )
+
+    classified = next(
+        row for row in line_provenance_detail(line).lots if row.lot_id == returned.pk
+    )
+    assert classified.provenance == RETURN_DERIVED
+    for pre_origin_schema in (False, True):
+        evidence = _run("return_origin_evidence", pre_origin_schema=pre_origin_schema)
+        assert {row["lot_id"] for row in evidence} == {returned.pk}

@@ -236,7 +236,10 @@ def _return_origin_matches(lot, row, own, *, explicit):
         )
     ]
     if explicit:
-        return bool(matching)
+        # The immutable origin FK is set only when this return creates the lot.
+        # Validate its exact ledger/document match, but do not re-infer identity
+        # from mutable timestamps.
+        return len(matching) == 1
     return bool(
         len(matching) == 1
         and own
@@ -251,38 +254,58 @@ def _return_origin_state(lot, rows, own):
     if explicit_id:
         row = next((item for item in rows if item.pk == explicit_id), None)
         return bool(row and _return_origin_matches(lot, row, own, explicit=True))
-    creation_time_rows = [
+    # A return line is created with the draft, often minutes or days before the
+    # physical stock is posted. Its created_at therefore says nothing about lot
+    # origin. Use the document's completion time and the first lot movement as
+    # event evidence instead.
+    first = own[0] if own else None
+    first_is_creation_time = bool(
+        first and _same_transaction(first.created_at, lot.created_at)
+    )
+    first_return_movement = bool(
+        first_is_creation_time
+        and first.movement_type == M.RETURN_LOT
+        and first.document_type == "stock_return"
+    )
+    associated_rows = [
         row for row in rows
         if row.returned_lot_id == lot.pk
-        and _same_transaction(row.created_at, lot.created_at)
+        or (
+            first_return_movement
+            and first.document_id is not None
+            and row.stock_return_id == first.document_id
+        )
     ]
+    completion_rows = [
+        row for row in associated_rows
+        if row.stock_return.completed_at is not None
+        and _same_transaction(row.stock_return.completed_at, lot.created_at)
+    ]
+    has_creation_evidence = first_is_creation_time and (
+        first.movement_type == M.RETURN_LOT
+        or first.document_type == "stock_return"
+    )
+    if not has_creation_evidence and not completion_rows:
+        # A return into a pre-existing lot is later stock flow, even if it is
+        # the first movement still present on that lot.
+        return False
+
+    candidate_rows = {row.pk: row for row in [*associated_rows, *completion_rows]}
     candidates = [
-        row for row in creation_time_rows
+        row for row in candidate_rows.values()
         if _return_origin_matches(lot, row, own, explicit=False)
     ]
     if len(candidates) == 1:
         return True
-    if not rows:
-        original_location = _location_timeline(lot, own)[0][1]
-        movement_only = [
-            movement for movement in own
-            if movement.movement_type == M.RETURN_LOT
-            and movement.document_type == "stock_return"
-            and movement.document_id is not None
-            and movement.batch_id == lot.batch_id
-            and movement.batch_line_id == lot.batch_line_id
-            and movement.part_type_id == lot.part_type_id
-            and movement.to_location_id == original_location
-            and movement.quantity == lot.initial_quantity
-            and own
-            and own[0].pk == movement.pk
-            and _same_transaction(movement.created_at, lot.created_at)
-        ]
-        if len(movement_only) == 1:
-            return True
-    if creation_time_rows:
+    if candidates or candidate_rows:
+        # A surviving document/line that contradicts the first stock event is
+        # evidence of damage, not permission to fall back to supplier intake.
         return None
-    return False
+
+    # The movement alone cannot prove that its return document completed or
+    # that the exact return line targeted this lot. Missing document/line
+    # evidence therefore fails closed instead of reconstructing a relationship.
+    return None
 
 
 def is_receipt_evidence(movement) -> bool:
@@ -700,12 +723,40 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
     from apps.returns.models import StockReturnLine
 
     return_rows_by_lot = {}
+    return_docs_by_lot = {
+        lot_id: {
+            movement.document_id
+            for movement in own.get(lot_id, [])
+            if movement.document_type == "stock_return" and movement.document_id is not None
+        }
+        for lot_id in lot_ids
+    }
+    return_line_ids = {
+        lot.origin_return_line_id for lot in lots if lot.origin_return_line_id
+    }
+    origin_return_by_lot = {
+        lot.pk: lot.origin_return_line_id for lot in lots if lot.origin_return_line_id
+    }
+    return_doc_ids = {
+        document_id for document_ids in return_docs_by_lot.values()
+        for document_id in document_ids
+    }
     for return_line in (
-        StockReturnLine.objects.filter(returned_lot_id__in=lot_ids)
+        StockReturnLine.objects.filter(
+            Q(returned_lot_id__in=lot_ids)
+            | Q(stock_return_id__in=return_doc_ids)
+            | Q(pk__in=return_line_ids)
+        )
         .select_related("stock_return")
         .order_by("pk")
     ):
-        return_rows_by_lot.setdefault(return_line.returned_lot_id, []).append(return_line)
+        for lot_id in lot_ids:
+            if (
+                return_line.returned_lot_id == lot_id
+                or return_line.stock_return_id in return_docs_by_lot[lot_id]
+                or return_line.pk == origin_return_by_lot.get(lot_id)
+            ):
+                return_rows_by_lot.setdefault(lot_id, []).append(return_line)
     line_counts = BatchLine.objects.filter(
         batch_id__in={lot.batch_id for lot in lots},
         part_type_id__in={lot.part_type_id for lot in lots},
