@@ -188,6 +188,7 @@ WHERE rl.batch_id = c.batch_id
       OR (
           first_m.id = m.id
           AND abs(extract(epoch FROM (m.created_at - c.created_at))) <= 1
+          AND abs(extract(epoch FROM (r.completed_at - c.created_at))) <= 1
       )
   )
 GROUP BY c.lot_id, rl.id

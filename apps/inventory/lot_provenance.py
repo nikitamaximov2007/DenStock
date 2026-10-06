@@ -245,6 +245,7 @@ def _return_origin_matches(lot, row, own, *, explicit):
         and own
         and own[0].pk == matching[0].pk
         and _same_transaction(matching[0].created_at, lot.created_at)
+        and _same_transaction(ret.completed_at, lot.created_at)
     )
 
 

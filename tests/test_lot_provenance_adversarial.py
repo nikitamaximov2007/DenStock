@@ -754,7 +754,8 @@ def test_two_same_part_lines_in_one_batch_keep_exact_transfer_provenance(env):
     [
         "missing_move", "retyped_move", "document_link_cleared", "missing_document",
         "wrong_batch_line", "wrong_part", "wrong_cell", "wrong_quantity",
-        "draft_return", "returned_lot_changed", "multiple_returns",
+        "draft_return", "completion_time_cleared", "returned_lot_changed",
+        "multiple_returns",
     ],
 )
 @pytest.mark.parametrize("draft_delay_seconds", [0, 600])
@@ -815,6 +816,8 @@ def test_damaged_return_evidence_never_upgrades_target_to_legacy(
         StockReturn.objects.filter(pk=stock_return.pk).update(
             status=StockReturn.Status.DRAFT, completed_at=None,
         )
+    elif damage == "completion_time_cleared":
+        StockReturn.objects.filter(pk=stock_return.pk).update(completed_at=None)
     elif damage == "returned_lot_changed":
         decoy_line = _finalized_line(env, env["part"], "10")
         decoy = create_stock_lot(decoy_line, env["cells"][2], Decimal("2"))
