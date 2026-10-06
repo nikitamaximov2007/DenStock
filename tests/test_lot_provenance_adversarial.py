@@ -116,6 +116,7 @@ def _corrupt_lot_for_adversarial_test(lot, **fields):
     columns = {
         "origin_transfer": "origin_transfer_id",
         "origin_return_line": "origin_return_line_id",
+        "creation_origin": "creation_origin",
         "note": "note",
     }
     if not fields or set(fields) - columns.keys():
@@ -128,6 +129,19 @@ def _corrupt_lot_for_adversarial_test(lot, **fields):
             f"UPDATE {connection.ops.quote_name(StockLot._meta.db_table)} "
             f"SET {assignments} WHERE id = %s",
             [*fields.values(), lot.pk],
+        )
+
+
+def _erase_return_document_for_adversarial_test(stock_return):
+    """Model deletion is guarded; only this direct SQL models erased old history."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"DELETE FROM {connection.ops.quote_name(StockReturnLine._meta.db_table)} "
+            "WHERE stock_return_id = %s", [stock_return.pk],
+        )
+        cursor.execute(
+            f"DELETE FROM {connection.ops.quote_name(StockReturn._meta.db_table)} "
+            "WHERE id = %s", [stock_return.pk],
         )
 
 
@@ -257,7 +271,9 @@ def test_historical_return_origin_requires_linked_first_exact_movement(env):
     )
     complete_return(ret, by=env["admin"])
     returned = ret.lines.get().returned_lot
-    _corrupt_lot_for_adversarial_test(returned, origin_return_line=None)
+    _corrupt_lot_for_adversarial_test(
+        returned, origin_return_line=None, creation_origin=None
+    )
 
     assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
 
@@ -281,7 +297,9 @@ def test_historical_return_origin_uses_completion_event_not_draft_line_time(
 
     complete_return(ret, by=env["admin"])
     returned = StockReturnLine.objects.get(pk=return_line.pk).returned_lot
-    _corrupt_lot_for_adversarial_test(returned, origin_return_line=None)
+    _corrupt_lot_for_adversarial_test(
+        returned, origin_return_line=None, creation_origin=None
+    )
 
     assert _cls(line, returned) == (RETURN_DERIVED, Decimal("0"))
 
@@ -324,7 +342,7 @@ def test_completed_transfer_record_cannot_be_deleted_without_origin_fk(env):
     receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
     transfer = _transfer(env, "1", env["cells"][0], env["cells"][1], "round4-delete")
     target = _lot_at(line, env["cells"][1])
-    _corrupt_lot_for_adversarial_test(target, origin_transfer=None)
+    _corrupt_lot_for_adversarial_test(target, origin_transfer=None, creation_origin=None)
     with pytest.raises(ProtectedError):
         transfer.delete()
     with pytest.raises(ProtectedError):
@@ -674,11 +692,11 @@ def test_damaged_transfer_evidence_never_upgrades_target_to_legacy(env, damage):
             document_type="",
             document_id=None,
         )
-        _corrupt_lot_for_adversarial_test(target, origin_transfer=None)
+        _corrupt_lot_for_adversarial_test(target, origin_transfer=None, creation_origin=None)
         StockTransfer.objects.filter(pk=transfer.pk)._raw_delete(using="default")
     else:
         StockMovement.objects.filter(pk=move.pk).delete()
-        _corrupt_lot_for_adversarial_test(target, origin_transfer=None)
+        _corrupt_lot_for_adversarial_test(target, origin_transfer=None, creation_origin=None)
         StockTransfer.objects.filter(pk=transfer.pk)._raw_delete(using="default")
 
     expected = TRANSFER_DERIVED if damage in {"target_clock", "document_clock"} else UNKNOWN
@@ -699,7 +717,9 @@ def test_historical_unlinked_transfer_outside_clock_window_fails_closed(env):
     # Simulate a historical row without the new direct FK and a damaged clock
     # ordering that would make the old initial-quantity reconstruction look
     # like a supplier lot. The transfer-shaped movement must block that fallback.
-    _corrupt_lot_for_adversarial_test(target, origin_transfer=None, note="")
+    _corrupt_lot_for_adversarial_test(
+        target, origin_transfer=None, creation_origin=None, note=""
+    )
     StockTransfer.objects.filter(pk=transfer.pk).update(
         created_at=target.created_at + timedelta(seconds=3)
     )
@@ -783,7 +803,7 @@ def test_damaged_return_evidence_never_upgrades_target_to_legacy(
     movement = StockMovement.objects.get(
         stock_lot=target, movement_type=StockMovement.MovementType.RETURN_LOT
     )
-    _corrupt_lot_for_adversarial_test(target, origin_return_line=None)
+    _corrupt_lot_for_adversarial_test(target, origin_return_line=None, creation_origin=None)
 
     if damage == "missing_move":
         StockMovement.objects.filter(pk=movement.pk).delete()
@@ -796,7 +816,7 @@ def test_damaged_return_evidence_never_upgrades_target_to_legacy(
             document_id=None,
         )
     elif damage == "missing_document":
-        StockReturn.objects.filter(pk=stock_return.pk).delete()
+        _erase_return_document_for_adversarial_test(stock_return)
     elif damage == "wrong_batch_line":
         other_line = _finalized_line(env, env["part"], "10")
         StockReturnLine.objects.filter(pk=return_line.pk).update(

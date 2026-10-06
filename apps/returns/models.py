@@ -1,7 +1,28 @@
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
+from django.db.models.deletion import ProtectedError
 
-from apps.inventory.models import NumberSequence
+from apps.inventory.models import NumberSequence, StockMovement
+
+
+def _posted_return_document_ids(using):
+    return StockMovement.objects.using(using).filter(
+        document_type="stock_return", document_id__isnull=False
+    ).values("document_id")
+
+
+class StockReturnQuerySet(models.QuerySet):
+    def delete(self):
+        with transaction.atomic(using=self.db):
+            # Posting locks the parent document first. Hold that same lock
+            # through the protection check and deletion.
+            list(self.order_by("pk").select_for_update().values_list("pk", flat=True))
+            protected = models.Q(status__in=("completed", "canceled")) | models.Q(
+                pk__in=_posted_return_document_ids(self.db)
+            )
+            if self.filter(protected).exists():
+                raise ProtectedError("Историю проведённого возврата нельзя удалять.", list(self))
+            return super().delete()
 
 
 class StockReturn(models.Model):
@@ -68,6 +89,8 @@ class StockReturn(models.Model):
     )
     cancel_reason = models.CharField("Причина отмены", max_length=255, blank=True)
 
+    objects = StockReturnQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Возврат на склад"
         verbose_name_plural = "Возвраты на склад"
@@ -80,6 +103,31 @@ class StockReturn(models.Model):
         if not self.number:
             self.number = NumberSequence.next("stock_return")
         super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        using = kwargs.get("using") or self._state.db
+        deleted = type(self).objects.using(using).filter(pk=self.pk).delete()
+        if deleted[0]:
+            self.pk = None
+        return deleted
+
+
+class StockReturnLineQuerySet(models.QuerySet):
+    def delete(self):
+        with transaction.atomic(using=self.db):
+            parent_ids = self.values_list("stock_return_id", flat=True).distinct()
+            list(
+                StockReturn.objects.using(self.db).filter(pk__in=parent_ids)
+                .order_by("pk").select_for_update().values_list("pk", flat=True)
+            )
+            list(self.order_by("pk").select_for_update().values_list("pk", flat=True))
+            protected = models.Q(stock_return__status__in=("completed", "canceled"))
+            protected |= models.Q(
+                stock_return_id__in=_posted_return_document_ids(self.db)
+            )
+            if self.filter(protected).exists():
+                raise ProtectedError("Строку проведённого возврата нельзя удалять.", list(self))
+            return super().delete()
 
 
 class StockReturnLine(models.Model):
@@ -146,6 +194,8 @@ class StockReturnLine(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = StockReturnLineQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Позиция возврата"
         verbose_name_plural = "Позиции возврата"
@@ -175,3 +225,10 @@ class StockReturnLine(models.Model):
     def __str__(self) -> str:
         target = self.part_item or self.stock_lot
         return f"{self.part_type} × {self.quantity} → {self.to_location} ({target})"
+
+    def delete(self, *args, **kwargs):
+        using = kwargs.get("using") or self._state.db
+        deleted = type(self).objects.using(using).filter(pk=self.pk).delete()
+        if deleted[0]:
+            self.pk = None
+        return deleted

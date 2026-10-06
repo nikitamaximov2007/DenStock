@@ -646,7 +646,7 @@ def test_repair_return_migrations_preserve_legacy_quarantine_draft(data):
                     "0004_stockreturn_cancel_reason_stockreturn_canceled_at_and_more",
                     ),
                     ("actions", "0008_warehouseaction_request_token"),
-                    ("inventory", "0017_stocklot_origin_return_line"),
+                    ("inventory", "0018_stocklot_creation_origin"),
                 ]
             )
         ret = StockReturn.objects.get(pk=ret_id)

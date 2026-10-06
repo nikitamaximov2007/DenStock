@@ -204,7 +204,43 @@ def _transfer_is_consistent(
     return True
 
 
-def _return_origin_matches(lot, row, own, *, explicit):
+def _return_document_consistent(rows, movements, return_id):
+    """Every posted row of this document must have one matching journal row."""
+    lines = [line for line in rows if line.stock_return_id == return_id]
+    if not lines or len(lines) != len(movements):
+        return False
+    matched = set()
+    for movement in movements:
+        if movement.movement_type == M.RETURN_LOT:
+            candidates = [
+                line for line in lines
+                if line.returned_lot_id == movement.stock_lot_id
+                and movement.stock_lot_id is not None
+                and line.part_item_id is None
+            ]
+        elif movement.movement_type == M.RETURN_ITEM:
+            candidates = [
+                line for line in lines
+                if line.part_item_id == movement.part_item_id
+                and movement.part_item_id is not None
+            ]
+        else:
+            return False
+        candidates = [
+            line for line in candidates
+            if line.batch_id == movement.batch_id
+            and line.batch_line_id == movement.batch_line_id
+            and line.part_type_id == movement.part_type_id
+            and line.to_location_id == movement.to_location_id
+            and line.quantity == movement.quantity
+        ]
+        if len(candidates) != 1 or candidates[0].pk in matched:
+            return False
+        matched.add(candidates[0].pk)
+    return len(matched) == len(lines)
+
+
+def _return_origin_matches(lot, row, own, rows, doc_movements, *, explicit):
     """Validate a return as the lot's creation event, not merely later inflow."""
     original_location = _location_timeline(lot, own)[0][1]
     ret = row.stock_return
@@ -235,11 +271,19 @@ def _return_origin_matches(lot, row, own, *, explicit):
             and movement.quantity == row.quantity
         )
     ]
+    same_lot_lines = [
+        candidate for candidate in rows
+        if candidate.stock_return_id == ret.pk and candidate.returned_lot_id == lot.pk
+    ]
+    if (
+        len(linked) != 1 or len(same_lot_lines) != 1
+        or not _return_document_consistent(rows, doc_movements.get(ret.pk, []), ret.pk)
+    ):
+        return False
     if explicit:
-        # The immutable origin FK is set only when this return creates the lot.
-        # Validate its exact ledger/document match, but do not re-infer identity
-        # from mutable timestamps.
-        return len(matching) == 1
+        # The creation marker is independent of this FK. The first ledger row
+        # must also be the exact return, never a later replenishment of the lot.
+        return bool(len(matching) == 1 and own and own[0].pk == matching[0].pk)
     return bool(
         len(matching) == 1
         and own
@@ -249,12 +293,14 @@ def _return_origin_matches(lot, row, own, *, explicit):
     )
 
 
-def _return_origin_state(lot, rows, own):
+def _return_origin_state(lot, rows, own, doc_movements):
     """Return True for proven creation, False for no origin evidence, None if damaged."""
     explicit_id = getattr(lot, "origin_return_line_id", None)
     if explicit_id:
         row = next((item for item in rows if item.pk == explicit_id), None)
-        return bool(row and _return_origin_matches(lot, row, own, explicit=True))
+        return bool(row and _return_origin_matches(
+            lot, row, own, rows, doc_movements, explicit=True
+        ))
     # A return line is created with the draft, often minutes or days before the
     # physical stock is posted. Its created_at therefore says nothing about lot
     # origin. Use the document's completion time and the first lot movement as
@@ -294,7 +340,7 @@ def _return_origin_state(lot, rows, own):
     candidate_rows = {row.pk: row for row in [*associated_rows, *completion_rows]}
     candidates = [
         row for row in candidate_rows.values()
-        if _return_origin_matches(lot, row, own, explicit=False)
+        if _return_origin_matches(lot, row, own, rows, doc_movements, explicit=False)
     ]
     if len(candidates) == 1:
         return True
@@ -319,6 +365,7 @@ def classify_lot(
     lot, own, line_movements, transfers, nearby_moves, nearby_transfers,
     transfer_movements, legacy_line_keys, return_rows=(),
     conflicting_source_lots=frozenset(), unanchored_transfer_lots=frozenset(),
+    return_doc_movements=None,
 ) -> LotProvenance:
     """Classify one lot on its current line.
 
@@ -331,8 +378,74 @@ def classify_lot(
     def result(provenance, intake, evidence):
         return LotProvenance(lot.pk, lot.batch_line_id, lot.status, provenance, intake, evidence)
 
+    marker = lot.creation_origin
+    if lot.origin_transfer_id and lot.origin_return_line_id:
+        return result(UNKNOWN, None, "два несовместимых явных источника лота")
+    if lot.origin_transfer_id and marker != StockLot.CreationOrigin.TRANSFER:
+        return result(UNKNOWN, None, "перемещение не является путём создания лота")
+    if lot.origin_return_line_id and marker != StockLot.CreationOrigin.RETURN:
+        return result(UNKNOWN, None, "возврат не является путём создания лота")
+    if marker == StockLot.CreationOrigin.TRANSFER and not lot.origin_transfer_id:
+        return result(UNKNOWN, None, "ссылка на создавшее перемещение отсутствует")
+    if marker == StockLot.CreationOrigin.RETURN and not lot.origin_return_line_id:
+        return result(UNKNOWN, None, "ссылка на создавший возврат отсутствует")
+
+    # Validate claimed derived origins before considering any supplier receipt.
+    if lot.origin_transfer_id or lot.origin_return_line_id:
+        if lot.origin_transfer_id:
+            transfer_id = lot.origin_transfer_id
+            note_transfer_id = _transfer_note_id(lot)
+            transfer = transfers.get(transfer_id)
+            rows = transfer_movements.get(transfer_id, [])
+            original_location = _location_timeline(lot, own)[0][1]
+            if (
+                (note_transfer_id is None or note_transfer_id == transfer_id)
+                and not any(is_receipt_evidence(m) for m in own)
+                and _transfer_is_consistent(
+                    lot, transfer, rows, original_location, conflicting_source_lots
+                )
+            ):
+                return result(TRANSFER_DERIVED, Decimal("0"), f"перемещение #{transfer_id}")
+            return result(UNKNOWN, None, "связь лота с перемещением повреждена")
+        if not any(is_receipt_evidence(m) for m in own):
+            if _return_origin_state(
+                lot, return_rows, own, return_doc_movements or {}
+            ) is True:
+                return result(RETURN_DERIVED, Decimal("0"), "строка возврата создала лот")
+        return result(UNKNOWN, None, "связь лота с возвратом повреждена")
+
+    return_origin = _return_origin_state(lot, return_rows, own, return_doc_movements or {})
     receipts = [m for m in own if is_receipt_evidence(m)]
+    if (
+        marker != StockLot.CreationOrigin.SUPPLIER_RECEIVED
+        and (return_origin is None or (return_origin is True and receipts))
+    ):
+        return result(UNKNOWN, None, "свидетельство возврата противоречит приёмке")
+    if return_origin is True:
+        return result(RETURN_DERIVED, Decimal("0"), "строка возврата создала лот")
     if receipts:
+        first = next((m for m in own if not (
+            m.movement_type == M.RECEIVE_LOT
+            and m.comment == OLD_BACKFILL_COMMENT and not m.document_type
+        )), None)
+        valid_receipt = (
+            marker in (None, StockLot.CreationOrigin.SUPPLIER_RECEIVED)
+            and not _has_transfer_note(lot)
+            and lot.pk not in unanchored_transfer_lots
+            and len(receipts) == 1
+            and first is not None and first.pk == receipts[0].pk
+            and receipts[0].document_type == "" and receipts[0].document_id is None
+            and receipts[0].batch_id == lot.batch_id
+            and receipts[0].part_type_id == lot.part_type_id
+            and receipts[0].batch_line_id is not None
+            and receipts[0].batch_line.batch_id == receipts[0].batch_id
+            and receipts[0].batch_line.part_type_id == receipts[0].part_type_id
+            and receipts[0].to_location_id == _location_timeline(lot, own)[0][1]
+            and receipts[0].quantity == lot.initial_quantity
+            and lot.initial_quantity > 0
+        )
+        if not valid_receipt:
+            return result(UNKNOWN, None, "движение приёмки не доказывает источник лота")
         here = [m for m in receipts if m.batch_line_id == lot.batch_line_id]
         if not here:
             lines = sorted({m.batch_line_id for m in receipts})
@@ -371,11 +484,6 @@ def classify_lot(
             return result(TRANSFER_DERIVED, Decimal("0"), f"перемещение #{transfer_id}")
         return result(UNKNOWN, None, "связь лота с документом перемещения повреждена")
 
-    return_origin = _return_origin_state(lot, return_rows, own)
-    if return_origin is True:
-        return result(RETURN_DERIVED, Decimal("0"), "строка возврата создала лот")
-    if return_origin is None or getattr(lot, "origin_return_line_id", None):
-        return result(UNKNOWN, None, "свидетельство происхождения возврата повреждено")
     old_backfill = any(
         movement.movement_type == M.RECEIVE_LOT
         and movement.comment == OLD_BACKFILL_COMMENT
@@ -454,6 +562,8 @@ def classify_lot(
     if old_backfill:
         return result(UNKNOWN, None, "открывающая запись журнала не доказывает приёмку")
     if lot.initial_quantity > 0:
+        if marker != StockLot.CreationOrigin.SUPPLIER_PENDING:
+            return result(UNKNOWN, None, "нет подтверждения первоначальной приёмки")
         timeline = _location_timeline(lot, own)
         if (
             lot.batch_id != lot.batch_line.batch_id
@@ -503,11 +613,13 @@ def _read_line(line, exclude_lot):
     )
     lot_ids = [lot.pk for lot in lots]
     movements = list(
-        StockMovement.objects.filter(batch_line=line).order_by("created_at", "pk")
+        StockMovement.objects.filter(batch_line=line)
+        .select_related("batch_line").order_by("created_at", "pk")
     )
     foreign = list(
         StockMovement.objects.filter(stock_lot_id__in=lot_ids)
         .exclude(batch_line=line)
+        .select_related("batch_line")
         .order_by("created_at", "pk")
     )
     return lots, movements, foreign
@@ -525,7 +637,7 @@ def _lot_signature(lot):
     return (
         lot.pk, lot.batch_id, lot.batch_line_id, lot.part_type_id, lot.location_id,
         lot.quantity, lot.initial_quantity, lot.status, lot.created_at,
-        lot.origin_transfer_id, lot.origin_return_line_id,
+        lot.origin_transfer_id, lot.origin_return_line_id, lot.creation_origin,
     )
 
 
@@ -634,7 +746,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
             lot_query.order_by("pk").values_list(
                 "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
                 "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
-                "origin_return_line_id",
+                "origin_return_line_id", "creation_origin",
             )
         )
         line_movement_query = StockMovement.objects.filter(batch_line=line)
@@ -647,7 +759,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
             lot_query.order_by("pk").values_list(
                 "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
                 "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
-                "origin_return_line_id",
+                "origin_return_line_id", "creation_origin",
             )
         )
         after = _movement_snapshot(line_movement_query)
@@ -742,7 +854,11 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         document_id for document_ids in return_docs_by_lot.values()
         for document_id in document_ids
     }
-    for return_line in (
+    return_doc_ids.update(
+        StockReturnLine.objects.filter(pk__in=return_line_ids)
+        .values_list("stock_return_id", flat=True)
+    )
+    return_lines = list(
         StockReturnLine.objects.filter(
             Q(returned_lot_id__in=lot_ids)
             | Q(stock_return_id__in=return_doc_ids)
@@ -750,7 +866,17 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
         )
         .select_related("stock_return")
         .order_by("pk")
-    ):
+    )
+    return_doc_ids.update(line.stock_return_id for line in return_lines)
+    return_movements = list(
+        StockMovement.objects.filter(
+            document_type="stock_return", document_id__in=return_doc_ids
+        ).order_by("created_at", "pk")
+    )
+    return_doc_movements = {}
+    for movement in return_movements:
+        return_doc_movements.setdefault(movement.document_id, []).append(movement)
+    for return_line in return_lines:
         for lot_id in lot_ids:
             if (
                 return_line.returned_lot_id == lot_id
@@ -758,6 +884,47 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
                 or return_line.pk == origin_return_by_lot.get(lot_id)
             ):
                 return_rows_by_lot.setdefault(lot_id, []).append(return_line)
+    return_movement_query = StockMovement.objects.filter(
+        document_type="stock_return", document_id__in=return_doc_ids
+    )
+    return_line_query = StockReturnLine.objects.filter(
+        Q(returned_lot_id__in=lot_ids)
+        | Q(stock_return_id__in=return_doc_ids)
+        | Q(pk__in=return_line_ids)
+    )
+
+    def return_line_signature(row):
+        return (
+            row.pk, row.stock_return_id, row.returned_lot_id, row.part_item_id,
+            row.batch_id, row.batch_line_id, row.part_type_id, row.to_location_id,
+            row.quantity, row.stock_return.status, row.stock_return.completed_at,
+        )
+
+    if (
+        lots_after != list(
+            lot_query.order_by("pk").values_list(
+                "pk", "batch_id", "batch_line_id", "part_type_id", "location_id",
+                "quantity", "initial_quantity", "status", "created_at", "origin_transfer_id",
+                "origin_return_line_id", "creation_origin",
+            )
+        )
+        or after != _movement_snapshot(line_movement_query)
+        or sorted(_movement_signature(row) for row in return_movements)
+        != _movement_snapshot(return_movement_query)
+        or sorted(return_line_signature(row) for row in return_lines)
+        != sorted(
+            return_line_signature(row)
+            for row in return_line_query.select_related("stock_return")
+        )
+    ):
+        return LineProvenance(
+            [
+                LotProvenance(lot.pk, lot.batch_line_id, lot.status, UNKNOWN, None,
+                              "документ возврата изменился во время проверки")
+                for lot in lots
+            ],
+            Decimal("0"), True,
+        )
     line_counts = BatchLine.objects.filter(
         batch_id__in={lot.batch_id for lot in lots},
         part_type_id__in={lot.part_type_id for lot in lots},
@@ -795,7 +962,7 @@ def line_provenance_detail(line, *, exclude_lot=None, attempts=3) -> LineProvena
             lot, own.get(lot.pk, []), movements, transfers, nearby_moves,
             nearby_transfers,
             transfer_movements, legacy_line_keys, return_rows_by_lot.get(lot.pk, ()),
-            conflicting_source_lots, unanchored_transfer_lots,
+            conflicting_source_lots, unanchored_transfer_lots, return_doc_movements,
         )
         for lot in lots
     ]

@@ -40,6 +40,69 @@ LEFT JOIN m ON m.stock_lot_id = l.id
 GROUP BY 1, 2, 3, 4
 ORDER BY 1, 2, 3, 4;
 
+-- name: supplier_receipt_evidence
+-- Positive supplier evidence, as distinct from raw RECEIVE_LOT rows counted
+-- in lot_inventory and receipts_over_line. Reject retyped or appended rows.
+WITH first_whole_move AS (
+    SELECT DISTINCT ON (stock_lot_id) stock_lot_id, from_location_id
+    FROM inventory_stockmovement
+    WHERE movement_type = 'move_lot' AND document_type = '' AND stock_lot_id IS NOT NULL
+    ORDER BY stock_lot_id, created_at, id
+), first_real_movement AS (
+    SELECT DISTINCT ON (stock_lot_id) stock_lot_id, id
+    FROM inventory_stockmovement
+    WHERE stock_lot_id IS NOT NULL
+      AND NOT (movement_type = 'receive_lot'
+               AND comment = 'Открывающий остаток' AND document_type = '')
+    ORDER BY stock_lot_id, created_at, id
+)
+SELECT l.id AS lot_id, m.id AS movement_id, m.batch_line_id AS receipt_line_id,
+       l.batch_line_id AS current_line_id, m.quantity
+FROM inventory_stocklot l
+JOIN inventory_stockmovement m ON m.stock_lot_id = l.id
+JOIN procurement_batchline receipt_line ON receipt_line.id = m.batch_line_id
+JOIN first_real_movement first_m ON first_m.stock_lot_id = l.id AND first_m.id = m.id
+LEFT JOIN first_whole_move first_move ON first_move.stock_lot_id = l.id
+WHERE m.movement_type = 'receive_lot'
+  AND NOT (m.comment = 'Открывающий остаток' AND m.document_type = '')
+  AND m.document_type = '' AND m.document_id IS NULL
+  AND m.batch_id = l.batch_id AND m.part_type_id = l.part_type_id
+  AND receipt_line.batch_id = m.batch_id AND receipt_line.part_type_id = m.part_type_id
+  AND m.to_location_id = coalesce(first_move.from_location_id, l.location_id)
+  AND m.quantity = l.initial_quantity AND l.initial_quantity > 0
+  AND nullif(to_jsonb(l)->>'origin_transfer_id', '') IS NULL
+  AND nullif(to_jsonb(l)->>'origin_return_line_id', '') IS NULL
+  AND (nullif(to_jsonb(l)->>'creation_origin', '') IS NULL
+       OR to_jsonb(l)->>'creation_origin' = 'supplier_received')
+  AND l.note NOT LIKE 'Перемещение #%'
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement another
+      WHERE another.stock_lot_id = l.id AND another.id <> m.id
+        AND another.movement_type = 'receive_lot'
+        AND NOT (another.comment = 'Открывающий остаток' AND another.document_type = '')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement transfer_m
+      WHERE transfer_m.batch_id = l.batch_id
+        AND transfer_m.batch_line_id = l.batch_line_id
+        AND transfer_m.part_type_id = l.part_type_id
+        AND transfer_m.to_location_id = coalesce(first_move.from_location_id, l.location_id)
+        AND transfer_m.quantity = l.initial_quantity
+        AND transfer_m.movement_type = 'move_lot'
+        AND transfer_m.document_type = 'stock_transfer'
+        AND transfer_m.created_at < l.created_at
+  )
+  AND (
+      to_jsonb(l)->>'creation_origin' = 'supplier_received'
+      OR NOT EXISTS (
+          SELECT 1 FROM returns_stockreturnline return_line
+          JOIN returns_stockreturn ret ON ret.id = return_line.stock_return_id
+          WHERE return_line.returned_lot_id = l.id AND ret.completed_at IS NOT NULL
+            AND abs(extract(epoch FROM (ret.completed_at - l.created_at))) <= 1
+      )
+  )
+ORDER BY l.id;
+
 -- name: transfer_evidence
 -- Lots without receipt evidence that a stock transfer opened. The matching
 -- MOVE_LOT is journaled on its source lot, so do not require its current
@@ -55,7 +118,7 @@ WITH first_whole_move AS (
 transfer_groups AS (
     SELECT t.id AS transfer_id,
            sum(m.quantity) AS moved_quantity,
-           bool_and(
+           bool_and(coalesce((
                m.movement_type = 'move_lot'
                AND m.document_type = 'stock_transfer'
                AND m.part_type_id = t.part_type_id
@@ -66,19 +129,27 @@ transfer_groups AS (
                AND m.batch_line_id = s.batch_line_id
                AND origin_line.part_type_id = t.part_type_id
                AND origin_line.batch_id = m.batch_id
-           ) AS rows_consistent
+               AND NOT EXISTS (
+                   SELECT 1 FROM inventory_stockmovement source_history
+                   WHERE source_history.stock_lot_id = s.id
+                     AND source_history.batch_line_id IS NOT NULL
+                     AND source_history.batch_line_id <> s.batch_line_id
+               )
+           ), false)) AS rows_consistent
     FROM inventory_stocktransfer t
     JOIN inventory_stockmovement m
       ON m.document_id = t.id AND m.document_type = 'stock_transfer'
-     AND m.movement_type = 'move_lot'
-    JOIN inventory_stocklot s ON s.id = m.stock_lot_id
-    JOIN procurement_batchline origin_line ON origin_line.id = m.batch_line_id
+    LEFT JOIN inventory_stocklot s ON s.id = m.stock_lot_id
+    LEFT JOIN procurement_batchline origin_line ON origin_line.id = m.batch_line_id
     GROUP BY t.id
 ),
 candidates AS (
     SELECT l.id, l.batch_id, l.batch_line_id, l.status, l.part_type_id, l.initial_quantity,
-           l.created_at, coalesce(f.from_location_id, l.location_id) AS original_location_id,
-           nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id
+           l.created_at, l.note,
+           nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id,
+           coalesce(f.from_location_id, l.location_id) AS original_location_id,
+           nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id,
+           nullif(to_jsonb(l)->>'creation_origin', '') AS creation_origin
     FROM inventory_stocklot l
     LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
     WHERE l.status <> 'receiving'
@@ -125,6 +196,15 @@ WHERE t.part_item_id IS NULL
   AND m.from_location_id = t.from_location_id
   AND t.to_location_id = c.original_location_id
   AND (c.origin_transfer_id = t.id OR t.created_at <= c.created_at)
+  AND (c.creation_origin IS NULL OR c.creation_origin = 'transfer')
+  AND (c.creation_origin IS DISTINCT FROM 'transfer' OR c.origin_transfer_id IS NOT NULL)
+  AND (c.origin_transfer_id IS NULL OR c.creation_origin = 'transfer')
+  AND c.origin_return_line_id IS NULL
+  AND (c.origin_transfer_id IS NULL OR c.note !~ '^Перемещение #[0-9]+ из '
+       OR substring(c.note from '^Перемещение #([0-9]+) из ')::bigint = c.origin_transfer_id)
+  AND (c.origin_transfer_id IS NOT NULL OR c.note NOT LIKE 'Перемещение #%'
+       OR (c.note ~ '^Перемещение #[0-9]+ из '
+           AND substring(c.note from '^Перемещение #([0-9]+) из ')::bigint = t.id))
   AND g.moved_quantity = t.quantity
   AND g.rows_consistent
 ORDER BY c.id, m.id;
@@ -149,7 +229,9 @@ WITH first_lot_movement AS (
     SELECT l.id AS lot_id, l.batch_id, l.batch_line_id, l.part_type_id,
            coalesce(f.from_location_id, l.location_id) AS original_location_id,
            l.initial_quantity, l.created_at,
-           nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id
+           nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id,
+           nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id,
+           nullif(to_jsonb(l)->>'creation_origin', '') AS creation_origin
     FROM inventory_stocklot l
     LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
     WHERE NOT EXISTS (
@@ -183,8 +265,71 @@ WHERE rl.batch_id = c.batch_id
   AND rl.part_type_id = c.part_type_id
   AND rl.to_location_id = c.original_location_id
   AND rl.quantity = c.initial_quantity
+  AND (c.creation_origin IS NULL OR c.creation_origin = 'return')
+  AND (c.creation_origin IS DISTINCT FROM 'return' OR c.origin_return_line_id IS NOT NULL)
+  AND (c.origin_return_line_id IS NULL OR c.creation_origin = 'return')
+  AND c.origin_transfer_id IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM returns_stockreturnline extra_line
+      WHERE extra_line.stock_return_id = r.id
+        AND extra_line.returned_lot_id = c.lot_id AND extra_line.id <> rl.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement extra_movement
+      WHERE extra_movement.stock_lot_id = c.lot_id
+        AND extra_movement.document_type = 'stock_return'
+        AND extra_movement.document_id = r.id AND extra_movement.id <> m.id
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement doc_movement
+      WHERE doc_movement.document_type = 'stock_return'
+        AND doc_movement.document_id = r.id
+        AND 1 <> (
+            SELECT count(*) FROM returns_stockreturnline doc_line
+            WHERE doc_line.stock_return_id = r.id
+              AND (
+                  (doc_movement.movement_type = 'return_lot'
+                   AND doc_line.returned_lot_id = doc_movement.stock_lot_id
+                   AND doc_movement.stock_lot_id IS NOT NULL
+                   AND doc_line.part_item_id IS NULL)
+                  OR
+                  (doc_movement.movement_type = 'return_item'
+                   AND doc_line.part_item_id = doc_movement.part_item_id
+                   AND doc_movement.part_item_id IS NOT NULL)
+              )
+              AND doc_line.batch_id = doc_movement.batch_id
+              AND doc_line.batch_line_id = doc_movement.batch_line_id
+              AND doc_line.part_type_id = doc_movement.part_type_id
+              AND doc_line.to_location_id = doc_movement.to_location_id
+              AND doc_line.quantity = doc_movement.quantity
+        )
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM returns_stockreturnline doc_line
+      WHERE doc_line.stock_return_id = r.id
+        AND 1 <> (
+            SELECT count(*) FROM inventory_stockmovement doc_movement
+            WHERE doc_movement.document_type = 'stock_return'
+              AND doc_movement.document_id = r.id
+              AND (
+                  (doc_movement.movement_type = 'return_lot'
+                   AND doc_line.returned_lot_id = doc_movement.stock_lot_id
+                   AND doc_movement.stock_lot_id IS NOT NULL
+                   AND doc_line.part_item_id IS NULL)
+                  OR
+                  (doc_movement.movement_type = 'return_item'
+                   AND doc_line.part_item_id = doc_movement.part_item_id
+                   AND doc_movement.part_item_id IS NOT NULL)
+              )
+              AND doc_line.batch_id = doc_movement.batch_id
+              AND doc_line.batch_line_id = doc_movement.batch_line_id
+              AND doc_line.part_type_id = doc_movement.part_type_id
+              AND doc_line.to_location_id = doc_movement.to_location_id
+              AND doc_line.quantity = doc_movement.quantity
+        )
+  )
   AND (
-      c.origin_return_line_id = rl.id
+      (c.origin_return_line_id = rl.id AND first_m.id = m.id)
       OR (
           first_m.id = m.id
           AND abs(extract(epoch FROM (m.created_at - c.created_at))) <= 1
@@ -203,12 +348,64 @@ ORDER BY lot_id;
 -- name: reassigned_receipts
 -- Receipts whose lot now sits on another batch line (admin re-assignment before
 -- 2c64484). The receipt counts for the line it names, not the lot's current one.
+WITH first_real_movement AS (
+    SELECT DISTINCT ON (stock_lot_id) stock_lot_id, id
+    FROM inventory_stockmovement
+    WHERE stock_lot_id IS NOT NULL
+      AND NOT (movement_type = 'receive_lot'
+               AND comment = 'Открывающий остаток' AND document_type = '')
+    ORDER BY stock_lot_id, created_at, id
+), first_whole_move AS (
+    SELECT DISTINCT ON (stock_lot_id) stock_lot_id, from_location_id
+    FROM inventory_stockmovement
+    WHERE movement_type = 'move_lot' AND document_type = '' AND stock_lot_id IS NOT NULL
+    ORDER BY stock_lot_id, created_at, id
+)
 SELECT m.id AS movement_id, m.stock_lot_id AS lot_id, m.batch_line_id AS receipt_line_id,
        l.batch_line_id AS current_line_id, m.quantity
 FROM inventory_stockmovement m
 JOIN inventory_stocklot l ON l.id = m.stock_lot_id
+JOIN procurement_batchline receipt_line ON receipt_line.id = m.batch_line_id
+JOIN first_real_movement first_m ON first_m.stock_lot_id = l.id AND first_m.id = m.id
+LEFT JOIN first_whole_move first_move ON first_move.stock_lot_id = l.id
 WHERE m.movement_type = 'receive_lot'
   AND NOT (m.comment = 'Открывающий остаток' AND m.document_type = '')
+  AND m.document_type = '' AND m.document_id IS NULL
+  AND m.batch_id = l.batch_id AND m.part_type_id = l.part_type_id
+  AND receipt_line.batch_id = m.batch_id AND receipt_line.part_type_id = m.part_type_id
+  AND m.to_location_id = coalesce(first_move.from_location_id, l.location_id)
+  AND m.quantity = l.initial_quantity AND l.initial_quantity > 0
+  AND nullif(to_jsonb(l)->>'origin_transfer_id', '') IS NULL
+  AND nullif(to_jsonb(l)->>'origin_return_line_id', '') IS NULL
+  AND (nullif(to_jsonb(l)->>'creation_origin', '') IS NULL
+       OR to_jsonb(l)->>'creation_origin' = 'supplier_received')
+  AND l.note NOT LIKE 'Перемещение #%'
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement another
+      WHERE another.stock_lot_id = l.id AND another.id <> m.id
+        AND another.movement_type = 'receive_lot'
+        AND NOT (another.comment = 'Открывающий остаток' AND another.document_type = '')
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement transfer_m
+      WHERE transfer_m.batch_id = l.batch_id
+        AND transfer_m.batch_line_id = l.batch_line_id
+        AND transfer_m.part_type_id = l.part_type_id
+        AND transfer_m.to_location_id = coalesce(first_move.from_location_id, l.location_id)
+        AND transfer_m.quantity = l.initial_quantity
+        AND transfer_m.movement_type = 'move_lot'
+        AND transfer_m.document_type = 'stock_transfer'
+        AND transfer_m.created_at < l.created_at
+  )
+  AND (
+      to_jsonb(l)->>'creation_origin' = 'supplier_received'
+      OR NOT EXISTS (
+          SELECT 1 FROM returns_stockreturnline return_line
+          JOIN returns_stockreturn ret ON ret.id = return_line.stock_return_id
+          WHERE return_line.returned_lot_id = l.id AND ret.completed_at IS NOT NULL
+            AND abs(extract(epoch FROM (ret.completed_at - l.created_at))) <= 1
+      )
+  )
   AND m.batch_line_id IS DISTINCT FROM l.batch_line_id
 ORDER BY m.id;
 

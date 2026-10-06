@@ -1,4 +1,75 @@
-# ACTIVE HANDOFF: Customer request to sale final release
+# ACTIVE HANDOFF: Quantity provenance Round 6
+
+Task: repair the seven independent audit blockers on
+`codex/quantity-provenance-blockers`, based on `eaf89f4b176c542d9c578b245f33398b1f5ac0b2`.
+This is an engineering candidate, not a production release. Production and
+`main` remain at `6916276df5de686c457914ff36e77b3e921dc322` at the latest
+read-only check. The feature branch is not based on current `main`.
+
+Completed:
+
+- Reproduced all seven audit findings against the unchanged Round 5 baseline.
+- Added a nullable, creation-path marker for new lots; old lots receive no
+  fabricated values. Explicit transfer and return links are checked before
+  supplier evidence. Contradictions and incomplete return documents yield
+  `UNKNOWN`. Supplier receipts and PostgreSQL evidence queries now use the
+  same strict document, line, lot and movement checks.
+- Blocked Django admin deletion of all StockReturn documents, including
+  completed historical returns with no explicit origin link. Posted return
+  documents and lines also reject normal ORM deletion; return lines are
+  already read-only in the admin inline and have no separate admin endpoint.
+  Existing StockTransfer model deletion guards prevent historical MOVE_LOT
+  documents from being erased through the ORM. RECEIVE_LOT has no external
+  document pointer; its StockLot relation is protected.
+- PostgreSQL 16 focused suite: 240 passed. Migration sequence 0016, 0017,
+  0018 passed on an isolated production snapshot seeded before migration with
+  old receipt, legacy, found, transfer, return, existing-return and same-part
+  multiline cases. All old origin columns remained NULL.
+- Production HEAD, app commit, actual remote main, PostgreSQL, health, counts
+  and candidate SQL were checked read-only. The live SQL output matched the
+  restored snapshot byte-for-byte. Candidate classifier on that snapshot:
+  984 lots; 785 supplier receipts, 13 transfers, 186 found, 0 returns,
+  0 `UNKNOWN`, 0 over-received lines. The 137 receipt-capacity differences
+  were already present under the Round 5 rule.
+- Full SQLite baseline: 6521 passed, 9 failed, 293 skipped. Candidate: 6540
+  passed, the same 9 failed, 320 skipped. Candidate-only failures: 0.
+  The exact common failure IDs are:
+  - `tests/test_clients_overview_sorting.py::test_screen_default_order_is_recent_first`
+  - `tests/test_clients_overview_sorting.py::test_broken_sort_parameters_fall_back_to_default`
+  - `tests/test_observability_and_price_labels.py::test_a_part_without_a_price_shows_a_dash_not_a_zero`
+  - `tests/test_partial_repair_line_cancellation.py::test_report_button_confirm_screen_and_redirect_keep_filters`
+  - `tests/test_unified_operator_price.py::test_a_part_without_a_price_shows_a_dash_not_a_zero`
+  - `tests/test_zero_price_sale_guard.py::test_search_shows_a_dash_for_a_part_without_a_price`
+  - `tests/deployment/test_ai_support_renderer.py::test_check_mode_prints_only_redacted_status`
+  - `tests/test_max_bot_compose.py::test_max_bot_mounts_only_the_public_ca_directory_read_only`
+  - `tests/test_max_edge_route.py::test_only_the_public_catalog_block_changes`
+- Static checks: ruff, djlint, Django check, migration check and diff check
+  passed.
+
+Unresolved requirement conflict:
+
+- A real pre-marker supplier lot with no `RECEIVE_LOT` or other origin record
+  is observationally identical to a return-created lot after its return
+  document and movement have both been erased. Preserving such a lot as
+  `LEGACY_PRIMARY` would also recreate the audit's false supplier result.
+  The candidate therefore marks both `UNKNOWN`, closing further supplier
+  intake on their lines. A safe positive legacy classification requires an
+  independent durable historical source that is not present in this schema,
+  or explicit acceptance of the fail-closed policy. Do not claim the requested
+  pre-marker legacy preservation has been proven.
+- The read-only SQL file publishes strict supplier, transfer and return
+  evidence sets. It is not a complete SQL reimplementation of every Python
+  class, including `LEGACY_PRIMARY`; exhaustive class-by-class SQL parity is
+  therefore still an independent-audit gate.
+
+Next steps: obtain a decision on the evidence-free historical legacy case,
+then integrate on
+current main and rerun the full qualification and independent audit. Do not
+deploy or migrate production from this branch.
+
+---
+
+# Historical handoff: Customer request to sale final release
 
 Task: final review and production release of the safe
 `CustomerRequest -> Customer -> DRAFT Sale -> completed Sale` workflow, stopping

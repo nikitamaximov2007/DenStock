@@ -19,3 +19,8 @@ class StockReturnAdmin(admin.ModelAdmin):
     search_fields = ("number", "reason", "comment")
     readonly_fields = ("number", "created_at", "updated_at", "completed_at", "cost_total")
     inlines = [StockReturnLineInline]
+
+    def has_delete_permission(self, request, obj=None):
+        # A posted return has ledger entries whose document link is not an FK.
+        # Blocking every admin deletion also closes bulk and direct delete URLs.
+        return False

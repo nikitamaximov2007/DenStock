@@ -66,6 +66,8 @@ def _queries(*, pre_origin_schema=False):
             "nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint", "NULL::bigint"
         ).replace(
             "nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint", "NULL::bigint"
+        ).replace(
+            "nullif(to_jsonb(l)->>'creation_origin', '')", "NULL::text"
         )
     parts = re.split(r"^-- name: (\w+)\n", text, flags=re.M)
     return dict(zip(parts[1::2], parts[2::2], strict=True))
@@ -82,7 +84,8 @@ def _run(name, *, pre_origin_schema=False):
 def test_the_file_only_reads():
     text = SQL.read_text(encoding="utf-8")
     assert set(_queries()) == {
-        "lot_inventory", "transfer_evidence", "reassigned_receipts",
+        "lot_inventory", "supplier_receipt_evidence", "transfer_evidence",
+        "reassigned_receipts",
         "old_backfill_receipts", "receipts_over_line", "return_origin_evidence",
     }
     code = "\n".join(line for line in text.splitlines() if not line.startswith("--"))
@@ -197,7 +200,9 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     )
     complete_return(damaged_return, by=env["admin"])
     damaged_target = damaged_return.lines.get().returned_lot
-    _corrupt_lot_for_adversarial_test(damaged_target, origin_return_line=None)
+    _corrupt_lot_for_adversarial_test(
+        damaged_target, origin_return_line=None, creation_origin=None
+    )
     type(damaged_return_line).objects.filter(pk=damaged_return_line.pk).update(
         quantity=Decimal("0.5")
     )
@@ -315,6 +320,9 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     ) == UNKNOWN
 
     assert {row["lot_id"] for row in _run("transfer_evidence")} == by_class[TRANSFER_DERIVED]
+    assert {
+        row["lot_id"] for row in _run("supplier_receipt_evidence")
+    } == by_class[PRIMARY_RECEIPT] | by_class[REASSIGNED]
     for pre_origin_schema in (False, True):
         assert {
             row["lot_id"]
@@ -367,7 +375,8 @@ def test_delayed_historical_return_python_sql_parity(  # noqa: F811
     with connection.cursor() as cursor:
         cursor.execute(
             f"UPDATE {connection.ops.quote_name(StockLot._meta.db_table)} "
-            f"SET {connection.ops.quote_name('origin_return_line_id')} = NULL WHERE id = %s",
+            f"SET {connection.ops.quote_name('origin_return_line_id')} = NULL, "
+            f"{connection.ops.quote_name('creation_origin')} = NULL WHERE id = %s",
             [returned.pk],
         )
 

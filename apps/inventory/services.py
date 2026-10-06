@@ -402,6 +402,7 @@ def create_stock_lot(
         part_type=line.part_type,
         batch=line.batch,
         batch_line=line,
+        creation_origin=StockLot.CreationOrigin.SUPPLIER_PENDING,
         location=location,
         quantity=quantity,
         initial_quantity=quantity,
@@ -699,6 +700,12 @@ def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
         lot, StockMovement.MovementType.RECEIVE_LOT, lot.quantity,
         to_location=lot.location, by=by, comment=comment,
     )
+    if lot.creation_origin == StockLot.CreationOrigin.SUPPLIER_PENDING:
+        # The receipt and this one-way creation marker change commit together.
+        StockLot.objects.filter(pk=lot.pk).update(
+            creation_origin=StockLot.CreationOrigin.SUPPLIER_RECEIVED
+        )
+        lot.creation_origin = StockLot.CreationOrigin.SUPPLIER_RECEIVED
     _refresh_balance(lot.batch_line, lot.location)
     set_preferred_part_location(lot.part_type, lot.location, by=by)
     return lot
@@ -875,6 +882,7 @@ def _move_locked_lot_portion(lot, target_location, quantity, *, transfer, by=Non
             batch=lot.batch,
             batch_line=lot.batch_line,
             origin_transfer=transfer,
+            creation_origin=StockLot.CreationOrigin.TRANSFER,
             location=target_location,
             quantity=quantity,
             initial_quantity=quantity,
@@ -1290,6 +1298,7 @@ def _post_found_stock_group(*, entries, location, token: str, by=None):
                         part_type=row["part"],
                         batch=line.batch,
                         batch_line=line,
+                        creation_origin=StockLot.CreationOrigin.FOUND,
                         location=location,
                         quantity=Decimal("0"),
                         initial_quantity=Decimal("0"),
@@ -1410,6 +1419,7 @@ def get_or_create_section_recount_lot(
             part_type=batch_line.part_type,
             batch=batch_line.batch,
             batch_line=batch_line,
+            creation_origin=StockLot.CreationOrigin.RECOUNT,
             location=location,
             quantity=Decimal("0"),
             initial_quantity=Decimal("0"),
@@ -1753,6 +1763,7 @@ def return_stock_lot_quantity(batch_line, to_location, quantity, *, unit_cost_ru
             location=to_location, quantity=quantity, initial_quantity=quantity,
             landed_unit_cost_rub=unit_cost_rub, status=restock_status,
             origin_return_line=origin_return_line,
+            creation_origin=StockLot.CreationOrigin.RETURN,
         )
     else:
         if lot.status == StockLot.Status.DEPLETED or lot.status == restock_status:

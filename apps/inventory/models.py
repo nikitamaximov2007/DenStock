@@ -575,6 +575,14 @@ class StockLot(models.Model):
         # физическом остатке.
         DEPLETED = "depleted", "Исчерпан"
 
+    class CreationOrigin(models.TextChoices):
+        SUPPLIER_PENDING = "supplier_pending", "Создан для приёмки"
+        SUPPLIER_RECEIVED = "supplier_received", "Принят от поставщика"
+        TRANSFER = "transfer", "Создан перемещением"
+        RETURN = "return", "Создан возвратом"
+        FOUND = "found", "Создан найденным остатком"
+        RECOUNT = "recount", "Создан пересчётом"
+
     # Ручные переходы Слоя 9. written_off выставляется Слоем 19 через движения.
     ALLOWED_TRANSITIONS = {
         Status.RECEIVING: [Status.AVAILABLE, Status.QUARANTINE],
@@ -611,6 +619,10 @@ class StockLot(models.Model):
         blank=True,
         editable=False,
         related_name="origin_lots",
+    )
+    creation_origin = models.CharField(  # noqa: DJ001 - NULL means pre-marker history
+        "Путь создания лота", max_length=20, choices=CreationOrigin.choices,
+        null=True, blank=True, editable=False,
     )
     location = models.ForeignKey(
         "warehouse.StorageLocation", verbose_name="Место",
@@ -660,12 +672,21 @@ class StockLot(models.Model):
 
     def save(self, *args, **kwargs):
         if self.pk:
+            update_fields = kwargs.get("update_fields")
+            protected = {
+                "origin_transfer", "origin_transfer_id", "origin_return_line",
+                "origin_return_line_id", "creation_origin",
+            }
+            writes_origin = update_fields is None or bool(protected.intersection(update_fields))
+            if not writes_origin:
+                return super().save(*args, **kwargs)
             previous = type(self).objects.filter(pk=self.pk).values(
-                "origin_transfer_id", "origin_return_line_id"
+                "origin_transfer_id", "origin_return_line_id", "creation_origin"
             ).first()
             if previous and (
                 previous["origin_transfer_id"] != self.origin_transfer_id
                 or previous["origin_return_line_id"] != self.origin_return_line_id
+                or previous["creation_origin"] != self.creation_origin
             ):
                 raise ValidationError("Происхождение созданного складского лота неизменяемо.")
         super().save(*args, **kwargs)
