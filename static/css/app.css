@@ -268,8 +268,12 @@ body.app {
    такому заголовку перенос разрешён - стрелку держит неразрывный пробел. */
 .table-sort-link--wrap { white-space: normal; }
 .inline-form { display: inline; margin-left: 8px; }
-.inline-form button { padding: 6px 10px; cursor: pointer; border: 1px solid var(--line);
-  border-radius: 6px; background: #fff; }
+.inline-form button { padding: 6px 10px; cursor: pointer; border-radius: 6px; }
+/* Only a bare <button> gets the neutral look. A .btn keeps its variant: this
+   rule (0,1,1) used to outrank .btn--primary (0,1,0), so «Провести продажу»
+   was white text on white and turned blue only on :hover (0,2,0). :where()
+   adds no specificity, so .btn variants win again in every state. */
+.inline-form button:where(:not(.btn)) { border: 1px solid var(--line); background: #fff; }
 .staff-bindings-form { display: grid; gap: 8px; }
 .staff-bindings-form .field__label { margin: 0; }
 .staff-bindings-form input, .staff-bindings-form select { min-width: 0; width: 100%; }
@@ -303,7 +307,11 @@ body.app {
 .messages { margin-bottom: 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .toolbar input, .toolbar select, .toolbar button { padding: 8px 10px; font-size: 15px;
-  border: 1px solid var(--line); border-radius: 8px; }
+  border-radius: 8px; }
+/* Same rule as .inline-form above: a .btn keeps its variant border (a blue
+   primary button must not carry a grey frame). */
+.toolbar input, .toolbar select, .toolbar button:where(:not(.btn)) {
+  border: 1px solid var(--line); }
 .tile a { font-size: 18px; text-decoration: none; color: var(--accent); }
 
 /* Фотографии деталей/экземпляров (Слой 24, UI-polish): крупное основное фото +
@@ -331,8 +339,8 @@ body.app {
 
 .photo-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .photo-actions .inline-form { margin: 0; }
-.photo-actions button { padding: 3px 7px; font-size: 12px; cursor: pointer;
-  border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.photo-actions button { padding: 3px 7px; font-size: 12px; cursor: pointer; border-radius: 6px; }
+.photo-actions button:where(:not(.btn)) { border: 1px solid var(--line); background: #fff; }
 .badge { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600;
   color: var(--ok-fg); background: var(--ok-bg); border: 1px solid var(--ok-line);
   border-radius: 999px; }
