@@ -194,13 +194,13 @@ WHERE t.part_item_id IS NULL
   AND origin_line.batch_id = m.batch_id
   AND m.from_location_id = t.from_location_id
   AND t.to_location_id = c.original_location_id
-  AND (c.origin_transfer_id = t.id OR t.created_at <= c.created_at)
+  AND (c.origin_transfer_id = t.id OR
+       (c.origin_transfer_id IS NULL AND t.created_at <= c.created_at
+        AND c.note = 'Перемещение #' || t.id::text || ' из ' || t.from_location_code))
   AND (c.creation_origin IS NULL OR c.creation_origin = 'transfer')
   AND (c.creation_origin IS DISTINCT FROM 'transfer' OR c.origin_transfer_id IS NOT NULL)
   AND (c.origin_transfer_id IS NULL OR c.creation_origin = 'transfer')
   AND c.origin_return_line_id IS NULL
-  AND (c.note NOT LIKE 'Перемещение #%'
-       OR c.note = 'Перемещение #' || t.id::text || ' из ' || t.from_location_code)
   AND g.moved_quantity = t.quantity
   AND g.rows_consistent
 ORDER BY c.id, m.id;
@@ -434,8 +434,9 @@ ORDER BY b.id;
 -- name: final_provenance
 -- One final, fail-closed class per lot. Run this SELECT in a read-only snapshot.
 -- Keep the CASE order aligned with classify_lot in apps/inventory/lot_provenance.py.
--- A transfer claim matches only the exact machine-written note; no regex or
--- nearby-document fallback is allowed after a malformed claim.
+-- An explicit origin_transfer is proved by structured evidence, never by note.
+-- Historical transfer inference requires the exact machine-written note;
+-- nearby documents never replace a missing or malformed note.
 WITH lot_base AS (
     SELECT l.id, l.batch_id, l.batch_line_id, l.part_type_id, l.location_id,
            l.quantity, l.initial_quantity, l.status, l.created_at, l.note,
@@ -562,7 +563,7 @@ WITH lot_base AS (
            c.transfer_id AS candidate_transfer_id,
            CASE WHEN l.origin_transfer_id IS NOT NULL THEN l.origin_transfer_id
                 WHEN l.note LIKE 'Перемещение #%' THEN l.note_transfer_id
-                ELSE c.transfer_id END AS chosen_transfer_id
+                ELSE NULL::bigint END AS chosen_transfer_id
     FROM lot_history l
     LEFT JOIN transfer_candidates c ON c.lot_id = l.id
 ), transfer_proof AS (
@@ -748,9 +749,7 @@ SELECT l.id AS lot_id, l.batch_line_id, l.status,
            WHEN l.marker = 'transfer' AND l.origin_transfer_id IS NULL THEN 'unknown'
            WHEN l.marker = 'return' AND l.origin_return_line_id IS NULL THEN 'unknown'
            WHEN l.origin_transfer_id IS NOT NULL THEN
-               CASE WHEN (l.note NOT LIKE 'Перемещение #%'
-                           OR l.note_transfer_id = l.origin_transfer_id)
-                         AND l.receipt_count = 0 AND l.transfer_valid
+               CASE WHEN l.receipt_count = 0 AND l.transfer_valid
                     THEN 'transfer_derived' ELSE 'unknown' END
            WHEN l.origin_return_line_id IS NOT NULL THEN
                CASE WHEN l.receipt_count = 0 AND l.return_origin IS TRUE
@@ -792,9 +791,7 @@ SELECT l.id AS lot_id, l.batch_line_id, l.status,
            WHEN l.status = 'receiving' THEN
                CASE WHEN l.movement_count = l.backfill_count
                     THEN 'pending_receipt' ELSE 'unknown' END
-           WHEN l.candidate_doc_count > 0 THEN
-               CASE WHEN l.candidate_doc_count = 1 AND l.transfer_valid
-                    THEN 'transfer_derived' ELSE 'unknown' END
+           WHEN l.candidate_doc_count > 0 THEN 'unknown'
            WHEN l.unanchored_transfer THEN 'unknown'
            WHEN l.initial_quantity = 0 AND l.first_type = 'adjust_in'
                 AND l.first_document_type = 'section_recount' THEN 'recount_derived'

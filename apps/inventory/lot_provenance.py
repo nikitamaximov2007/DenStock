@@ -89,8 +89,8 @@ def _has_transfer_note(lot) -> bool:
 
 
 def _transfer_note_matches(lot, transfer) -> bool:
-    """A claimed document must match the creator's persisted note byte for byte."""
-    return not _has_transfer_note(lot) or (
+    """Historical inference needs the exact machine note, never a nearby transfer."""
+    return (
         transfer is not None
         and lot.note == f"Перемещение #{transfer.pk} из {transfer.from_location_code}"
     )
@@ -418,14 +418,11 @@ def classify_lot(
     if lot.origin_transfer_id or lot.origin_return_line_id:
         if lot.origin_transfer_id:
             transfer_id = lot.origin_transfer_id
-            note_transfer_id = _transfer_note_id(lot)
             transfer = transfers.get(transfer_id)
             rows = transfer_movements.get(transfer_id, [])
             original_location = _location_timeline(lot, own)[0][1]
             if (
-                _transfer_note_matches(lot, transfer)
-                and (note_transfer_id is None or note_transfer_id == transfer_id)
-                and not any(is_receipt_evidence(m) for m in own)
+                not any(is_receipt_evidence(m) for m in own)
                 and _transfer_is_consistent(
                     lot, transfer, rows, original_location, conflicting_source_lots
                 )
@@ -479,21 +476,16 @@ def classify_lot(
             PRIMARY_RECEIPT, sum((m.quantity for m in here), Decimal("0")),
             f"RECEIVE_LOT x{len(here)}",
         )
-    if lot.origin_transfer_id or _has_transfer_note(lot):
-        transfer_id = lot.origin_transfer_id or _transfer_note_id(lot)
-        note_transfer_id = _transfer_note_id(lot)
+    if _has_transfer_note(lot):
+        transfer_id = _transfer_note_id(lot)
         transfer = transfers.get(transfer_id) if transfer_id is not None else None
         rows = transfer_movements.get(transfer_id, []) if transfer_id is not None else []
         original_location = _location_timeline(lot, own)[0][1]
-        explicitly_linked = lot.origin_transfer_id is not None
-        if explicitly_linked and note_transfer_id is not None and note_transfer_id != transfer_id:
-            return result(UNKNOWN, None, "ссылка лота противоречит примечанию перемещения")
         if not _transfer_note_matches(lot, transfer):
             return result(UNKNOWN, None, "примечание перемещения не доказывает источник")
-        # New lots carry a direct FK to their creating transfer. For historical
-        # lots, a note is only a hint; clocks remain a narrow compatibility
-        # fallback and can never turn contradictory evidence into provenance.
-        time_supports_legacy_link = explicitly_linked or (
+        # This is only for historical lots without an explicit origin FK.
+        # The note identifies a document; clocks merely support the old link.
+        time_supports_legacy_link = (
             transfer is not None
             and transfer.created_at <= lot.created_at
             and _same_transaction(transfer.created_at, lot.created_at)
@@ -542,43 +534,7 @@ def classify_lot(
         lot, own, nearby_moves, nearby_transfers, transfers
     )
     if candidates:
-        identified = [
-            candidate
-            for candidate in candidates
-            if candidate[0] is not None
-            and candidate[0].quantity == lot.initial_quantity
-            and candidate[0].batch_id == lot.batch_id
-        ]
-        if identified:
-            transfer_ids = {
-                candidate[1].pk for candidate in identified if candidate[1] is not None
-            }
-            if any(
-                candidate[1] is None or candidate[1].pk not in transfer_ids
-                for candidate in candidates
-            ):
-                return result(UNKNOWN, None, "неоднозначная цепочка перемещения")
-            candidates = identified
-        candidate_transfer_ids = {
-            candidate[1].pk for candidate in candidates if candidate[1] is not None
-        }
-        valid = [
-            transfer_id for transfer_id in candidate_transfer_ids
-            if _transfer_is_consistent(
-                lot,
-                transfers.get(transfer_id),
-                transfer_movements.get(transfer_id, []),
-                _location_timeline(lot, own)[0][1],
-                conflicting_source_lots,
-            )
-        ]
-        if len(candidate_transfer_ids) == 1 and len(valid) == 1:
-            transfer = transfers[valid[0]]
-            return result(
-                TRANSFER_DERIVED, Decimal("0"),
-                f"перемещение #{transfer.pk}: документ и движения согласованы",
-            )
-        return result(UNKNOWN, None, "неоднозначная или повреждённая цепочка перемещения")
+        return result(UNKNOWN, None, "без точного примечания источник перемещения не доказан")
     if lot.pk in unanchored_transfer_lots:
         return result(
             UNKNOWN, None,

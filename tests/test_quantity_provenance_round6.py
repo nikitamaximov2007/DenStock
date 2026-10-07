@@ -10,7 +10,7 @@ from django.db import connection
 from django.db.models.deletion import ProtectedError
 from django.urls import reverse
 
-from apps.inventory.lot_provenance import UNKNOWN
+from apps.inventory.lot_provenance import TRANSFER_DERIVED, UNKNOWN
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.returns.models import StockReturn, StockReturnLine
@@ -281,7 +281,7 @@ def test_transfer_sql_rejects_extra_document_movement(env):
 @pytest.mark.postgresql
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
 @pytest.mark.skipif(connection.vendor != "postgresql", reason="production SQL needs PostgreSQL")
-def test_transfer_sql_rejects_changed_origin_note(env):
+def test_transfer_sql_ignores_changed_display_note_with_explicit_origin(env):
     from tests.test_lot_provenance_sql_postgresql import _run
 
     line = _finalized_line(env, env["part"], "10")
@@ -289,8 +289,8 @@ def test_transfer_sql_rejects_changed_origin_note(env):
     _transfer(env, "3", env["cells"][0], env["cells"][1], "r6-sql-note")
     target = StockLot.objects.get(batch_line=line, location=env["cells"][1])
     _corrupt_lot_for_adversarial_test(target, note="Перемещение #999999 из другого места")
-    assert _cls(line, target)[0] == UNKNOWN
-    assert target.pk not in {row["lot_id"] for row in _run("transfer_evidence")}
+    assert _cls(line, target)[0] == TRANSFER_DERIVED
+    assert target.pk in {row["lot_id"] for row in _run("transfer_evidence")}
 
 
 @pytest.mark.postgresql

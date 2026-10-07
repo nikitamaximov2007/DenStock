@@ -50,7 +50,7 @@ def _sql_class(lot):
     ("historical", "wrong_ascii_id"),
     ("explicit", "wrong_ascii_id"),
 ])
-def test_admin_edited_transfer_note_fails_closed_in_python_and_sql(
+def test_admin_edited_transfer_note_respects_origin_contract_in_python_and_sql(
     env, client, mode, malformation
 ):
     line = _finalized_line(env, env["part"], "10")
@@ -83,7 +83,8 @@ def test_admin_edited_transfer_note_fails_closed_in_python_and_sql(
     assert response.status_code == 302
     target.refresh_from_db()
     assert target.note == notes[malformation]
-    assert _cls(line, target)[0] == _sql_class(target) == UNKNOWN
+    expected = UNKNOWN if mode == "historical" else TRANSFER_DERIVED
+    assert _cls(line, target)[0] == _sql_class(target) == expected
 
 
 def test_historical_note_cannot_select_one_of_two_plausible_transfers(env):
@@ -102,7 +103,7 @@ def test_historical_note_cannot_select_one_of_two_plausible_transfers(env):
 
 
 @pytest.mark.parametrize("historical", [False, True])
-def test_note_referring_to_another_existing_transfer_is_unknown(env, client, historical):
+def test_note_referring_to_another_transfer_cannot_override_origin(env, client, historical):
     line = _finalized_line(env, env["part"], "10")
     receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))
     _transfer(env, "3", env["cells"][0], env["cells"][1], "r7-note-own")
@@ -116,7 +117,8 @@ def test_note_referring_to_another_existing_transfer_is_unknown(env, client, his
         {"note": f"Перемещение #{other.pk} из {other.from_location_code}", "_save": "Сохранить"},
     )
     assert response.status_code == 302
-    assert _cls(line, target)[0] == _sql_class(target) == UNKNOWN
+    expected = UNKNOWN if historical else TRANSFER_DERIVED
+    assert _cls(line, target)[0] == _sql_class(target) == expected
 
 
 @pytest.mark.parametrize("invalid", ["", " ", "supplier-received", "wrong"])
