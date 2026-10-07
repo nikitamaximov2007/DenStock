@@ -702,9 +702,7 @@ def receive_stock_lot(lot: StockLot, *, by=None, comment="") -> StockLot:
     )
     if lot.creation_origin == StockLot.CreationOrigin.SUPPLIER_PENDING:
         # The receipt and this one-way creation marker change commit together.
-        StockLot.objects.filter(pk=lot.pk).update(
-            creation_origin=StockLot.CreationOrigin.SUPPLIER_RECEIVED
-        )
+        StockLot.objects.filter(pk=lot.pk)._complete_supplier_receipt_origin()
         lot.creation_origin = StockLot.CreationOrigin.SUPPLIER_RECEIVED
     _refresh_balance(lot.batch_line, lot.location)
     set_preferred_part_location(lot.part_type, lot.location, by=by)

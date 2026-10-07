@@ -1,4 +1,51 @@
-# ACTIVE HANDOFF: Quantity provenance Round 6.1
+# ACTIVE HANDOFF: Quantity provenance Round 7
+
+Branch `codex/quantity-provenance-blockers`, baseline
+`172d09f0eabf837c417fc5216e6ddade671e27ab`. This candidate remains
+unreleased. Do not deploy, merge, or rebase it onto `main` before the final
+independent retest.
+
+Round 7 closes two PostgreSQL/Python parity defects reproduced on the baseline:
+
+- Real Django admin edits to a transfer lot note (`Перемещение #без номера`,
+  a space after `#`, or Unicode digits) made Python return `UNKNOWN` while SQL
+  accepted nearby transfer evidence. The historical and explicit-origin cases
+  now require the exact machine-written note, including the ASCII decimal id
+  and stored source-location snapshot. A malformed transfer claim cannot fall
+  back to another transfer. Two plausible historical creators remain `UNKNOWN`.
+- `creation_origin=''` persisted through `QuerySet.update` and made Python
+  return `UNKNOWN` while SQL treated it as NULL and returned a supplier receipt.
+  Normal ORM updates, bulk updates, and model saves reject invalid origin
+  mutation. The receipt service alone performs the checked, one-way
+  `supplier_pending` to `supplier_received` transition. Migration 0019 adds a
+  CHECK constraint allowing only NULL and the six declared marker values.
+  SQL no longer converts empty text to NULL, so pre-constraint corruption
+  remains `UNKNOWN` in both readers.
+
+PostgreSQL 16 focused qualification: 308 passed, 1 expected failure for the
+separate status-integrity issue below. A fresh production dump was restored
+only in an isolated local PostgreSQL 16 database, migrated through 0016,
+0017, 0018, and 0019. All 984 old markers and explicit-origin references
+remain NULL; the candidate Python classifier and SQL agree on all 984 lots
+(785 supplier, 13 transfer, 186 found; zero mismatches). Production remained
+at `6916276df5de686c457914ff36e77b3e921dc322`, PostgreSQL 16.14, and
+`/healthz/` returned HTTP 200 with database OK at the fresh read-only check.
+Full SQLite comparison against `172d09f`: baseline 6544 passed, 9 failed,
+316 skipped; candidate 6544 passed, the same 9 failed, 350 skipped.
+Candidate-only failures: 0. Ruff, djlint, Django check, migration check, and
+diff check passed.
+
+**FOLLOW-UP INTEGRITY TASK REQUIRED:** A completed `StockReturn` can be edited
+through the Django admin HTTP change form back to `draft`, then posted a second
+time. The second posting writes another `RETURN_LOT` and doubles returned
+stock. `tests/test_quantity_provenance_round7.py` documents the reproduction
+as a strict expected failure. This is pre-existing and outside the Round 7
+parity fix; the return document status transition and repost protection need a
+separate integrity change.
+
+---
+
+# Historical handoff: Quantity provenance Round 6.1
 
 Task: close final SQL classifier parity on
 `codex/quantity-provenance-blockers`, based on `42ca0e096ba44de1e7131ace443c3f6e585125c1`.

@@ -71,7 +71,7 @@ WHERE m.movement_type = 'receive_lot'
   AND m.quantity = l.initial_quantity AND l.initial_quantity > 0
   AND nullif(to_jsonb(l)->>'origin_transfer_id', '') IS NULL
   AND nullif(to_jsonb(l)->>'origin_return_line_id', '') IS NULL
-  AND (nullif(to_jsonb(l)->>'creation_origin', '') IS NULL
+  AND (to_jsonb(l)->>'creation_origin' IS NULL
        OR to_jsonb(l)->>'creation_origin' = 'supplier_received')
   AND l.note NOT LIKE 'Перемещение #%'
   AND NOT EXISTS (
@@ -148,7 +148,7 @@ candidates AS (
            nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id,
            coalesce(f.from_location_id, l.location_id) AS original_location_id,
            nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id,
-           nullif(to_jsonb(l)->>'creation_origin', '') AS creation_origin
+           to_jsonb(l)->>'creation_origin' AS creation_origin
     FROM inventory_stocklot l
     LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
     WHERE l.status <> 'receiving'
@@ -199,11 +199,8 @@ WHERE t.part_item_id IS NULL
   AND (c.creation_origin IS DISTINCT FROM 'transfer' OR c.origin_transfer_id IS NOT NULL)
   AND (c.origin_transfer_id IS NULL OR c.creation_origin = 'transfer')
   AND c.origin_return_line_id IS NULL
-  AND (c.origin_transfer_id IS NULL OR c.note !~ '^Перемещение #[0-9]+ из '
-       OR substring(c.note from '^Перемещение #([0-9]+) из ')::bigint = c.origin_transfer_id)
-  AND (c.origin_transfer_id IS NOT NULL OR c.note NOT LIKE 'Перемещение #%'
-       OR (c.note ~ '^Перемещение #[0-9]+ из '
-           AND substring(c.note from '^Перемещение #([0-9]+) из ')::bigint = t.id))
+  AND (c.note NOT LIKE 'Перемещение #%'
+       OR c.note = 'Перемещение #' || t.id::text || ' из ' || t.from_location_code)
   AND g.moved_quantity = t.quantity
   AND g.rows_consistent
 ORDER BY c.id, m.id;
@@ -230,7 +227,7 @@ WITH first_lot_movement AS (
            l.initial_quantity, l.created_at,
            nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id,
            nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id,
-           nullif(to_jsonb(l)->>'creation_origin', '') AS creation_origin
+           to_jsonb(l)->>'creation_origin' AS creation_origin
     FROM inventory_stocklot l
     LEFT JOIN first_whole_move f ON f.stock_lot_id = l.id
     WHERE NOT EXISTS (
@@ -376,7 +373,7 @@ WHERE m.movement_type = 'receive_lot'
   AND m.quantity = l.initial_quantity AND l.initial_quantity > 0
   AND nullif(to_jsonb(l)->>'origin_transfer_id', '') IS NULL
   AND nullif(to_jsonb(l)->>'origin_return_line_id', '') IS NULL
-  AND (nullif(to_jsonb(l)->>'creation_origin', '') IS NULL
+  AND (to_jsonb(l)->>'creation_origin' IS NULL
        OR to_jsonb(l)->>'creation_origin' = 'supplier_received')
   AND l.note NOT LIKE 'Перемещение #%'
   AND NOT EXISTS (
@@ -437,20 +434,26 @@ ORDER BY b.id;
 -- name: final_provenance
 -- One final, fail-closed class per lot. Run this SELECT in a read-only snapshot.
 -- Keep the CASE order aligned with classify_lot in apps/inventory/lot_provenance.py.
+-- A transfer claim matches only the exact machine-written note; no regex or
+-- nearby-document fallback is allowed after a malformed claim.
 WITH lot_base AS (
     SELECT l.id, l.batch_id, l.batch_line_id, l.part_type_id, l.location_id,
            l.quantity, l.initial_quantity, l.status, l.created_at, l.note,
            nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id,
            nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id,
-           nullif(to_jsonb(l)->>'creation_origin', '') AS marker,
+           to_jsonb(l)->>'creation_origin' AS marker,
            coalesce(first_move.from_location_id, l.location_id) AS original_location_id,
-           CASE WHEN l.note LIKE 'Перемещение #%'
-                THEN substring(l.note from '^Перемещение #([0-9]+) из ')::numeric
-           END AS note_transfer_id,
+           note_match.id AS note_transfer_id,
            b.batch_id AS current_line_batch_id,
            b.part_type_id AS current_line_part_type_id
     FROM inventory_stocklot l
     JOIN procurement_batchline b ON b.id = l.batch_line_id
+    LEFT JOIN LATERAL (
+        SELECT t.id FROM inventory_stocktransfer t
+        WHERE l.note LIKE 'Перемещение #%'
+          AND l.note = 'Перемещение #' || t.id::text || ' из ' || t.from_location_code
+        LIMIT 1
+    ) note_match ON true
     LEFT JOIN LATERAL (
         SELECT m.from_location_id
         FROM inventory_stockmovement m
@@ -556,8 +559,10 @@ WITH lot_base AS (
     GROUP BY l.id
 ), transfer_choice AS (
     SELECT l.*, coalesce(c.doc_count, 0) AS candidate_doc_count,
-           coalesce(l.origin_transfer_id::numeric, l.note_transfer_id,
-                    c.transfer_id::numeric) AS chosen_transfer_id
+           c.transfer_id AS candidate_transfer_id,
+           CASE WHEN l.origin_transfer_id IS NOT NULL THEN l.origin_transfer_id
+                WHEN l.note LIKE 'Перемещение #%' THEN l.note_transfer_id
+                ELSE c.transfer_id END AS chosen_transfer_id
     FROM lot_history l
     LEFT JOIN transfer_candidates c ON c.lot_id = l.id
 ), transfer_proof AS (
@@ -729,6 +734,10 @@ WITH lot_base AS (
 )
 SELECT l.id AS lot_id, l.batch_line_id, l.status,
        CASE
+           WHEN l.marker IS NOT NULL AND l.marker NOT IN (
+               'supplier_pending', 'supplier_received', 'transfer', 'return',
+               'found', 'recount'
+           ) THEN 'unknown'
            -- Claimed derived origin wins the ordering. A broken claim is UNKNOWN.
            WHEN l.origin_transfer_id IS NOT NULL AND l.origin_return_line_id IS NOT NULL
                THEN 'unknown'
@@ -739,7 +748,7 @@ SELECT l.id AS lot_id, l.batch_line_id, l.status,
            WHEN l.marker = 'transfer' AND l.origin_transfer_id IS NULL THEN 'unknown'
            WHEN l.marker = 'return' AND l.origin_return_line_id IS NULL THEN 'unknown'
            WHEN l.origin_transfer_id IS NOT NULL THEN
-               CASE WHEN (l.note_transfer_id IS NULL
+               CASE WHEN (l.note NOT LIKE 'Перемещение #%'
                            OR l.note_transfer_id = l.origin_transfer_id)
                          AND l.receipt_count = 0 AND l.transfer_valid
                     THEN 'transfer_derived' ELSE 'unknown' END
@@ -773,6 +782,9 @@ SELECT l.id AS lot_id, l.batch_line_id, l.status,
                    ELSE 'unknown' END
            WHEN l.note LIKE 'Перемещение #%' THEN
                CASE WHEN l.chosen_transfer_id IS NOT NULL
+                         AND (l.candidate_doc_count = 0 OR
+                              (l.candidate_doc_count = 1 AND
+                               l.candidate_transfer_id = l.chosen_transfer_id))
                          AND l.transfer_created_at <= l.created_at
                          AND l.transfer_created_at >= l.created_at - interval '1 second'
                          AND l.has_near_target_movement AND l.transfer_valid

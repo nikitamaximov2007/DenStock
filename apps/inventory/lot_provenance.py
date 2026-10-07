@@ -21,7 +21,6 @@ transfer targets and pending lots false receipts), and a lot's current batch
 line when a receipt says otherwise (before 2c64484 admin could reassign a
 lot to another line). A receipt belongs to the line its movement names.
 """
-import re
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -73,13 +72,28 @@ def _same_transaction(a, b) -> bool:
 
 
 def _transfer_note_id(lot):
-    """Return the persisted transfer-document reference carried by a new target lot."""
-    match = re.match(r"^Перемещение #(\d+) из ", lot.note or "")
-    return int(match.group(1)) if match else None
+    """Parse only the ASCII document-id hint from a transfer claim."""
+    note = lot.note or ""
+    if not note.startswith("Перемещение #"):
+        return None
+    digits, separator, _ = note[len("Перемещение #"):].partition(" из ")
+    if not separator or not digits or digits[0] not in "123456789":
+        return None
+    if any(digit not in "0123456789" for digit in digits):
+        return None
+    return int(digits)
 
 
 def _has_transfer_note(lot) -> bool:
     return (lot.note or "").startswith("Перемещение #")
+
+
+def _transfer_note_matches(lot, transfer) -> bool:
+    """A claimed document must match the creator's persisted note byte for byte."""
+    return not _has_transfer_note(lot) or (
+        transfer is not None
+        and lot.note == f"Перемещение #{transfer.pk} из {transfer.from_location_code}"
+    )
 
 
 def _location_timeline(lot, own):
@@ -387,6 +401,8 @@ def classify_lot(
         return LotProvenance(lot.pk, lot.batch_line_id, lot.status, provenance, intake, evidence)
 
     marker = lot.creation_origin
+    if marker is not None and marker not in StockLot.CreationOrigin.values:
+        return result(UNKNOWN, None, "недопустимый путь создания лота")
     if lot.origin_transfer_id and lot.origin_return_line_id:
         return result(UNKNOWN, None, "два несовместимых явных источника лота")
     if lot.origin_transfer_id and marker != StockLot.CreationOrigin.TRANSFER:
@@ -407,7 +423,8 @@ def classify_lot(
             rows = transfer_movements.get(transfer_id, [])
             original_location = _location_timeline(lot, own)[0][1]
             if (
-                (note_transfer_id is None or note_transfer_id == transfer_id)
+                _transfer_note_matches(lot, transfer)
+                and (note_transfer_id is None or note_transfer_id == transfer_id)
                 and not any(is_receipt_evidence(m) for m in own)
                 and _transfer_is_consistent(
                     lot, transfer, rows, original_location, conflicting_source_lots
@@ -471,6 +488,8 @@ def classify_lot(
         explicitly_linked = lot.origin_transfer_id is not None
         if explicitly_linked and note_transfer_id is not None and note_transfer_id != transfer_id:
             return result(UNKNOWN, None, "ссылка лота противоречит примечанию перемещения")
+        if not _transfer_note_matches(lot, transfer):
+            return result(UNKNOWN, None, "примечание перемещения не доказывает источник")
         # New lots carry a direct FK to their creating transfer. For historical
         # lots, a note is only a hint; clocks remain a narrow compatibility
         # fallback and can never turn contradictory evidence into provenance.
@@ -486,8 +505,17 @@ def classify_lot(
                 and movement.to_location_id == original_location
             )
         )
-        if time_supports_legacy_link and _transfer_is_consistent(
-            lot, transfer, rows, original_location, conflicting_source_lots
+        candidate_ids = {
+            candidate[1].pk for candidate in _transfer_candidates(
+                lot, own, nearby_moves, nearby_transfers, transfers
+            )
+        }
+        if (
+            time_supports_legacy_link
+            and len(candidate_ids) <= 1
+            and _transfer_is_consistent(
+                lot, transfer, rows, original_location, conflicting_source_lots
+            )
         ):
             return result(TRANSFER_DERIVED, Decimal("0"), f"перемещение #{transfer_id}")
         return result(UNKNOWN, None, "связь лота с документом перемещения повреждена")

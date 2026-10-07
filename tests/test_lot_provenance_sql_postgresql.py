@@ -68,7 +68,7 @@ def _queries(*, pre_origin_schema=False):
         ).replace(
             "nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint", "NULL::bigint"
         ).replace(
-            "nullif(to_jsonb(l)->>'creation_origin', '')", "NULL::text"
+            "to_jsonb(l)->>'creation_origin'", "NULL::text"
         )
     parts = re.split(r"^-- name: (\w+)\n", text, flags=re.M)
     return dict(zip(parts[1::2], parts[2::2], strict=True))

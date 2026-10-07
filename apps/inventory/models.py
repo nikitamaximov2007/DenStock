@@ -445,6 +445,7 @@ class StockLocationLock(models.Model):
 class StockLotQuerySet(models.QuerySet):
     _origin_fields = {
         "origin_transfer", "origin_transfer_id", "origin_return_line", "origin_return_line_id",
+        "creation_origin",
     }
 
     def update(self, **kwargs):
@@ -456,6 +457,19 @@ class StockLotQuerySet(models.QuerySet):
         if self._origin_fields.intersection(fields):
             raise ValidationError("Происхождение созданного складского лота неизменяемо.")
         return super().bulk_update(objs, fields, batch_size=batch_size)
+
+    def _complete_supplier_receipt_origin(self):
+        """The sole permitted creation-marker transition, within receipt posting."""
+        lots = list(self.select_for_update().values_list("pk", "creation_origin", "status"))
+        if len(lots) != 1 or lots[0][1:] != ("supplier_pending", "available"):
+            raise ValidationError("Переход происхождения приёмки недопустим.")
+        if not StockMovement.objects.filter(
+            stock_lot_id=lots[0][0], movement_type=StockMovement.MovementType.RECEIVE_LOT,
+        ).exists():
+            raise ValidationError("Движение приёмки для лота отсутствует.")
+        return models.QuerySet.update(
+            self.filter(pk=lots[0][0]), creation_origin="supplier_received"
+        )
 
 
 class StockBalance(models.Model):
@@ -665,12 +679,26 @@ class StockLot(models.Model):
                 condition=models.Q(initial_quantity__gte=0),
                 name="stocklot_initial_non_negative",
             ),
+            models.CheckConstraint(
+                condition=models.Q(creation_origin__isnull=True) | models.Q(
+                    creation_origin__in=[
+                        "supplier_pending", "supplier_received", "transfer", "return",
+                        "found", "recount",
+                    ]
+                ),
+                name="stocklot_creation_origin_valid",
+            ),
         ]
 
     def __str__(self) -> str:
         return f"{self.part_type} × {self.quantity} @ {self.location.code}"
 
     def save(self, *args, **kwargs):
+        if (
+            self.creation_origin is not None
+            and self.creation_origin not in self.CreationOrigin.values
+        ):
+            raise ValidationError("Недопустимый путь создания складского лота.")
         if self.pk:
             update_fields = kwargs.get("update_fields")
             protected = {
