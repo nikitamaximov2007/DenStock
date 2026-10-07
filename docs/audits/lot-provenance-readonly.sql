@@ -8,10 +8,9 @@
 --
 -- "Receipt evidence" = a RECEIVE_LOT that the old backfill_opening_movements did
 -- NOT write (that command wrote comment 'Открывающий остаток' and no document).
--- The full classification (classes, UNKNOWN, closed lines, capacity changes) is
--- `python manage.py audit_lot_provenance` from the candidate code; these queries
--- reproduce its evidence rules and must agree with it
--- (tests/test_lot_provenance_sql_postgresql.py).
+-- final_provenance below classifies every lot. The preceding queries expose
+-- supporting evidence for investigation; the final result is the parity gate
+-- against `python manage.py audit_lot_provenance`.
 
 -- name: lot_inventory
 -- Lots by status and by the evidence they carry.
@@ -434,3 +433,372 @@ WHERE m.movement_type = 'receive_lot'
 GROUP BY b.id, b.quantity
 HAVING sum(m.quantity) > b.quantity
 ORDER BY b.id;
+
+-- name: final_provenance
+-- One final, fail-closed class per lot. Run this SELECT in a read-only snapshot.
+-- Keep the CASE order aligned with classify_lot in apps/inventory/lot_provenance.py.
+WITH lot_base AS (
+    SELECT l.id, l.batch_id, l.batch_line_id, l.part_type_id, l.location_id,
+           l.quantity, l.initial_quantity, l.status, l.created_at, l.note,
+           nullif(to_jsonb(l)->>'origin_transfer_id', '')::bigint AS origin_transfer_id,
+           nullif(to_jsonb(l)->>'origin_return_line_id', '')::bigint AS origin_return_line_id,
+           nullif(to_jsonb(l)->>'creation_origin', '') AS marker,
+           coalesce(first_move.from_location_id, l.location_id) AS original_location_id,
+           CASE WHEN l.note LIKE 'Перемещение #%'
+                THEN substring(l.note from '^Перемещение #([0-9]+) из ')::numeric
+           END AS note_transfer_id,
+           b.batch_id AS current_line_batch_id,
+           b.part_type_id AS current_line_part_type_id
+    FROM inventory_stocklot l
+    JOIN procurement_batchline b ON b.id = l.batch_line_id
+    LEFT JOIN LATERAL (
+        SELECT m.from_location_id
+        FROM inventory_stockmovement m
+        WHERE m.stock_lot_id = l.id AND m.movement_type = 'move_lot'
+          AND m.document_type = '' AND m.from_location_id IS NOT NULL
+          AND m.to_location_id IS NOT NULL
+        ORDER BY m.created_at, m.id LIMIT 1
+    ) first_move ON true
+), own_stats AS (
+    SELECT m.stock_lot_id AS lot_id,
+           (array_agg(m.id ORDER BY m.created_at, m.id))[1] AS first_id,
+           (array_agg(m.id ORDER BY m.created_at, m.id)
+               FILTER (WHERE NOT (m.movement_type = 'receive_lot'
+                   AND m.comment = 'Открывающий остаток' AND m.document_type = '')))[1]
+               AS first_real_id,
+           count(*) AS movement_count,
+           count(*) FILTER (WHERE m.movement_type = 'receive_lot'
+               AND NOT (m.comment = 'Открывающий остаток' AND m.document_type = ''))
+               AS receipt_count,
+           min(m.id) FILTER (WHERE m.movement_type = 'receive_lot'
+               AND NOT (m.comment = 'Открывающий остаток' AND m.document_type = ''))
+               AS receipt_id,
+           count(*) FILTER (WHERE m.movement_type = 'receive_lot'
+               AND m.comment = 'Открывающий остаток' AND m.document_type = '')
+               AS backfill_count,
+           count(*) FILTER (WHERE m.batch_line_id IS NOT NULL
+               AND m.batch_line_id <> l.batch_line_id) AS other_line_count,
+           coalesce(sum(CASE
+               WHEN m.movement_type IN ('adjust_in', 'return_lot', 'writeoff_cancel_lot')
+                   THEN m.quantity
+               WHEN m.movement_type IN ('adjust_out', 'sale_lot', 'issue_lot',
+                                        'write_off_lot')
+                   OR (m.movement_type = 'move_lot'
+                       AND m.document_type = 'stock_transfer') THEN -m.quantity
+               ELSE 0 END), 0) AS own_net
+    FROM inventory_stockmovement m
+    JOIN inventory_stocklot l ON l.id = m.stock_lot_id
+    GROUP BY m.stock_lot_id
+), lot_history AS (
+    SELECT l.*, coalesce(s.movement_count, 0) AS movement_count,
+           coalesce(s.receipt_count, 0) AS receipt_count,
+           coalesce(s.backfill_count, 0) AS backfill_count,
+           coalesce(s.other_line_count, 0) AS other_line_count,
+           coalesce(s.own_net, 0) AS own_net,
+           first_m.id AS first_id, first_m.movement_type AS first_type,
+           first_m.document_type AS first_document_type,
+           first_m.document_id AS first_document_id,
+           first_m.created_at AS first_created_at,
+           s.first_real_id,
+           receipt.id AS receipt_id, receipt.batch_line_id AS receipt_line_id,
+           receipt.batch_id AS receipt_batch_id,
+           receipt.part_type_id AS receipt_part_type_id,
+           receipt.to_location_id AS receipt_location_id,
+           receipt.quantity AS receipt_quantity,
+           receipt.document_type AS receipt_document_type,
+           receipt.document_id AS receipt_document_id,
+           receipt_line.batch_id AS receipt_line_batch_id,
+           receipt_line.part_type_id AS receipt_line_part_type_id
+    FROM lot_base l
+    LEFT JOIN own_stats s ON s.lot_id = l.id
+    LEFT JOIN inventory_stockmovement first_m ON first_m.id = s.first_id
+    LEFT JOIN inventory_stockmovement receipt ON receipt.id = s.receipt_id
+    LEFT JOIN procurement_batchline receipt_line ON receipt_line.id = receipt.batch_line_id
+), source_conflicts AS (
+    SELECT DISTINCT m.stock_lot_id AS lot_id
+    FROM inventory_stockmovement m
+    JOIN inventory_stocklot l ON l.id = m.stock_lot_id
+    WHERE m.batch_line_id IS NOT NULL AND m.batch_line_id <> l.batch_line_id
+), transfer_groups AS (
+    SELECT t.id AS transfer_id, sum(m.quantity) AS moved_quantity,
+           bool_and(coalesce(
+               m.movement_type = 'move_lot' AND m.part_type_id = t.part_type_id
+               AND m.from_location_id = t.from_location_id
+               AND m.to_location_id = t.to_location_id
+               AND source.id IS NOT NULL AND source.part_type_id = t.part_type_id
+               AND source.batch_line_id = m.batch_line_id
+               AND m.batch_id = source.batch_id
+               AND source_line.id IS NOT NULL
+               AND source_line.part_type_id = t.part_type_id
+               AND source_line.batch_id = m.batch_id
+               AND conflict.lot_id IS NULL, false)) AS rows_consistent
+    FROM inventory_stocktransfer t
+    JOIN inventory_stockmovement m ON m.document_type = 'stock_transfer'
+        AND m.document_id = t.id
+    LEFT JOIN inventory_stocklot source ON source.id = m.stock_lot_id
+    LEFT JOIN procurement_batchline source_line ON source_line.id = m.batch_line_id
+    LEFT JOIN source_conflicts conflict ON conflict.lot_id = source.id
+    GROUP BY t.id
+), transfer_candidates AS (
+    SELECT l.id AS lot_id, count(DISTINCT t.id) AS doc_count, min(t.id) AS transfer_id
+    FROM lot_history l
+    JOIN inventory_stockmovement m ON m.stock_lot_id IS DISTINCT FROM l.id
+        AND m.movement_type = 'move_lot' AND m.document_type = 'stock_transfer'
+        AND m.batch_id = l.batch_id AND m.batch_line_id = l.batch_line_id
+        AND m.part_type_id = l.part_type_id
+        AND m.to_location_id = l.original_location_id
+        AND m.quantity = l.initial_quantity
+        AND abs(extract(epoch FROM (m.created_at - l.created_at))) <= 1
+    JOIN inventory_stocktransfer t ON t.id = m.document_id
+        AND t.part_type_id = l.part_type_id
+        AND t.to_location_id = l.original_location_id
+    WHERE l.status <> 'receiving'
+    GROUP BY l.id
+), transfer_choice AS (
+    SELECT l.*, coalesce(c.doc_count, 0) AS candidate_doc_count,
+           coalesce(l.origin_transfer_id::numeric, l.note_transfer_id,
+                    c.transfer_id::numeric) AS chosen_transfer_id
+    FROM lot_history l
+    LEFT JOIN transfer_candidates c ON c.lot_id = l.id
+), transfer_proof AS (
+    SELECT l.*,
+           coalesce(t.part_item_id IS NULL
+               AND t.stock_state IN ('available', 'quarantine')
+               AND t.part_type_id = l.part_type_id
+               AND t.to_location_id = l.original_location_id
+               AND l.current_line_part_type_id = l.part_type_id
+               AND g.moved_quantity = t.quantity AND g.rows_consistent
+               AND coalesce(target.moved_quantity, 0) = l.initial_quantity, false)
+               AS transfer_valid,
+           t.created_at AS transfer_created_at,
+           coalesce(target.has_near_target_movement, false) AS has_near_target_movement
+    FROM transfer_choice l
+    LEFT JOIN inventory_stocktransfer t ON t.id = l.chosen_transfer_id
+    LEFT JOIN transfer_groups g ON g.transfer_id = t.id
+    LEFT JOIN LATERAL (
+        SELECT sum(m.quantity) AS moved_quantity,
+               bool_or(m.created_at >= l.created_at
+                   AND m.created_at <= l.created_at + interval '1 second')
+                   AS has_near_target_movement
+        FROM inventory_stockmovement m
+        WHERE m.document_type = 'stock_transfer' AND m.document_id = t.id
+          AND m.batch_line_id = l.batch_line_id
+          AND m.to_location_id = l.original_location_id
+    ) target ON true
+), return_document_proof AS (
+    SELECT r.id AS return_id,
+           (SELECT count(*) FROM returns_stockreturnline rl
+               WHERE rl.stock_return_id = r.id) > 0 AS has_lines,
+           (SELECT count(*) FROM returns_stockreturnline rl
+               WHERE rl.stock_return_id = r.id) =
+           (SELECT count(*) FROM inventory_stockmovement m
+               WHERE m.document_type = 'stock_return' AND m.document_id = r.id)
+               AS counts_match,
+           NOT EXISTS (
+               SELECT 1 FROM inventory_stockmovement m
+               WHERE m.document_type = 'stock_return' AND m.document_id = r.id
+                 AND (SELECT count(*) FROM returns_stockreturnline rl
+                     WHERE rl.stock_return_id = r.id
+                       AND ((m.movement_type = 'return_lot'
+                             AND rl.returned_lot_id = m.stock_lot_id
+                             AND m.stock_lot_id IS NOT NULL AND rl.part_item_id IS NULL)
+                         OR (m.movement_type = 'return_item'
+                             AND rl.part_item_id = m.part_item_id
+                             AND m.part_item_id IS NOT NULL))
+                       AND rl.batch_id = m.batch_id
+                       AND rl.batch_line_id = m.batch_line_id
+                       AND rl.part_type_id = m.part_type_id
+                       AND rl.to_location_id = m.to_location_id
+                       AND rl.quantity = m.quantity) <> 1
+           ) AS every_movement_matches,
+           NOT EXISTS (
+               SELECT 1 FROM returns_stockreturnline rl
+               WHERE rl.stock_return_id = r.id
+                 AND (SELECT count(*) FROM inventory_stockmovement m
+                     WHERE m.document_type = 'stock_return' AND m.document_id = r.id
+                       AND ((m.movement_type = 'return_lot'
+                             AND rl.returned_lot_id = m.stock_lot_id
+                             AND m.stock_lot_id IS NOT NULL AND rl.part_item_id IS NULL)
+                         OR (m.movement_type = 'return_item'
+                             AND rl.part_item_id = m.part_item_id
+                             AND m.part_item_id IS NOT NULL))
+                       AND rl.batch_id = m.batch_id
+                       AND rl.batch_line_id = m.batch_line_id
+                       AND rl.part_type_id = m.part_type_id
+                       AND rl.to_location_id = m.to_location_id
+                       AND rl.quantity = m.quantity) <> 1
+           ) AS every_line_matches
+    FROM returns_stockreturn r
+), valid_return_lines AS (
+    SELECT l.id AS lot_id, rl.id AS return_line_id,
+           m.id AS movement_id,
+           abs(extract(epoch FROM (m.created_at - l.created_at))) <= 1
+               AND abs(extract(epoch FROM (r.completed_at - l.created_at))) <= 1
+               AS historical_time_valid
+    FROM lot_history l
+    JOIN returns_stockreturnline rl ON rl.returned_lot_id = l.id
+    JOIN returns_stockreturn r ON r.id = rl.stock_return_id
+        AND r.status IN ('completed', 'canceled') AND r.completed_at IS NOT NULL
+    JOIN return_document_proof doc ON doc.return_id = r.id
+        AND doc.has_lines AND doc.counts_match
+        AND doc.every_movement_matches AND doc.every_line_matches
+    JOIN inventory_stockmovement m ON m.id = l.first_id
+        AND m.movement_type = 'return_lot' AND m.document_type = 'stock_return'
+        AND m.document_id = r.id
+        AND m.batch_id = rl.batch_id AND m.batch_line_id = rl.batch_line_id
+        AND m.part_type_id = rl.part_type_id
+        AND m.to_location_id = rl.to_location_id AND m.quantity = rl.quantity
+    WHERE rl.batch_id = l.batch_id AND rl.batch_line_id = l.batch_line_id
+      AND rl.part_type_id = l.part_type_id
+      AND rl.to_location_id = l.original_location_id
+      AND rl.quantity = l.initial_quantity
+      AND (SELECT count(*) FROM inventory_stockmovement own
+           WHERE own.stock_lot_id = l.id AND own.document_type = 'stock_return'
+             AND own.document_id = r.id) = 1
+      AND (SELECT count(*) FROM returns_stockreturnline same_lot
+           WHERE same_lot.stock_return_id = r.id AND same_lot.returned_lot_id = l.id) = 1
+), return_stats AS (
+    SELECT l.id AS lot_id,
+           count(v.return_line_id) FILTER (WHERE v.historical_time_valid)
+               AS historical_valid_count,
+           bool_or(v.return_line_id = l.origin_return_line_id)
+               AS explicit_valid,
+           (l.first_id IS NOT NULL
+               AND abs(extract(epoch FROM (l.first_created_at - l.created_at))) <= 1
+               AND (l.first_type = 'return_lot'
+                    OR l.first_document_type = 'stock_return'))
+               OR EXISTS (
+                   SELECT 1 FROM returns_stockreturnline rl
+                   JOIN returns_stockreturn r ON r.id = rl.stock_return_id
+                   WHERE rl.returned_lot_id = l.id AND r.completed_at IS NOT NULL
+                     AND abs(extract(epoch FROM (r.completed_at - l.created_at))) <= 1
+               ) AS has_return_creation_evidence
+    FROM lot_history l
+    LEFT JOIN valid_return_lines v ON v.lot_id = l.id
+    GROUP BY l.id, l.first_id, l.first_created_at, l.created_at, l.first_type,
+             l.first_document_type
+), return_proof AS (
+    SELECT l.*,
+           CASE WHEN l.origin_return_line_id IS NOT NULL
+                THEN coalesce(rs.explicit_valid, false)
+                WHEN l.first_id IS NOT NULL
+                     AND abs(extract(epoch FROM (l.first_created_at - l.created_at))) <= 1
+                     AND l.first_type = 'adjust_in'
+                     AND l.first_document_type IN ('found_addition', 'section_recount')
+                    THEN false
+                WHEN NOT rs.has_return_creation_evidence THEN false
+                WHEN rs.historical_valid_count = 1 THEN true
+                ELSE NULL::boolean END AS return_origin
+    FROM transfer_proof l
+    JOIN return_stats rs ON rs.lot_id = l.id
+), final_flags AS (
+    SELECT l.*,
+           EXISTS (
+               SELECT 1 FROM inventory_stockmovement m
+               WHERE l.status <> 'receiving'
+                 AND m.movement_type = 'move_lot' AND m.document_type = 'stock_transfer'
+                 AND m.batch_id = l.batch_id AND m.batch_line_id = l.batch_line_id
+                 AND m.part_type_id = l.part_type_id
+                 AND m.to_location_id = l.original_location_id
+                 AND m.quantity = l.initial_quantity AND m.created_at < l.created_at
+           ) AS unanchored_transfer,
+           coalesce(merge_net.quantity, 0) AS merge_net,
+           (SELECT count(*) FROM procurement_batchline b
+               WHERE b.batch_id = l.batch_id AND b.part_type_id = l.part_type_id)
+               AS same_part_line_count
+    FROM return_proof l
+    LEFT JOIN LATERAL (
+        SELECT sum(m.quantity) AS quantity
+        FROM inventory_stockmovement m
+        WHERE m.batch_line_id = l.batch_line_id
+          AND m.stock_lot_id IS DISTINCT FROM l.id
+          AND m.movement_type = 'move_lot' AND m.document_type = 'stock_transfer'
+          AND m.created_at > l.created_at
+          AND m.to_location_id = coalesce((
+              SELECT whole_move.to_location_id
+              FROM inventory_stockmovement whole_move
+              WHERE whole_move.stock_lot_id = l.id
+                AND whole_move.movement_type = 'move_lot'
+                AND whole_move.document_type = ''
+                AND whole_move.from_location_id IS NOT NULL
+                AND whole_move.to_location_id IS NOT NULL
+                AND whole_move.created_at <= m.created_at
+              ORDER BY whole_move.created_at DESC, whole_move.id DESC LIMIT 1
+          ), l.original_location_id)
+    ) merge_net ON true
+)
+SELECT l.id AS lot_id, l.batch_line_id, l.status,
+       CASE
+           -- Claimed derived origin wins the ordering. A broken claim is UNKNOWN.
+           WHEN l.origin_transfer_id IS NOT NULL AND l.origin_return_line_id IS NOT NULL
+               THEN 'unknown'
+           WHEN l.origin_transfer_id IS NOT NULL AND l.marker IS DISTINCT FROM 'transfer'
+               THEN 'unknown'
+           WHEN l.origin_return_line_id IS NOT NULL AND l.marker IS DISTINCT FROM 'return'
+               THEN 'unknown'
+           WHEN l.marker = 'transfer' AND l.origin_transfer_id IS NULL THEN 'unknown'
+           WHEN l.marker = 'return' AND l.origin_return_line_id IS NULL THEN 'unknown'
+           WHEN l.origin_transfer_id IS NOT NULL THEN
+               CASE WHEN (l.note_transfer_id IS NULL
+                           OR l.note_transfer_id = l.origin_transfer_id)
+                         AND l.receipt_count = 0 AND l.transfer_valid
+                    THEN 'transfer_derived' ELSE 'unknown' END
+           WHEN l.origin_return_line_id IS NOT NULL THEN
+               CASE WHEN l.receipt_count = 0 AND l.return_origin IS TRUE
+                    THEN 'return_derived' ELSE 'unknown' END
+           -- Damaged return creation evidence blocks weaker supplier inference.
+           WHEN l.marker IS DISTINCT FROM 'supplier_received'
+                AND (l.return_origin IS NULL
+                     OR (l.return_origin IS TRUE AND l.receipt_count > 0))
+               THEN 'unknown'
+           WHEN l.return_origin IS TRUE THEN 'return_derived'
+           WHEN l.receipt_count > 0 THEN
+               CASE WHEN l.marker IN ('supplier_received') OR l.marker IS NULL THEN
+                   CASE WHEN l.note NOT LIKE 'Перемещение #%'
+                             AND NOT l.unanchored_transfer
+                             AND l.receipt_count = 1 AND l.first_real_id = l.receipt_id
+                             AND l.receipt_document_type = ''
+                             AND l.receipt_document_id IS NULL
+                             AND l.receipt_batch_id = l.batch_id
+                             AND l.receipt_part_type_id = l.part_type_id
+                             AND l.receipt_line_id IS NOT NULL
+                             AND l.receipt_line_batch_id = l.receipt_batch_id
+                             AND l.receipt_line_part_type_id = l.receipt_part_type_id
+                             AND l.receipt_location_id = l.original_location_id
+                             AND l.receipt_quantity = l.initial_quantity
+                             AND l.initial_quantity > 0
+                        THEN CASE WHEN l.receipt_line_id = l.batch_line_id
+                             THEN 'primary_receipt' ELSE 'received_on_another_line' END
+                        ELSE 'unknown' END
+                   ELSE 'unknown' END
+           WHEN l.note LIKE 'Перемещение #%' THEN
+               CASE WHEN l.chosen_transfer_id IS NOT NULL
+                         AND l.transfer_created_at <= l.created_at
+                         AND l.transfer_created_at >= l.created_at - interval '1 second'
+                         AND l.has_near_target_movement AND l.transfer_valid
+                    THEN 'transfer_derived' ELSE 'unknown' END
+           WHEN l.status = 'receiving' THEN
+               CASE WHEN l.movement_count = l.backfill_count
+                    THEN 'pending_receipt' ELSE 'unknown' END
+           WHEN l.candidate_doc_count > 0 THEN
+               CASE WHEN l.candidate_doc_count = 1 AND l.transfer_valid
+                    THEN 'transfer_derived' ELSE 'unknown' END
+           WHEN l.unanchored_transfer THEN 'unknown'
+           WHEN l.initial_quantity = 0 AND l.first_type = 'adjust_in'
+                AND l.first_document_type = 'section_recount' THEN 'recount_derived'
+           WHEN l.initial_quantity = 0 AND l.first_type = 'adjust_in'
+                AND l.first_document_type = 'found_addition' THEN 'found_stock'
+           WHEN l.backfill_count > 0 THEN 'unknown'
+           -- The persisted supplier_pending marker is positive legacy evidence;
+           -- a NULL historical marker never acquires supplier provenance here.
+           WHEN l.initial_quantity > 0 AND l.marker = 'supplier_pending'
+                AND l.batch_id = l.current_line_batch_id
+                AND l.current_line_part_type_id = l.part_type_id
+                AND l.same_part_line_count = 1
+                AND l.quantity - l.own_net - l.merge_net = l.initial_quantity
+                AND l.other_line_count = 0 THEN 'legacy_primary_receipt'
+           -- Absent, ambiguous and contradictory evidence all fail closed.
+           ELSE 'unknown'
+       END AS provenance
+FROM final_flags l
+ORDER BY l.id;

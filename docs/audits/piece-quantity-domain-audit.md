@@ -300,7 +300,8 @@ transfer lots without any movement) showed that "no movement" does not mean
 | Section recount | 7bdcdd5 | ADJUST_IN `section_recount` first, opened at 0 | that first movement |
 | Found stock (scanner group) | 877fd0b | ADJUST_IN `found_addition` first, opened at 0 | that first movement; the posting IS the intake of its own synthetic batch line, so the whole line quantity counts (later additions into the same lot are not new intake) |
 | Pending receipt | always | none yet | status `receiving` |
-| Received by status flip | before 108b5ad (2026-09-29) | no RECEIVE_LOT; later sales etc. are recorded | the ledger rebuilds the lot's starting quantity (own in/out, transfer portions out, transfer merges in) and it equals `initial_quantity` |
+| Status-flipped lot with a retained `supplier_pending` marker | compatibility case | no RECEIVE_LOT; later sales etc. are recorded | the marker gives positive supplier evidence, the current batch/line/part relation is unique, and the ledger rebuilds the starting quantity as `initial_quantity` |
+| Pre-marker status-flipped lot with no surviving supplier evidence | before the creation marker | no RECEIVE_LOT | UNKNOWN: a NULL marker cannot distinguish it from erased derived-origin history |
 | Lot re-assigned to another line (admin, before 2c64484) | | its RECEIVE_LOT names the original line | the receipt counts for the line the movement names (`received_on_another_line`, intake 0 on the current line) |
 | Anything else (for example quantity edited without a movement before 108b5ad / 2c64484) | | | none: UNKNOWN, intake unproven, the line stays closed |
 
@@ -357,12 +358,13 @@ part of this change.
 
 Not verified on production from this review: there was no production access.
 
-* `docs/audits/lot-provenance-readonly.sql`: SELECT-only queries for the
-  deployed schema (run in `BEGIN TRANSACTION READ ONLY`): lot inventory by
-  status and evidence, transfer evidence for lots without receipts, receipts on
-  re-assigned lots, old-backfill receipts, lines whose receipts alone exceed the
-  line. `tests/test_lot_provenance_sql_postgresql.py` keeps them equal to the
-  classifier.
+* `docs/audits/lot-provenance-readonly.sql`: SELECT-only queries (run in
+  `BEGIN TRANSACTION READ ONLY`) expose evidence and a `final_provenance` result
+  with exactly one class per lot. PostgreSQL tests compare that final class with
+  Python after normal and contradictory histories. An old lot with no surviving
+  positive supplier evidence is `UNKNOWN`, including when derived-origin
+  evidence was erased; `LEGACY_PRIMARY` requires `supplier_pending` plus the
+  complete line and ledger checks.
 * `python manage.py audit_lot_provenance --show 500` from the candidate code,
   pointed at the production database, writes nothing. It prints: lots per class
   (total / active / without any movement), UNKNOWN among them, lines closed by

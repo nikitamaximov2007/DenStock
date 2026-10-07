@@ -37,6 +37,7 @@ from apps.returns.services import add_sale_line_return, complete_return, create_
 from apps.sales.models import Sale
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
 from apps.warehouse.models import StorageLocation
+from tests.lot_provenance_sql_parity import assert_final_provenance_parity
 from tests.test_lot_provenance_adversarial import (  # noqa: F401
     _age,
     _corrupt_lot_for_adversarial_test,
@@ -87,6 +88,7 @@ def test_the_file_only_reads():
         "lot_inventory", "supplier_receipt_evidence", "transfer_evidence",
         "reassigned_receipts",
         "old_backfill_receipts", "receipts_over_line", "return_origin_evidence",
+        "final_provenance",
     }
     code = "\n".join(line for line in text.splitlines() if not line.startswith("--"))
     assert not re.search(
@@ -301,6 +303,9 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     by_class = {}
     for lot in classified:
         by_class.setdefault(lot.provenance, set()).add(lot.lot_id)
+    assert {
+        row["lot_id"]: row["provenance"] for row in _run("final_provenance")
+    } == {lot.lot_id: lot.provenance for lot in classified}
     assert by_class[TRANSFER_DERIVED] == {
         target.pk, moved.pk, broken_target.pk, transfer_target.pk,
     }
@@ -343,6 +348,7 @@ def test_the_production_queries_name_the_lots_the_classifier_names(units, env): 
     assert no_movement[True] == StockLot.objects.exclude(
         pk__in=StockMovement.objects.filter(stock_lot__isnull=False).values("stock_lot")
     ).count()
+    assert_final_provenance_parity()
 
 
 @pytest.mark.parametrize("draft_delay_seconds", [0, 10, 600, 30 * 24 * 60 * 60])
@@ -387,3 +393,30 @@ def test_delayed_historical_return_python_sql_parity(  # noqa: F811
     for pre_origin_schema in (False, True):
         evidence = _run("return_origin_evidence", pre_origin_schema=pre_origin_schema)
         assert {row["lot_id"] for row in evidence} == {returned.pk}
+    assert_final_provenance_parity()
+
+
+def test_later_return_into_found_stock_keeps_found_origin(units, env):  # noqa: F811
+    from apps.inventory.lot_provenance import FOUND_STOCK
+
+    post_found_stock_group(
+        entries=[{"source": "warehouse", "source_id": env["part"].pk,
+                  "exact_number": "ADV-1", "quantity": 3}],
+        location=env["cells"][3], token="sql-found-later-return",
+    )
+    found = StockLot.objects.get(part_type=env["part"], location=env["cells"][3])
+    sale = create_sale(customer_name="Клиент", by=env["admin"])
+    add_stock_lot_to_sale(sale, found, Decimal("1"), unit_price=Decimal("100"))
+    sale = complete_sale(sale, by=env["admin"])
+    ret = create_return(source=Sale.objects.get(pk=sale.pk), reason="Later return", by=env["admin"])
+    add_sale_line_return(
+        ret, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=env["cells"][3], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(ret, by=env["admin"])
+
+    assert next(
+        row.provenance for row in line_provenance_detail(found.batch_line).lots
+        if row.lot_id == found.pk
+    ) == FOUND_STOCK
+    assert_final_provenance_parity()

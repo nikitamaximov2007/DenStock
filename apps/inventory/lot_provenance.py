@@ -309,6 +309,14 @@ def _return_origin_state(lot, rows, own, doc_movements):
     first_is_creation_time = bool(
         first and _same_transaction(first.created_at, lot.created_at)
     )
+    # A found/recount posting is itself the first, creation-time stock event.
+    # A return posted immediately afterwards into that existing lot cannot
+    # retroactively replace this stronger origin evidence.
+    if (
+        first_is_creation_time and first.movement_type == M.ADJUST_IN
+        and first.document_type in {"found_addition", "section_recount"}
+    ):
+        return False
     first_return_movement = bool(
         first_is_creation_time
         and first.movement_type == M.RETURN_LOT

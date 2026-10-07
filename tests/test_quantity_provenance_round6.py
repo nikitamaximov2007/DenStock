@@ -37,6 +37,16 @@ from tests.test_piece_stock_boundary import _finalized_line, stock  # noqa: F401
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def final_sql_class_parity():
+    """Check final classes after each Round 6 blocker and corruption fixture."""
+    yield
+    if connection.vendor == "postgresql":
+        from tests.lot_provenance_sql_parity import assert_final_provenance_parity
+
+        assert_final_provenance_parity()
+
+
 def _return_created(env, *, location=None):
     line = _finalized_line(env, env["part"], "10")
     source = receive_stock_lot(create_stock_lot(line, env["cells"][0], Decimal("10")))

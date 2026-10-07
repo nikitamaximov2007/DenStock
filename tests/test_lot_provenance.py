@@ -11,6 +11,7 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.db import connection
 from django.urls import reverse
 
 from apps.inventory.lot_provenance import (
@@ -38,6 +39,7 @@ from apps.inventory.services import (
     remaining_qty,
 )
 from apps.procurement.models import BatchLine
+from apps.returns.models import StockReturn
 from apps.returns.services import add_sale_line_return, complete_return, create_return
 from apps.sales.models import Sale
 from apps.sales.services import add_stock_lot_to_sale, complete_sale, create_sale
@@ -46,6 +48,16 @@ from tests.customs_support import remember_customs
 from tests.test_piece_stock_boundary import _finalized_line, stock  # noqa: F401
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture(autouse=True)
+def final_sql_class_parity():
+    """Cover every established provenance class with final SQL parity on PG16."""
+    yield
+    if connection.vendor == "postgresql":
+        from tests.lot_provenance_sql_parity import assert_final_provenance_parity
+
+        assert_final_provenance_parity()
 
 
 @pytest.fixture
@@ -149,6 +161,48 @@ def test_a_found_stock_line_is_fully_taken_by_its_found_addition(env):
     assert remaining_qty(line) == Decimal("0")  # 0ba1416 left 3 open here
     with pytest.raises(InventoryError, match="можно принять ещё 0"):
         create_stock_lot(line, env["cells"][0], Decimal("3"))
+
+
+@pytest.mark.parametrize("origin", ["found", "recount"])
+@pytest.mark.parametrize("pre_marker", [False, True])
+def test_later_return_at_creation_time_keeps_found_or_recount_origin(
+    env, origin, pre_marker
+):
+    if origin == "found":
+        post_found_stock_group(
+            entries=[{"source": "warehouse", "source_id": env["part"].pk,
+                      "exact_number": "PROV-1", "quantity": 3}],
+            location=env["cells"][3], token="prov-found-return",
+        )
+        lot = StockLot.objects.get(part_type=env["part"], location=env["cells"][3])
+        expected = FOUND_STOCK
+    else:
+        line = _finalized_line(env, env["part"], "3")
+        lot = get_or_create_section_recount_lot(
+            line, env["cells"][3], lot_status=StockLot.Status.AVAILABLE
+        )
+        adjust_stock_lot_quantity(
+            lot, Decimal("3"), comment="Пересчёт", document_type="section_recount"
+        )
+        expected = RECOUNT_DERIVED
+
+    if pre_marker:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE inventory_stocklot SET creation_origin = NULL WHERE id = %s",
+                [lot.pk],
+            )
+
+    sale = _sell(env, lot, "1")
+    stock_return = create_return(source=sale, reason="Возврат", by=env["admin"])
+    add_sale_line_return(
+        stock_return, Sale.objects.get(pk=sale.pk).lines.get(), Decimal("1"),
+        to_location=env["cells"][3], restock_status=StockLot.Status.AVAILABLE,
+    )
+    complete_return(stock_return, by=env["admin"])
+    StockReturn.objects.filter(pk=stock_return.pk).update(completed_at=lot.created_at)
+
+    assert _classes(lot.batch_line)[lot.pk][0] == expected
 
 
 def test_a_legacy_status_flipped_lot_counts_what_the_ledger_proves(env):

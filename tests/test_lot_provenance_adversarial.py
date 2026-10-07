@@ -67,6 +67,16 @@ pytestmark = pytest.mark.django_db
 RECEIPT = StockMovement.MovementType.RECEIVE_LOT
 
 
+@pytest.fixture(autouse=True)
+def final_sql_class_parity():
+    """Every adversarial PostgreSQL fixture must agree on the final class."""
+    yield
+    if connection.vendor == "postgresql":
+        from tests.lot_provenance_sql_parity import assert_final_provenance_parity
+
+        assert_final_provenance_parity()
+
+
 @pytest.fixture
 def env(stock, public_catalog):  # noqa: F811
     cells = [

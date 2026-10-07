@@ -1,12 +1,12 @@
-# ACTIVE HANDOFF: Quantity provenance Round 6
+# ACTIVE HANDOFF: Quantity provenance Round 6.1
 
-Task: repair the seven independent audit blockers on
-`codex/quantity-provenance-blockers`, based on `eaf89f4b176c542d9c578b245f33398b1f5ac0b2`.
+Task: close final SQL classifier parity on
+`codex/quantity-provenance-blockers`, based on `42ca0e096ba44de1e7131ace443c3f6e585125c1`.
 This is an engineering candidate, not a production release. Production and
 `main` remain at `6916276df5de686c457914ff36e77b3e921dc322` at the latest
 read-only check. The feature branch is not based on current `main`.
 
-Completed:
+Round 6 baseline already completed:
 
 - Reproduced all seven audit findings against the unchanged Round 5 baseline.
 - Added a nullable, creation-path marker for new lots; old lots receive no
@@ -46,26 +46,37 @@ Completed:
 - Static checks: ruff, djlint, Django check, migration check and diff check
   passed.
 
-Unresolved requirement conflict:
+Owner decision for Round 6.1 is final: a historical lot without surviving
+positive supplier evidence is `UNKNOWN`, even when it may once have been a
+legitimate legacy supplier lot. A `supplier_pending` creation marker plus the
+unique line and reconstructed ledger is required for `LEGACY_PRIMARY`.
 
-- A real pre-marker supplier lot with no `RECEIVE_LOT` or other origin record
-  is observationally identical to a return-created lot after its return
-  document and movement have both been erased. Preserving such a lot as
-  `LEGACY_PRIMARY` would also recreate the audit's false supplier result.
-  The candidate therefore marks both `UNKNOWN`, closing further supplier
-  intake on their lines. A safe positive legacy classification requires an
-  independent durable historical source that is not present in this schema,
-  or explicit acceptance of the fail-closed policy. Do not claim the requested
-  pre-marker legacy preservation has been proven.
-- The read-only SQL file publishes strict supplier, transfer and return
-  evidence sets. It is not a complete SQL reimplementation of every Python
-  class, including `LEGACY_PRIMARY`; exhaustive class-by-class SQL parity is
-  therefore still an independent-audit gate.
+Round 6.1 candidate work:
 
-Next steps: obtain a decision on the evidence-free historical legacy case,
-then integrate on
-current main and rerun the full qualification and independent audit. Do not
-deploy or migrate production from this branch.
+- Added a complete, read-only `final_provenance` SQL query. It returns one of
+  all nine Python classes for every lot and follows the same explicit-origin,
+  contradiction, receipt, transfer, pending, recount, found, legacy and UNKNOWN
+  ordering. Existing evidence queries remain available for investigation.
+- PostgreSQL 16 parity assertions now run after every fixture in the core,
+  adversarial and Round 6 regression modules, comparing final classes for all
+  fixture lots, including damaged documents and erased evidence.
+- A later return posted within one second of a found-stock or recount origin
+  exposed a real shared classifier bug: both sides used weak return completion
+  timing to displace the first, marked ADJUST_IN origin. Python and SQL now
+  preserve the proven found/recount origin; SQLite and PostgreSQL regressions
+  cover it.
+- A fresh read-only production dump was restored and migrated only in an
+  isolated local PostgreSQL 16 database. Python and final SQL agreed on all
+  984 lots: 785 `PRIMARY_RECEIPT`, 13 `TRANSFER_DERIVED`, 186 `FOUND_STOCK`;
+  zero mismatches. Production itself remains unchanged at `6916276` and
+  PostgreSQL 16.14 at the latest read-only check.
+- Focused PostgreSQL qualification: 277 passed, including the seven Round 6
+  blockers, admin return deletion, AUD-01, delayed and existing-lot returns,
+  same-part multiple BatchLines, F1 rebound, quantity and return suites.
+- Full SQLite comparison against `42ca0e0`: baseline 6540 passed, 9 failed,
+  320 skipped; candidate 6544 passed, the same 9 failed, 321 skipped.
+  Candidate-only failures: 0. Ruff, Django check, migration check, djlint and
+  diff check pass. No new migration, deploy or merge.
 
 ---
 
