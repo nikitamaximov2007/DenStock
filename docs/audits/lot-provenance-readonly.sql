@@ -107,12 +107,106 @@ ORDER BY l.id;
 -- MOVE_LOT is journaled on its source lot, so do not require its current
 -- BatchLine FK to equal the target's current BatchLine. Prove part identity on
 -- the source lot, movement, transfer, target lot and both BatchLines, and prove
--- the complete transfer movement group agrees with its document.
+-- the complete transfer movement group agrees with its document. Reconstruct
+-- the source cell and balance from its ledger; a later or competing source lot
+-- cannot establish the target's creation event.
 WITH first_whole_move AS (
     SELECT DISTINCT ON (stock_lot_id) stock_lot_id, from_location_id
     FROM inventory_stockmovement
     WHERE movement_type = 'move_lot' AND document_type = '' AND stock_lot_id IS NOT NULL
     ORDER BY stock_lot_id, created_at, id
+),
+source_positions AS (
+    SELECT m.id AS movement_id, candidate.id AS lot_id,
+           coalesce(
+               (SELECT h.to_location_id FROM inventory_stockmovement h
+                WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                  AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                  AND h.to_location_id IS NOT NULL
+                  AND (h.created_at, h.id) <= (m.created_at, m.id)
+                ORDER BY h.created_at DESC, h.id DESC LIMIT 1),
+               (SELECT h.from_location_id FROM inventory_stockmovement h
+                WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                  AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                  AND h.to_location_id IS NOT NULL
+                ORDER BY h.created_at, h.id LIMIT 1), candidate.location_id
+           ) AS location_id,
+           NOT EXISTS (
+               SELECT 1 FROM (
+                   SELECT h.created_at, h.from_location_id,
+                          lag(h.to_location_id) OVER (ORDER BY h.created_at, h.id)
+                              AS previous_to_location_id
+                   FROM inventory_stockmovement h
+                   WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                     AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                     AND h.to_location_id IS NOT NULL
+               ) history
+               WHERE history.created_at < candidate.created_at
+                  OR (history.previous_to_location_id IS NOT NULL
+                      AND history.from_location_id <> history.previous_to_location_id)
+           ) AND coalesce(
+               (SELECT h.to_location_id FROM inventory_stockmovement h
+                WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                  AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                  AND h.to_location_id IS NOT NULL
+                ORDER BY h.created_at DESC, h.id DESC LIMIT 1), candidate.location_id
+           ) = candidate.location_id AS history_consistent
+    FROM inventory_stockmovement m
+    JOIN inventory_stocklot candidate ON candidate.batch_id = m.batch_id
+        AND candidate.batch_line_id = m.batch_line_id
+        AND candidate.part_type_id = m.part_type_id
+        AND candidate.created_at <= m.created_at
+    WHERE m.document_type = 'stock_transfer'
+), source_counts AS (
+    SELECT positions.movement_id, count(*) AS matching_count
+    FROM source_positions positions
+    JOIN inventory_stockmovement m ON m.id = positions.movement_id
+    WHERE positions.location_id = m.from_location_id AND positions.history_consistent
+    GROUP BY positions.movement_id
+), source_own_net AS (
+    SELECT m.stock_lot_id AS lot_id,
+           sum(CASE
+               WHEN m.movement_type IN ('adjust_in', 'return_lot', 'writeoff_cancel_lot')
+                   THEN m.quantity
+               WHEN m.movement_type IN ('adjust_out', 'sale_lot', 'issue_lot',
+                                        'write_off_lot')
+                   OR (m.movement_type = 'move_lot'
+                       AND m.document_type = 'stock_transfer') THEN -m.quantity
+               ELSE 0 END) AS amount
+    FROM inventory_stockmovement m
+    WHERE m.stock_lot_id IS NOT NULL
+    GROUP BY m.stock_lot_id
+), source_incoming AS (
+    SELECT positions.lot_id, sum(m.quantity) AS amount
+    FROM source_positions positions
+    JOIN inventory_stockmovement m ON m.id = positions.movement_id
+    JOIN inventory_stocklot source ON source.id = positions.lot_id
+    WHERE m.movement_type = 'move_lot' AND m.stock_lot_id <> source.id
+      AND m.created_at > source.created_at
+      AND m.to_location_id = positions.location_id
+    GROUP BY positions.lot_id
+), source_balances AS (
+    SELECT source.id AS lot_id,
+           source.quantity - coalesce(own.amount, 0) - coalesce(incoming.amount, 0)
+               AS reconstructed_start,
+           CASE WHEN to_jsonb(source)->>'creation_origin' IN ('transfer', 'return')
+                 OR (to_jsonb(source)->>'creation_origin' IS NULL AND (
+                     source.note LIKE 'Перемещение #%'
+                     OR EXISTS (
+                         SELECT 1 FROM inventory_stockmovement first_movement
+                         WHERE first_movement.id = (
+                             SELECT first_id.id FROM inventory_stockmovement first_id
+                             WHERE first_id.stock_lot_id = source.id
+                             ORDER BY first_id.created_at, first_id.id LIMIT 1
+                         ) AND first_movement.movement_type = 'return_lot'
+                           AND abs(extract(epoch FROM (
+                               first_movement.created_at - source.created_at
+                           ))) <= 1
+                     )
+                 )) THEN 0 ELSE source.initial_quantity END AS expected_start
+    FROM inventory_stocklot source
+    LEFT JOIN source_own_net own ON own.lot_id = source.id
+    LEFT JOIN source_incoming incoming ON incoming.lot_id = source.id
 ),
 transfer_groups AS (
     SELECT t.id AS transfer_id,
@@ -124,6 +218,11 @@ transfer_groups AS (
                AND m.from_location_id = t.from_location_id
                AND m.to_location_id = t.to_location_id
                AND s.part_type_id = t.part_type_id
+               AND s.created_at <= m.created_at
+               AND position_at_move.location_id = m.from_location_id
+               AND position_at_move.history_consistent
+               AND source_count.matching_count = 1
+               AND source_balance.reconstructed_start = source_balance.expected_start
                AND m.batch_id = s.batch_id
                AND m.batch_line_id = s.batch_line_id
                AND origin_line.part_type_id = t.part_type_id
@@ -140,6 +239,10 @@ transfer_groups AS (
       ON m.document_id = t.id AND m.document_type = 'stock_transfer'
     LEFT JOIN inventory_stocklot s ON s.id = m.stock_lot_id
     LEFT JOIN procurement_batchline origin_line ON origin_line.id = m.batch_line_id
+    LEFT JOIN source_positions position_at_move ON position_at_move.movement_id = m.id
+        AND position_at_move.lot_id = s.id
+    LEFT JOIN source_counts source_count ON source_count.movement_id = m.id
+    LEFT JOIN source_balances source_balance ON source_balance.lot_id = s.id
     GROUP BY t.id
 ),
 candidates AS (
@@ -203,6 +306,12 @@ WHERE t.part_item_id IS NULL
   AND c.origin_return_line_id IS NULL
   AND g.moved_quantity = t.quantity
   AND g.rows_consistent
+  AND NOT EXISTS (
+      SELECT 1 FROM inventory_stockmovement source_is_target
+      WHERE source_is_target.document_type = 'stock_transfer'
+        AND source_is_target.document_id = t.id
+        AND source_is_target.stock_lot_id = c.id
+  )
 ORDER BY c.id, m.id;
 
 -- name: return_origin_evidence
@@ -437,6 +546,8 @@ ORDER BY b.id;
 -- An explicit origin_transfer is proved by structured evidence, never by note.
 -- Historical transfer inference requires the exact machine-written note;
 -- nearby documents never replace a missing or malformed note.
+-- Both explicit and historical transfers require one valid source lot per
+-- MOVE_LOT, with a continuous location history and conserved ledger balance.
 WITH lot_base AS (
     SELECT l.id, l.batch_id, l.batch_line_id, l.part_type_id, l.location_id,
            l.quantity, l.initial_quantity, l.status, l.created_at, l.note,
@@ -523,6 +634,97 @@ WITH lot_base AS (
     FROM inventory_stockmovement m
     JOIN inventory_stocklot l ON l.id = m.stock_lot_id
     WHERE m.batch_line_id IS NOT NULL AND m.batch_line_id <> l.batch_line_id
+), source_positions AS (
+    SELECT m.id AS movement_id, candidate.id AS lot_id,
+           coalesce(
+               (SELECT h.to_location_id FROM inventory_stockmovement h
+                WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                  AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                  AND h.to_location_id IS NOT NULL
+                  AND (h.created_at, h.id) <= (m.created_at, m.id)
+                ORDER BY h.created_at DESC, h.id DESC LIMIT 1),
+               (SELECT h.from_location_id FROM inventory_stockmovement h
+                WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                  AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                  AND h.to_location_id IS NOT NULL
+                ORDER BY h.created_at, h.id LIMIT 1), candidate.location_id
+           ) AS location_id,
+           NOT EXISTS (
+               SELECT 1 FROM (
+                   SELECT h.created_at, h.from_location_id,
+                          lag(h.to_location_id) OVER (ORDER BY h.created_at, h.id)
+                              AS previous_to_location_id
+                   FROM inventory_stockmovement h
+                   WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                     AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                     AND h.to_location_id IS NOT NULL
+               ) history
+               WHERE history.created_at < candidate.created_at
+                  OR (history.previous_to_location_id IS NOT NULL
+                      AND history.from_location_id <> history.previous_to_location_id)
+           ) AND coalesce(
+               (SELECT h.to_location_id FROM inventory_stockmovement h
+                WHERE h.stock_lot_id = candidate.id AND h.movement_type = 'move_lot'
+                  AND h.document_type = '' AND h.from_location_id IS NOT NULL
+                  AND h.to_location_id IS NOT NULL
+                ORDER BY h.created_at DESC, h.id DESC LIMIT 1), candidate.location_id
+           ) = candidate.location_id AS history_consistent
+    FROM inventory_stockmovement m
+    JOIN inventory_stocklot candidate ON candidate.batch_id = m.batch_id
+        AND candidate.batch_line_id = m.batch_line_id
+        AND candidate.part_type_id = m.part_type_id
+        AND candidate.created_at <= m.created_at
+    WHERE m.document_type = 'stock_transfer'
+), source_counts AS (
+    SELECT positions.movement_id, count(*) AS matching_count
+    FROM source_positions positions
+    JOIN inventory_stockmovement m ON m.id = positions.movement_id
+    WHERE positions.location_id = m.from_location_id AND positions.history_consistent
+    GROUP BY positions.movement_id
+), source_own_net AS (
+    SELECT m.stock_lot_id AS lot_id,
+           sum(CASE
+               WHEN m.movement_type IN ('adjust_in', 'return_lot', 'writeoff_cancel_lot')
+                   THEN m.quantity
+               WHEN m.movement_type IN ('adjust_out', 'sale_lot', 'issue_lot',
+                                        'write_off_lot')
+                   OR (m.movement_type = 'move_lot'
+                       AND m.document_type = 'stock_transfer') THEN -m.quantity
+               ELSE 0 END) AS amount
+    FROM inventory_stockmovement m
+    WHERE m.stock_lot_id IS NOT NULL
+    GROUP BY m.stock_lot_id
+), source_incoming AS (
+    SELECT positions.lot_id, sum(m.quantity) AS amount
+    FROM source_positions positions
+    JOIN inventory_stockmovement m ON m.id = positions.movement_id
+    JOIN inventory_stocklot source ON source.id = positions.lot_id
+    WHERE m.movement_type = 'move_lot' AND m.stock_lot_id <> source.id
+      AND m.created_at > source.created_at
+      AND m.to_location_id = positions.location_id
+    GROUP BY positions.lot_id
+), source_balances AS (
+    SELECT source.id AS lot_id,
+           source.quantity - coalesce(own.amount, 0) - coalesce(incoming.amount, 0)
+               AS reconstructed_start,
+           CASE WHEN to_jsonb(source)->>'creation_origin' IN ('transfer', 'return')
+                 OR (to_jsonb(source)->>'creation_origin' IS NULL AND (
+                     source.note LIKE 'Перемещение #%'
+                     OR EXISTS (
+                         SELECT 1 FROM inventory_stockmovement first_movement
+                         WHERE first_movement.id = (
+                             SELECT first_id.id FROM inventory_stockmovement first_id
+                             WHERE first_id.stock_lot_id = source.id
+                             ORDER BY first_id.created_at, first_id.id LIMIT 1
+                         ) AND first_movement.movement_type = 'return_lot'
+                           AND abs(extract(epoch FROM (
+                               first_movement.created_at - source.created_at
+                           ))) <= 1
+                     )
+                 )) THEN 0 ELSE source.initial_quantity END AS expected_start
+    FROM inventory_stocklot source
+    LEFT JOIN source_own_net own ON own.lot_id = source.id
+    LEFT JOIN source_incoming incoming ON incoming.lot_id = source.id
 ), transfer_groups AS (
     SELECT t.id AS transfer_id, sum(m.quantity) AS moved_quantity,
            bool_and(coalesce(
@@ -530,6 +732,11 @@ WITH lot_base AS (
                AND m.from_location_id = t.from_location_id
                AND m.to_location_id = t.to_location_id
                AND source.id IS NOT NULL AND source.part_type_id = t.part_type_id
+               AND source.created_at <= m.created_at
+               AND source_position.location_id = m.from_location_id
+               AND source_position.history_consistent
+               AND source_count.matching_count = 1
+               AND source_balance.reconstructed_start = source_balance.expected_start
                AND source.batch_line_id = m.batch_line_id
                AND m.batch_id = source.batch_id
                AND source_line.id IS NOT NULL
@@ -542,6 +749,10 @@ WITH lot_base AS (
     LEFT JOIN inventory_stocklot source ON source.id = m.stock_lot_id
     LEFT JOIN procurement_batchline source_line ON source_line.id = m.batch_line_id
     LEFT JOIN source_conflicts conflict ON conflict.lot_id = source.id
+    LEFT JOIN source_positions source_position ON source_position.movement_id = m.id
+        AND source_position.lot_id = source.id
+    LEFT JOIN source_counts source_count ON source_count.movement_id = m.id
+    LEFT JOIN source_balances source_balance ON source_balance.lot_id = source.id
     GROUP BY t.id
 ), transfer_candidates AS (
     SELECT l.id AS lot_id, count(DISTINCT t.id) AS doc_count, min(t.id) AS transfer_id
@@ -574,6 +785,12 @@ WITH lot_base AS (
                AND t.to_location_id = l.original_location_id
                AND l.current_line_part_type_id = l.part_type_id
                AND g.moved_quantity = t.quantity AND g.rows_consistent
+               AND NOT EXISTS (
+                   SELECT 1 FROM inventory_stockmovement source_is_target
+                   WHERE source_is_target.document_type = 'stock_transfer'
+                     AND source_is_target.document_id = t.id
+                     AND source_is_target.stock_lot_id = l.id
+               )
                AND coalesce(target.moved_quantity, 0) = l.initial_quantity, false)
                AS transfer_valid,
            t.created_at AS transfer_created_at,
