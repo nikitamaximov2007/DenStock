@@ -17,7 +17,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.actions.models import WarehouseAction
-from apps.inventory.models import PartItem, StockLot
+from apps.inventory.models import PartItem, StockLot, StockMovement
 from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import (
     InventoryError,
@@ -392,22 +392,20 @@ def add_repair_line_return(ret, repair_line, quantity, *, to_location, restock_s
 @transaction.atomic
 def remove_return_line(line, *, by=None) -> None:
     """Снять позицию из черновика возврата."""
-    line = (
-        StockReturnLine.objects.select_for_update().select_related("stock_return").get(pk=line.pk)
-    )
-    _ensure_draft(line.stock_return)
+    parent_id = StockReturnLine.objects.values_list("stock_return_id", flat=True).get(pk=line.pk)
+    ret = StockReturn.objects.select_for_update().get(pk=parent_id)
+    _ensure_draft(ret)
+    line = StockReturnLine.objects.select_for_update().get(pk=line.pk, stock_return_id=parent_id)
     line.delete()
 
 
 @transaction.atomic
 def update_return_line_restock_status(line, *, restock_status, by=None) -> StockReturnLine:
     """Update the planned state of a draft line without touching stock."""
-    line = (
-        StockReturnLine.objects.select_for_update()
-        .select_related("stock_return")
-        .get(pk=line.pk)
-    )
-    _ensure_draft(line.stock_return)
+    parent_id = StockReturnLine.objects.values_list("stock_return_id", flat=True).get(pk=line.pk)
+    ret = StockReturn.objects.select_for_update().get(pk=parent_id)
+    _ensure_draft(ret)
+    line = StockReturnLine.objects.select_for_update().get(pk=line.pk, stock_return_id=parent_id)
     if restock_status not in (
         StockReturnLine.RestockStatus.AVAILABLE,
         StockReturnLine.RestockStatus.QUARANTINE,
@@ -447,6 +445,16 @@ def complete_return(ret, *, by=None) -> StockReturn:
         return ret
     if ret.status != StockReturn.Status.DRAFT:
         raise ReturnError("Возврат уже проведён.")
+    # A legacy/admin/raw-ORM status rollback may leave posted movements while
+    # making the header look like a draft. Never credit it a second time.
+    if StockMovement.objects.filter(
+        document_type="stock_return", document_id=ret.pk,
+        movement_type__in=(
+            StockMovement.MovementType.RETURN_ITEM,
+            StockMovement.MovementType.RETURN_LOT,
+        ),
+    ).exists():
+        raise ReturnError("Возврат уже зачислен на склад и не может быть проведён повторно.")
     line_ids = _locked_return_line_ids(ret)
     lines = list(
         StockReturnLine.objects.filter(pk__in=line_ids).select_related(
@@ -657,7 +665,8 @@ def cancel_return(ret, *, by=None, reason="") -> StockReturn:
             "canceled_by",
             "cancel_reason",
             "updated_at",
-        ]
+        ],
+        _allow_completed_cancel=True,
     )
 
     if repair_order_ids:

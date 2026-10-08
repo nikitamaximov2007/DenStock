@@ -1,7 +1,41 @@
 from django.conf import settings
-from django.db import models
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
 
 from apps.inventory.models import NumberSequence
+
+
+class StockReturnQuerySet(models.QuerySet):
+    """Do not let bulk ORM writes reopen or rewrite a posted return."""
+
+    POSTED_FIELDS = frozenset({
+        "number", "status", "source_type", "source_id", "cost_total",
+        "created_by", "created_by_id", "created_at", "completed_at",
+        "completed_by", "completed_by_id", "canceled_at", "canceled_by",
+        "canceled_by_id", "cancel_reason",
+    })
+
+    def _reject_posted(self):
+        ids = list(self.values_list("pk", flat=True))
+        # Lock every target, including drafts: a concurrent completion may be
+        # changing a draft into a posted row while this update waits.
+        statuses = list(self.model.objects.select_for_update().filter(
+            pk__in=ids
+        ).order_by("pk").values_list("status", flat=True))
+        if any(status in ("completed", "canceled") for status in statuses):
+            raise ValidationError("Проведённый возврат нельзя изменить через массовую операцию.")
+
+    def update(self, **kwargs):
+        if self.POSTED_FIELDS.intersection(kwargs):
+            with transaction.atomic(using=self.db):
+                self._reject_posted()
+                return super().update(**kwargs)
+        return super().update(**kwargs)
+
+    def delete(self):
+        with transaction.atomic(using=self.db):
+            self._reject_posted()
+            return super().delete()
 
 
 class StockReturn(models.Model):
@@ -68,6 +102,8 @@ class StockReturn(models.Model):
     )
     cancel_reason = models.CharField("Причина отмены", max_length=255, blank=True)
 
+    objects = StockReturnQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Возврат на склад"
         verbose_name_plural = "Возвраты на склад"
@@ -77,9 +113,70 @@ class StockReturn(models.Model):
         return f"{self.number} ({self.get_source_type_display()} #{self.source_id})"
 
     def save(self, *args, **kwargs):
-        if not self.number:
-            self.number = NumberSequence.next("stock_return")
-        super().save(*args, **kwargs)
+        allow_completed_cancel = kwargs.pop("_allow_completed_cancel", False)
+        with transaction.atomic(using=self._state.db):
+            if self.pk:
+                prior = type(self).objects.select_for_update().get(pk=self.pk)
+                if prior.status in (self.Status.COMPLETED, self.Status.CANCELED):
+                    changed = {
+                        field for field in StockReturnQuerySet.POSTED_FIELDS
+                        if getattr(prior, field) != getattr(self, field)
+                    }
+                    allowed_cancel_fields = {
+                        "status", "canceled_at", "canceled_by", "canceled_by_id",
+                        "cancel_reason",
+                    }
+                    if changed and not (
+                        allow_completed_cancel
+                        and prior.status == self.Status.COMPLETED
+                        and self.status == self.Status.CANCELED
+                        and changed <= allowed_cancel_fields
+                    ):
+                        raise ValidationError("Проведённый возврат нельзя открыть или переписать.")
+            if not self.number:
+                self.number = NumberSequence.next("stock_return")
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic(using=self._state.db):
+            current = type(self).objects.select_for_update().get(pk=self.pk)
+            if current.status in (self.Status.COMPLETED, self.Status.CANCELED):
+                raise ValidationError("Проведённый возврат нельзя удалить.")
+            return super().delete(*args, **kwargs)
+
+
+class StockReturnLineQuerySet(models.QuerySet):
+    def bulk_create(self, objs, **kwargs):
+        objs = list(objs)
+        with transaction.atomic(using=self.db):
+            parent_ids = sorted({obj.stock_return_id for obj in objs})
+            parents = StockReturn.objects.select_for_update().filter(
+                pk__in=parent_ids
+            ).order_by("pk")
+            if any(parent.status != StockReturn.Status.DRAFT for parent in parents):
+                raise ValidationError("Строки проведённого возврата нельзя добавлять.")
+            return super().bulk_create(objs, **kwargs)
+
+    def _lock_and_check(self):
+        parent_ids = list(self.values_list("stock_return_id", flat=True).distinct())
+        if parent_ids:
+            parents = StockReturn.objects.select_for_update().filter(
+                pk__in=parent_ids
+            ).order_by("pk")
+            if any(parent.status != StockReturn.Status.DRAFT for parent in parents):
+                raise ValidationError("Строки проведённого возврата нельзя изменять.")
+
+    def update(self, **kwargs):
+        if "stock_return" in kwargs or "stock_return_id" in kwargs:
+            raise ValidationError("Нельзя переносить строку в другой возврат.")
+        with transaction.atomic(using=self.db):
+            self._lock_and_check()
+            return super().update(**kwargs)
+
+    def delete(self):
+        with transaction.atomic(using=self.db):
+            self._lock_and_check()
+            return super().delete()
 
 
 class StockReturnLine(models.Model):
@@ -146,6 +243,8 @@ class StockReturnLine(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = StockReturnLineQuerySet.as_manager()
+
     class Meta:
         verbose_name = "Позиция возврата"
         verbose_name_plural = "Позиции возврата"
@@ -175,3 +274,21 @@ class StockReturnLine(models.Model):
     def __str__(self) -> str:
         target = self.part_item or self.stock_lot
         return f"{self.part_type} × {self.quantity} → {self.to_location} ({target})"
+
+    def save(self, *args, **kwargs):
+        with transaction.atomic(using=self._state.db):
+            parent = StockReturn.objects.select_for_update().get(pk=self.stock_return_id)
+            if parent.status != StockReturn.Status.DRAFT:
+                raise ValidationError("Строки проведённого возврата нельзя изменять.")
+            if self.pk and type(self).objects.filter(pk=self.pk).exclude(
+                stock_return_id=self.stock_return_id
+            ).exists():
+                raise ValidationError("Нельзя переносить строку в другой возврат.")
+            return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        with transaction.atomic(using=self._state.db):
+            parent = StockReturn.objects.select_for_update().get(pk=self.stock_return_id)
+            if parent.status != StockReturn.Status.DRAFT:
+                raise ValidationError("Строки проведённого возврата нельзя удалить.")
+            return super().delete(*args, **kwargs)
