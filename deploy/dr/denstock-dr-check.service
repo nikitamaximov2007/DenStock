@@ -1,0 +1,8 @@
+[Unit]
+Description=DenisStock DR freshness check (exit 2 = stale or failed destination)
+OnFailure=denstock-dr-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/denstock/scripts/operations/dr_check.py \
+  --status-file /opt/denstock/backups/dr-status.json --label yandex --label google --max-age-hours 36

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.denstock.dr-mac-pull</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON__</string>
+    <string>__REPO__/scripts/operations/dr_mac_pull.py</string>
+    <string>--remote</string><string>__YANDEX_READ_ONLY_REMOTE__</string>
+    <string>--remote</string><string>__GOOGLE_READ_ONLY_REMOTE__</string>
+    <string>--root</string><string>__BACKUP_DIRECTORY__</string>
+    <string>--public-key</string><string>__PINNED_PUBLIC_KEY__</string>
+    <string>--notify</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>RCLONE_CONFIG</key><string>__RCLONE_CONFIG__</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>__LOG_DIRECTORY__/dr-mac-pull.log</string>
+  <key>StandardErrorPath</key><string>__LOG_DIRECTORY__/dr-mac-pull.err.log</string>
+</dict>
+</plist>

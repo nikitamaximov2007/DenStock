@@ -180,6 +180,24 @@ def validate_manifest(
     elif media_hash is not None:
         result.errors.append("media_sha256 задан без media_filename")
 
+    # Optional for historical v2 runs; every newly produced run includes this archive.
+    private_name = manifest.get("private_media_filename")
+    private_hash = manifest.get("private_media_sha256")
+    if private_name is not None or private_hash is not None:
+        safe_private = _safe_filename(private_name)
+        if safe_private != "private_media.tar.gz":
+            result.errors.append("private_media_filename отсутствует или небезопасен")
+        elif not SHA256_RE.fullmatch(str(private_hash or "")):
+            result.errors.append("private_media_sha256 отсутствует или некорректен")
+        else:
+            private_path = run_dir / safe_private
+            if not private_path.is_file():
+                result.errors.append("архив private_media отсутствует")
+            elif sha256_file(private_path) != private_hash:
+                result.errors.append("контрольная сумма private_media не совпадает")
+        if not SHA256_RE.fullmatch(str(manifest.get("private_media_tree_sha256") or "")):
+            result.errors.append("private_media_tree_sha256 отсутствует или некорректен")
+
     marker = manifest.get("data_state")
     if not isinstance(marker, dict) or not SHA256_RE.fullmatch(
         str(marker.get("business_sha256", ""))

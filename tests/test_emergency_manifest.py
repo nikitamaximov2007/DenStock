@@ -124,6 +124,8 @@ def test_manifest_rejects_migration_and_data_marker_tampering(tmp_path):
 )
 def test_backup_all_writes_verified_v2_manifest(tmp_path, db, settings, monkeypatch):
     configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
+    settings.PRIVATE_MEDIA_ROOT = tmp_path / "private_media"
+    settings.PRIVATE_MEDIA_ROOT.mkdir()
     source = tmp_path / "source.sqlite3"
     source.write_bytes(b"sqlite-copy")
     media = tmp_path / "media"

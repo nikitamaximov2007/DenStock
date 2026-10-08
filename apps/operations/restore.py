@@ -65,6 +65,7 @@ class VerifyReport:
     manifest: dict = field(default_factory=dict)
     db_file: str = ""
     media_file: str = ""
+    private_media_file: str = ""
 
     @property
     def ok(self) -> bool:
@@ -187,6 +188,20 @@ def verify_backup(run_id: str) -> VerifyReport:
     else:
         report.checks.append(("Media в бэкапе нет (по manifest — корректно)", "ok"))
 
+    private_name = manifest.get("private_media_filename")
+    if private_name:
+        private_path = run_dir / private_name
+        if report.check(
+            "Архив private_media существует и не пустой",
+            private_name == "private_media.tar.gz"
+            and private_path.is_file()
+            and private_path.stat().st_size > 0,
+            error="архив private_media отсутствует или повреждён",
+        ):
+            report.private_media_file = private_name
+    else:
+        report.checks.append(("Историческая копия без private_media", "warn"))
+
     # Контрольные суммы: проверяем, только если manifest их содержит.
     checksums = manifest.get("sha256") or {}
     if checksums:
@@ -308,6 +323,9 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
     run_dir = _safe_run_dir(run_id)
     db_path = run_dir / report.db_file
     media_path = (run_dir / report.media_file) if report.media_file else None
+    private_path = (
+        (run_dir / report.private_media_file) if report.private_media_file else None
+    )
 
     log.append("шаг 3/4: восстановление базы и media (restoring)")
     _file_log(log)  # фиксируем след ДО перезаписи базы
@@ -317,6 +335,8 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
             log.append(f"предупреждение: {warning}")
         if media_path is not None:
             backup.restore_media(media_path)
+        if private_path is not None:
+            backup.restore_media(private_path, media_root=settings.PRIVATE_MEDIA_ROOT)
         log.append("шаг 4/4: применение миграций (migrated)")
         call_command("migrate", interactive=False, verbosity=0)
     except Exception as exc:  # noqa: BLE001 — причина уходит в журнал, не глотается

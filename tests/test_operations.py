@@ -143,6 +143,40 @@ def test_backup_all_trigger_automatic(tmp_path, db, settings):
     assert manifest["type"] == "automatic"
 
 
+def test_backup_all_includes_private_media_and_checksums(tmp_path, db, settings):
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
+    source_db = _make_db_file(tmp_path / "src.sqlite3")
+    ordinary = tmp_path / "media"
+    ordinary.mkdir()
+    (ordinary / "public.jpg").write_bytes(b"public-photo")
+    private = tmp_path / "private"
+    (private / "customer_requests").mkdir(parents=True)
+    (private / "customer_requests" / "attachment.bin").write_bytes(b"private-attachment")
+
+    run = backup.backup_all(
+        root=tmp_path / "backups", settings_dict=_sqlite_settings(source_db),
+        media_root=ordinary, private_media_root=private,
+    )
+    manifest = json.loads((run / "manifest.json").read_text())
+    assert manifest["private_media_filename"] == "private_media.tar.gz"
+    assert manifest["sha256"]["private_media.tar.gz"] == manifest["private_media_sha256"]
+    with tarfile.open(run / "private_media.tar.gz") as archive:
+        assert "./customer_requests/attachment.bin" in archive.getnames()
+    from apps.operations.emergency_manifest import validate_manifest
+
+    assert validate_manifest(run).ok
+    (run / "private_media.tar.gz").write_bytes(b"damaged")
+    assert not validate_manifest(run).ok
+
+
+def test_production_backup_fails_if_private_mount_is_missing(tmp_path, db, settings):
+    settings.DENSTOCK_MODE = "production"
+    settings.PRIVATE_MEDIA_ROOT = tmp_path / "missing"
+    source_db = _make_db_file(tmp_path / "src.sqlite3")
+    with pytest.raises(backup.OperationsError, match="PRIVATE_MEDIA_ROOT"):
+        backup.backup_all(root=tmp_path / "backups", settings_dict=_sqlite_settings(source_db))
+
+
 def test_prune_keeps_last_n(tmp_path):
     root = tmp_path / "backups"
     for name in ["2026-01-01_00-00-00", "2026-02-01_00-00-00", "2026-03-01_00-00-00"]:

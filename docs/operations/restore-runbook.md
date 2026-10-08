@@ -23,9 +23,15 @@ docker compose exec web python manage.py verify_backup <run_id>
 ```bash
 docker compose exec web python manage.py restore_db   backups/<run_id>/db.dump --yes
 docker compose exec web python manage.py restore_media backups/<run_id>/media.tar.gz --yes
+docker compose exec web python manage.py restore_private_media backups/<run_id>/private_media.tar.gz --yes
 docker compose exec web python manage.py migrate
 docker compose exec web python manage.py ops_check
 ```
+
+Начиная с DR-кандидата, новый полный бэкап содержит отдельный
+`private_media.tar.gz`. Копии, созданные до этого изменения, **не содержат**
+приватный том: команда восстановления private_media для них невозможна.
+Проверяйте наличие архива и его SHA-256 в подписанном манифесте до restore.
 
 Подробности и сценарий «новый VPS с нуля»: production-deploy-runbook.md.
 

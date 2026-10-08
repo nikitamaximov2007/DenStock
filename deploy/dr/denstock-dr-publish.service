@@ -1,0 +1,20 @@
+# EXAMPLE ONLY. Not installed by this branch; review before copying to /etc/systemd/system.
+# Needs an (owner-approved) bind mount ./dr-staging:/app/dr-staging in a compose override.
+# Runs AFTER the existing denstock-backup job has produced a verified run.
+[Unit]
+Description=DenisStock disaster-recovery publish (age bundle to Yandex and Google)
+OnFailure=denstock-dr-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/denstock
+# rclone credentials live ONLY here (root-owned, mode 600), never in Git.
+Environment=RCLONE_CONFIG=/etc/denstock/rclone-dr.conf
+ExecStart=/usr/bin/docker compose exec -T web python manage.py dr_encrypt --staging /app/dr-staging
+ExecStart=/usr/bin/python3 /opt/denstock/scripts/operations/dr_upload.py \
+  --staging /opt/denstock/dr-staging \
+  --destination yandex=s3=yandex-dr:denstock-dr-bucket/denisstock \
+  --destination google=drive=google-dr:DenisStock \
+  --public-key /etc/denstock/manifest-public.pem \
+  --status-file /opt/denstock/backups/dr-status.json
+TimeoutStartSec=3h

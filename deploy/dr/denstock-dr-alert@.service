@@ -1,0 +1,9 @@
+# Writes a CRITICAL journal entry for the failed unit. Delivery to a human
+# (email / MAX / Telegram) needs an owner-approved channel and secret: add it as
+# a second ExecStart once approved. Nothing here contains a secret.
+[Unit]
+Description=DenisStock DR alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-cat -t denstock-dr -p crit /bin/echo "DenisStock DR unit failed: %i"

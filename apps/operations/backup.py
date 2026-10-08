@@ -104,6 +104,19 @@ def backup_media(dest_dir, *, media_root=None) -> Path | None:
     return archive
 
 
+def backup_private_media(dest_dir, *, private_media_root=None) -> Path:
+    """Capture the separate private volume, including an intentionally empty volume."""
+    source = Path(private_media_root or settings.PRIVATE_MEDIA_ROOT)
+    if not source.is_dir() and settings.DENSTOCK_MODE == "production":
+        raise OperationsError("PRIVATE_MEDIA_ROOT отсутствует: полный бэкап невозможен.")
+    archive = Path(dest_dir) / "private_media.tar.gz"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, "w:gz") as tar:
+        if source.is_dir():
+            tar.add(source, arcname=".")
+    return archive
+
+
 def backup_db(dest_dir, *, settings_dict=None) -> Path:
     """Сделать дамп БД в `dest_dir`. Postgres → pg_dump -Fc; SQLite → копия файла."""
     s = settings_dict or connection.settings_dict
@@ -229,6 +242,7 @@ def backup_all(
     keep_last=None,
     settings_dict=None,
     media_root=None,
+    private_media_root=None,
     trigger="manual",
     extra_manifest=None,
 ) -> Path:
@@ -241,15 +255,26 @@ def backup_all(
     if trigger not in BACKUP_TYPES:
         raise OperationsError(f"Неизвестный тип backup: {trigger}")
     s = settings_dict or connection.settings_dict
-    run = new_run_dir(root)
     media_source = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
+    private_source = (
+        Path(private_media_root) if private_media_root else Path(settings.PRIVATE_MEDIA_ROOT)
+    )
+    if not private_source.is_dir() and settings.DENSTOCK_MODE == "production":
+        raise OperationsError("PRIVATE_MEDIA_ROOT отсутствует: полный бэкап невозможен.")
+    run = new_run_dir(root)
     engine = _engine_name(s["ENGINE"])
     with _backup_consistency_scope(s) as state:
         migrations = migration_state()
         data_marker = business_state_marker()
         media_tree_hash = media_tree_sha256(media_source)
+        private_media_tree_hash = media_tree_sha256(private_source)
         db_path = backup_db(run, settings_dict=s)
         media_path = backup_media(run, media_root=media_root)
+        private_media_path = backup_private_media(run, private_media_root=private_source)
+        if media_tree_sha256(media_source) != media_tree_hash:
+            raise OperationsError("MEDIA_ROOT изменился во время бэкапа; копия непригодна.")
+        if media_tree_sha256(private_source) != private_media_tree_hash:
+            raise OperationsError("PRIVATE_MEDIA_ROOT изменился во время бэкапа; копия непригодна.")
         consistency = (
             "single_writer_locked"
             if state.write_state
@@ -261,12 +286,14 @@ def backup_all(
         )
     verify_database_payload(db_path, engine)
     verify_media_payload(media_path)
+    verify_media_payload(private_media_path)
     app_commit = getattr(settings, "DENSTOCK_APP_COMMIT", "") or _git_commit()
     if not app_commit:
         raise OperationsError("Не удалось определить application commit для manifest.")
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
     db_sha256 = sha256_file(db_path)
     media_sha256 = sha256_file(media_path) if media_path else None
+    private_media_sha256 = sha256_file(private_media_path)
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "backup_run_id": str(uuid.uuid4()),
@@ -287,6 +314,9 @@ def backup_all(
         "media_filename": media_path.name if media_path else None,
         "media_sha256": media_sha256,
         "media_tree_sha256": media_tree_hash,
+        "private_media_filename": private_media_path.name,
+        "private_media_sha256": private_media_sha256,
+        "private_media_tree_sha256": private_media_tree_hash,
         "migration_fingerprint": migrations["fingerprint"],
         "migration_state": migrations["applied"],
         "data_state": data_marker,
@@ -304,6 +334,7 @@ def backup_all(
         "sha256": {
             db_path.name: db_sha256,
             **({media_path.name: media_sha256} if media_path else {}),
+            private_media_path.name: private_media_sha256,
         },
     }
     if extra_manifest:
@@ -362,7 +393,10 @@ def prune_old_runs(root, keep_last: int) -> list[Path]:
     keep = set(complete[-keep_last:]) | set(partial[-keep_last:])
     to_remove = [run for run in runs if run not in keep]
     for path in to_remove:
-        shutil.rmtree(path, ignore_errors=True)
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            raise OperationsError(f"Не удалось удалить старую копию {path.name}: {exc}") from exc
     return to_remove
 
 
