@@ -17,7 +17,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.actions.models import WarehouseAction
-from apps.inventory.models import PartItem, StockLot, StockMovement
+from apps.inventory.models import PartItem, StockLot
 from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import (
     InventoryError,
@@ -32,6 +32,7 @@ from apps.sales.models import Sale, SaleLine
 from apps.sales.services import active_reserved_for_lot, is_part_item_reserved
 
 from .models import StockReturn, StockReturnLine
+from .movement_attribution import return_movement_evidence
 
 
 class ReturnError(Exception):
@@ -447,13 +448,12 @@ def complete_return(ret, *, by=None) -> StockReturn:
         raise ReturnError("Возврат уже проведён.")
     # A legacy/admin/raw-ORM status rollback may leave posted movements while
     # making the header look like a draft. Never credit it a second time.
-    if StockMovement.objects.filter(
-        document_type="stock_return", document_id=ret.pk,
-        movement_type__in=(
-            StockMovement.MovementType.RETURN_ITEM,
-            StockMovement.MovementType.RETURN_LOT,
-        ),
-    ).exists():
+    evidence = return_movement_evidence(ret)
+    if evidence.ambiguous_ids:
+        raise ReturnError(
+            "Связь возврата со складским движением неоднозначна; проведение запрещено."
+        )
+    if evidence.owned_ids:
         raise ReturnError("Возврат уже зачислен на склад и не может быть проведён повторно.")
     line_ids = _locked_return_line_ids(ret)
     lines = list(
@@ -501,6 +501,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
                     by=by, document_id=ret.pk, comment=f"Возврат {ret.number}",
                 )
                 line.save(
+                    _allow_posting=True,
                     update_fields=[
                         "unit_cost_rub", "total_cost_rub", "source_repair_line", "to_location",
                         "stock_lot", "part_item", "batch", "batch_line",
@@ -515,6 +516,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
                 )
                 line.returned_lot = returned_lot
                 line.save(
+                    _allow_posting=True,
                     update_fields=[
                         "unit_cost_rub", "total_cost_rub", "returned_lot", "to_location",
                         "stock_lot", "part_item", "batch", "batch_line", "source_repair_line",
@@ -550,6 +552,7 @@ def complete_return(ret, *, by=None) -> StockReturn:
     ret.completed_at = now
     ret.completed_by = by
     ret.save(
+        _allow_posting=True,
         update_fields=["cost_total", "status", "completed_at", "completed_by", "updated_at"]
     )
     if repair_order_ids:
@@ -640,7 +643,10 @@ def cancel_return(ret, *, by=None, reason="") -> StockReturn:
                 raise ReturnError(str(exc)) from exc
             if line.source_repair_line_id:
                 repair_order_ids.add(line.source_repair_line.repair_order_id)
-    elif ret.status != StockReturn.Status.DRAFT:
+    elif ret.status == StockReturn.Status.DRAFT:
+        if return_movement_evidence(ret).possible_posting:
+            raise ReturnError("Связь черновика со складским движением требует проверки.")
+    else:
         raise ReturnError("Недопустимый статус возврата.")
 
     now = timezone.now()

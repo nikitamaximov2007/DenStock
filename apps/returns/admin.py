@@ -1,10 +1,18 @@
 from django.contrib import admin
+from django.core.exceptions import PermissionDenied
 
 from .models import StockReturn, StockReturnLine
+from .movement_attribution import return_movement_evidence
 
 
 def _draft_only(obj):
-    return obj is None or obj.status == StockReturn.Status.DRAFT
+    return (
+        obj is None
+        or (
+            obj.status == StockReturn.Status.DRAFT
+            and not return_movement_evidence(obj).possible_posting
+        )
+    )
 
 
 class StockReturnLineInline(admin.TabularInline):
@@ -33,12 +41,20 @@ class StockReturnAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         fields = super().get_readonly_fields(request, obj)
-        if obj and obj.status != StockReturn.Status.DRAFT:
+        if obj and not _draft_only(obj):
             return tuple(fields) + (
                 "status", "source_type", "source_id", "created_by", "completed_by", "canceled_at",
-                "canceled_by", "cancel_reason",
+                "canceled_by", "cancel_reason", "reason", "comment",
             )
         return fields
 
     def has_delete_permission(self, request, obj=None):
         return _draft_only(obj) and super().has_delete_permission(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        # Admin's delete-selected action must fail before the collector can
+        # cascade into return lines or leave movements without a document.
+        for ret in queryset.order_by("pk"):
+            if not self.has_delete_permission(request, ret):
+                raise PermissionDenied("Возврат с возможным складским движением нельзя удалить.")
+        return super().delete_queryset(request, queryset)
