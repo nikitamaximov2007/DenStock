@@ -633,3 +633,45 @@ def test_retention_deletes_only_old_completed_exports(tmp_path, settings, monkey
     assert not older_run.exists()
     assert newer_run.exists()
     assert unknown.exists()
+
+
+@pytest.mark.django_db
+def test_failback_package_carries_the_private_media_archive(tmp_path, settings, monkeypatch):
+    """An emergency final backup includes private_media; failback must transport it."""
+    from apps.operations.private_media import create_archive
+
+    settings.DENSTOCK_MODE = "emergency-local"
+    settings.DENSTOCK_EMERGENCY_ROOT = tmp_path / "runtime"
+    session = _session(status=OfflineSession.Status.ELIGIBLE)
+    run = _final_run(tmp_path / "backups", session)
+    private = tmp_path / "emergency-private"
+    (private / "customer_requests").mkdir(parents=True)
+    (private / "customer_requests" / "offline.jpg").write_bytes(b"taken while offline")
+    archive, inventory = create_archive(private, run)
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+    manifest.update(
+        private_media_status="included",
+        private_media_filename=archive.name,
+        private_media_sha256=sha256_file(archive),
+        private_media_tree_sha256=inventory.tree_sha256,
+        private_media_file_count=inventory.files,
+        private_media_bytes=inventory.bytes,
+        sha256={"db.dump": manifest["database_sha256"], archive.name: sha256_file(archive)},
+    )
+    (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    session.final_backup_run_id = run.name
+    session.failback_report = {
+        "status": OfflineSession.Status.ELIGIBLE,
+        "automatic_production_overwrite": "disabled",
+    }
+    session.save()
+    monkeypatch.setattr("apps.operations.failback.validate_database_target", lambda **kwargs: None)
+
+    package, digest = prepare_failback_package(
+        session=session, root=tmp_path / "backups",
+        paths=EmergencyPaths(settings.DENSTOCK_EMERGENCY_ROOT),
+    )
+    with zipfile.ZipFile(package) as packed:
+        assert "backup/private_media.tar.gz" in packed.namelist()
+    _report, inspected_manifest = inspect_failback_package(package, expected_sha256=digest)
+    assert inspected_manifest["private_media_file_count"] == 1

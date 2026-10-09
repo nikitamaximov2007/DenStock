@@ -7,13 +7,13 @@
 ## Что делает UI
 
 - **Список** локальных backup-run из `BACKUP_ROOT` (`backups/<timestamp>/`): наличие `manifest.json`,
-  `db.dump`/`db.sqlite3`, `media.tar.gz`, размеры файлов, поля manifest (created_at/engine/version/
+  `db.dump`/`db.sqlite3`, `media.tar.gz`, `private_media.tar.gz`, размеры файлов, поля manifest (created_at/engine/version/
   git_commit).
 - **«Экспорт бэкапа»** (синяя primary-кнопка, POST, CSRF) — создаёт **ручной** локальный бэкап
   текущего состояния через существующий `apps/operations/backup.backup_all(trigger="manual")`.
   Операция может занять время.
 - **Manifest** и **Скачать** — просмотр манифеста и выгрузка файлов **только** из конкретного
-  backup-run (разрешены `manifest.json`, `db.dump`, `db.sqlite3`, `media.tar.gz`; защита от path
+  backup-run (разрешены `manifest.json`, `db.dump`, `db.sqlite3`, `media.tar.gz`, `private_media.tar.gz`; защита от path
   traversal).
 - **Статус offsite** — read-only: если есть `backups/offsite_status.json`, показывается; иначе
   «не настроено».
@@ -50,6 +50,7 @@ rsync/rclone), независимо от веб-приложения. Offsite-п
 ```bash
 docker compose exec web python manage.py restore_db   backups/<run_id>/db.dump      --yes
 docker compose exec web python manage.py restore_media backups/<run_id>/media.tar.gz --yes
+docker compose exec web python manage.py restore_private_media <run_id> --yes
 docker compose exec web python manage.py ops_check
 ```
 

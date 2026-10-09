@@ -180,6 +180,8 @@ def validate_manifest(
     elif media_hash is not None:
         result.errors.append("media_sha256 задан без media_filename")
 
+    _validate_private_media(manifest, run_dir, result)
+
     marker = manifest.get("data_state")
     if not isinstance(marker, dict) or not SHA256_RE.fullmatch(
         str(marker.get("business_sha256", ""))
@@ -227,3 +229,51 @@ def validate_manifest(
     if manifest.get("consistency") not in {"database_snapshot", "single_writer_locked"}:
         result.errors.append("consistency отсутствует или неизвестен")
     return result
+
+
+PRIVATE_FIELDS = (
+    "private_media_filename",
+    "private_media_sha256",
+    "private_media_tree_sha256",
+    "private_media_file_count",
+    "private_media_bytes",
+)
+
+
+def _validate_private_media(manifest: dict, run_dir: Path, result) -> None:
+    """New manifests state what happened to private_media; old ones simply predate it."""
+    status = manifest.get("private_media_status")
+    if status is None:
+        if any(manifest.get(key) is not None for key in PRIVATE_FIELDS):
+            result.errors.append("поля private_media заданы без private_media_status")
+        return  # historical backup: documented as not containing private_media
+    if status == "absent":
+        if any(manifest.get(key) is not None for key in PRIVATE_FIELDS):
+            result.errors.append("private_media_status=absent, но поля архива заданы")
+        if manifest.get("source_environment") == "production":
+            result.errors.append("production-бэкап без private_media недопустим")
+        return
+    if status != "included":
+        result.errors.append("private_media_status неизвестен")
+        return
+    name = manifest.get("private_media_filename")
+    expected_hash = manifest.get("private_media_sha256")
+    if _safe_filename(name) != "private_media.tar.gz":
+        result.errors.append("private_media_filename отсутствует или небезопасен")
+        return
+    if not SHA256_RE.fullmatch(str(expected_hash or "")):
+        result.errors.append("private_media_sha256 отсутствует или некорректен")
+        return
+    if (manifest.get("sha256") or {}).get(name) != expected_hash:
+        result.errors.append("private_media отсутствует в перечне контрольных сумм")
+    if not SHA256_RE.fullmatch(str(manifest.get("private_media_tree_sha256") or "")):
+        result.errors.append("private_media_tree_sha256 отсутствует или некорректен")
+    for key in ("private_media_file_count", "private_media_bytes"):
+        value = manifest.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            result.errors.append(f"{key} отсутствует или некорректен")
+    path = run_dir / name
+    if not path.is_file():
+        result.errors.append("архив private_media отсутствует")
+    elif sha256_file(path) != expected_hash:
+        result.errors.append("контрольная сумма private_media не совпадает")
