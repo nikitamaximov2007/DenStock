@@ -17,7 +17,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.actions.models import WarehouseAction
-from apps.inventory.models import PartItem, StockLot
+from apps.inventory.models import PartItem, StockLot, StockMovement
 from apps.inventory.presentation import manufacturer_display, part_exact_number
 from apps.inventory.services import (
     InventoryError,
@@ -31,7 +31,7 @@ from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.sales.models import Sale, SaleLine
 from apps.sales.services import active_reserved_for_lot, is_part_item_reserved
 
-from .models import StockReturn, StockReturnLine
+from .models import StockReturn, StockReturnLine, status_transition
 
 
 class ReturnError(Exception):
@@ -444,9 +444,21 @@ def complete_return(ret, *, by=None) -> StockReturn:
     """
     ret = StockReturn.objects.select_for_update().get(pk=ret.pk)
     if ret.status == StockReturn.Status.COMPLETED:
-        return ret
+        return ret  # idempotent: the existing posting is the result
     if ret.status != StockReturn.Status.DRAFT:
-        raise ReturnError("Возврат уже проведён.")
+        raise ReturnError("Отменённый возврат нельзя провести.")
+    if StockMovement.objects.filter(
+        document_type="stock_return", document_id=ret.pk, created_at__gte=ret.created_at,
+        movement_type__in=(
+            StockMovement.MovementType.RETURN_ITEM, StockMovement.MovementType.RETURN_LOT,
+        ),
+    ).exists():
+        # A draft that already has its own return movements is a corrupted
+        # history (a posted return reverted outside the services).  Never post
+        # twice.  Older movements that merely reuse this id are not its own.
+        raise ReturnError(
+            "По этому возврату уже есть движения прихода: повторное проведение запрещено."
+        )
     line_ids = _locked_return_line_ids(ret)
     lines = list(
         StockReturnLine.objects.filter(pk__in=line_ids).select_related(
@@ -541,9 +553,10 @@ def complete_return(ret, *, by=None) -> StockReturn:
     ret.status = StockReturn.Status.COMPLETED
     ret.completed_at = now
     ret.completed_by = by
-    ret.save(
-        update_fields=["cost_total", "status", "completed_at", "completed_by", "updated_at"]
-    )
+    with status_transition(ret.pk, StockReturn.Status.COMPLETED):
+        ret.save(
+            update_fields=["cost_total", "status", "completed_at", "completed_by", "updated_at"]
+        )
     if repair_order_ids:
         from apps.repairs.services import calculate_repair_costs
 
@@ -650,15 +663,16 @@ def cancel_return(ret, *, by=None, reason="") -> StockReturn:
     ret.canceled_at = now
     ret.canceled_by = by
     ret.cancel_reason = reason
-    ret.save(
-        update_fields=[
-            "status",
-            "canceled_at",
-            "canceled_by",
-            "cancel_reason",
-            "updated_at",
-        ]
-    )
+    with status_transition(ret.pk, StockReturn.Status.CANCELED):
+        ret.save(
+            update_fields=[
+                "status",
+                "canceled_at",
+                "canceled_by",
+                "cancel_reason",
+                "updated_at",
+            ]
+        )
 
     if repair_order_ids:
         from apps.repairs.services import calculate_repair_costs

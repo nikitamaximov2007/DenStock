@@ -9,7 +9,11 @@ from django.db.models import Sum
 from apps.inventory.models import StockLot
 from apps.procurement.models import money
 from apps.repairs.models import RepairIssueLine, RepairOrder
-from apps.returns.models import StockReturn, StockReturnLine
+from apps.returns.models import (
+    StockReturn,
+    StockReturnLine,
+    posted_return_cost_correction,
+)
 from apps.sales.models import Sale, SaleLine
 
 from .models import ReceiptLine
@@ -109,6 +113,13 @@ def apply_historical_lot_cost_remediation(plan: HistoricalLotCostPlan):
     )
     if plan.already_applied:
         return plan
+    # Posted returns are immutable; this receipt-proven correction is the one
+    # supported exception, and it may change ONLY their cost columns.
+    with posted_return_cost_correction():
+        return _apply_locked(plan)
+
+
+def _apply_locked(plan: HistoricalLotCostPlan):
     lot = StockLot.objects.select_for_update().select_related("batch_line").get(pk=plan.lot_id)
     batch_line = lot.batch_line
     batch_line.landed_unit_cost_rub = plan.new_cost
