@@ -120,17 +120,19 @@ def test_destinations_may_not_overlap():
         assert_isolated(["y:bucket/dr", "y:bucket/dr/sub"])
 
 
-def test_rotation_keeps_newest_verified_and_counts_hidden_versions(tmp_path):
+def test_full_remote_keeps_verified_generations_and_refuses_preupload_rotation(tmp_path):
     key, cloud, dest = make("s3", tmp_path, "y:bucket/dr", limit=1500)
     put(cloud, key, "bucket/dr", "2026-10-01_03-00-00", 300)
     put(cloud, key, "bucket/dr", "2026-10-02_03-00-00", 300)
     cloud.hidden = 100  # noncurrent versions occupy physical space
     bundle, receipt = stage(tmp_path, key, "2026-10-03_03-00-00", 300)
-    result = publish_generation(dest, "2026-10-03_03-00-00", bundle, receipt)
-    assert result["removed"] == ["2026-10-01_03-00-00"]
-    assert result["bytes"] <= 1500
+    with pytest.raises(BudgetError, match="не помещается"):
+        publish_generation(dest, "2026-10-03_03-00-00", bundle, receipt,
+                           allow_best_effort_budget=True)
+    assert not any(call[0] in {"deletefile", "rmdir"} for call in cloud.calls)
+    assert dest.is_verified("2026-10-01_03-00-00")
     assert dest.is_verified("2026-10-02_03-00-00")
-    assert dest.is_verified("2026-10-03_03-00-00")
+    assert not dest.is_verified("2026-10-03_03-00-00")
 
 
 def test_hidden_bytes_that_deletion_cannot_free_fail_closed(tmp_path):
@@ -139,7 +141,8 @@ def test_hidden_bytes_that_deletion_cannot_free_fail_closed(tmp_path):
     cloud.hidden = 700  # trash that the adapter cannot purge
     bundle, receipt = stage(tmp_path, key, "2026-10-02_03-00-00", 300)
     with pytest.raises(BudgetError):
-        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt)
+        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt,
+                           allow_best_effort_budget=True)
     assert dest.is_verified("2026-10-01_03-00-00")  # the only good copy survived
     assert "DenisStock/2026-10-02_03-00-00/bundle.tar.age" not in cloud.files
 
@@ -157,7 +160,8 @@ def test_corrupt_newest_is_never_trusted_as_the_surviving_copy(tmp_path):
     cloud.files["bucket/dr/2026-10-01_03-00-00/bundle.tar.age"] = b"z" * 300  # bit rot
     bundle, receipt = stage(tmp_path, key, "2026-10-02_03-00-00", 300)
     with pytest.raises(BudgetError):
-        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt)
+        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt,
+                           allow_best_effort_budget=True)
     assert "bucket/dr/2026-10-01_03-00-00/bundle.tar.age" in cloud.files  # nothing deleted
 
 
@@ -167,11 +171,12 @@ def test_failed_upload_leaves_previous_generation(tmp_path):
     cloud.fail_upload = True
     bundle, receipt = stage(tmp_path, key, "2026-10-02_03-00-00", 300)
     with pytest.raises(BudgetError):
-        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt)
+        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt,
+                           allow_best_effort_budget=True)
     assert dest.is_verified("2026-10-01_03-00-00")
 
 
-def test_incomplete_old_upload_is_discarded_but_receipted_generations_are_not(tmp_path):
+def test_incomplete_old_upload_is_never_deleted_from_a_single_listing(tmp_path):
     key, cloud, dest = make("s3", tmp_path, "y:bucket/dr")
     put(cloud, key, "bucket/dr", "2026-10-01_03-00-00", 100)
     cloud.files["bucket/dr/2026-10-02_03-00-00/bundle.tar.age"] = b"p" * 50  # no receipt
@@ -183,23 +188,26 @@ def test_incomplete_old_upload_is_discarded_but_receipted_generations_are_not(tm
         "s3", "y:bucket/dr", dest.public_key, runner=cloud.runner, hasher=cloud.hasher,
         now=lambda: datetime(2026, 10, 9, tzinfo=UTC),
     )
-    assert later.discard_incomplete() == ["2026-10-02_03-00-00"]
+    assert later.discard_incomplete() == []
+    assert "bucket/dr/2026-10-02_03-00-00/bundle.tar.age" in cloud.files
     assert dest.is_verified("2026-10-01_03-00-00")
 
 
 def test_two_destinations_are_independent(tmp_path):
-    key, yandex_cloud, yandex = make("s3", tmp_path, "y:bucket/dr", limit=1500)
+    key, yandex_cloud, yandex = make("s3", tmp_path, "y:bucket/dr", limit=2500)
     _, drive_cloud, drive = make(
-        "drive", tmp_path, "g:DenisStock", limit=1500, keys=(key, yandex.public_key),
+        "drive", tmp_path, "g:DenisStock", limit=2500, keys=(key, yandex.public_key),
     )
     for cloud, base in ((yandex_cloud, "bucket/dr"), (drive_cloud, "DenisStock")):
-        put(cloud, key, base, "2026-10-01_03-00-00", 300)
-        put(cloud, key, base, "2026-10-02_03-00-00", 300)
+        put(cloud, key, base, "2026-10-01_03-00-00", 100)
+        put(cloud, key, base, "2026-10-02_03-00-00", 100)
     drive_cloud.fail_upload = True
     bundle, receipt = stage(tmp_path, key, "2026-10-03_03-00-00", 300)
-    publish_generation(yandex, "2026-10-03_03-00-00", bundle, receipt)
+    publish_generation(yandex, "2026-10-03_03-00-00", bundle, receipt,
+                       allow_best_effort_budget=True)
     with pytest.raises(BudgetError):
-        publish_generation(drive, "2026-10-03_03-00-00", bundle, receipt)
+        publish_generation(drive, "2026-10-03_03-00-00", bundle, receipt,
+                           allow_best_effort_budget=True)
     assert not any("DenisStock" in call[-1] for call in yandex_cloud.calls if call[-1])
     assert not any("bucket/dr" in call[-1] for call in drive_cloud.calls if call[-1])
     assert yandex.is_verified("2026-10-03_03-00-00")
@@ -217,5 +225,19 @@ def test_drive_account_usage_outside_the_folder_blocks_upload(tmp_path):
     bundle, receipt = stage(tmp_path, key, "2026-10-02_03-00-00", 300)
     assert dest.physical_bytes() >= 1000
     with pytest.raises(BudgetError):
-        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt)
+        publish_generation(dest, "2026-10-02_03-00-00", bundle, receipt,
+                           allow_best_effort_budget=True)
     assert dest.is_verified("2026-10-01_03-00-00")
+
+
+def test_drive_counts_other_google_services_in_the_account_total(tmp_path):
+    key, cloud, dest = make("drive", tmp_path, "g:DenisStock", limit=1500)
+    real = cloud.runner
+
+    def with_gmail(args, **kw):
+        if args[0] == "about":
+            return json.dumps({"used": 100, "other": 900}).encode()
+        return real(args, **kw)
+
+    dest.runner = with_gmail
+    assert dest.physical_bytes() == 1000

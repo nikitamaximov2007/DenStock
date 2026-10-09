@@ -28,30 +28,32 @@ def test_exact_limit_does_not_rotate():
     assert reserve_capacity(store, 400_000_000) == []
 
 
-def test_oldest_first_preserves_newest_verified():
+def test_preflight_never_deletes_verified_generations():
     store = FakeDestination({"a": 350, "b": 350, "c": 200}, {"a", "b", "c"})
-    assert reserve_capacity(store, 450, limit=1000) == ["a"]
-    assert store.deleted == ["a"]
+    with pytest.raises(BudgetError, match="не помещается"):
+        reserve_capacity(store, 450, limit=1000)
+    assert store.deleted == []
     assert "c" in store.sizes
 
 
 def test_versions_and_partials_count_even_if_not_visible_as_generations():
     store = FakeDestination({"a": 300, "b": 300}, {"a", "b"}, hidden=300)
-    with pytest.raises(BudgetError, match="последней исправной"):
+    with pytest.raises(BudgetError, match="не помещается"):
         reserve_capacity(store, 600, limit=1000)
-    assert store.deleted == ["a"]
+    assert store.deleted == []
     assert "b" in store.sizes
 
 
 def test_versioned_delete_marker_does_not_claim_space_was_freed():
     store = FakeDestination({"a": 400, "b": 400}, {"a", "b"}, deletion_releases=False)
-    with pytest.raises(BudgetError, match="не освободило"):
+    with pytest.raises(BudgetError, match="не помещается"):
         reserve_capacity(store, 300, limit=1000)
+    assert store.deleted == []
 
 
 def test_no_verified_generation_fails_without_deletion():
     store = FakeDestination({"partial": 100}, set())
-    with pytest.raises(BudgetError, match="Нет проверенного"):
+    with pytest.raises(BudgetError, match="не помещается"):
         reserve_capacity(store, 950, limit=1000)
     assert store.deleted == []
 

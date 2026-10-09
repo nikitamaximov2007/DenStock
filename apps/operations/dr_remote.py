@@ -13,20 +13,29 @@ through the injectable ``runner``.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import subprocess
+import tempfile
+import threading
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .backup_budget import BYTE_LIMIT, BudgetError, Generation, reserve_capacity
+from .backup_budget import (
+    BYTE_LIMIT,
+    BudgetError,
+    Generation,
+    parse_signed_time,
+    prune_superseded,
+)
 from .dr_local import ENCRYPTED_NAME, RECEIPT_NAME, RUN_NAME, verify_receipt
 
 Runner = Callable[..., bytes]
 
 KINDS = ("s3", "drive")
-INCOMPLETE_GRACE = timedelta(hours=6)
 
 
 def rclone_runner(args: list[str], *, stdin: bytes | None = None, timeout: int = 1800) -> bytes:
@@ -129,7 +138,10 @@ class RcloneDestination:
     # -- measurement -------------------------------------------------------
     def _size(self, *extra: str) -> int:
         data = self._json("size", "--json", *extra, self.remote)
-        if not isinstance(data, dict) or not isinstance(data.get("bytes"), int):
+        if (
+            not isinstance(data, dict) or not isinstance(data.get("bytes"), int)
+            or data["bytes"] < 0
+        ):
             raise BudgetError("Облако не вернуло размер.")
         if data.get("sizeless", 0):
             raise BudgetError("Есть объекты без известного размера: измерение невозможно.")
@@ -149,30 +161,45 @@ class RcloneDestination:
         # anything outside the folder only show up in the account total.
         about = self._json("about", "--json", self.remote)
         used = about.get("used") if isinstance(about, dict) else None
-        if not isinstance(used, int):
+        if not isinstance(used, int) or used < 0:
             raise BudgetError("Google Drive не вернул занятый объём аккаунта.")
-        return max(folder, used)
+        # rclone maps used=usageInDrive and other=usage-usageInDrive (Gmail,
+        # Photos).  Their sum is the account's whole quota usage: stricter.
+        other = about.get("other", 0)
+        if not isinstance(other, int) or other < 0:
+            raise BudgetError("Google Drive вернул некорректный объём других сервисов.")
+        return max(folder, used + other)
 
     def _assert_no_multipart(self) -> None:
         bucket, _, prefix = self.remote.partition(":")[2].partition("/")
         root = f"{self.remote.partition(':')[0]}:{bucket}"
-        uploads = self._json("backend", "list-multipart-uploads", root) or {}
+        uploads = self._json("backend", "list-multipart-uploads", root)
+        if not isinstance(uploads, dict):
+            raise BudgetError("Список multipart-загрузок недоступен.")
+        entries = uploads.get(bucket, uploads.get("uploads"))
+        if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
+            raise BudgetError("Список multipart-загрузок неполон.")
         pending = [
-            item for item in (uploads.get(bucket) or uploads.get("uploads") or [])
-            if str(item.get("Key", "")).startswith(prefix)
-        ] if isinstance(uploads, dict) else []
+            item for item in entries
+            if str(item.get("Key", "")).startswith(prefix.rstrip("/") + "/")
+        ]
         if pending:
             raise BudgetError("Есть незавершённые multipart-загрузки: объём не измерить.")
 
     # -- listing and verification -------------------------------------------
     def _run_names(self) -> list[str]:
         out = self.runner(["lsf", "--dirs-only", "--max-depth", "1", self.remote]).decode()
-        return sorted(n.rstrip("/") for n in out.splitlines() if RUN_NAME.fullmatch(n.rstrip("/")))
+        names = [n.rstrip("/") for n in out.splitlines() if RUN_NAME.fullmatch(n.rstrip("/"))]
+        if len(names) != len(set(names)):
+            raise BudgetError("Облако вернуло неоднозначные имена поколений.")
+        return sorted(names)
 
     def _files(self, name: str) -> list[dict]:
         data = self._json("lsjson", "--recursive", "--files-only", *self._list_flags,
                           f"{self.remote}/{name}")
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+            raise BudgetError("Облако вернуло неполный список файлов.")
+        return data
 
     def generations(self) -> list[Generation]:
         return [Generation(name, self.is_verified(name)) for name in self._run_names()]
@@ -180,9 +207,14 @@ class RcloneDestination:
     def is_verified(self, name: str) -> bool:
         """Signed receipt + exact size + full read-back SHA-256 of the ciphertext."""
         try:
-            files = {f["Path"]: f for f in self._files(name)}
-            if set(files) != {ENCRYPTED_NAME, RECEIPT_NAME}:
+            listed = self._files(name)
+            # Drive permits same-name files.  A dict would silently discard
+            # one and rclone cat might subsequently read the other.
+            if len(listed) != 2 or {f["Path"] for f in listed} != {
+                ENCRYPTED_NAME, RECEIPT_NAME,
+            }:
                 return False
+            files = {f["Path"]: f for f in listed}
             receipt = json.loads(self.runner(["cat", f"{self.remote}/{name}/{RECEIPT_NAME}"]))
             if (
                 receipt.get("version") != 1
@@ -195,53 +227,60 @@ class RcloneDestination:
                 ["cat", f"{self.remote}/{name}/{ENCRYPTED_NAME}"], receipt["bytes"],
             )
             return digest == receipt.get("sha256")
-        except (BudgetError, ValueError, TypeError, KeyError, AttributeError):
+        except (ValueError, TypeError, KeyError, AttributeError):
             return False
 
     # -- mutation -----------------------------------------------------------
+    def _exact_pair(self, name: str) -> dict:
+        """Exactly one ciphertext and one receipt; duplicates/extras are ambiguity."""
+        listed = self._files(name)
+        names = [f.get("Path") for f in listed]
+        if sorted(names) != sorted([ENCRYPTED_NAME, RECEIPT_NAME]):
+            raise BudgetError("Состав поколения неоднозначен; удаление запрещено.")
+        ids = [f.get("ID") for f in listed if f.get("ID")]
+        if len(ids) != len(set(ids)):
+            raise BudgetError("Повторяющиеся идентификаторы объектов; удаление запрещено.")
+        return {f["Path"]: f for f in listed}
+
+    def signed_created_at(self, name: str):
+        """Signed source-backup time of a VERIFIED generation, else None."""
+        if not self.is_verified(name):
+            return None
+        try:
+            receipt = json.loads(self.runner(["cat", f"{self.remote}/{name}/{RECEIPT_NAME}"]))
+        except ValueError:
+            return None
+        if not verify_receipt(receipt, self.public_key, self.key_id):
+            return None
+        return parse_signed_time(receipt.get("backup_created_at"))
+
     def delete_generation(self, name: str) -> None:
-        """Remove ONE named generation: receipt first, so it is never half-trusted."""
+        """Remove ONE superseded generation, receipt first so it is never half-trusted.
+
+        Only ``prune_superseded`` calls this, after a newer generation was
+        re-verified.  The exact pair is re-listed right before deletion.
+        """
         if not RUN_NAME.fullmatch(name):
             raise BudgetError("Некорректный идентификатор поколения.")
+        self._exact_pair(name)
         base = f"{self.remote}/{name}"
-        delete_flags = ["--s3-versions"] if self.kind == "s3" else ["--drive-use-trash=false"]
-        files = self._files(name)
-        ordered = sorted(files, key=lambda f: f["Path"] != RECEIPT_NAME)
-        for item in ordered:
-            if "/" in item["Path"] or ".." in item["Path"]:
-                raise BudgetError("Небезопасный путь в поколении.")
-            self.runner(["deletefile", *delete_flags, f"{base}/{item['Path']}"])
+        flags = ["--drive-use-trash=false"] if self.kind == "drive" else []
+        self.runner(["deletefile", *flags, f"{base}/{RECEIPT_NAME}"])
+        self.runner(["deletefile", *flags, f"{base}/{ENCRYPTED_NAME}"])
         self.runner(["rmdir", base])
 
     def discard_incomplete(self) -> list[str]:
-        """Drop never-finished uploads (no receipt) older than the grace period.
+        """No automatic deletion from a possibly incomplete provider listing.
 
-        Without a receipt a generation was never verified recoverable, so
-        removing it cannot reduce recovery evidence.
+        A missing receipt in one listing is not proof that it never existed.
+        Incomplete generations require an independently verified operator
+        decision; leaving them in place is safer than erasing recovery data.
         """
-        removed = []
-        for name in self._run_names():
-            files = self._files(name)
-            if any(f["Path"] == RECEIPT_NAME for f in files):
-                continue
-            stamps = [f.get("ModTime") for f in files if f.get("ModTime")]
-            if files and not stamps:
-                continue
-            newest = max(
-                (datetime.fromisoformat(s.replace("Z", "+00:00")) for s in stamps),
-                default=None,
-            )
-            if newest is not None and self.now() - newest < INCOMPLETE_GRACE:
-                continue
-            self.delete_generation(name)
-            removed.append(name)
-        return removed
+        return []
 
     def cleanup_multipart(self) -> None:
-        """Abort stale incomplete multipart uploads (S3 only); parts are not evidence."""
-        if self.kind == "s3":
-            root = self.remote.partition("/")[0]
-            self.runner(["backend", "cleanup", root, "-o", "max-age=1h"])
+        """Disabled: rclone's bucket-level cleanup may affect foreign prefixes."""
+        return None
 
     def upload(self, name: str, bundle: Path, receipt_json: bytes) -> None:
         """Ciphertext first, receipt LAST: a receipt means the generation is complete."""
@@ -252,31 +291,73 @@ class RcloneDestination:
         self.runner(["rcat", f"{base}/{RECEIPT_NAME}"], stdin=receipt_json)
 
 
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+@contextmanager
+def destination_lock(key: str):
+    """Serialize publish/prune per destination within this host (threads and processes).
+
+    It cannot stop a writer on another host or a person using the console:
+    that limitation is documented, not hidden.
+    """
+    digest = hashlib.sha256(key.encode()).hexdigest()[:32]
+    with _THREAD_LOCKS_GUARD:
+        thread_lock = _THREAD_LOCKS.setdefault(digest, threading.Lock())
+    directory = Path(tempfile.gettempdir()) / "denstock-dr-locks"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    with thread_lock, (directory / f"{digest}.lock").open("a+b") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
 def publish_generation(
-    destination: RcloneDestination, name: str, bundle: Path, receipt: dict,
+    destination, name: str, bundle: Path, receipt: dict, *,
+    allow_best_effort_budget: bool = False,
 ) -> dict:
-    """Rotate, upload, read back and re-measure ONE destination, fail-closed."""
+    """Upload only if old and new fit together; prune superseded copies afterwards.
+
+    Nothing is deleted before or during the upload.  After the new generation
+    is verified by full read-back, verified generations with an OLDER signed
+    creation time are removed so the next run has room again.
+    """
+    if not allow_best_effort_budget:
+        raise BudgetError("Жёсткий лимит 1 ГБ не доказан; публикация остановлена.")
+    key = getattr(destination, "remote", None) or f"{type(destination).__module__}." \
+        f"{type(destination).__qualname__}"
+    with destination_lock(key):
+        return _publish_locked(destination, name, bundle, receipt)
+
+
+def _publish_locked(destination, name: str, bundle: Path, receipt: dict) -> dict:
     receipt_bytes = (json.dumps(receipt, sort_keys=True) + "\n").encode()
     incoming = Path(bundle).stat().st_size + len(receipt_bytes)
     if receipt.get("bytes") != Path(bundle).stat().st_size:
         raise BudgetError("Размер архива не совпал с receipt.")
-    destination.cleanup_multipart()
-    destination.discard_incomplete()
-    if destination.is_verified(name):
-        return {"run": name, "removed": [], "bytes": destination.physical_bytes(), "reused": True}
-    removed = reserve_capacity(destination, incoming, limit=destination.limit)
-    try:
+    reused = destination.is_verified(name)
+    if reused and hasattr(destination, "runner"):
+        # Same name must mean the same signed ciphertext, never "something verified".
+        remote_receipt = json.loads(destination.runner(
+            ["cat", f"{destination.remote}/{name}/{RECEIPT_NAME}"]))
+        if (remote_receipt.get("sha256"), remote_receipt.get("bytes")) != (
+            receipt.get("sha256"), receipt.get("bytes"),
+        ):
+            raise BudgetError("Имя поколения уже занято другим содержимым; публикация остановлена.")
+    if not reused:
+        measured = destination.physical_bytes()
+        if measured < 0 or measured + incoming > destination.limit:
+            raise BudgetError("Новая копия не помещается рядом с проверенной; алерт, без удаления.")
         destination.upload(name, bundle, receipt_bytes)
         if not destination.is_verified(name):
             raise BudgetError("Загруженное поколение не прошло обратную проверку.")
-        total = destination.physical_bytes()
-        if total > destination.limit:
-            raise BudgetError("После загрузки превышен лимит хранилища.")
-    except BudgetError:
-        # Only the unverified/over-limit generation we just wrote may be removed,
-        # and only if another verified generation survives.
-        others = [g for g in destination.generations() if g.verified and g.name != name]
-        if others:
-            destination.delete_generation(name)
-        raise
-    return {"run": name, "removed": removed, "bytes": total, "reused": False}
+    # Prune BEFORE the final measurement: a run that finds an earlier prune
+    # unfinished (reused generation) must be able to finish it.
+    removed = (
+        prune_superseded(destination, name)
+        if hasattr(destination, "signed_created_at") else []
+    )
+    total = destination.physical_bytes()
+    if total > destination.limit:
+        raise BudgetError("Измеренный объём выше лимита; требуется вмешательство.")
+    return {"run": name, "removed": removed, "reused": reused, "bytes": total}

@@ -1,11 +1,7 @@
-"""Fail-closed per-destination byte budgeting for backup generations.
-
-Adapters must report *physical* namespace usage, including old versions, trash
-and partial uploads. An adapter that cannot make that promise is not eligible
-for automatic rotation under the exact-byte contract.
-"""
+"""Conservative byte preflight, not a provider-enforced physical quota."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 BYTE_LIMIT = 1_000_000_000
@@ -35,34 +31,52 @@ def reserve_capacity(
     *,
     limit: int = BYTE_LIMIT,
 ) -> list[str]:
-    """Rotate oldest verified generations, preserving the newest known-good.
+    """Refuse if the replacement cannot coexist with every retained generation.
 
-    The adapter remeasures after *each* deletion. Hidden versions, failed
-    deletion, concurrent additions and partials can therefore never be assumed
-    to have released capacity. No upload is permitted unless the final measure
-    plus the entire incoming generation fits the hard limit.
+    A preflight cannot prove a provider's hard quota. In particular it must
+    never delete old recovery evidence merely to make a later upload possible.
     """
     if incoming_bytes < 0 or limit <= 0 or incoming_bytes > limit:
         raise BudgetError("Новая копия превышает лимит хранилища.")
     current = destination.physical_bytes()
     if current < 0:
         raise BudgetError("Не удалось достоверно измерить хранилище.")
-    if current + incoming_bytes <= limit:
-        return []
-    generations = destination.generations()
-    verified = sorted((g for g in generations if g.verified), key=lambda g: g.name)
-    if not verified:
-        raise BudgetError("Нет проверенного поколения: автоматическое удаление запрещено.")
-    removed: list[str] = []
-    for generation in verified[:-1]:
-        if current + incoming_bytes <= limit:
-            break
-        destination.delete_generation(generation.name)
-        after = destination.physical_bytes()
-        if after < 0 or after >= current:
-            raise BudgetError("Удаление не освободило подтверждённый объём; остановка.")
-        removed.append(generation.name)
-        current = after
     if current + incoming_bytes > limit:
-        raise BudgetError("Нельзя освободить место без удаления последней исправной копии.")
+        raise BudgetError("Новая копия не помещается без удаления проверенных поколений.")
+    return []
+
+
+def parse_signed_time(value) -> datetime | None:
+    """A timezone-aware ISO timestamp from a signed receipt, else None."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def prune_superseded(destination, newest: str) -> list[str]:
+    """Delete verified generations whose SIGNED creation time is older than ``newest``.
+
+    Runs only after ``newest`` itself is uploaded/installed.  It is re-verified
+    here, immediately before any deletion, so the newest independently
+    verified recoverable generation always survives.  Generations that are
+    unverified, incomplete, ambiguous or have no signed time are never touched:
+    a listing that omits a file is not evidence that a generation is garbage.
+    Nothing is ever deleted to make room *before* an upload.
+    """
+    if not destination.is_verified(newest):
+        raise BudgetError("Новое поколение не подтверждено; старые копии не удаляются.")
+    newest_time = destination.signed_created_at(newest)
+    if newest_time is None:
+        raise BudgetError("Нет подписанного времени нового поколения; удаление запрещено.")
+    removed = []
+    for generation in sorted(destination.generations(), key=lambda g: g.name):
+        if generation.name == newest or not generation.verified:
+            continue
+        created = destination.signed_created_at(generation.name)
+        if created is None or created >= newest_time:
+            continue
+        destination.delete_generation(generation.name)
+        removed.append(generation.name)
     return removed

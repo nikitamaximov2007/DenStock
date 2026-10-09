@@ -66,7 +66,7 @@ def drill(tmp_path, settings):
         "public": settings.DENSTOCK_MANIFEST_PUBLIC_KEY_PATH,
         "key_id": settings.DENSTOCK_MANIFEST_SIGNING_KEY_ID, "pg": pg, "work": work,
         "media": tmp_path / "restored" / "media", "private": tmp_path / "restored" / "private",
-        "tmp": tmp_path,
+        "tmp": tmp_path, "run": run, "recipient": recipient,
     }
 
 
@@ -140,6 +140,35 @@ def test_untrusted_signer_rolls_back_completely(drill, tmp_path):
     _assert_clean_failure(drill, name)
 
 
+def test_damaged_ciphertext_rolls_back_completely(drill):
+    damaged = drill["tmp"] / "damaged.age"
+    damaged.write_bytes(drill["bundle"].read_bytes()[:20])
+    name = "dr_" + uuid.uuid4().hex[:10]
+    with pytest.raises(RestoreError):
+        restore_bundle(
+            damaged, drill["identity"], drill["public"], pg=drill["pg"],
+            new_database=name, media_target=drill["media"],
+            private_target=drill["private"], work_parent=drill["work"],
+            key_id=drill["key_id"],
+        )
+    _assert_clean_failure(drill, name)
+
+
+def test_pg_restore_failure_rolls_back_completely(drill, monkeypatch):
+    original = dr_restore.subprocess.run
+
+    def failed_restore(args, **kwargs):
+        if args[0] == "pg_restore":
+            raise subprocess.CalledProcessError(1, args)
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(dr_restore.subprocess, "run", failed_restore)
+    name = "dr_" + uuid.uuid4().hex[:10]
+    with pytest.raises(RestoreError):
+        _call(drill, new_database=name)
+    _assert_clean_failure(drill, name)
+
+
 def test_failure_after_database_and_first_directory_rolls_back_everything(drill, monkeypatch):
     real = os.replace
     calls = []
@@ -166,3 +195,77 @@ def test_existing_target_is_never_overwritten(drill):
         _call(drill, new_database=name)
     assert (drill["private"] / "keep.txt").read_text() == "precious"
     assert not _database_exists(drill, name)
+
+
+def test_bit_flipped_ciphertext_rolls_back_completely(drill):
+    data = bytearray(drill["bundle"].read_bytes())
+    data[len(data) // 2] ^= 0x01  # one flipped bit deep inside the payload
+    flipped = drill["tmp"] / "flipped.age"
+    flipped.write_bytes(bytes(data))
+    name = "dr_" + uuid.uuid4().hex[:10]
+    with pytest.raises(RestoreError):
+        restore_bundle(
+            flipped, drill["identity"], drill["public"], pg=drill["pg"],
+            new_database=name, media_target=drill["media"],
+            private_target=drill["private"], work_parent=drill["work"],
+            key_id=drill["key_id"],
+        )
+    _assert_clean_failure(drill, name)
+
+
+def test_media_extraction_failing_midway_rolls_back_completely(drill, monkeypatch):
+    import tarfile
+
+    real = tarfile.TarFile.extractall
+    calls = []
+
+    def partial_then_fail(self, path, *args, **kwargs):
+        calls.append(path)
+        if len(calls) == 2:  # private_media: write something, then fail
+            (dr_restore.Path(path) / "half-written.bin").write_bytes(b"partial")
+            raise tarfile.ExtractError("disk error")
+        return real(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", partial_then_fail)
+    name = "dr_" + uuid.uuid4().hex[:10]
+    with pytest.raises(RestoreError):
+        _call(drill, new_database=name)
+    assert len(calls) == 2
+    _assert_clean_failure(drill, name)
+
+
+def test_old_format_without_private_media_is_refused_not_half_restored(drill, settings):
+    """A historical Yandex-format run has no private_media.  It stays restorable by
+    the old db/media commands, but the DR restore must not pretend it is complete."""
+    import json
+    import tarfile
+
+    from apps.operations.manifest_signing import sign_manifest
+
+    run = drill["run"]
+    manifest = json.loads((run / "manifest.json").read_text())
+    for field in ("private_media_filename", "private_media_sha256",
+                  "private_media_tree_sha256", "signature"):
+        manifest.pop(field, None)
+    manifest["sha256"].pop("private_media.tar.gz")
+    sign_manifest(manifest)
+    legacy = drill["tmp"] / "legacy"
+    legacy.mkdir()
+    (legacy / "manifest.json").write_text(json.dumps(manifest))
+    package = drill["tmp"] / "legacy.tar"
+    with tarfile.open(package, "w") as out:
+        for item in ("manifest.json", "db.dump", "media.tar.gz"):
+            source = legacy / item if item == "manifest.json" else run / item
+            out.add(source, arcname=item)
+    bundle = drill["tmp"] / "legacy.age"
+    subprocess.run(["age", "-r", drill["recipient"], "-o", str(bundle), str(package)],
+                   check=True)
+    name = "dr_" + uuid.uuid4().hex[:10]
+    with pytest.raises(RestoreError):
+        restore_bundle(
+            bundle, drill["identity"], drill["public"], pg=drill["pg"],
+            new_database=name, media_target=drill["media"],
+            private_target=drill["private"], work_parent=drill["work"],
+            key_id=drill["key_id"],
+        )
+    _assert_clean_failure(drill, name)

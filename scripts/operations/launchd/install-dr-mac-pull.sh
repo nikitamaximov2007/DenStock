@@ -12,6 +12,7 @@ chmod 700 "$BACKUP_DIRECTORY"
 export LOG_DIRECTORY
 python3 - "$OUT" <<'PY'
 import os, pathlib, sys
+from xml.sax.saxutils import escape
 src = pathlib.Path(os.environ["REPO"]) / "scripts/operations/launchd/com.denstock.dr-mac-pull.plist.in"
 text = src.read_text()
 for placeholder, env in {
@@ -22,7 +23,7 @@ for placeholder, env in {
     "__PINNED_PUBLIC_KEY__": "PINNED_PUBLIC_KEY",
     "__RCLONE_CONFIG__": "RCLONE_CONFIG", "__LOG_DIRECTORY__": "LOG_DIRECTORY",
 }.items():
-    text = text.replace(placeholder, os.environ[env])
+    text = text.replace(placeholder, escape(os.environ[env]))
 pathlib.Path(sys.argv[1]).write_text(text)
 PY
 plutil -lint "$OUT"

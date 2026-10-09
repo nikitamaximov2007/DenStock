@@ -16,7 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from apps.operations import dr_status  # noqa: E402
 from apps.operations.backup_budget import BudgetError  # noqa: E402
-from apps.operations.dr_local import ENCRYPTED_NAME, RECEIPT_NAME, RUN_NAME  # noqa: E402
+from apps.operations.dr_local import (  # noqa: E402
+    ENCRYPTED_NAME,
+    RECEIPT_NAME,
+    RUN_NAME,
+    verify_receipt,
+)
 from apps.operations.dr_remote import (  # noqa: E402
     RcloneDestination,
     assert_isolated,
@@ -45,7 +50,15 @@ def parse_destination(value: str) -> tuple[str, str, str]:
     return label, kind, validate_remote(kind, remote)
 
 
-def run(staging: Path, destinations: list[str], public_key: Path, status_file: Path) -> int:
+def run(
+    staging: Path, destinations: list[str], public_key: Path, status_file: Path, *,
+    allow_best_effort_budget: bool = False,
+) -> int:
+    if not allow_best_effort_budget:
+        raise BudgetError(
+            "Жёсткий лимит 1 ГБ не подтверждён провайдерами. "
+            "Облачная публикация остановлена до решения владельца."
+        )
     parsed = [parse_destination(item) for item in destinations]
     assert_isolated([remote for _, _, remote in parsed])
     if len({label for label, _, _ in parsed}) != len(parsed):
@@ -55,16 +68,29 @@ def run(staging: Path, destinations: list[str], public_key: Path, status_file: P
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         generation = newest_staged(staging)
         receipt = json.loads((generation / RECEIPT_NAME).read_text())
+        if not verify_receipt(receipt, public_key) or receipt.get("run") != generation.name:
+            raise BudgetError("Подпись подготовленного receipt не прошла проверку.")
+        if receipt.get("backup_created_at") is not None:
+            try:
+                from datetime import datetime
+
+                made = datetime.fromisoformat(receipt["backup_created_at"])
+                if made.tzinfo is None:
+                    raise ValueError("naive timestamp")
+            except (TypeError, ValueError) as exc:
+                raise BudgetError("Дата исходного бэкапа некорректна.") from exc
         failures = 0
         for label, kind, remote in parsed:
             try:
                 result = publish_generation(
                     RcloneDestination(kind, remote, public_key),
                     generation.name, generation / ENCRYPTED_NAME, receipt,
+                    allow_best_effort_budget=True,
                 )
                 dr_status.record(
                     status_file, label, ok=True, run=generation.name,
                     physical_bytes=result["bytes"],
+                    backup_created_at=receipt.get("backup_created_at"),
                 )
                 print(f"{label}: ok {generation.name} bytes={result['bytes']}")
             except BudgetError as exc:
@@ -80,9 +106,16 @@ def main() -> int:
     parser.add_argument("--destination", required=True, action="append")
     parser.add_argument("--public-key", required=True, type=Path)
     parser.add_argument("--status-file", required=True, type=Path)
+    parser.add_argument(
+        "--allow-best-effort-budget", action="store_true",
+        help="Явно разрешить публикацию без гарантии физического лимита 1 ГБ",
+    )
     args = parser.parse_args()
     try:
-        return run(args.staging, args.destination, args.public_key, args.status_file)
+        return run(
+            args.staging, args.destination, args.public_key, args.status_file,
+            allow_best_effort_budget=args.allow_best_effort_budget,
+        )
     except (BudgetError, BlockingIOError, OSError, ValueError) as exc:
         print(f"DenisStock DR upload failed: {exc}", file=sys.stderr)
         return 1

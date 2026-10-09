@@ -22,7 +22,8 @@ def load(path: Path) -> dict:
 
 
 def record(path: Path, label: str, *, ok: bool, run: str = "", error: str = "",
-           physical_bytes: int | None = None, now: datetime | None = None) -> None:
+           physical_bytes: int | None = None, backup_created_at: str | None = None,
+           now: datetime | None = None) -> None:
     """Atomically merge one destination outcome; last_success survives failures."""
     path = Path(path)
     stamp = (now or _now()).isoformat(timespec="seconds")
@@ -30,7 +31,10 @@ def record(path: Path, label: str, *, ok: bool, run: str = "", error: str = "",
     entry = data["destinations"].setdefault(label, {})
     entry.update(last_attempt_at=stamp, ok=ok, error="" if ok else error[:300])
     if ok:
-        entry.update(last_success_at=stamp, run=run, physical_bytes=physical_bytes)
+        entry.update(
+            last_success_at=stamp, uploaded_at=stamp, last_verified_at=stamp,
+            backup_created_at=backup_created_at, run=run, physical_bytes=physical_bytes,
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".dr-status-")
     with os.fdopen(fd, "w") as handle:
@@ -50,8 +54,15 @@ def problems(path: Path, labels: list[str], max_age: timedelta,
         if not entry or not entry.get("last_success_at"):
             found.append(f"{label}: ни одной успешной копии")
             continue
-        age = now - datetime.fromisoformat(entry["last_success_at"])
-        if age > max_age:
+        try:
+            created = datetime.fromisoformat(entry["backup_created_at"])
+            if created.tzinfo is None:
+                raise ValueError("naive backup time")
+            age = now - created
+        except (KeyError, TypeError, ValueError):
+            found.append(f"{label}: возраст исходного бэкапа не подтверждён")
+            continue
+        if age > max_age or age < -timedelta(minutes=5):
             found.append(f"{label}: последняя успешная копия старше {max_age}")
         elif not entry.get("ok", False):
             found.append(f"{label}: последняя попытка завершилась ошибкой")

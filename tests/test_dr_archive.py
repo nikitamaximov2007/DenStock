@@ -55,7 +55,10 @@ def test_age_bundle_round_trip_contains_signed_db_and_both_media(tmp_path, setti
     assert size == encrypted.stat().st_size
     assert digest == sha256_file(encrypted)
     assert verify_receipt(
-        signed_cipher_receipt("generation1", encrypted),
+        signed_cipher_receipt(
+            "generation1", encrypted,
+            backup_created_at=json.loads((run / "manifest.json").read_text())["created_at"],
+        ),
         settings.DENSTOCK_MANIFEST_PUBLIC_KEY_PATH,
         settings.DENSTOCK_MANIFEST_SIGNING_KEY_ID,
     )

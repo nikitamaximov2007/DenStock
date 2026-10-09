@@ -74,12 +74,13 @@ def encrypt_verified_run(
         raise ArchiveError("Не удалось зашифровать архив age.") from exc
 
 
-def signed_cipher_receipt(run_name: str, encrypted: Path) -> dict:
+def signed_cipher_receipt(run_name: str, encrypted: Path, *, backup_created_at: str) -> dict:
     """Bind the exact ciphertext to the existing production signer identity."""
     encrypted = Path(encrypted)
     receipt = {
         "version": 1,
         "run": run_name,
+        "backup_created_at": backup_created_at,
         "bytes": encrypted.stat().st_size,
         "sha256": sha256_file(encrypted),
     }

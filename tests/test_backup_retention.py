@@ -105,3 +105,54 @@ def test_non_positive_keep_deletes_nothing(tmp_path, keep):
     run = _complete_run(tmp_path, "2026-08-01_10-00-00")
     assert prune_old_runs(tmp_path, keep) == []
     assert run.exists()
+
+
+def test_one_unremovable_run_does_not_block_the_rest_and_is_reported(tmp_path):
+    """Production has root-owned historical runs the web UID 2001 cannot delete."""
+    import os
+
+    from apps.operations.backup import OperationsError
+
+    runs = [_complete_run(tmp_path, f"2026-08-0{i}_10-00-00") for i in (1, 2, 3, 4)]
+    stuck = runs[0]
+    os.chmod(stuck, 0o555)  # like a root-owned directory: entries cannot be unlinked
+    try:
+        with pytest.raises(OperationsError, match=stuck.name):
+            prune_old_runs(tmp_path, 2)
+        assert stuck.exists() and (stuck / "manifest.json").exists()  # untouched, intact
+        assert not runs[1].exists()  # the removable older run still went
+        assert runs[2].exists() and runs[3].exists()
+    finally:
+        os.chmod(stuck, 0o755)
+
+
+def test_backup_all_survives_a_retention_failure_so_offsite_still_runs(
+    tmp_path, db, settings, capsys
+):
+    """The production wrapper uses `set -e`: a prune error must not abort it."""
+    import os
+    import sqlite3
+    import uuid
+
+    from apps.operations import backup
+    from tests.emergency_support import configure_test_trust
+
+    configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
+    root = tmp_path / "backups"
+    stuck = _complete_run(root, "2020-01-01_00-00-00")
+    _complete_run(root, "2020-01-02_00-00-00")
+    database = tmp_path / "src.sqlite3"
+    with sqlite3.connect(database) as conn:
+        conn.execute("CREATE TABLE t (v TEXT)")
+    os.chmod(stuck, 0o555)
+    try:
+        run = backup.backup_all(
+            root=root, keep_last=1, media_root=tmp_path / "no-media",
+            private_media_root=tmp_path / "no-private",
+            settings_dict={"ENGINE": "django.db.backends.sqlite3", "NAME": str(database)},
+        )
+    finally:
+        os.chmod(stuck, 0o755)
+    assert (run / "manifest.json").is_file()
+    assert "ротация локальных копий не завершена" in capsys.readouterr().err
+    assert stuck.exists()

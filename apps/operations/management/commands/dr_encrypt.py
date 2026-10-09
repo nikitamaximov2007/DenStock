@@ -5,6 +5,7 @@ age *public* recipient is configured here.  Nothing is uploaded: the host
 uploader ``scripts/operations/dr_upload.py`` does that with rotation.
 """
 
+import fcntl
 import json
 import os
 import re
@@ -56,25 +57,32 @@ class Command(BaseCommand):
         if staging == root or root in staging.parents:
             raise CommandError("--staging должен лежать ВНЕ каталога бэкапов.")
         staging.mkdir(parents=True, exist_ok=True, mode=0o700)
-        run = newest_complete_run(backup.backup_root())
-        target = staging / run.name
-        if (target / RECEIPT_NAME).is_file():
-            self.stdout.write(f"Поколение уже подготовлено: {run.name}")
-            return
-        work = staging / f".work-{run.name}"
-        shutil.rmtree(work, ignore_errors=True)
-        work.mkdir(parents=True, mode=0o700)
-        try:
-            cipher = work / ENCRYPTED_NAME
-            encrypt_verified_run(run, cipher, recipients)
-            receipt = signed_cipher_receipt(run.name, cipher)
-            (work / RECEIPT_NAME).write_text(json.dumps(receipt, sort_keys=True) + "\n")
-            shutil.rmtree(target, ignore_errors=True)
-            os.replace(work, target)
-        except (ArchiveError, OSError, ValueError) as exc:
+        with (staging / ".encrypt.lock").open("a+b") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            run = newest_complete_run(backup.backup_root())
+            target = staging / run.name
+            if (target / RECEIPT_NAME).is_file():
+                self.stdout.write(f"Поколение уже подготовлено: {run.name}")
+                return
+            work = staging / f".work-{run.name}"
             shutil.rmtree(work, ignore_errors=True)
-            raise CommandError(f"Подготовка DR-поколения не удалась: {exc}") from exc
-        staged = sorted(p for p in staging.iterdir() if p.is_dir() and RUN_NAME.fullmatch(p.name))
-        for old in staged[:-2]:  # staging holds ciphertext only; keep the newest two
-            shutil.rmtree(old, ignore_errors=True)
-        self.stdout.write(self.style.SUCCESS(f"DR-поколение готово: {run.name}"))
+            work.mkdir(parents=True, mode=0o700)
+            try:
+                cipher = work / ENCRYPTED_NAME
+                encrypt_verified_run(run, cipher, recipients)
+                manifest = read_manifest(run / "manifest.json")
+                receipt = signed_cipher_receipt(
+                    run.name, cipher, backup_created_at=manifest["created_at"],
+                )
+                (work / RECEIPT_NAME).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+                shutil.rmtree(target, ignore_errors=True)
+                os.replace(work, target)
+            except (ArchiveError, OSError, ValueError) as exc:
+                shutil.rmtree(work, ignore_errors=True)
+                raise CommandError(f"Подготовка DR-поколения не удалась: {exc}") from exc
+            staged = sorted(
+                p for p in staging.iterdir() if p.is_dir() and RUN_NAME.fullmatch(p.name)
+            )
+            for old in staged[:-2]:  # staging holds ciphertext only; keep the newest two
+                shutil.rmtree(old, ignore_errors=True)
+            self.stdout.write(self.style.SUCCESS(f"DR-поколение готово: {run.name}"))

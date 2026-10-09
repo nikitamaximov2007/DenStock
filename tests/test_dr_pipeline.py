@@ -121,8 +121,14 @@ def test_status_flags_missing_stale_and_failed_destinations(tmp_path):
     now = datetime(2026, 10, 8, tzinfo=UTC)
     day = timedelta(hours=36)
     assert len(dr_status.problems(status, ["yandex", "google"], day, now)) == 2
-    dr_status.record(status, "yandex", ok=True, run="r", now=now - timedelta(hours=1))
-    dr_status.record(status, "google", ok=True, run="r", now=now - timedelta(hours=48))
+    dr_status.record(
+        status, "yandex", ok=True, run="r", now=now - timedelta(hours=1),
+        backup_created_at=(now - timedelta(hours=1)).isoformat(),
+    )
+    dr_status.record(
+        status, "google", ok=True, run="r", now=now - timedelta(hours=48),
+        backup_created_at=(now - timedelta(hours=48)).isoformat(),
+    )
     assert dr_status.problems(status, ["yandex"], day, now) == []
     assert "старше" in dr_status.problems(status, ["google"], day, now)[0]
     dr_status.record(status, "yandex", ok=False, error="x" * 1000, now=now)
@@ -138,7 +144,9 @@ def test_dr_check_exit_codes(tmp_path, monkeypatch, capsys):
     argv = ["dr_check", "--status-file", str(status), "--label", "yandex"]
     monkeypatch.setattr("sys.argv", argv)
     assert dr_check.main() == 2
-    dr_status.record(status, "yandex", ok=True, run="r")
+    dr_status.record(
+        status, "yandex", ok=True, run="r", backup_created_at=datetime.now(UTC).isoformat(),
+    )
     assert dr_check.main() == 0
 
 
@@ -157,7 +165,7 @@ def test_upload_isolates_destinations_and_exits_nonzero_on_any_failure(tmp_path,
     staging, name = _stage(tmp_path, key)
     seen = []
 
-    def fake_publish(destination, run, bundle, receipt):
+    def fake_publish(destination, run, bundle, receipt, **kwargs):
         seen.append(destination.remote)
         if destination.kind == "drive":
             raise BudgetError("Google недоступен")
@@ -167,6 +175,7 @@ def test_upload_isolates_destinations_and_exits_nonzero_on_any_failure(tmp_path,
     status = tmp_path / "status.json"
     code = dr_upload.run(
         staging, ["yandex=s3=y:bucket/dr", "google=drive=g:DenisStock"], public, status,
+        allow_best_effort_budget=True,
     )
     assert code == 1
     assert seen == ["y:bucket/dr", "g:DenisStock"]  # drive failure did not stop yandex
@@ -184,7 +193,10 @@ def test_upload_refuses_overlapping_or_root_destinations(tmp_path):
         ["a=s3=y:bucket/dr", "a=drive=g:DenisStock"],
     ):
         with pytest.raises(BudgetError):
-            dr_upload.run(staging, destinations, public, tmp_path / "s.json")
+            dr_upload.run(
+                staging, destinations, public, tmp_path / "s.json",
+                allow_best_effort_budget=True,
+            )
 
 
 def test_mac_pull_uses_every_remote_and_reports_partial_failure(tmp_path, monkeypatch, capsys):
@@ -219,7 +231,10 @@ def test_mac_pull_flags_stale_local_copy(tmp_path, monkeypatch):
     store = LocalEncryptedStore(tmp_path / "mac", public)
     source = tmp_path / "src"
     source.write_bytes(b"old")
-    store.install(old, source, _receipt(key, old, b"old"))
+    store.install(
+        old, source,
+        _receipt(key, old, b"old", created_at=(datetime.now(UTC) - timedelta(days=5)).isoformat()),
+    )
     monkeypatch.setattr(dr_mac_pull, "pull_newest", lambda *a: old)
     monkeypatch.setattr("sys.argv", [
         "x", "--remote", "y:bucket/dr", "--root", str(tmp_path / "mac"),

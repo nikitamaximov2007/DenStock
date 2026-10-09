@@ -335,3 +335,27 @@ def test_production_python_dependencies_are_pinned_and_used_by_docker_build():
     assert "FROM python:3.12.13-slim" in dockerfile
     assert 'pip install --requirement production.txt' in dockerfile
     assert "pip install --no-deps ." in dockerfile
+
+
+def test_historical_run_without_private_media_is_flagged_and_private_files_untouched(
+    backups_root, db, django_user_model, monkeypatch, settings, tmp_path
+):
+    """Old-format (pre-private_media) Yandex runs stay restorable for db+media, are
+    labelled as historical, and the restore never touches PRIVATE_MEDIA_ROOT."""
+    settings.PRIVATE_MEDIA_ROOT = tmp_path / "private-live"
+    settings.PRIVATE_MEDIA_ROOT.mkdir()
+    (settings.PRIVATE_MEDIA_ROOT / "keep.bin").write_bytes(b"current private file")
+    _make_run(backups_root)
+    report = verify_backup("2026-07-05_07-13-35")
+    assert report.ok
+    assert report.private_media_file == ""
+    assert ("Историческая копия без private_media", "warn") in report.checks
+    user = django_user_model.objects.create_superuser("owner", "o@example.com", "x")
+    pre = _make_run(backups_root, run_id="2026-07-05_08-00-00")
+    monkeypatch.setattr(backup_mod, "backup_all", lambda **kw: pre)
+    monkeypatch.setattr(restore_mod.backup, "restore_db", lambda p: [])
+    monkeypatch.setattr(restore_mod, "call_command", lambda *a, **kw: None)
+    monkeypatch.setattr(restore_mod.connections, "close_all", lambda: None)
+    job = run_web_restore("2026-07-05_07-13-35", user=user)
+    assert job.status == RestoreJob.Status.COMPLETED
+    assert (settings.PRIVATE_MEDIA_ROOT / "keep.bin").read_bytes() == b"current private file"

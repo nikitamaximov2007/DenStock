@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from apps.operations.backup_budget import BudgetError, reserve_capacity  # noqa: E402
+from apps.operations.backup_budget import BudgetError, parse_signed_time  # noqa: E402
 from apps.operations.dr_local import (  # noqa: E402
     RUN_NAME,
     LocalEncryptedStore,
@@ -88,51 +88,75 @@ def pull_newest(remote: str, root: Path, public_key: Path) -> str:
         )
         if not names:
             raise BudgetError("В удалённом хранилище нет поколений.")
-        name = names[-1]
-        if store.is_verified(name):
-            return name
-        if (store.root / name).exists():
-            raise BudgetError("Локальное поколение повреждено; автоматическая замена запрещена.")
-        try:
-            receipt = json.loads(_rclone("cat", f"{remote}/{name}/receipt.json"))
-        except (ValueError, UnicodeDecodeError) as exc:
-            raise BudgetError("Удалённый receipt повреждён.") from exc
-        if (
-            receipt.get("version") != 1
-            or receipt.get("run") != name
-            or not verify_receipt(receipt, public_key)
-            or not isinstance(receipt.get("bytes"), int)
-            or receipt["bytes"] < 1
-            or not isinstance(receipt.get("sha256"), str)
-            or len(receipt["sha256"]) != 64
-        ):
-            raise BudgetError("Удалённый receipt не прошёл проверку.")
-        receipt_size = len((json.dumps(receipt, sort_keys=True) + "\n").encode())
-        reserve_capacity(store, receipt["bytes"] + receipt_size, limit=store.limit)
-        fd, temporary = tempfile.mkstemp(prefix=".incoming-", dir=store.root)
-        os.close(fd)
-        staged = Path(temporary)
-        try:
-            _download_bounded(
-                f"{remote}/{name}/bundle.tar.age", staged, receipt["bytes"],
-            )
-            store.install_staged(name, staged, receipt)
-        finally:
-            staged.unlink(missing_ok=True)
-        return name
+        local = newest_local_age(store.root, public_key)
+        local_time = store.signed_created_at(local[0]) if local else None
+        no_room = False
+        for name in reversed(names):
+            if store.is_verified(name):
+                return name
+            if (store.root / name).exists():
+                # Preserve the local evidence and try an older remote run.
+                continue
+            try:
+                receipt = json.loads(_rclone("cat", f"{remote}/{name}/receipt.json"))
+                if (
+                    receipt.get("version") != 1
+                    or receipt.get("run") != name
+                    or not verify_receipt(receipt, public_key)
+                    or not isinstance(receipt.get("bytes"), int)
+                    or receipt["bytes"] < 1
+                    or not isinstance(receipt.get("sha256"), str)
+                    or len(receipt["sha256"]) != 64
+                ):
+                    continue
+                remote_time = parse_signed_time(receipt.get("backup_created_at"))
+                if local_time is not None and (remote_time is None or remote_time <= local_time):
+                    # Already holding a copy at least this fresh: never re-download
+                    # older data the rotation removed on purpose.
+                    return local[0]
+                receipt_size = len((json.dumps(receipt, sort_keys=True) + "\n").encode())
+                # A candidate must fit *without* deleting any known-good copy.
+                if store.physical_bytes() + receipt["bytes"] + receipt_size > store.limit:
+                    no_room = True
+                    continue
+                fd, temporary = tempfile.mkstemp(prefix=".incoming-", dir=store.root)
+                os.close(fd)
+                staged = Path(temporary)
+                try:
+                    _download_bounded(
+                        f"{remote}/{name}/bundle.tar.age", staged, receipt["bytes"],
+                    )
+                    store.install_staged(name, staged, receipt)
+                finally:
+                    staged.unlink(missing_ok=True)
+                return name
+            except (BudgetError, ValueError, UnicodeDecodeError, OSError, TypeError):
+                continue
+        if no_room:
+            raise BudgetError("Новая копия не помещается рядом с проверенной; старая сохранена.")
+        raise BudgetError("Нет доступного проверенного поколения в этом хранилище.")
 
 
 def newest_local_age(root: Path, public_key: Path) -> tuple[str, timedelta] | None:
-    """Newest locally VERIFIED generation and its age from the run timestamp."""
+    """Freshest locally verified generation by its signed source timestamp."""
     store = LocalEncryptedStore(root, public_key)
-    verified = sorted(g.name for g in store.generations() if g.verified)
-    for name in reversed(verified):
-        try:
-            made = datetime.strptime(name, "%Y-%m-%d_%H-%M-%S")
-        except ValueError:
+    freshest = None
+    for generation in store.generations():
+        if not generation.verified:
             continue
-        return name, datetime.now() - made
-    return None
+        try:
+            receipt = json.loads((store.root / generation.name / "receipt.json").read_text())
+            made = datetime.fromisoformat(receipt["backup_created_at"])
+            if made.tzinfo is None:
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if freshest is None or made > freshest[1]:
+            freshest = (generation.name, made)
+    if freshest is None:
+        return None
+    name, made = freshest
+    return name, datetime.now(made.tzinfo) - made
 
 
 def notify(message: str) -> None:
@@ -172,7 +196,10 @@ def main() -> int:
     if failures:
         status = 1 if failures == len(args.remote) else 3
     newest = newest_local_age(args.root, args.public_key)
-    if newest is None or newest[1] > timedelta(hours=args.max_age_hours):
+    if (
+        newest is None or newest[1] > timedelta(hours=args.max_age_hours)
+        or newest[1] < -timedelta(minutes=5)
+    ):
         print("DenisStock backup STALE: нет свежей проверенной локальной копии.", file=sys.stderr)
         status = status or 4
     if pulled:

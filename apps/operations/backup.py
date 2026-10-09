@@ -7,10 +7,12 @@
 Безопасность: пароль БД передаётся в `pg_dump`/`pg_restore` через переменную окружения
 `PGPASSWORD` (не в argv), в вывод/манифест секреты не пишутся.
 """
+import logging
 import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tarfile
 import uuid
 from contextlib import contextmanager
@@ -37,6 +39,8 @@ from .emergency_state import (
 from .manifest_signing import sign_manifest
 from .models import DeploymentState
 
+logger = logging.getLogger(__name__)
+
 
 class OperationsError(Exception):
     """Понятная эксплуатационная ошибка (команды переводят её в CommandError)."""
@@ -52,9 +56,20 @@ def backup_root() -> Path:
 
 def new_run_dir(root=None) -> Path:
     base = Path(root) if root else backup_root()
-    run = base / timestamp()
-    run.mkdir(parents=True, exist_ok=True)
-    return run
+    base.mkdir(parents=True, exist_ok=True)
+    stamp = timestamp()
+    # mkdir without exist_ok is atomic: two invocations (threads or processes)
+    # can never share a run directory.  The plain timestamp is kept whenever it
+    # is free, because the emergency station and the UI parse that exact form
+    # for the backup age; only a real same-second collision gets a suffix.
+    for name in (stamp, *(f"{stamp}-{uuid.uuid4().hex[:12]}" for _ in range(8))):
+        run = base / name
+        try:
+            run.mkdir()
+        except FileExistsError:
+            continue
+        return run
+    raise OperationsError("Не удалось создать уникальный каталог бэкапа.")
 
 
 def _engine_name(engine: str) -> str:
@@ -93,6 +108,7 @@ def pg_binary(name: str, version: int | None = None) -> str | None:
 def backup_media(dest_dir, *, media_root=None) -> Path | None:
     """Заархивировать media в `<dest_dir>/media.tar.gz`. None — если файлов нет."""
     media_root = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
+    _assert_regular_media_tree(media_root)
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     has_files = media_root.exists() and any(p.is_file() for p in media_root.rglob("*"))
@@ -107,6 +123,7 @@ def backup_media(dest_dir, *, media_root=None) -> Path | None:
 def backup_private_media(dest_dir, *, private_media_root=None) -> Path:
     """Capture the separate private volume, including an intentionally empty volume."""
     source = Path(private_media_root or settings.PRIVATE_MEDIA_ROOT)
+    _assert_regular_media_tree(source)
     if not source.is_dir() and settings.DENSTOCK_MODE == "production":
         raise OperationsError("PRIVATE_MEDIA_ROOT отсутствует: полный бэкап невозможен.")
     archive = Path(dest_dir) / "private_media.tar.gz"
@@ -211,10 +228,23 @@ def verify_media_payload(path: str | Path | None) -> None:
         with tarfile.open(path, "r:gz") as archive:
             for member in archive.getmembers():
                 member_path = Path(member.name)
-                if member_path.is_absolute() or ".." in member_path.parts:
+                if (
+                    member_path.is_absolute() or ".." in member_path.parts
+                    or not (member.isfile() or member.isdir())
+                ):
                     raise OperationsError("Media backup содержит небезопасный путь.")
     except (OSError, tarfile.TarError) as exc:
         raise OperationsError(f"Media backup повреждён: {exc}") from exc
+
+
+def _assert_regular_media_tree(root: Path) -> None:
+    """The archive and the safe restore filter must agree on file types."""
+    if root.is_symlink():
+        raise OperationsError("Media содержит символическую ссылку; полный бэкап невозможен.")
+    if root.exists():
+        for path in root.rglob("*"):
+            if path.is_symlink() or not (path.is_file() or path.is_dir()):
+                raise OperationsError("Media содержит небезопасный элемент; бэкап остановлен.")
 
 
 @contextmanager
@@ -355,7 +385,16 @@ def backup_all(
             + "; ".join(validation.errors)
         )
     if keep_last:
-        prune_old_runs(run.parent, keep_last)
+        try:
+            prune_old_runs(run.parent, keep_last)
+        except OperationsError as exc:
+            # The new copy is complete and verified.  A retention failure (for
+            # example root-owned historical runs that the web UID cannot remove)
+            # must be visible, but must not make the scheduler abort before the
+            # offsite upload of a good backup.
+            logger.warning("Ротация локальных копий не завершена: %s", exc)
+            print(f"ПРЕДУПРЕЖДЕНИЕ: ротация локальных копий не завершена: {exc}",
+                  file=sys.stderr)
     return run
 
 
@@ -392,12 +431,16 @@ def prune_old_runs(root, keep_last: int) -> list[Path]:
         (complete if _run_is_complete(run) else partial).append(run)
     keep = set(complete[-keep_last:]) | set(partial[-keep_last:])
     to_remove = [run for run in runs if run not in keep]
+    removed, failed = [], []
     for path in to_remove:
         try:
             shutil.rmtree(path)
-        except OSError as exc:
-            raise OperationsError(f"Не удалось удалить старую копию {path.name}: {exc}") from exc
-    return to_remove
+            removed.append(path)
+        except OSError:
+            failed.append(path.name)  # keep going: one stuck run must not block the rest
+    if failed:
+        raise OperationsError("Не удалось удалить старые копии: " + ", ".join(failed))
+    return removed
 
 
 # --- Restore -----------------------------------------------------------------
@@ -433,6 +476,7 @@ def restore_media(archive, *, media_root=None) -> None:
     archive = Path(archive)
     if not archive.exists():
         raise OperationsError(f"Архив media не найден: {archive}")
+    verify_media_payload(archive)
     media_root = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
     media_root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:

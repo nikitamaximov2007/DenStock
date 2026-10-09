@@ -12,7 +12,13 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .backup_budget import BYTE_LIMIT, BudgetError, Generation, reserve_capacity
+from .backup_budget import (
+    BYTE_LIMIT,
+    BudgetError,
+    Generation,
+    parse_signed_time,
+    prune_superseded,
+)
 
 
 def sha256_file(path: Path) -> str:
@@ -90,6 +96,16 @@ class LocalEncryptedStore:
         except (OSError, ValueError, TypeError):
             return False
 
+    def signed_created_at(self, name: str):
+        """Signed source-backup time of a VERIFIED generation, else None."""
+        if not self.is_verified(name):
+            return None
+        try:
+            receipt = json.loads((self._run_path(name) / RECEIPT_NAME).read_text())
+        except (OSError, ValueError):
+            return None
+        return parse_signed_time(receipt.get("backup_created_at"))
+
     def delete_generation(self, name: str) -> None:
         path = self._run_path(name)
         if path.is_symlink() or not path.is_dir():
@@ -112,11 +128,9 @@ class LocalEncryptedStore:
         if receipt.get("bytes") != encrypted.stat().st_size:
             raise BudgetError("Размер источника не совпал с подписанным receipt.")
         receipt_bytes = (json.dumps(receipt, sort_keys=True) + "\n").encode()
-        # A caller must stage the download outside this namespace; the source is
-        # never deleted here. Count the entire incoming generation, not a file.
-        removed = reserve_capacity(
-            self, encrypted.stat().st_size + len(receipt_bytes), limit=self.limit,
-        )
+        # The new copy must fit before any old verified generation is touched.
+        if self.physical_bytes() + encrypted.stat().st_size + len(receipt_bytes) > self.limit:
+            raise BudgetError("Новая копия не помещается без удаления проверенных поколений.")
         target.mkdir(mode=0o700)
         try:
             shutil.copyfile(encrypted, target / ENCRYPTED_NAME)
@@ -128,9 +142,9 @@ class LocalEncryptedStore:
         except (OSError, BudgetError):
             shutil.rmtree(target)
             raise
-        return removed
+        return self._prune_after(name)
 
-    def install_staged(self, name: str, staged: Path, receipt: dict) -> None:
+    def install_staged(self, name: str, staged: Path, receipt: dict) -> list[str]:
         """Commit an already-budgeted download by rename, without a second copy."""
         target = self._run_path(name)
         staged = Path(staged)
@@ -150,15 +164,26 @@ class LocalEncryptedStore:
             or receipt.get("sha256") != sha256_file(staged)
         ):
             raise BudgetError("Скачанный архив не прошёл проверку.")
+        receipt_bytes = (json.dumps(receipt, sort_keys=True) + "\n").encode()
+        # The staged ciphertext is already counted by physical_bytes().
+        if self.physical_bytes() + len(receipt_bytes) > self.limit:
+            raise BudgetError("Новая копия не помещается без удаления проверенных поколений.")
         target.mkdir(mode=0o700)
         try:
             os.replace(staged, target / ENCRYPTED_NAME)
-            (target / RECEIPT_NAME).write_text(json.dumps(receipt, sort_keys=True) + "\n")
+            (target / RECEIPT_NAME).write_bytes(receipt_bytes)
             if not self.is_verified(name) or self.physical_bytes() > self.limit:
                 raise BudgetError("Копия не прошла проверку или превышен лимит.")
         except (OSError, BudgetError):
             shutil.rmtree(target)
             raise
+        return self._prune_after(name)
+
+    def _prune_after(self, name: str) -> list[str]:
+        """Older verified copies go only after the new one is verified in place."""
+        if self.signed_created_at(name) is None:
+            return []  # legacy receipt without a signed time: keep everything
+        return prune_superseded(self, name)
 
     def _run_path(self, name: str) -> Path:
         if not RUN_NAME.fullmatch(name):
