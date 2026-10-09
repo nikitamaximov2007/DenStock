@@ -142,12 +142,17 @@ def test_backup_all_writes_verified_v2_manifest(tmp_path, db, settings, monkeypa
         },
     )
 
+    private = tmp_path / "private"
+    private.mkdir()  # production refuses a backup without the private volume
     run = backup.backup_all(
-        root=tmp_path / "backups", settings_dict=settings_dict, media_root=media
+        root=tmp_path / "backups", settings_dict=settings_dict, media_root=media,
+        private_media_root=private,
     )
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
 
     assert manifest["schema_version"] == SCHEMA_VERSION
+    assert manifest["private_media_status"] == "included"
+    assert manifest["private_media_file_count"] == 0
     assert manifest["source_environment"] == "production"
     assert manifest["verification_status"] == "verified"
     assert manifest["database_sha256"] == sha256_file(run / "db.sqlite3")

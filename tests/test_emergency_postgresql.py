@@ -194,6 +194,8 @@ def test_postgresql_backup_snapshot_serializes_business_writes(
     _set_state(DeploymentState.WriteState.NORMAL)
     settings.DENSTOCK_MODE = "production"
     settings.DENSTOCK_APP_COMMIT = COMMIT
+    settings.PRIVATE_MEDIA_ROOT = tmp_path / "private"  # the mounted private volume
+    settings.PRIVATE_MEDIA_ROOT.mkdir()
     lock_acquired = threading.Event()
     allow_backup = threading.Event()
 
@@ -355,6 +357,9 @@ def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
     source_media = tmp_path / "source-media"
     source_media.mkdir()
     (source_media / "source.txt").write_text("source-media", encoding="utf-8")
+    settings.PRIVATE_MEDIA_ROOT = tmp_path / "source-private"
+    (settings.PRIVATE_MEDIA_ROOT / "customer_requests").mkdir(parents=True)
+    (settings.PRIVATE_MEDIA_ROOT / "customer_requests" / "a.bin").write_bytes(b"private")
     first_database = f"denstock_emergency_it_{uuid.uuid4().hex[:12]}"
     second_database = f"denstock_emergency_it_{uuid.uuid4().hex[:12]}"
     created_databases = []
@@ -369,6 +374,8 @@ def test_postgresql_two_stage_backup_restore_and_offline_warehouse_operation(
         )
         source_manifest = validate_manifest(source_run, expected_source="production")
         assert source_manifest.ok
+        assert source_manifest.manifest["private_media_status"] == "included"
+        assert source_manifest.manifest["private_media_file_count"] == 1
 
         create_database(first_database)
         created_databases.append(first_database)

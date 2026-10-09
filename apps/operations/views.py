@@ -28,7 +28,9 @@ from .models import DeploymentState, RestoreJob
 from .write_guard import acquire_failover_lock
 
 # Единственные файлы, которые вообще можно отдать из backup-run.
-ALLOWED_FILES = ("manifest.json", "db.dump", "db.sqlite3", "media.tar.gz")
+ALLOWED_FILES = (
+    "manifest.json", "db.dump", "db.sqlite3", "media.tar.gz", "private_media.tar.gz",
+)
 
 # Читабельные подписи и pill-стиль для manifest["type"].
 TYPE_LABELS = {
@@ -170,6 +172,9 @@ def backups_list(request):
                 f["name"] in ("db.dump", "db.sqlite3") for f in run["files"]
             )
             run["has_media"] = any(f["name"] == "media.tar.gz" for f in run["files"])
+            run["has_private_media"] = any(
+                f["name"] == "private_media.tar.gz" for f in run["files"]
+            )
         context["restore_jobs"] = RestoreJob.objects.all()[:10]
     return render(request, "operations/backups.html", context)
 
