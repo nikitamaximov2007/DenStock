@@ -36,6 +36,7 @@ from .emergency_state import (
 )
 from .manifest_signing import sign_manifest
 from .models import DeploymentState
+from .private_media import PrivateMediaError, create_archive, inspect_tree
 
 
 class OperationsError(Exception):
@@ -229,6 +230,7 @@ def backup_all(
     keep_last=None,
     settings_dict=None,
     media_root=None,
+    private_media_root=None,
     trigger="manual",
     extra_manifest=None,
 ) -> Path:
@@ -241,8 +243,16 @@ def backup_all(
     if trigger not in BACKUP_TYPES:
         raise OperationsError(f"Неизвестный тип backup: {trigger}")
     s = settings_dict or connection.settings_dict
-    run = new_run_dir(root)
     media_source = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
+    private_source = Path(private_media_root or settings.PRIVATE_MEDIA_ROOT)
+    # Production must always capture private_media; elsewhere (development,
+    # tests, the emergency station) an absent directory is recorded as such.
+    private_required = settings.DENSTOCK_MODE == "production"
+    try:
+        private_present = inspect_tree(private_source, require_present=private_required)
+    except PrivateMediaError as exc:
+        raise OperationsError(str(exc)) from exc
+    run = new_run_dir(root)
     engine = _engine_name(s["ENGINE"])
     with _backup_consistency_scope(s) as state:
         migrations = migration_state()
@@ -250,6 +260,12 @@ def backup_all(
         media_tree_hash = media_tree_sha256(media_source)
         db_path = backup_db(run, settings_dict=s)
         media_path = backup_media(run, media_root=media_root)
+        private_path = private_inventory = None
+        if private_present is not None:
+            try:
+                private_path, private_inventory = create_archive(private_source, run)
+            except PrivateMediaError as exc:
+                raise OperationsError(str(exc)) from exc
         consistency = (
             "single_writer_locked"
             if state.write_state
@@ -267,6 +283,7 @@ def backup_all(
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
     db_sha256 = sha256_file(db_path)
     media_sha256 = sha256_file(media_path) if media_path else None
+    private_sha256 = sha256_file(private_path) if private_path else None
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "backup_run_id": str(uuid.uuid4()),
@@ -287,6 +304,17 @@ def backup_all(
         "media_filename": media_path.name if media_path else None,
         "media_sha256": media_sha256,
         "media_tree_sha256": media_tree_hash,
+        # "included": the archive below holds the whole private tree (maybe 0
+        # files).  "absent": the directory did not exist (never in production).
+        # Manifests without this key predate private_media backups.
+        "private_media_status": "included" if private_path else "absent",
+        "private_media_filename": private_path.name if private_path else None,
+        "private_media_sha256": private_sha256,
+        "private_media_tree_sha256": (
+            private_inventory.tree_sha256 if private_inventory else None
+        ),
+        "private_media_file_count": private_inventory.files if private_inventory else None,
+        "private_media_bytes": private_inventory.bytes if private_inventory else None,
         "migration_fingerprint": migrations["fingerprint"],
         "migration_state": migrations["applied"],
         "data_state": data_marker,
@@ -304,6 +332,7 @@ def backup_all(
         "sha256": {
             db_path.name: db_sha256,
             **({media_path.name: media_sha256} if media_path else {}),
+            **({private_path.name: private_sha256} if private_path else {}),
         },
     }
     if extra_manifest:

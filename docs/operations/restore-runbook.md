@@ -23,9 +23,14 @@ docker compose exec web python manage.py verify_backup <run_id>
 ```bash
 docker compose exec web python manage.py restore_db   backups/<run_id>/db.dump --yes
 docker compose exec web python manage.py restore_media backups/<run_id>/media.tar.gz --yes
+docker compose exec web python manage.py restore_private_media <run_id> --yes
 docker compose exec web python manage.py migrate
 docker compose exec web python manage.py ops_check
 ```
+
+`restore_private_media` заменяет содержимое приватного тома целиком и откатывает
+замену при ошибке. У старых копий без private_media этот шаг пропускается
+(приватные файлы остаются как есть). Подробности: private-media-backup.md.
 
 Подробности и сценарий «новый VPS с нуля»: production-deploy-runbook.md.
 

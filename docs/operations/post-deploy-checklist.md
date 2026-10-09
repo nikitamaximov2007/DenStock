@@ -19,6 +19,8 @@
 - [ ] Последний бэкап содержит `db.dump` (или `db.sqlite3` в dev)
 - [ ] Последний бэкап содержит `manifest.json`
 - [ ] Последний бэкап содержит `media.tar.gz` (если media есть)
+- [ ] Последний бэкап содержит `private_media.tar.gz`, в manifest
+      `private_media_status = included` (см. private-media-backup.md)
 - [ ] Ручной «Экспорт бэкапа» из UI работает
 
 ## Offsite

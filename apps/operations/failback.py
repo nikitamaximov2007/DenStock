@@ -422,6 +422,8 @@ def prepare_failback_package(*, session=None, root=None, paths=None):
     payload_names = ["manifest.json", manifest["database_dump_filename"]]
     if manifest.get("media_filename"):
         payload_names.append(manifest["media_filename"])
+    if manifest.get("private_media_filename"):
+        payload_names.append(manifest["private_media_filename"])
     package_metadata = {
         "schema_version": 1,
         "created_at": timezone.now().isoformat(),
@@ -495,6 +497,8 @@ def inspect_failback_package(package_path, *, expected_sha256) -> tuple[dict, di
             }
             if manifest.get("media_filename"):
                 payload_names.add(f"backup/{manifest['media_filename']}")
+            if manifest.get("private_media_filename"):
+                payload_names.add(f"backup/{manifest['private_media_filename']}")
             if not payload_names.issubset(names) or any(
                 Path(name).is_absolute() or ".." in Path(name).parts or name not in payload_names
                 for name in names

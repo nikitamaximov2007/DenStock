@@ -27,7 +27,9 @@ from django.db import connection, connections
 from django.utils import timezone
 
 from . import backup
+from .manifest_signing import ManifestSignatureError, verify_manifest
 from .models import RestoreJob
+from .private_media import Inventory, PrivateMediaError, archive_inventory, restore_archive
 
 CONFIRM_PHRASE = "ПОДТВЕРЖДАЮ"
 OLD_BACKUP_DAYS = 30  # старше — предупреждение «бэкап старый»
@@ -65,6 +67,7 @@ class VerifyReport:
     manifest: dict = field(default_factory=dict)
     db_file: str = ""
     media_file: str = ""
+    private_media_file: str = ""
 
     @property
     def ok(self) -> bool:
@@ -135,6 +138,22 @@ def verify_backup(run_id: str) -> VerifyReport:
         return report
     report.manifest = manifest
 
+    if manifest.get("signature"):
+        try:
+            verify_manifest(manifest)
+            signed = True
+        except ManifestSignatureError:
+            signed = False
+        report.check(
+            "Подпись manifest (Ed25519)", signed,
+            error="подпись manifest недействительна: бэкап изменён или подписан чужим ключом",
+        )
+    else:
+        report.check(
+            "Подпись manifest (Ed25519)", False,
+            warn="manifest не подписан (старая копия): подлинность не подтверждена",
+        )
+
     known_keys = {"created_at", "engine", "db_file"}
     report.check(
         "Бэкап принадлежит DenisStock", known_keys <= set(manifest),
@@ -186,6 +205,8 @@ def verify_backup(run_id: str) -> VerifyReport:
             report.media_file = media_name
     else:
         report.checks.append(("Media в бэкапе нет (по manifest — корректно)", "ok"))
+
+    _verify_private_media(report, run_dir, manifest)
 
     # Контрольные суммы: проверяем, только если manifest их содержит.
     checksums = manifest.get("sha256") or {}
@@ -309,7 +330,28 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
     db_path = run_dir / report.db_file
     media_path = (run_dir / report.media_file) if report.media_file else None
 
-    log.append("шаг 3/4: восстановление базы и media (restoring)")
+    # Private media first: its swap is all-or-nothing with its own rollback, so
+    # a damaged archive or a full disk aborts the restore before the database
+    # is touched.  Old copies without private_media leave the files as they are.
+    if report.private_media_file:
+        log.append("шаг 3/5: восстановление private_media (restoring_private)")
+        try:
+            restore_archive(
+                run_dir / report.private_media_file,
+                settings.PRIVATE_MEDIA_ROOT,
+                expected=_manifest_private_inventory(report.manifest),
+            )
+        except PrivateMediaError as exc:
+            log.append(f"ОШИБКА private_media: {exc}. База и media не изменялись.")
+            _file_log(log)
+            return _write_job(user, run_id, RestoreJob.Status.FAILED,
+                              pre_run_id=pre_run_id, log_lines=log,
+                              error=f"private_media: {exc}")
+        log.append("private_media восстановлены")
+    else:
+        log.append("private_media в этой копии нет: приватные файлы оставлены как есть")
+
+    log.append("шаг 4/5: восстановление базы и media (restoring)")
     _file_log(log)  # фиксируем след ДО перезаписи базы
     try:
         connections.close_all()  # не держим соединения во время pg_restore
@@ -317,7 +359,7 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
             log.append(f"предупреждение: {warning}")
         if media_path is not None:
             backup.restore_media(media_path)
-        log.append("шаг 4/4: применение миграций (migrated)")
+        log.append("шаг 5/5: применение миграций (migrated)")
         call_command("migrate", interactive=False, verbosity=0)
     except Exception as exc:  # noqa: BLE001 — причина уходит в журнал, не глотается
         log.append(f"ОШИБКА восстановления: {exc}")
@@ -331,6 +373,51 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
     _file_log(log)
     return _write_job(user, run_id, RestoreJob.Status.COMPLETED,
                       pre_run_id=pre_run_id, log_lines=log)
+
+
+def _verify_private_media(report, run_dir, manifest) -> None:
+    status = manifest.get("private_media_status")
+    if status is None:
+        report.check(
+            "Private media", False,
+            warn="старая копия без private_media: приватные файлы (вложения заявок, "
+                 "импорт каталогов) не восстанавливаются и останутся как есть",
+        )
+        return
+    if status == "absent":
+        report.check(
+            "Private media", False,
+            warn="при создании копии каталога private_media не было: приватные файлы "
+                 "не восстанавливаются",
+        )
+        return
+    name = manifest.get("private_media_filename") or ""
+    path = run_dir / name
+    if not report.check(
+        "Архив private_media существует",
+        name == "private_media.tar.gz" and path.is_file(),
+        error="архив private_media указан в manifest, но отсутствует",
+    ):
+        return
+    try:
+        inventory = archive_inventory(path)
+    except PrivateMediaError as exc:
+        report.check("Архив private_media цел и безопасен", False, error=str(exc))
+        return
+    if report.check(
+        "Содержимое private_media совпадает с manifest",
+        inventory == _manifest_private_inventory(manifest),
+        error="содержимое архива private_media не совпадает с manifest",
+    ):
+        report.private_media_file = name
+
+
+def _manifest_private_inventory(manifest) -> Inventory:
+    return Inventory(
+        manifest.get("private_media_file_count"),
+        manifest.get("private_media_bytes"),
+        manifest.get("private_media_tree_sha256"),
+    )
 
 
 def restore_age_warning(manifest: dict) -> bool:

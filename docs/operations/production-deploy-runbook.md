@@ -89,6 +89,7 @@ rclone copy yandex-s3:denstock-backups-nikita/<run_id> backups/<run_id>
 
 docker compose exec web python manage.py restore_db   backups/<run_id>/db.dump      --yes
 docker compose exec web python manage.py restore_media backups/<run_id>/media.tar.gz --yes
+docker compose exec web python manage.py restore_private_media <run_id> --yes
 docker compose exec web python manage.py migrate --noinput
 docker compose exec web python manage.py check
 docker compose exec web python manage.py ops_check
