@@ -11,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from django.core.files.storage import FileSystemStorage
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
@@ -19,6 +21,7 @@ from apps.customer_requests.attachments import cleanup_attachment
 from apps.customer_requests.models import CustomerRequest, TelegramConversation, TelegramMessage
 from apps.operations import backup, restore
 from apps.operations.emergency_state import sha256_file
+from apps.operations.manifest_signing import verify_emergency_manifest
 from apps.operations.private_media import create_archive
 from apps.operations.standby import refresh_standby
 from apps.operations.write_guard import acquire_failover_lock, lifecycle_write
@@ -26,6 +29,29 @@ from tests.emergency_support import sign_production_manifest
 from tests.test_emergency_standby import _source_backup
 
 pytest_plugins = ("tests.test_emergency_standby", "tests.test_private_media_backup")
+
+
+def test_emergency_final_backup_uses_an_independent_signing_key(production, settings):
+    private = Ed25519PrivateKey.generate()
+    path = production["tmp"] / "emergency-private-key.pem"
+    public = production["tmp"] / "emergency-public-key.pem"
+    path.write_bytes(private.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    public.write_bytes(private.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+    ))
+    settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_PATH = str(path)
+    settings.DENSTOCK_EMERGENCY_MANIFEST_PUBLIC_KEY_PATH = str(public)
+    settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_ID = "synthetic-emergency-1"
+    settings.DENSTOCK_MODE = "emergency-local"
+
+    run = production["make"](trigger="emergency_final")
+    manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
+
+    verify_emergency_manifest(manifest)
+    assert manifest["signature"]["key_id"] == "synthetic-emergency-1"
 
 
 @pytest.mark.django_db

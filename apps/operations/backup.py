@@ -35,7 +35,12 @@ from .emergency_state import (
     migration_state,
     sha256_file,
 )
-from .manifest_signing import ManifestSignatureError, sign_manifest, verify_manifest
+from .manifest_signing import (
+    ManifestSignatureError,
+    sign_emergency_manifest,
+    sign_manifest,
+    verify_manifest,
+)
 from .models import DeploymentState
 from .private_media import PrivateMediaError, archive_inventory, create_archive, inspect_tree
 
@@ -373,6 +378,8 @@ def backup_all(
         manifest.update(extra_manifest)
     if settings.DENSTOCK_MODE == "production":
         sign_manifest(manifest)
+    elif settings.DENSTOCK_MODE == "emergency-local" and trigger == "emergency_final":
+        sign_emergency_manifest(manifest)
     write_manifest(run / "manifest.json", manifest)
     validation = validate_manifest(run, expected_source=settings.DENSTOCK_MODE)
     if not validation.ok:

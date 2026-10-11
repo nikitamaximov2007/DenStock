@@ -27,7 +27,9 @@ from .emergency_state import (
     record_event,
     sha256_file,
 )
+from .manifest_signing import ManifestSignatureError, verify_emergency_manifest
 from .models import DeploymentState, OfflineSession
+from .private_media import Inventory, PrivateMediaError, archive_inventory, inspect_tree
 from .standby import (
     EmergencyPaths,
     control_lock,
@@ -513,6 +515,17 @@ def inspect_failback_package(package_path, *, expected_sha256) -> tuple[dict, di
                     with archive.open(name) as source, target.open("wb") as destination:
                         shutil.copyfileobj(source, destination, length=1024 * 1024)
                 validation = validate_manifest(run, expected_source="emergency-local")
+                if validation.ok and manifest.get("private_media_status") == "included":
+                    expected = Inventory(
+                        manifest["private_media_file_count"],
+                        manifest["private_media_bytes"],
+                        manifest["private_media_tree_sha256"],
+                    )
+                    try:
+                        if archive_inventory(run / manifest["private_media_filename"]) != expected:
+                            raise FailbackError("Private media archive не совпадает с manifest.")
+                    except PrivateMediaError as exc:
+                        raise FailbackError("Private media archive повреждён.") from exc
     except (OSError, zipfile.BadZipFile, KeyError, json.JSONDecodeError) as exc:
         raise FailbackError("Failback package отсутствует или повреждён.") from exc
     if not validation.ok:
@@ -535,6 +548,19 @@ def finalize_production_failback(*, package_path, expected_sha256):
     session_id = package_report.get("offline_session_id")
     if (manifest.get("offline_lineage") or {}).get("offline_session_id") != session_id:
         raise FailbackError("Package session lineage не совпадает.")
+    try:
+        verify_emergency_manifest(manifest)
+    except ManifestSignatureError as exc:
+        raise FailbackError("Подпись emergency final backup недействительна.") from exc
+    if manifest.get("private_media_status") != "included":
+        raise FailbackError(
+            "Старый failback backup без private_media нельзя принять автоматически."
+        )
+    expected_private = Inventory(
+        manifest["private_media_file_count"],
+        manifest["private_media_bytes"],
+        manifest["private_media_tree_sha256"],
+    )
 
     with transaction.atomic(), lifecycle_write():
         acquire_failover_lock(exclusive=True)
@@ -555,6 +581,12 @@ def finalize_production_failback(*, package_path, expected_sha256):
             raise FailbackError("Restored business data не совпадают с package.")
         if media_tree_sha256(settings.MEDIA_ROOT) != manifest["media_tree_sha256"]:
             raise FailbackError("Restored production media не совпадают с package.")
+        try:
+            actual_private = inspect_tree(settings.PRIVATE_MEDIA_ROOT, require_present=True)
+        except PrivateMediaError as exc:
+            raise FailbackError("Restored production private_media недоступны.") from exc
+        if actual_private != expected_private:
+            raise FailbackError("Restored production private_media не совпадают с package.")
         session = OfflineSession.objects.select_for_update().filter(pk=session_id).first()
         if session is None:
             raise FailbackError("OfflineSession из package отсутствует в restored database.")

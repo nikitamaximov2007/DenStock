@@ -6,6 +6,8 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
@@ -28,7 +30,9 @@ from apps.operations.management.commands.production_maintenance import (
     DISABLE_PHRASE,
     ENABLE_PHRASE,
 )
+from apps.operations.manifest_signing import sign_emergency_manifest
 from apps.operations.models import DeploymentState, OfflineSession
+from apps.operations.private_media import create_archive
 from apps.operations.standby import EmergencyPaths, load_control, save_control
 from apps.operations.write_guard import BusinessWriteBlocked
 from apps.suppliers.models import Supplier
@@ -127,6 +131,78 @@ def _final_run(
     manifest.update(overrides)
     (run / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return run
+
+
+def _sign_final_with_private(run, settings, tmp_path):
+    """Only synthetic emergency keys and files are used by finalizer tests."""
+    private = Ed25519PrivateKey.generate()
+    signing_key = tmp_path / "emergency-signing.pem"
+    public_key = tmp_path / "emergency-pinned.pem"
+    signing_key.write_bytes(private.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    public_key.write_bytes(private.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo,
+    ))
+    settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_PATH = str(signing_key)
+    settings.DENSTOCK_EMERGENCY_MANIFEST_PUBLIC_KEY_PATH = str(public_key)
+    settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_ID = "synthetic-emergency-1"
+    tree = tmp_path / "restored-private"
+    tree.mkdir(exist_ok=True)
+    (tree / "synthetic.bin").write_bytes(b"private restored content")
+    settings.PRIVATE_MEDIA_ROOT = tree
+    archive, inventory = create_archive(tree, run)
+    manifest_path = run / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.update(
+        private_media_status="included",
+        private_media_filename=archive.name,
+        private_media_sha256=sha256_file(archive),
+        private_media_tree_sha256=inventory.tree_sha256,
+        private_media_file_count=inventory.files,
+        private_media_bytes=inventory.bytes,
+        sha256={archive.name: sha256_file(archive)},
+    )
+    mode = settings.DENSTOCK_MODE
+    settings.DENSTOCK_MODE = "emergency-local"
+    try:
+        sign_emergency_manifest(manifest)
+    finally:
+        settings.DENSTOCK_MODE = mode
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return tree
+
+
+def _ready_signed_production_failback(tmp_path, settings, monkeypatch):
+    settings.DENSTOCK_MODE = "production"
+    settings.DENSTOCK_APP_COMMIT = COMMIT
+    settings.DENSTOCK_EMERGENCY_ROOT = tmp_path / "runtime"
+    session = _session(status=OfflineSession.Status.ELIGIBLE)
+    run = _final_run(tmp_path / "backups", session)
+    tree = _sign_final_with_private(run, settings, tmp_path)
+    session.final_backup_run_id = run.name
+    session.failback_report = {
+        "status": OfflineSession.Status.ELIGIBLE,
+        "automatic_production_overwrite": "disabled",
+    }
+    session.save()
+    monkeypatch.setattr("apps.operations.failback.validate_database_target", lambda **kwargs: None)
+    package, digest = prepare_failback_package(session=session, root=tmp_path / "backups")
+    state = DeploymentState.get_solo()
+    state.database_identity = DATABASE_ID
+    state.write_state = DeploymentState.WriteState.EMERGENCY_FROZEN
+    state.save()
+    monkeypatch.setattr(
+        "apps.operations.failback.migration_state",
+        lambda: {"fingerprint": MIGRATION_HASH},
+    )
+    monkeypatch.setattr(
+        "apps.operations.failback.business_state_marker",
+        lambda: {"database_identity": DATABASE_ID, "business_sha256": "f" * 64},
+    )
+    monkeypatch.setattr("apps.operations.failback.media_tree_sha256", lambda path: "e" * 64)
+    return session, package, digest, tree
 
 
 def _production_probe():
@@ -408,42 +484,99 @@ def test_failback_package_rejects_wrong_sha(tmp_path, settings, monkeypatch):
 def test_production_finalizer_unlocks_only_matching_eligible_restore(
     tmp_path, settings, monkeypatch
 ):
-    settings.DENSTOCK_MODE = "production"
-    settings.DENSTOCK_APP_COMMIT = COMMIT
-    settings.DENSTOCK_EMERGENCY_ROOT = tmp_path / "runtime"
-    session = _session(status=OfflineSession.Status.ELIGIBLE)
-    run = _final_run(tmp_path / "backups", session)
-    session.final_backup_run_id = run.name
-    session.failback_report = {
-        "status": OfflineSession.Status.ELIGIBLE,
-        "automatic_production_overwrite": "disabled",
-    }
-    session.save()
-    monkeypatch.setattr("apps.operations.failback.validate_database_target", lambda **kwargs: None)
-    package, digest = prepare_failback_package(session=session, root=tmp_path / "backups")
-    state = DeploymentState.get_solo()
-    state.database_identity = DATABASE_ID
-    state.write_state = DeploymentState.WriteState.EMERGENCY_FROZEN
-    state.save()
-    monkeypatch.setattr(
-        "apps.operations.failback.migration_state",
-        lambda: {"fingerprint": MIGRATION_HASH},
+    session, package, digest, _ = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
     )
-    monkeypatch.setattr(
-        "apps.operations.failback.business_state_marker",
-        lambda: {
-            "database_identity": DATABASE_ID,
-            "business_sha256": "f" * 64,
-        },
-    )
-    monkeypatch.setattr("apps.operations.failback.media_tree_sha256", lambda path: "e" * 64)
 
     finalized = finalize_production_failback(package_path=package, expected_sha256=digest)
 
+    state = DeploymentState.get_solo()
     state.refresh_from_db()
     assert finalized.pk == session.pk
     assert finalized.status == OfflineSession.Status.COMPLETED
     assert state.write_state == DeploymentState.WriteState.NORMAL
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("damage", ["missing", "extra", "changed"])
+def test_finalizer_keeps_writes_frozen_when_private_tree_is_not_exact(
+    tmp_path, settings, monkeypatch, damage
+):
+    _session_row, package, digest, tree = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+    if damage == "missing":
+        (tree / "synthetic.bin").unlink()
+    elif damage == "extra":
+        (tree / "extra.bin").write_bytes(b"unexpected")
+    else:
+        (tree / "synthetic.bin").write_bytes(b"modified")
+
+    with pytest.raises(FailbackError, match="private_media"):
+        finalize_production_failback(package_path=package, expected_sha256=digest)
+
+    assert DeploymentState.get_solo().write_state == DeploymentState.WriteState.EMERGENCY_FROZEN
+
+
+@pytest.mark.django_db
+def test_finalizer_rejects_emergency_export_without_pinned_public_key(
+    tmp_path, settings, monkeypatch
+):
+    _session_row, package, digest, _ = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+    settings.DENSTOCK_EMERGENCY_MANIFEST_PUBLIC_KEY_PATH = ""
+    with pytest.raises(FailbackError, match="Подпись"):
+        finalize_production_failback(package_path=package, expected_sha256=digest)
+    assert DeploymentState.get_solo().write_state == DeploymentState.WriteState.EMERGENCY_FROZEN
+
+
+@pytest.mark.django_db
+def test_finalizer_rejects_removed_emergency_signature(tmp_path, settings, monkeypatch):
+    session, _package, _digest, _ = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+    run = tmp_path / "backups" / session.final_backup_run_id
+    path = run / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest.pop("signature")
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    package, digest = prepare_failback_package(session=session, root=tmp_path / "backups")
+
+    with pytest.raises(FailbackError, match="Подпись"):
+        finalize_production_failback(package_path=package, expected_sha256=digest)
+    assert DeploymentState.get_solo().write_state == DeploymentState.WriteState.EMERGENCY_FROZEN
+
+
+@pytest.mark.django_db
+def test_finalizer_rejects_signed_legacy_package_without_private_media(
+    tmp_path, settings, monkeypatch
+):
+    session, _package, _digest, _ = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+    run = tmp_path / "backups" / session.final_backup_run_id
+    path = run / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest.pop("signature")
+    for key in (
+        "private_media_status", "private_media_filename", "private_media_sha256",
+        "private_media_tree_sha256", "private_media_file_count", "private_media_bytes",
+    ):
+        manifest.pop(key)
+    manifest["sha256"].pop("private_media.tar.gz")
+    mode = settings.DENSTOCK_MODE
+    settings.DENSTOCK_MODE = "emergency-local"
+    try:
+        sign_emergency_manifest(manifest)
+    finally:
+        settings.DENSTOCK_MODE = mode
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    package, digest = prepare_failback_package(session=session, root=tmp_path / "backups")
+
+    with pytest.raises(FailbackError, match="без private_media"):
+        finalize_production_failback(package_path=package, expected_sha256=digest)
+    assert DeploymentState.get_solo().write_state == DeploymentState.WriteState.EMERGENCY_FROZEN
 
 
 @pytest.mark.django_db

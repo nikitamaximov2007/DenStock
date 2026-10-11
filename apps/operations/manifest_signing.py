@@ -61,3 +61,41 @@ def verify_manifest(manifest: dict) -> None:
         key.verify(value, canonical_manifest_payload(manifest))
     except (KeyError, TypeError, ValueError, InvalidSignature) as exc:
         raise ManifestSignatureError("Manifest signature is invalid.") from exc
+
+
+def sign_emergency_manifest(manifest: dict) -> None:
+    """Sign a frozen emergency export with a key absent from production."""
+    if settings.DENSTOCK_MODE != "emergency-local":
+        raise ManifestSignatureError("Only the emergency station may sign its final export.")
+    path = Path(settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_PATH)
+    key_id = settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_ID
+    if not path.is_file() or not key_id:
+        raise ManifestSignatureError("Emergency manifest signing key is not configured.")
+    key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not isinstance(key, Ed25519PrivateKey):
+        raise ManifestSignatureError("Emergency manifest signing key must be Ed25519.")
+    manifest["signature"] = {
+        "algorithm": "ed25519",
+        "key_id": key_id,
+        "value": base64.b64encode(key.sign(canonical_manifest_payload(manifest))).decode("ascii"),
+    }
+
+
+def verify_emergency_manifest(manifest: dict) -> None:
+    """Production trusts only the independently pinned emergency public key."""
+    signature = manifest.get("signature")
+    if not isinstance(signature, dict) or signature.get("algorithm") != "ed25519":
+        raise ManifestSignatureError("Emergency manifest signature is missing or unsupported.")
+    if signature.get("key_id") != settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_ID:
+        raise ManifestSignatureError("Emergency manifest signing key is not trusted.")
+    path = Path(settings.DENSTOCK_EMERGENCY_MANIFEST_PUBLIC_KEY_PATH)
+    if not path.is_file():
+        raise ManifestSignatureError("Pinned emergency manifest public key is unavailable.")
+    try:
+        key = serialization.load_pem_public_key(path.read_bytes())
+        value = base64.b64decode(signature["value"], validate=True)
+        if not isinstance(key, Ed25519PublicKey):
+            raise TypeError
+        key.verify(value, canonical_manifest_payload(manifest))
+    except (KeyError, TypeError, ValueError, InvalidSignature) as exc:
+        raise ManifestSignatureError("Emergency manifest signature is invalid.") from exc

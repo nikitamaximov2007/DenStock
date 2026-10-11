@@ -152,6 +152,16 @@ Secrets в manifest отсутствуют.
 9. Только после успеха atomically меняет active pointer.
 10. Сохраняет previous verified standby.
 
+Финальный `emergency_final` экспорт для обратного переключения подписывается
+**отдельным** Ed25519-ключом аварийной станции
+(`DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_PATH` и
+`DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_ID`). На production закрепляется
+только соответствующий публичный ключ
+(`DENSTOCK_EMERGENCY_MANIFEST_PUBLIC_KEY_PATH` с тем же key ID). Закрытый ключ
+production на станцию не копируется, а закрытый ключ станции не копируется на
+production. Без этих ключей финальный экспорт или его приёмка должны
+завершаться отказом.
+
 При создании PostgreSQL backup DenisStock берёт exclusive failover lock на
 время вычисления data/media markers, `pg_dump` и media archive. Новые
 application writes ждут завершения snapshot. Standby всё равно восстанавливает
@@ -329,15 +339,16 @@ approved change window, fresh production backup, независимый review p
 3. Создать дополнительный full production safety backup и проверить offsite.
 4. Проверить package SHA-256 на production host.
 5. Распаковать package в отдельный каталог внутри `backups/`.
-6. Остановить `web` и `proxy`, оставив PostgreSQL доступным только локальному
-   Docker network.
+6. Остановить `web`, `proxy`, `catalog-web`, `telegram-bot` и `max-bot`, оставив
+   PostgreSQL доступным только локальному Docker network. Ни один writer не
+   должен работать во время восстановления.
 7. Восстановить DB dump штатным `restore_db --yes`.
 8. Восстановить media как exact snapshot, а не поверх более нового дерева.
    Старое media сохранить как rollback volume/snapshot. Простое overlay-copy
    недостаточно, потому что удалённые offline файлы останутся лишними.
    Отдельно восстановить private_media из того же final backup как exact
    snapshot и сохранить прежний приватный том для отката. У старых backup
-   private_media отсутствует; такой failback не восстанавливает вложения.
+   private_media отсутствует; такой failback теперь нельзя принять finalizer.
 9. Не открывать proxy и не разрешать writes.
 10. Запустить migrations/checks на exact app commit из package.
 11. Выполнить production finalizer:
