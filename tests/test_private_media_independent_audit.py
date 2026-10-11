@@ -22,6 +22,7 @@ from apps.customer_requests.models import CustomerRequest, TelegramConversation,
 from apps.operations import backup, restore
 from apps.operations.emergency_state import sha256_file
 from apps.operations.manifest_signing import verify_emergency_manifest
+from apps.operations.models import DeploymentState
 from apps.operations.private_media import create_archive
 from apps.operations.standby import refresh_standby
 from apps.operations.write_guard import acquire_failover_lock, lifecycle_write
@@ -203,6 +204,7 @@ def test_public_media_change_during_backup_cannot_create_verified_mixed_snapshot
 def test_backup_lock_prevents_deletion_of_db_referenced_attachment(tmp_path, settings):
     if connection.vendor != "postgresql":
         pytest.skip("PostgreSQL 16 required")
+    DeploymentState.get_solo()
     request = CustomerRequest.objects.create(
         customer_name="Synthetic", customer_phone="0", preferred_messenger="telegram",
         privacy_policy_version="v", personal_data_consent_version="v",

@@ -26,6 +26,25 @@ def configure_test_trust(tmp_path, settings, *, workstation_id):
     settings.DENSTOCK_MANIFEST_SIGNING_KEY_PATH = str(private_path)
     settings.DENSTOCK_MANIFEST_PUBLIC_KEY_PATH = str(public_path)
     settings.DENSTOCK_MANIFEST_SIGNING_KEY_ID = "test-production-1"
+    emergency_private = Ed25519PrivateKey.generate()
+    emergency_private_path = tmp_path / "emergency-signing-private.pem"
+    emergency_public_path = tmp_path / "pinned-emergency-public.pem"
+    emergency_private_path.write_bytes(
+        emergency_private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    emergency_public_path.write_bytes(
+        emergency_private.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_PATH = str(emergency_private_path)
+    settings.DENSTOCK_EMERGENCY_MANIFEST_PUBLIC_KEY_PATH = str(emergency_public_path)
+    settings.DENSTOCK_EMERGENCY_MANIFEST_SIGNING_KEY_ID = "test-emergency-1"
     settings.DENSTOCK_EMERGENCY_WORKSTATION_ID = str(workstation_id)
 
 

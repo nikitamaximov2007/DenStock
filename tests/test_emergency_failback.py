@@ -519,6 +519,59 @@ def test_finalizer_keeps_writes_frozen_when_private_tree_is_not_exact(
 
 
 @pytest.mark.django_db
+def test_finalizer_rejects_corrupt_private_archive_even_with_updated_package_sha(
+    tmp_path, settings, monkeypatch
+):
+    _session_row, package, _digest, _tree = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+    with zipfile.ZipFile(package) as source:
+        payload = {name: source.read(name) for name in source.namelist()}
+    payload["backup/private_media.tar.gz"] = b"not a private archive"
+    with zipfile.ZipFile(package, "w") as destination:
+        for name, content in payload.items():
+            destination.writestr(name, content)
+
+    with pytest.raises(FailbackError, match="invalid|поврежд|не совпадает"):
+        finalize_production_failback(
+            package_path=package, expected_sha256=sha256_file(package)
+        )
+    assert DeploymentState.get_solo().write_state == DeploymentState.WriteState.EMERGENCY_FROZEN
+
+
+@pytest.mark.django_db
+def test_finalizer_rolls_back_unlock_if_interrupted_in_final_transaction(
+    tmp_path, settings, monkeypatch
+):
+    session, package, digest, _tree = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+
+    def interrupted(*args, **kwargs):
+        raise RuntimeError("synthetic interruption")
+
+    monkeypatch.setattr("apps.operations.failback.record_event", interrupted)
+    with pytest.raises(RuntimeError, match="synthetic interruption"):
+        finalize_production_failback(package_path=package, expected_sha256=digest)
+
+    session.refresh_from_db()
+    assert session.status == OfflineSession.Status.ELIGIBLE
+    assert DeploymentState.get_solo().write_state == DeploymentState.WriteState.EMERGENCY_FROZEN
+
+
+@pytest.mark.django_db
+def test_failback_package_rejects_duplicate_member_names(tmp_path, settings, monkeypatch):
+    _session, package, _digest, _tree = _ready_signed_production_failback(
+        tmp_path, settings, monkeypatch
+    )
+    with zipfile.ZipFile(package, "a") as archive:
+        archive.writestr("backup/manifest.json", b"{}")
+
+    with pytest.raises(FailbackError, match="дубликат"):
+        inspect_failback_package(package, expected_sha256=sha256_file(package))
+
+
+@pytest.mark.django_db
 def test_finalizer_rejects_emergency_export_without_pinned_public_key(
     tmp_path, settings, monkeypatch
 ):

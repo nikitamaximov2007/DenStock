@@ -481,9 +481,15 @@ def inspect_failback_package(package_path, *, expected_sha256) -> tuple[dict, di
         raise FailbackError("Package SHA-256 не совпадает.")
     try:
         with zipfile.ZipFile(package_path, "r") as archive:
+            members = archive.infolist()
+            names = {member.filename for member in members}
+            if len(names) != len(members) or any(
+                member.is_dir() or ((member.external_attr >> 16) & 0o170000) == 0o120000
+                for member in members
+            ):
+                raise FailbackError("Failback package содержит дубликат или ссылку.")
             if archive.testzip():
                 raise FailbackError("Failback package повреждён.")
-            names = set(archive.namelist())
             if "failback-report.json" not in names or "backup/manifest.json" not in names:
                 raise FailbackError("Failback package не содержит обязательные metadata.")
             if archive.getinfo("failback-report.json").file_size > 2 * 1024 * 1024:
