@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -28,7 +29,7 @@ def fake_host(tmp_path):
     docker = binaries / "docker"
     docker.write_text(
         """#!/usr/bin/env python3
-import os, pathlib, sys
+import os, pathlib, sys, time
 root = pathlib.Path(os.environ['FAKE_PROJECT'])
 args = sys.argv[1:]
 if 'backup_all' in args:
@@ -36,6 +37,9 @@ if 'backup_all' in args:
     run.mkdir()
     (run / 'manifest.json').write_bytes(b'signed synthetic manifest')
     (run / 'db.dump').write_bytes(b'd' * 40)
+    if os.environ.get('FAKE_BACKUP_SLEEP'):
+        (root / 'backup-in-progress').write_text('ready')
+        time.sleep(float(os.environ['FAKE_BACKUP_SLEEP']))
     print(f'Полный бэкап готов: {run}')
 elif 'verify_backup' in args:
     run = root / 'backups' / args[-1]
@@ -47,7 +51,14 @@ else:
     )
     docker.chmod(0o755)
     flock = binaries / "flock"
-    flock.write_text("#!/bin/sh\nexit 0\n")  # synthetic runner has no production lock
+    flock.write_text(
+        "#!/usr/bin/env python3\n"
+        "import fcntl, sys\n"
+        "try:\n"
+        "    fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        "except BlockingIOError:\n"
+        "    sys.exit(1)\n"
+    )
     flock.chmod(0o755)
     rclone = binaries / "rclone"
     rclone.write_text(
@@ -252,3 +263,27 @@ def test_accounting_delay_stops_further_retention(fake_host):
     assert previous.is_dir()
     assert (fake_host["remote"] / NEW_RUN).is_dir()
     assert _status(fake_host)["status"] == "failed"
+
+
+def test_two_concurrent_publishers_do_not_start_a_second_backup(fake_host):
+    _configure(fake_host, 1000)
+    with subprocess.Popen(
+        ["bash", str(WRAPPER)], cwd=fake_host["root"],
+        env={**fake_host["env"], "FAKE_BACKUP_SLEEP": "2"},
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    ) as first:
+        marker = fake_host["root"] / "backup-in-progress"
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), "first backup never reached the lock-protected stage"
+        second = subprocess.run(
+            ["bash", str(WRAPPER)], cwd=fake_host["root"],
+            env=fake_host["env"], capture_output=True, text=True,
+        )
+        _stdout, stderr = first.communicate(timeout=10)
+        assert first.returncode == 0, stderr
+
+    assert second.returncode == 75
+    assert "backup already running" in second.stderr
+    assert len([call for call in _calls(fake_host) if call[0] == "copy"]) == 1
