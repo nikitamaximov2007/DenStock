@@ -347,6 +347,9 @@ def test_i_web_restore_aborts_before_the_database_when_private_media_fails(
     production, django_user_model, monkeypatch,
 ):
     run = production["make"]()
+    # Production online restore is prohibited; exercise its legacy staging
+    # behavior only in the isolated test mode.
+    production["settings"].DENSTOCK_MODE = "test"
     user = django_user_model.objects.create_superuser("owner", "o@example.com", "x")
     database_touched = []
     monkeypatch.setattr(restore.backup, "backup_all", lambda **kw: run)
@@ -365,6 +368,7 @@ def test_i_web_restore_aborts_before_the_database_when_private_media_fails(
 def test_web_restore_replaces_private_media_with_the_backup(production, django_user_model,
                                                           monkeypatch):
     run = production["make"]()
+    production["settings"].DENSTOCK_MODE = "test"
     expected = _tree(production["private"])
     (production["private"] / "created-after-backup.bin").write_bytes(b"newer")
     user = django_user_model.objects.create_superuser("owner", "o@example.com", "x")

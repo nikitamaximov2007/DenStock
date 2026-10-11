@@ -96,6 +96,23 @@ def _login_owner(client, make_user):
 RESTORE_BLOCK = "Аварийное восстановление"
 
 
+@pytest.mark.parametrize("mode", ["production", "emergency-local"])
+def test_online_restore_refuses_before_any_restore_write(settings, monkeypatch, mode):
+    settings.DENSTOCK_MODE = mode
+    settings.DENSTOCK_ENABLE_WEB_RESTORE = True
+    monkeypatch.setattr(
+        restore_mod.backup, "backup_all",
+        lambda **kwargs: pytest.fail("online restore attempted a pre-backup"),
+    )
+    monkeypatch.setattr(
+        restore_mod, "verify_backup",
+        lambda run_id: pytest.fail("online restore reached verification"),
+    )
+
+    with pytest.raises(restore_mod.OnlineRestoreUnsafe, match="Online restore запрещён"):
+        run_web_restore("synthetic-run", user=None)
+
+
 # --- Кто видит restore UI -----------------------------------------------------
 
 

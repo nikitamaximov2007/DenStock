@@ -35,11 +35,17 @@ CONFIRM_PHRASE = "ПОДТВЕРЖДАЮ"
 OLD_BACKUP_DAYS = 30  # старше — предупреждение «бэкап старый»
 
 
+class OnlineRestoreUnsafe(RuntimeError):
+    """Production restore requires an offline, journalled cutover procedure."""
+
+
 # --- Кто вообще видит restore ----------------------------------------------------
 
 
 def can_web_restore(user) -> bool:
     """Restore-доступ: флаг включён + admin + email/username в allowlist."""
+    if settings.DENSTOCK_MODE in {"production", "emergency-local"}:
+        return False
     if not getattr(settings, "DENSTOCK_ENABLE_WEB_RESTORE", False):
         return False
     if not getattr(user, "is_authenticated", False) or not user.is_admin:
@@ -309,6 +315,11 @@ def run_web_restore(run_id: str, *, user) -> RestoreJob:
     migrate; ошибка до restore — в текущую нетронутую базу). Файл restore.log
     ведётся на каждом шаге.
     """
+    if settings.DENSTOCK_MODE in {"production", "emergency-local"}:
+        raise OnlineRestoreUnsafe(
+            "Online restore запрещён: остановите все writers и используйте "
+            "контролируемое offline-восстановление с точкой возврата."
+        )
     log = [f"[{timezone.now():%Y-%m-%d %H:%M:%S}] restore {run_id}: "
            f"запустил {getattr(user, 'username', '?')}"]
 
