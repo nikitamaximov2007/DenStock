@@ -149,10 +149,16 @@ def verify_backup(run_id: str) -> VerifyReport:
             error="подпись manifest недействительна: бэкап изменён или подписан чужим ключом",
         )
     else:
-        report.check(
-            "Подпись manifest (Ed25519)", False,
-            warn="manifest не подписан (старая копия): подлинность не подтверждена",
-        )
+        if settings.DENSTOCK_MODE == "production":
+            report.check(
+                "Подпись manifest (Ed25519)", False,
+                error="production-бэкап не подписан: автоматическое восстановление запрещено",
+            )
+        else:
+            report.check(
+                "Подпись manifest (Ed25519)", False,
+                warn="manifest не подписан (старая копия): подлинность не подтверждена",
+            )
 
     known_keys = {"created_at", "engine", "db_file"}
     report.check(

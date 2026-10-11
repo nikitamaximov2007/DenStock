@@ -24,7 +24,7 @@ services:
       DENSTOCK_MODE: emergency-local
       DENSTOCK_EMERGENCY_DATABASE_NAME: ${EMERGENCY_DATABASE_NAME:-denstock_emergency_control}
       DENSTOCK_MEDIA_ROOT: /app/.emergency/standbys/${EMERGENCY_SLOT:-inactive}/media
-      PRIVATE_MEDIA_ROOT: /app/.emergency/private-media
+      PRIVATE_MEDIA_ROOT: /app/.emergency/standbys/${EMERGENCY_SLOT:-inactive}/private_media
       BACKUP_ROOT: /app/.emergency/backups
       AI_SUPPORT_ENABLED: "false"
       AI_SUPPORT_PROVIDER: disabled

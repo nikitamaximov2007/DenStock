@@ -196,6 +196,7 @@ def test_postgresql_backup_snapshot_serializes_business_writes(
     settings.DENSTOCK_APP_COMMIT = COMMIT
     settings.PRIVATE_MEDIA_ROOT = tmp_path / "private"  # the mounted private volume
     settings.PRIVATE_MEDIA_ROOT.mkdir()
+    (tmp_path / "media").mkdir()  # a mounted but empty public-media volume
     lock_acquired = threading.Event()
     allow_backup = threading.Event()
 

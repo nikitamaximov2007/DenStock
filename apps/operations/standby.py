@@ -25,6 +25,7 @@ from .emergency_environment import validate_database_target
 from .emergency_manifest import validate_manifest
 from .emergency_state import application_migration_state, media_tree_sha256, record_event
 from .models import OfflineSession
+from .private_media import Inventory, PrivateMediaError, restore_archive
 
 CONTROL_SCHEMA_VERSION = 1
 SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -168,6 +169,10 @@ def active_standby_run_dir(active: dict, paths=None) -> Path:
         raise StandbyError("Active standby paths не соответствуют slot.")
     if not manifest_path.is_file() or not media_root.is_dir():
         raise StandbyError("Active standby files отсутствуют.")
+    if active.get("private_media_root"):
+        private_root = Path(str(active["private_media_root"])).resolve()
+        if private_root != slot_dir / "private_media" or not private_root.is_dir():
+            raise StandbyError("Active standby private media не соответствуют slot.")
     return slot_dir
 
 
@@ -293,7 +298,10 @@ def _database_url(database_settings: dict, name: str) -> str:
     return f"postgresql://{auth}{host}:{port}/{quote(name, safe='')}"
 
 
-def validate_candidate(name: str, media_root: Path, *, database_settings=None) -> dict:
+def validate_candidate(
+    name: str, media_root: Path, *, private_media_root: Path | None = None,
+    database_settings=None,
+) -> dict:
     database_settings = database_settings or connection.settings_dict
     candidate_url = _database_url(database_settings, name)
     environment = {
@@ -304,6 +312,7 @@ def validate_candidate(name: str, media_root: Path, *, database_settings=None) -
         "DENSTOCK_INSTANCE_ID": settings.DENSTOCK_INSTANCE_ID,
         "DENSTOCK_EMERGENCY_DATABASE_NAME": name,
         "DENSTOCK_MEDIA_ROOT": str(media_root),
+        "PRIVATE_MEDIA_ROOT": str(private_media_root or settings.PRIVATE_MEDIA_ROOT),
     }
     commands = [
         [sys.executable, "manage.py", "check"],
@@ -427,7 +436,26 @@ def _refresh_standby_locked(source: str, *, run_id=None, paths: EmergencyPaths) 
             media_root.mkdir(parents=True, exist_ok=True)
         if media_tree_sha256(media_root) != manifest["media_tree_sha256"]:
             raise StandbyError("Restored media fingerprint differs from manifest.")
-        probe = validate_candidate(database_name, media_root)
+        private_media_root = staging / "private_media"
+        if manifest.get("private_media_status") == "included":
+            try:
+                restore_archive(
+                    fetched / manifest["private_media_filename"],
+                    private_media_root,
+                    expected=Inventory(
+                        manifest["private_media_file_count"],
+                        manifest["private_media_bytes"],
+                        manifest["private_media_tree_sha256"],
+                    ),
+                )
+            except PrivateMediaError as exc:
+                raise StandbyError(f"Private media restore failed: {exc}") from exc
+        else:
+            # Historical signed copies did not contain private attachments.
+            private_media_root.mkdir(parents=True, exist_ok=True)
+        probe = validate_candidate(
+            database_name, media_root, private_media_root=private_media_root
+        )
         if probe.get("data_state", {}).get("business_sha256") != manifest["data_state"].get(
             "business_sha256"
         ):
@@ -446,6 +474,7 @@ def _refresh_standby_locked(source: str, *, run_id=None, paths: EmergencyPaths) 
             "slot": slot,
             "database_name": database_name,
             "media_root": str(slot_dir / "media"),
+            "private_media_root": str(slot_dir / "private_media"),
             "manifest_path": str(slot_dir / "manifest.json"),
             "backup_run_id": manifest["backup_run_id"],
             "source_run_id": source_run_id,

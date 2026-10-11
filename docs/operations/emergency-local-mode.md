@@ -145,9 +145,10 @@ Secrets в manifest отсутствуют.
 3. Проверяет manifest schema, source environment, SHA-256 и verified status.
 4. Проверяет exact app commit и migration fingerprint.
 5. Создаёт отдельную candidate DB с безопасным prefix.
-6. Восстанавливает PostgreSQL dump и media.
+6. Восстанавливает PostgreSQL dump, публичные media и, если они есть в
+   подписанном manifest, private_media в одном candidate slot.
 7. Запускает `manage.py check`, migration check, stock balance check и probe.
-8. Сверяет business и media tree fingerprints с manifest.
+8. Сверяет business, media и private_media fingerprints с manifest.
 9. Только после успеха atomically меняет active pointer.
 10. Сохраняет previous verified standby.
 
@@ -250,7 +251,7 @@ request дополнительно выполняется в одной transact
 1. Exclusive lock дожидается текущих write transactions.
 2. Deployment переходит в `emergency_frozen`.
 3. Все последующие business writes блокируются.
-4. Создаются DB dump и media archive.
+4. Создаются DB dump, media archive и private_media archive.
 5. Проверяются dump, archive и SHA-256.
 6. Manifest получает final state и offline lineage.
 7. Session становится `FROZEN`.
@@ -334,6 +335,9 @@ approved change window, fresh production backup, независимый review p
 8. Восстановить media как exact snapshot, а не поверх более нового дерева.
    Старое media сохранить как rollback volume/snapshot. Простое overlay-copy
    недостаточно, потому что удалённые offline файлы останутся лишними.
+   Отдельно восстановить private_media из того же final backup как exact
+   snapshot и сохранить прежний приватный том для отката. У старых backup
+   private_media отсутствует; такой failback не восстанавливает вложения.
 9. Не открывать proxy и не разрешать writes.
 10. Запустить migrations/checks на exact app commit из package.
 11. Выполнить production finalizer:
@@ -363,11 +367,12 @@ approved change window, fresh production backup, независимый review p
 2. Остановить web/proxy.
 3. Вернуть pre-restore production DB backup.
 4. Вернуть сохранённый production media snapshot.
-5. Запустить migrations/checks на прежнем release.
-6. Проверить data/media markers и health.
-7. Открыть прежний production только отдельным maintenance disable после
+5. Вернуть сохранённый production private_media snapshot.
+6. Запустить migrations/checks на прежнем release.
+7. Проверить data/media markers и health.
+8. Открыть прежний production только отдельным maintenance disable после
    документированного решения.
-8. Сохранить local package и report для reconciliation.
+9. Сохранить local package и report для reconciliation.
 
 ## Recovery после прерывания
 

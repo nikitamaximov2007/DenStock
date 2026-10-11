@@ -7,6 +7,7 @@
 Безопасность: пароль БД передаётся в `pg_dump`/`pg_restore` через переменную окружения
 `PGPASSWORD` (не в argv), в вывод/манифест секреты не пишутся.
 """
+import hashlib
 import os
 import shutil
 import sqlite3
@@ -34,9 +35,9 @@ from .emergency_state import (
     migration_state,
     sha256_file,
 )
-from .manifest_signing import sign_manifest
+from .manifest_signing import ManifestSignatureError, sign_manifest, verify_manifest
 from .models import DeploymentState
-from .private_media import PrivateMediaError, create_archive, inspect_tree
+from .private_media import PrivateMediaError, archive_inventory, create_archive, inspect_tree
 
 
 class OperationsError(Exception):
@@ -54,7 +55,10 @@ def backup_root() -> Path:
 def new_run_dir(root=None) -> Path:
     base = Path(root) if root else backup_root()
     run = base / timestamp()
-    run.mkdir(parents=True, exist_ok=True)
+    try:
+        run.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise OperationsError(f"Каталог backup уже существует: {run.name}") from exc
     return run
 
 
@@ -155,7 +159,12 @@ BACKUP_TYPES = (
 
 
 def verify_database_payload(path: str | Path, engine: str) -> None:
-    """Reject a corrupt dump before marking a backup as verified."""
+    """Decode the entire dump before marking a backup as verified.
+
+    ``pg_restore --list`` only reads the table of contents: damaged compressed
+    table data can pass it. Rendering to the OS null device verifies every data
+    block without connecting to or modifying any database.
+    """
     path = Path(path)
     if engine == "sqlite":
         try:
@@ -171,7 +180,7 @@ def verify_database_payload(path: str | Path, engine: str) -> None:
         if binary is None:
             raise OperationsError("pg_restore 16 недоступен для проверки backup.")
         result = subprocess.run(
-            [binary, "--list", str(path)], capture_output=True, text=True
+            [binary, f"--file={os.devnull}", str(path)], capture_output=True, text=True
         )
         if result.returncode != 0:
             fallback = pg_binary("pg_restore", RESTORE_FALLBACK_PG_VERSION)
@@ -181,11 +190,12 @@ def verify_database_payload(path: str | Path, engine: str) -> None:
                 and fallback != binary
             ):
                 result = subprocess.run(
-                    [fallback, "--list", str(path)], capture_output=True, text=True
+                    [fallback, f"--file={os.devnull}", str(path)],
+                    capture_output=True, text=True,
                 )
         if result.returncode != 0:
             raise OperationsError(
-                f"PostgreSQL backup не прошёл pg_restore --list: "
+                f"PostgreSQL backup не прошёл полную проверку pg_restore: "
                 f"{result.stderr or result.returncode}"
             )
         return
@@ -245,6 +255,10 @@ def backup_all(
     s = settings_dict or connection.settings_dict
     media_source = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
     private_source = Path(private_media_root or settings.PRIVATE_MEDIA_ROOT)
+    if settings.DENSTOCK_MODE == "production" and (
+        media_source.is_symlink() or not media_source.is_dir()
+    ):
+        raise OperationsError("Каталог mediafiles не найден или небезопасен: бэкап остановлен.")
     # Production must always capture private_media; elsewhere (development,
     # tests, the emergency station) an absent directory is recorded as such.
     private_required = settings.DENSTOCK_MODE == "production"
@@ -260,6 +274,20 @@ def backup_all(
         media_tree_hash = media_tree_sha256(media_source)
         db_path = backup_db(run, settings_dict=s)
         media_path = backup_media(run, media_root=media_root)
+        try:
+            packed_media_hash = (
+                archive_inventory(media_path).tree_sha256
+                if media_path else hashlib.sha256(b"empty-media-tree\n").hexdigest()
+            )
+        except PrivateMediaError as exc:
+            raise OperationsError(f"Архив media повреждён или небезопасен: {exc}") from exc
+        if (
+            packed_media_hash != media_tree_hash
+            or media_tree_sha256(media_source) != media_tree_hash
+        ):
+            raise OperationsError(
+                "Публичные media изменились во время копирования: backup отменён."
+            )
         private_path = private_inventory = None
         if private_present is not None:
             try:
@@ -358,7 +386,11 @@ def backup_all(
 
 
 def _run_is_complete(run: Path) -> bool:
-    """Каталог довели до конца: manifest читается и помечен verified.
+    """Only a readable, verified run counts toward production retention.
+
+    Production additionally rechecks hashes and the pinned signature before
+    allowing a newer run to evict an older one. A forged ``verified`` marker
+    is not proof of recoverability.
 
     Каталог создаётся В НАЧАЛЕ копирования, поэтому прерванный запуск оставляет
     на диске частичный каталог без пригодного manifest.
@@ -367,7 +399,17 @@ def _run_is_complete(run: Path) -> bool:
         manifest = read_manifest(run / "manifest.json")
     except ManifestError:
         return False
-    return manifest.get("verification_status") == "verified"
+    if manifest.get("verification_status") != "verified":
+        return False
+    if settings.DENSTOCK_MODE == "production":
+        validation = validate_manifest(run, expected_source="production")
+        if not validation.ok:
+            return False
+        try:
+            verify_manifest(manifest)
+        except ManifestSignatureError:
+            return False
+    return True
 
 
 def prune_old_runs(root, keep_last: int) -> list[Path]:
