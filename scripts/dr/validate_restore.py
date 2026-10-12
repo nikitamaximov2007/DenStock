@@ -130,6 +130,12 @@ if inventory_path.exists():
     }
     check("private_media_files_equal_inventory", actual == expected,
           expected=len(expected), restored=len(actual))
+elif manifest.get("private_media_status") == "included":
+    # private_media.tar.gz inside the signed run: its tree hash is signed.
+    tree = media_tree_sha256(private_root)
+    check("private_media_files_equal_inventory", tree == manifest["private_media_tree_sha256"],
+          expected=manifest.get("private_media_file_count"),
+          restored=sum(1 for p in private_root.rglob("*") if p.is_file()))
 else:
     check("private_media_files_equal_inventory", False, reason="no inventory supplied")
 

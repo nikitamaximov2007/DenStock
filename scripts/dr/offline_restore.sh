@@ -66,6 +66,11 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 run, pubkey, source = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 m = json.loads((run / "manifest.json").read_text())
+if m.get("private_media_status") == "included":
+    # private_media.tar.gz travels inside the run: it must be signed and present.
+    name = m.get("private_media_filename") or ""
+    if name not in m["sha256"] or not (run / name).is_file():
+        sys.exit("manifest says private_media is included, but its archive is missing")
 for name, digest in m["sha256"].items():
     h = hashlib.sha256((run / name).read_bytes()).hexdigest()
     if h != digest:

@@ -28,8 +28,14 @@ die() { echo "[kit] STOP: $*" >&2; exit 1; }
 [[ ! -e "$WORK" ]] || die "$WORK already exists: use a new directory"
 pick() { local found; found=$(ls -1 "$KIT"/$1 2>/dev/null | sort | tail -1); [[ -n "$found" ]] || die "kit has no $1"; printf '%s' "$found"; }
 BACKUP=$(pick '*.signed-backup.tar.age')
-PRIVATE=$(pick 'private_media.*.tar.age')
-INVENTORY="$PRIVATE.inventory.age"; [[ -f "$INVENTORY" ]] || die "missing $INVENTORY"
+# A separate private_media capture is optional: runs made by the backup-only
+# release (and pushed by independent_offsite_push.sh) carry private_media.tar.gz
+# inside the signed run instead.
+PRIVATE=$(ls -1 "$KIT"/private_media.*.tar.age 2>/dev/null | sort | tail -1 || true)
+INVENTORY=""
+if [[ -n "$PRIVATE" ]]; then
+    INVENTORY="$PRIVATE.inventory.age"; [[ -f "$INVENTORY" ]] || die "missing $INVENTORY"
+fi
 SECRETS="$SECRETS_ARG"
 if [[ -z "$SECRETS" ]]; then
     SECRETS=$(ls -1 "$KIT"/production-secrets-*.tar.age 2>/dev/null | sort | tail -1 || true)
@@ -44,15 +50,22 @@ else
     ID="$(age -d "$IDENTITY" </dev/tty)" || die "the identity did not unlock (wrong passphrase?)"
 fi
 dec() { age -d -i <(printf '%s\n' "$ID") "$1"; }
-# Prove the identity opens this kit BEFORE anything is written.
-dec "$INVENTORY" >/dev/null 2>&1 || { unset ID; die "this identity cannot decrypt the kit"; }
+# Prove the identity opens this kit BEFORE anything is written (header only).
+PROBE="${INVENTORY:-$BACKUP}"
+# head closes the pipe early, so age's exit status is meaningless here: count bytes.
+PROBED=$(dec "$PROBE" 2>/dev/null | head -c 64 | wc -c | tr -d ' ' || true)
+[[ "$PROBED" -gt 0 ]] || { unset ID; die "this identity cannot decrypt the kit"; }
 
 mkdir -m 700 "$WORK" "$WORK/run" "$WORK/secrets" "$WORK/env"
 echo "[kit] decrypt the signed backup run" >&2
 dec "$BACKUP" | tar -xf - -C "$WORK/run" --strip-components=1
-echo "[kit] decrypt private_media and its inventory" >&2
-dec "$PRIVATE" > "$WORK/private.tar"
-dec "$INVENTORY" > "$WORK/private-inventory.json"
+if [[ -n "$PRIVATE" ]]; then
+    echo "[kit] decrypt private_media and its inventory" >&2
+    dec "$PRIVATE" > "$WORK/private.tar"
+    dec "$INVENTORY" > "$WORK/private-inventory.json"
+elif [[ ! -f "$WORK/run/private_media.tar.gz" ]]; then
+    unset ID; die "no private_media: neither a separate capture nor one inside the run"
+fi
 echo "[kit] decrypt configuration and secrets (files stay 0600 under work)" >&2
 dec "$SECRETS" | tar -xf - -C "$WORK/secrets"
 echo "[kit] decrypt the source bundle and check out the backup's commit" >&2
@@ -84,8 +97,10 @@ pub = secrets / "etc/denstock/manifest-signing/production-ed25519.pub"
 print(json.dumps({"backup_created_at": manifest["created_at"], "app_commit": commit[:12],
                   "key_id": manifest["signature"]["key_id"]}))
 PY
+PRIVATE_ARGS=""
+[[ -f "$WORK/private.tar" ]] && PRIVATE_ARGS="--private-archive $WORK/private.tar --private-inventory $WORK/private-inventory.json"
 echo "[kit] ready. Next (isolated test):" >&2
 echo "  scripts/dr/offline_restore.sh --project dr-test-<date> --source $WORK/source --run $WORK/run \\" >&2
-echo "    --private-archive $WORK/private.tar --private-inventory $WORK/private-inventory.json \\" >&2
+echo "    $PRIVATE_ARGS \\" >&2
 echo "    --env-dir $WORK/env --pubkey $WORK/pinned-public.pem --port 18080 --mode test --report $WORK/report.json" >&2
 echo "  then: scripts/dr/cleanup_dr.sh dr-test-<date>; rm -rf $WORK" >&2

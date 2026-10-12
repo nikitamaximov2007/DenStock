@@ -104,6 +104,49 @@ json.dump(rows, open(sys.argv[2], "w"))
 print(f"[drill] private capture: {len(rows)} files")
 PY
 
+# INRUN=1: the backup-only release format. private_media.tar.gz travels INSIDE
+# the signed run (this is what independent_offsite_push.sh uploads), there is
+# no separate capture and no inventory: the signed tree hash is the check.
+if [[ "${INRUN:-0}" == 1 ]]; then
+    "$PY" - "$WORK/private.tar" "$WORK/run" "$WORK/signing.pem" <<'PY'
+import base64, gzip, hashlib, io, json, sys, tarfile
+from pathlib import Path
+from cryptography.hazmat.primitives import serialization
+src, run, key = sys.argv[1], Path(sys.argv[2]), sys.argv[3]
+rows, buf = [], io.BytesIO()
+with tarfile.open(src) as t, tarfile.open(fileobj=buf, mode="w") as out:
+    for m in t:
+        if not m.isreg():
+            continue
+        data = t.extractfile(m).read()
+        rel = m.name.split("/", 1)[1]
+        rows.append((tuple(rel.split("/")), rel, hashlib.sha256(data).hexdigest(), len(data)))
+        info = tarfile.TarInfo("./" + rel); info.size = len(data); info.mode = 0o644
+        out.addfile(info, io.BytesIO(data))
+archive = run / "private_media.tar.gz"
+archive.write_bytes(gzip.compress(buf.getvalue()))
+digest = hashlib.sha256()
+for _, rel, h, _ in sorted(rows):
+    digest.update(len(rel.encode()).to_bytes(8, "big")); digest.update(rel.encode())
+    digest.update(bytes.fromhex(h))
+if not rows:
+    digest.update(b"empty-media-tree\n")
+m = json.loads((run / "manifest.json").read_text()); m.pop("signature")
+sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+m.update(private_media_status="included", private_media_filename=archive.name,
+         private_media_sha256=sha, private_media_tree_sha256=digest.hexdigest(),
+         private_media_file_count=len(rows), private_media_bytes=sum(r[3] for r in rows))
+m["sha256"][archive.name] = sha
+pk = serialization.load_pem_private_key(open(key, "rb").read(), None)
+payload = json.dumps(m, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
+m["signature"] = {"algorithm": "ed25519", "key_id": "dr-drill",
+                  "value": base64.b64encode(pk.sign(payload)).decode()}
+(run / "manifest.json").write_text(json.dumps(m))
+print(f"[drill] private_media inside the signed run: {len(rows)} files")
+PY
+    rm -f "$WORK/private.tar" "$WORK/private-inventory.json"
+fi
+
 # --- optional fault injection: the restore must REFUSE or REPORT FAILURE --------
 case "${DRILL_FAULT:-}" in
     "") ;;
@@ -129,7 +172,7 @@ m["signature"] = {"algorithm": "ed25519", "key_id": "dr-drill",
 json.dump(m, open(path, "w"))
 PY
         ;;
-    drop_private_file) "$PY" - "$WORK/private.tar" <<'PY'
+    drop_private_file) [[ "${INRUN:-0}" == 1 ]] && { printf 'X' | dd of="$WORK/run/private_media.tar.gz" bs=1 seek=40 conv=notrunc 2>/dev/null; } || "$PY" - "$WORK/private.tar" <<'PY'
 import sys, tarfile
 src = sys.argv[1]
 members = []
@@ -161,8 +204,10 @@ if [[ "${KIT_MODE:-0}" == 1 ]]; then
     age-keygen -o "$WORK/test-identity.txt" 2>/dev/null
     RCPT="$(age-keygen -y "$WORK/test-identity.txt")"
     tar -C "$WORK" -cf - -s "#^run#$RUN_ID#" run | age -r "$RCPT" -o "$KIT/$RUN_ID.signed-backup.tar.age"
-    age -r "$RCPT" -o "$KIT/private_media.drill.tar.age" "$WORK/private.tar"
-    age -r "$RCPT" -o "$KIT/private_media.drill.tar.age.inventory.age" "$WORK/private-inventory.json"
+    if [[ -f "$WORK/private.tar" ]]; then
+        age -r "$RCPT" -o "$KIT/private_media.drill.tar.age" "$WORK/private.tar"
+        age -r "$RCPT" -o "$KIT/private_media.drill.tar.age.inventory.age" "$WORK/private-inventory.json"
+    fi
     mkdir -p "$WORK/sec/opt/denstock" "$WORK/sec/etc/denstock/manifest-signing"
     cp "$WORK/env/web.env" "$WORK/sec/opt/denstock/.env"
     cp "$WORK/env/public.env" "$WORK/sec/opt/denstock/.env.public"
@@ -177,14 +222,19 @@ if [[ "${KIT_MODE:-0}" == 1 ]]; then
     fi
     "$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$WORK/test-identity.txt" \
         --work "$WORK/prepared" --plain-identity
+    PRIVATE_ARGS=()
+    [[ -f "$WORK/prepared/private.tar" ]] && PRIVATE_ARGS=(--private-archive "$WORK/prepared/private.tar"
+        --private-inventory "$WORK/prepared/private-inventory.json")
     "$HERE/offline_restore.sh" --project "$DST" --source "$WORK/prepared/source" \
-        --run "$WORK/prepared/run" --private-archive "$WORK/prepared/private.tar" \
-        --private-inventory "$WORK/prepared/private-inventory.json" \
+        --run "$WORK/prepared/run" ${PRIVATE_ARGS[@]+"${PRIVATE_ARGS[@]}"} \
         --env-dir "$WORK/prepared/env" --pubkey "$WORK/prepared/pinned-public.pem" \
         --port "$PORT" --mode test --report "${DR_REPORT:-$WORK/report.json}"
 else
+    PRIVATE_ARGS=()
+    [[ -f "$WORK/private.tar" ]] && PRIVATE_ARGS=(--private-archive "$WORK/private.tar"
+        --private-inventory "$WORK/private-inventory.json")
     "$HERE/offline_restore.sh" --project "$DST" --source "$SOURCE" --run "$WORK/run" \
-        --private-archive "$WORK/private.tar" --private-inventory "$WORK/private-inventory.json" \
+        ${PRIVATE_ARGS[@]+"${PRIVATE_ARGS[@]}"} \
         --env-dir "$WORK/env" --pubkey "$WORK/signing.pub.pem" --port "$PORT" --mode test \
         --report "${DR_REPORT:-$WORK/report.json}"
 fi
