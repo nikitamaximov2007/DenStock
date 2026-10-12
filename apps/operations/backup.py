@@ -54,7 +54,10 @@ def backup_root() -> Path:
 def new_run_dir(root=None) -> Path:
     base = Path(root) if root else backup_root()
     run = base / timestamp()
-    run.mkdir(parents=True, exist_ok=True)
+    try:
+        run.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise OperationsError(f"Каталог backup уже существует: {run.name}") from exc
     return run
 
 
@@ -155,7 +158,12 @@ BACKUP_TYPES = (
 
 
 def verify_database_payload(path: str | Path, engine: str) -> None:
-    """Reject a corrupt dump before marking a backup as verified."""
+    """Decode the entire dump before marking a backup as verified.
+
+    ``pg_restore --list`` only reads the table of contents: damaged compressed
+    table data can pass it. Rendering to the OS null device verifies every data
+    block without connecting to or modifying any database.
+    """
     path = Path(path)
     if engine == "sqlite":
         try:
@@ -171,7 +179,7 @@ def verify_database_payload(path: str | Path, engine: str) -> None:
         if binary is None:
             raise OperationsError("pg_restore 16 недоступен для проверки backup.")
         result = subprocess.run(
-            [binary, "--list", str(path)], capture_output=True, text=True
+            [binary, f"--file={os.devnull}", str(path)], capture_output=True, text=True
         )
         if result.returncode != 0:
             fallback = pg_binary("pg_restore", RESTORE_FALLBACK_PG_VERSION)
@@ -181,11 +189,12 @@ def verify_database_payload(path: str | Path, engine: str) -> None:
                 and fallback != binary
             ):
                 result = subprocess.run(
-                    [fallback, "--list", str(path)], capture_output=True, text=True
+                    [fallback, f"--file={os.devnull}", str(path)],
+                    capture_output=True, text=True,
                 )
         if result.returncode != 0:
             raise OperationsError(
-                f"PostgreSQL backup не прошёл pg_restore --list: "
+                f"PostgreSQL backup не прошёл полную проверку pg_restore: "
                 f"{result.stderr or result.returncode}"
             )
         return
