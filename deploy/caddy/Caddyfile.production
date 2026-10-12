@@ -4,12 +4,12 @@
 	encode gzip
 
 	# Слой 25: статичная отдача загруженных media-файлов из общего тома (read-only).
-	@private_customer_media path /media/customer_requests/*
-	handle @private_customer_media {
-		respond 404
-	}
 	# /media/part-items/… → /srv/media/part-items/…
 	handle_path /media/* {
+		# Private customer attachments must never be served from public media:
+		# any path segment customer_requests, any case, plain or escaped slash.
+		@private_attachments path_regexp private_attachments (?i)(^|/|%2f)customer_requests(/|%2f|$)
+		respond @private_attachments 404
 		root * /srv/media
 		file_server
 	}
@@ -31,7 +31,6 @@ catalog.185-250-44-206.sslip.io {
 # one place: MAX's webhook, POST only. Everything else is catalog-web.
 pro-brp.ru {
 	encode gzip
-	header X-Robots-Tag "noindex, nofollow"
 
 	# MAX delivers updates here (HTTPS 443, this host's trusted certificate).
 	# Exact path and method: no other /customer-requests/ URL, no GET. web

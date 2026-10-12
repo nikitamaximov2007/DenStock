@@ -2,9 +2,11 @@
 
 ``deploy/caddy/Caddyfile.production.pre-max`` is a byte copy of the Caddyfile
 production serves today (read-only preflight, sha256 below). The candidate
-``Caddyfile.production`` must differ from it only inside the pro-brp.ru block,
-by the MAX webhook route. ``scripts/qualification/max_edge_check.py`` proves
-the same with real Caddy; these tests pin the text without Docker.
+``Caddyfile.production`` is a byte copy of the live file after the MAX release
+and the 2026-10-12 private-media hotfix: it must differ from the pre-MAX copy
+only by the MAX webhook route and the guard inside ``handle_path /media/*``.
+``scripts/qualification/max_edge_check.py`` proves the MAX route with real
+Caddy; these tests pin the text without Docker.
 """
 
 import difflib
@@ -33,9 +35,24 @@ def test_pre_max_copy_is_exactly_what_production_serves():
     assert hashlib.sha256(PRE.encode("utf-8")).hexdigest() == LIVE_SHA256
 
 
-def test_only_the_public_catalog_block_changes():
-    for site in ("{$CADDY_SITE_ADDRESS::80}", "catalog.185-250-44-206.sslip.io", "www.pro-brp.ru"):
+# The 2026-10-12 emergency hotfix (live since then) added exactly these lines
+# inside the internal site's ``handle_path /media/*``; nothing else may differ.
+PRIVATE_MEDIA_GUARD = (
+    "\t\t# Private customer attachments must never be served from public media:\n"
+    "\t\t# any path segment customer_requests, any case, plain or escaped slash.\n"
+    "\t\t@private_attachments path_regexp private_attachments "
+    "(?i)(^|/|%2f)customer_requests(/|%2f|$)\n"
+    "\t\trespond @private_attachments 404\n"
+)
+
+
+def test_only_the_public_catalog_block_and_the_media_guard_change():
+    for site in ("catalog.185-250-44-206.sslip.io", "www.pro-brp.ru"):
         assert _block(PRE, site) == _block(POST, site), site
+    internal = _block(POST, "{$CADDY_SITE_ADDRESS::80}")
+    assert internal.count(PRIVATE_MEDIA_GUARD) == 1
+    assert "\thandle_path /media/* {\n" + PRIVATE_MEDIA_GUARD in internal
+    assert internal.replace(PRIVATE_MEDIA_GUARD, "") == _block(PRE, "{$CADDY_SITE_ADDRESS::80}")
     outside_pre = re.sub(r"^pro-brp\.ru \{\n.*?^\}", "", PRE, flags=re.MULTILINE | re.DOTALL)
     outside_post = re.sub(r"^pro-brp\.ru \{\n.*?^\}", "", POST, flags=re.MULTILINE | re.DOTALL)
     changed = [
@@ -43,6 +60,8 @@ def test_only_the_public_catalog_block_changes():
             outside_pre.splitlines(), outside_post.splitlines(), lineterm="", n=0
         ) if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
+    guard_lines = {"+" + line for line in PRIVATE_MEDIA_GUARD.splitlines()}
+    changed = [line for line in changed if line not in guard_lines]
     assert all(line[1:].startswith("#") for line in changed), changed
 
 

@@ -2,6 +2,9 @@
 	encode gzip
 
 	handle_path /media/* {
+		# Same guard as production: never serve customer attachments.
+		@private_attachments path_regexp private_attachments (?i)(^|/|%2f)customer_requests(/|%2f|$)
+		respond @private_attachments 404
 		root * /srv/standbys/{$EMERGENCY_SLOT}/media
 		file_server
 	}
