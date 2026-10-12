@@ -18,11 +18,12 @@ pytestmark = [
 
 
 def test_concurrent_duplicate_name_pick_token_counts_one_unit():
+    unit, _ = Unit.objects.get_or_create(name="Штука")
     category = Category.objects.create(name="Concurrent picker")
     part = PartType.objects.create(
         name="Сальник конкурентный",
         category=category,
-        unit=Unit.objects.get(name="Штука"),
+        unit=unit,
         tracking_mode=PartType.TrackingMode.BULK,
     )
     location = get_or_create_location("S01-D03-C08", name="Concurrent picker")
