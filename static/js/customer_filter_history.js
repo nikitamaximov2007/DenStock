@@ -152,18 +152,18 @@
     var getStorage = function () {
       if (storage) return storage;
       try { storage = root.localStorage; } catch (error) { storage = null; }
+      if (!storage) {
+        // Поиск клиентов должен работать и при заблокированном localStorage.
+        storage = { getItem: function () { return null; }, setItem: function () {} };
+      }
       return storage;
     };
     var start = function () {
-      var available = getStorage();
-      if (available) init(root.document, available);
+      init(root.document, getStorage());
     };
     root.document.addEventListener("denstock:page-loaded", function (event) {
-      var available = getStorage();
-      if (available) {
-        var target = event && event.detail && event.detail.root;
-        init(root.document, available, target || root.document);
-      }
+      var target = event && event.detail && event.detail.root;
+      init(root.document, getStorage(), target || root.document);
     });
     if (root.document.readyState === "loading") {
       root.document.addEventListener("DOMContentLoaded", start);

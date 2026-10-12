@@ -332,11 +332,34 @@ replacement.input.dispatch("input", { inputType: "insertText" });
 const filtered = replacement.select.options.map((option) => option.hidden);
 replacement.input.value = "клиент через меню";
 replacement.input.dispatch("keydown", { key: "Enter" });
+const deniedInput = element({ list: "history", "data-customer-filter": "select",
+  "data-customer-filter-history": "7" });
+const deniedList = element({});
+const deniedSelect = element({});
+deniedSelect.options = [
+  { hidden: false, dataset: { customerSearch: "" } },
+  { hidden: false, dataset: { customerSearch: "иванов" } },
+  { hidden: false, dataset: { customerSearch: "сидоров" } },
+];
+const deniedDocument = {
+  readyState: "complete",
+  addEventListener() {},
+  querySelectorAll: () => [deniedInput],
+  getElementById: (id) => id === "history" ? deniedList : deniedSelect,
+  createElement: (tag) => element({ tag }),
+};
+const deniedWindow = { document: deniedDocument };
+Object.defineProperty(deniedWindow, "localStorage", { get() { throw Error("denied"); } });
+vm.runInNewContext(source, { window: deniedWindow, WeakSet });
+deniedInput.value = "сидоров";
+deniedInput.dispatch("input", { inputType: "insertText" });
 process.stdout.write(JSON.stringify({
   directBound,
   replacementBound: (replacement.input.handlers.keydown || []).length,
   filtered,
   stored: JSON.parse(store["denstock:customer-filter-history:7"] || "[]"),
+  deniedBound: (deniedInput.handlers.keydown || []).length,
+  deniedFiltered: deniedSelect.options.map((option) => option.hidden),
 }));
 """
     result = subprocess.run(
@@ -352,6 +375,8 @@ process.stdout.write(JSON.stringify({
         "replacementBound": 1,
         "filtered": [False, True, False],
         "stored": ["клиент через меню"],
+        "deniedBound": 1,
+        "deniedFiltered": [False, True, False],
     }
 
 
