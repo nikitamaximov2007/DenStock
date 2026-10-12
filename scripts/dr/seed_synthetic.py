@@ -42,7 +42,8 @@ for n in range(12):
     receive_stock_lot(create_stock_lot(line, cell, Decimal("5")), by=admin)
     if n == 0:
         image = PartTypeImage(part=part)
-        image.image.save("drill-photo.jpg", ContentFile(b"\xff\xd8synthetic jpeg\xff\xd9"), save=True)
+        photo = ContentFile(b"\xff\xd8synthetic jpeg\xff\xd9")
+        image.image.save("drill-photo.jpg", photo, save=True)
 Customer.objects.create(name="Синтетический клиент", phone="+7 900 000-00-01")
 
 private = Path(settings.PRIVATE_MEDIA_ROOT)

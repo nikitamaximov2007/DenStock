@@ -76,8 +76,10 @@ with connection.cursor() as cursor:
             f'(SELECT 1 FROM {parent} p WHERE p."{pcol}" = ch."{col}")'
         )
         orphans += cursor.fetchone()[0]
-    cursor.execute("SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace "
-                   "WHERE n.nspname='public' AND NOT c.convalidated")
+    cursor.execute(
+        "SELECT count(*) FROM pg_constraint c JOIN pg_namespace n ON n.oid=c.connamespace "
+        "WHERE n.nspname='public' AND NOT c.convalidated"
+    )
     not_valid = cursor.fetchone()[0]
     cursor.execute("SELECT count(*) FROM pg_indexes WHERE schemaname='public'")
     indexes = cursor.fetchone()[0]

@@ -104,6 +104,50 @@ json.dump(rows, open(sys.argv[2], "w"))
 print(f"[drill] private capture: {len(rows)} files")
 PY
 
+# --- optional fault injection: the restore must REFUSE or REPORT FAILURE --------
+case "${DRILL_FAULT:-}" in
+    "") ;;
+    tamper_dump) printf 'X' | dd of="$WORK/run/db.dump" bs=1 seek=4096 conv=notrunc 2>/dev/null ;;
+    foreign_key) "$PY" - "$WORK" <<'PY'
+import sys
+from pathlib import Path
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+other = Ed25519PrivateKey.generate().public_key()
+Path(sys.argv[1], "signing.pub.pem").write_bytes(other.public_bytes(
+    serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+PY
+        ;;
+    wrong_commit) "$PY" - "$WORK/run/manifest.json" "$WORK/signing.pem" <<'PY'
+import base64, json, sys
+from cryptography.hazmat.primitives import serialization
+path, key = sys.argv[1], serialization.load_pem_private_key(open(sys.argv[2], "rb").read(), None)
+m = json.load(open(path)); m["app_commit"] = "0" * 40; m.pop("signature")
+payload = json.dumps(m, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode()
+m["signature"] = {"algorithm": "ed25519", "key_id": "dr-drill",
+                  "value": base64.b64encode(key.sign(payload)).decode()}
+json.dump(m, open(path, "w"))
+PY
+        ;;
+    drop_private_file) "$PY" - "$WORK/private.tar" <<'PY'
+import sys, tarfile
+src = sys.argv[1]
+members = []
+with tarfile.open(src) as t:
+    for m in t:
+        if m.isreg() and m.name.endswith("drill-scan.pdf"):
+            continue
+        members.append((m, t.extractfile(m).read() if m.isreg() else None))
+import io
+with tarfile.open(src, "w") as out:
+    for m, data in members:
+        out.addfile(m, io.BytesIO(data) if data is not None else None)
+PY
+        ;;
+    *) echo "unknown DRILL_FAULT" >&2; exit 2 ;;
+esac
+[[ -n "${DRILL_FAULT:-}" ]] && echo "[drill] injected fault: $DRILL_FAULT"
+
 # --- 2. disaster: production and its storage are gone ----------------------------
 echo "[drill] destroy synthetic production (VPS and Yandex lost)"
 "$HERE/cleanup_dr.sh" "$SRC" >/dev/null
