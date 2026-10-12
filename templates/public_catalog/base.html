@@ -107,7 +107,9 @@
       <div class="site-footer__inner">
         <p>PRO-STOR · каталог запчастей</p>
         <p>Цена и наличие показаны по данным склада на момент открытия страницы.</p>
-        <p><a href="{% url 'public_catalog_about' %}">О сервисе</a></p>
+        <p>
+          <a href="{% url 'public_catalog_in_stock' %}">Запчасти в наличии</a> · <a href="{% url 'public_catalog_about' %}">О сервисе</a>
+        </p>
       </div>
     </footer>
     {% block structured_data %}{% endblock %}

@@ -18,7 +18,7 @@ import math
 
 from django.conf import settings
 
-from .public_catalog import PartCard, public_parts
+from .public_catalog import PartCard, in_stock_public_parts, public_parts
 
 SITE_NAME = "PRO-STOR"
 SITEMAP_PAGE_SIZE = 10_000
@@ -176,4 +176,21 @@ def sitemap_entries(number: int) -> list[tuple]:
         public_parts()
         .order_by("pk")
         .values_list("public_id", "updated_at")[start : start + SITEMAP_PAGE_SIZE]
+    )
+
+
+def in_stock_sitemap_entries() -> list[tuple]:
+    """(public_id, lastmod) for the parts in stock right now, the sitemap's own
+    segment for the pages most worth indexing.
+
+    Every URL here is also in its ``parts-<n>`` shard; listing it twice is
+    allowed by the protocol and lets Search Console report the in-stock
+    segment's indexing on its own. Bounded by the stock rows and capped at one
+    shard's size, so it stays far under the protocol limit.
+    """
+    stocked = list(in_stock_public_parts())[:SITEMAP_PAGE_SIZE]
+    if not stocked:
+        return []
+    return list(
+        public_parts().filter(pk__in=stocked).order_by("pk").values_list("public_id", "updated_at")
     )

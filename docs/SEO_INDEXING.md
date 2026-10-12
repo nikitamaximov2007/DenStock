@@ -49,10 +49,11 @@ canonical URL instead of creating duplicate indexable copies.
 | --- | --- | --- |
 | `/` (home) | yes, once indexing is on | default (no per-template override) |
 | `/parts/<public_id>/` (product page) | yes, once indexing is on | default; canonical, title, description, JSON-LD |
+| `/in-stock/` and `/in-stock/?page=<n>` (in-stock listing) | yes, once indexing is on | default; self-canonical per page, `rel=prev/next` links; `?page=1` 301s to `/in-stock/`, a page past the end or a malformed page is 404 |
 | `/search/` (any `?q=`/filter combination) | no | `noindex, follow` - crawlers may still follow links to product pages |
 | `/cart/` | no | `noindex, nofollow` |
 | `/request/`, `/request/submit/`, `/request/success/<id>/` | no | `noindex, nofollow` |
-| `/robots.txt`, `/sitemap.xml`, `/sitemaps/parts-<n>.xml`, `/healthz/` | n/a | not HTML pages; not linked for crawling as content |
+| `/robots.txt`, `/sitemap.xml`, `/sitemaps/in-stock.xml`, `/sitemaps/parts-<n>.xml`, `/healthz/` | n/a | not HTML pages; not linked for crawling as content |
 | Internal DenisStock (admin, `/sales/`, `/repairs/`, reports, Telegram/MAX webhooks, etc.) | never | served by a completely separate process/URLConf (`config.urls`, `web`/`admin.<domain>`) - not reachable from the public host at all, not merely hidden by robots |
 
 Whether ANY of the above indexes at all is gated by one deployment switch,
@@ -136,13 +137,45 @@ Robots.txt is a courtesy for well-behaved crawlers, not a security boundary:
 internal DenisStock routes are unreachable from the public host at the
 process/URLConf level (see the route table above), not merely disallowed.
 
+## Crawlable link graph
+
+A sitemap tells a search engine that a URL exists; it does not tell it the
+URL matters. Until 2026-10 no public HTML page linked to any product page:
+the home page had only the search form, a product page linked only to its
+confirmed analogs (there were none in production), and the breadcrumb went to
+`/search/`, which `robots.txt` disallows. All 126,114 product pages were
+reachable by a crawler through the sitemap alone (see
+`docs/audits/seo-indexation-audit-2026-10-12.md`).
+
+`/in-stock/` is the crawlable path to the pages most worth indexing:
+
+- It lists every public part with stock available right now
+  (`apps.catalog.public_catalog.in_stock_public_parts`, the same unfiltered
+  `live_stock_rows` read the coverage report uses), 50 per page, ordered by
+  part ID, using the ordinary result card.
+- The home page and the footer of every public page link to it, so each
+  in-stock product page is at most three clicks from `/`.
+- Its cost follows the number of stock rows, not the catalog size
+  (production 2026-10-12: 913 stock rows, 884 in-stock parts, 7 queries,
+  about 0.35 s for the stock read).
+
+Do not add links to all 126k parts this way: listing the out-of-stock
+aftermarket import would recreate the same thin, low-signal URL space in a
+second form. A manufacturer or category navigation is the next step once the
+owner decides which tiers deserve it.
+
 ## Sitemap architecture
 
-- `/sitemap.xml` is a **sitemap index** (`<sitemapindex>`), listing one
-  `<sitemap>` entry per shard file.
+- `/sitemap.xml` is a **sitemap index** (`<sitemapindex>`). Its first entry is
+  the in-stock segment `/sitemaps/in-stock.xml` (the in-stock product URLs,
+  capped at one shard's size); then one `<sitemap>` entry per part shard file.
+  An in-stock URL also stays in its part shard: the protocol allows that, and
+  the separate file lets Search Console report the in-stock segment's
+  indexing on its own (Sitemaps report, per-file "Discovered pages" and the
+  Pages report filtered by sitemap).
 - Each shard, `/sitemaps/parts-<n>.xml`, holds at most `SITEMAP_PAGE_SIZE`
   (10,000) product URLs - safely under the 50,000-URL sitemap protocol limit.
-  Shard 1 also carries the catalog root URL.
+  Shard 1 also carries the catalog root, `/about/` and `/in-stock/`.
 - Only `public_parts()` (`is_public=True, is_active=True`) is ever included -
   the identical rule the product page and search use.
 - Each `<url>` carries `<lastmod>` from `PartType.updated_at` (`auto_now`) -

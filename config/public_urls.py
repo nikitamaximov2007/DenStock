@@ -14,6 +14,7 @@ urlpatterns = [
     path("account/", include("apps.customer_accounts.urls")),
     path("", public_views.public_root, name="public_catalog_root"),
     path("about/", public_views.public_about, name="public_catalog_about"),
+    path("in-stock/", public_views.public_in_stock, name="public_catalog_in_stock"),
     path("search/", public_views.public_search, name="public_catalog_search"),
     path("parts/<uuid:public_id>/", public_views.public_part_detail, name="public_catalog_part"),
     path(
@@ -53,6 +54,11 @@ urlpatterns = [
     ),
     path("robots.txt", public_views.robots_txt, name="public_catalog_robots"),
     path("sitemap.xml", public_views.sitemap_index, name="public_catalog_sitemap"),
+    path(
+        "sitemaps/in-stock.xml",
+        public_views.sitemap_in_stock,
+        name="public_catalog_sitemap_in_stock",
+    ),
     path(
         "sitemaps/parts-<int:number>.xml",
         public_views.sitemap_parts,

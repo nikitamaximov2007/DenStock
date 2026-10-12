@@ -299,7 +299,10 @@ def test_sitemap_splits_at_the_page_size(public_client, public_catalog, monkeypa
     index = public_client.get("/sitemap.xml").content.decode()
     last = public_client.get("/sitemaps/parts-3.xml").content.decode()
 
-    assert index.count("<sitemap>") == 3
+    # Three part shards plus the in-stock segment, which comes first.
+    assert index.count("<sitemap>") == 4
+    assert index.count("/sitemaps/parts-") == 3
+    assert "/sitemaps/in-stock.xml" in index
     assert last.count("<url>") == 1 and str(parts[-1].public_id) in last
 
 

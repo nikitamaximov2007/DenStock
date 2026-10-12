@@ -47,6 +47,8 @@ from .public_cart import (
 from .public_catalog import (
     APPLICATION_LABELS,
     cards_by_id,
+    in_stock_catalog,
+    parse_page,
     part_relations,
     public_parts,
     search_catalog,
@@ -57,6 +59,8 @@ from .search import MAX_QUERY_LENGTH
 
 PHOTO_MAX_AGE = 24 * 60 * 60
 CRAWLER_FILE_MAX_AGE = 60 * 60
+# Catalog pages a cart button may return to.
+LOCAL_NEXT_PREFIXES = ("/search/", "/parts/", "/in-stock/")
 
 
 def _render(request, template, context=None, *, status=200):
@@ -94,6 +98,45 @@ def public_about(request):
         request,
         "public_catalog/about.html",
         {"canonical_url": public_seo.absolute_url(request, reverse("public_catalog_about"))},
+    )
+
+
+@require_safe
+def public_in_stock(request):
+    """Every public part in stock now, as plain paginated links.
+
+    This is the crawlable path to the pages most worth indexing: product pages
+    are otherwise reachable only through the sitemap and the search form,
+    which crawlers do not submit. Each page has exactly one URL: ``?page=1``
+    redirects to the bare listing and a page past the end is a 404, never a
+    copy of another page.
+    """
+    raw = request.GET.get("page")
+    page = 1
+    if raw is not None:
+        page = parse_page(raw)
+        if str(page) != raw:
+            raise Http404
+        if page == 1:
+            return redirect("public_catalog_in_stock", permanent=True)
+    listing = in_stock_catalog(page)
+    if listing is None:
+        raise Http404
+    base_path = reverse("public_catalog_in_stock")
+    canonical_path = base_path if page == 1 else f"{base_path}?page={page}"
+    previous_url = ""
+    if listing.has_previous:
+        previous_url = base_path if page == 2 else f"{base_path}?page={page - 1}"
+    return _render(
+        request,
+        "public_catalog/in_stock.html",
+        {
+            "listing": listing,
+            "canonical_url": public_seo.absolute_url(request, canonical_path),
+            "previous_url": previous_url,
+            "next_url": f"{base_path}?page={page + 1}" if listing.has_next else "",
+            "in_cart": {UUID(key) for key in read_cart(request.session)},
+        },
     )
 
 
@@ -221,7 +264,7 @@ def _safe_next(request):
     value = str(request.POST.get("next") or "")
     if value == "cart":
         return reverse("public_catalog_cart")
-    local = value.startswith(("/search/", "/parts/")) and url_has_allowed_host_and_scheme(
+    local = value.startswith(LOCAL_NEXT_PREFIXES) and url_has_allowed_host_and_scheme(
         value, allowed_hosts={request.get_host()}, require_https=request.is_secure()
     )
     return value if local else ""
@@ -455,7 +498,7 @@ def robots_txt(request):
 
 @require_safe
 def sitemap_index(request):
-    pages = [
+    pages = [public_seo.absolute_url(request, reverse("public_catalog_sitemap_in_stock"))] + [
         public_seo.absolute_url(request, reverse("public_catalog_sitemap_parts", args=[number]))
         for number in range(1, public_seo.sitemap_page_count() + 1)
     ]
@@ -474,18 +517,34 @@ def sitemap_parts(request, number):
     if number < 1 or number > public_seo.sitemap_page_count():
         raise Http404
     base = public_seo.base_url(request)
-    urls = [
+    urls = _part_urls(base, public_seo.sitemap_entries(number))
+    if number == 1:
+        # No single trustworthy "changed" timestamp for the static pages -
+        # omitting lastmod beats fabricating one.
+        urls[:0] = [
+            {"loc": base + reverse(name), "lastmod": ""}
+            for name in ("public_catalog_root", "public_catalog_about", "public_catalog_in_stock")
+        ]
+    return _sitemap_response(request, urls)
+
+
+@require_safe
+def sitemap_in_stock(request):
+    base = public_seo.base_url(request)
+    return _sitemap_response(request, _part_urls(base, public_seo.in_stock_sitemap_entries()))
+
+
+def _part_urls(base, entries):
+    return [
         {
             "loc": base + reverse("public_catalog_part", args=[public_id]),
             "lastmod": timezone.localtime(updated_at).date().isoformat() if updated_at else "",
         }
-        for public_id, updated_at in public_seo.sitemap_entries(number)
+        for public_id, updated_at in entries
     ]
-    if number == 1:
-        # No single trustworthy "changed" timestamp for either static page -
-        # omitting lastmod beats fabricating one.
-        urls.insert(0, {"loc": base + reverse("public_catalog_about"), "lastmod": ""})
-        urls.insert(0, {"loc": base + reverse("public_catalog_root"), "lastmod": ""})
+
+
+def _sitemap_response(request, urls):
     response = render(
         request, "public_catalog/sitemap.xml", {"urls": urls}, content_type="application/xml"
     )
