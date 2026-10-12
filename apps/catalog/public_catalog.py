@@ -24,10 +24,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from urllib.parse import urlencode
 
-from django.db.models import Q
+from django.core.cache import cache
+from django.db.models import Max, Q
 
 from apps.actions.models import PartCustomsInfo
 from apps.inventory.availability import available_totals
+from apps.inventory.models import PartItem, StockLot
 from apps.inventory.movement import live_stock_rows
 from apps.inventory.presentation import manufacturer_display
 
@@ -503,12 +505,57 @@ def part_relations(part_id: int) -> PartRelations:
 # --- In-stock listing -------------------------------------------------------------------
 
 IN_STOCK_PAGE_SIZE = 50
+# Measured on production 2026-10-12: 912 physical stock rows, 0.8-1.1 s per
+# live_stock_rows() call. The anonymous listing and sitemap must not pay that on
+# every request, so the computed set is shared for a few minutes per process.
+# Product pages keep showing their own live stock; only the listing may lag.
+IN_STOCK_CACHE_KEY = "public_catalog:in_stock:v1"
+IN_STOCK_CACHE_SECONDS = 300
 
 
 def in_stock_public_parts() -> dict[int, Decimal]:
     """Public parts with stock available right now, by ID in a stable order.
 
-    Reads ``live_stock_rows`` without a part filter, the same way the coverage
+    Cached for ``IN_STOCK_CACHE_SECONDS``; see ``_compute_in_stock_public_parts``.
+    """
+    cached = cache.get(IN_STOCK_CACHE_KEY)
+    if cached is not None:
+        return {part_id: Decimal(quantity) for part_id, quantity in cached}
+    stocked = _compute_in_stock_public_parts()
+    cache.set(
+        IN_STOCK_CACHE_KEY,
+        [(part_id, str(quantity)) for part_id, quantity in stocked.items()],
+        IN_STOCK_CACHE_SECONDS,
+    )
+    return stocked
+
+
+def in_stock_lastmod(part_ids) -> dict[int, object]:
+    """Latest change of each part's card, lots or units (the public role reads all three).
+
+    ``PartType.updated_at`` alone misses the moment a part came into stock: a
+    receipt or a sale changes lots and units, not the card.
+    """
+    ids = list(part_ids)
+    latest: dict[int, object] = dict(
+        public_parts().filter(pk__in=ids).values_list("pk", "updated_at")
+    )
+    for model in (StockLot, PartItem):
+        rows = (
+            model.objects.filter(part_type_id__in=ids)
+            .values("part_type_id")
+            .annotate(changed=Max("updated_at"))
+            .values_list("part_type_id", "changed")
+        )
+        for part_id, changed in rows:
+            current = latest.get(part_id)
+            if changed is not None and (current is None or changed > current):
+                latest[part_id] = changed
+    return latest
+
+
+def _compute_in_stock_public_parts() -> dict[int, Decimal]:
+    """Reads ``live_stock_rows`` without a part filter, the same way the coverage
     report does: its cost follows the number of physical stock rows, never the
     size of the catalog, and availability keeps its canonical semantics.
     """
@@ -529,6 +576,13 @@ class InStockPage:
     total: int
     page: int
     pages: int
+
+    @property
+    def page_numbers(self) -> list[int]:
+        """Every page is linked from every page: any listing page is one click
+        from the first, so a product is at most three clicks from the home page.
+        Production has 18 pages (884 parts); the cap keeps the bar finite."""
+        return list(range(1, min(self.pages, 100) + 1))
 
     @property
     def has_previous(self) -> bool:

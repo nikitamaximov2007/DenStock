@@ -29,6 +29,17 @@
           <a class="btn btn--secondary" href="{{ previous_url }}" rel="prev">Назад</a>
         {% endif %}
         <span class="pager__state">Страница {{ listing.page }} из {{ listing.pages }}</span>
+        <span class="pager__pages">
+          {% for number in listing.page_numbers %}
+            {% if number == listing.page %}
+              <span aria-current="page">{{ number }}</span>
+            {% elif number == 1 %}
+              <a href="{% url 'public_catalog_in_stock' %}">1</a>
+            {% else %}
+              <a href="{% url 'public_catalog_in_stock' %}?page={{ number }}">{{ number }}</a>
+            {% endif %}
+          {% endfor %}
+        </span>
         {% if next_url %}
           <a class="btn btn--secondary" href="{{ next_url }}" rel="next">Вперёд</a>
         {% endif %}

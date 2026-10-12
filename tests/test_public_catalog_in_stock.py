@@ -11,6 +11,7 @@ home page and every page's footer link to, with exactly one URL per page.
 import re
 
 import pytest
+from django.core.cache import cache
 from django.test import override_settings
 
 from apps.catalog import public_catalog as public_catalog_service
@@ -23,6 +24,14 @@ from tests.public_catalog_support import (  # noqa: F401 - fixtures
 )
 
 pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture(autouse=True)
+def fresh_in_stock_cache():
+    """The listing caches the in-stock set per process; each test starts cold."""
+    cache.delete(public_catalog_service.IN_STOCK_CACHE_KEY)
+    yield
+    cache.delete(public_catalog_service.IN_STOCK_CACHE_KEY)
 
 
 def _part_links(body: str) -> set[str]:
@@ -109,6 +118,7 @@ def test_empty_stock_renders_an_honest_empty_listing(public_client, public_catal
 
 def test_listing_reads_only_and_query_count_is_flat(public_client, public_catalog):  # noqa: F811
     def measure():
+        cache.delete(public_catalog_service.IN_STOCK_CACHE_KEY)  # the uncached cost
         with capture() as queries:
             assert public_client.get("/in-stock/").status_code == 200
         assert_no_writes(queries)
@@ -155,3 +165,55 @@ def test_cart_add_from_the_listing_returns_to_the_listing(public_client, stocked
     )
     assert response.status_code == 302
     assert response["Location"] == "/in-stock/"
+
+
+def test_repeated_requests_reuse_the_in_stock_set_instead_of_recomputing(
+    public_client, public_catalog, monkeypatch  # noqa: F811
+):
+    """Production: 912 stock rows cost 0.8-1.1 s per computation (2026-10-12)."""
+    part = public_catalog.part("Cached stocked", article="610001")
+    public_catalog.stock(part, "1")
+    calls = {"n": 0}
+    real = public_catalog_service.live_stock_rows
+
+    def counted(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(public_catalog_service, "live_stock_rows", counted)
+    for path in ("/in-stock/", "/in-stock/", "/sitemaps/in-stock.xml", "/sitemap.xml"):
+        assert public_client.get(path).status_code == 200, path
+    assert calls["n"] == 1
+
+
+def test_every_listing_page_links_every_other_page(public_client, public_catalog, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(public_catalog_service, "IN_STOCK_PAGE_SIZE", 1)
+    for n in range(4):
+        public_catalog.stock(public_catalog.part(f"Deep {n}", article=f"62000{n}"), "1")
+    last = public_client.get("/in-stock/?page=4").content.decode()
+    first = public_client.get("/in-stock/").content.decode()
+    for page in (2, 3, 4):
+        assert f'href="/in-stock/?page={page}"' in first
+    assert 'href="/in-stock/">1</a>' in last
+    assert 'aria-current="page">4<' in last
+
+
+def test_in_stock_sitemap_lastmod_follows_stock_changes_not_only_the_card(
+    public_client, public_catalog  # noqa: F811
+):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.catalog.models import PartType
+    from apps.inventory.models import StockLot
+
+    part = public_catalog.part("Lastmod stocked", article="630001")
+    public_catalog.stock(part, "1")
+    old = timezone.now() - timedelta(days=40)
+    PartType.objects.filter(pk=part.pk).update(updated_at=old)
+    recent = timezone.now() - timedelta(days=2)
+    StockLot.objects.filter(part_type=part).update(updated_at=recent)
+    body = public_client.get("/sitemaps/in-stock.xml").content.decode()
+    entry = body.split(str(part.public_id), 1)[1].split("</url>", 1)[0]
+    assert f"<lastmod>{timezone.localtime(recent).date().isoformat()}</lastmod>" in entry

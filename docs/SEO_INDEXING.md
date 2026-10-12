@@ -153,11 +153,17 @@ reachable by a crawler through the sitemap alone (see
   (`apps.catalog.public_catalog.in_stock_public_parts`, the same unfiltered
   `live_stock_rows` read the coverage report uses), 50 per page, ordered by
   part ID, using the ordinary result card.
-- The home page and the footer of every public page link to it, so each
-  in-stock product page is at most three clicks from `/`.
-- Its cost follows the number of stock rows, not the catalog size
-  (production 2026-10-12: 913 stock rows, 884 in-stock parts, 7 queries,
-  about 0.35 s for the stock read).
+- The home page and the footer of every public page link to it, and every
+  listing page links every other page (up to 100), so each in-stock product
+  page is at most three clicks from `/`: home, any listing page, product.
+  Before the page bar the pager was prev/next only, and page 18 (production
+  has 18 pages) was 18 clicks deep.
+- Its cost follows the number of stock rows, not the catalog size. Measured on
+  production 2026-10-12: 912 stock rows, 884 in-stock parts, 0.8-1.1 s per
+  `live_stock_rows()` read under normal load. The computed set is therefore
+  cached for 5 minutes per process (`IN_STOCK_CACHE_SECONDS`), so anonymous
+  listing and sitemap requests do not pay it each time; product pages keep
+  their own live stock, only the listing may lag by up to 5 minutes.
 
 Do not add links to all 126k parts this way: listing the out-of-stock
 aftermarket import would recreate the same thin, low-signal URL space in a
@@ -178,7 +184,11 @@ owner decides which tiers deserve it.
   Shard 1 also carries the catalog root, `/about/` and `/in-stock/`.
 - Only `public_parts()` (`is_public=True, is_active=True`) is ever included -
   the identical rule the product page and search use.
-- Each `<url>` carries `<lastmod>` from `PartType.updated_at` (`auto_now`) -
+- In `/sitemaps/in-stock.xml` each `<lastmod>` is the latest of the card's
+  `updated_at` and its lots' and units' `updated_at`: coming into stock or a
+  sale changes lots and units, not the card, and the public role can read all
+  three (it cannot read stock movements).
+- Each `<url>` in the `parts-<n>` shards carries `<lastmod>` from `PartType.updated_at` (`auto_now`) -
   a real signal, not `now()` on every request. It is not scoped to
   public-visible fields only (any save bumps it), which is an accepted,
   documented trade-off: "omitting is better than fabricating", and this is

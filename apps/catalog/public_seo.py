@@ -18,7 +18,7 @@ import math
 
 from django.conf import settings
 
-from .public_catalog import PartCard, in_stock_public_parts, public_parts
+from .public_catalog import PartCard, in_stock_lastmod, in_stock_public_parts, public_parts
 
 SITE_NAME = "PRO-STOR"
 SITEMAP_PAGE_SIZE = 10_000
@@ -191,6 +191,11 @@ def in_stock_sitemap_entries() -> list[tuple]:
     stocked = list(in_stock_public_parts())[:SITEMAP_PAGE_SIZE]
     if not stocked:
         return []
-    return list(
-        public_parts().filter(pk__in=stocked).order_by("pk").values_list("public_id", "updated_at")
-    )
+    lastmod = in_stock_lastmod(stocked)
+    return [
+        (public_id, lastmod.get(part_id))
+        for part_id, public_id in public_parts()
+        .filter(pk__in=stocked)
+        .order_by("pk")
+        .values_list("pk", "public_id")
+    ]
