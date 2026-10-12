@@ -40,6 +40,19 @@ if [ "${BACKUP_OFFSITE_ENABLED}" = "true" ]; then ENABLED=true; else ENABLED=fal
 STATUS_FILE="${BACKUP_STATUS_FILE:-backups/offsite_status.json}"
 mkdir -p "$(dirname "$STATUS_FILE")"
 
+if [ "$DRY_RUN" != "1" ]; then
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "[backup_offsite] ОШИБКА: flock не установлен; безопасная блокировка невозможна" >&2
+    exit 1
+  fi
+  mkdir -p backups
+  exec 9>"${PROJECT_ROOT}/backups/.offsite-backup.lock"
+  if ! flock -n 9; then
+    echo "[backup_offsite] Уже выполняется другой offsite backup; выхожу без изменений" >&2
+    exit 1
+  fi
+fi
+
 RUN_ID=""
 RUN_PATH=""
 
@@ -65,11 +78,11 @@ EOF
 
 # --- 1. Создать automatic-бэкап внутри контейнера web ---
 if [ "$DRY_RUN" = "1" ]; then
-  log "DRY-RUN: docker compose exec -T ${BACKUP_WEB_SERVICE} python manage.py backup_all --trigger automatic --keep-last ${BACKUP_KEEP_LAST}"
+  log "DRY-RUN: docker compose exec -T ${BACKUP_WEB_SERVICE} python manage.py backup_all --trigger automatic"
 else
-  log "создаю автоматический бэкап (keep-last=${BACKUP_KEEP_LAST})..."
+  log "создаю автоматический бэкап..."
   docker compose exec -T "${BACKUP_WEB_SERVICE}" \
-    python manage.py backup_all --trigger automatic --keep-last "${BACKUP_KEEP_LAST}"
+    python manage.py backup_all --trigger automatic
 fi
 
 # --- 2. Найти последний backup run (каталог backups/<timestamp>/) ---
@@ -93,6 +106,10 @@ fi
 
 # --- 4. Offsite отключён → статус not_configured, exit 0 ---
 if [ "$ENABLED" != "true" ]; then
+  if [ "$DRY_RUN" != "1" ]; then
+    docker compose exec -T "${BACKUP_WEB_SERVICE}" \
+      python manage.py prune_backups --keep-last "${BACKUP_KEEP_LAST}"
+  fi
   write_status "not_configured" "Offsite отключён (BACKUP_OFFSITE_ENABLED=false)" "" 0
   log "offsite отключён — только локальный бэкап"
   exit 0
@@ -117,16 +134,34 @@ fi
 DEST="${BACKUP_OFFSITE_TARGET}/${RUN_ID}"
 if [ "$DRY_RUN" = "1" ]; then
   log "DRY-RUN: rclone copy ${RUN_PATH} ${DEST}"
+  log "DRY-RUN: rclone check --download ${RUN_PATH} ${DEST}"
+  log "DRY-RUN: prune local backups only after successful offsite verification"
   exit 0
 fi
 
 log "отправляю ${RUN_ID} в offsite (${BACKUP_OFFSITE_TARGET})..."
 if rclone copy "$RUN_PATH" "$DEST"; then
-  write_status "ok" "Отправлено в offsite" "$RUN_ID" 0
-  log "offsite OK"
+  :
 else
   rc=$?
   write_status "failed" "rclone copy завершился с ошибкой" "" "$rc"
   log "ОШИБКА offsite (rclone rc=${rc})" >&2
   exit 1
 fi
+
+log "проверяю удалённую копию чтением данных..."
+if rclone check --download "$RUN_PATH" "$DEST"; then
+  :
+else
+  rc=$?
+  write_status "failed" "Удалённая копия не прошла rclone check --download" "" "$rc"
+  log "ОШИБКА offsite: проверка удалённой копии не пройдена" >&2
+  exit 1
+fi
+
+# Local pruning is deliberately after successful remote read-back. A failed
+# upload or verification leaves every older local and remote recovery run intact.
+docker compose exec -T "${BACKUP_WEB_SERVICE}" \
+  python manage.py prune_backups --keep-last "${BACKUP_KEEP_LAST}"
+write_status "ok" "Копия загружена и проверена чтением; локальная ротация выполнена" "$RUN_ID" 0
+log "offsite OK"
