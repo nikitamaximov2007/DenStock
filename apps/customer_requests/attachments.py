@@ -5,6 +5,8 @@ import os
 import re
 from dataclasses import dataclass
 
+from django.db import transaction
+
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 ALLOWED = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
 EXTENSIONS = {"png", "jpg", "jpeg", "webp", "pdf"}
@@ -33,8 +35,15 @@ def cleanup_attachment(message) -> None:
     """Remove bytes only after a terminal, non-retryable delivery outcome."""
     if not hasattr(message, "attachment") or not message.attachment:
         return
-    message.attachment.delete(save=False)
-    type(message).objects.filter(pk=message.pk).update(attachment="")
+    storage = message.attachment.storage
+    name = message.attachment.name
+    with transaction.atomic():
+        type(message).objects.filter(pk=message.pk).update(attachment="")
+        # A backup may hold the global database write lock while archiving
+        # private_media. Delete only after the DB no longer references this
+        # attachment; an orphaned file is recoverable, a missing reference is not.
+        transaction.on_commit(lambda: storage.delete(name))
+    message.attachment = ""
 
 
 @dataclass(frozen=True, slots=True)
