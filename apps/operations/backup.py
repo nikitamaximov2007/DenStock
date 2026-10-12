@@ -94,17 +94,37 @@ def pg_binary(name: str, version: int | None = None) -> str | None:
 # --- Backup ------------------------------------------------------------------
 
 
-def backup_media(dest_dir, *, media_root=None) -> Path | None:
-    """Заархивировать media в `<dest_dir>/media.tar.gz`. None — если файлов нет."""
+MEDIA_ARCHIVE_NAME = "media.tar.gz"
+
+
+def archive_public_media(dest_dir, *, media_root=None) -> tuple[Path | None, str]:
+    """Согласованный архив публичных media и хеш его содержимого.
+
+    Тот же путь, что у private_media: дерево снимается до и после упаковки, и
+    содержимое самого архива обязано совпасть с обоими снимками, иначе ещё
+    попытка, а после трёх - ошибка. Символические ссылки и спецфайлы
+    запрещены. Хеш в manifest берётся из архива, а не из отдельного обхода.
+    Атомарного снимка файловой системы здесь нет: гарантия - «архив равен
+    дереву, которое не менялось на время упаковки», иначе бэкап не создаётся.
+    """
     media_root = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     has_files = media_root.exists() and any(p.is_file() for p in media_root.rglob("*"))
     if not has_files:
-        return None
-    archive = dest_dir / "media.tar.gz"
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(str(media_root), arcname=".")
+        return None, media_tree_sha256(media_root)
+    try:
+        archive, inventory = create_archive(
+            media_root, dest_dir, archive_name=MEDIA_ARCHIVE_NAME
+        )
+    except PrivateMediaError as exc:
+        raise OperationsError(f"Публичные media (mediafiles) не заархивированы: {exc}") from exc
+    return archive, inventory.tree_sha256
+
+
+def backup_media(dest_dir, *, media_root=None) -> Path | None:
+    """Заархивировать media в `<dest_dir>/media.tar.gz`. None — если файлов нет."""
+    archive, _tree = archive_public_media(dest_dir, media_root=media_root)
     return archive
 
 
@@ -266,9 +286,8 @@ def backup_all(
     with _backup_consistency_scope(s) as state:
         migrations = migration_state()
         data_marker = business_state_marker()
-        media_tree_hash = media_tree_sha256(media_source)
         db_path = backup_db(run, settings_dict=s)
-        media_path = backup_media(run, media_root=media_root)
+        media_path, media_tree_hash = archive_public_media(run, media_root=media_source)
         private_path = private_inventory = None
         if private_present is not None:
             try:

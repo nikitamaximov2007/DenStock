@@ -196,11 +196,15 @@ def _refuse_unsafe_members(tarinfo: tarfile.TarInfo):
     return tarinfo
 
 
-def create_archive(root, dest_dir) -> tuple[Path, Inventory]:
-    """Archive the tree; the archive's own content must equal the source before and after."""
+def create_archive(root, dest_dir, *, archive_name: str = ARCHIVE_NAME) -> tuple[Path, Inventory]:
+    """Archive the tree; the archive's own content must equal the source before and after.
+
+    Used for private_media and, with ``archive_name="media.tar.gz"``, for the
+    public media tree: both get the same before/after/packed comparison.
+    """
     root, dest_dir = Path(root), Path(dest_dir)
-    final = dest_dir / ARCHIVE_NAME
-    partial = dest_dir / (ARCHIVE_NAME + ".partial")
+    final = dest_dir / archive_name
+    partial = dest_dir / (archive_name + ".partial")
     for _attempt in range(CONSISTENCY_ATTEMPTS):
         before = inspect_tree(root, require_present=True)
         try:
