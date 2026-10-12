@@ -5,8 +5,9 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.db import close_old_connections, connection
 
+from apps.customers.forms import CustomerForm
 from apps.customers.models import Customer, CustomerLifecycleEvent
-from apps.customers.services import CustomerArchiveError, archive_customer
+from apps.customers.services import CustomerArchiveError, archive_customer, update_active_customer
 from apps.sales.models import Sale
 from apps.sales.services import SaleError, create_sale
 
@@ -88,3 +89,45 @@ def test_archive_racing_new_sale_serializes_customer_use(archive_race_scene):
         # The sale acquired the row lock first and completed before archiving.
         assert Sale.objects.get(pk=sale_result).customer_id == customer.pk
     assert customer.is_archived
+
+
+def test_archive_racing_customer_edit_rejects_a_late_update(archive_race_scene):
+    operator, _second, customer = archive_race_scene
+    barrier = Barrier(2)
+
+    def archive():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+            archive_customer(customer_id=customer.pk, by=operator, reason="Архивировать")
+        finally:
+            close_old_connections()
+
+    def edit():
+        close_old_connections()
+        try:
+            form = CustomerForm(
+                {"name": "Новое имя"}, instance=Customer.objects.get(pk=customer.pk)
+            )
+            assert form.is_valid(), form.errors
+            barrier.wait(timeout=5)
+            try:
+                update_active_customer(form, customer_id=customer.pk)
+            except CustomerArchiveError:
+                return "refused"
+            return "edited"
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        archive_future = pool.submit(archive)
+        edit_future = pool.submit(edit)
+        archive_future.result()
+        edit_result = edit_future.result()
+
+    customer.refresh_from_db()
+    assert customer.is_archived
+    assert customer.lifecycle_events.count() == 1
+    assert customer.name == (
+        "Клиент для гонки архивации" if edit_result == "refused" else "Новое имя"
+    )
