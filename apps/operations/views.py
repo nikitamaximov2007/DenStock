@@ -10,6 +10,7 @@ Layer 30: добавлено аварийное веб-восстановлен�
 пользователей web-restore по-прежнему отсутствует.
 """
 import json
+from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib import messages
@@ -18,6 +19,7 @@ from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import FileResponse, Http404, JsonResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
@@ -140,14 +142,30 @@ def _list_runs() -> list:
     return [_run_info(p) for p in runs]
 
 
+# The offsite timer runs daily; a status older than this is not evidence of a
+# recent copy (a killed or never-started run leaves the old file in place).
+OFFSITE_STATUS_MAX_AGE = timedelta(hours=26)
+
+
 def _offsite_status():
     path = backup.backup_root() / "offsite_status.json"
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        status = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {"error": "status-файл повреждён"}
+    if not isinstance(status, dict):
+        return {"error": "status-файл повреждён"}
+    try:
+        checked = datetime.fromisoformat(str(status.get("checked_at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        checked = None
+    if checked is None or checked.tzinfo is None:
+        status["stale"] = True
+    else:
+        status["stale"] = timezone.now() - checked > OFFSITE_STATUS_MAX_AGE
+    return status
 
 
 @login_required

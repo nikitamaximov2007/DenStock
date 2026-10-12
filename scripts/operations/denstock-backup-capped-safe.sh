@@ -26,6 +26,7 @@ fi
 
 RUN_ID=""
 RUN_PATH=""
+TERMINAL_STATUS_WRITTEN=0
 status() {
     local state="$1" message="$2" uploaded="${3:-}" exit_code="${4:-0}"
     STATUS_PATH="$BACKUP_STATUS_FILE" STATE="$state" MESSAGE="$message" \
@@ -55,6 +56,9 @@ temporary = path.with_suffix(path.suffix + ".tmp")
 temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
 temporary.replace(path)
 PY
+    if [[ "$state" != running ]]; then
+        TERMINAL_STATUS_WRITTEN=1
+    fi
 }
 fail() {
     status failed "$1" "" 1
@@ -90,6 +94,21 @@ print(sum(p.stat().st_size for p in Path(os.environ["RUN_PATH_VALUE"]).rglob("*"
           if p.is_file()))
 PY
 }
+
+# A run killed by a signal (systemd stop, reboot) or by an unexpected error
+# must not leave yesterday's "ok" in the status file.
+on_exit() {
+    local code=$?
+    if [[ "$TERMINAL_STATUS_WRITTEN" != 1 ]]; then
+        status failed "Запуск прерван до завершения; новая копия не подтверждена" "" \
+            "$(( code == 0 ? 1 : code ))" || true
+    fi
+}
+trap on_exit EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+status running "Создание и выгрузка копии выполняются" "" 0 ||
+    echo "[denstock-backup] status-файл недоступен; продолжаю без него" >&2
 
 BACKUP_OUTPUT="$(docker compose exec -T "$BACKUP_WEB_SERVICE" \
     python manage.py backup_all --trigger automatic --keep-last "$BACKUP_KEEP_LAST")" ||
@@ -131,6 +150,12 @@ DEST="$BACKUP_OFFSITE_TARGET/$RUN_ID"
 rclone copy "$RUN_PATH" "$DEST" || fail "Upload не завершён; старые копии сохранены"
 rclone check --download "$RUN_PATH" "$DEST" ||
     fail "Read-back новой копии не совпал; старые копии сохранены"
+# The read-back proves remote == local bytes. Re-verify the local signature and
+# hashes now, so the remote copy is equal to bytes that still verify, not to a
+# local copy that changed after the first verification.
+docker compose exec -T "$BACKUP_WEB_SERVICE" \
+    python manage.py verify_backup "$RUN_ID" >/dev/null ||
+    fail "Локальная копия изменилась после первой проверки; ротация не выполнялась"
 AFTER_RUNS="$(remote_runs)" || fail "После upload список удалённых поколений недоступен"
 if ! printf '%s\n' "$AFTER_RUNS" | grep -Fxq "$RUN_ID"; then
     fail "Новое поколение не видно в удалённом списке"

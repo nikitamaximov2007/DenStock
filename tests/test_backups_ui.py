@@ -300,14 +300,65 @@ def _write_offsite(root, data):
     (Path(root) / "offsite_status.json").write_text(json.dumps(data), encoding="utf-8")
 
 
+def _hours_ago(hours):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    return (timezone.now() - timedelta(hours=hours)).isoformat()
+
+
 def test_offsite_status_ok(make_user, client, backups_root):
     _write_offsite(backups_root, {
-        "status": "ok", "checked_at": "2026-07-02T03:00:00Z", "target": "remote:denstock-backups",
+        "status": "ok", "checked_at": _hours_ago(3), "target": "remote:denstock-backups",
     })
     _admin(make_user, client)
     html = client.get(reverse("operations:backups")).content.decode()
     assert "отправлено" in html
     assert "remote:denstock-backups" in html
+
+
+def test_offsite_status_ok_older_than_a_day_is_shown_as_stale(make_user, client, backups_root):
+    # A killed or never-started daily run leaves the previous "ok" in place.
+    _write_offsite(backups_root, {
+        "status": "ok", "checked_at": "2026-07-02T03:00:00Z", "target": "remote:denstock-backups",
+    })
+    _admin(make_user, client)
+    html = client.get(reverse("operations:backups")).content.decode()
+    assert "устарела" in html
+    assert "Offsite: отправлено" not in html
+
+
+def test_offsite_status_without_timestamp_is_not_shown_as_fresh(make_user, client, backups_root):
+    _write_offsite(backups_root, {"status": "ok"})
+    _admin(make_user, client)
+    html = client.get(reverse("operations:backups")).content.decode()
+    assert "устарела" in html
+
+
+def test_offsite_status_degraded_is_not_shown_as_not_configured(make_user, client, backups_root):
+    _write_offsite(backups_root, {
+        "status": "degraded", "checked_at": _hours_ago(1),
+        "message": "Новая копия проверена; предыдущая не подтверждена, ротация остановлена",
+    })
+    _admin(make_user, client)
+    html = client.get(reverse("operations:backups")).content.decode()
+    assert "ротация остановлена" in html
+    assert "не настроено" not in html
+
+
+def test_offsite_status_running_and_stuck_running(make_user, client, backups_root):
+    _admin(make_user, client)
+    _write_offsite(backups_root, {"status": "running", "checked_at": _hours_ago(0)})
+    assert "копия создаётся" in client.get(reverse("operations:backups")).content.decode()
+    _write_offsite(backups_root, {"status": "running", "checked_at": _hours_ago(30)})
+    assert "запуск не завершился" in client.get(reverse("operations:backups")).content.decode()
+
+
+def test_offsite_status_non_object_json_is_reported_as_damaged(make_user, client, backups_root):
+    (Path(backups_root) / "offsite_status.json").write_text("[]", encoding="utf-8")
+    _admin(make_user, client)
+    assert "повреждён" in client.get(reverse("operations:backups")).content.decode()
 
 
 def test_offsite_status_failed_does_not_break(make_user, client, backups_root):

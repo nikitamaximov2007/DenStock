@@ -56,6 +56,17 @@
         <p class="status-card__meta">{{ offsite.error }}</p>
       </div>
     </div>
+  {% elif offsite.status == "ok" and offsite.stale %}
+    <div class="status-card status-card--danger">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite: последняя проверка устарела</p>
+        <p class="status-card__meta">
+          {% if offsite.checked_at %}Проверено {{ offsite.checked_at|ru_dts }}.{% endif %}
+          Ежедневный запуск не отчитался больше суток: проверьте таймер и журнал на сервере.
+        </p>
+      </div>
+    </div>
   {% elif offsite.status == "ok" %}
     <div class="status-card status-card--ok">
       <span class="status-card__dot"></span>
@@ -65,6 +76,24 @@
           {% if offsite.checked_at %}Проверено {{ offsite.checked_at|ru_dts }}{% endif %}
           {% if offsite.target %}· {{ offsite.target }}{% endif %}
         </p>
+      </div>
+    </div>
+  {% elif offsite.status == "degraded" %}
+    <div class="status-card status-card--danger">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">Offsite: копия отправлена, ротация остановлена</p>
+        <p class="status-card__meta">{{ offsite.message|default:"Новая копия проверена, старые не удалялись. Нужна проверка на сервере." }}</p>
+      </div>
+    </div>
+  {% elif offsite.status == "running" %}
+    <div class="status-card {% if offsite.stale %}status-card--danger{% else %}status-card--muted{% endif %}">
+      <span class="status-card__dot"></span>
+      <div class="status-card__body">
+        <p class="status-card__title">
+          {% if offsite.stale %}Offsite: запуск не завершился{% else %}Offsite: копия создаётся{% endif %}
+        </p>
+        <p class="status-card__meta">{% if offsite.checked_at %}Начато {{ offsite.checked_at|ru_dts }}{% endif %}</p>
       </div>
     </div>
   {% elif offsite.status == "failed" %}
