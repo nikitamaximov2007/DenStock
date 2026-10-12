@@ -332,6 +332,13 @@ replacement.input.dispatch("input", { inputType: "insertText" });
 const filtered = replacement.select.options.map((option) => option.hidden);
 replacement.input.value = "клиент через меню";
 replacement.input.dispatch("keydown", { key: "Enter" });
+// Back and forward each replace #content and emit the same navigation event.
+const backPage = page(); current = [backPage.input];
+document.fire("denstock:page-loaded", { detail: { root: backPage.root } });
+const backShown = backPage.list.children.map((option) => option.value);
+const forwardPage = page(); current = [forwardPage.input];
+document.fire("denstock:page-loaded", { detail: { root: forwardPage.root } });
+const forwardShown = forwardPage.list.children.map((option) => option.value);
 const deniedInput = element({ list: "history", "data-customer-filter": "select",
   "data-customer-filter-history": "7" });
 const deniedList = element({});
@@ -358,6 +365,10 @@ process.stdout.write(JSON.stringify({
   replacementBound: (replacement.input.handlers.keydown || []).length,
   filtered,
   stored: JSON.parse(store["denstock:customer-filter-history:7"] || "[]"),
+  backBound: (backPage.input.handlers.keydown || []).length,
+  forwardBound: (forwardPage.input.handlers.keydown || []).length,
+  backShown,
+  forwardShown,
   deniedBound: (deniedInput.handlers.keydown || []).length,
   deniedFiltered: deniedSelect.options.map((option) => option.hidden),
 }));
@@ -375,6 +386,10 @@ process.stdout.write(JSON.stringify({
         "replacementBound": 1,
         "filtered": [False, True, False],
         "stored": ["клиент через меню"],
+        "backBound": 1,
+        "forwardBound": 1,
+        "backShown": ["клиент через меню"],
+        "forwardShown": ["клиент через меню"],
         "deniedBound": 1,
         "deniedFiltered": [False, True, False],
     }
