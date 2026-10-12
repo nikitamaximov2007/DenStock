@@ -144,6 +144,7 @@ with tarfile.open(src, "w") as out:
         out.addfile(m, io.BytesIO(data) if data is not None else None)
 PY
         ;;
+    wrong_identity) ;;  # applied in KIT_MODE below
     *) echo "unknown DRILL_FAULT" >&2; exit 2 ;;
 esac
 [[ -n "${DRILL_FAULT:-}" ]] && echo "[drill] injected fault: $DRILL_FAULT"
@@ -153,8 +154,38 @@ echo "[drill] destroy synthetic production (VPS and Yandex lost)"
 "$HERE/cleanup_dr.sh" "$SRC" >/dev/null
 
 # --- 3. recovery on new resources, from the captured files only -------------------
-"$HERE/offline_restore.sh" --project "$DST" --source "$SOURCE" --run "$WORK/run" \
-    --private-archive "$WORK/private.tar" --private-inventory "$WORK/private-inventory.json" \
-    --env-dir "$WORK/env" --pubkey "$WORK/signing.pub.pem" --port "$PORT" --mode test \
-    --report "${DR_REPORT:-$WORK/report.json}"
+if [[ "${KIT_MODE:-0}" == 1 ]]; then
+    # Pack everything exactly like the real kit, encrypted to a synthetic age
+    # identity, and recover only through prepare_kit_restore.sh.
+    KIT="$WORK/kit"; mkdir -m 700 "$KIT"
+    age-keygen -o "$WORK/test-identity.txt" 2>/dev/null
+    RCPT="$(age-keygen -y "$WORK/test-identity.txt")"
+    tar -C "$WORK" -cf - -s "#^run#$RUN_ID#" run | age -r "$RCPT" -o "$KIT/$RUN_ID.signed-backup.tar.age"
+    age -r "$RCPT" -o "$KIT/private_media.drill.tar.age" "$WORK/private.tar"
+    age -r "$RCPT" -o "$KIT/private_media.drill.tar.age.inventory.age" "$WORK/private-inventory.json"
+    mkdir -p "$WORK/sec/opt/denstock" "$WORK/sec/etc/denstock/manifest-signing"
+    cp "$WORK/env/web.env" "$WORK/sec/opt/denstock/.env"
+    cp "$WORK/env/public.env" "$WORK/sec/opt/denstock/.env.public"
+    cp "$WORK/signing.pub.pem" "$WORK/sec/etc/denstock/manifest-signing/production-ed25519.pub"
+    tar -C "$WORK/sec" -cf - opt etc | age -r "$RCPT" -o "$KIT/production-secrets-drill.tar.age"
+    git -C "$SOURCE" bundle create "$WORK/src.bundle" HEAD 2>/dev/null
+    age -r "$RCPT" -o "$KIT/source-code.drill.bundle.age" "$WORK/src.bundle"
+    rm -rf "$WORK/sec" "$WORK/src.bundle"
+    if [[ "${DRILL_FAULT:-}" == wrong_identity ]]; then
+        age-keygen -o "$WORK/test-identity.txt.other" 2>/dev/null
+        mv "$WORK/test-identity.txt.other" "$WORK/test-identity.txt"
+    fi
+    "$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$WORK/test-identity.txt" \
+        --work "$WORK/prepared" --plain-identity
+    "$HERE/offline_restore.sh" --project "$DST" --source "$WORK/prepared/source" \
+        --run "$WORK/prepared/run" --private-archive "$WORK/prepared/private.tar" \
+        --private-inventory "$WORK/prepared/private-inventory.json" \
+        --env-dir "$WORK/prepared/env" --pubkey "$WORK/prepared/pinned-public.pem" \
+        --port "$PORT" --mode test --report "${DR_REPORT:-$WORK/report.json}"
+else
+    "$HERE/offline_restore.sh" --project "$DST" --source "$SOURCE" --run "$WORK/run" \
+        --private-archive "$WORK/private.tar" --private-inventory "$WORK/private-inventory.json" \
+        --env-dir "$WORK/env" --pubkey "$WORK/signing.pub.pem" --port "$PORT" --mode test \
+        --report "${DR_REPORT:-$WORK/report.json}"
+fi
 if [[ -n "${DR_REPORT:-}" ]]; then echo "[drill] report: $DR_REPORT"; fi
