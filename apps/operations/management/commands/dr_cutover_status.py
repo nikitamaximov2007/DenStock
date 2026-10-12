@@ -21,7 +21,9 @@ class Command(DRCommand):
         if options["json"]:
             self.write_json(report)
         else:
-            for key in ("stage_state", "cutover_state", "cutover_id", "reality", "lock_holder"):
+            keys = ("stage_state", "cutover_state", "cutover_id", "reality", "slots",
+                    "reality_detail", "lock_holder")
+            for key in keys:
                 if key in report:
                     self.stdout.write(f"{key}: {report[key]}")
             for problem in report["problems"]:

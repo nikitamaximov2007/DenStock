@@ -947,6 +947,16 @@ def cutover_status(stage_journal=None, *, settings_dict=None) -> dict:
                     with guard_bypass():
                         reality = probe(plan, s)
                     report["reality"] = _states(reality)
+                    report["reality_detail"] = reality
+                    report["slots"] = {
+                        slot: {
+                            key: plan[slot][key]
+                            for key in ("live", "staged", "old", "live_oid", "staged_oid",
+                                        "live_ino", "staged_ino")
+                            if key in plan[slot]
+                        }
+                        for slot in SLOTS
+                    }
                     values = set(report["reality"].values())
                     if state in OLD_GENERATION_STATES and not values <= {"old", "old-no-stage"}:
                         report["problems"].append("журнал и хранилища расходятся")
