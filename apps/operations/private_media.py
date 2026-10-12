@@ -216,6 +216,12 @@ def create_archive(root, dest_dir) -> tuple[Path, Inventory]:
             raise
         except (OSError, tarfile.TarError) as exc:
             partial.unlink(missing_ok=True)
+            # A bot that rewrites a file shorter after tar recorded its size makes
+            # tarfile fail with "unexpected end of data".  That is a concurrent
+            # change, not a broken volume: take a fresh snapshot.  A full disk or
+            # an unreadable file leaves the tree as it was and stays an error.
+            if inspect_tree(root, require_present=True) != before:
+                continue
             raise PrivateMediaError(f"Не удалось заархивировать private_media: {exc}") from exc
         after = inspect_tree(root, require_present=True)
         if before == after == packed:
