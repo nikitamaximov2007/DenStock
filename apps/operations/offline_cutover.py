@@ -82,6 +82,7 @@ from .offline_restore import (
 from .private_media import Inventory, PrivateMediaError, inspect_tree
 
 COMMIT_PHRASE = "ЗАФИКСИРОВАТЬ-DR"
+RETIRE_PHRASE = "СНЯТЬ-МЕТКУ-DR"
 SLOTS = ("database", "media", "private_media")
 FILE_SLOTS = ("media", "private_media")
 SETTING_FOR_SLOT = {"media": "MEDIA_ROOT", "private_media": "PRIVATE_MEDIA_ROOT"}
@@ -120,11 +121,13 @@ CUTOVER_STATES = {
     "rolled_back": "ROLLED_BACK",
     "committing": "COMMITTING",
     "committed": "COMMITTED",
+    "retiring": "RETIRING",
+    "retired": "RETIRED",
     "recovery_required": "RECOVERY_REQUIRED",
 }
 # States in which the configured runtime may serve, and the reality each needs.
 OLD_GENERATION_STATES = frozenset({None, "VALIDATED", "WRITERS_QUIESCED", "ROLLED_BACK"})
-NEW_GENERATION_STATES = frozenset({"POST_CUTOVER_VERIFIED", "COMMITTED"})
+NEW_GENERATION_STATES = frozenset({"POST_CUTOVER_VERIFIED", "COMMITTED", "RETIRED"})
 
 
 class CutoverError(StageRestoreError):
@@ -801,8 +804,10 @@ def recover_cutover(stage_journal, *, writers_stopped: bool, rollback: bool = Fa
                     "reason": "переключение по этому staging не начиналось"}
         rows = _read(path)
         state = cutover_state(rows)
-        if state in ("COMMITTED", "ROLLED_BACK"):
+        if state in ("COMMITTED", "RETIRED", "ROLLED_BACK"):
             return {"action": "none", "state": state, "reason": "переключение уже завершено"}
+        if state == "RETIRING":
+            raise CutoverError("Снятие метки прервано: повторите dr_cutover_retire.")
         if state == "RECOVERY_REQUIRED":
             raise CutoverError(
                 "Журнал требует ручного восстановления (RECOVERY_REQUIRED): автоматически "
@@ -912,6 +917,52 @@ def commit_cutover(stage_journal, *, post_backup, confirm: str, settings_dict=No
         journal.record("committed", post_backup_run_id=post["backup_run_id"], retained=retained)
     return {"action": "committed", "state": "COMMITTED", "retained": retained,
             "post_backup_run_id": post["backup_run_id"]}
+
+
+def retire_cutover(stage_journal, *, confirm: str, settings_dict=None) -> dict:
+    """COMMITTED -> RETIRED: remove the generation marker from the live database.
+
+    While the marker stays, every process checks that MEDIA_ROOT and
+    PRIVATE_MEDIA_ROOT are the exact directories (inodes) of the committed
+    generation.  That is right right after a cutover, but it would also refuse
+    a later, legitimate move of the volumes (new server, volume migration) with
+    no way out.  Retiring is an explicit operator step once the generation is
+    committed and backed up; the old database keeps its ``superseded`` marker,
+    so it can still never be served by mistake.
+    """
+    if confirm != RETIRE_PHRASE:
+        raise CutoverError(f"Для снятия метки укажите --confirm {RETIRE_PHRASE}")
+    s = dict(settings_dict or connection.settings_dict)
+    with dr_operation_lock(s), guard_bypass():
+        path, rows, state = _locked_journal(stage_journal)
+        if state not in ("COMMITTED", "RETIRING"):
+            raise CutoverError(f"Снять метку можно только после фиксации, сейчас {state}.")
+        plan = _plan(rows)
+        states = _states(probe(plan, s))
+        if any(value != "new" for value in states.values()):
+            raise CutoverError(f"Хранилища не в новом поколении ({states}): метку не снимаю.")
+        live = plan["database"]["live"]
+        marker = parse_marker(_database_comment(s, live))
+        if state == "COMMITTED" or marker is not None:
+            if not marker or marker.get("cutover_id") != plan["cutover_id"] or marker.get(
+                "state"
+            ) != "committed":
+                raise CutoverError(
+                    "Метка рабочей базы не соответствует зафиксированному поколению."
+                )
+            problems = marker_problems(marker)
+            if problems:
+                raise CutoverError(
+                    "Этот процесс видит другие каталоги, чем у поколения: " + " ".join(problems)
+                )
+        journal = ExistingJournal(path)
+        if state != "RETIRING":
+            journal.record("retiring", database=live)
+        fault_point("retire:after_journal")
+        with _admin(s) as admin:
+            admin.execute(_comment_statement(live, None))
+        journal.record("retired", database=live)
+    return {"action": "retired", "state": "RETIRED", "database": live}
 
 
 def cutover_status(stage_journal=None, *, settings_dict=None) -> dict:

@@ -527,6 +527,43 @@ def test_20_successful_final_recovery_commit_and_idempotent_reruns(case):
     assert_new_generation_serves(live, state="committed")
 
 
+def test_21_retire_marker_after_commit_survives_crash_and_volume_move(case):
+    live, run = case
+    stage_journal, cutover = staged_and_prepared(live, run)
+    assert execute(live, stage_journal).returncode == 0
+    retire = ("dr_cutover_retire", str(stage_journal), "--confirm")
+    early = live.manage(*retire, "СНЯТЬ-МЕТКУ-DR")
+    assert early.returncode == 1 and "после фиксации" in early.output
+    post = _post_backup(live)
+    assert live.manage("dr_cutover_commit", str(stage_journal), "--post-backup", str(post),
+                       "--confirm", "ЗАФИКСИРОВАТЬ-DR").returncode == 0
+    plan = next(r for r in read_journal(cutover) if r["stage"] == "preparing")["plan"]
+
+    assert live.manage(*retire, "нет").returncode == 1
+    killed = live.manage(*retire, "СНЯТЬ-МЕТКУ-DR", fault="retire:after_journal")
+    assert killed.returncode == -9
+    assert stages(cutover)[-1] == "retiring"
+    assert comment(CLUSTER, live.live_db)["state"] == "committed"  # nothing changed yet
+    assert "повторите dr_cutover_retire" in recover(live, stage_journal).output
+
+    result = live.manage(*retire, "СНЯТЬ-МЕТКУ-DR")
+    assert result.returncode == 0 and "RETIRED" in result.output, result.output
+    assert comment(CLUSTER, live.live_db) is None
+    assert comment(CLUSTER, plan["database"]["old"])["state"] == "superseded"
+    code, report = status(live, stage_journal)
+    assert code == 0 and report["cutover_state"] == "RETIRED" and report["safe_to_serve"]
+    assert "уже завершено" in recover(live, stage_journal).output
+    assert live.manage(*retire, "СНЯТЬ-МЕТКУ-DR").returncode == 1  # not twice
+
+    # A later legitimate volume move (same content, new directory) no longer
+    # blocks startup, which a committed marker would (see 18b).
+    moved = live.media.with_name(live.media.name + "-moved-away")
+    live.media.rename(moved)
+    shutil.copytree(moved, live.media)
+    code, data, output = probe_app(live)
+    assert code == 0 and data["photo_ok"] and data["first_name"] == "BACKUP-GENERATION", output
+
+
 def test_end_to_end_cutover_then_writes_reopen(case):
     live, run = case
     stage_journal, cutover = staged_and_prepared(live, run)

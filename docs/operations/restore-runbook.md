@@ -111,6 +111,7 @@ SOURCE_VERIFIED -> STAGED                        dr_stage_restore
 -> VALIDATED -> WRITERS_QUIESCED -> CUTOVER_PREPARED    dr_cutover_prepare
 -> CUTOVER -> POST_CUTOVER_VERIFIED                     dr_cutover_execute
 -> COMMITTED                                            dr_cutover_commit
+-> RETIRED                                              dr_cutover_retire
 ROLLED_BACK, RECOVERY_REQUIRED                          dr_cutover_recover
 ```
 
@@ -214,6 +215,20 @@ ROLLED_BACK, RECOVERY_REQUIRED                          dr_cutover_recover
 10. Старое поколение (`<база>_dro_<id>`, `<каталог>.dr-old-<id>`) удалять
     вручную и только после того, как POST-бэкап проверен и выгружен
     offsite. Инструмента удаления старого поколения нет сознательно.
+11. Снятие метки поколения (RETIRED), когда POST-бэкап выгружен offsite:
+
+    ```bash
+    python manage.py dr_cutover_retire /srv/dr/stage-20261011.journal \
+      --confirm СНЯТЬ-МЕТКУ-DR
+    ```
+
+    Пока метка стоит, каждый процесс сверяет inode MEDIA_ROOT и
+    PRIVATE_MEDIA_ROOT с каталогами поколения. Это защищает сразу после
+    переключения, но заблокирует запуск при любом будущем переносе томов
+    (новый сервер, пересоздание тома). Команда снимает метку только с
+    рабочей базы, только после COMMITTED, только если хранилища в новом
+    поколении и этот процесс видит именно его каталоги. Старая база
+    сохраняет метку `superseded` и по-прежнему не обслуживается.
 
 После сбоя (SIGKILL, перезагрузка, ошибка диска):
 
@@ -234,6 +249,7 @@ python manage.py dr_cutover_recover /srv/dr/stage-20261011.journal --writers-sto
   путям старые каталоги, затем снять метку `COMMENT ON DATABASE <имя> IS
   NULL` только со старой базы. Документировать каждое действие.
 - Прерванная фиксация (COMMITTING): повторить `dr_cutover_commit`.
+- Прерванное снятие метки (RETIRING): повторить `dr_cutover_retire`.
 - `dr_stage_discard` запрещён, пока переключение не откатено.
 - Повторный запуск execute, recover, commit, prepare после завершения
   ничего не меняет (проверено).
