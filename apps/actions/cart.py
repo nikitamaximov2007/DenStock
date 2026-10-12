@@ -27,6 +27,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from apps.customers.models import Customer
+from apps.customers.services import CustomerArchiveError, require_active_customer
 from apps.inventory.models import StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.procurement.models import money
@@ -428,6 +429,10 @@ def complete_cart(
         # сервисный контракт Sale/Repair.
         if not isinstance(customer, Customer):
             customer = Customer.objects.get(pk=customer)
+        try:
+            customer = require_active_customer(customer)
+        except CustomerArchiveError as exc:
+            raise ActionError(str(exc)) from exc
         customer_comment = customer.name
     if not customer_comment:
         raise ActionError("Выберите карточку клиента.")

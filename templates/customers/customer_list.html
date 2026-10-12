@@ -5,13 +5,19 @@
     <h1 class="page-title">Клиенты</h1>
     {% if can_edit %}
       <div class="page-actions">
+        {% if show_archived %}
+          <a class="btn btn--secondary" href="{% url 'customer_list' %}">Активные клиенты</a>
+        {% else %}
+          <a class="btn btn--secondary"
+             href="{% url 'customer_list' %}?archived=1">Архив клиентов</a>
+        {% endif %}
         <a class="btn btn--primary" href="{% url 'customer_create' %}">Новый клиент</a>
       </div>
     {% endif %}
   </div>
   <form method="get" class="filter-toolbar filter-toolbar--compact">
     <label>
-      Имя или телефон
+      {% if show_archived %}Имя или телефон в архиве{% else %}Имя или телефон{% endif %}
       <input name="q"
              type="search"
              value="{{ q }}"
@@ -24,7 +30,7 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Имя</th>
+          <th>{% if show_archived %}Архивный клиент{% else %}Имя{% endif %}</th>
           <th>Телефон</th>
         </tr>
       </thead>
@@ -33,6 +39,7 @@
           <tr>
             <td>
               <a href="{% url 'customer_detail' customer.pk %}">{{ customer.name }}</a>
+              {% if customer.is_archived %}<span class="pill pill--warning">в архиве</span>{% endif %}
             </td>
             {% comment %}
               Описание клиента - заметка для карточки, а не для списка: в общем

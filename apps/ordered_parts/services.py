@@ -19,7 +19,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Q
 
-from apps.catalog.models import normalize_number
+from apps.catalog.models import PartType, normalize_number
 from apps.catalog_import.origin import AFTERMARKET_CATALOG, aftermarket_part_ids
 from apps.core.part_lookup import (
     clean_lookup_value,
@@ -27,6 +27,7 @@ from apps.core.part_lookup import (
     part_not_found_message,
     resolve_part_lookup,
 )
+from apps.customers.services import require_active_customer
 
 from .models import OrderedPart
 
@@ -232,8 +233,6 @@ def _ensure_ordered_part_card(candidate, *, by=None):
 
 def resolve_ordered_part_by_id(part_id):
     """Деталь, выбранная оператором из списка неоднозначного артикула."""
-    from apps.catalog.models import PartType
-
     part = PartType.objects.filter(pk=part_id).first()
     if part is None:
         raise OrderedPartError("Деталь не найдена.")
@@ -293,6 +292,10 @@ def create_ordered_part(*, candidate, customer, prepayment, by=None) -> OrderedP
     """
     if customer is None:
         raise OrderedPartError("Выберите клиента.")
+    try:
+        customer = require_active_customer(customer)
+    except ValueError as exc:
+        raise OrderedPartError(str(exc)) from exc
     if candidate is None:
         raise OrderedPartError("Выберите деталь по артикулу.")
     part = _ensure_ordered_part_card(candidate, by=by)
@@ -321,6 +324,10 @@ def update_ordered_part(order: OrderedPart, *, customer, prepayment, by=None) ->
     """
     if customer is None:
         raise OrderedPartError("Выберите клиента.")
+    try:
+        customer = require_active_customer(customer)
+    except ValueError as exc:
+        raise OrderedPartError(str(exc)) from exc
     order.customer = customer
     order.prepayment_rub = parse_prepayment(prepayment)
     order.updated_by = by

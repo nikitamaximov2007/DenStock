@@ -11,7 +11,12 @@ from django.utils import timezone
 
 from apps.core.phones import looks_like_phone, normalize_phone
 
-from .models import Customer, CustomerCreateIdempotency, CustomerPeriodPaymentAcknowledgement
+from .models import (
+    Customer,
+    CustomerCreateIdempotency,
+    CustomerLifecycleEvent,
+    CustomerPeriodPaymentAcknowledgement,
+)
 
 SEARCH_LIMIT = 50
 # Пол для клиентов без завершённых документов. Значение самой ранней возможной
@@ -22,6 +27,69 @@ _NO_ACTIVITY = datetime.datetime(1, 1, 1, tzinfo=datetime.UTC)
 
 class CustomerCreateIdempotencyError(RuntimeError):
     """A reserved create token has no completed customer to return."""
+
+
+class CustomerArchiveError(ValueError):
+    """The requested customer archive transition is not valid."""
+
+
+def require_active_customer(customer):
+    """Lock and return an active card before starting a new customer operation."""
+    if customer is None:
+        return None
+    customer_id = getattr(customer, "pk", customer)
+    try:
+        return Customer.objects.select_for_update().get(pk=customer_id, archived_at__isnull=True)
+    except Customer.DoesNotExist as exc:
+        if Customer.objects.filter(pk=customer_id, archived_at__isnull=False).exists():
+            raise CustomerArchiveError("Карточка клиента находится в архиве.") from exc
+        raise CustomerArchiveError("Карточка клиента не найдена.") from exc
+
+
+@transaction.atomic
+def archive_customer(*, customer_id, by, reason: str) -> Customer:
+    reason = (reason or "").strip()
+    if by is None:
+        raise CustomerArchiveError("Не удалось определить сотрудника.")
+    if not reason:
+        raise CustomerArchiveError("Укажите причину архивации клиента.")
+    customer = Customer.objects.select_for_update().get(pk=customer_id)
+    if customer.is_archived:
+        raise CustomerArchiveError("Клиент уже находится в архиве.")
+    customer.archived_at = timezone.now()
+    customer.archived_by = by
+    customer.save(update_fields=["archived_at", "archived_by", "updated_at"])
+    CustomerLifecycleEvent.objects.create(
+        customer=customer,
+        actor=by,
+        previous_status=CustomerLifecycleEvent.Status.ACTIVE,
+        resulting_status=CustomerLifecycleEvent.Status.ARCHIVED,
+        reason=reason[:1000],
+    )
+    return customer
+
+
+@transaction.atomic
+def restore_customer(*, customer_id, by, reason: str) -> Customer:
+    reason = (reason or "").strip()
+    if by is None:
+        raise CustomerArchiveError("Не удалось определить сотрудника.")
+    if not reason:
+        raise CustomerArchiveError("Укажите причину восстановления клиента.")
+    customer = Customer.objects.select_for_update().get(pk=customer_id)
+    if not customer.is_archived:
+        raise CustomerArchiveError("Клиент уже активен.")
+    customer.archived_at = None
+    customer.archived_by = None
+    customer.save(update_fields=["archived_at", "archived_by", "updated_at"])
+    CustomerLifecycleEvent.objects.create(
+        customer=customer,
+        actor=by,
+        previous_status=CustomerLifecycleEvent.Status.ARCHIVED,
+        resulting_status=CustomerLifecycleEvent.Status.ACTIVE,
+        reason=reason[:1000],
+    )
+    return customer
 
 
 def create_customer_idempotently(form, *, token):
@@ -47,10 +115,12 @@ def create_customer_idempotently(form, *, token):
         return customer, True
 
 
-def search_customers(query: str, *, limit: int = SEARCH_LIMIT):
+def search_customers(query: str, *, limit: int = SEARCH_LIMIT, include_archived=False):
     """Клиенты по имени (подстрока) или телефону в любом привычном формате."""
     query = (query or "").strip()
     queryset = Customer.objects.all()
+    if not include_archived:
+        queryset = queryset.filter(archived_at__isnull=True)
     if not query:
         return queryset[:limit]
     condition = Q(name__icontains=query)
@@ -61,7 +131,7 @@ def search_customers(query: str, *, limit: int = SEARCH_LIMIT):
     return queryset.filter(condition)[:limit]
 
 
-def customers_by_recent_activity(*, limit: int | None = SEARCH_LIMIT):
+def customers_by_recent_activity(*, limit: int | None = SEARCH_LIMIT, include_archived=False):
     """Клиенты по свежести последнего ЗАВЕРШЁННОГО документа, свежие - первыми.
 
     Сотрудник почти всегда оформляет документ на того, кто уже приходил, и
@@ -90,8 +160,11 @@ def customers_by_recent_activity(*, limit: int | None = SEARCH_LIMIT):
         .values("completed_at")[:1]
     )
     floor = Value(_NO_ACTIVITY, output_field=DateTimeField())
+    customers = Customer.objects.all()
+    if not include_archived:
+        customers = customers.filter(archived_at__isnull=True)
     ordered = (
-        Customer.objects.annotate(
+        customers.annotate(
             last_sale_at=Subquery(last_sale, output_field=DateTimeField()),
             last_repair_at=Subquery(last_repair, output_field=DateTimeField()),
         )
