@@ -125,11 +125,28 @@ def _run_info(run_dir) -> dict:
         "run_id": run_dir.name,
         "files": files,
         "has_manifest": manifest is not None,
+        "private_media_state": _private_media_state(manifest),
         "manifest": manifest or {},
         "manifest_error": manifest_error,
         "type_label": _type_label(manifest),
         "type_pill": _type_pill(manifest),
     }
+
+
+def _private_media_state(manifest) -> str | None:
+    """What the manifest says about private files, for the operator's list.
+
+    "included": the copy carries private_media.tar.gz (maybe 0 files);
+    "absent": the directory did not exist when the copy was made;
+    "legacy": the copy predates private_media backups.
+    The list only displays this; verify_backup is what checks the archive.
+    """
+    if manifest is None:
+        return None
+    status = manifest.get("private_media_status")
+    if status is None:
+        return "legacy"
+    return status if status in {"included", "absent"} else "unknown"
 
 
 def _list_runs() -> list:

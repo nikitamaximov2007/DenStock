@@ -102,6 +102,11 @@
             <td>
               <span class="code-pill">{{ r.run_id }}</span>
               {% if not r.has_manifest %}<span class="pill pill--warning">без manifest</span>{% endif %}
+              {% if r.private_media_state == "legacy" or r.private_media_state == "absent" %}
+                <span class="pill pill--warning">без приватных файлов</span>
+              {% elif r.private_media_state == "unknown" %}
+                <span class="pill pill--danger">приватные файлы: неизвестный статус</span>
+              {% endif %}
             </td>
             <td>
               <span class="pill {{ r.type_pill }}">{{ r.type_label }}</span>
@@ -163,8 +168,8 @@
       <div class="status-card__body">
         <p class="status-card__title">Опасная зона: восстановление перезапишет текущие данные</p>
         <p class="status-card__meta">
-          Восстановление заменит текущую базу и файлы media содержимым выбранного
-          бэкапа. Перед запуском система обязательно создаст pre-restore бэкап
+          Восстановление заменит текущую базу, файлы media и приватные файлы
+          (если они есть в копии) содержимым выбранного бэкапа. Перед запуском система обязательно создаст pre-restore бэкап
           текущего состояния. Раздел виден только владельцу из allowlist;
           запуск требует проверки бэкапа и фразы {{ "ПОДТВЕРЖДАЮ" }}.
         </p>
@@ -181,6 +186,7 @@
             <th>Manifest</th>
             <th>БД</th>
             <th>Media</th>
+            <th>Приватные</th>
             <th></th>
           </tr>
         </thead>
@@ -221,6 +227,13 @@
                   <span class="pill pill--success">есть</span>
                 {% else %}
                   <span class="pill pill--muted">нет</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.has_private_media %}
+                  <span class="pill pill--success">есть</span>
+                {% else %}
+                  <span class="pill pill--warning">нет</span>
                 {% endif %}
               </td>
               <td class="table__actions">
