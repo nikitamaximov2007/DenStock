@@ -2,9 +2,9 @@
 
 ``deploy/caddy/Caddyfile.production.pre-max`` is a byte copy of the Caddyfile
 production serves today (read-only preflight, sha256 below). The candidate
-``Caddyfile.production`` must differ from it only inside the pro-brp.ru block,
-by the MAX webhook route. ``scripts/qualification/max_edge_check.py`` proves
-the same with real Caddy; these tests pin the text without Docker.
+``Caddyfile.production`` carries the MAX webhook route and a private-media guard
+that was added after the historical copy. ``scripts/qualification/max_edge_check.py``
+proves the MAX route with real Caddy; these tests pin the text without Docker.
 """
 
 import difflib
@@ -33,9 +33,18 @@ def test_pre_max_copy_is_exactly_what_production_serves():
     assert hashlib.sha256(PRE.encode("utf-8")).hexdigest() == LIVE_SHA256
 
 
-def test_only_the_public_catalog_block_changes():
-    for site in ("{$CADDY_SITE_ADDRESS::80}", "catalog.185-250-44-206.sslip.io", "www.pro-brp.ru"):
+def test_only_the_public_catalog_and_private_media_guard_change():
+    for site in ("catalog.185-250-44-206.sslip.io", "www.pro-brp.ru"):
         assert _block(PRE, site) == _block(POST, site), site
+    internal_pre = _block(PRE, "{$CADDY_SITE_ADDRESS::80}")
+    internal_post = _block(POST, "{$CADDY_SITE_ADDRESS::80}")
+    internal_post = re.sub(
+        r"\t@private_customer_media path_regexp [^\n]+\n"
+        r"\thandle @private_customer_media \{\n\t\trespond 404\n\t\}\n",
+        "",
+        internal_post,
+    )
+    assert internal_pre == internal_post
     outside_pre = re.sub(r"^pro-brp\.ru \{\n.*?^\}", "", PRE, flags=re.MULTILINE | re.DOTALL)
     outside_post = re.sub(r"^pro-brp\.ru \{\n.*?^\}", "", POST, flags=re.MULTILINE | re.DOTALL)
     changed = [
@@ -43,6 +52,14 @@ def test_only_the_public_catalog_block_changes():
             outside_pre.splitlines(), outside_post.splitlines(), lineterm="", n=0
         ) if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
+    allowed_security_change = {
+        "+\t@private_customer_media path_regexp private_customer_media "
+        "(?i)(^|/|%2f)customer_requests(/|%2f|$)",
+        "+\thandle @private_customer_media {",
+        "+\t\trespond 404",
+        "+\t}",
+    }
+    changed = [line for line in changed if line not in allowed_security_change]
     assert all(line[1:].startswith("#") for line in changed), changed
 
 

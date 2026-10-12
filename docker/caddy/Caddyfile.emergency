@@ -2,6 +2,8 @@
 	encode gzip
 
 	handle_path /media/* {
+		@private_customer_media path_regexp private_customer_media (?i)(^|/|%2f)customer_requests(/|%2f|$)
+		respond @private_customer_media 404
 		root * /srv/standbys/{$EMERGENCY_SLOT}/media
 		file_server
 	}
