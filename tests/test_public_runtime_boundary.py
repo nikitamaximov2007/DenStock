@@ -89,6 +89,7 @@ def test_public_resolver_has_only_catalog_routes():
     assert names == {
         "public_catalog_root",
         "public_catalog_about",
+        "public_catalog_in_stock",
         "public_catalog_search",
         "public_catalog_part",
         "public_catalog_photo",
@@ -102,6 +103,7 @@ def test_public_resolver_has_only_catalog_routes():
         "public_catalog_max_continue",
         "public_catalog_robots",
         "public_catalog_sitemap",
+        "public_catalog_sitemap_in_stock",
         "public_catalog_sitemap_parts",
         "public_catalog_healthz",
         "customer_account_home",

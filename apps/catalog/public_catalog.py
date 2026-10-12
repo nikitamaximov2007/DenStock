@@ -28,6 +28,7 @@ from django.db.models import Q
 
 from apps.actions.models import PartCustomsInfo
 from apps.inventory.availability import available_totals
+from apps.inventory.movement import live_stock_rows
 from apps.inventory.presentation import manufacturer_display
 
 from .models import PartAnalog, PartCompatibility, PartType
@@ -497,3 +498,58 @@ def part_relations(part_id: int) -> PartRelations:
         analogs=[cards[other] for other in dict.fromkeys(analog_ids) if other in cards],
         originals=[cards[other] for other in dict.fromkeys(original_ids) if other in cards],
     )
+
+
+# --- In-stock listing -------------------------------------------------------------------
+
+IN_STOCK_PAGE_SIZE = 50
+
+
+def in_stock_public_parts() -> dict[int, Decimal]:
+    """Public parts with stock available right now, by ID in a stable order.
+
+    Reads ``live_stock_rows`` without a part filter, the same way the coverage
+    report does: its cost follows the number of physical stock rows, never the
+    size of the catalog, and availability keeps its canonical semantics.
+    """
+    available: dict[int, Decimal] = {}
+    for row in live_stock_rows():
+        part_id = row.part_type.pk
+        available[part_id] = available.get(part_id, ZERO) + row.available
+    stocked = [part_id for part_id, quantity in available.items() if quantity > ZERO]
+    if not stocked:
+        return {}
+    visible = public_parts().filter(pk__in=stocked).order_by("pk").values_list("pk", flat=True)
+    return {part_id: available[part_id] for part_id in visible}
+
+
+@dataclass(slots=True)
+class InStockPage:
+    cards: list[PartCard]
+    total: int
+    page: int
+    pages: int
+
+    @property
+    def has_previous(self) -> bool:
+        return self.page > 1
+
+    @property
+    def has_next(self) -> bool:
+        return self.page < self.pages
+
+
+def in_stock_catalog(page: int) -> InStockPage | None:
+    """One page of the in-stock listing, or None when the page does not exist.
+
+    The page number is never clamped: a page past the end is absent, not a
+    copy of the last page, so the listing has exactly one URL per page.
+    """
+    stocked = in_stock_public_parts()
+    page_size = IN_STOCK_PAGE_SIZE
+    pages = max(1, math.ceil(len(stocked) / page_size))
+    if page < 1 or page > pages:
+        return None
+    window = list(stocked)[(page - 1) * page_size : page * page_size]
+    cards = build_cards(window, quantities={part_id: stocked[part_id] for part_id in window})
+    return InStockPage(cards=cards, total=len(stocked), page=page, pages=pages)

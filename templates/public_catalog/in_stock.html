@@ -1,0 +1,43 @@
+{% extends "public_catalog/base.html" %}
+{% block title %}
+  Запчасти в наличии{% if listing.page > 1 %}, страница {{ listing.page }}{% endif %} · PRO-STOR
+{% endblock %}
+{% block meta %}
+  <meta name="description"
+        content="Детали, которые есть на складе PRO-STOR сейчас: артикул, производитель, цена и количество.{% if listing.page > 1 %} Страница {{ listing.page }} из {{ listing.pages }}.{% endif %}">
+  <link rel="canonical" href="{{ canonical_url }}">
+{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1 class="page-head__title">Запчасти в наличии</h1>
+    {% if listing.total %}
+      <p class="page-head__meta">
+        На складе: {{ listing.total }}
+        {% if listing.pages > 1 %}· страница {{ listing.page }} из {{ listing.pages }}{% endif %}
+      </p>
+    {% endif %}
+  </div>
+  {% if listing.cards %}
+    <ol class="result-list">
+      {% for card in listing.cards %}
+        <li>{% include "public_catalog/_card.html" with next=request.get_full_path %}</li>
+      {% endfor %}
+    </ol>
+    {% if listing.pages > 1 %}
+      <nav class="pager" aria-label="Страницы списка">
+        {% if previous_url %}
+          <a class="btn btn--secondary" href="{{ previous_url }}" rel="prev">Назад</a>
+        {% endif %}
+        <span class="pager__state">Страница {{ listing.page }} из {{ listing.pages }}</span>
+        {% if next_url %}
+          <a class="btn btn--secondary" href="{{ next_url }}" rel="next">Вперёд</a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Сейчас на складе ничего нет</p>
+      <p class="empty__text">Найдите деталь по артикулу и оставьте заявку: мы уточним возможность поставки.</p>
+    </div>
+  {% endif %}
+{% endblock %}

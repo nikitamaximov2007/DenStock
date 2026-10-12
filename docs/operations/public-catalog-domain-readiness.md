@@ -175,7 +175,8 @@ The code is SEO-ready and noindex is purely a deployment setting:
 
 Rollback of the switch is the same edit with `false`. Search result pages
 stay `noindex, follow` and the cart stays `noindex, nofollow` in both modes;
-part pages are the only indexable content.
+part pages, the home and about pages, and the `/in-stock/` listing are the
+indexable content.
 
 ## Canonical URLs and the sitemap
 
@@ -183,5 +184,8 @@ Every part page links `rel=canonical` to
 `PUBLIC_CATALOG_BASE_URL/parts/<public_id>/`, so `www`, the preview and any
 alias collapse onto one URL. `/sitemap.xml` is an index of files with at
 most 10,000 part URLs each (`/sitemaps/parts-<n>.xml`), built with the same
-visibility rule as the pages and cached for an hour. Public IDs are
+visibility rule as the pages and cached for an hour. Its first entry,
+`/sitemaps/in-stock.xml`, repeats the in-stock part URLs as their own segment;
+`/in-stock/` is the indexable HTML listing that links to them (see
+`docs/SEO_INDEXING.md`, "Crawlable link graph"). Public IDs are
 permanent: the identity survives price, stock, name and photo changes.

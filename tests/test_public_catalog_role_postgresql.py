@@ -108,9 +108,14 @@ def test_public_reads_work_under_the_restricted_role(restricted_role, seeded, pu
         "/robots.txt",
         "/sitemap.xml",
         "/sitemaps/parts-1.xml",
+        "/sitemaps/in-stock.xml",
+        "/in-stock/",
         "/healthz/",
     ):
         assert public_client.get(path).status_code == 200, path
+    # The unfiltered stock read behind the in-stock listing works for the role.
+    assert str(original.public_id) in public_client.get("/in-stock/").content.decode()
+    assert str(original.public_id) in public_client.get("/sitemaps/in-stock.xml").content.decode()
     added = public_client.post(f"/cart/{original.public_id}/add/", {"quantity": "2"})
     assert added.status_code == 302
     assert "Поршень в сборе" in public_client.get("/cart/").content.decode()

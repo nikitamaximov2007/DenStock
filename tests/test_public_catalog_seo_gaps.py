@@ -208,11 +208,12 @@ def test_sitemap_generation_is_bounded_at_large_scale(db):
 
     assert index.status_code == 200
     assert first_shard.status_code == 200
-    assert index.content.decode().count("<sitemap>") == public_seo.sitemap_page_count()
-    # +2: the catalog root and the about page are inserted at the front of
-    # the first shard only.
+    # +1: the in-stock segment is listed before the part shards.
+    assert index.content.decode().count("<sitemap>") == public_seo.sitemap_page_count() + 1
+    # +3: the catalog root, the about page and the in-stock listing are
+    # inserted at the front of the first shard only.
     assert first_shard.content.decode().count("<url>") == (
-        min(12_000, public_seo.SITEMAP_PAGE_SIZE) + 2
+        min(12_000, public_seo.SITEMAP_PAGE_SIZE) + 3
     )
     assert_no_writes(queries)
     assert len(queries.captured_queries) <= 6
