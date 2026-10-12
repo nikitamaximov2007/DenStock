@@ -121,11 +121,11 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
 
 class LocationCreateView(ManageWarehouseMixin, FormView):
     form_class = StorageAddressV2CreateForm
-    template_name = "directories/form.html"
+    template_name = "warehouse/location_create.html"
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx["title"] = "Новое место хранения"
+        ctx["title"] = "Новая ячейка"
         return ctx
 
     def form_valid(self, form):
@@ -134,7 +134,7 @@ class LocationCreateView(ManageWarehouseMixin, FormView):
         except ValidationError as exc:
             form.add_error(None, exc)
             return self.form_invalid(form)
-        messages.success(self.request, "Место хранения создано.")
+        messages.success(self.request, f"Ячейка {location.short_code} создана.")
         return redirect("location_detail", pk=location.pk)
 
 

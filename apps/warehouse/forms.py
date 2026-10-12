@@ -11,52 +11,31 @@ from .services import (
 
 
 class StorageAddressV2CreateForm(forms.Form):
-    class LocationType:
-        RACK = "rack"
-        DRAWER = "drawer"
-        CELL = "cell"
+    """Новая ячейка по S/D/C. Стеллаж и ящик создаются автоматически, если их нет.
 
-    location_type = forms.ChoiceField(
-        label="Что создать",
-        choices=[
-            (LocationType.RACK, "Стеллаж"),
-            (LocationType.DRAWER, "Ящик"),
-            (LocationType.CELL, "Ячейка"),
-        ],
-    )
+    Тип места, название, назначение и вместимость пользователю не показываются:
+    ячейка получает значения модели по умолчанию (название = код, обычное
+    назначение, без вместимости), как и прежде при пустых полях.
+    """
+
     rack_number = forms.IntegerField(label="Стеллаж (S)", min_value=1)
-    drawer_number = forms.IntegerField(label="Ящик (D)", min_value=0, required=False)
-    cell_number = forms.IntegerField(label="Ячейка (C)", min_value=1, required=False)
-    name = forms.CharField(label="Название", max_length=150, required=False)
-    purpose = forms.ChoiceField(
-        label="Назначение",
-        choices=StorageLocation.Purpose.choices,
-        initial=StorageLocation.Purpose.NORMAL,
-        required=False,
-    )
+    drawer_number = forms.IntegerField(label="Ящик (D)", min_value=0)
+    cell_number = forms.IntegerField(label="Ячейка (C)", min_value=1)
     description = forms.CharField(
         label="Описание", required=False, widget=forms.Textarea(attrs={"rows": 3})
     )
-    capacity = forms.IntegerField(label="Вместимость", min_value=1, required=False)
+
+    conflict_location = None
 
     def clean(self):
         cleaned = super().clean()
         if self.errors:
             return cleaned
-        location_type = cleaned["location_type"]
-        drawer = cleaned.get("drawer_number")
-        cell = cleaned.get("cell_number")
-        if location_type in {self.LocationType.DRAWER, self.LocationType.CELL} and drawer is None:
-            self.add_error("drawer_number", "Для ящика или ячейки укажите номер D.")
-            return cleaned
-        if location_type == self.LocationType.CELL and not cell:
-            self.add_error("cell_number", "Для ячейки укажите номер C.")
-            return cleaned
         try:
             cleaned["code"] = compose_address(
                 cleaned["rack_number"],
-                drawer_no=(drawer if location_type != self.LocationType.RACK else None),
-                cell_no=(cell if location_type == self.LocationType.CELL else None),
+                drawer_no=cleaned["drawer_number"],
+                cell_no=cleaned["cell_number"],
             )
         except AddressError as exc:
             raise forms.ValidationError(str(exc)) from exc
@@ -66,14 +45,10 @@ class StorageAddressV2CreateForm(forms.Form):
         try:
             return create_location(
                 self.cleaned_data["code"],
-                name=self.cleaned_data.get("name", ""),
-                purpose=(
-                    self.cleaned_data.get("purpose") or StorageLocation.Purpose.NORMAL
-                ),
                 description=self.cleaned_data.get("description", ""),
-                capacity=self.cleaned_data.get("capacity"),
             )
         except StorageLocationCreateError as exc:
+            self.conflict_location = exc.location
             raise forms.ValidationError(str(exc)) from exc
 
 

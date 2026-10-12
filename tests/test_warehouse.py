@@ -64,51 +64,44 @@ def _create_payload(**over):
     return data
 
 
-def test_create_v2_rack(make_user, client):
+def test_create_v2_cell_creates_its_rack(make_user, client):
+    """Форма создаёт только ячейку; отсутствующий стеллаж создаётся автоматически."""
     make_user("admin", is_superuser=True)
     client.login(username="admin", password=PASSWORD)
     resp = client.post(
         reverse("location_create"),
-        {"location_type": "rack", "rack_number": "1", "name": "Стеллаж 1"},
+        {"rack_number": "1", "drawer_number": "1", "cell_number": "1"},
     )
     assert resp.status_code == 302
     assert StorageLocation.objects.filter(code="S01", level=L.RACK).exists()
 
 
-def test_create_v2_drawer_inside_rack(make_user, client):
+def test_create_v2_cell_creates_drawer_inside_rack(make_user, client):
     make_user("admin", is_superuser=True)
     client.login(username="admin", password=PASSWORD)
     resp = client.post(
         reverse("location_create"),
-        {
-            "location_type": "drawer",
-            "rack_number": "1",
-            "drawer_number": "2",
-            "name": "Ящик 2",
-        },
+        {"rack_number": "1", "drawer_number": "2", "cell_number": "1"},
     )
     assert resp.status_code == 302
     rack = StorageLocation.objects.get(code="S01")
     drawer = StorageLocation.objects.get(code="S01-D02")
     assert drawer.parent == rack
     assert drawer.level == L.DRAWER
+    assert StorageLocation.objects.get(code="S01-D02-C01").parent == drawer
 
 
-def test_create_v2_drawer_zero_inside_rack(make_user, client):
+def test_create_v2_cell_in_drawer_zero(make_user, client):
     make_user("drawer-zero-admin", is_superuser=True)
     client.login(username="drawer-zero-admin", password=PASSWORD)
     resp = client.post(
         reverse("location_create"),
-        {
-            "location_type": "drawer",
-            "rack_number": "1",
-            "drawer_number": "0",
-            "name": "Ящик 0",
-        },
+        {"rack_number": "1", "drawer_number": "0", "cell_number": "1"},
     )
     assert resp.status_code == 302
     drawer = StorageLocation.objects.get(code="S01-D00")
     assert drawer.level == L.DRAWER
+    assert StorageLocation.objects.filter(code="S01-D00-C01", level=L.CELL).exists()
 
 
 def test_create_v2_drawer_rejects_negative_number_without_partial_location(make_user, client):
@@ -116,12 +109,7 @@ def test_create_v2_drawer_rejects_negative_number_without_partial_location(make_
     client.login(username="negative-drawer-admin", password=PASSWORD)
     response = client.post(
         reverse("location_create"),
-        {
-            "location_type": "drawer",
-            "rack_number": "1",
-            "drawer_number": "-1",
-            "name": "Нельзя",
-        },
+        {"rack_number": "1", "drawer_number": "-1", "cell_number": "1"},
     )
     assert response.status_code == 200
     assert "drawer_number" in response.context["form"].errors

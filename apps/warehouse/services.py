@@ -16,7 +16,15 @@ class StorageLocationRenameError(ValueError):
 
 
 class StorageLocationCreateError(ValueError):
-    """Ожидаемая ошибка создания ячейки через адресный flow."""
+    """Ожидаемая ошибка создания ячейки через адресный flow.
+
+    ``location`` указывает на место, из-за которого адрес занят (если оно
+    есть): форма показывает ссылку на него.
+    """
+
+    def __init__(self, message, *, location=None):
+        super().__init__(message)
+        self.location = location
 
 
 class StorageLocationRemovalError(ValueError):
