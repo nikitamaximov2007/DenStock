@@ -19,7 +19,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.catalog.models import PartType
-from apps.customers.services import customer_snapshot
+from apps.customers.services import CustomerArchiveError, customer_snapshot, require_active_customer
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
@@ -76,6 +76,7 @@ def _default_customer_price(inventory, current_price):
 # --- Создание / наполнение заказа --------------------------------------------
 
 
+@transaction.atomic
 def create_repair_order(
     *,
     customer_name="",
@@ -90,6 +91,10 @@ def create_repair_order(
     customer=None,
 ) -> RepairOrder:
     """Создать черновик ремонтного заказа (склад ещё не трогаем)."""
+    try:
+        customer = require_active_customer(customer)
+    except CustomerArchiveError as exc:
+        raise RepairError(str(exc)) from exc
     # Выбрана карточка клиента - документ забирает её АКТУАЛЬНЫЕ имя и телефон
     # как снимок. Дальше документ от карточки не зависит: переименование
     # карточки завтра историю не переписывает.
