@@ -94,7 +94,7 @@ def test_two_backup_publishers_cannot_reuse_the_same_generation_directory(tmp_pa
 
 
 @pytest.mark.postgresql
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_backup_lock_prevents_deletion_of_db_referenced_attachment(tmp_path, settings):
     if connection.vendor != "postgresql":
         pytest.skip("PostgreSQL 16 required")
@@ -144,7 +144,7 @@ def test_backup_lock_prevents_deletion_of_db_referenced_attachment(tmp_path, set
 
 
 @pytest.mark.postgresql
-@pytest.mark.django_db(transaction=True)
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
 def test_postgresql_backup_verification_reads_data_blocks_not_only_toc(tmp_path):
     if connection.vendor != "postgresql":
         pytest.skip("PostgreSQL 16 required")
