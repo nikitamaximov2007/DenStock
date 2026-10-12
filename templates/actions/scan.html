@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load l10n %}
+{% load l10n static %}
 {% block title %}Действия со склада · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -232,8 +232,12 @@
             <input id="customer-filter-{{ panel.kind }}"
                    type="search"
                    placeholder="Имя или телефон"
+                   autocomplete="off"
+                   list="customer-filter-history-{{ panel.kind }}"
                    data-customer-filter="customer-select-{{ panel.kind }}"
+                   data-customer-filter-history="{{ request.user.pk }}"
                    style="min-width: 280px">
+            <datalist id="customer-filter-history-{{ panel.kind }}"></datalist>
           </p>
           <p>
             <label for="customer-select-{{ panel.kind }}">Клиент</label>
@@ -457,6 +461,7 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="scan" title="Отсканируйте деталь" text="Поставьте курсор в поле сканера и отсканируйте номер. Система покажет остатки по ячейкам." compact=1 %}
   {% endif %}
+  <script defer src="{% static 'js/customer_filter_history.js' %}"></script>
   <script>
     document.querySelectorAll('[data-customer-filter]').forEach((input) => {
       const select = document.getElementById(input.dataset.customerFilter);
