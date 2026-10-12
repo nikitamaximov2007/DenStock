@@ -22,19 +22,24 @@ BEFORE = [
     ("operations", "0005_telegram_messaging"),
 ]
 AFTER_SCHEMA = [("customer_requests", "0008_max_messaging"), ("operations", "0006_max_messaging")]
-LATEST = [
-    # Restore the current customer-request schema after exercising the
-    # historical MAX rollback.  Newer realtime/attachment migrations are
-    # additive and must be present before the serialized fixture is restored.
-    ("customer_requests", "0012_maxmessage_attachment_and_more"),
-    ("operations", "0006_max_messaging"),
-]
 
 
 def _migrate(targets):
     executor = MigrationExecutor(connection)
     executor.loader.build_graph()
     executor.migrate(targets)
+
+
+def _migrate_to_latest():
+    """Restore the WHOLE current schema, not a hardcoded historical target.
+
+    The previous fixed target (customer_requests 0012) left every later
+    migration unapplied, so transaction tests that ran after this module on
+    PostgreSQL met a truncated schema (e.g. no customer_account_id column).
+    """
+    executor = MigrationExecutor(connection)
+    executor.loader.build_graph()
+    executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 def _tables():
@@ -66,7 +71,7 @@ def test_max_migrations_roll_back_and_forward_cleanly():
         assert not (MAX_TABLES & _tables())
         assert "customer_requests_telegrammessage" in _tables()
     finally:
-        _migrate(LATEST)
+        _migrate_to_latest()
     assert MAX_TABLES <= _tables()
 
 
