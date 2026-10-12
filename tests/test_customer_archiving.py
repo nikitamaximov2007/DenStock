@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.db.models.deletion import ProtectedError
 from django.test import Client
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.customers.admin import CustomerAdmin
 from apps.customers.models import Customer, CustomerLifecycleEvent
@@ -13,8 +14,10 @@ from apps.customers.services import (
     restore_customer,
     search_customers,
 )
+from apps.repairs.models import RepairOrder
 from apps.repairs.services import RepairError, create_repair_order
 from apps.sales.forms import ReservationForm, SaleForm
+from apps.sales.models import Sale
 from apps.sales.services import ReservationError, SaleError, create_reservation, create_sale
 
 
@@ -28,6 +31,12 @@ def test_archive_retains_document_references_and_snapshots(operator):
     sale = create_sale(customer=customer, by=operator)
     repair = create_repair_order(customer=customer, by=operator)
     reservation = create_reservation(customer=customer, by=operator)
+    # These synthetic historical rows exercise archive preservation without
+    # issuing stock in a customer-lifecycle test.
+    Sale.objects.filter(pk=sale.pk).update(status=Sale.Status.COMPLETED, sold_at=timezone.now())
+    RepairOrder.objects.filter(pk=repair.pk).update(
+        status=RepairOrder.Status.COMPLETED, completed_at=timezone.now()
+    )
     original = {
         "sale": (sale.customer_id, sale.customer_name, sale.customer_phone),
         "repair": (repair.customer_id, repair.customer_name, repair.customer_phone),
@@ -45,6 +54,8 @@ def test_archive_retains_document_references_and_snapshots(operator):
     repair.refresh_from_db()
     reservation.refresh_from_db()
     assert customer.is_archived
+    assert sale.status == Sale.Status.COMPLETED
+    assert repair.status == RepairOrder.Status.COMPLETED
     assert customer.archived_at is not None
     assert customer.archived_by_id == operator.pk
     assert (sale.customer_id, sale.customer_name, sale.customer_phone) == original["sale"]
@@ -62,10 +73,11 @@ def test_archive_retains_document_references_and_snapshots(operator):
 def test_archived_customer_is_excluded_from_active_search_and_forms(db):
     operator = get_user_model().objects.create_superuser("archive-search", password="test")
     active = Customer.objects.create(name="Иванов", phone="+79990000001")
-    archived = Customer.objects.create(name="Иванов", phone="+79990000002")
+    archived = Customer.objects.create(name="Иванов", phone="+79990000001")
     archive_customer(customer_id=archived.pk, by=operator, reason="Неактуальная карточка")
 
     assert list(search_customers("Иванов")) == [active]
+    assert list(search_customers("+79990000001")) == [active]
     assert list(search_customers("Иванов", include_archived=True)) == [active, archived]
     assert list(customers_by_recent_activity()) == [active]
     for form in (SaleForm(), ReservationForm()):
@@ -110,6 +122,7 @@ def test_new_operations_reject_archived_customer(operator):
 
 def test_customer_archive_confirmation_permissions_csrf_and_list(operator):
     customer = Customer.objects.create(name="Клиент для UI")
+    Customer.objects.create(name="Другой активный клиент")
     client = Client(enforce_csrf_checks=True)
     client.force_login(operator)
     url = reverse("customer_archive", args=[customer.pk])
@@ -134,6 +147,11 @@ def test_customer_archive_confirmation_permissions_csrf_and_list(operator):
     assert "Клиент для UI" not in client.get(reverse("customer_list")).content.decode()
     archive_page = client.get(reverse("customer_list"), {"archived": "1"})
     assert "Клиент для UI" in archive_page.content.decode()
+    assert "Другой активный клиент" not in archive_page.content.decode()
+    assert 'name="archived" value="1"' in archive_page.content.decode()
+    archive_search = client.get(reverse("customer_list"), {"archived": "1", "q": "Клиент"})
+    assert "Клиент для UI" in archive_search.content.decode()
+    assert "Другой активный клиент" not in archive_search.content.decode()
     detail = client.get(reverse("customer_detail", args=[customer.pk])).content.decode()
     assert "Восстановить клиента" in detail
     assert "Карточка в архиве" in detail
@@ -157,3 +175,36 @@ def test_non_manager_cannot_archive_customer(operator):
     client.force_login(viewer)
     assert client.get(reverse("customer_archive", args=[customer.pk])).status_code == 403
     assert CustomerAdmin(Customer, None).has_delete_permission(None) is False
+
+
+def test_malformed_customer_query_parameter_does_not_break_sale_cart(operator):
+    client = Client()
+    client.force_login(operator)
+    response = client.get(reverse("actions_scan"), {"kind": "sale", "customer_id": "invalid"})
+    assert response.status_code == 200
+
+
+def test_archived_customer_cannot_be_edited_through_an_old_url(operator):
+    customer = Customer.objects.create(name="Имя до архива")
+    archive_customer(customer_id=customer.pk, by=operator, reason="Закрыта карточка")
+    client = Client()
+    client.force_login(operator)
+    url = reverse("customer_edit", args=[customer.pk])
+    assert client.get(url).status_code == 404
+    assert client.post(url, {"name": "Попытка правки"}).status_code == 404
+    customer.refresh_from_db()
+    assert customer.name == "Имя до архива"
+
+
+def test_active_customer_edit_still_saves_the_validated_fields(operator):
+    customer = Customer.objects.create(name="Старое имя")
+    client = Client()
+    client.force_login(operator)
+    response = client.post(
+        reverse("customer_edit", args=[customer.pk]),
+        {"name": "Новое имя", "phone": "+7 900 123-45-67"},
+    )
+    assert response.status_code == 302
+    customer.refresh_from_db()
+    assert customer.name == "Новое имя"
+    assert customer.phone == "+7 900 123-45-67"

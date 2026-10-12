@@ -16,6 +16,7 @@
     {% endif %}
   </div>
   <form method="get" class="filter-toolbar filter-toolbar--compact">
+    {% if show_archived %}<input type="hidden" name="archived" value="1">{% endif %}
     <label>
       {% if show_archived %}Имя или телефон в архиве{% else %}Имя или телефон{% endif %}
       <input name="q"

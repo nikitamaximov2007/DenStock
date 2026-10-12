@@ -27,6 +27,7 @@ from .services import (
     create_customer_idempotently,
     restore_customer,
     search_customers,
+    update_active_customer,
 )
 
 PAGE_SIZE = 50
@@ -75,7 +76,10 @@ def customer_list(request):
     _require_access(request)
     query = (request.GET.get("q") or "").strip()
     archived = request.GET.get("archived") == "1"
-    customers = search_customers(query, limit=1000, include_archived=archived)
+    if query:
+        customers = search_customers(query, limit=1000, archived_only=archived)
+    else:
+        customers = Customer.objects.filter(archived_at__isnull=not archived)
     page_obj = Paginator(customers, PAGE_SIZE).get_page(request.GET.get("page"))
     return render(
         request,
@@ -204,11 +208,15 @@ def legacy_customer_link(request):
 @login_required
 def customer_edit(request, pk):
     _require_edit(request)
-    customer = get_object_or_404(Customer, pk=pk)
+    customer = get_object_or_404(Customer, pk=pk, archived_at__isnull=True)
     if request.method == "POST":
         form = CustomerForm(request.POST, instance=customer)
         if form.is_valid():
-            form.save()
+            try:
+                update_active_customer(form, customer_id=customer.pk)
+            except CustomerArchiveError as exc:
+                messages.error(request, str(exc))
+                return redirect("customer_detail", pk=customer.pk)
             messages.success(request, "Карточка клиента обновлена.")
             return redirect("customer_detail", pk=customer.pk)
     else:

@@ -7,6 +7,7 @@ import datetime
 from django.db import IntegrityError, transaction
 from django.db.models import DateTimeField, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce, Greatest
+from django.forms.models import construct_instance
 from django.utils import timezone
 
 from apps.core.phones import looks_like_phone, normalize_phone
@@ -44,6 +45,14 @@ def require_active_customer(customer):
         if Customer.objects.filter(pk=customer_id, archived_at__isnull=False).exists():
             raise CustomerArchiveError("Карточка клиента находится в архиве.") from exc
         raise CustomerArchiveError("Карточка клиента не найдена.") from exc
+
+
+@transaction.atomic
+def update_active_customer(form, *, customer_id) -> Customer:
+    """Save a validated customer form while holding the archive row lock."""
+    customer = require_active_customer(customer_id)
+    form.instance = construct_instance(form, customer, form._meta.fields, form._meta.exclude)
+    return form.save()
 
 
 @transaction.atomic
@@ -115,11 +124,15 @@ def create_customer_idempotently(form, *, token):
         return customer, True
 
 
-def search_customers(query: str, *, limit: int = SEARCH_LIMIT, include_archived=False):
+def search_customers(
+    query: str, *, limit: int = SEARCH_LIMIT, include_archived=False, archived_only=False
+):
     """Клиенты по имени (подстрока) или телефону в любом привычном формате."""
     query = (query or "").strip()
     queryset = Customer.objects.all()
-    if not include_archived:
+    if archived_only:
+        queryset = queryset.filter(archived_at__isnull=False)
+    elif not include_archived:
         queryset = queryset.filter(archived_at__isnull=True)
     if not query:
         return queryset[:limit]
