@@ -30,7 +30,9 @@ def ownership_links(request):
             services.unlink_customer(account, by_user=request.user)
             messages.success(request, "Связь кабинета снята.")
         else:
-            customer = Customer.objects.filter(pk=request.POST.get("customer_id")).first()
+            customer = Customer.objects.filter(
+                pk=request.POST.get("customer_id"), archived_at__isnull=True
+            ).first()
             if customer is None:
                 messages.error(request, "Карточка клиента не найдена.")
             else:
@@ -43,7 +45,7 @@ def ownership_links(request):
         return redirect("customer_account_internal_links")
     query = " ".join(str(request.GET.get("q", "")).split())[:80]
     account_qs = CustomerAccount.objects.prefetch_related("identities").order_by("pk")
-    customer_qs = Customer.objects.order_by("name", "pk")
+    customer_qs = Customer.objects.filter(archived_at__isnull=True).order_by("name", "pk")
     if query:
         account_qs = account_qs.filter(
             Q(display_name__icontains=query) | Q(identities__display_name__icontains=query)
