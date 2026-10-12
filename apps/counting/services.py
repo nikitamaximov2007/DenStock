@@ -21,7 +21,9 @@ from apps.catalog_import.origin import (
     has_physical_stock,
 )
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
+from apps.core.part_picker import looks_like_name_query, search_pickable_parts
 from apps.inventory.models import NumberSequence
+from apps.inventory.presentation import part_exact_number
 from apps.polaris.models import PolarisCatalogPart, PolarisPricingSettings
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
 from apps.polaris.services import (
@@ -313,14 +315,19 @@ def _record_scan_atomic(
     *,
     by=None,
     request_token=None,
+    picked_part: PartType | None = None,
 ) -> InventoryCountingLine:
-    """Записать один скан: сырое событие + инкремент сгруппированной строки."""
+    """Записать один скан: сырое событие + инкремент сгруппированной строки.
+
+    ``picked_part`` - карточка, выбранная по названию: строка привязывается к
+    ней напрямую, а ``raw_value`` служит только ключом группировки.
+    """
     session = InventoryCountingSession.objects.select_for_update().get(pk=session.pk)
     _ensure_draft(session)
     raw = clean_lookup_value(raw_value)
     if not raw:
         raise CountingError("Пустой скан.")
-    norm = normalize_number(raw) or raw.upper()
+    norm = raw if picked_part is not None else (normalize_number(raw) or raw.upper())
     token = _scan_request_token(request_token)
     if token:
         existing = InventoryScanEvent.objects.select_related("matched_line").filter(
@@ -335,7 +342,13 @@ def _record_scan_atomic(
         .first()
     )
     if line is None:
-        source, part, brp, polaris, display, price = _match(norm, raw)
+        if picked_part is not None:
+            source, part, brp, polaris, display, price = (
+                _part_source(picked_part), picked_part, None, None,
+                picked_part.name, picked_part.recommended_price,
+            )
+        else:
+            source, part, brp, polaris, display, price = _match(norm, raw)
         line = InventoryCountingLine.objects.create(
             session=session,
             scanned_value=raw,
@@ -373,6 +386,7 @@ def record_scan(
     *,
     by=None,
     request_token=None,
+    picked_part: PartType | None = None,
 ) -> InventoryCountingLine:
     """Record a scan once; repeated durable tokens do not increment it."""
     token = _scan_request_token(request_token)
@@ -383,6 +397,7 @@ def record_scan(
             raw,
             by=by,
             request_token=token,
+            picked_part=picked_part,
         )
     except IntegrityError:
         event = (
@@ -395,6 +410,44 @@ def record_scan(
         if event:
             return _existing_scan_line(event, session=session, raw=raw, by=by)
         raise
+
+
+def name_pick_rows(raw_value: str) -> list[dict] | None:
+    """Подсказки, если введено название, а не код. ``None`` - обычный скан.
+
+    Сначала строка проверяется как код теми же правилами, что и скан: если
+    это известный номер, штрихкод или артикул (даже собственный, вида
+    «25*62*7»), работает прежний путь. Только нераспознанная строка, похожая
+    на название, превращается в выбор карточки - строка «Неизвестная деталь»
+    по ней не создаётся.
+    """
+    raw = clean_lookup_value(raw_value)
+    if not raw or not looks_like_name_query(raw):
+        return None
+    norm = normalize_number(raw) or raw.upper()
+    source, *_rest, display, _price = _match(norm, raw)
+    if source != "unknown" or display != UNKNOWN_NAME:
+        return None
+    return search_pickable_parts(raw)
+
+
+def record_part_pick(
+    session: InventoryCountingSession, part: PartType, *, by=None, request_token=None
+) -> InventoryCountingLine:
+    """Посчитать одну единицу карточки, выбранной по названию.
+
+    Если у карточки есть артикул и скан этого артикула даёт ровно эту карточку,
+    выбор равен скану артикула: строка общая со сканами штрихкода. Иначе
+    строка ведётся по ключу ``PART-<id>`` с прямой привязкой к карточке.
+    """
+    exact = part_exact_number(part, default="")
+    if exact:
+        found = _warehouse_part_by_scan(normalize_number(exact), exact)
+        if found is not None and found.pk == part.pk:
+            return record_scan(session, exact, by=by, request_token=request_token)
+    return record_scan(
+        session, f"PART-{part.pk}", by=by, request_token=request_token, picked_part=part
+    )
 
 
 @transaction.atomic

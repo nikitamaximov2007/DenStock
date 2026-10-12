@@ -9,6 +9,7 @@ urlpatterns = [
     path("scanner/", views.scanner_page, name="scanner"),
     path("scanner/resolve/", views.scanner_resolve, name="scanner_resolve"),
     path("scanner/receiving/", views.scanner_receiving, name="scanner_receiving"),
+    path("scanner/part-search/", views.scanner_part_search, name="scanner_part_search"),
     path(
         "scanner/receiving/location-guidance/",
         views.scanner_receiving_location_guidance,

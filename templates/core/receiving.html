@@ -63,18 +63,33 @@
              name="code"
              type="text"
              class="scanner-page__input"
-             placeholder="{% if step == 'scan_object' %}Отсканируйте деталь…{% else %}Отсканируйте ячейку…{% endif %}"
+             placeholder="{% if step == 'scan_object' %}Отсканируйте деталь или введите часть названия…{% else %}Отсканируйте ячейку…{% endif %}"
              autocomplete="off"
              autofocus
              autocapitalize="off"
              autocorrect="off"
              spellcheck="false"
+             {% if step == "scan_object" %}data-part-picker-url="{% url 'scanner_part_search' %}" data-part-picker-form="receiving-pick-form" data-part-picker-status="receiving-pick-status"{% endif %}
              data-scan-input>
       <button type="submit" name="action" value="scan" class="btn btn--primary">Сканировать</button>
       {% if object %}
         <button type="submit" name="action" value="reset" class="btn">Сбросить</button>
       {% endif %}
     </form>
+    {% if step == "scan_object" %}
+      <form id="receiving-pick-form" method="post" data-idempotent-form hidden>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="pick_part">
+        <input type="hidden" name="part_id" value="">
+        <input type="hidden" name="pick_token" value="{{ pick_token }}">
+      </form>
+      <p id="receiving-pick-status"
+         class="part-picker__status muted"
+         role="status"
+         aria-live="polite"></p>
+      {% url 'scanner_receiving' as receiving_url %}
+      {% include "partials/_part_name_pick.html" with pick_action=receiving_url action_value="pick_part" token_name="pick_token" token_value=pick_token %}
+    {% endif %}
   {% endif %}
   {% if catalog_choice.candidates %}
     <div class="card">

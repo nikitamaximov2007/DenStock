@@ -64,10 +64,12 @@ from apps.warehouse.services import (
 
 from .models import UnresolvedScan
 from .part_lookup import MatchSource, clean_lookup_value, part_not_found_message
+from .part_picker import get_pickable_part, looks_like_name_query, search_pickable_parts
 from .receiving_queue import (
     QueueLineNotFound,
     ReceivingQueueError,
     _location_guidance,
+    _warehouse_candidate,
     add_candidate,
     assign_location,
     cancel_location_change,
@@ -506,6 +508,45 @@ def _queue_candidate_scan(request: HttpRequest, code: str, *, warehouse_part_id=
     return True
 
 
+_PICK_TOKENS_KEY = "receiving_pick_tokens"
+
+
+def _pick_part_into_queue(request: HttpRequest) -> HttpResponse:
+    """Добавить в очередь карточку, выбранную по названию. Остаток не меняется.
+
+    ID проверяется заново на сервере; дальше та же очередь, что после скана
+    точного артикула. Одноразовый токен формы защищает от второго Enter.
+    """
+    token = (request.POST.get("pick_token") or "").strip()[:64]
+    used = list(request.session.get(_PICK_TOKENS_KEY, []))
+    if token and token in used:
+        messages.info(request, "Эта деталь уже добавлена в очередь.")
+        return redirect("scanner_receiving")
+    part = get_pickable_part(request.POST.get("part_id"))
+    if part is None:
+        messages.error(request, "Деталь не найдена или в архиве. Найдите её заново.")
+        return redirect("scanner_receiving")
+    line, added_new = add_candidate(request.session, _warehouse_candidate(part))
+    if token:
+        request.session[_PICK_TOKENS_KEY] = (used + [token])[-50:]
+    verb = "добавлена в очередь" if added_new else "увеличена в очереди"
+    messages.success(
+        request,
+        f"{part.name}: {verb}, количество {quantity_int(line['quantity'])}.",
+    )
+    return redirect("scanner_receiving")
+
+
+@login_required
+@require_GET
+def scanner_part_search(request: HttpRequest) -> JsonResponse:
+    """Подсказки «по названию» для приёмки и пересчёта: только для склада."""
+    if not request.user.can_manage_inventory:
+        raise PermissionDenied
+    query = request.GET.get("q", "")
+    return JsonResponse({"query": query, "results": search_pickable_parts(query)})
+
+
 def _post_queue_group(request: HttpRequest) -> str:
     location_id = _int(request.POST.get("location_id"))
     token = (request.POST.get("token") or "").strip()
@@ -606,6 +647,7 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
     candidates: list = []
     error = ""
     error_line_id = ""
+    name_pick = None
 
     if request.method == "POST":
         action = request.POST.get("action", "")
@@ -672,6 +714,8 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
                 error = _post_queue_group(request)
                 if not error:
                     return redirect("scanner_receiving")
+            if action == "pick_part":
+                return _pick_part_into_queue(request)
         except ReceivingQueueError as exc:
             error = str(exc)
             error_line_id = request.POST.get("line_id", "")
@@ -737,12 +781,23 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
                     else:
                         if queued:
                             return redirect("scanner_receiving")
-                        _record_unresolved(request, code)
-                        error = (
-                            "Код не распознан: он не найден в каталогах BRP, Polaris "
-                            "или в складском "
-                            "справочнике. Сначала создайте карточку детали или проверьте номер."
-                        )
+                        if looks_like_name_query(code):
+                            # Набрано название, а не код: предлагаем выбрать
+                            # карточку и ничего не проводим по строке запроса.
+                            name_pick = {"query": code, "rows": search_pickable_parts(code)}
+                            if not name_pick["rows"]:
+                                error = (
+                                    f"По названию «{code}» ничего не найдено. Создайте "
+                                    "карточку детали или отсканируйте её код."
+                                )
+                        else:
+                            _record_unresolved(request, code)
+                            error = (
+                                "Код не распознан: он не найден в каталогах BRP, Polaris "
+                                "или в складском "
+                                "справочнике. Сначала создайте карточку детали или "
+                                "проверьте номер."
+                            )
                 else:
                     error = _wrong_object_message(result)
             else:
@@ -817,6 +872,8 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
         "receiving_queue": queue_context(request.session),
         "error": error,
         "error_line_id": error_line_id,
+        "name_pick": name_pick,
+        "pick_token": secrets.token_urlsafe(16),
         "receiving_lots": receiving_lots,
         "history": history,
         "found_history": found_history,

@@ -1,0 +1,41 @@
+{% comment %}
+Выбор карточки по части названия (без JS или после Enter по названию).
+Параметры: name_pick ({query, rows}), pick_action (URL формы), action_value
+(значение поля action или пусто), token_name, token_value.
+{% endcomment %}
+{% if name_pick %}
+  <div class="card part-picker__results" id="part-name-pick">
+    {% if name_pick.rows %}
+      <p>
+        <strong>По названию «{{ name_pick.query }}» найдено: {{ name_pick.rows|length }}.</strong>
+        Выберите точную деталь. Ничего не проводится, пока деталь не выбрана.
+      </p>
+      <ul class="part-picker__choices">
+        {% for row in name_pick.rows %}
+          <li>
+            <form method="post"
+                  action="{{ pick_action }}"
+                  class="inline-form"
+                  data-idempotent-form>
+              {% csrf_token %}
+              {% if action_value %}<input type="hidden" name="action" value="{{ action_value }}">{% endif %}
+              <input type="hidden" name="part_id" value="{{ row.id }}">
+              <input type="hidden" name="{{ token_name }}" value="{{ token_value }}">
+              <button type="submit" class="btn btn--small">Выбрать</button>
+              <span class="part-picker__name">{{ row.name }}</span>
+              {% if row.article or row.manufacturer %}
+                <span class="part-picker__meta">
+                  {% if row.article %}Артикул: {{ row.article }}{% endif %}
+                  {% if row.article and row.manufacturer %}·{% endif %}
+                  {{ row.manufacturer }}
+                </span>
+              {% endif %}
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>По названию «{{ name_pick.query }}» ничего не найдено.</p>
+    {% endif %}
+  </div>
+{% endif %}

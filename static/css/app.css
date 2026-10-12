@@ -1084,3 +1084,17 @@ form.toolbar input:focus, form.toolbar select:focus {
   .cr-chat__list { max-height: none; }
   .cr-reply__bar .btn { width: 100%; }
 }
+
+/* Выбор карточки по части названия (приёмка, пересчёт) */
+.part-picker__list { list-style: none; margin: 4px 0 0; padding: 4px 0; flex: 1 0 100%;
+  max-width: 560px; max-height: 320px; overflow-y: auto; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
+.part-picker__item, .part-picker__empty { padding: 8px 12px; }
+.part-picker__item { cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.part-picker__item.is-active, .part-picker__item:hover { background: var(--info-bg); }
+.part-picker__empty { color: var(--muted); }
+.part-picker__name { font-weight: 600; overflow-wrap: anywhere; }
+.part-picker__meta { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.part-picker__choices { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.part-picker__choices .inline-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.part-picker__status:empty { display: none; }

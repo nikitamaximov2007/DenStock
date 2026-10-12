@@ -34,15 +34,33 @@
                name="code"
                type="text"
                class="scanner-page__input"
-               placeholder="Сканируйте номер или штрихкод"
+               placeholder="Сканируйте номер, штрихкод или введите часть названия"
                autocomplete="off"
                autofocus
                autocapitalize="off"
                autocorrect="off"
                spellcheck="false"
+               data-part-picker-url="{% url 'scanner_part_search' %}"
+               data-part-picker-form="counting-pick-form"
+               data-part-picker-status="counting-pick-status"
                data-scan-input>
         <button type="submit" class="btn btn--primary">Добавить скан</button>
       </form>
+      <form id="counting-pick-form"
+            method="post"
+            action="{% url 'counting_pick' session.pk %}"
+            data-idempotent-form
+            hidden>
+        {% csrf_token %}
+        <input type="hidden" name="part_id" value="">
+        <input type="hidden" name="request_token" value="{{ request_token }}">
+      </form>
+      <p id="counting-pick-status"
+         class="part-picker__status muted"
+         role="status"
+         aria-live="polite"></p>
+      {% url 'counting_pick' session.pk as counting_pick_url %}
+      {% include "partials/_part_name_pick.html" with pick_action=counting_pick_url action_value="" token_name="request_token" token_value=request_token %}
       <p class="action-panel__hint">
         Пикайте все детали из этой ячейки подряд. Одинаковые номера будут сложены
         автоматически. Сканер работает как клавиатура: скан и Enter. Сортировать

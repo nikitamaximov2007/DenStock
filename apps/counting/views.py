@@ -6,6 +6,7 @@ can_manage_inventory (роли склада).
 """
 import secrets
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -19,7 +20,8 @@ from django.urls import reverse
 from django.views.decorators.http import require_POST
 
 from apps.catalog.models import normalize_number
-from apps.core.part_lookup import resolve_part_lookup
+from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
+from apps.core.part_picker import get_pickable_part, search_pickable_parts
 from apps.core.templatetags.number_format import quantity_int
 from apps.polaris.services import find_polaris_by_number
 from apps.warehouse.services import StorageLocationCreateError
@@ -37,7 +39,9 @@ from .services import (
     delete_session,
     find_brp_by_number,
     get_session_value_breakdown,
+    name_pick_rows,
     post_session,
+    record_part_pick,
     record_scan,
     refresh_draft_prices,
     remove_line,
@@ -234,8 +238,16 @@ def counting_detail(request, pk):
             "is_draft": session.is_draft,
             "can_rename_location": request.user.can_manage_warehouse,
             "request_token": secrets.token_urlsafe(32),
+            "name_pick": _name_pick_context(request, session),
         },
     )
+
+
+def _name_pick_context(request, session):
+    query = clean_lookup_value(request.GET.get("pick", ""))
+    if not query or not session.is_draft:
+        return None
+    return {"query": query, "rows": search_pickable_parts(query)}
 
 
 @login_required
@@ -244,6 +256,18 @@ def counting_scan(request, pk):
     session = get_object_or_404(InventoryCountingSession, pk=pk)
     _require_manage(request)
     code = request.POST.get("code", "")
+    rows = name_pick_rows(code) if session.is_draft else None
+    if rows is not None:
+        # Набрано название: ничего не считаем, предлагаем выбрать карточку.
+        if rows:
+            query = urlencode({"pick": clean_lookup_value(code)})
+            return redirect(reverse("counting_detail", args=[pk]) + f"?{query}#scan")
+        messages.error(
+            request,
+            f"По названию «{clean_lookup_value(code)}» ничего не найдено. Создайте "
+            "карточку детали или отсканируйте её код.",
+        )
+        return redirect(reverse("counting_detail", args=[pk]) + "#scan")
     try:
         line = record_scan(
             session,
@@ -263,6 +287,30 @@ def counting_scan(request, pk):
             f"{line.scanned_value}: {line.display_name} ({label}), количество {qty}",
         )
     # PRG: возврат на страницу с якорем на поле сканера (autofocus вернёт фокус).
+    return redirect(reverse("counting_detail", args=[pk]) + "#scan")
+
+
+@login_required
+@require_POST
+def counting_pick(request, pk):
+    """Посчитать карточку, выбранную по названию. ID проверяется на сервере."""
+    session = get_object_or_404(InventoryCountingSession, pk=pk)
+    _require_manage(request)
+    part = get_pickable_part(request.POST.get("part_id"))
+    if part is None:
+        messages.error(request, "Деталь не найдена или в архиве. Найдите её заново.")
+        return redirect(reverse("counting_detail", args=[pk]) + "#scan")
+    try:
+        line = record_part_pick(
+            session, part, by=request.user, request_token=request.POST.get("request_token")
+        )
+    except CountingError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(
+            request,
+            f"{line.display_name}: количество {quantity_int(line.quantity_counted)}",
+        )
     return redirect(reverse("counting_detail", args=[pk]) + "#scan")
 
 
