@@ -14,7 +14,7 @@ NOT TESTED (не проверялось).
 
 Каталог `~/DenisStock-Recovery/` на MacBook владельца. Шифрование age,
 получатель `age1j9ru52...`, ключ `keys/recovery-identity.age` защищён
-парольной фразой (Apple Passwords: «DenisStock — Emergency Recovery»).
+парольной фразой (Apple Passwords, запись DenisStock Emergency Recovery).
 
 | Архив | Содержимое |
 |---|---|
