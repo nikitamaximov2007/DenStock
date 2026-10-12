@@ -325,7 +325,7 @@ def test_same_part_two_locations(refs, admin):
 def test_cancel_session(refs, location, admin):
     session = start_session(location=location, by=admin)
     record_scan(session, "700700", by=admin)
-    cancel_session(session)
+    cancel_session(session, by=admin, reason="Проверка отмены тестовой сессии")
     session.refresh_from_db()
     assert session.status == InventoryCountingSession.Status.CANCELLED
     with pytest.raises(CountingError):
@@ -1500,7 +1500,7 @@ def test_posted_session_cannot_be_deleted(refs, location, admin):
 
 def test_cancelled_session_cannot_be_deleted(refs, location, admin):
     session = start_session(location=location, by=admin)
-    cancel_session(session)
+    cancel_session(session, by=admin, reason="Проверка отмены тестовой сессии")
     assert can_delete_session(session) is False
     with pytest.raises(CountingError):
         delete_session(session)

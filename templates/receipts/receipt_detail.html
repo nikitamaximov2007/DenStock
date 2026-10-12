@@ -15,6 +15,9 @@
     {% if is_draft %}
       <span class="pill pill--muted">Черновик</span>
       Черновик не влияет на склад: остатки и движения появятся после проведения.
+    {% elif receipt.status == "cancelled" %}
+      <span class="pill pill--muted">Отменено</span>
+      Технический черновик пересчёта закрыт и не влияет на остатки.
     {% else %}
       <span class="pill pill--success">Проведено</span>
       {% if receipt.posted_at %}{{ receipt.posted_at|ru_dt }}{% endif %}

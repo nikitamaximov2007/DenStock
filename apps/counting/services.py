@@ -33,8 +33,10 @@ from apps.polaris.services import (
 )
 from apps.receipts.models import Receipt
 from apps.receipts.services import add_line, create_receipt, post_receipt
+from apps.stocktaking.models import SectionRecount
+from apps.stocktaking.section_recount import SectionRecountError, create_cell_recount
 from apps.suppliers.models import Supplier
-from apps.warehouse.models import ValuationSettings
+from apps.warehouse.models import StorageLocation, ValuationSettings
 
 from .cell_state import movements_touching_cell
 from .models import InventoryCountingLine, InventoryCountingSession, InventoryScanEvent
@@ -52,7 +54,9 @@ def _ensure_draft(session: InventoryCountingSession) -> None:
         raise CountingError("Сессия уже завершена: сканирование недоступно.")
 
 
+@transaction.atomic
 def start_session(*, location, comment="", by=None) -> InventoryCountingSession:
+    location = StorageLocation.objects.select_for_update().get(pk=location.pk)
     return InventoryCountingSession.objects.create(
         storage_location=location,
         full_address=location.code,
@@ -681,7 +685,12 @@ def convert_to_receipt(
     ячейки». Параметр unit_cost - запасная цена ТОЛЬКО для строк без цены;
     по умолчанию 0, строка без цены остаётся 0.
     """
+    original = session
+    session = InventoryCountingSession.objects.select_for_update().get(pk=session.pk)
     if session.status == InventoryCountingSession.Status.CONVERTED and session.converted_receipt:
+        original.status = session.status
+        original.converted_receipt = session.converted_receipt
+        original.converted_receipt_id = session.converted_receipt_id
         return session.converted_receipt
     if session.status != InventoryCountingSession.Status.DRAFT:
         raise CountingError("Сессия уже проведена или отменена.")
@@ -762,6 +771,9 @@ def convert_to_receipt(
     session.status = InventoryCountingSession.Status.CONVERTED
     session.converted_receipt = receipt
     session.save(update_fields=["status", "converted_receipt", "updated_at"])
+    original.status = session.status
+    original.converted_receipt = receipt
+    original.converted_receipt_id = receipt.pk
     return receipt
 
 
@@ -777,6 +789,10 @@ def post_session(session: InventoryCountingSession, *, by=None) -> Receipt:
         raise CountingError("Эта сессия уже проведена: повторное проведение удвоило бы остаток.")
     if session.status == InventoryCountingSession.Status.CANCELLED:
         raise CountingError("Сессия отменена.")
+    # Stock mutation services lock the same StorageLocation row before they
+    # write a movement. Hold it across the stale check and the posting so a
+    # movement cannot commit in the gap between those two steps.
+    StorageLocation.objects.select_for_update().get(pk=session.storage_location_id)
     # Пересчёт - первичный ввод: проведение ПРИБАВЛЯЕТ посчитанное к остатку.
     # Если после начала сессии ячейку успели тронуть - приняли, переместили,
     # списали - подсчёт относится к прежнему содержимому, и прибавлять его к
@@ -811,11 +827,90 @@ def post_session(session: InventoryCountingSession, *, by=None) -> Receipt:
     return receipt
 
 
-def cancel_session(session: InventoryCountingSession) -> None:
+def _cancel_locked_session(
+    session: InventoryCountingSession, *, by, reason: str
+) -> None:
+    reason = (reason or "").strip()
+    if by is None:
+        raise CountingError("Не удалось определить сотрудника, отменяющего пересчёт.")
+    if not reason:
+        raise CountingError("Укажите причину отмены пересчёта.")
     if session.status == InventoryCountingSession.Status.POSTED:
         raise CountingError("Проведённую сессию отменить нельзя.")
+    if session.status == InventoryCountingSession.Status.CANCELLED:
+        raise CountingError("Сессия уже отменена.")
+    if session.status not in (
+        InventoryCountingSession.Status.DRAFT,
+        InventoryCountingSession.Status.CONVERTED,
+    ):
+        raise CountingError("Эту сессию нельзя отменить в текущем состоянии.")
+
+    if session.converted_receipt_id:
+        receipt = Receipt.objects.select_for_update().get(pk=session.converted_receipt_id)
+        if receipt.status != Receipt.Status.DRAFT or receipt.batch_id or receipt.posted_at:
+            raise CountingError(
+                "Связанный документ уже изменён. Отмена пересчёта небезопасна."
+            )
+        # Технический документ первичного ввода должен быть непроводим и после
+        # отмены сессии, в том числе через прямой вызов receipt service.
+        receipt.status = Receipt.Status.CANCELLED
+        receipt.save(update_fields=["status"])
+
     session.status = InventoryCountingSession.Status.CANCELLED
-    session.save(update_fields=["status", "updated_at"])
+    session.cancelled_by = by
+    session.cancelled_at = timezone.now()
+    session.cancellation_reason = reason[:500]
+    session.save(
+        update_fields=[
+            "status", "cancelled_by", "cancelled_at", "cancellation_reason", "updated_at"
+        ]
+    )
+
+
+@transaction.atomic
+def cancel_session(
+    session: InventoryCountingSession, *, by=None, reason: str = ""
+) -> None:
+    original = session
+    locked = InventoryCountingSession.objects.select_for_update().get(pk=session.pk)
+    _cancel_locked_session(locked, by=by, reason=reason)
+    original.status = locked.status
+    original.cancelled_by = locked.cancelled_by
+    original.cancelled_at = locked.cancelled_at
+    original.cancellation_reason = locked.cancellation_reason
+    original.replacement_recount_id = locked.replacement_recount_id
+
+
+@transaction.atomic
+def restart_session(
+    session: InventoryCountingSession, *, by=None, reason: str
+) -> SectionRecount:
+    """Cancel primary-entry count and start a snapshot-based cell recount."""
+    if by is None:
+        raise CountingError("Не удалось определить сотрудника, начинающего пересчёт.")
+    session = InventoryCountingSession.objects.select_for_update().get(pk=session.pk)
+    if session.replacement_recount_id:
+        return session.replacement_recount
+    if session.status != InventoryCountingSession.Status.CANCELLED:
+        _cancel_locked_session(session, by=by, reason=reason)
+    elif not (reason or "").strip():
+        raise CountingError("Укажите причину начала нового пересчёта.")
+
+    location = StorageLocation.objects.get(pk=session.storage_location_id)
+    # A primary-entry session adds its quantity to stock. A restart therefore
+    # uses the snapshot-based reconciliation flow, which locks the cell and
+    # later applies only the counted difference through inventory services.
+    try:
+        replacement = create_cell_recount(
+            location=location,
+            by=by,
+            restart_reason=reason,
+        )
+    except SectionRecountError as exc:
+        raise CountingError(str(exc)) from exc
+    session.replacement_recount = replacement
+    session.save(update_fields=["replacement_recount", "updated_at"])
+    return replacement
 
 
 # --- Удаление черновика (hotfix 32.2) ----------------------------------------------

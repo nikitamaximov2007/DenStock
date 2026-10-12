@@ -59,6 +59,24 @@ class InventoryCountingSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     posted_at = models.DateTimeField("Проведено (когда)", null=True, blank=True)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        verbose_name="Кто отменил",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    cancelled_at = models.DateTimeField("Отменено (когда)", null=True, blank=True)
+    cancellation_reason = models.CharField("Причина отмены", max_length=500, blank=True)
+    replacement_recount = models.OneToOneField(
+        "stocktaking.SectionRecount",
+        verbose_name="Новый сверочный пересчёт после отмены",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="restarted_counting_session",
+    )
 
     class Meta:
         verbose_name = "Пересчёт ячейки"
