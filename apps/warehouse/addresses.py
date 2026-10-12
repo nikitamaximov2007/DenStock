@@ -349,6 +349,12 @@ def _create_v2_location(address: StorageAddress, *, name: str) -> StorageLocatio
     try:
         _assert_location_identity_available(code=address.code, barcode=barcode)
     except StorageLocationRenameError as exc:
+        # Параллельный запрос успел создать этого же родителя между проверками:
+        # это get-or-create, поэтому отдаём уже созданное место, как и при
+        # IntegrityError ниже.
+        existing = _identity_owner(address.code)
+        if existing is not None:
+            return existing
         raise StorageLocationCreateError(str(exc)) from exc
     try:
         with transaction.atomic():
@@ -391,6 +397,11 @@ def create_location(
     try:
         _assert_location_identity_available(code=parsed.code, barcode=barcode)
     except StorageLocationRenameError as exc:
+        # Параллельный запрос мог создать этот же адрес между проверками: тогда
+        # занят сам адрес, и называть надо его, а не штрихкод.
+        owner = _identity_owner(parsed.code)
+        if owner is not None:
+            raise _address_taken_error(parsed, owner) from exc
         raise StorageLocationCreateError(str(exc)) from exc
     try:
         with transaction.atomic():
