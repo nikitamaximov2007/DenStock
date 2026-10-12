@@ -213,6 +213,12 @@ def actions_scan(request):
     # Только что созданный клиент (?customer_id=) важнее сохранённого: скрипт
     # страницы сразу сохранит этот выбор в черновик.
     requested_customer_id = request.GET.get("customer_id") or ""
+    if not (
+        requested_customer_id.isascii()
+        and requested_customer_id.isdigit()
+        and len(requested_customer_id) <= 18
+    ):
+        requested_customer_id = ""
     if requested_customer_id and not Customer.objects.filter(
         pk=requested_customer_id, archived_at__isnull=True
     ).exists():
