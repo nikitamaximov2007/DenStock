@@ -22,6 +22,7 @@ from pathlib import Path
 from django.conf import settings
 from django.db import connection, transaction
 
+from .dr_faults import members_with_fault
 from .emergency_manifest import (
     SCHEMA_VERSION,
     ManifestError,
@@ -480,7 +481,11 @@ def restore_media(archive, *, media_root=None) -> None:
     media_root = Path(media_root) if media_root else Path(settings.MEDIA_ROOT)
     media_root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(media_root, filter="data")  # data-фильтр против path traversal
+        # data-фильтр против path traversal; точка сбоя действует только в тестах.
+        tar.extractall(
+            media_root, members=members_with_fault(tar, "media:after_first_member"),
+            filter="data",
+        )
 
 
 def restore_db(source, *, settings_dict=None) -> list[str]:

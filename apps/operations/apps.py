@@ -7,8 +7,10 @@ class OperationsConfig(AppConfig):
     verbose_name = "Эксплуатация"
 
     def ready(self):
+        from .cutover_guard import install_generation_guard
         from .emergency_environment import validate_database_target
         from .write_guard import install_all_guards
 
         validate_database_target()
         install_all_guards()
+        install_generation_guard()

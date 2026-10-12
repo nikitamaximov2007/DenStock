@@ -330,6 +330,9 @@ DENSTOCK_BACKUP_STORAGE_ORIGIN = env(
 # --- Эксплуатация (Слой 25) -------------------------------------------------
 # Каталог резервных копий (БД + media). Не коммитится (см. .gitignore).
 BACKUP_ROOT = Path(env("BACKUP_ROOT", default=str(BASE_DIR / "backups")))
+# Offline DR: one exclusive lock file for staging/cutover tools
+# (default: <BACKUP_ROOT>/.dr-operation.lock).
+DENSTOCK_DR_LOCK_PATH = env("DENSTOCK_DR_LOCK_PATH", default="").strip()
 
 # --- Layer 30: аварийное веб-восстановление ----------------------------------
 # По умолчанию ВЫКЛЮЧЕНО. Даже при включённом флаге restore видит только

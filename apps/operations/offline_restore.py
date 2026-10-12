@@ -16,17 +16,26 @@ the ones recorded at backup time, and every file referenced by the staged
 database must exist in the staged media.
 
 There is deliberately NO cutover here: switching the application to the staged
-slots stays a separate, still unimplemented operator step.  ``discard_stage``
-removes only what the journal says this tool created.
+slots is the separate operator procedure in ``offline_cutover``.
+``discard_stage`` removes only what the journal says this tool created, and
+refuses while a cutover of this stage is not rolled back.
+
+Every DR tool (staging, discard, cutover) holds one exclusive operation lock:
+``flock`` on a lock file plus a session advisory lock in PostgreSQL.  Both are
+released by the kernel or the server when the process dies, so a SIGKILL never
+leaves a stale lock behind.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
 import shutil
+import socket
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,6 +47,7 @@ from django.utils import timezone
 from psycopg import sql
 
 from . import backup
+from .dr_faults import fault_point
 from .emergency_manifest import validate_manifest
 from .emergency_state import (
     business_state_marker,
@@ -50,9 +60,17 @@ from .private_media import Inventory, PrivateMediaError, archive_inventory, rest
 
 DATABASE_NAME_RE = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 MISSING_FILE_SAMPLE = 20
+# Cluster-wide: two DR tools on the same PostgreSQL never run together.
+DR_ADVISORY_LOCK_ID = 0x44454E5344524C4B
+CUTOVER_JOURNAL_SUFFIX = ".cutover"
+TORN_TAIL_STAGE = "torn_tail_sealed"
 
 
 class StageRestoreError(Exception):
+    pass
+
+
+class JournalCorruptError(StageRestoreError):
     pass
 
 
@@ -72,6 +90,30 @@ class ExternalPrivateMedia:
     expected: Inventory
 
 
+def durable_fsync(fd: int) -> None:
+    """fsync that also flushes the drive cache where the OS separates the two.
+
+    On macOS ``fsync`` only hands data to the drive; ``F_FULLFSYNC`` asks the
+    drive to persist it.  Linux ``fsync`` already does both.
+    """
+    full = getattr(fcntl, "F_FULLFSYNC", None)
+    if full is not None:
+        try:
+            fcntl.fcntl(fd, full)
+            return
+        except OSError:
+            pass
+    os.fsync(fd)
+
+
+def sync_directory(path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        durable_fsync(fd)
+    finally:
+        os.close(fd)
+
+
 class Journal:
     """Append-only, fsynced JSON-lines record; created exclusively."""
 
@@ -82,30 +124,131 @@ class Journal:
         self._sync_dir()
 
     def _sync_dir(self) -> None:
-        fd = os.open(self.path.parent, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        sync_directory(self.path.parent)
 
     def record(self, stage: str, **data) -> None:
         line = json.dumps(
             {"at": timezone.now().isoformat(timespec="seconds"), "stage": stage, **data},
             ensure_ascii=False, sort_keys=True, default=str,
         )
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+        # One write() of a whole line, then fsync: the next action starts only
+        # after the record is on disk.
+        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND)
+        payload = (line + "\n").encode("utf-8")
+        try:
+            if os.write(fd, payload) != len(payload):
+                raise OSError("Журнал записан не полностью (диск заполнен?).")
+            durable_fsync(fd)
+        finally:
+            os.close(fd)
         self._sync_dir()
+        fault_point(f"journal:{stage}")
 
 
 def read_journal(path) -> list[dict]:
+    """Parse the journal; tolerate only a torn last record, never guess.
+
+    A record is written as one line and fsynced before the action it
+    announces, so bytes after the last newline (power loss or a short write)
+    were never acted on and are ignored.  ``ExistingJournal`` seals such a
+    tail with a newline and a ``torn_tail_sealed`` record before appending;
+    the line right before that record is void.  Any other malformed line makes
+    the journal untrustworthy: ``JournalCorruptError``.
+    """
+    lines = Path(path).read_bytes().split(b"\n")[:-1]  # last piece: torn or empty
+    entries: list[tuple[int, dict | None]] = []
+    for number, raw in enumerate(lines, start=1):
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw.decode("utf-8"))
+            if not isinstance(row, dict) or not isinstance(row.get("stage"), str):
+                raise ValueError("not a journal record")
+        except ValueError:
+            row = None
+        if row is not None and row["stage"] == TORN_TAIL_STAGE:
+            if not entries:
+                raise JournalCorruptError(f"Журнал повреждён: строка {number}.")
+            entries.pop()  # the sealed fragment was never acted on
+        entries.append((number, row))
     rows = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
+    for number, row in entries:
+        if row is None:
+            raise JournalCorruptError(f"Журнал повреждён: строка {number}.")
+        rows.append(row)
     return rows
+
+
+def journal_has_torn_tail(path) -> bool:
+    data = Path(path).read_bytes()
+    return bool(data) and not data.endswith(b"\n")
+
+
+# --- Exclusive DR operation lock --------------------------------------------
+
+
+def lock_path() -> Path:
+    configured = str(getattr(settings, "DENSTOCK_DR_LOCK_PATH", "") or "").strip()
+    return Path(configured) if configured else backup.backup_root() / ".dr-operation.lock"
+
+
+def lock_holder() -> str | None:
+    """Who holds the lock right now (None when free); read-only probe."""
+    path = lock_path()
+    if not path.exists():
+        return None
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return path.read_text(encoding="utf-8", errors="replace").strip() or "?"
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def dr_operation_lock(settings_dict: dict, *, database: bool = True):
+    """Refuse a second DR operation while one runs (pid/host recorded)."""
+    path = lock_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            holder = path.read_text(encoding="utf-8", errors="replace").strip() or "?"
+            raise StageRestoreError(
+                f"Другая DR-операция уже выполняется ({holder}). Дождитесь её завершения."
+            ) from None
+        try:
+            os.ftruncate(fd, 0)
+            os.write(fd, json.dumps({
+                "pid": os.getpid(), "host": socket.gethostname(),
+                "started_at": timezone.now().isoformat(timespec="seconds"),
+            }).encode("utf-8"))
+            durable_fsync(fd)
+            with _advisory_lock(settings_dict, enabled=database):
+                yield
+        finally:
+            os.ftruncate(fd, 0)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def _advisory_lock(settings_dict: dict, *, enabled: bool):
+    if not enabled or "postgresql" not in str(settings_dict.get("ENGINE", "")):
+        yield
+        return
+    with psycopg.connect(**_admin_params(settings_dict)) as admin:
+        got = admin.execute("SELECT pg_try_advisory_lock(%s)", (DR_ADVISORY_LOCK_ID,))
+        if not got.fetchone()[0]:
+            raise StageRestoreError("Другая DR-операция уже держит блокировку в PostgreSQL.")
+        yield
 
 
 # --- Guards (nothing is created before all of them pass) ---------------------
@@ -203,7 +346,7 @@ def _admin_params(s: dict) -> dict:
     }
 
 
-def _create_database(s: dict, name: str) -> None:
+def _create_database(s: dict, name: str) -> int:
     with psycopg.connect(**_admin_params(s)) as admin:
         exists = admin.execute(
             "SELECT 1 FROM pg_database WHERE datname = %s", (name,)
@@ -211,6 +354,15 @@ def _create_database(s: dict, name: str) -> None:
         if exists:
             raise StageRestoreError(f"База {name} уже существует: staging только в новую базу.")
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        return admin.execute(
+            "SELECT oid FROM pg_database WHERE datname = %s", (name,)
+        ).fetchone()[0]
+
+
+def database_oid(s: dict, name: str) -> int | None:
+    with psycopg.connect(**_admin_params(s)) as admin:
+        row = admin.execute("SELECT oid FROM pg_database WHERE datname = %s", (name,)).fetchone()
+    return row[0] if row else None
 
 
 def _drop_database(s: dict, name: str) -> None:
@@ -322,11 +474,17 @@ def stage_restore(
     run_dir = Path(run_dir)
     s = dict(settings_dict or connection.settings_dict)
     _check_targets(run_dir, targets, s)
+    with dr_operation_lock(s):
+        return _stage_restore_locked(run_dir, targets, private_media, s)
+
+
+def _stage_restore_locked(run_dir, targets, private_media, s) -> dict:
     manifest = _verify_inputs(run_dir, private_media)
 
     journal = Journal(targets.journal)
     journal.record(
         "verified",
+        run_dir=str(run_dir.resolve()),
         backup_run_id=manifest["backup_run_id"],
         created_at=manifest["created_at"],
         app_commit=manifest["app_commit"],
@@ -336,8 +494,8 @@ def stage_restore(
     stage = "creating_database"
     try:
         journal.record(stage, database=targets.database)
-        _create_database(s, targets.database)
-        journal.record("database_created", database=targets.database)
+        oid = _create_database(s, targets.database)
+        journal.record("database_created", database=targets.database, oid=oid)
 
         stage = "restoring_database"
         warnings = backup.restore_db(
@@ -402,6 +560,26 @@ def discard_stage(journal_path, *, settings_dict: dict | None = None) -> list[st
     """Remove only the slots the journal records as created by stage_restore."""
     s = dict(settings_dict or connection.settings_dict)
     rows = read_journal(journal_path)
+    _refuse_discard_during_cutover(journal_path)
+    creates_database = any(row["stage"] == "database_created" for row in rows)
+    with dr_operation_lock(s, database=creates_database):
+        return _discard_stage_locked(journal_path, s)
+
+
+def _refuse_discard_during_cutover(journal_path) -> None:
+    cutover = Path(str(journal_path) + CUTOVER_JOURNAL_SUFFIX)
+    if not cutover.exists():
+        return
+    stages = [row["stage"] for row in read_journal(cutover) if row["stage"] != TORN_TAIL_STAGE]
+    if not stages or stages[-1] != "rolled_back":
+        raise StageRestoreError(
+            "По этому staging начато переключение, и оно не откатено: удалять "
+            "staging нельзя. См. dr_cutover_status."
+        )
+
+
+def _discard_stage_locked(journal_path, s: dict) -> list[str]:
+    rows = read_journal(journal_path)
     if any(row["stage"] == "discarded" for row in rows):
         raise StageRestoreError("Этот staging уже удалён.")
     removed = []
@@ -412,6 +590,12 @@ def discard_stage(journal_path, *, settings_dict: dict | None = None) -> list[st
             name = row["database"]
             if name == s.get("NAME") or not DATABASE_NAME_RE.fullmatch(name):
                 raise StageRestoreError("Журнал указывает на рабочую или некорректную базу.")
+            if row.get("oid") is not None:
+                current = database_oid(s, name)
+                if current is not None and current != row["oid"]:
+                    raise StageRestoreError(
+                        f"База {name} уже не та, что создал staging (другой oid): не удаляю."
+                    )
             _drop_database(s, name)
             removed.append(f"database:{name}")
     live = [Path(settings.MEDIA_ROOT).resolve(), Path(settings.PRIVATE_MEDIA_ROOT).resolve()]
@@ -423,10 +607,23 @@ def discard_stage(journal_path, *, settings_dict: dict | None = None) -> list[st
             if path.exists():
                 shutil.rmtree(path)
             removed.append(f"dir:{path}")
-    _ExistingJournal(journal_path).record("discarded", removed=removed)
+    ExistingJournal(journal_path).record("discarded", removed=removed)
     return removed
 
 
-class _ExistingJournal(Journal):
-    def __init__(self, path):  # reopen for append, never recreate
+class ExistingJournal(Journal):
+    """Reopen for append, never recreate; seal a torn tail first."""
+
+    def __init__(self, path):
         self.path = Path(path)
+        if not self.path.is_file():
+            raise StageRestoreError(f"Журнал не найден: {self.path}")
+        if journal_has_torn_tail(self.path):
+            size = self.path.stat().st_size
+            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND)
+            try:
+                os.write(fd, b"\n")
+                durable_fsync(fd)
+            finally:
+                os.close(fd)
+            self.record(TORN_TAIL_STAGE, file_size_before=size)
