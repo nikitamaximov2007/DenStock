@@ -1,6 +1,11 @@
 :80 {
 	encode gzip
 
+	# Legacy messenger attachments may sit in a restored public media tree.
+	@private_customer_media path /media/customer_requests/*
+	handle @private_customer_media {
+		respond 404
+	}
 	handle_path /media/* {
 		root * /srv/standbys/{$EMERGENCY_SLOT}/media
 		file_server
