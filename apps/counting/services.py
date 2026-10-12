@@ -428,7 +428,11 @@ def name_pick_rows(raw_value: str) -> list[dict] | None:
     source, *_rest, display, _price = _match(norm, raw)
     if source != "unknown" or display != UNKNOWN_NAME:
         return None
-    return search_pickable_parts(raw)
+    rows = search_pickable_parts(raw)
+    # A name query is never itself a part identity. Only intercept a scan
+    # when the operator can choose a concrete active warehouse card. Empty
+    # results retain the established unknown-code path.
+    return rows or None
 
 
 def record_part_pick(

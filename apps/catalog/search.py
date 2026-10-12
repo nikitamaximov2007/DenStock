@@ -153,12 +153,13 @@ def clean_query(raw: str | None) -> str:
 # --- Identifier tiers -------------------------------------------------------
 
 
-def _identity_numbers():
+def _identity_numbers(*, active_only: bool = False):
     """Only the canonical identity kinds, never auxiliary or internal numbers."""
-    return PartNumber.objects.filter(kind__in=EXACT_NUMBER_KINDS)
+    rows = PartNumber.objects.filter(kind__in=EXACT_NUMBER_KINDS)
+    return rows.filter(part__is_active=True) if active_only else rows
 
 
-def _exact_article_split(query: str, normalized: str, limit: int):
+def _exact_article_split(query: str, normalized: str, limit: int, *, active_only: bool = False):
     """Exact-as-typed and separator-insensitive matches from ONE indexed lookup.
 
     ``normalized_value`` is indexed; the raw ``value`` is not. So both tiers
@@ -169,7 +170,7 @@ def _exact_article_split(query: str, normalized: str, limit: int):
     if not normalized:
         return [], []
     rows = list(
-        _identity_numbers()
+        _identity_numbers(active_only=active_only)
         .filter(normalized_value=normalized)
         .order_by("part_id", "pk")
         .values_list("part_id", "value")[:limit]
@@ -180,9 +181,11 @@ def _exact_article_split(query: str, normalized: str, limit: int):
     return exact, normalized_only
 
 
-def _article_ids(normalized: str, lookup: str, limit: int) -> list[int]:
+def _article_ids(
+    normalized: str, lookup: str, limit: int, *, active_only: bool = False
+) -> list[int]:
     return list(
-        _identity_numbers()
+        _identity_numbers(active_only=active_only)
         .filter(**{f"normalized_value__{lookup}": normalized})
         .order_by("part_id")
         .values_list("part_id", flat=True)
@@ -203,28 +206,34 @@ def _article_ids(normalized: str, lookup: str, limit: int) -> list[int]:
 _FOLDED_LOOKUPS = {"iexact": "exact", "istartswith": "startswith", "icontains": "contains"}
 
 
-def _name_ids(query: str, lookup: str, limit: int) -> list[int]:
+def _name_ids(
+    query: str, lookup: str, limit: int, *, active_only: bool = False
+) -> list[int]:
     """English catalog name OR confirmed Russian name, merged by primary key.
 
     Two separate queries on purpose: an OR across the join would stop
     PostgreSQL from using the index on either side.
     """
-    english = PartType.objects.filter(**{f"name__{lookup}": query}).values_list(
+    english_rows = PartType.objects.filter(**{f"name__{lookup}": query})
+    if active_only:
+        english_rows = english_rows.filter(is_active=True)
+    english = english_rows.values_list(
         "pk", flat=True
     )[:limit]
     folded = fold_search_text(query)
-    russian = (
-        PartCustomsInfo.objects.filter(
-            customs_name_ru_confirmed=True,
-            **{f"search_name_ru__{_FOLDED_LOOKUPS[lookup]}": folded},
-        ).values_list("part_type_id", flat=True)[:limit]
-        if folded
-        else []
-    )
+    russian_rows = PartCustomsInfo.objects.filter(
+        customs_name_ru_confirmed=True,
+        **{f"search_name_ru__{_FOLDED_LOOKUPS[lookup]}": folded},
+    ) if folded else PartCustomsInfo.objects.none()
+    if active_only:
+        russian_rows = russian_rows.filter(part_type__is_active=True)
+    russian = russian_rows.values_list("part_type_id", flat=True)[:limit]
     return sorted(set(english) | set(russian))[:limit]
 
 
-def _compact_name_ids(query: str, lookup: str, limit: int) -> list[int]:
+def _compact_name_ids(
+    query: str, lookup: str, limit: int, *, active_only: bool = False
+) -> list[int]:
     """Те же названия, но сравнение без разделителей.
 
     Обе колонки свёрнуты той же функцией, что и запрос, поэтому сравнение
@@ -234,13 +243,17 @@ def _compact_name_ids(query: str, lookup: str, limit: int) -> list[int]:
     compact = compact_search_text(query)
     if not compact:
         return []
-    english = PartType.objects.filter(**{f"search_name_compact__{lookup}": compact}).values_list(
-        "pk", flat=True
-    )[:limit]
-    russian = PartCustomsInfo.objects.filter(
+    english_rows = PartType.objects.filter(**{f"search_name_compact__{lookup}": compact})
+    if active_only:
+        english_rows = english_rows.filter(is_active=True)
+    english = english_rows.values_list("pk", flat=True)[:limit]
+    russian_rows = PartCustomsInfo.objects.filter(
         customs_name_ru_confirmed=True,
         **{f"search_name_ru_compact__{lookup}": compact},
-    ).values_list("part_type_id", flat=True)[:limit]
+    )
+    if active_only:
+        russian_rows = russian_rows.filter(part_type__is_active=True)
+    russian = russian_rows.values_list("part_type_id", flat=True)[:limit]
     return sorted(set(english) | set(russian))[:limit]
 
 
@@ -264,10 +277,13 @@ def _query_words(query: str) -> list[str]:
     return words
 
 
-def _all_words_ids(words: list[str], limit: int) -> list[int]:
+def _all_words_ids(words: list[str], limit: int, *, active_only: bool = False) -> list[int]:
     """Названия, где встречается КАЖДОЕ слово запроса, в любом порядке."""
     english = PartType.objects.all()
     russian = PartCustomsInfo.objects.filter(customs_name_ru_confirmed=True)
+    if active_only:
+        english = english.filter(is_active=True)
+        russian = russian.filter(part_type__is_active=True)
     for word in words:
         english = english.filter(name__icontains=word)
         russian = russian.filter(search_name_ru__contains=word)
@@ -282,12 +298,13 @@ SELECT part_id, MAX(score) AS score FROM (
     SELECT pt.id AS part_id,
            word_similarity(UPPER(%s), UPPER(pt.name::text)) AS score
     FROM catalog_parttype pt
-    WHERE UPPER(%s) <%% UPPER(pt.name::text)
+    WHERE {active_filter}UPPER(%s) <%% UPPER(pt.name::text)
   UNION ALL
     SELECT ci.part_type_id AS part_id,
            word_similarity(%s, ci.search_name_ru) AS score
     FROM actions_partcustomsinfo ci
-    WHERE ci.customs_name_ru_confirmed
+    {customs_join}
+    WHERE {active_filter}ci.customs_name_ru_confirmed
       AND %s <%% ci.search_name_ru
 ) candidates
 GROUP BY part_id
@@ -296,7 +313,9 @@ LIMIT %s
 """
 
 
-def _fuzzy_rows(query: str, limit: int) -> list[tuple[int, float]]:
+def _fuzzy_rows(
+    query: str, limit: int, *, active_only: bool = False
+) -> list[tuple[int, float]]:
     """Typo-tolerant name matches through the pg_trgm ``<%`` operator.
 
     ``<%`` is what lets the GIN trigram index answer the query. Computing
@@ -330,7 +349,15 @@ def _fuzzy_rows(query: str, limit: int) -> list[tuple[int, float]]:
             [str(WORD_SIMILARITY_THRESHOLD)],
         )
         folded = fold_search_text(query)
-        cursor.execute(_FUZZY_SQL, [query, query, folded, folded, limit])
+        sql = _FUZZY_SQL.format(
+            active_filter="pt.is_active AND " if active_only else "",
+            customs_join=(
+                "JOIN catalog_parttype pt ON pt.id = ci.part_type_id"
+                if active_only
+                else ""
+            ),
+        )
+        cursor.execute(sql, [query, query, folded, folded, limit])
         rows = [(int(part_id), float(score)) for part_id, score in cursor.fetchall()]
         if nested:
             cursor.execute(
@@ -342,12 +369,15 @@ def _fuzzy_rows(query: str, limit: int) -> list[tuple[int, float]]:
 # --- Public entry points ----------------------------------------------------
 
 
-def search_part_ids(raw_query: str | None, *, limit: int = RESULT_CAP) -> list[PartSearchHit]:
+def search_part_ids(
+    raw_query: str | None, *, limit: int = RESULT_CAP, active_only: bool = False
+) -> list[PartSearchHit]:
     """Ranked part identities for a query, capped and deterministic.
 
     Tiers run in priority order and a part keeps only its best tier, so no part
     appears twice. Inside a tier the order is score then primary key, which
-    keeps ties stable across calls and across pages.
+    keeps ties stable across calls and across pages. ``active_only`` applies
+    the activity predicate inside every tier, before each SQL limit.
     """
     query = clean_query(raw_query)
     if not query:
@@ -380,7 +410,9 @@ def search_part_ids(raw_query: str | None, *, limit: int = RESULT_CAP) -> list[P
 
     # 1-2. Identifier equality has no length floor: one indexed lookup stays
     # cheap even for a two-character article, so short exact queries work.
-    exact, normalized_only = _exact_article_split(query, normalized, limit)
+    exact, normalized_only = _exact_article_split(
+        query, normalized, limit, active_only=active_only
+    )
     take(exact, "exact_article")
     take(normalized_only, "normalized_exact_article")
 
@@ -390,9 +422,15 @@ def search_part_ids(raw_query: str | None, *, limit: int = RESULT_CAP) -> list[P
 
     # 3-4. Prefix and substring are the broad scans, so they need a floor.
     if not full() and len(normalized) >= MIN_PREFIX_LENGTH:
-        take(_article_ids(normalized, "startswith", limit), "article_prefix")
+        take(
+            _article_ids(normalized, "startswith", limit, active_only=active_only),
+            "article_prefix",
+        )
     if not full() and len(normalized) >= MIN_PARTIAL_LENGTH:
-        take(_article_ids(normalized, "contains", limit), "article_partial")
+        take(
+            _article_ids(normalized, "contains", limit, active_only=active_only),
+            "article_partial",
+        )
 
     # 5-8. Name equality is a cheap comparison; prefix and substring get floors.
     # Each broad tier is asked twice: once about the name as written, once
@@ -400,29 +438,42 @@ def search_part_ids(raw_query: str | None, *, limit: int = RESULT_CAP) -> list[P
     # «O-RING» without letting it outrank a part actually called «O RING».
     compact = compact_search_text(query)
     if not full():
-        take(_name_ids(query, "iexact", limit), "exact_name")
+        take(_name_ids(query, "iexact", limit, active_only=active_only), "exact_name")
     if not full():
-        take(_compact_name_ids(query, "exact", limit), "normalized_exact_name")
+        take(
+            _compact_name_ids(query, "exact", limit, active_only=active_only),
+            "normalized_exact_name",
+        )
     if not full() and len(query) >= MIN_PREFIX_LENGTH:
-        take(_name_ids(query, "istartswith", limit), "name_prefix")
+        take(
+            _name_ids(query, "istartswith", limit, active_only=active_only), "name_prefix"
+        )
         if len(compact) >= MIN_PREFIX_LENGTH:
-            take(_compact_name_ids(query, "startswith", limit), "name_prefix")
+            take(
+                _compact_name_ids(query, "startswith", limit, active_only=active_only),
+                "name_prefix",
+            )
     if not full() and len(query) >= MIN_PARTIAL_LENGTH:
-        take(_name_ids(query, "icontains", limit), "name_partial")
+        take(
+            _name_ids(query, "icontains", limit, active_only=active_only), "name_partial"
+        )
         if len(compact) >= MIN_PARTIAL_LENGTH:
-            take(_compact_name_ids(query, "contains", limit), "name_partial")
+            take(
+                _compact_name_ids(query, "contains", limit, active_only=active_only),
+                "name_partial",
+            )
 
     # 8. Every word of a multiword query, in any order.
     if not full():
         words = _query_words(query)
         if words:
-            take(_all_words_ids(words, limit), "name_all_words")
+            take(_all_words_ids(words, limit, active_only=active_only), "name_all_words")
 
     # 9. Typo tolerance last, so a fuzzy name can never outrank an identifier.
     # It is for words: a query with no letter at all is an identifier, which
     # the exact, prefix and substring tiers already cover, so it is skipped.
     if not full() and len(query) >= MIN_FUZZY_LENGTH and _has_letter(query):
-        rows = _fuzzy_rows(query, limit)
+        rows = _fuzzy_rows(query, limit, active_only=active_only)
         take([part_id for part_id, _score in rows], "name_fuzzy", dict(rows))
 
     return hits

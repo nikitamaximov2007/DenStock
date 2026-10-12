@@ -27,11 +27,21 @@ MIN_PICKER_QUERY = 2
 
 # Настоящие штрихкоды и артикулы не содержат кириллицы, пробелов и «*».
 # Строка с ними, которая не распознана как код, - это набранное название.
-_NAME_MARKERS = re.compile(r"[Ѐ-ӿ\s*]")
+_NAME_MARKERS = re.compile(r"[\s*]")
 
 
 def looks_like_name_query(raw: str | None) -> bool:
-    return bool(_NAME_MARKERS.search((raw or "").strip()))
+    value = (raw or "").strip()
+    if not value:
+        return False
+    # Exact identifier resolution always runs before this heuristic. For
+    # unrecognized input, accept ordinary one-word Latin and Cyrillic names
+    # as well as spaced/compact dimensional names. Punctuation and digits
+    # keep code-like values (for example ``MУСОР-XYZ``) on the unknown-code
+    # path unless the operator explicitly searches in the live picker.
+    if _NAME_MARKERS.search(value):
+        return True
+    return value.isalpha()
 
 
 def pickable_parts():
@@ -63,7 +73,7 @@ def search_pickable_parts(raw: str | None, *, limit: int = PICKER_LIMIT) -> list
     query = clean_query(raw)
     if len(query) < MIN_PICKER_QUERY:
         return []
-    hits = search_part_ids(query, limit=_SEARCH_WINDOW)
+    hits = search_part_ids(query, limit=_SEARCH_WINDOW, active_only=True)
     ids = [hit.part_id for hit in hits]
     parts = {
         part.pk: part

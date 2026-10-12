@@ -7,6 +7,7 @@ JS-раннера в проекте нет, поэтому логику фоку
   функция, защита от пустого submit, отсутствие агрессивного setInterval).
 Полный сценарий 20-30 сканов проверяется отдельным browser smoke.
 """
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -71,10 +72,21 @@ def test_scan_input_has_stable_selector(client, boss, session):
 
 def test_scan_input_has_autofocus(client, boss, session):
     html = _detail(client, session)
-    # autofocus и data-scan-input на одном и том же поле #scan
-    field = html[html.index('id="scan"'): html.index('id="scan"') + 400]
-    assert "autofocus" in field
-    assert "data-scan-input" in field
+    # Parse the actual input element. A fixed character window silently broke
+    # when the picker added data attributes to this scanner field.
+    class ScanInputParser(HTMLParser):
+        attrs = None
+
+        def handle_starttag(self, tag, attrs):
+            values = dict(attrs)
+            if tag == "input" and values.get("id") == "scan":
+                self.attrs = values
+
+    parser = ScanInputParser()
+    parser.feed(html)
+    assert parser.attrs is not None
+    assert "autofocus" in parser.attrs
+    assert "data-scan-input" in parser.attrs
 
 
 def test_scan_focus_module_included(client, boss, session):

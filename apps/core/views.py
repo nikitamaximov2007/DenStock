@@ -518,6 +518,9 @@ def _pick_part_into_queue(request: HttpRequest) -> HttpResponse:
     точного артикула. Одноразовый токен формы защищает от второго Enter.
     """
     token = (request.POST.get("pick_token") or "").strip()[:64]
+    if not token:
+        messages.error(request, "Обновите страницу и выберите деталь ещё раз.")
+        return redirect("scanner_receiving")
     used = list(request.session.get(_PICK_TOKENS_KEY, []))
     if token and token in used:
         messages.info(request, "Эта деталь уже добавлена в очередь.")
@@ -783,12 +786,17 @@ def scanner_receiving(request: HttpRequest) -> HttpResponse:
                             return redirect("scanner_receiving")
                         if looks_like_name_query(code):
                             # Набрано название, а не код: предлагаем выбрать
-                            # карточку и ничего не проводим по строке запроса.
-                            name_pick = {"query": code, "rows": search_pickable_parts(code)}
-                            if not name_pick["rows"]:
+                            # карточку только при наличии совпадений. Если их
+                            # нет, сохраняем прежний workflow неизвестного кода.
+                            rows = search_pickable_parts(code)
+                            if rows:
+                                name_pick = {"query": code, "rows": rows}
+                            else:
+                                _record_unresolved(request, code)
                                 error = (
-                                    f"По названию «{code}» ничего не найдено. Создайте "
-                                    "карточку детали или отсканируйте её код."
+                                    "Код не распознан: он не найден в каталогах BRP, Polaris "
+                                    "или в складском справочнике. Сначала создайте карточку "
+                                    "детали или проверьте номер."
                                 )
                         else:
                             _record_unresolved(request, code)

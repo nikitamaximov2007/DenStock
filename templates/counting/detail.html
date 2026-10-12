@@ -54,6 +54,7 @@
         {% csrf_token %}
         <input type="hidden" name="part_id" value="">
         <input type="hidden" name="request_token" value="{{ request_token }}">
+        <button type="submit" hidden aria-hidden="true"></button>
       </form>
       <p id="counting-pick-status"
          class="part-picker__status muted"

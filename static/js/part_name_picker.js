@@ -87,8 +87,8 @@
           small.textContent = meta.join(" · ");
           li.appendChild(small);
         }
-        li.addEventListener("mousedown", function (event) {
-          event.preventDefault(); // фокус остаётся в поле, blur не закроет список раньше
+        li.addEventListener("pointerdown", function (event) {
+          event.preventDefault(); // мышь/касание: фокус не уйдёт до выбора
           pick(index);
         });
         li.addEventListener("mouseenter", function () { highlight(index); });
@@ -124,6 +124,7 @@
       if (state.timer !== null) cancel(state.timer);
       state.timer = null;
       state.seq += 1; // любой уже отправленный запрос теперь устарел
+      close(); // старый вариант нельзя выбрать, пока ищем новый запрос
       var query = input.value.trim();
       if (query.length < MIN_QUERY) { close(); return; }
       state.timer = schedule(function () { state.timer = null; search(query); }, DEBOUNCE_MS);
