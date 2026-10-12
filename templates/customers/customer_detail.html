@@ -12,11 +12,29 @@
       <div class="page-actions">
         <a class="btn btn--small btn--secondary"
            href="{% url 'reports_client_timeline' %}?customer_id={{ customer.pk }}">История</a>
-        <a class="btn btn--small btn--secondary"
-           href="{% url 'customer_edit' customer.pk %}">Изменить</a>
+        {% if customer.is_archived %}
+          <span class="pill pill--warning">в архиве</span>
+          <a class="btn btn--small btn--primary"
+             href="{% url 'customer_restore' customer.pk %}">Восстановить клиента</a>
+        {% else %}
+          <a class="btn btn--small btn--secondary"
+             href="{% url 'customer_edit' customer.pk %}">Изменить</a>
+          <a class="btn btn--small btn--danger"
+             href="{% url 'customer_archive' customer.pk %}">Удалить клиента</a>
+        {% endif %}
       </div>
     {% endif %}
   </div>
+  {% if customer.is_archived %}
+    <div class="status-card status-card--warning">
+      <div class="status-card__body">
+        <p class="status-card__title">Карточка в архиве</p>
+        <p class="status-card__meta">
+          {{ customer.archived_at|ru_dt }} · {{ customer.archived_by|default:"сотрудник не указан" }}
+        </p>
+      </div>
+    </div>
+  {% endif %}
   <div class="card">
     <div class="card__body">
       <table class="table">
@@ -142,6 +160,35 @@
                 <td>{{ reservation.get_status_display }}</td>
                 <td>{{ reservation.customer_name }}</td>
                 <td>{{ reservation.created_at|ru_dt }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+  {% if lifecycle_events %}
+    <div class="card">
+      <div class="card__header">
+        <h2 class="card__title">Архив: история действий</h2>
+      </div>
+      <div class="card__body">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Действие</th>
+              <th>Оператор</th>
+              <th>Причина</th>
+              <th>Когда</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in lifecycle_events %}
+              <tr>
+                <td>{{ event.get_resulting_status_display }}</td>
+                <td>{{ event.actor }}</td>
+                <td>{{ event.reason }}</td>
+                <td>{{ event.created_at|ru_dt }}</td>
               </tr>
             {% endfor %}
           </tbody>

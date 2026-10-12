@@ -14,7 +14,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from apps.customers.services import customer_snapshot
+from apps.customers.services import CustomerArchiveError, customer_snapshot, require_active_customer
 from apps.inventory.models import PartItem, StockLot
 from apps.inventory.pricing import resolve_effective_inventory_customer_price
 from apps.inventory.services import (
@@ -173,10 +173,15 @@ def _recompute_for_lines(lines) -> None:
 # --- Сервисы изменения брони -------------------------------------------------
 
 
+@transaction.atomic
 def create_reservation(
     *, customer_name="", customer_phone="", comment="", expires_at=None, by=None, customer=None
 ) -> Reservation:
     """Создать черновик брони (остаток ещё не держим)."""
+    try:
+        customer = require_active_customer(customer)
+    except CustomerArchiveError as exc:
+        raise ReservationError(str(exc)) from exc
     # Выбрана карточка клиента - документ забирает её АКТУАЛЬНЫЕ имя и телефон
     # как снимок. Дальше документ от карточки не зависит: переименование
     # карточки завтра историю не переписывает.
@@ -403,10 +408,15 @@ def expire_reservations(*, now=None, by=None) -> int:
 # вызывает и НЕ пишет ledger напрямую.
 
 
+@transaction.atomic
 def create_sale(
     *, customer_name="", customer_phone="", comment="", by=None, reservation=None, customer=None
 ) -> Sale:
     """Создать черновик продажи."""
+    try:
+        customer = require_active_customer(customer)
+    except CustomerArchiveError as exc:
+        raise SaleError(str(exc)) from exc
     # Выбрана карточка клиента - документ забирает её АКТУАЛЬНЫЕ имя и телефон
     # как снимок. Дальше документ от карточки не зависит: переименование
     # карточки завтра историю не переписывает.

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ action_label }} клиента {{ customer.name }} · DenisStock{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1 class="page-title">{{ action_label }} клиента</h1>
+    <div class="page-actions">
+      <a class="btn btn--small btn--secondary"
+         href="{% url 'customer_detail' customer.pk %}">Вернуться к карточке</a>
+    </div>
+  </div>
+  {% if can_transition %}
+    <div class="status-card status-card--warning">
+      <div class="status-card__body">
+        <p class="status-card__title">{{ customer.name }}</p>
+        {% if restore %}
+          <p class="status-card__meta">Активная карточка снова появится в выборе клиента для новых операций.</p>
+        {% else %}
+          <p class="status-card__meta">
+            Карточка будет помещена в архив. Продажи, ремонты, резервы и снимки документов останутся связаны с ней.
+            Архивную карточку нельзя будет выбрать для новой операции.
+          </p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card__body">
+        <p>
+          Действие выполняет учётная запись
+          <strong>{{ request.user.get_full_name|default:request.user.username }}</strong>.
+          Оператор и причина сохраняются в истории карточки.
+        </p>
+        <form method="post" class="form">
+          {% csrf_token %}
+          <div class="field">
+            <label class="field__label" for="lifecycle-reason">Причина действия</label>
+            <textarea id="lifecycle-reason"
+                      name="reason"
+                      rows="3"
+                      maxlength="1000"
+                      required></textarea>
+          </div>
+          <label class="checkbox-field">
+            <input type="checkbox" name="confirm_transition" value="yes" required>
+            Подтверждаю действие для карточки «{{ customer.name }}»
+          </label>
+          <div class="form-actions">
+            <button type="submit"
+                    class="btn {% if restore %}btn--primary{% else %}btn--danger{% endif %}">
+              {{ action_label }} клиента
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% else %}
+    <div class="status-card status-card--error">
+      <div class="status-card__body">
+        <p class="status-card__title">Статус карточки уже изменился</p>
+        <p class="status-card__meta">Обновите карточку и проверьте её текущий статус.</p>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}
