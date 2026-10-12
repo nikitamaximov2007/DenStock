@@ -177,12 +177,15 @@ def test_provider_accounting_lag_refuses_upload_without_deleting(tmp_path, gener
 
     harness.settle()
     third = harness.run(LAST)
-    # Documented liveness gap: the newest remote name is the partial run, so
-    # it is the "previous" generation, fails read-back, and rotation stops.
-    assert third.returncode == 1
-    assert third.status["status"] == "degraded"
-    assert _purges(harness) == []
-    assert harness.restorable_runs() == [PREVIOUS, NEW, LAST]
+    # The partial run is newer than the proven NEW and its bytes differ from a
+    # verified local twin: it is removed first, then normal rotation. (Before
+    # the production-lineage candidate it became «previous» and stopped every
+    # later rotation.)
+    assert third.returncode == 0, third.stderr
+    assert third.status["status"] == "ok"
+    assert LATER not in harness.remote_runs()
+    assert _purges(harness)[0][1] == f"{TARGET}/{LATER}"
+    assert harness.restorable_runs()[-2:] == [NEW, LAST]
 
 
 def test_enospc_mid_upload_keeps_every_verified_generation(tmp_path, generation_bytes):
@@ -328,3 +331,64 @@ def test_newest_restorable_generation_survives_random_faults(tmp_path, generatio
     # Outcomes differ per seed: one unlucky fault can stall the wrapper in the
     # documented fail-closed state for the rest of the sequence.
     assert outcomes <= {"ok", "failed", "degraded"}
+
+
+# --- Interrupted uploads and read-back cost (production-lineage candidate) -------
+
+
+def _downloads(harness):
+    return [c for c in harness.rclone_calls() if c[0] == "check" and "--download" in c]
+
+
+def test_partial_upload_from_an_interrupted_night_is_removed_by_the_next_good_run(
+    tmp_path, generation_bytes
+):
+    """A cut upload used to become «previous» and stop every later rotation."""
+    harness = OffsiteHarness(tmp_path, soft_limit=10 * generation_bytes)
+    harness.seed_remote(OLDEST)
+    harness.seed_remote(PREVIOUS)
+    harness.arm(copy_fail_after=1)
+    assert harness.run(LATER).status["status"] == "failed"
+    harness.disarm()
+    assert LATER in harness.remote_runs()  # a broken partial copy stays behind
+
+    result = harness.run(LAST)
+
+    assert result.returncode == 0, result.stderr
+    assert result.status["status"] == "ok"
+    assert LATER not in harness.remote_runs()
+    assert harness.restorable_runs() == [OLDEST, PREVIOUS, LAST]
+    assert [c[1] for c in _purges(harness)] == [f"{TARGET}/{LATER}"]
+
+
+def test_unprovable_newer_copy_without_its_local_twin_stops_rotation(
+    tmp_path, generation_bytes
+):
+    """No local copy means no proof either way: nothing is deleted."""
+    harness = OffsiteHarness(tmp_path, soft_limit=10 * generation_bytes)
+    harness.seed_remote(PREVIOUS)
+    harness.seed_remote(LATER, local=False)
+
+    result = harness.run(LAST)
+
+    assert result.returncode == 1
+    assert result.status["status"] == "degraded"
+    assert result.status["uploaded_run"] == LAST
+    assert _purges(harness) == []
+    assert LAST in harness.restorable_runs()
+
+
+def test_a_normal_night_downloads_only_the_new_and_the_previous_copy(
+    tmp_path, generation_bytes
+):
+    harness = OffsiteHarness(tmp_path, soft_limit=3 * generation_bytes + 10)
+    harness.seed_remote(OLDEST)
+    harness.seed_remote(PREVIOUS)
+
+    result = harness.run(NEW)
+
+    assert result.status["status"] == "ok", result.stderr
+    downloaded = sorted(c[-1].rsplit("/", 1)[-1] for c in _downloads(harness))
+    assert downloaded == sorted([NEW, PREVIOUS])
+    hash_only = [c for c in harness.rclone_calls() if c[0] == "check" and "--download" not in c]
+    assert sorted(c[-1].rsplit("/", 1)[-1] for c in hash_only) == sorted([NEW, PREVIOUS])

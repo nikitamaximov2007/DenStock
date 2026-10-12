@@ -89,8 +89,9 @@ elif args[0] == 'copy':
 elif args[0] == 'check':
     if os.environ.get('FAKE_CHECK_FAIL') == '1':
         sys.exit(11)
-    source = pathlib.Path(args[2])
-    target = path(args[3])
+    positional = [a for a in args[1:] if not a.startswith('--')]  # [--download] SRC DST
+    source = pathlib.Path(positional[0])
+    target = path(positional[1])
     left = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()}
     right = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob('*') if p.is_file()}
     if left != right:

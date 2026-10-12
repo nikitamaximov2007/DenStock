@@ -151,8 +151,10 @@ elif command == "copy":
 elif command == "check":
     if faults.get("check_fail"):
         sys.exit(1)
-    source = pathlib.Path(args[2])
-    dest = key_of(args[3])
+    # rclone check [--download] SRC DST: flags may come first.
+    positional = [a for a in args[1:] if not a.startswith("--")]
+    source = pathlib.Path(positional[0])
+    dest = key_of(positional[1])
     left = {
         p.relative_to(source).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in source.rglob("*") if p.is_file()

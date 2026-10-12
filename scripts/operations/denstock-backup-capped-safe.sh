@@ -170,19 +170,57 @@ if (( REMOTE_AFTER > BACKUP_REMOTE_SOFT_LIMIT_BYTES )); then
     fail "После upload учтённый размер превысил soft limit; новую копию не удалять"
 fi
 
-# Preserve the new verified generation and the most recent older generation.
-# An older generation is trusted only when its local signed copy can be checked
-# byte-for-byte against remote. Otherwise fail retention without deleting data.
-PREVIOUS="$(printf '%s\n' "$BEFORE_RUNS" | tail -1)"
-if [[ -n "$PREVIOUS" && "$PREVIOUS" != "$RUN_ID" ]]; then
-    if [[ ! -d "backups/$PREVIOUS" ]] || \
+# Preserve the new verified generation and the most recent PROVEN older one.
+# An older generation is proven only when its local signed copy still verifies
+# and matches remote byte for byte. Walking back from the newest: a copy whose
+# local twin verifies but whose remote bytes differ is a broken (interrupted)
+# upload, not a recovery point; a copy without a verifiable local twin cannot be
+# judged, so rotation stops there without deleting anything.
+PREVIOUS=""
+BROKEN=()
+while IFS= read -r CANDIDATE; do
+    [[ -z "$CANDIDATE" ]] && continue
+    if [[ ! -d "backups/$CANDIDATE" ]] || \
         ! docker compose exec -T "$BACKUP_WEB_SERVICE" \
-            python manage.py verify_backup "$PREVIOUS" >/dev/null || \
-        ! rclone check --download "backups/$PREVIOUS" "$BACKUP_OFFSITE_TARGET/$PREVIOUS"; then
+            python manage.py verify_backup "$CANDIDATE" >/dev/null </dev/null; then
         status degraded "Новая копия проверена; предыдущая не подтверждена, ротация остановлена" \
             "$RUN_ID" 1
         exit 1
     fi
+    if rclone check --download "backups/$CANDIDATE" "$BACKUP_OFFSITE_TARGET/$CANDIDATE" \
+        </dev/null; then
+        PREVIOUS="$CANDIDATE"
+        break
+    fi
+    BROKEN+=("$CANDIDATE")
+    if (( ${#BROKEN[@]} >= 3 )); then
+        status degraded "Несколько удалённых копий подряд повреждены; ротация остановлена" \
+            "$RUN_ID" 1
+        exit 1
+    fi
+done < <(printf '%s\n' "$BEFORE_RUNS" | sed '/^$/d' | LC_ALL=C sort -r)
+if [[ -n "$BEFORE_RUNS" && -z "$PREVIOUS" ]]; then
+    status degraded "Новая копия проверена; предыдущая не подтверждена, ротация остановлена" \
+        "$RUN_ID" 1
+    exit 1
+fi
+
+# Broken copies newer than the proven previous one are interrupted uploads.
+# Two proven generations (new and previous) exist, so removing them is safe.
+for BAD in ${BROKEN[@]+"${BROKEN[@]}"}; do
+    [[ "$BAD" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$ ]] ||
+        fail "Небезопасное имя поколения; ротация остановлена"
+    [[ "$BAD" != "$RUN_ID" && "$BAD" != "$PREVIOUS" ]] ||
+        fail "Внутренняя ошибка выбора повреждённой копии; ротация остановлена"
+    rclone purge "$BACKUP_OFFSITE_TARGET/$BAD" ||
+        fail "Не удалось удалить повреждённую копию $BAD; остальные копии сохранены"
+    rclone backend cleanup-hidden "$BACKUP_OFFSITE_TARGET/$BAD" ||
+        fail "Не удалось очистить версии повреждённой копии $BAD; остальные сохранены"
+done
+if (( ${#BROKEN[@]} > 0 )); then
+    AFTER_RUNS="$(remote_runs)" || fail "После удаления повреждённых копий список неизвестен"
+    REMOTE_AFTER="$(size_bytes "$BACKUP_OFFSITE_TARGET")" ||
+        fail "После удаления повреждённых копий размер неизвестен"
 fi
 
 # Keep enough headroom for another generation of the same measured size.
@@ -212,11 +250,13 @@ if [[ -n "$PREVIOUS" ]]; then
     done
 fi
 
-if ! rclone check --download "$RUN_PATH" "$DEST"; then
-    fail "После ротации новое поколение перестало проходить read-back"
+# Both survivors were already read back in full above. After rotation a hash
+# comparison (no download) proves they were not touched, at no egress cost.
+if ! rclone check "$RUN_PATH" "$DEST"; then
+    fail "После ротации новое поколение не совпадает по контрольным суммам"
 fi
 if [[ -n "$PREVIOUS" ]] && \
-    ! rclone check --download "backups/$PREVIOUS" "$BACKUP_OFFSITE_TARGET/$PREVIOUS"; then
-    fail "После ротации предыдущее поколение перестало проходить read-back"
+    ! rclone check "backups/$PREVIOUS" "$BACKUP_OFFSITE_TARGET/$PREVIOUS"; then
+    fail "После ротации предыдущее поколение не совпадает по контрольным суммам"
 fi
 status ok "Новая копия проверена чтением; учтённый размер $REMOTE_AFTER байт" "$RUN_ID"
