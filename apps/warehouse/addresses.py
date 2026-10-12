@@ -258,21 +258,81 @@ def _identity_owner(code: str):
     return alias.location if alias else None
 
 
+# Название места в сообщениях: (именительный падеж, «отключён/отключена»).
+_LEVEL_WORDS = {
+    StorageLocation.Level.RACK: ("Стеллаж", "отключён"),
+    StorageLocation.Level.DRAWER: ("Ящик", "отключён"),
+    StorageLocation.Level.CELL: ("Ячейка", "отключена"),
+}
+_ACTIVATE_HINT = "«Структура склада», фильтр «Все», кнопка «Активировать»"
+
+
+def _level_words(level) -> tuple[str, str]:
+    return _LEVEL_WORDS.get(level, ("Место", "отключено"))
+
+
+def _address_taken_error(address: StorageAddress, owner: StorageLocation):
+    """Почему адрес занят: активное место, архивное место или старый адрес."""
+    short = short_address(address.code)
+    noun, disabled = _level_words(address.level)
+    if owner.code.upper() != address.code.upper():
+        return StorageLocationCreateError(
+            f"Адрес {short} занят: это старый адрес ячейки {short_address(owner.code)}. "
+            "Выберите другой адрес.",
+            location=owner,
+        )
+    if owner.is_active:
+        return StorageLocationCreateError(f"{noun} {short} уже существует.", location=owner)
+    message = (
+        f"{noun} {short} уже есть, но {disabled} (в архиве). Создать его заново нельзя: "
+        f"архивное место хранит историю. Чтобы снова пользоваться им, включите его: "
+        f"{_ACTIVATE_HINT}."
+    )
+    if owner.level == StorageLocation.Level.CELL:
+        message = (
+            f"{noun} {short} уже есть, но {disabled} (в архиве). Создать её заново нельзя: "
+            f"архивная ячейка хранит историю. Чтобы снова пользоваться ею, включите её: "
+            f"{_ACTIVATE_HINT}."
+        )
+    archived_parents = []
+    parent = owner.parent
+    while parent is not None:
+        if not parent.is_active:
+            archived_parents.append(parent)
+        parent = parent.parent
+    if archived_parents:
+        names = ", ".join(
+            f"{_level_words(p.level)[0].lower()} {short_address(p.code)}"
+            for p in reversed(archived_parents)
+        )
+        tail = "он тоже в архиве" if len(archived_parents) == 1 else "они тоже в архиве"
+        message += f" Сначала включите {names}: {tail}."
+    if owner.level == StorageLocation.Level.CELL:
+        message += " После включения проверьте в «Изменить», что в ней можно хранить остаток."
+    return StorageLocationCreateError(message, location=owner)
+
+
 def _get_or_create_canonical_parent(address: StorageAddress) -> StorageLocation:
     canonical = StorageLocation.objects.filter(code__iexact=address.code).first()
+    short = short_address(address.code)
+    noun, disabled = _level_words(address.level)
     if canonical is not None:
         if canonical.level != address.level:
             raise StorageLocationCreateError(
-                f"Родитель {address.code} существует с другим типом места."
+                f"Родитель {short} существует с другим типом места.", location=canonical
             )
         if not canonical.is_active:
-            raise StorageLocationCreateError(f"Родитель {address.code} архивирован.")
+            raise StorageLocationCreateError(
+                f"{noun} {short} {disabled} (в архиве): новую ячейку в нём создать нельзя. "
+                f"Сначала включите его: {_ACTIVATE_HINT}.",
+                location=canonical,
+            )
         return canonical
     if StorageLocationAlias.objects.filter(
         is_active=True, code__iexact=address.code
     ).exists():
         raise StorageLocationCreateError(
-            f"Родитель {address.code} является старым адресом. Используйте текущий адрес."
+            f"{noun} {short} является старым адресом. Используйте текущий адрес."
         )
     return _create_v2_location(address, name=address.code)
 
@@ -320,8 +380,9 @@ def create_location(
 ) -> StorageLocation:
     """Создать новый V2 target, при необходимости создав только его родителей."""
     parsed = parse_address(address)
-    if _identity_owner(parsed.code) is not None:
-        raise StorageLocationCreateError("Место с таким адресом уже существует.")
+    owner = _identity_owner(parsed.code)
+    if owner is not None:
+        raise _address_taken_error(parsed, owner)
     parent = None
     if parsed.parent_code:
         parent_address = parse_address(parsed.parent_code)
@@ -346,6 +407,10 @@ def create_location(
                 capacity=capacity,
             )
     except IntegrityError as exc:
+        # Параллельный запрос успел создать тот же адрес: назовём причину точно.
+        owner = _identity_owner(parsed.code)
+        if owner is not None:
+            raise _address_taken_error(parsed, owner) from exc
         raise StorageLocationCreateError(
             "Место с таким code или barcode уже существует."
         ) from exc

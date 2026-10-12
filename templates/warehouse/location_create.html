@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · DenisStock{% endblock %}
+{% block content %}
+  <h1 class="page-title">{{ title }}</h1>
+  <form method="post" class="form">
+    {% csrf_token %}
+    {{ form.as_p }}
+    {% if form.conflict_location %}
+      <p>
+        <a class="btn btn--secondary btn--small"
+           href="{% url 'location_detail' form.conflict_location.pk %}">Открыть {{ form.conflict_location.short_code }}</a>
+        <a class="btn btn--secondary btn--small"
+           href="{% url 'warehouse_index' %}?show=all">Структура склада, все места</a>
+      </p>
+    {% endif %}
+    <button type="submit" class="btn btn--primary">Сохранить</button>
+  </form>
+{% endblock %}
