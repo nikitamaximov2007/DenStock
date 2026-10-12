@@ -87,13 +87,14 @@
         {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
         {{ cell.quantity|quantity_int }}.
       </div>
-    {% else %}
+    {% elif session.status == "draft" or session.status == "converted" %}
       <div class="notice notice--warning">
         После начала этой инвентаризации остатки в ячейке менялись: движений
         {{ cell.changes_count }}. Посчитано в инвентаризации
         {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
         {{ cell.quantity|quantity_int }}. Подсчёт относится к прежнему
-        содержимому, поэтому провести его нельзя: пересчитайте ячейку заново.
+        содержимому, поэтому провести его нельзя.
+        <a href="{% url 'counting_cancel' session.pk %}?restart=1">Отменить и пересчитать заново</a>.
       </div>
     {% endif %}
   {% endif %}
@@ -185,6 +186,8 @@
           · Причина: {{ session.cancellation_reason|default:"не указана" }}
           {% if session.replacement_recount_id %}
             · <a href="{% url 'section_recount_detail' session.replacement_recount_id %}">Открыть сверочный пересчёт</a>
+          {% else %}
+            · <a href="{% url 'counting_cancel' session.pk %}?restart=1">Начать сверочный пересчёт этой ячейки</a>
           {% endif %}
         </p>
       </div>

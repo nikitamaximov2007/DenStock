@@ -1,8 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Отмена пересчёта {{ session.full_address|short_address }} · DenisStock{% endblock %}
+{% block title %}
+  {% if can_restart_after_cancel %}Новый пересчёт{% else %}Отмена пересчёта{% endif %}
+  {{ session.full_address|short_address }} · DenisStock
+{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">Отменить пересчёт</h1>
+    <h1 class="page-title">
+      {% if can_restart_after_cancel %}Начать пересчёт заново{% else %}Отменить пересчёт{% endif %}
+    </h1>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
          href="{% url 'counting_detail' session.pk %}">Вернуться к пересчёту</a>
@@ -12,8 +17,12 @@
     Ячейка: <span class="code-pill">{{ session.full_address|short_address }}</span>
     · Начал: {{ session.created_by|default:"не указан" }}
   </p>
-  {% if can_cancel %}
-    {% include "partials/_status_block.html" with kind="warning" text="Отмена сохранит сессию, сканы и строки в истории. Остатки и складские движения не изменятся. Если создан технический черновик документа, он будет закрыт и его нельзя будет провести." %}
+  {% if can_cancel or can_restart_after_cancel %}
+    {% if can_cancel %}
+      {% include "partials/_status_block.html" with kind="warning" text="Отмена сохранит сессию, сканы и строки в истории. Остатки и складские движения не изменятся. Если создан технический черновик документа, он будет закрыт и его нельзя будет провести." %}
+    {% else %}
+      {% include "partials/_status_block.html" with kind="info" text="Старая сессия уже отменена. Новый сверочный пересчёт начнётся с текущего снимка остатков; отмена не меняла склад." %}
+    {% endif %}
     <div class="card">
       <div class="card__body">
         <p>
@@ -24,22 +33,30 @@
         <form method="post" class="form">
           {% csrf_token %}
           <div class="field">
-            <label class="field__label" for="cancel-reason">Причина отмены</label>
+            <label class="field__label" for="cancel-reason">
+              {% if can_restart_after_cancel %}Причина нового пересчёта{% else %}Причина отмены{% endif %}
+            </label>
             <textarea id="cancel-reason" name="reason" rows="3" maxlength="500" required></textarea>
           </div>
-          <label class="checkbox-field">
-            <input type="checkbox"
-                   name="restart"
-                   value="1"
-                   {% if restart %}checked{% endif %}>
-            После отмены сразу начать сверочный пересчёт этой ячейки с текущим снимком остатков
-          </label>
+          {% if can_cancel %}
+            <label class="checkbox-field">
+              <input type="checkbox"
+                     name="restart"
+                     value="1"
+                     {% if restart %}checked{% endif %}>
+              После отмены сразу начать сверочный пересчёт этой ячейки с текущим снимком остатков
+            </label>
+          {% else %}
+            <input type="hidden" name="restart" value="1">
+          {% endif %}
           <label class="checkbox-field">
             <input type="checkbox" name="confirm_cancel" value="yes" required>
-            Подтверждаю отмену выбранной сессии
+            {% if can_restart_after_cancel %}Подтверждаю запуск нового пересчёта{% else %}Подтверждаю отмену выбранной сессии{% endif %}
           </label>
           <div class="form-actions">
-            <button type="submit" class="btn btn--danger">Подтвердить отмену</button>
+            <button type="submit" class="btn btn--danger">
+              {% if can_restart_after_cancel %}Начать сверочный пересчёт{% else %}Подтвердить отмену{% endif %}
+            </button>
           </div>
         </form>
       </div>

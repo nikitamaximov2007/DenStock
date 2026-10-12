@@ -544,7 +544,9 @@ def counting_cancel(request, pk):
                 if replacement:
                     messages.success(
                         request,
-                        f"Первичный ввод отменён. Запущен сверочный пересчёт "
+                        f"Запущен сверочный пересчёт ячейки {replacement.section_code}."
+                        if session.status == InventoryCountingSession.Status.CANCELLED
+                        else f"Первичный ввод отменён. Запущен сверочный пересчёт "
                         f"ячейки {replacement.section_code}.",
                     )
                     return redirect("section_recount_detail", pk=replacement.pk)
@@ -554,9 +556,19 @@ def counting_cancel(request, pk):
         InventoryCountingSession.Status.DRAFT,
         InventoryCountingSession.Status.CONVERTED,
     )
+    can_restart_after_cancel = (
+        restart
+        and session.status == InventoryCountingSession.Status.CANCELLED
+        and not session.replacement_recount_id
+    )
     return render(
         request,
         "counting/cancel.html",
-        {"session": session, "restart": restart, "can_cancel": can_cancel},
-        status=200 if can_cancel else 409,
+        {
+            "session": session,
+            "restart": restart,
+            "can_cancel": can_cancel,
+            "can_restart_after_cancel": can_restart_after_cancel,
+        },
+        status=200 if can_cancel or can_restart_after_cancel else 409,
     )

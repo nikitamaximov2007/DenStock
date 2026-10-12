@@ -172,6 +172,8 @@ def test_stale_post_offers_restart_and_non_inventory_user_is_denied(scene):
 
     client = Client()
     client.force_login(scene["user"])
+    detail = client.get(reverse("counting_detail", args=[session.pk]))
+    assert "Отменить и пересчитать заново" in detail.content.decode()
     response = client.post(reverse("counting_post", args=[session.pk]), follow=True)
     assert response.status_code == 200
     assert "Отменить и пересчитать заново" in response.content.decode()
@@ -235,3 +237,31 @@ def test_failed_replacement_creation_rolls_back_cancellation(scene, monkeypatch)
     assert old.cancelled_at is None
     assert old.replacement_recount_id is None
     assert receipt.status == Receipt.Status.DRAFT
+
+
+def test_operator_can_restart_after_a_separate_cancellation(scene):
+    old = start_session(location=scene["location"], by=scene["user"])
+    cancel_session(old, by=scene["user"], reason="Подсчёт прерван")
+    receive(scene, 14)
+    before = (StockBalance.objects.count(), StockMovement.objects.count())
+
+    client = Client()
+    client.force_login(scene["user"])
+    detail = client.get(reverse("counting_detail", args=[old.pk]))
+    assert "Начать сверочный пересчёт этой ячейки" in detail.content.decode()
+    url = reverse("counting_cancel", args=[old.pk])
+    confirm = client.get(url, {"restart": "1"})
+    assert confirm.status_code == 200
+    assert "Старая сессия уже отменена" in confirm.content.decode()
+    response = client.post(
+        url,
+        {"restart": "1", "reason": "Новый факт", "confirm_cancel": "yes"},
+    )
+    assert response.status_code == 302
+
+    old.refresh_from_db()
+    replacement = old.replacement_recount
+    assert replacement.status == SectionRecount.Status.COUNTING
+    assert replacement.restart_reason == "Новый факт"
+    assert sum(Decimal(row["quantity"]) for row in replacement.snapshot["lots"]) == Decimal("14")
+    assert (StockBalance.objects.count(), StockMovement.objects.count()) == before
