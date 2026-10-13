@@ -135,6 +135,7 @@ def test_postgresql_concurrent_double_tap_is_transparent(data):
     """Два одновременных запроса с одним токеном: оба получают один результат."""
     cart = _cart_with_one_row(data)
     before = _available(data)
+    remember_cart_customs(cart)
     barrier = Barrier(2)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
