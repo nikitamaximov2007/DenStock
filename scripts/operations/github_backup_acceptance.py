@@ -23,6 +23,7 @@ It refuses to run if the repository already has releases.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -43,7 +44,7 @@ def step(message):
     print(f"[acceptance] {message}", flush=True)
 
 
-def synthetic_run(root: Path) -> str:
+def synthetic_run(root: Path, key) -> str:
     when = datetime.now(timezone.utc).replace(microsecond=0)  # noqa: UP017 - runs on macOS 3.9
     run = when.strftime("%Y-%m-%d_%H-%M-%S")
     folder = root / run
@@ -54,11 +55,15 @@ def synthetic_run(root: Path) -> str:
         data = MARKER + os.urandom(size)
         (folder / name).write_bytes(data)
         hashes[name] = hashlib.sha256(data).hexdigest()
-    (folder / "manifest.json").write_text(json.dumps({
+    manifest = {
         "verification_status": "verified", "created_at": when.isoformat(),
         "app_commit": "0" * 40, "private_media_status": "included",
         "private_media_filename": "private_media.tar.gz", "private_media_file_count": 1,
-        "sha256": hashes, "signature": {"algorithm": "none", "note": "acceptance test"}}))
+        "media_filename": "media.tar.gz", "sha256": hashes}
+    payload = json.dumps(manifest, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    signature = base64.b64encode(key.sign(payload.encode("ascii"))).decode()
+    manifest["signature"] = {"algorithm": "ed25519", "key_id": "acceptance", "value": signature}
+    (folder / "manifest.json").write_text(json.dumps(manifest))
     return run
 
 
@@ -89,8 +94,17 @@ def main() -> int:
                                             capture_output=True, text=True).stdout)
         backups = tmp / "backups"
         backups.mkdir()
-        run = synthetic_run(backups)
+        # A throwaway signing key: the job verifies Ed25519 before upload.
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        key = Ed25519PrivateKey.generate()
+        pubkey = tmp / "acceptance-signing.pub"
+        pubkey.write_bytes(key.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+        run = synthetic_run(backups, key)
         env = {**conf, "BACKUP_ROOT": str(backups), "GHB_RECIPIENT_FILE": str(recipient),
+               "GHB_MANIFEST_PUBKEY": str(pubkey),
                "GHB_LOCK_FILE": str(tmp / "lock"), "GHB_STATUS_FILE": str(tmp / "status.json")}
 
         step("2. push: draft, upload, read-back, publish")

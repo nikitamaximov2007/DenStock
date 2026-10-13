@@ -30,6 +30,24 @@ pytestmark = pytest.mark.skipif(
 ROOT = Path(__file__).resolve().parents[1]
 JOB = ROOT / "scripts/operations/github_release_backup.py"
 MARKER = b"PLAINTEXT-CUSTOMER-MARKER-gh-5c1e"
+
+
+def _signing_key():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    return Ed25519PrivateKey.generate()
+
+
+SIGNING_KEY = _signing_key()  # synthetic, per test session
+
+
+def _sign(manifest: dict, key=None) -> dict:
+    import base64
+
+    body = {k: v for k, v in manifest.items() if k != "signature"}
+    payload = json.dumps(body, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    value = base64.b64encode((key or SIGNING_KEY).sign(payload.encode("ascii"))).decode()
+    return {**body, "signature": {"algorithm": "ed25519", "key_id": "synthetic", "value": value}}
 KIB, MIB = 1024, 1024 * 1024
 
 
@@ -52,6 +70,11 @@ def env(tmp_path):
         tokens[name] = path
     backups = tmp_path / "backups"
     backups.mkdir()
+    from cryptography.hazmat.primitives import serialization
+
+    pubkey = tmp_path / "manifest-signing.pub"
+    pubkey.write_bytes(SIGNING_KEY.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
     ctx = {"fake": fake, "identity": identity, "recipient": recipient, "tokens": tokens,
            "backups": backups, "tmp": tmp_path,
            "base": {"GHB_CONFIG": "/nonexistent", "GHB_REPO": fake.repo,
@@ -59,7 +82,8 @@ def env(tmp_path):
                     "GHB_RECIPIENT_FILE": str(recipient), "BACKUP_ROOT": str(backups),
                     "GHB_LOCK_FILE": str(tmp_path / "job.lock"),
                     "GHB_RETRIES": "2", "GHB_RETRY_DELAY": "0.05", "GHB_TIMEOUT": "20",
-                    "GHB_FORBIDDEN_REPOS": "owner/DenStock"}}
+                    "GHB_FORBIDDEN_REPOS": "owner/DenStock",
+                    "GHB_MANIFEST_PUBKEY": str(pubkey)}}
     try:
         yield ctx
     finally:
@@ -89,8 +113,8 @@ def make_run(backups: Path, when: datetime, size: int, *, private=True, verified
                 "private_media_status": "included" if private else "absent",
                 "private_media_filename": "private_media.tar.gz" if private else None,
                 "private_media_file_count": 3 if private else None,
-                "sha256": hashes, "signature": {"algorithm": "ed25519", "value": "c3ludGg="}}
-    (run / "manifest.json").write_text(json.dumps(manifest))
+                "sha256": hashes}
+    (run / "manifest.json").write_text(json.dumps(_sign(manifest)))
     return run_id
 
 
@@ -664,3 +688,20 @@ def test_real_service_acceptance_script_passes_against_the_fake(env):
                           text=True, timeout=300)
     assert busy.returncode != 0 and "already has releases" in busy.stdout + busy.stderr
     assert "v1" in [r["tag_name"] for r in env["fake"].releases.values()]
+
+
+def test_a_manifest_that_does_not_verify_is_never_uploaded(env):
+    """Invariant 1: hash AND Ed25519 signature are checked before anything leaves."""
+    run = make_run(env["backups"], NOW, 100 * KIB)
+    path = env["backups"] / run / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["app_commit"] = "0" * 40  # one field changed after signing
+    path.write_text(json.dumps(manifest))
+    forged = push(env)
+    assert forged.returncode == 1 and "подпись" in forged.status["message"]
+    path.write_text(json.dumps(_sign(manifest, key=_signing_key())))  # someone else's key
+    foreign = push(env)
+    assert foreign.returncode == 1 and "подпись" in foreign.status["message"]
+    missing = push(env, GHB_MANIFEST_PUBKEY=env["tmp"] / "absent.pub")
+    assert missing.returncode == 1 and "ключ" in missing.status["message"]
+    assert not env["fake"].releases

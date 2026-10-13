@@ -9,6 +9,11 @@ OnFailure=denstock-github-backup-alert.service
 [Service]
 Type=oneshot
 Environment=GHB_CONFIG=/etc/denstock/github-backup.env
+# Ciphertext is staged outside /opt/denstock/backups, so the nightly wrapper and
+# backup_all rotation never see it. systemd creates the directory 0700.
+Environment=GHB_WORK_DIR=/var/lib/denstock-github-backup
+StateDirectory=denstock-github-backup
+StateDirectoryMode=0700
 ExecStart=/usr/bin/python3 /opt/denstock/scripts/operations/github_release_backup.py push
 # 75 = another run still holds the lock: not a failure.
 SuccessExitStatus=75

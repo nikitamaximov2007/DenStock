@@ -200,7 +200,8 @@ import sys; open(sys.argv[1], "w").write(W); open(sys.argv[2], "w").write(R)' "$
     GHB=(env GHB_CONFIG=/nonexistent GHB_REPO=owner/denstock-backups
          GHB_API_URL="http://127.0.0.1:$(cat "$GH/port")"
          GHB_UPLOAD_URL="http://127.0.0.1:$(cat "$GH/port")/uploads"
-         GHB_RECIPIENT_FILE="$GH/recipient.txt" BACKUP_ROOT="$GH/backups" GHB_LOCK_FILE="$GH/lock")
+         GHB_RECIPIENT_FILE="$GH/recipient.txt" BACKUP_ROOT="$GH/backups" GHB_LOCK_FILE="$GH/lock"
+         GHB_MANIFEST_PUBKEY="$WORK/signing.pub.pem")
     "${GHB[@]}" GHB_TOKEN_FILE="$GH/write.token" "$PY" "$SOURCE/scripts/operations/github_release_backup.py" push
     echo "[drill] VPS lost: the local run is deleted; only GitHub remains"
     rm -rf "$GH/backups"

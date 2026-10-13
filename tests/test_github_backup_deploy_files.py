@@ -11,6 +11,8 @@ def test_service_runs_after_the_nightly_backup_and_tolerates_a_held_lock():
     assert "SuccessExitStatus=75" in unit
     assert "OnFailure=denstock-github-backup-alert.service" in unit
     assert "ProtectSystem=strict" in unit and "NoNewPrivileges=yes" in unit
+    assert "Environment=GHB_WORK_DIR=/var/lib/denstock-github-backup" in unit
+    assert "StateDirectory=denstock-github-backup" in unit
     assert "TOKEN" not in unit.upper().replace("GHB_CONFIG", "")
 
 

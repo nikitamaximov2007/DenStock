@@ -47,8 +47,12 @@
 2. Репозиторий должен быть приватным и не совпадать с репозиторием исходного
    кода (`GHB_FORBIDDEN_REPOS`).
 3. Берется самая новая локальная копия со статусом `verified`. Отказ, если в
-   ней нет `private_media`, если хеш любого файла не совпадает с manifest или
-   manifest не подписан.
+   ней нет `private_media` (или public media, когда она указана в manifest),
+   если хеш любого файла не совпадает с manifest или подпись Ed25519 manifest
+   не проходит проверку закрепленным публичным ключом
+   (`GHB_MANIFEST_PUBKEY`, по умолчанию
+   `/etc/denstock/manifest-signing/production-ed25519.pub`; на сервере есть
+   `python3-cryptography` 41.0.7).
 4. Если на GitHub уже есть целая копия с тем же идентификатором: ничего не
    делается. Если есть неподтвержденная с тем же идентификатором: отказ, без
    перезаписи. Если на GitHub уже есть более новая целая копия: старая не
@@ -111,6 +115,9 @@ private_media 51 МБ, шифрование почти не меняет раз�
 - `deploy/github-backup/systemd/denstock-github-backup.timer`: ежедневно в
   05:00 МСК (ночная копия в 03:00), случайная задержка до 15 минут,
   `Persistent=true` догоняет пропуск после простоя.
+- Шифртекст готовится в `/var/lib/denstock-github-backup` (systemd
+  `StateDirectory`, 0700), а не в `/opt/denstock/backups`: ночная обёртка и
+  ротация `backup_all` его не видят.
 - `denstock-github-backup.service`: после `denstock-backup.service`, таймаут
   2 часа, защита systemd (`ProtectSystem=strict`, `NoNewPrivileges`), код 75
   (занято) не считается ошибкой.

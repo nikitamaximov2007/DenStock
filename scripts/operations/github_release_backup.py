@@ -470,7 +470,33 @@ def pick_run(root: Path, requested: str | None):
     raise BackupError("нет локальной копии со статусом verified")
 
 
-def check_local_run(run_dir: Path):
+def verify_signature(manifest: dict, pubkey_path: Path) -> None:
+    """Ed25519 over the canonical manifest without ``signature``: the same bytes
+    that backup_all signs and that offline_restore.sh verifies. A copy whose
+    signature does not verify against the pinned key never leaves the host."""
+    import base64
+
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import serialization
+    except ImportError:
+        raise BackupError("нет python3-cryptography: подпись проверить нельзя") from None
+    try:
+        key = serialization.load_pem_public_key(pubkey_path.read_bytes())
+    except (OSError, ValueError):
+        raise BackupError("публичный ключ подписи не читается") from None
+    signature = manifest.get("signature") or {}
+    if signature.get("algorithm") != "ed25519" or not signature.get("value"):
+        raise BackupError("manifest не подписан Ed25519")
+    payload = json.dumps({k: v for k, v in manifest.items() if k != "signature"},
+                         ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("ascii")
+    try:
+        key.verify(base64.b64decode(signature["value"]), payload)
+    except (InvalidSignature, ValueError, TypeError):
+        raise BackupError("подпись manifest не прошла проверку: копию не выгружаю") from None
+
+
+def check_local_run(run_dir: Path, pubkey_path: Path):
     raw = (run_dir / "manifest.json").read_bytes()
     manifest = json.loads(raw)
     if manifest.get("verification_status") != "verified":
@@ -481,14 +507,16 @@ def check_local_run(run_dir: Path):
         if not (run_dir / name).is_file():
             raise BackupError(f"в копии {run_dir.name} нет {name}")
     hashes = manifest.get("sha256") or {}
-    for required in ("db.dump", manifest.get("private_media_filename") or "private_media.tar.gz"):
-        if required not in hashes:
-            raise BackupError(f"manifest не содержит хеш {required}")
+    required = ["db.dump", manifest.get("private_media_filename") or "private_media.tar.gz"]
+    if manifest.get("media_filename"):
+        required.append(manifest["media_filename"])  # public media, when the site has any
+    for name in required:
+        if name not in hashes:
+            raise BackupError(f"manifest не содержит хеш {name}")
     for name, digest in hashes.items():
         if sha256_file(run_dir / name) != digest:
             raise BackupError(f"локальная копия повреждена: хеш {name} не совпадает")
-    if "signature" not in manifest:
-        raise BackupError(f"manifest копии {run_dir.name} не подписан")
+    verify_signature(manifest, pubkey_path)
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
@@ -562,7 +590,9 @@ def push(conf) -> int:
 
         run = pick_run(root, conf.get("GHB_RUN"))
         status.data.update(run=run)
-        manifest, manifest_sha = check_local_run(root / run)
+        pubkey = Path(conf.get("GHB_MANIFEST_PUBKEY",
+                               "/etc/denstock/manifest-signing/production-ed25519.pub"))
+        manifest, manifest_sha = check_local_run(root / run, pubkey)
         tag = f"denstock-backup-{run}-{manifest_sha[:12]}"
         status.data.update(tag=tag)
         cipher_name, sidecar_name = asset_names(run)
