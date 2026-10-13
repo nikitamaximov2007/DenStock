@@ -288,6 +288,10 @@ def complete_repair_order(order, *, by=None) -> RepairOrder:
         return order
     if order.status != RepairOrder.Status.DRAFT:
         raise RepairError("Заказ уже проведён или отменён.")
+    try:
+        require_active_customer(order.customer_id)
+    except CustomerArchiveError as exc:
+        raise RepairError(str(exc)) from exc
     lines = list(order.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise RepairError("Нельзя провести пустой заказ.")

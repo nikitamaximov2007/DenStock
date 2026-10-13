@@ -703,6 +703,10 @@ def complete_sale(sale, *, by=None) -> Sale:
     sale = Sale.objects.select_for_update().get(pk=sale.pk)
     if sale.status != Sale.Status.DRAFT:
         raise SaleError("Продажа уже проведена.")
+    try:
+        require_active_customer(sale.customer_id)
+    except CustomerArchiveError as exc:
+        raise SaleError(str(exc)) from exc
     lines = list(sale.lines.select_related("part_item", "stock_lot", "part_type"))
     if not lines:
         raise SaleError("Нельзя завершить пустую продажу.")

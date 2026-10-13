@@ -1,10 +1,16 @@
+from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
+from threading import Barrier
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections, connection
 from django.db.models.deletion import ProtectedError
 from django.test import Client
 from django.urls import reverse
 from django.utils import timezone
 
+from apps.catalog.models import Category, PartType, Unit
 from apps.customers.admin import CustomerAdmin
 from apps.customers.models import Customer, CustomerLifecycleEvent
 from apps.customers.services import (
@@ -14,16 +20,75 @@ from apps.customers.services import (
     restore_customer,
     search_customers,
 )
+from apps.inventory.models import StockMovement
+from apps.inventory.services import create_stock_lot, receive_stock_lot
+from apps.procurement.models import Batch, BatchLine
+from apps.procurement.services import finalize_cost
 from apps.repairs.models import RepairOrder
-from apps.repairs.services import RepairError, create_repair_order
+from apps.repairs.services import (
+    RepairError,
+    add_stock_lot_to_repair_order,
+    complete_repair_order,
+    create_repair_order,
+)
 from apps.sales.forms import ReservationForm, SaleForm
 from apps.sales.models import Sale
-from apps.sales.services import ReservationError, SaleError, create_reservation, create_sale
+from apps.sales.services import (
+    ReservationError,
+    SaleError,
+    add_stock_lot_to_sale,
+    complete_sale,
+    create_reservation,
+    create_sale,
+)
+from apps.suppliers.models import Supplier
+from apps.warehouse.models import StorageLocation
+from tests.customs_support import remember_customs
 
 
 @pytest.fixture
 def operator(db):
     return get_user_model().objects.create_superuser("archive-operator", password="test")
+
+
+@pytest.fixture
+def customer_completion_scene(operator):
+    customer = Customer.objects.create(name="Клиент с черновиками")
+    supplier = Supplier.objects.create(name="Поставщик для проверки архива")
+    category = Category.objects.create(name="Тест архива клиента")
+    unit = Unit.objects.get(name="Штука")
+    location = StorageLocation.objects.create(
+        name="Ячейка проверки архива",
+        code="S01-D01-C01",
+        storage_allowed=True,
+        is_active=True,
+    )
+    part = PartType.objects.create(
+        name="Болт для проверки архива",
+        category=category,
+        unit=unit,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("100"),
+    )
+    batch = Batch.objects.create(supplier=supplier, shipping_cost=Decimal("0"))
+    line = BatchLine.objects.create(
+        batch=batch,
+        part_type=part,
+        quantity=Decimal("5"),
+        unit_cost_currency=Decimal("10"),
+    )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, operator)
+    line.refresh_from_db()
+    lot = create_stock_lot(line, location, Decimal("5"))
+    receive_stock_lot(lot, by=operator)
+    remember_customs(part)
+    sale = create_sale(customer=customer, by=operator)
+    add_stock_lot_to_sale(sale, lot, Decimal("1"), unit_price=Decimal("100"), by=operator)
+    repair = create_repair_order(customer=customer, by=operator)
+    add_stock_lot_to_repair_order(repair, lot, Decimal("1"), by=operator)
+    return {"customer": customer, "sale": sale, "repair": repair, "lot": lot}
 
 
 def test_archive_retains_document_references_and_snapshots(operator):
@@ -118,6 +183,101 @@ def test_new_operations_reject_archived_customer(operator):
         create_repair_order(customer=customer, by=operator)
     with pytest.raises(ReservationError, match="архиве"):
         create_reservation(customer=customer, by=operator)
+
+
+def test_archiving_customer_blocks_completion_of_existing_sale_and_repair_drafts(
+    client, operator, customer_completion_scene
+):
+    scene = customer_completion_scene
+    archive_customer(
+        customer_id=scene["customer"].pk,
+        by=operator,
+        reason="Проверка открытых черновиков",
+    )
+
+    client.force_login(operator)
+    sale_response = client.post(reverse("sale_complete", args=[scene["sale"].pk]))
+    repair_response = client.post(reverse("repair_order_complete", args=[scene["repair"].pk]))
+    assert sale_response.status_code == 302
+    assert repair_response.status_code == 302
+
+    with pytest.raises(SaleError, match="архиве"):
+        complete_sale(scene["sale"], by=operator)
+    with pytest.raises(RepairError, match="архиве"):
+        complete_repair_order(scene["repair"], by=operator)
+
+    scene["sale"].refresh_from_db()
+    scene["repair"].refresh_from_db()
+    scene["lot"].refresh_from_db()
+    assert scene["sale"].status == Sale.Status.DRAFT
+    assert scene["repair"].status == RepairOrder.Status.DRAFT
+    assert scene["lot"].quantity == Decimal("5")
+    assert not StockMovement.objects.filter(
+        document_type__in=["sale", "repair_order"]
+    ).exists()
+
+
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="Requires PostgreSQL row locks")
+@pytest.mark.parametrize("kind", ["sale", "repair"])
+def test_archiving_customer_serializes_with_existing_document_completion(
+    customer_completion_scene, operator, kind
+):
+    scene = customer_completion_scene
+    barrier = Barrier(2)
+    doc = scene[kind]
+    doc_model = Sale if kind == "sale" else RepairOrder
+    doc_type = "sale" if kind == "sale" else "repair_order"
+
+    def archive():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+            current_operator = get_user_model().objects.get(pk=operator.pk)
+            archive_customer(
+                customer_id=scene["customer"].pk,
+                by=current_operator,
+                reason="Гонка с проведением черновика",
+            )
+            return "archived"
+        finally:
+            close_old_connections()
+
+    def complete():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+            current_operator = get_user_model().objects.get(pk=operator.pk)
+            current_doc = doc_model.objects.get(pk=doc.pk)
+            try:
+                (complete_sale if kind == "sale" else complete_repair_order)(
+                    current_doc, by=current_operator
+                )
+            except (SaleError, RepairError):
+                return "refused"
+            return "completed"
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        archive_future = pool.submit(archive)
+        complete_future = pool.submit(complete)
+        assert archive_future.result() == "archived"
+        completion = complete_future.result()
+
+    scene["customer"].refresh_from_db()
+    doc.refresh_from_db()
+    scene["lot"].refresh_from_db()
+    assert scene["customer"].is_archived
+    assert completion in {"completed", "refused"}
+    if completion == "completed":
+        assert doc.status in {Sale.Status.COMPLETED, RepairOrder.Status.COMPLETED}
+        assert scene["lot"].quantity == Decimal("4")
+        assert StockMovement.objects.filter(document_type=doc_type, document_id=doc.pk).count() == 1
+    else:
+        assert doc.status in {Sale.Status.DRAFT, RepairOrder.Status.DRAFT}
+        assert scene["lot"].quantity == Decimal("5")
+        assert not StockMovement.objects.filter(document_type=doc_type, document_id=doc.pk).exists()
 
 
 def test_customer_archive_confirmation_permissions_csrf_and_list(operator):
