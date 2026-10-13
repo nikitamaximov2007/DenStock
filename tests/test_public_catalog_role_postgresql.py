@@ -22,6 +22,7 @@ from django.db.utils import ProgrammingError
 
 from apps.catalog.public_catalog import cards_by_id, part_relations, search_catalog
 from apps.catalog.public_photos import primary_photos, publish_photo, reject_photo, rendition_for
+from apps.inventory.public_columns import HIDDEN_COLUMNS
 
 pytestmark = pytest.mark.postgresql
 
@@ -307,7 +308,20 @@ def test_the_role_script_grants_exactly_the_documented_privileges(restricted_rol
         "customer_accounts_customeraccountevent",
         "customer_accounts_customerloginattempt",
     }
-    legacy_columns = {item for item in columns if not item[0].startswith("customer_account")}
+    restricted = {item for item in columns if item[0] in HIDDEN_COLUMNS}
+    for table, hidden in HIDDEN_COLUMNS.items():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = %s", [table])
+            every = {row[0] for row in cursor.fetchall()}
+        assert set(hidden) <= every, table  # the list names real columns
+        granted = {column for t, column, privilege in restricted
+                   if t == table and privilege == "SELECT"}
+        assert granted == every - set(hidden), table
+    assert {privilege for _t, _c, privilege in restricted} == {"SELECT"}
+    legacy_columns = {item for item in columns if not item[0].startswith("customer_account")
+                      and item[0] not in HIDDEN_COLUMNS}
     assert legacy_columns == {
         ("customer_requests_customerrequest", "id", "SELECT"),
         ("customer_requests_customerrequest", "public_id", "SELECT"),
@@ -711,3 +725,43 @@ def test_a_public_max_request_hands_off_under_the_restricted_role(
     assert handoff["Location"].startswith("https://max.ru/id0000000000_bot?start=")
     assert CustomerRequestMessengerLinkToken.objects.get().channel == "max"
     assert not MaxConversation.objects.exists() and not MaxOutboxEvent.objects.exists()
+
+
+SENSITIVE_SAMPLES = (
+    ("inventory_stocklot", "landed_unit_cost_rub"),
+    ("inventory_partitem", "landed_cost_rub"),
+    ("procurement_batch", "shipping_cost"),
+    ("procurement_batch", "supplier_id"),
+    ("sales_reservation", "customer_phone"),
+    ("sales_reservation", "customer_name"),
+    ("brp_brpcatalogpart", "wholesale_price_usd"),
+    ("brp_brppartlink", "brp_wholesale_price_usd"),
+    ("polaris_polarispartlink", "markup_percent_used"),
+    ("actions_partcustomsinfo", "customs_unit_price_usd"),
+)
+
+
+def test_cost_and_customer_columns_are_unreadable_under_the_restricted_role(
+    restricted_role, seeded
+):
+    """Least privilege (2026-10-13): a compromised catalog-web cannot read purchase
+    costs, supplier prices or a reserving customer's name and phone, while the
+    public facts of the same tables stay readable."""
+    _as(restricted_role)
+    for table, column in SENSITIVE_SAMPLES:
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            with transaction.atomic(), connection.cursor() as cursor:
+                cursor.execute(f"SELECT {column} FROM {table} LIMIT 1")
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT quantity, status FROM inventory_stocklot LIMIT 1")
+        cursor.execute("SELECT final_customer_price_rub FROM brp_brppartlink LIMIT 1")
+
+
+def test_public_column_mode_reports_the_same_stock(seeded):
+    from apps.inventory.movement import live_stock_rows
+
+    def shape(rows):
+        return sorted((r.part_type.pk, r.location.pk, r.physical, r.available, r.reserved,
+                       r.receiving, r.quarantine, tuple(sorted(r.batches))) for r in rows)
+
+    assert shape(live_stock_rows(public_columns_only=True)) == shape(live_stock_rows())

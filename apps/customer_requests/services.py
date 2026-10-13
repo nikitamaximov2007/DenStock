@@ -14,6 +14,7 @@ from apps.catalog.public_contracts import resolve_current_customer_prices
 from apps.core.phones import canonical_phone_text, canonical_ru_mobile, normalize_phone
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import part_exact_number, with_part_identity
+from apps.inventory.public_columns import identity_deferred_fields
 
 from .models import (
     CustomerRequest,
@@ -203,7 +204,10 @@ def create_customer_request(
         candidates = candidates.filter(is_public=True)
     parts = {
         part.pk: part
-        for part in with_part_identity(candidates.select_related("unit"), part_field="")
+        # Also runs under the public catalog role: never load cost columns.
+        for part in with_part_identity(candidates.select_related("unit"), part_field="").defer(
+            *identity_deferred_fields()
+        )
     }
     if len(parts) != len(part_ids):
         raise CustomerRequestError("Одна или несколько деталей больше недоступны.")

@@ -90,17 +90,30 @@ class LiveStockRow:
         return ", ".join(labels)
 
 
-def _identity_parts(part_ids) -> dict[int, PartType]:
-    parts = list(
-        with_part_identity(PartType.objects.filter(pk__in=part_ids), part_field="")
-    )
+def _identity_parts(part_ids, *, public_columns_only=False) -> dict[int, PartType]:
+    qs = with_part_identity(PartType.objects.filter(pk__in=part_ids), part_field="")
+    if public_columns_only:
+        from .public_columns import identity_deferred_fields
+
+        qs = qs.defer(*identity_deferred_fields())
+    parts = list(qs)
     for part in parts:
         part.live_exact_number = part_exact_number(part, default="")
         part.live_manufacturer = manufacturer_display(part)
     return {part.pk: part for part in parts}
 
 
-def _physical_lots(*, part_id=None, part_ids=None, batch_id=None, location_id=None):
+def _public_columns_only(qs, model):
+    """Defer the columns the public catalog role cannot read (see public_columns)."""
+    from apps.procurement.models import Batch
+
+    from .public_columns import deferred_fields
+
+    return qs.defer(*deferred_fields(model), *deferred_fields(Batch, prefix="batch__"))
+
+
+def _physical_lots(*, part_id=None, part_ids=None, batch_id=None, location_id=None,
+                   public_columns_only=False):
     qs = StockLot.objects.filter(status__in=LOT_PHYSICAL_STATUSES, quantity__gt=0)
     if part_id:
         qs = qs.filter(part_type_id=part_id)
@@ -110,10 +123,14 @@ def _physical_lots(*, part_id=None, part_ids=None, batch_id=None, location_id=No
         qs = qs.filter(batch_id=batch_id)
     if location_id:
         qs = qs.filter(location_id=location_id)
-    return list(qs.select_related("location", "batch").order_by("created_at", "pk"))
+    qs = qs.select_related("location", "batch").order_by("created_at", "pk")
+    if public_columns_only:
+        qs = _public_columns_only(qs, StockLot)
+    return list(qs)
 
 
-def _physical_items(*, part_id=None, part_ids=None, batch_id=None, location_id=None):
+def _physical_items(*, part_id=None, part_ids=None, batch_id=None, location_id=None,
+                    public_columns_only=False):
     qs = PartItem.objects.filter(
         status__in=ITEM_PHYSICAL_STATUSES, current_location__isnull=False
     )
@@ -125,7 +142,10 @@ def _physical_items(*, part_id=None, part_ids=None, batch_id=None, location_id=N
         qs = qs.filter(batch_id=batch_id)
     if location_id:
         qs = qs.filter(current_location_id=location_id)
-    return list(qs.select_related("current_location", "batch").order_by("created_at", "pk"))
+    qs = qs.select_related("current_location", "batch").order_by("created_at", "pk")
+    if public_columns_only:
+        qs = _public_columns_only(qs, PartItem)
+    return list(qs)
 
 
 def _reservation_maps(lots, items):
@@ -180,14 +200,21 @@ def movement_sources_for_part(part: PartType) -> tuple[list[MovementSource], lis
 
 
 def live_stock_rows(
-    *, part_id=None, part_ids=None, batch_id=None, location_id=None
+    *, part_id=None, part_ids=None, batch_id=None, location_id=None, public_columns_only=False
 ) -> list[LiveStockRow]:
-    """Current physical stock grouped by exact part identity and cell."""
+    """Current physical stock grouped by exact part identity and cell.
+
+    ``public_columns_only`` (the public catalog) loads the same rows without
+    the cost, supplier and note columns its database role cannot read; the
+    quantities and states, and therefore the availability, are identical.
+    """
     lots = _physical_lots(
-        part_id=part_id, part_ids=part_ids, batch_id=batch_id, location_id=location_id
+        part_id=part_id, part_ids=part_ids, batch_id=batch_id, location_id=location_id,
+        public_columns_only=public_columns_only,
     )
     items = _physical_items(
-        part_id=part_id, part_ids=part_ids, batch_id=batch_id, location_id=location_id
+        part_id=part_id, part_ids=part_ids, batch_id=batch_id, location_id=location_id,
+        public_columns_only=public_columns_only,
     )
     reserved_lots, reserved_items = _reservation_maps(lots, items)
     grouped: dict[tuple[int, int], LiveStockRow] = {}
@@ -226,7 +253,7 @@ def live_stock_rows(
         else:
             row.available += Decimal("1")
 
-    parts = _identity_parts({key[0] for key in grouped})
+    parts = _identity_parts({key[0] for key in grouped}, public_columns_only=public_columns_only)
     for (part_type_id, _location_id), row in grouped.items():
         part = parts[part_type_id]
         row.part_type = part

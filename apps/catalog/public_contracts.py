@@ -15,6 +15,7 @@ from apps.actions.models import PartCustomsInfo
 from apps.inventory.availability import available_totals
 from apps.inventory.presentation import manufacturer_display, part_exact_number, with_part_identity
 from apps.inventory.pricing import effective_part_customer_prices
+from apps.inventory.public_columns import identity_deferred_fields
 
 from .models import PartType
 
@@ -182,7 +183,7 @@ def build_public_part_facts(
         with_part_identity(
             PartType.objects.filter(pk__in=ids).select_related("unit"),
             part_field="",
-        )
+        ).defer(*identity_deferred_fields())  # columns the public role cannot read
     )
     parts_by_id = {part.pk: part for part in parts}
     russian_names = {
