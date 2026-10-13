@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Daily check from the owner's Mac (independent of the VPS) and a weekly cold
+     copy. Install: copy to ~/Library/LaunchAgents/ and adjust the two paths,
+     then: launchctl load ~/Library/LaunchAgents/com.denisstock.github-backup-monitor.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.denisstock.github-backup-monitor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/OWNER/DenisStock-Monitor/github_backup_mac_monitor.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>15</integer></dict>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

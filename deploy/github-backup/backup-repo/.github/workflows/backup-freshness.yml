@@ -1,0 +1,29 @@
+# Independent monitor that lives in the PRIVATE backup repository itself.
+# It runs on GitHub, not on the VPS: if the VPS dies or its token deletes the
+# releases, this workflow fails and GitHub emails the owner. The built-in
+# GITHUB_TOKEN is read-only here; the VPS token has no "Workflows" permission,
+# so it cannot change this file.
+name: backup-freshness
+on:
+  schedule:
+    - cron: "30 4 * * *"   # 07:30 MSK, daily
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check freshness (deep on Mondays)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHB_REPO: ${{ github.repository }}
+          GHB_CONFIG: /nonexistent
+        run: |
+          umask 077
+          printf '%s' "$TOKEN" > "$RUNNER_TEMP/token"
+          export GHB_TOKEN_FILE="$RUNNER_TEMP/token"
+          DEEP=""; [ "$(date -u +%u)" = 1 ] && DEEP="--deep --deep-all"
+          python3 monitor/github_release_backup.py check --max-age-hours 30 $DEEP

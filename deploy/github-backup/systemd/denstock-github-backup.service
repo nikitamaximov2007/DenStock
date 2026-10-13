@@ -1,0 +1,23 @@
+# Daily encrypted copy of the newest verified backup to GitHub Releases.
+# Install: docs/operations/github-release-backups.md (needs owner approval).
+[Unit]
+Description=DenisStock: encrypted backup copy to GitHub Releases
+After=denstock-backup.service network-online.target
+Wants=network-online.target
+OnFailure=denstock-github-backup-alert.service
+
+[Service]
+Type=oneshot
+Environment=GHB_CONFIG=/etc/denstock/github-backup.env
+ExecStart=/usr/bin/python3 /opt/denstock/scripts/operations/github_release_backup.py push
+# 75 = another run still holds the lock: not a failure.
+SuccessExitStatus=75
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/denstock/backups /run/lock
