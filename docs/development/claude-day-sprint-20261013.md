@@ -49,3 +49,17 @@ Production не менялся: web `f7b80861`, catalog-web образ 2026-09-2
 - Порядок выпуска каталога: catalog-web на новом коде, затем права
   `denstock_public` по столбцам (иначе каталог упадет).
 - Внешний SSD и бумажная копия фразы (чек-лист).
+
+## Финализация инфраструктурных выпусков (вторая половина дня)
+
+| Направление | Ветка | SHA | Статус |
+| --- | --- | --- | --- |
+| private_media, только web | `claude/private-media-backup-release` | `748225d` | ГОТОВ: runbook `docs/operations/private-media-release-runbook.md`, моделирование хранения Yandex без блокера |
+| web: private_media + reconcile + Caddy-файлы | `claude/infra-web-release-candidate` | `f44f980` | ГОТОВ: 282 SQLite / 278 PG16 целевых, полный SQLite без новых падений |
+| GitHub-копии | `claude/github-release-backups` | `ce8a6ca` | ГОТОВ к проверке на настоящем GitHub: подпись Ed25519 до выгрузки, 39 тестов, прогон GITHUB=1 пройден |
+| Учебное восстановление на реальных данных | `claude/offline-full-service-restore` | `414b0ff` | ЖДЕТ ВВОДА ФРАЗЫ; найден и исправлен сбой после ввода фразы (нет cryptography); репетиция на синтетике пройдена |
+| Caddy | `claude/private-attachment-security-live-caddy` | `2243d5e` | ГОТОВ: 38 проверок GET и HEAD настоящим Caddy |
+| SEO под суженной ролью | `claude/seo-in-stock-restricted-role` | `833c356` | ГОТОВ: 171/171 с новыми правами, функционально все со старыми |
+| Поколения томов | `claude/dr-generation-volume-qualification` | `37ebe46` | инструмент и 15 аварийных тестов; живого cutover нет |
+
+Ветки web и SEO сливаются без конфликтов. Временные контейнеры PostgreSQL удалены.
