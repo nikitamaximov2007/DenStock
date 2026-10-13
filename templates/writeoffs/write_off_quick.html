@@ -6,6 +6,7 @@
   </div>
   <form method="post" class="form action-panel">
     {% csrf_token %}
+    <input type="hidden" name="request_token" value="{{ request_token }}">
     <p>
       <label for="quick-write-off-reason">Причина</label>
       <br>
@@ -42,7 +43,7 @@
             <option value="">Выберите ячейку</option>
             {% for row in locations %}
               <option value="{{ row.location.pk }}"
-                      {% if request.POST.location_id == row.location.pk|stringformat:"s" %}selected{% endif %}>{{ row.location.short_code }} - доступно {{ row.available|quantity_int }}</option>
+                      {% if selected_location_id == row.location.pk|stringformat:"s" %}selected{% endif %}>{{ row.location.short_code }} - доступно {{ row.available|quantity_int }}</option>
             {% endfor %}
           </select>
         </p>

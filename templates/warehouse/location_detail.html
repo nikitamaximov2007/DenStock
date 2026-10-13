@@ -135,6 +135,7 @@
           <th class="num--qty">Доступно</th>
           <th class="num--qty">Резерв</th>
           <th class="num--qty">Карантин</th>
+          {% if can_quick_write_off %}<th>Действия</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -147,6 +148,16 @@
             <td class="num--qty">{{ row.available|quantity_int }}</td>
             <td class="num--qty">{{ row.reserved|quantity_int }}</td>
             <td class="num--qty">{{ row.quarantine|quantity_int }}</td>
+            {% if can_quick_write_off %}
+              <td>
+                {% if row.available > 0 and row.part_type.tracking_mode == "bulk" and row.part_exact_number != "Артикул не указан" %}
+                  <a class="btn btn--secondary btn--small"
+                     href="{% url 'write_off_quick' %}?q={{ row.part_exact_number|urlencode }}&amp;part_id={{ row.part_type.pk }}&amp;location_id={{ location.pk }}">Быстро списать</a>
+                {% else %}
+                  ·
+                {% endif %}
+              </td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>
