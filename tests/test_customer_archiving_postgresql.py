@@ -8,6 +8,7 @@ from django.db import close_old_connections, connection
 from apps.customers.forms import CustomerForm
 from apps.customers.models import Customer, CustomerLifecycleEvent
 from apps.customers.services import CustomerArchiveError, archive_customer, update_active_customer
+from apps.inventory.models import NumberSequence
 from apps.sales.models import Sale
 from apps.sales.services import SaleError, create_sale
 
@@ -21,6 +22,11 @@ pytestmark = [
 @pytest.fixture
 def archive_race_scene():
     user_model = get_user_model()
+    # Transactional tests flush data-migration rows between cases. Re-seed the
+    # sale counter explicitly so this race reaches customer locking, not setup.
+    NumberSequence.objects.get_or_create(
+        key="sale", defaults={"prefix": "S-", "last_value": 0}
+    )
     first = user_model.objects.create_superuser("archive-race-first", password="test")
     second = user_model.objects.create_superuser("archive-race-second", password="test")
     customer = Customer.objects.create(name="Клиент для гонки архивации")
