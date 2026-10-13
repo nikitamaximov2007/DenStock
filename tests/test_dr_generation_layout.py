@@ -125,7 +125,7 @@ def test_verify_rejects_an_absolute_link(volume):
 
 def test_guard_refuses_any_generation_mismatch(tmp_path):
     media, private = tmp_path / "media", tmp_path / "private"
-    for root, gens in ((media, ("gen-0", "gen-1")), (private, ("gen-0", "gen-1"))):
+    for root in (media, private):
         root.mkdir()
         make_volume(root)
         assert run("migrate-gen0", root).returncode == 0
