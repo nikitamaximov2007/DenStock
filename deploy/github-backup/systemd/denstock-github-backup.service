@@ -14,7 +14,7 @@ Environment=GHB_CONFIG=/etc/denstock/github-backup.env
 Environment=GHB_WORK_DIR=/var/lib/denstock-github-backup
 StateDirectory=denstock-github-backup
 StateDirectoryMode=0700
-ExecStart=/usr/bin/python3 /opt/denstock/scripts/operations/github_release_backup.py push
+ExecStart=/usr/bin/python3 /usr/local/lib/denstock/github_release_backup.py push
 # 75 = another run still holds the lock: not a failure.
 SuccessExitStatus=75
 TimeoutStartSec=2h

@@ -242,9 +242,12 @@ GHB_CONFIG=/nonexistent GHB_REPO=<владелец>/denisstock-backups GHB_TOKEN
 
    Публичный ключ подписи берется по умолчанию из
    `/etc/denstock/manifest-signing/production-ed25519.pub`.
-5. Скрипт и unit-файлы: `scripts/operations/github_release_backup.py` в
-   `/opt/denstock/scripts/operations/`, файлы `deploy/github-backup/systemd/`
-   в `/etc/systemd/system/`, `systemctl daemon-reload`.
+5. Скрипт вне рабочего дерева git (как обёртка в `/usr/local/sbin`), чтобы
+   будущий `git checkout` в `/opt/denstock` его не задевал:
+   `install -D -m 755 github_release_backup.py /usr/local/lib/denstock/github_release_backup.py`
+   (файл из ветки `claude/github-release-backups`), файлы
+   `deploy/github-backup/systemd/*` в `/etc/systemd/system/`,
+   `systemctl daemon-reload`.
 6. Первый запуск вручную: `systemctl start denstock-github-backup.service`,
    затем `cat /opt/denstock/backups/github_backup_status.json` (ожидается `ok`).
 7. С Mac (файл `~/.config/denisstock/github-backup-monitor.env`, 0600:
