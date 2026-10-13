@@ -238,6 +238,13 @@ elif [[ "${KIT_MODE:-0}" == 1 ]]; then
         age-keygen -o "$WORK/test-identity.txt.other" 2>/dev/null
         mv "$WORK/test-identity.txt.other" "$WORK/test-identity.txt"
     fi
+    if [[ -n "${DRILL_EXPORT_KIT:-}" ]]; then
+        # Synthetic only: keep the encrypted test kit and its test key to rehearse
+        # morning_real_drill.sh end to end.
+        mkdir -m 700 "$DRILL_EXPORT_KIT"
+        cp "$KIT"/* "$WORK/test-identity.txt" "$DRILL_EXPORT_KIT/"
+        echo "[drill] synthetic kit exported to $DRILL_EXPORT_KIT"
+    fi
     "$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$WORK/test-identity.txt" \
         --work "$WORK/prepared" --plain-identity
     PRIVATE_ARGS=()
