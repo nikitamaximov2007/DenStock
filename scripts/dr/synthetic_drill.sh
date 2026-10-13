@@ -16,36 +16,14 @@ chmod 700 "$WORK"
 cleanup() {
     "$HERE/cleanup_dr.sh" "$SRC" >/dev/null 2>&1 || true
     if [[ "${KEEP_DRILL:-0}" != 1 ]]; then "$HERE/cleanup_dr.sh" "$DST" >/dev/null 2>&1 || true; fi
+    [[ -n "${FAKE_PID:-}" ]] && kill "$FAKE_PID" 2>/dev/null
     rm -rf "$WORK"
 }
 trap cleanup EXIT
 echo "[drill] work dir $WORK, projects $SRC -> $DST"
 
 # --- synthetic secrets (random, never production) --------------------------------
-"$PY" - "$WORK/env" "$(git -C "$SOURCE" rev-parse HEAD)" <<'PY'
-import os, secrets, sys
-out, commit = sys.argv[1], sys.argv[2]
-os.makedirs(out, mode=0o700)
-db_pw, pub_pw = secrets.token_urlsafe(18), secrets.token_urlsafe(18)
-def write(name, rows):
-    path = os.path.join(out, name)
-    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as fh:
-        fh.write("\n".join(f"{k}={v}" for k, v in rows) + "\n")
-write("db.env", [("POSTGRES_DB", "denstock"), ("POSTGRES_USER", "denstock"), ("POSTGRES_PASSWORD", db_pw)])
-write("web.env", [
-    ("DJANGO_SETTINGS_MODULE", "config.settings.prod"), ("DJANGO_DEBUG", "false"),
-    ("DJANGO_SECRET_KEY", secrets.token_urlsafe(40)), ("DJANGO_ALLOWED_HOSTS", "localhost"),
-    ("POSTGRES_DB", "denstock"), ("POSTGRES_USER", "denstock"), ("POSTGRES_PASSWORD", db_pw),
-    ("DATABASE_URL", f"postgres://denstock:{db_pw}@db:5432/denstock"),
-    ("DENSTOCK_MODE", "production"), ("DENSTOCK_APP_COMMIT", commit),
-    ("PRIVATE_MEDIA_ROOT", "/app/private_media"), ("TIME_ZONE", "Europe/Moscow"),
-])
-write("public.env", [
-    ("DJANGO_SECRET_KEY", secrets.token_urlsafe(40)),
-    ("PUBLIC_DATABASE_URL", f"postgres://denstock_public:{pub_pw}@db:5432/denstock"),
-    ("DJANGO_SECURE_COOKIES", "false"),
-])
-PY
+"$PY" "$HERE/fresh_env.py" "$WORK/env" "$(git -C "$SOURCE" rev-parse HEAD)"
 "$PY" - "$WORK" <<'PY'
 import sys
 from pathlib import Path
@@ -197,7 +175,46 @@ echo "[drill] destroy synthetic production (VPS and Yandex lost)"
 "$HERE/cleanup_dr.sh" "$SRC" >/dev/null
 
 # --- 3. recovery on new resources, from the captured files only -------------------
-if [[ "${KIT_MODE:-0}" == 1 ]]; then
+if [[ "${GITHUB:-0}" == 1 ]]; then
+    # GitHub alone: the signed run (private_media inside, backup-only release)
+    # goes through github_release_backup.py push to an ISOLATED fake GitHub; the
+    # local run and every secret are then gone. Recovery uses only the release
+    # asset fetched back, the source repository, the owner's age identity and
+    # the separately kept signing PUBLIC key; secrets are generated fresh.
+    "$PY" - "$WORK/run/manifest.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+sys.exit(0 if m.get("private_media_status") == "included"
+         else "the run carries no private_media: GITHUB=1 needs the backup-only release")
+PY
+    rm -f "$WORK/private.tar" "$WORK/private-inventory.json"
+    GH="$WORK/github"; mkdir -m 700 "$GH" "$GH/backups"
+    age-keygen -o "$WORK/test-identity.txt" 2>/dev/null
+    age-keygen -y "$WORK/test-identity.txt" > "$GH/recipient.txt"
+    mv "$WORK/run" "$GH/backups/$RUN_ID"
+    (cd "$SOURCE" && exec "$PY" -m tests.github_fake --serve "$GH/blobs" --port-file "$GH/port") &
+    FAKE_PID=$!
+    for _ in $(seq 1 100); do [[ -s "$GH/port" ]] && break; sleep 0.1; done
+    (cd "$SOURCE" && "$PY" -c 'from tests.github_fake import WRITE_TOKEN as W, READ_TOKEN as R
+import sys; open(sys.argv[1], "w").write(W); open(sys.argv[2], "w").write(R)' "$GH/write.token" "$GH/read.token")
+    GHB=(env GHB_CONFIG=/nonexistent GHB_REPO=owner/denstock-backups
+         GHB_API_URL="http://127.0.0.1:$(cat "$GH/port")"
+         GHB_UPLOAD_URL="http://127.0.0.1:$(cat "$GH/port")/uploads"
+         GHB_RECIPIENT_FILE="$GH/recipient.txt" BACKUP_ROOT="$GH/backups" GHB_LOCK_FILE="$GH/lock")
+    "${GHB[@]}" GHB_TOKEN_FILE="$GH/write.token" "$PY" "$SOURCE/scripts/operations/github_release_backup.py" push
+    echo "[drill] VPS lost: the local run is deleted; only GitHub remains"
+    rm -rf "$GH/backups"
+    KIT="$WORK/kit"
+    "${GHB[@]}" GHB_TOKEN_FILE="$GH/read.token" "$PY" "$SOURCE/scripts/operations/github_release_backup.py" fetch --out "$KIT"
+    if [[ "${DRILL_FAULT:-}" == wrong_identity ]]; then age-keygen -o "$WORK/test-identity.txt.other" 2>/dev/null; mv "$WORK/test-identity.txt.other" "$WORK/test-identity.txt"; fi
+    "$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$WORK/test-identity.txt" \
+        --work "$WORK/prepared" --plain-identity --fresh-secrets --pubkey "$WORK/signing.pub.pem" \
+        --source-git "$SOURCE"
+    "$HERE/offline_restore.sh" --project "$DST" --source "$WORK/prepared/source" \
+        --run "$WORK/prepared/run" --env-dir "$WORK/prepared/env" \
+        --pubkey "$WORK/prepared/pinned-public.pem" --port "$PORT" --mode test \
+        --report "${DR_REPORT:-$WORK/report.json}"
+elif [[ "${KIT_MODE:-0}" == 1 ]]; then
     # Pack everything exactly like the real kit, encrypted to a synthetic age
     # identity, and recover only through prepare_kit_restore.sh.
     KIT="$WORK/kit"; mkdir -m 700 "$KIT"

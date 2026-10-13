@@ -315,3 +315,15 @@ class FakeGitHub:
                 self.handle_one("DELETE")
 
         return Handler
+
+
+if __name__ == "__main__":  # used by scripts/dr/synthetic_drill.sh GITHUB=1
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--serve", required=True, help="blob directory")
+    parser.add_argument("--port-file", required=True)
+    args = parser.parse_args()
+    server = FakeGitHub(Path(args.serve))
+    Path(args.port_file).write_text(str(server.port))
+    server.server.serve_forever()
