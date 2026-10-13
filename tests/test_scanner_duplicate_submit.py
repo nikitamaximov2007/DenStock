@@ -134,6 +134,9 @@ def _complete_concurrently(cart_pk, user_pk, barrier):
 def test_postgresql_concurrent_double_tap_is_transparent(data):
     """Два одновременных запроса с одним токеном: оба получают один результат."""
     cart = _cart_with_one_row(data)
+    # Проведение проверяет обязательные таможенные поля; заполнить их до гонки,
+    # чтобы оба участника дошли до конкурентной блокировки корзины.
+    remember_cart_customs(cart)
     before = _available(data)
     barrier = Barrier(2)
 
