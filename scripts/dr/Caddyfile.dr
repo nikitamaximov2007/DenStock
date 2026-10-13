@@ -1,0 +1,19 @@
+# Recovery stack edge: plain HTTP on the loopback port only, no ACME, no TLS.
+# Same private-attachment guard as production, inside the media handler.
+:80 {
+	@public_catalog host catalog.localhost
+	handle @public_catalog {
+		reverse_proxy catalog-web:8000
+	}
+
+	handle_path /media/* {
+		@private_attachments path_regexp private_attachments (?i)(^|/|%2f)customer_requests(/|%2f|$)
+		respond @private_attachments 404
+		root * /srv/media
+		file_server
+	}
+
+	handle {
+		reverse_proxy web:8000
+	}
+}
