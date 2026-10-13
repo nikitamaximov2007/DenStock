@@ -6,6 +6,7 @@ database + public media + private media -> backup -> signed manifest -> verify
 
 import hashlib
 import json
+import os
 import subprocess
 import uuid
 
@@ -78,6 +79,9 @@ def test_full_chain_restores_database_public_and_private_media(tmp_path, setting
              "-h", str(pg["host"]), "-p", str(pg["port"]), "-U", pg["user"],
              "-d", target_db, str(run / manifest["database_dump_filename"])],
             check=True, capture_output=True,
+            # A password-protected server (the default postgres:16 image) needs it;
+            # without it the restore failed only where trust auth was not set.
+            env={**os.environ, "PGPASSWORD": str(pg["password"])},
         )
         with psycopg.connect(dbname=target_db, **pg) as restored:
             count = restored.execute(
