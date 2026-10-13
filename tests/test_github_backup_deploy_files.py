@@ -10,7 +10,8 @@ def test_service_runs_after_the_nightly_backup_and_tolerates_a_held_lock():
     assert "After=denstock-backup.service" in unit
     assert "SuccessExitStatus=75" in unit
     # Installed outside the /opt/denstock git tree, so a checkout never touches it.
-    assert "ExecStart=/usr/bin/python3 /usr/local/lib/denstock/github_release_backup.py push" in unit
+    script = "/usr/local/lib/denstock/github_release_backup.py"
+    assert f"ExecStart=/usr/bin/python3 {script} push" in unit
     assert "OnFailure=denstock-github-backup-alert.service" in unit
     assert "ProtectSystem=strict" in unit and "NoNewPrivileges=yes" in unit
     assert "Environment=GHB_WORK_DIR=/var/lib/denstock-github-backup" in unit
