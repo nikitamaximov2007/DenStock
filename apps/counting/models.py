@@ -68,7 +68,11 @@ class InventoryCountingSession(models.Model):
         related_name="+",
     )
     cancelled_at = models.DateTimeField("Отменено (когда)", null=True, blank=True)
-    cancellation_reason = models.CharField("Причина отмены", max_length=500, blank=True)
+    # db_default: the previous release does not know this column; its INSERTs
+    # must keep working if the application is rolled back after the migration.
+    cancellation_reason = models.CharField(
+        "Причина отмены", max_length=500, blank=True, default="", db_default=""
+    )
     replacement_recount = models.OneToOneField(
         "stocktaking.SectionRecount",
         verbose_name="Новый сверочный пересчёт после отмены",

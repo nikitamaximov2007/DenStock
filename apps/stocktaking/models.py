@@ -158,7 +158,10 @@ class SectionRecount(models.Model):
         "Статус", max_length=20, choices=Status.choices, default=Status.DRAFT, db_index=True
     )
     operation_key = models.CharField("Ключ операции", max_length=64, unique=True, editable=False)
-    restart_reason = models.CharField("Причина пересчёта после отмены", max_length=500, blank=True)
+    # db_default: rollback-safe for code that predates this column (see counting).
+    restart_reason = models.CharField(
+        "Причина пересчёта после отмены", max_length=500, blank=True, default="", db_default=""
+    )
     snapshot = models.JSONField("Исходный snapshot", default=dict, editable=False)
     snapshot_fingerprint = models.CharField(
         "Fingerprint snapshot", max_length=64, blank=True, editable=False
