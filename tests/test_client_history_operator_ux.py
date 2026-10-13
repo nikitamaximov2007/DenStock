@@ -782,6 +782,7 @@ def test_postgresql_two_history_cancellations_of_the_last_unit(django_user_model
     batch_line.refresh_from_db()
     lot = create_stock_lot(batch_line, location, Decimal("5"))
     receive_stock_lot(lot, by=admin)
+    remember_customs(part)
 
     customer = Customer.objects.create(name="Гонка")
     sale = create_sale(customer=customer, customer_name="", by=admin)
