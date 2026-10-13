@@ -560,7 +560,7 @@ def _compute_in_stock_public_parts() -> dict[int, Decimal]:
     size of the catalog, and availability keeps its canonical semantics.
     """
     available: dict[int, Decimal] = {}
-    for row in live_stock_rows():
+    for row in live_stock_rows(public_columns_only=True):
         part_id = row.part_type.pk
         available[part_id] = available.get(part_id, ZERO) + row.available
     stocked = [part_id for part_id, quantity in available.items() if quantity > ZERO]
