@@ -9,6 +9,7 @@
 документ продажи тоже не трогаем: там цену вводит человек, и его ноль
 осознанный.
 """
+import re
 from decimal import Decimal
 
 import pytest
@@ -359,7 +360,8 @@ def test_search_shows_a_dash_for_a_part_without_a_price(client, env):
     body = client.get(reverse("part_search"), {"q": "BEZ-1"}).content.decode()
 
     assert "БЕЗ ЦЕНЫ" in body
-    assert "Цена: —" in body
+    assert "Цена: -" in body  # plain hyphen, see 9a51bff
     assert "Цена: 0" not in body
     card = client.get(reverse("part_detail", args=[part.pk])).content.decode()
-    assert "—" in card
+    price_cell = re.search(r"<th>Цена</th>\s*<td>(.*?)</td>", card, re.S).group(1)
+    assert price_cell.split()[0] == "-"  # plain hyphen (9a51bff), never 0

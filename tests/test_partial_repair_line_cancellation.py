@@ -7,6 +7,7 @@ import pytest
 from django.contrib.auth.models import Group
 from django.db import close_old_connections, connection
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts import roles
 from apps.catalog.models import Category, PartNumber, PartType, Unit
@@ -281,9 +282,12 @@ def test_report_button_confirm_screen_and_redirect_keep_filters(client, env):
     order = _repair(env, customer=customer)
     line = order.lines.get()
     client.force_login(env["admin"])
+    # The period must contain the repair's date; a hardcoded August 2026 made
+    # this test pass only in August.
+    issued = timezone.localdate(order.created_at)
     report_url = (
         f"{reverse('reports_repairs_by_client_detail')}?customer_id={customer.pk}"
-        "&date_from=2026-08-01&date_to=2026-08-31"
+        f"&date_from={issued.replace(day=1).isoformat()}&date_to={issued.isoformat()}"
     )
 
     body = client.get(report_url).content.decode()

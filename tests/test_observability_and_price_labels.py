@@ -311,7 +311,8 @@ def test_a_part_without_a_price_shows_a_dash_not_a_zero(client, env):
 
     body = client.get(reverse("actions_scan"), {"kind": "repair"}).content.decode()
     assert cart_rows(cart)[0].unit_price is None
-    assert "—" in body
+    # The empty price cell (plain hyphen since 9a51bff), not any hyphen on the page.
+    assert '<span class="muted">-</span>' in body
     assert "0 ₽" not in body
 
 

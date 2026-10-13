@@ -101,7 +101,12 @@ def test_max_bot_is_direct_no_egress_network_and_no_proxy():
 
 
 def test_max_bot_mounts_only_the_public_ca_directory_read_only():
-    (volume,) = BOT["volumes"]
+    # The bot also needs the attachment volumes (it delivers and then removes
+    # customer attachments); the CA directory is its ONLY host bind mount.
+    binds = [v for v in BOT["volumes"] if isinstance(v, dict) and v.get("type") == "bind"]
+    named = sorted(v for v in BOT["volumes"] if isinstance(v, str))
+    assert named == ["media:/app/mediafiles", "private_media:/app/private_media"]
+    (volume,) = binds
     assert volume["type"] == "bind"
     assert volume["target"] == "/etc/denstock/max"
     assert volume["read_only"] is True

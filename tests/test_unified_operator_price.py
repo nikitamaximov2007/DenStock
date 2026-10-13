@@ -252,11 +252,13 @@ def test_a_part_without_a_price_shows_a_dash_not_a_zero(client, env):
     _login(client, env)
 
     cell = _price_cell(_text(client, reverse("lot_detail", args=[lot.pk])))
-    assert "—" in cell
+    # Visible copy uses a plain hyphen since 9a51bff ("use plain dashes").
+    assert "-" in cell
     assert "0" not in cell  # ноль вместо цены не подставляется
 
     search = _text(client, reverse("part_search") + "?q=NO-PRICE-1")
-    assert "Цена: —" in search
+    assert "Цена: -" in search
+    assert "Цена: 0" not in search
 
 
 # --- Разные виды деталей -----------------------------------------------------
