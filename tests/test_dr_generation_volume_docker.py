@@ -85,7 +85,8 @@ def stack(tmp_path_factory):
         _docker("run", "-d", "--name", f"{name}-app", "--user", "2001:2001",
                 "-v", f"{volume}:/app/media-volume", "python:3.12-alpine", "sleep", "3600")
         _docker("run", "-d", "--name", f"{name}-proxy", "--network", net, "-p", "127.0.0.1::80",
-                "-v", f"{volume}:/srv/media-volume:ro", "-v", f"{caddyfile}:/etc/caddy/Caddyfile:ro",
+                "-v", f"{volume}:/srv/media-volume:ro",
+                "-v", f"{caddyfile}:/etc/caddy/Caddyfile:ro",
                 "caddy:2")
         port = json.loads(_docker("inspect", f"{name}-proxy").stdout)[0]["NetworkSettings"][
             "Ports"]["80/tcp"][0]["HostPort"]
@@ -136,7 +137,8 @@ def test_an_absolute_link_target_breaks_in_the_other_container(stack):
     """The app resolves /app/media-volume/gen-1; Caddy mounts the volume at
     /srv/media-volume, where that absolute target does not exist. The link must
     be RELATIVE (``current -> gen-<id>``)."""
-    inside_app = _app(stack, "import os; print(os.path.isdir('/app/media-volume/current-absolute'))")
+    probe = "import os; print(os.path.isdir('/app/media-volume/current-absolute'))"
+    inside_app = _app(stack, probe)
     assert inside_app == "True"
     proxy = stack["app"].replace("-app", "-proxy")
     seen_by_proxy = _docker("exec", proxy, "sh", "-c",
