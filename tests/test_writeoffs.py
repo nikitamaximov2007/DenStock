@@ -7,11 +7,15 @@
 напрямую не пишет.
 """
 import re
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier
 from unittest.mock import patch
 
 import pytest
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
+from django.db import close_old_connections, connection
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -504,6 +508,135 @@ def test_quick_write_off_page_lists_available_locations_without_lot_details(clie
     offered = set(re.findall(r'<option value="(\d+)"', body))
     assert offered == {str(data["lot"].location_id), str(second_location.pk)}
     assert str(second.pk) not in offered
+
+
+def test_cell_detail_links_to_quick_write_off_for_that_part_and_location(client, data):
+    PartNumber.objects.create(
+        part=data["lot"].part_type,
+        value="BOLT-ARTICLE",
+        kind=PartNumber.Kind.OEM,
+    )
+    client.force_login(data["admin"])
+
+    response = client.get(reverse("location_detail", args=[data["loc"].pk]))
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert (
+        f'{reverse("write_off_quick")}?q=BOLT-ARTICLE&amp;part_id={data["lot"].part_type_id}'
+        f'&amp;location_id={data["loc"].pk}'
+    ) in body
+    assert StockLot.objects.get(pk=data["lot"].pk).quantity == Decimal("5")
+
+
+def test_cell_quick_write_off_prefills_selected_source_location(client, data):
+    second_location = StorageLocation.objects.create(
+        name="Ячейка B", code="B-01", storage_allowed=True, is_active=True
+    )
+    second_line = _finalized_line(
+        Supplier.objects.get(name="ООО Поставка"),
+        data["lot"].part_type,
+        data["admin"],
+        qty="10",
+    )
+    second_lot = create_stock_lot(second_line, second_location, Decimal("6"))
+    receive_stock_lot(second_lot, by=data["admin"])
+    PartNumber.objects.create(
+        part=data["lot"].part_type,
+        value="BOLT-ARTICLE",
+        kind=PartNumber.Kind.OEM,
+    )
+    client.force_login(data["admin"])
+
+    response = client.get(
+        reverse("write_off_quick"),
+        {
+            "q": "BOLT-ARTICLE",
+            "part_id": data["lot"].part_type_id,
+            "location_id": data["loc"].pk,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert response.context["selected_location_id"] == str(data["loc"].pk)
+    assert re.search(rf'<option value="{data["loc"].pk}"\s+selected>', body)
+    assert f'<option value="{second_location.pk}"' in body
+    assert StockLot.objects.get(pk=data["lot"].pk).quantity == Decimal("5")
+
+
+def test_repeated_quick_write_off_post_with_same_token_posts_once(client, data):
+    PartNumber.objects.create(
+        part=data["lot"].part_type,
+        value="BOLT-ARTICLE",
+        kind=PartNumber.Kind.OEM,
+    )
+    client.force_login(data["admin"])
+    response = client.get(f"{reverse('write_off_quick')}?q=BOLT-ARTICLE")
+    request_token = response.context["request_token"]
+    payload = {
+        "request_token": request_token,
+        "q": "BOLT-ARTICLE",
+        "part_id": data["lot"].part_type_id,
+        "reason": "Брак",
+        "business_author": "Оператор",
+        "quantity": "1",
+        "location_id": data["loc"].pk,
+    }
+
+    first = client.post(reverse("write_off_quick"), payload)
+    second = client.post(reverse("write_off_quick"), payload)
+    altered = client.post(reverse("write_off_quick"), {**payload, "quantity": "2"})
+
+    assert first.status_code == second.status_code == 302
+    assert first["Location"] == second["Location"]
+    assert altered.status_code == 200
+    assert WriteOffDocument.objects.count() == 1
+    assert StockLot.objects.get(pk=data["lot"].pk).quantity == Decimal("4")
+    assert StockMovement.objects.filter(
+        movement_type__in=[
+            StockMovement.MovementType.WRITE_OFF_ITEM,
+            StockMovement.MovementType.WRITE_OFF_LOT,
+        ]
+    ).count() == 1
+
+
+@pytest.mark.django_db(transaction=True, serialized_rollback=True)
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="Requires PostgreSQL row locks")
+@pytest.mark.parametrize("_attempt", range(3))
+def test_concurrent_duplicate_quick_write_off_posts_once(data, _attempt):
+    token = "same-quick-writeoff-request-token"
+    barrier = Barrier(2)
+
+    def submit():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=5)
+            return quick_write_off(
+                part=PartType.objects.get(pk=data["lot"].part_type_id),
+                scanned_code="BOLT-ARTICLE",
+                reason="Брак",
+                business_author="Оператор",
+                quantity="1",
+                location_id=data["loc"].pk,
+                by=get_user_model().objects.get(pk=data["admin"].pk),
+                request_token=token,
+            ).pk
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        document_ids = list(pool.map(lambda _index: submit(), range(2)))
+
+    assert document_ids[0] == document_ids[1]
+    assert WriteOffDocument.objects.filter(quick_request_token=token).count() == 1
+    assert StockLot.objects.get(pk=data["lot"].pk).quantity == Decimal("4")
+    assert StockMovement.objects.filter(
+        movement_type__in=[
+            StockMovement.MovementType.WRITE_OFF_ITEM,
+            StockMovement.MovementType.WRITE_OFF_LOT,
+        ]
+    ).count() == 1
 
 
 def test_quick_write_off_rejects_insufficient_quantity_without_partial_document(data):
