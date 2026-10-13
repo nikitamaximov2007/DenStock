@@ -15,11 +15,15 @@ KIT="$HOME/DenisStock-Recovery-Updates/2026-10-12"
 SECRETS="$(ls -1 "$HOME"/DenisStock-Recovery/secrets/production-secrets-*.tar.age | sort | tail -1)"
 IDENTITY="$HOME/DenisStock-Recovery/keys/recovery-identity.age"
 PLAIN=()
+SOURCE_GIT=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --kit) KIT="$2"; shift 2 ;;
         --secrets) SECRETS="$2"; shift 2 ;;
         --identity) IDENTITY="$2"; shift 2 ;;
+        # A kit fetched from GitHub has no source bundle: clone this repository
+        # (for example ~/Developer/DenStock after git fetch) at the backup's commit.
+        --source-git) SOURCE_GIT=(--source-git "$2"); shift 2 ;;
         # Synthetic rehearsal of this exact procedure with an unprotected TEST key.
         --plain-identity) PLAIN=(--plain-identity); shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -86,7 +90,7 @@ trap 'exit 129' HUP
 mkdir -p -m 700 "$REPORTS"
 START=$(date +%s)
 "$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$IDENTITY" --work "$WORK" --secrets "$SECRETS" \
-    ${PLAIN[@]+"${PLAIN[@]}"}
+    ${PLAIN[@]+"${PLAIN[@]}"} ${SOURCE_GIT[@]+"${SOURCE_GIT[@]}"}
 DECRYPTED=$(date +%s)
 PRIVATE_ARGS=()
 [[ -f "$WORK/private.tar" ]] && PRIVATE_ARGS=(--private-archive "$WORK/private.tar"

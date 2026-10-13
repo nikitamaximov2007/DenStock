@@ -247,9 +247,20 @@ GHB_CONFIG=/nonexistent GHB_REPO=<владелец>/denisstock-backups GHB_TOKEN
    в `/etc/systemd/system/`, `systemctl daemon-reload`.
 6. Первый запуск вручную: `systemctl start denstock-github-backup.service`,
    затем `cat /opt/denstock/backups/github_backup_status.json` (ожидается `ok`).
-7. С Mac: `check --deep` токеном чтения (ожидается `DEGRADED`: копия одна),
-   затем `fetch`, `prepare_kit_restore.sh --fresh-secrets` или `--secrets`,
-   `offline_restore.sh --mode test`: фразу вводит владелец.
+7. С Mac (файл `~/.config/denisstock/github-backup-monitor.env`, 0600:
+   `GHB_REPO=<владелец>/denisstock-backups` и
+   `GHB_TOKEN_FILE=<путь к файлу токена чтения>`):
+
+   ```bash
+   cd ~/Developer/DenStock-github-backups && git -C ~/Developer/DenStock fetch -q origin
+   export GHB_CONFIG=~/.config/denisstock/github-backup-monitor.env
+   python3 scripts/operations/github_release_backup.py check --deep
+   python3 scripts/operations/github_release_backup.py fetch --out ~/DenisStock-Recovery-Updates/github/first
+   scripts/dr/morning_real_drill.sh --kit ~/DenisStock-Recovery-Updates/github/first --source-git ~/Developer/DenStock
+   ```
+
+   Ожидается `DEGRADED` (копия пока одна, это нормально), затем
+   `passed=True` изолированного восстановления; фразу вводит владелец.
 8. Только после этого: `systemctl enable --now denstock-github-backup.timer`.
 9. Монитор на Mac (`deploy/github-backup/mac/`) и проверка Actions.
 
