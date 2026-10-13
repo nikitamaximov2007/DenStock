@@ -30,6 +30,6 @@ def available_totals(part_ids: Iterable[int]) -> dict[int, Decimal]:
         return {}
 
     totals = {part_id: ZERO for part_id in ids}
-    for row in live_stock_rows(part_ids=ids):
+    for row in live_stock_rows(part_ids=ids, public_columns_only=True):
         totals[row.part_type.pk] += row.available
     return totals

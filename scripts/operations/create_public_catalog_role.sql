@@ -26,6 +26,9 @@ SELECT set_config('denstock.public_role', :'public_role', false);
 DO $$
 DECLARE
     role_name text := current_setting('denstock.public_role');
+    restricted_table text;
+    hidden_columns text[];
+    visible_columns text;
 BEGIN
     IF role_name !~ '^[a-z_][a-z0-9_]*$' THEN
         RAISE EXCEPTION 'unsafe role name %', role_name;
@@ -64,12 +67,9 @@ BEGIN
         -- Search 2.0 identities and public facts
         'catalog_parttype, catalog_partnumber, catalog_unit, catalog_manufacturer, '
         -- canonical source article (BRP / Polaris link)
-        'brp_brppartlink, brp_brpcatalogpart, polaris_polarispartlink, polaris_polariscatalogpart, '
-        -- confirmed Russian name and the explicit application area
-        'actions_partcustomsinfo, '
-        -- canonical availability (lots, serial items, reservations)
-        'inventory_stocklot, inventory_partitem, procurement_batch, warehouse_storagelocation, '
-        'sales_reservation, sales_reservationline, '
+        -- (brp/polaris links and catalog rows, customs info, lots, serial items,
+        -- batches and reservations: column-level below, without cost columns)
+        'warehouse_storagelocation, sales_reservationline, '
         -- confirmed analog relations (Stage 7)
         'catalog_partanalog, '
         -- application filter: explicit vehicle compatibility
@@ -79,6 +79,42 @@ BEGIN
         'TO %I',
         role_name
     );
+
+    -- Least privilege for tables that mix public facts with commercial or
+    -- personal columns: every column EXCEPT the listed ones. Purchase costs,
+    -- supplier wholesale prices, exchange rates and markups, customs values,
+    -- staff ids, internal notes and the reserving customer's name and phone
+    -- stay unreadable even to a compromised catalog-web.
+    FOR restricted_table, hidden_columns IN SELECT * FROM (VALUES
+        ('inventory_stocklot', ARRAY['landed_unit_cost_rub',
+            'receipt_customer_price_snapshot_rub', 'note']),
+        ('inventory_partitem', ARRAY['landed_cost_rub',
+            'receipt_customer_price_snapshot_rub', 'note']),
+        ('procurement_batch', ARRAY['supplier_id', 'invoice_number', 'notes',
+            'shipping_cost', 'customs_cost', 'commission_cost', 'other_cost',
+            'total_extra_cost', 'cost_allocation_method', 'cost_finalized_at',
+            'cost_finalized_by_id', 'created_by_id']),
+        ('sales_reservation', ARRAY['customer_id', 'customer_name', 'customer_phone',
+            'comment', 'created_by_id']),
+        ('brp_brpcatalogpart', ARRAY['wholesale_price_usd']),
+        ('brp_brppartlink', ARRAY['brp_wholesale_price_usd', 'usd_rate_used',
+            'markup_percent_used', 'created_by_id']),
+        ('polaris_polariscatalogpart', ARRAY['wholesale_price_usd']),
+        ('polaris_polarispartlink', ARRAY['polaris_wholesale_price_usd', 'usd_rate_used',
+            'markup_percent_used', 'created_by_id']),
+        ('actions_partcustomsinfo', ARRAY['customs_unit_price_usd'])
+    ) AS restricted(name, hidden) LOOP
+        SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+          INTO visible_columns
+          FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = restricted_table
+           AND NOT (column_name = ANY (hidden_columns));
+        IF visible_columns IS NULL THEN
+            RAISE EXCEPTION 'table % not found', restricted_table;
+        END IF;
+        EXECUTE format('GRANT SELECT (%s) ON TABLE %I TO %I',
+            visible_columns, restricted_table, role_name);
+    END LOOP;
 
     -- The one write: a new customer request and its line snapshots. INSERT
     -- only, no UPDATE or DELETE. Column-level SELECT covers exactly what the
