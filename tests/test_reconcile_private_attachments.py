@@ -231,3 +231,28 @@ def test_name_escaping_either_root_is_refused(roots):
         _run("--apply", "--remove-legacy")
 
     assert (roots["public"].parent / "escape.png").exists()
+
+
+def test_new_private_directories_are_flushed_into_their_parents(tmp_path, monkeypatch):
+    """Crash consistency: every directory the copy creates is fsynced into its
+    parent before the copy counts, so deleting the public copy later cannot
+    outlive the directory holding the private one."""
+    from pathlib import Path
+
+    from apps.customer_requests.management.commands import (
+        reconcile_message_attachments_private as command,
+    )
+
+    flushed = []
+    monkeypatch.setattr(command, "_fsync_directory",
+                        lambda path: flushed.append(Path(path).resolve()))
+    source = tmp_path / "public" / "a.pdf"
+    source.parent.mkdir()
+    source.write_bytes(b"pdf")
+    target = tmp_path / "private" / "customer_requests" / "7" / "a.pdf"
+    command._copy_without_overwrite(source, target, 0o640)
+    assert target.read_bytes() == b"pdf"
+    root = tmp_path.resolve()
+    for created in ("private", "private/customer_requests", "private/customer_requests/7"):
+        assert (root / created).parent in flushed, created
+    assert (root / "private/customer_requests/7") in flushed  # the file's own entry

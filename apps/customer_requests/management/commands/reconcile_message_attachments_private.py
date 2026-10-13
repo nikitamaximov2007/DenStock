@@ -58,9 +58,34 @@ def _inside(root: Path, name: str) -> Path | None:
     return candidate
 
 
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _make_directories_durable(directory: Path) -> None:
+    """``mkdir -p`` whose new entries survive a crash: each directory created
+    here is flushed into its parent, so a later deletion of the public copy can
+    never outlive the directory that holds the private one."""
+    missing = []
+    current = directory
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    for path in reversed(missing):
+        try:
+            path.mkdir()
+        except FileExistsError:
+            pass
+        _fsync_directory(path.parent)
+
+
 def _copy_without_overwrite(source: Path, target: Path, mode: int) -> None:
     """Publish ``target`` complete or not at all; never replace an existing file."""
-    target.parent.mkdir(parents=True, exist_ok=True)
+    _make_directories_durable(target.parent)
     descriptor, temporary = tempfile.mkstemp(
         prefix=".reconcile-", suffix=".partial", dir=target.parent
     )
@@ -77,11 +102,7 @@ def _copy_without_overwrite(source: Path, target: Path, mode: int) -> None:
             os.unlink(temporary)
         except FileNotFoundError:
             pass
-    directory = os.open(target.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
+    _fsync_directory(target.parent)
 
 
 def _alternative_copies(private: Path, legacy_hash: str) -> int:
