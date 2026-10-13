@@ -39,6 +39,21 @@ df -h /opt/denstock                                          # свободно 
 docker compose exec -T -u 2001:2001 web find /app/private_media ! -readable </dev/null   # пусто
 ```
 
+Результат этих проверок 2026-10-13 (повтор), все пройдены: HEAD `f7b80861`,
+в рабочем дереве только неотслеживаемый `docker-compose.signing.yml`;
+`748225d` доступен с сервера (`git ls-remote`); обёртка `5b5f8a93`,
+Caddyfile `8ba9fb9e`; свободно 8,5 GB; proxy монтирует
+`/etc/denstock/caddy/Caddyfile`, выпуск не меняет Caddy, compose, Docker и
+`.env`-файлы.
+
+### 1a. Ворота сохранности до изменения (только чтение)
+
+- Текущие приватные файлы уже восстановимы независимо: дерево
+  `/app/private_media` на сервере (16 файлов, `917447d1...`) совпадает с
+  зашифрованным захватом на Mac `~/DenisStock-Recovery-Updates/2026-10-12/`.
+- Последняя ночная копия проходит `verify_backup` и проверку подписи Ed25519
+  закрепленным ключом (`production-1`).
+
 ## 2. PRE: копия старым кодом через обычную обёртку
 
 ```bash
@@ -53,7 +68,7 @@ python3 -c "import json;d=json.load(open('backups/offsite_status.json'));print(d
 ```bash
 docker tag denstock-web:latest denstock-web:rollback-f7b8086
 git fetch origin claude/private-media-backup-release
-git checkout --detach <SHA этого runbook>
+git checkout --detach 748225d934ae675edd2f9795f42ce2c8d43c4b22
 sed -i "s/^DENSTOCK_APP_COMMIT=.*/DENSTOCK_APP_COMMIT=$(git rev-parse HEAD)/" .env
 docker compose build web
 docker compose up -d --no-deps --wait web
@@ -76,6 +91,23 @@ set -a; . ./.env.backup; set +a; rclone check backups/$RUN "$BACKUP_OFFSITE_TARG
 
 Ожидается: `[OK] Подпись manifest (Ed25519)`,
 `[OK] Содержимое private_media совпадает с manifest`, `0 differences`.
+
+## 4a. Что считается успехом и как виден сбой
+
+`backup_all` нового кода в production-режиме перед выходом с кодом 0 сам
+проверяет подпись Ed25519 закрепленным ключом, заново считает SHA-256 дампа,
+public media и private_media, проверяет дамп и архив media и отказывает, если
+private_media нет. Обёртка работает с `set -e`: при любой из этих ошибок
+выгрузка не начинается. Статус-файл при этом не обновляется, но экран
+«Резервные копии» помечает статус старше 26 часов как «запуск не завершился»;
+второй независимый сигнал даст монитор GitHub-копий.
+
+Чего действующая обёртка НЕ делает: не скачивает копию из Yandex обратно для
+сверки содержимого (сравнивает только размер и число файлов; при выгрузке
+rclone сверяет MD5). Это закрывает отдельно протестированная обёртка
+`scripts/operations/denstock-backup-capped-safe.sh` (чтение назад
+`rclone check --download`); ее установка это отдельное решение владельца и
+не входит в этот выпуск.
 
 ## 5. Ночью и утром
 
