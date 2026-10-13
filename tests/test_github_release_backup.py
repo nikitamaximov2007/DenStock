@@ -674,15 +674,18 @@ def test_real_service_acceptance_script_passes_against_the_fake(env):
     environ = {**os.environ, "GHB_CONFIG": "/nonexistent", "GHB_REPO": env["fake"].repo,
                "GHB_API_URL": env["fake"].api, "GHB_UPLOAD_URL": env["fake"].uploads,
                "GHB_TOKEN_FILE": str(env["tokens"]["write"])}
-    result = subprocess.run([sys.executable, str(script), "--source-repo", "owner/DenStock"],
+    result = subprocess.run([sys.executable, str(script), "--source-repo", "owner/DenStock",
+                             "--confirm-delete"],
                             env=environ, capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ACCEPTED" in result.stdout
     assert not env["fake"].releases  # only its own release, and it is gone
-    refused = subprocess.run([sys.executable, str(script)], env={
-        **environ, "GHB_TOKEN_FILE": str(env["tokens"]["write"])}, capture_output=True,
-        text=True, timeout=300)
-    assert refused.returncode == 0  # empty again, so it may run again
+    kept = subprocess.run([sys.executable, str(script)], env=environ, input="no\n",
+                          capture_output=True, text=True, timeout=300)
+    assert kept.returncode == 2 and "KEPT" in kept.stdout  # nothing deleted without consent
+    assert len(env["fake"].releases) == 1
+    env["fake"].releases.clear()
+    env["fake"].assets.clear()
     env["fake"].add_release("v1", assets=[("a.bin", b"a")])
     busy = subprocess.run([sys.executable, str(script)], env=environ, capture_output=True,
                           text=True, timeout=300)

@@ -120,6 +120,14 @@ def main() -> int:
         assert ghb.total_bytes(gens) == mine[0]["bytes"], "unexpected bytes in the repository"
         step(f"   generation {mine[0]['tag']} valid, {mine[0]['bytes']} bytes")
 
+        step("3b. pagination as the job relies on it (per_page=1)")
+        first = gh.call("GET", f"/repos/{gh.repo}/releases?per_page=1&page=1", what="page 1")
+        second = gh.call("GET", f"/repos/{gh.repo}/releases?per_page=1&page=2", what="page 2")
+        assert len(first) == 1 and second == [], (len(first), len(second))
+        assets = gh.call("GET", f"/repos/{gh.repo}/releases/{mine[0]['id']}/assets?per_page=1",
+                         what="assets page")
+        assert len(assets) == 1, "asset pagination did not honour per_page"
+
         step("4. deep check")
         args = type("A", (), {"deep": True, "deep_all": True, "max_age_hours": 26})()
         assert ghb.check(env, args) in (0, 2), "deep check failed"  # 2 = DEGRADED (one copy)
@@ -140,7 +148,13 @@ def main() -> int:
             assert (plain / run / name).read_bytes() == (backups / run / name).read_bytes(), name
         step("   decrypted bytes equal the synthetic originals")
 
-        step("6. delete ONLY the release created by this test")
+        step(f"6. delete ONLY the release created by this test: {mine[0]['tag']}")
+        if "--confirm-delete" not in sys.argv:
+            answer = input("Type DELETE to remove this one test release (anything else keeps it): ")
+            if answer.strip() != "DELETE":
+                step("KEPT. Delete this test release in the GitHub UI before enabling the "
+                     "daily job: until then it looks like a valid generation.")
+                return 2
         gh.delete_release(mine[0]["id"])
         assert not [g for g in ghb.inventory(gh) if g["run"] == run]
     step("ACCEPTED: the real GitHub service behaves as the job expects. "

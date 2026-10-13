@@ -170,24 +170,43 @@ private_media 51 МБ, шифрование почти не меняет раз�
   Скрипт совместим: файлы прикладываются к черновику до публикации, а ротация
   удаляет выпуск целиком.
 
-## 8. Настройка GitHub (делает владелец, отдельным одобрением)
+## 8. Настройка и установка (каждый шаг с отдельного одобрения владельца)
 
-1. Создать ПРИВАТНЫЙ репозиторий, например `<владелец>/denisstock-backups`,
-   с README (нужен хотя бы один коммит: публикация выпуска создает тег на
-   ветке по умолчанию). Не репозиторий исходного кода.
-2. Settings: включить "Immutable releases"; включить уведомления о падении
-   Actions на почту.
-3. Положить в репозиторий `monitor/github_release_backup.py` (копия
-   скрипта) и `.github/workflows/backup-freshness.yml`. Это код, не данные.
-4. Fine-grained токен для VPS: только этот репозиторий; "Contents: Read and
-   write"; срок 1 год; напоминание в календаре за 2 недели.
-5. Fine-grained токен для Mac: только этот репозиторий; "Contents: Read-only".
-6. На VPS (после одобрения): `apt install age`; файл токена
-   `/etc/denstock/github-backup.token` (0600, root) вводится владельцем в
-   терминале, не через чат и не аргументом команды; получатель
-   `/etc/denstock/github-backup-recipient.txt` из
-   `~/DenisStock-Recovery/keys/recipient.txt`; конфигурация
-   `/etc/denstock/github-backup.env`:
+### 8.1 GitHub (владелец, в браузере)
+
+1. Новый ПРИВАТНЫЙ репозиторий, например `<владелец>/denisstock-backups`,
+   с README (нужен хотя бы один коммит). Не `nikitamaximov2007/DenStock`.
+2. Settings: включить Immutable releases. В настройках уведомлений GitHub:
+   письма о падении Actions.
+3. В репозиторий: `monitor/github_release_backup.py` (копия скрипта) и
+   `.github/workflows/backup-freshness.yml` из `deploy/github-backup/backup-repo/`.
+4. Токен для VPS (fine-grained): только этот репозиторий; Contents: Read and
+   write; Metadata: Read; срок 1 год; напоминание за 2 недели.
+5. Токен для монитора на Mac: только этот репозиторий; Contents: Read-only.
+6. Токены сохранять сразу в файлы с правами 0600 (`umask 077; pbpaste > файл`),
+   не в чат и не в аргументы команд.
+
+### 8.2 Приемка на настоящем GitHub (Mac, пока репозиторий пуст)
+
+```bash
+cd ~/Developer/DenStock-github-backups
+GHB_CONFIG=/nonexistent GHB_REPO=<владелец>/denisstock-backups GHB_TOKEN_FILE=<файл токена записи> python3 scripts/operations/github_backup_acceptance.py --source-repo nikitamaximov2007/DenStock
+```
+
+Синтетические данные, одноразовый ключ age и одноразовый ключ подписи.
+Проверяет: приватность, что токен не видит репозиторий кода, черновик,
+выгрузку, чтение назад по SHA-256 (перенаправление без токена), публикацию,
+постраничную выдачу выпусков и файлов, учет байтов, расшифровку. Перед
+удалением своего тестового выпуска спрашивает `DELETE`. Итог `ACCEPTED`.
+Без репозитория и токенов этот шаг ЗАБЛОКИРОВАН.
+
+### 8.3 Production (после выпуска private_media `748225d` и 8.2)
+
+1. `apt install age` на VPS.
+2. `/etc/denstock/github-backup.token` (0600, root): токен записи.
+3. `/etc/denstock/github-backup-recipient.txt`: содержимое
+   `~/DenisStock-Recovery/keys/recipient.txt` (публичный, не секрет).
+4. `/etc/denstock/github-backup.env` (0600):
 
    ```
    GHB_REPO=<владелец>/denisstock-backups
@@ -197,22 +216,18 @@ private_media 51 МБ, шифрование почти не меняет раз�
    GHB_FORBIDDEN_REPOS=nikitamaximov2007/DenStock
    ```
 
-7. Приемка на настоящем GitHub на синтетических данных, пока репозиторий
-   пуст (с Mac, токен записи; удаляет только свой тестовый выпуск):
-
-   ```bash
-   GHB_CONFIG=/nonexistent GHB_REPO=<владелец>/denisstock-backups GHB_TOKEN_FILE=<файл токена записи> python3 scripts/operations/github_backup_acceptance.py --source-repo nikitamaximov2007/DenStock
-   ```
-
-   Ожидаемый итог: `ACCEPTED`. Тег тестового выпуска остается (удаление
-   выпуска тег не удаляет), это безвредно.
-8. Первый настоящий запуск вручную, затем `check --deep` с Mac, затем раздел 11.
-9. Только после этого: таймер `systemctl enable --now denstock-github-backup.timer`.
-
-ПРЕДУСЛОВИЕ: копии на production должны содержать private_media внутри
-подписанного запуска (релиз backup-only, ветка `claude/private-media-backup-release`).
-Сейчас (проверено 2026-10-13, копия 03:00) в копиях production есть только
-`db.dump`, `media.tar.gz` и `manifest.json`, и задача такие копии отклоняет.
+   Публичный ключ подписи берется по умолчанию из
+   `/etc/denstock/manifest-signing/production-ed25519.pub`.
+5. Скрипт и unit-файлы: `scripts/operations/github_release_backup.py` в
+   `/opt/denstock/scripts/operations/`, файлы `deploy/github-backup/systemd/`
+   в `/etc/systemd/system/`, `systemctl daemon-reload`.
+6. Первый запуск вручную: `systemctl start denstock-github-backup.service`,
+   затем `cat /opt/denstock/backups/github_backup_status.json` (ожидается `ok`).
+7. С Mac: `check --deep` токеном чтения (ожидается `DEGRADED`: копия одна),
+   затем `fetch`, `prepare_kit_restore.sh --fresh-secrets` или `--secrets`,
+   `offline_restore.sh --mode test`: фразу вводит владелец.
+8. Только после этого: `systemctl enable --now denstock-github-backup.timer`.
+9. Монитор на Mac (`deploy/github-backup/mac/`) и проверка Actions.
 
 ## 9. Восстановление только с GitHub (VPS и Yandex недоступны)
 
