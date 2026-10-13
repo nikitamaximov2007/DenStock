@@ -149,6 +149,22 @@ private_media 51 МБ, шифрование почти не меняет раз�
    уведомлением macOS и раз в неделю ХОЛОДНАЯ КОПИЯ новейшего шифртекста в
    `~/DenisStock-Recovery-Updates/github/<дата>/`.
 
+## 6a. Как видны ошибки GitHub (квота, API, токен)
+
+| Что случилось | Где видно |
+| --- | --- |
+| Токен истек или отозван (401) | статус `failed`: «токен недействителен или просрочен»; Actions и Mac: `UNREACHABLE`, затем `STALE` |
+| Нет прав или лимит запросов (403, 429) | статус `failed`: «нет прав или превышен лимит» / «лимит запросов GitHub исчерпан» |
+| GitHub недоступен, обрыв сети | статус `failed`: «GitHub недоступен»; копия не публикуется, старые не трогаются |
+| Копия не помещается в 1 ГиБ даже после ротации | статус `failed`: «не помещается в бюджет ... ничего не удалено» |
+| Объем выше 850 МиБ, но в бюджете | статус `warning` |
+| Ночь не выполнилась вовсе (VPS умер) | Actions и Mac: `STALE` через 26 часов, письмо GitHub |
+| Копия на GitHub испорчена | Actions по понедельникам и Mac: `CORRUPT` |
+
+Статус-файл: `/opt/denstock/backups/github_backup_status.json`; при `failed`
+задача вызывает `GHB_NOTIFY_SCRIPT` (текст на stdin), если он задан, и
+systemd пишет запись `denstock-github-backup` в журнал.
+
 ## 7. Безопасность и остаточные риски
 
 - Токен VPS: fine-grained, доступ только к одному репозиторию копий,
@@ -183,15 +199,23 @@ private_media 51 МБ, шифрование почти не меняет раз�
 4. Токен для VPS (fine-grained): только этот репозиторий; Contents: Read and
    write; Metadata: Read; срок 1 год; напоминание за 2 недели.
 5. Токен для монитора на Mac: только этот репозиторий; Contents: Read-only.
-6. Токены сохранять сразу в файлы с правами 0600 (`umask 077; pbpaste > файл`),
-   не в чат и не в аргументы команд.
+6. Токены сохранять сразу в файлы с правами 0600, не в чат, не в аргументы
+   команд и не в историю shell. На Mac: скопировать токен в буфер и
+   `umask 077; pbpaste > ~/.config/denisstock/github-read.token` (и так же
+   файл токена записи для приемки). На VPS (шаг 8.3):
+   `install -m 600 /dev/null /etc/denstock/github-backup.token`, затем
+   `cat > /etc/denstock/github-backup.token`, вставить токен, Enter, Ctrl+D.
 
 ### 8.2 Приемка на настоящем GitHub (Mac, пока репозиторий пуст)
 
 ```bash
 cd ~/Developer/DenStock-github-backups
-GHB_CONFIG=/nonexistent GHB_REPO=<владелец>/denisstock-backups GHB_TOKEN_FILE=<файл токена записи> python3 scripts/operations/github_backup_acceptance.py --source-repo nikitamaximov2007/DenStock
+GHB_CONFIG=/nonexistent GHB_REPO=<владелец>/denisstock-backups GHB_TOKEN_FILE=<файл токена записи> ~/Developer/DenStock/.venv/bin/python scripts/operations/github_backup_acceptance.py --source-repo nikitamaximov2007/DenStock
 ```
+
+(Python из venv проекта: системному `python3` macOS не хватает
+`cryptography` для одноразовой подписи. Нужны `age` и `age-keygen`, они
+установлены.)
 
 Синтетические данные, одноразовый ключ age и одноразовый ключ подписи.
 Проверяет: приватность, что токен не видит репозиторий кода, черновик,
