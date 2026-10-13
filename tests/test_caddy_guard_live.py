@@ -166,3 +166,21 @@ def test_negative_control_without_the_guard_the_file_leaks(unguarded_edge):
                                                               "customer_requests"))]
     for path in leaking:  # every file variant really leaks without the guard
         assert _get(unguarded_edge, path) == (200, SECRET), path
+
+
+def _head(base, raw_path):
+    out = subprocess.run(["curl", "-s", "--path-as-is", "-I", "-o", "/dev/null", "-w",
+                          "%{http_code} %{size_download}", base + raw_path],
+                         capture_output=True, check=True, text=True).stdout
+    code, size = out.split()
+    return int(code), int(size)
+
+
+@pytest.mark.parametrize("path", PRIVATE_VARIANTS)
+def test_head_requests_never_confirm_a_private_file(edge, path):
+    code, _ = _head(edge, path)
+    assert code in (404, 400), (path, code)
+
+
+def test_head_on_public_media_still_works(edge):
+    assert _head(edge, "/media/part-items/photo.jpg")[0] == 200
