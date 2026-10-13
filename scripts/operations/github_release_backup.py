@@ -154,15 +154,21 @@ class GitHub:
                 {"Content-Type": "application/json"} if data is not None else None))
             try:
                 with self._open(request) as response:
-                    raw = response.read()
-                    return json.loads(raw) if raw else None
+                    return _json(response.read(), what)
             except urllib.error.HTTPError as exc:
                 if exc.code in ok:
-                    raw = exc.read()
-                    return json.loads(raw) if raw else None
+                    return _json(exc.read(), what)
                 if exc.code >= 500 and attempt < attempts:
                     time.sleep(self.retry_delay * attempt)
                     continue
+                wait = _rate_limit_wait(exc)
+                if wait is not None:
+                    # Primary or secondary rate limit. A read waits once if GitHub
+                    # asks for at most a minute; a write never repeats by itself.
+                    if retry and attempt < attempts and wait <= 60:
+                        time.sleep(wait)
+                        continue
+                    raise BackupError(f"лимит запросов GitHub исчерпан ({what})") from None
                 raise self._explain(exc.code, what) from None
             except (urllib.error.URLError, socket.timeout, ConnectionError, ssl.SSLError,
                     http.client.HTTPException) as exc:
@@ -176,15 +182,31 @@ class GitHub:
     def repository(self):
         return self.call("GET", f"/repos/{self.repo}", what="репозиторий")
 
-    def releases(self):
+    def _pages(self, path, what):
         result, page = [], 1
         while True:
-            batch = self.call("GET", f"/repos/{self.repo}/releases?per_page=100&page={page}",
-                              what="список выпусков")
+            sep = "&" if "?" in path else "?"
+            batch = self.call("GET", f"{path}{sep}per_page=100&page={page}", what=what)
+            if not isinstance(batch, list) or not all(isinstance(x, dict) for x in batch):
+                raise BackupError(f"GitHub вернул некорректный ответ ({what})")
             result.extend(batch)
             if len(batch) < 100:
                 return result
             page += 1
+            if page > 1000:
+                raise BackupError(f"слишком длинный список ({what})")
+
+    def releases(self):
+        """Every release (drafts too, with a write token) with its COMPLETE asset
+        list. Assets come from the paginated assets endpoint, not from the copy
+        embedded in the release listing, so the byte count never misses one."""
+        releases = self._pages(f"/repos/{self.repo}/releases", "список выпусков")
+        for release in releases:
+            if not isinstance(release.get("id"), int):
+                raise BackupError("GitHub вернул выпуск без идентификатора")
+            release["assets"] = self._pages(
+                f"/repos/{self.repo}/releases/{release['id']}/assets", "список файлов выпуска")
+        return releases
 
     def create_draft(self, tag, body):
         return self.call("POST", f"/repos/{self.repo}/releases", {
@@ -254,6 +276,30 @@ class GitHub:
             raise BackupError(f"чтение {what} прервано: {type(reason).__name__}") from None
 
 
+def _json(raw, what):
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise BackupError(f"GitHub вернул не JSON ({what})") from None
+
+
+def _rate_limit_wait(exc):
+    """Seconds to wait for a rate-limit answer, or None if it is not one."""
+    headers = exc.headers or {}
+    limited = exc.code == 429 or (exc.code == 403 and (
+        headers.get("Retry-After") or headers.get("X-RateLimit-Remaining") == "0"))
+    if not limited:
+        return None
+    try:
+        if headers.get("Retry-After"):
+            return float(headers["Retry-After"])
+        return max(0.0, float(headers.get("X-RateLimit-Reset", "0")) - time.time())
+    except ValueError:
+        return 3600.0
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):  # noqa: ARG002
         return None
@@ -267,7 +313,14 @@ def asset_names(run):
 
 
 def release_bytes(release):
-    return sum(int(a.get("size") or 0) for a in release.get("assets") or [])
+    total = 0
+    for asset in release.get("assets") or []:
+        size = asset.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            # An unknown size makes the budget unknowable: fail closed.
+            raise BackupError("GitHub вернул файл выпуска без корректного размера")
+        total += size
+    return total
 
 
 def classify(gh: GitHub, release, *, read_sidecar=True):
@@ -291,14 +344,22 @@ def classify(gh: GitHub, release, *, read_sidecar=True):
     if not read_sidecar:
         return {**info, "kind": "valid"}
     raw = bytearray()
+    if assets[sidecar_name].get("size", 0) > 64 * 1024:
+        return {**info, "kind": "invalid", "reason": "описание копии подозрительно большое"}
     try:
         gh.download(assets[sidecar_name]["id"], raw.extend, what=sidecar_name)
         sidecar = json.loads(bytes(raw))
     except ValueError:
         return {**info, "kind": "invalid", "reason": "описание копии не читается"}
+    if not isinstance(sidecar, dict):
+        return {**info, "kind": "invalid", "reason": "описание копии не читается"}
     info["sidecar"] = sidecar
     if (sidecar.get("format") != FORMAT or sidecar.get("tag") != tag
-            or sidecar.get("ciphertext_bytes") != assets[cipher_name].get("size")):
+            or sidecar.get("run") != info["run"]
+            or sidecar.get("ciphertext_name") != cipher_name
+            or not re.fullmatch(r"[0-9a-f]{64}", str(sidecar.get("ciphertext_sha256")))
+            or sidecar.get("ciphertext_bytes") != assets[cipher_name].get("size")
+            or _parse_time(str(sidecar.get("created_at") or "")) is None):
         return {**info, "kind": "invalid", "reason": "размер или описание не совпадают"}
     return {**info, "kind": "valid", "created_at": sidecar.get("created_at")}
 
@@ -580,7 +641,10 @@ def push(conf) -> int:
             raise BackupError("после публикации копия не распознана как целая")
         # The new copy is proven now: bring usage back under the watermark, still
         # keeping at least ``min_keep`` valid generations (survivors re-proven).
-        delete, _ = plan_with_proven_survivors(gh, gens, 0, watermark, budget, min_keep)
+        # Also make room for TOMORROW's copy now, while the new copy is proven:
+        # in the steady state nothing is deleted before an upload.
+        reserve = int(cipher_bytes * float(conf.get("GHB_RESERVE_FACTOR", "1.1")))
+        delete, _ = plan_with_proven_survivors(gh, gens, reserve, watermark, budget, min_keep)
         for gen in delete:
             log(f"ротация после выгрузки: удаляю {gen['kind']} {gen['tag']}")
             gh.delete_release(gen["id"])
@@ -596,6 +660,13 @@ def push(conf) -> int:
     except BackupError as exc:
         status.write("failed", str(exc))
         log(f"ОШИБКА: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001 - any surprise must end as "failed", not "running"
+        status.write("failed", f"внутренняя ошибка {type(exc).__name__}: требуется разбор журнала")
+        log(f"ВНУТРЕННЯЯ ОШИБКА {type(exc).__name__}")
+        import traceback
+
+        traceback.print_exc()
         return 1
     except Stop:
         status.write("failed",
@@ -632,10 +703,15 @@ def check(conf, args) -> int:
         print(f"UNREACHABLE {exc}")
         return 1
     valid = [g for g in gens if g["kind"] == "valid"]
+    invalid = [g for g in gens if g["kind"] == "invalid"]
     used = total_bytes(gens)
-    summary = f"valid={len(valid)} used={used} budget={budget}"
+    summary = f"valid={len(valid)} invalid={len(invalid)} used={used} budget={budget}"
     if used > budget:
         print(f"OVER_BUDGET {summary}")
+        return 1
+    published = [g for g in gens if g["kind"] in ("valid", "invalid")]
+    if published and published[-1]["kind"] == "invalid":
+        print(f"CORRUPT newest {published[-1]['tag']}: {published[-1].get('reason')}; {summary}")
         return 1
     if not valid:
         print(f"STALE no valid generation; {summary}")
@@ -730,6 +806,9 @@ def main(argv=None) -> int:
         return fetch(conf, args)
     except BackupError as exc:
         log(f"ОШИБКА: {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        log(f"ВНУТРЕННЯЯ ОШИБКА {type(exc).__name__}")
         return 1
 
 

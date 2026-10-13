@@ -213,9 +213,13 @@ def test_production_sized_generations_near_one_gib(env):
         result = push(env)
         assert result.returncode == 0, result.stderr
         assert env["fake"].used() <= 850 * MIB
+        # Steady state: old copies are deleted only AFTER the new one is proven,
+        # never in front of an upload.
+        assert "ротация: удаляю" not in result.stderr
         shutil.rmtree(env["backups"] / run)
-    assert_never_over_budget(env, 1024 * MIB)
-    assert len(env["fake"].published()) == 8  # 8 x ~98 MiB under the 850 MiB watermark
+    assert_never_over_budget(env, 850 * MIB)  # even the transient peak stayed under it
+    # 7 kept + room for tomorrow's (~108 MiB reserve) under the 850 MiB watermark
+    assert len(env["fake"].published()) == 7
 
 
 def test_second_push_of_the_same_run_changes_nothing(env):
@@ -473,3 +477,190 @@ def test_fetch_refuses_a_corrupted_download_and_never_overwrites(env):
     bad = fetch(env, env["tmp"] / "kit2")
     assert bad.returncode == 1 and "повреждена" in bad.stderr
     assert not list((env["tmp"] / "kit2").glob("*.age"))
+
+
+# --- audit 2026-10-13: fault injection and invariants --------------------------------
+
+
+def _intact_tags(fake):
+    """Published generations whose ciphertext really matches its description."""
+    import hashlib
+
+    intact = set()
+    for rel in fake.published():
+        names = {fake.assets[a]["name"]: fake.assets[a] for a in rel["asset_ids"]}
+        side = next((a for n, a in names.items() if n.endswith(".backup.json")), None)
+        ciph = next((a for n, a in names.items() if n.endswith(".tar.age")), None)
+        if not side or not ciph:
+            continue
+        meta = json.loads(fake.blob(side["id"]).read_bytes())
+        if hashlib.sha256(fake.blob(ciph["id"]).read_bytes()).hexdigest() == meta.get(
+                "ciphertext_sha256"):
+            intact.add(rel["tag_name"])
+    return intact
+
+
+def test_ninety_randomized_days_keep_every_invariant(env):
+    """Random sizes, a few oversized archives, outages, accidental deletions and
+    silent corruption. After every night: peak <= budget; a successful night's
+    copy is the newest and intact; the job itself never leaves fewer than
+    min(2, before) intact copies."""
+    import random
+
+    rng = random.Random(20261013)
+    budget, watermark = 8 * MIB, int(6.8 * MIB)
+    fake = env["fake"]
+    for day in range(90):
+        when = NOW - timedelta(days=89 - day)
+        size = rng.randint(300, 1200) * KIB
+        if rng.random() < 0.04:
+            size = 7 * MIB  # unexpected large archive: cannot fit next to two copies
+        run = make_run(env["backups"], when, size)
+        event = rng.random()
+        if event < 0.05:
+            fake.faults["outage"] = True
+        elif event < 0.08:
+            fake.faults["delete_fail"] = True
+        elif event < 0.11 and fake.published():
+            fake.corrupt(fake.asset_by_name(
+                rng.choice(fake.published())["tag_name"].split("-", 2)[2][:19]
+                + ".signed-backup.tar.age")["id"])
+        elif event < 0.13 and len(fake.published()) > 2:
+            with fake.lock:  # someone deletes a release by hand
+                victim = rng.choice(fake.published())
+                for aid in victim["asset_ids"]:
+                    fake.assets.pop(aid)
+                fake.releases.pop(victim["id"])
+        before = _intact_tags(fake)
+        result = push(env, GHB_BUDGET_BYTES=budget, GHB_WATERMARK_BYTES=watermark)
+        fake.faults.clear()
+        after = _intact_tags(fake)
+        assert fake.max_used <= budget, day
+        if result.returncode == 0 and "зашифрована" in result.status["message"]:
+            assert valid_runs(fake)[-1] == run, day
+            assert any(run in tag for tag in after), day
+            assert len(after) >= min(2, len(before) + 1), (day, result.stderr)
+        else:
+            assert result.status["status"] == "failed", day
+            assert len(after & before) >= min(2, len(before)), (day, result.stderr)
+        shutil.rmtree(env["backups"] / run)
+    assert_never_over_budget(env, budget)
+
+
+def test_one_valid_and_one_silently_corrupted_copy(env):
+    budget, watermark = 3 * MIB, int(2.5 * MIB)
+    runs = []
+    for day in range(2):
+        runs.append(make_run(env["backups"], NOW - timedelta(days=2 - day), 800 * KIB))
+        assert push(env, GHB_BUDGET_BYTES=budget, GHB_WATERMARK_BYTES=watermark).returncode == 0
+    env["fake"].corrupt(env["fake"].asset_by_name(f"{runs[1]}.signed-backup.tar.age")["id"])
+    runs.append(make_run(env["backups"], NOW, 800 * KIB))
+    result = push(env, GHB_BUDGET_BYTES=budget, GHB_WATERMARK_BYTES=watermark)
+    assert result.returncode == 0, result.stderr
+    # the corrupted copy never counted as one of the "two": the intact old one survives
+    assert _intact_tags(env["fake"]) == {r["tag_name"] for r in env["fake"].published()}
+    assert runs[0] in valid_runs(env["fake"]) and runs[2] in valid_runs(env["fake"])
+    assert runs[1] not in valid_runs(env["fake"])
+
+
+def test_github_outage_during_rotation_deletes_at_most_what_was_planned(env):
+    budget, watermark = 3 * MIB, int(2.5 * MIB)
+    for day in range(3):
+        make_run(env["backups"], NOW - timedelta(days=3 - day), 700 * KIB)
+        assert push(env, GHB_BUDGET_BYTES=budget, GHB_WATERMARK_BYTES=watermark).returncode == 0
+    before = _intact_tags(env["fake"])
+    run = make_run(env["backups"], NOW, 700 * KIB)
+    env["fake"].faults["delete_fail"] = True
+    seen = len(env["fake"].calls)
+    result = push(env, GHB_BUDGET_BYTES=budget, GHB_WATERMARK_BYTES=watermark)
+    env["fake"].faults.clear()
+    # no retry storm, a clear failure, every intact copy still there
+    deletes = [c for c in env["fake"].calls[seen:] if c[0] == "DELETE"]
+    assert len(deletes) <= 1
+    if result.returncode:
+        assert result.status["status"] == "failed"
+        assert before <= _intact_tags(env["fake"])
+    retry = push(env, GHB_BUDGET_BYTES=budget, GHB_WATERMARK_BYTES=watermark)
+    assert retry.returncode == 0 and valid_runs(env["fake"])[-1] == run
+
+
+def test_inconsistent_metadata_after_a_successful_api_call_is_not_healthy(env):
+    make_run(env["backups"], NOW - timedelta(days=1), 200 * KIB)
+    assert push(env).returncode == 0
+    run = make_run(env["backups"], NOW, 200 * KIB)
+    env["fake"].faults["size_lie"] = 7  # the asset list reports a size that differs
+    result = push(env)
+    assert result.returncode == 1 and result.status["status"] == "failed"
+    monitor = check(env)
+    assert monitor.returncode == 1 and "CORRUPT" in monitor.stdout
+    env["fake"].faults.clear()
+    assert run in "".join(r["tag_name"] for r in env["fake"].published())  # kept as evidence
+
+
+def test_malformed_api_answers_fail_closed_and_never_stay_running(env):
+    make_run(env["backups"], NOW, 100 * KIB)
+    env["fake"].faults["bad_json"] = True
+    result = push(env)
+    assert result.returncode == 1 and result.status["status"] == "failed"
+    assert "не JSON" in result.status["message"]
+    env["fake"].add_release("odd", assets=[("x.bin", b"x")])
+    env["fake"].assets[max(env["fake"].assets)]["size"] = "big"  # a size that is not a number
+    result = push(env)
+    assert result.returncode == 1 and "размера" in result.status["message"]
+    assert not env["fake"].published() or all(
+        r["tag_name"] == "odd" for r in env["fake"].published())
+
+
+def test_malformed_description_asset_is_invalid_not_a_crash(env):
+    run = make_run(env["backups"], NOW, 100 * KIB)
+    assert push(env).returncode == 0
+    side = env["fake"].asset_by_name(f"{run}.backup.json")
+    env["fake"].blob(side["id"]).write_bytes(b"[1, 2, 3]")
+    env["fake"].assets[side["id"]]["size"] = 9
+    monitor = check(env)
+    assert monitor.returncode == 1 and "CORRUPT" in monitor.stdout
+
+
+def test_rate_limited_reads_wait_and_continue(env):
+    make_run(env["backups"], NOW, 100 * KIB)
+    env["fake"].faults["rate_limit_gets"] = 1
+    result = push(env)
+    assert result.returncode == 0, result.stderr
+
+
+def test_accidentally_deleted_release_is_noticed_and_recovered(env):
+    for day in range(2):
+        make_run(env["backups"], NOW - timedelta(hours=30 - day * 12), 100 * KIB)
+        assert push(env).returncode == 0
+    newest = env["fake"].published()[-1]
+    with env["fake"].lock:
+        for aid in newest["asset_ids"]:
+            env["fake"].assets.pop(aid)
+        env["fake"].releases.pop(newest["id"])
+    degraded = check(env)
+    assert degraded.returncode == 2  # STALE or DEGRADED, never FRESH
+    make_run(env["backups"], NOW, 100 * KIB)
+    assert push(env).returncode == 0
+    assert check(env).returncode == 0
+
+
+def test_real_service_acceptance_script_passes_against_the_fake(env):
+    """The owner's acceptance procedure, run here against the isolated fake."""
+    script = ROOT / "scripts/operations/github_backup_acceptance.py"
+    environ = {**os.environ, "GHB_CONFIG": "/nonexistent", "GHB_REPO": env["fake"].repo,
+               "GHB_API_URL": env["fake"].api, "GHB_UPLOAD_URL": env["fake"].uploads,
+               "GHB_TOKEN_FILE": str(env["tokens"]["write"])}
+    result = subprocess.run([sys.executable, str(script), "--source-repo", "owner/DenStock"],
+                            env=environ, capture_output=True, text=True, timeout=300)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ACCEPTED" in result.stdout
+    assert not env["fake"].releases  # only its own release, and it is gone
+    refused = subprocess.run([sys.executable, str(script)], env={
+        **environ, "GHB_TOKEN_FILE": str(env["tokens"]["write"])}, capture_output=True,
+        text=True, timeout=300)
+    assert refused.returncode == 0  # empty again, so it may run again
+    env["fake"].add_release("v1", assets=[("a.bin", b"a")])
+    busy = subprocess.run([sys.executable, str(script)], env=environ, capture_output=True,
+                          text=True, timeout=300)
+    assert busy.returncode != 0 and "already has releases" in busy.stdout + busy.stderr
+    assert "v1" in [r["tag_name"] for r in env["fake"].releases.values()]

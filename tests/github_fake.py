@@ -118,7 +118,9 @@ class FakeGitHub:
                 "body": rel["body"], "draft": rel["draft"],
                 "upload_url": (f"{self.uploads}/repos/{self.repo}/releases/{rel['id']}"
                                "/assets{?name,label}"),
-                "assets": [self._asset_json(self.assets[a]) for a in rel["asset_ids"]]}
+                # The embedded copy is deliberately truncated: the job must use the
+                # paginated assets endpoint for accounting.
+                "assets": [self._asset_json(self.assets[a]) for a in rel["asset_ids"]][:1]}
 
     @staticmethod
     def _asset_json(asset):
@@ -159,6 +161,20 @@ class FakeGitHub:
                 if fake.faults.get("outage"):
                     self._drain()
                     return self._send(503, {"message": "Service Unavailable"})
+                if method == "GET" and fake.faults.get("rate_limit_gets", 0) > 0:
+                    fake.faults["rate_limit_gets"] -= 1
+                    return self._send(429, {"message": "rate limited"}, {"Retry-After": "0"})
+                if method == "DELETE" and fake.faults.get("delete_fail"):
+                    self._drain()
+                    return self._send(503, {"message": "Service Unavailable"})
+                if fake.faults.get("bad_json") and url.path.endswith("/releases"):
+                    fake.faults.pop("bad_json")
+                    body = b"<html>oops</html>"
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return None
                 if url.path.startswith("/objects/"):
                     return self._object(url)
                 token = self._token()
@@ -181,6 +197,9 @@ class FakeGitHub:
                     return self._patch(int(match.group(1)), writer)
                 if match and method == "DELETE":
                     return self._delete(int(match.group(1)), writer)
+                match = re.fullmatch(rf"{re.escape(base)}/releases/(\d+)/assets", url.path)
+                if match and method == "GET":
+                    return self._assets(url, int(match.group(1)))
                 match = re.fullmatch(rf"{re.escape(base)}/releases/assets/(\d+)", url.path)
                 if match and method == "GET":
                     return self._asset(int(match.group(1)))
@@ -197,6 +216,20 @@ class FakeGitHub:
                     chunk = rels[(page - 1) * per_page: page * per_page]
                     payload = [fake._release_json(r) for r in chunk]
                 return self._send(200, payload)
+
+            def _assets(self, url, rid):
+                query = parse_qs(url.query)
+                per_page = int(query.get("per_page", ["30"])[0])
+                page = int(query.get("page", ["1"])[0])
+                with fake.lock:
+                    rel = fake.releases.get(rid)
+                    if rel is None:
+                        return self._send(404, {"message": "Not Found"})
+                    items = [fake._asset_json(fake.assets[a]) for a in rel["asset_ids"]]
+                    if fake.faults.get("size_lie"):
+                        for item in items:
+                            item["size"] += fake.faults["size_lie"]
+                return self._send(200, items[(page - 1) * per_page: page * per_page])
 
             def _create(self, writer):
                 data = json.loads(self._drain() or b"{}")
