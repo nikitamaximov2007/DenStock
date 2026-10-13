@@ -14,31 +14,79 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 KIT="$HOME/DenisStock-Recovery-Updates/2026-10-12"
 SECRETS="$(ls -1 "$HOME"/DenisStock-Recovery/secrets/production-secrets-*.tar.age | sort | tail -1)"
 IDENTITY="$HOME/DenisStock-Recovery/keys/recovery-identity.age"
+PLAIN=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --kit) KIT="$2"; shift 2 ;;
         --secrets) SECRETS="$2"; shift 2 ;;
+        --identity) IDENTITY="$2"; shift 2 ;;
+        # Synthetic rehearsal of this exact procedure with an unprotected TEST key.
+        --plain-identity) PLAIN=(--plain-identity); shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 STAMP="$(date -u +%Y%m%d%H%M%S)"
 PROJECT="dr-real-$STAMP"
 WORK="$HOME/DenisStock-DR-work.$STAMP"
-REPORTS="$HOME/DenisStock-DR-reports"
+REPORTS="${DR_REPORTS_DIR:-$HOME/DenisStock-DR-reports}"
 PORT="${DR_PORT:-18090}"
-export DR_PYTHON="${DR_PYTHON:-$(cd "$HERE/../.." && pwd -P)/.venv/bin/python}"
-[[ -x "$DR_PYTHON" ]] || DR_PYTHON=python3
+die() { echo "[real-drill] STOP: $*" >&2; exit 1; }
+
+# Preflight BEFORE the passphrase is asked: everything that can fail without
+# decrypting anything fails here.
+# 1. A Python that can verify Ed25519 (offline_restore step 1). macOS python3
+#    has no cryptography; the project's shared venv does.
+if [[ -z "${DR_PYTHON:-}" ]]; then
+    for candidate in "$(cd "$HERE/../.." && pwd -P)/.venv/bin/python" \
+                     "$HOME/Developer/DenStock/.venv/bin/python" python3; do
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import cryptography" 2>/dev/null; then
+            DR_PYTHON="$candidate"; break
+        fi
+    done
+fi
+[[ -n "${DR_PYTHON:-}" ]] && "$DR_PYTHON" -c "import cryptography" 2>/dev/null ||
+    die "no Python with the cryptography package (set DR_PYTHON)"
+export DR_PYTHON
+# 2. Tools and Docker.
+for tool in age docker git lsof; do command -v "$tool" >/dev/null || die "$tool is not installed"; done
+docker info >/dev/null 2>&1 || die "Docker is not running"
+# 3. Leftovers of an interrupted earlier drill (SIGKILL, power loss) are removed
+#    first, by hand: this drill never starts next to old decrypted data.
+LEFTOVER_DIRS=$(ls -d "$HOME"/DenisStock-DR-work.* 2>/dev/null || true)
+LEFTOVER_VOLUMES=$(docker volume ls -q | grep '^dr-real-' || true)
+if [[ -n "$LEFTOVER_DIRS$LEFTOVER_VOLUMES" ]]; then
+    echo "[real-drill] leftovers of an earlier drill:" >&2
+    printf '  %s\n' $LEFTOVER_DIRS $LEFTOVER_VOLUMES >&2
+    die "remove them first: rm -rf ~/DenisStock-DR-work.*; scripts/dr/cleanup_dr.sh <dr-real-project>"
+fi
+# 4. The kit is only read: its file hashes are compared before and after.
+[[ -d "$KIT" && -f "$IDENTITY" && -f "$SECRETS" ]] || die "kit, identity or secrets not found"
+kit_hashes() { (cd "$KIT" && find . -type f -print0 | sort -z | xargs -0 shasum -a 256; \
+                shasum -a 256 "$IDENTITY" "$SECRETS"); }
+KIT_BEFORE=$(kit_hashes)
+
 cleanup() {
     local code=$?
+    trap - EXIT INT TERM HUP
     "$HERE/cleanup_dr.sh" "$PROJECT" >/dev/null 2>&1 || true
     rm -rf "$WORK"
     [[ ! -e "$WORK" ]] && echo "[real-drill] decrypted data removed" >&2
+    if [[ "$(kit_hashes)" == "$KIT_BEFORE" ]]; then
+        echo "[real-drill] recovery kit unchanged (SHA-256 of every file)" >&2
+    else
+        echo "[real-drill] WARNING: recovery kit files changed during the drill" >&2
+        code=1
+    fi
     exit "$code"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 mkdir -p -m 700 "$REPORTS"
 START=$(date +%s)
-"$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$IDENTITY" --work "$WORK" --secrets "$SECRETS"
+"$HERE/prepare_kit_restore.sh" --kit "$KIT" --identity "$IDENTITY" --work "$WORK" --secrets "$SECRETS" \
+    ${PLAIN[@]+"${PLAIN[@]}"}
 DECRYPTED=$(date +%s)
 PRIVATE_ARGS=()
 [[ -f "$WORK/private.tar" ]] && PRIVATE_ARGS=(--private-archive "$WORK/private.tar"
