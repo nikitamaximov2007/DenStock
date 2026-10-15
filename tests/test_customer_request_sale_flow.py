@@ -4,6 +4,8 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
@@ -24,7 +26,7 @@ from apps.customer_requests.services import (
 )
 from apps.customers.models import Customer
 from apps.inventory.models import StockMovement
-from apps.inventory.services import create_stock_lot, receive_stock_lot
+from apps.inventory.services import create_stock_lot, move_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
 from apps.procurement.services import finalize_cost
 from apps.reports.services import (
@@ -76,7 +78,7 @@ def sale_scene(admin):
     batch = finalize_cost(batch, admin)
     batch_line.refresh_from_db()
     location = StorageLocation.objects.create(
-        name="Заявки A", code="REQ-A", storage_allowed=True, is_active=True
+        name="Заявки A", code="S01-D01-C01", storage_allowed=True, is_active=True
     )
     lot = create_stock_lot(batch_line, location, Decimal("3"))
     receive_stock_lot(lot, by=admin)
@@ -84,13 +86,20 @@ def sale_scene(admin):
     return {"admin": admin, "part": part, "lot": lot, "location": location}
 
 
-def make_request(part, *, phone="89090000001", name="Александр Пушкарев", key="request-key"):
+def make_request(
+    part,
+    *,
+    phone="89090000001",
+    name="Александр Пушкарев",
+    key="request-key",
+    supply=False,
+):
     key = f"customer-request-{key}"
     request, _created = create_customer_request(
         customer_name=name,
         customer_phone=phone,
         preferred_messenger=CustomerRequest.Messenger.TELEGRAM,
-        lines=[RequestLineInput(part_id=part.pk, quantity="1", supply_inquiry=False)],
+        lines=[RequestLineInput(part_id=part.pk, quantity="1", supply_inquiry=supply)],
         privacy_policy_version=POLICY,
         personal_data_consent_version=POLICY,
         submission_key=key,
@@ -385,6 +394,165 @@ def test_request_detail_exposes_sale_action_and_audit_is_read_only(client, sale_
     call_command("audit_customer_request_customer_matches", stdout=output)
     assert "Заявки без совпадения" in output.getvalue()
     assert Customer.objects.count() == before_customers
+
+
+def test_request_detail_shows_live_pickable_locations_without_stock_writes(client, sale_scene):
+    part = sale_scene["part"]
+    admin = sale_scene["admin"]
+    second_location = StorageLocation.objects.create(
+        name="Заявки B", code="S01-D02-C01", storage_allowed=True, is_active=True
+    )
+    second_batch = Batch.objects.create(
+        supplier=Supplier.objects.create(name="Поставщик заявки B"),
+        shipping_cost=Decimal("0"),
+    )
+    second_line = BatchLine.objects.create(
+        batch=second_batch,
+        part_type=part,
+        quantity=Decimal("2"),
+        unit_cost_currency=Decimal("100"),
+    )
+    second_batch.status = Batch.Status.ACCEPTED
+    second_batch.save(update_fields=["status"])
+    finalize_cost(second_batch, admin)
+    second_line.refresh_from_db()
+    second_lot = create_stock_lot(second_line, second_location, Decimal("2"))
+    receive_stock_lot(second_lot, by=admin)
+
+    request = make_request(part, key="live-locations")
+    line = request.lines.get()
+    line.quantity_requested = Decimal("7")
+    line.save(update_fields=["quantity_requested"])
+    client.force_login(admin)
+
+    before_quantities = list(
+        sale_scene["lot"].__class__.objects.order_by("pk").values_list("pk", "quantity")
+    )
+    before_movements = list(StockMovement.objects.order_by("pk").values_list("pk", "quantity"))
+    response = client.get(reverse("customer_request_detail", args=[request.pk]))
+    html = response.content.decode()
+
+    assert response.status_code == 200
+    assert "1-1-1" in html and "1-2-1" in html
+    assert "3 шт" in html and "2 шт" in html
+    assert "доступно 5 шт" in html
+    assert "data-line-total" in html
+    assert "Оформить продажу по заявке" not in html
+    assert list(
+        sale_scene["lot"].__class__.objects.order_by("pk").values_list("pk", "quantity")
+    ) == before_quantities
+    assert (
+        list(StockMovement.objects.order_by("pk").values_list("pk", "quantity"))
+        == before_movements
+    )
+
+    third_location = StorageLocation.objects.create(
+        name="Заявки C", code="S02-D01-C01", storage_allowed=True, is_active=True
+    )
+    move_stock_lot(sale_scene["lot"], third_location, by=admin)
+    response = client.get(reverse("customer_request_detail", args=[request.pk]))
+    html = response.content.decode()
+    assert "2-1-1" in html and "1-1-1" not in html
+    assert "1-2-1" in html
+
+    second_location.is_active = False
+    second_location.save(update_fields=["is_active"])
+    response = client.get(reverse("customer_request_detail", args=[request.pk]))
+    html = response.content.decode()
+    assert "1-2-1" not in html
+    assert "доступно 5 шт" in html
+
+    second_location.is_active = True
+    second_location.storage_allowed = False
+    second_location.save(update_fields=["is_active", "storage_allowed"])
+    response = client.get(reverse("customer_request_detail", args=[request.pk]))
+    html = response.content.decode()
+    assert "1-2-1" not in html
+    assert "доступно 5 шт" in html
+
+
+def test_request_detail_keeps_zero_stock_line_and_handles_seven_lines_without_n_plus_one(
+    client, sale_scene
+):
+    admin = sale_scene["admin"]
+    category = sale_scene["part"].category
+    unit = sale_scene["part"].unit
+    manufacturer = sale_scene["part"].manufacturer
+    empty_part = PartType.objects.create(
+        name="Деталь без остатка",
+        category=category,
+        unit=unit,
+        manufacturer=manufacturer,
+        tracking_mode=PartType.TrackingMode.BULK,
+        recommended_price=Decimal("500"),
+        is_public=True,
+    )
+    PartNumber.objects.create(part=empty_part, value="REQ-EMPTY", is_primary=True)
+    empty_request = make_request(empty_part, key="zero-stock", supply=True)
+    client.force_login(admin)
+    empty_response = client.get(reverse("customer_request_detail", args=[empty_request.pk]))
+    empty_html = empty_response.content.decode()
+    assert empty_response.status_code == 200
+    assert "Деталь без остатка" in empty_html
+    assert "Нет доступного места для сборки" in empty_html
+
+    batch = Batch.objects.create(
+        supplier=Supplier.objects.create(name="Поставщик семи позиций"),
+        shipping_cost=Decimal("0"),
+    )
+    parts = [sale_scene["part"]]
+    batch_lines = []
+    for index in range(2, 8):
+        part = PartType.objects.create(
+            name=f"Позиция заявки {index}",
+            category=category,
+            unit=unit,
+            manufacturer=manufacturer,
+            tracking_mode=PartType.TrackingMode.BULK,
+            recommended_price=Decimal("500"),
+            is_public=True,
+        )
+        PartNumber.objects.create(part=part, value=f"REQ-{index}", is_primary=True)
+        parts.append(part)
+        batch_lines.append(
+            BatchLine.objects.create(
+                batch=batch,
+                part_type=part,
+                quantity=Decimal("1"),
+                unit_cost_currency=Decimal("100"),
+            )
+        )
+    batch.status = Batch.Status.ACCEPTED
+    batch.save(update_fields=["status"])
+    finalize_cost(batch, admin)
+    for batch_line in batch_lines:
+        batch_line.refresh_from_db()
+        lot = create_stock_lot(batch_line, sale_scene["location"], Decimal("1"))
+        receive_stock_lot(lot, by=admin)
+
+    seven_request, _created = create_customer_request(
+        customer_name="Семь позиций",
+        customer_phone="89090000008",
+        preferred_messenger=CustomerRequest.Messenger.TELEGRAM,
+        lines=[
+            RequestLineInput(part_id=part.pk, quantity="1", supply_inquiry=False)
+            for part in parts
+        ],
+        privacy_policy_version=POLICY,
+        personal_data_consent_version=POLICY,
+        submission_key="customer-request-seven-pick-locations",
+    )
+    one_request = make_request(sale_scene["part"], key="query-count-one")
+    with CaptureQueriesContext(connection) as one_queries:
+        one_response = client.get(reverse("customer_request_detail", args=[one_request.pk]))
+    with CaptureQueriesContext(connection) as seven_queries:
+        seven_response = client.get(reverse("customer_request_detail", args=[seven_request.pk]))
+
+    assert one_response.status_code == seven_response.status_code == 200
+    assert "7 поз." in seven_response.content.decode()
+    seven_html = seven_response.content.decode()
+    assert all(f"Позиция заявки {index}" in seven_html for index in range(2, 8))
+    assert len(seven_queries) <= len(one_queries) + 2
 
 
 def test_request_sale_customs_completion_keeps_draft_and_stock_unchanged(client, sale_scene):
