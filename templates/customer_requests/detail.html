@@ -313,6 +313,9 @@
                       цена уточняется
                     {% endif %}
                     · доступно {{ line.current_available|quantity_int }} {{ line.unit_short_name }}
+                    {% if line.current_shortage > 0 %}
+                      · не хватает {{ line.current_shortage|quantity_int }} {{ line.unit_short_name }}
+                    {% endif %}
                   </div>
                 </td>
                 <td data-cell-locations>

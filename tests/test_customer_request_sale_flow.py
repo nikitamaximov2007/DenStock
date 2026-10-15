@@ -39,7 +39,7 @@ from apps.reports.services import (
     get_sales_by_customer,
     get_sales_report,
 )
-from apps.sales.models import Sale, SaleLine
+from apps.sales.models import Reservation, ReservationLine, Sale, SaleLine
 from apps.suppliers.models import Supplier
 from apps.warehouse.models import StorageLocation
 from tests.customs_support import remember_customs
@@ -419,6 +419,34 @@ def test_request_detail_shows_live_pickable_locations_without_stock_writes(clien
     second_lot = create_stock_lot(second_line, second_location, Decimal("2"))
     receive_stock_lot(second_lot, by=admin)
 
+    same_cell_batch = Batch.objects.create(
+        supplier=Supplier.objects.create(name="Поставщик заявки A2"),
+        shipping_cost=Decimal("0"),
+    )
+    same_cell_line = BatchLine.objects.create(
+        batch=same_cell_batch,
+        part_type=part,
+        quantity=Decimal("2"),
+        unit_cost_currency=Decimal("100"),
+    )
+    same_cell_batch.status = Batch.Status.ACCEPTED
+    same_cell_batch.save(update_fields=["status"])
+    finalize_cost(same_cell_batch, admin)
+    same_cell_line.refresh_from_db()
+    same_cell_lot = create_stock_lot(same_cell_line, sale_scene["location"], Decimal("2"))
+    receive_stock_lot(same_cell_lot, by=admin)
+    reservation = Reservation.objects.create(
+        status=Reservation.Status.ACTIVE,
+        customer_name="Резерв для проверки",
+        created_by=admin,
+    )
+    ReservationLine.objects.create(
+        reservation=reservation,
+        part_type=part,
+        stock_lot=same_cell_lot,
+        quantity=Decimal("1"),
+    )
+
     request = make_request(part, key="live-locations")
     line = request.lines.get()
     line.quantity_requested = Decimal("7")
@@ -434,8 +462,10 @@ def test_request_detail_shows_live_pickable_locations_without_stock_writes(clien
 
     assert response.status_code == 200
     assert "1-1-1" in html and "1-2-1" in html
-    assert "3 шт" in html and "2 шт" in html
-    assert "доступно 5 шт" in html
+    assert html.count('class="cr-order__location-code">1-1-1') == 1
+    assert "4 шт" in html and "2 шт" in html
+    assert "доступно 6 шт" in html
+    assert "не хватает 1 шт" in html
     assert "data-line-total" in html
     assert "Оформить продажу по заявке" not in html
     assert list(
@@ -452,7 +482,7 @@ def test_request_detail_shows_live_pickable_locations_without_stock_writes(clien
     move_stock_lot(sale_scene["lot"], third_location, by=admin)
     response = client.get(reverse("customer_request_detail", args=[request.pk]))
     html = response.content.decode()
-    assert "2-1-1" in html and "1-1-1" not in html
+    assert "2-1-1" in html and "1-1-1" in html
     assert "1-2-1" in html
 
     second_location.is_active = False
@@ -460,7 +490,7 @@ def test_request_detail_shows_live_pickable_locations_without_stock_writes(clien
     response = client.get(reverse("customer_request_detail", args=[request.pk]))
     html = response.content.decode()
     assert "1-2-1" not in html
-    assert "доступно 5 шт" in html
+    assert "доступно 4 шт" in html
 
     second_location.is_active = True
     second_location.storage_allowed = False
@@ -468,7 +498,7 @@ def test_request_detail_shows_live_pickable_locations_without_stock_writes(clien
     response = client.get(reverse("customer_request_detail", args=[request.pk]))
     html = response.content.decode()
     assert "1-2-1" not in html
-    assert "доступно 5 шт" in html
+    assert "доступно 4 шт" in html
 
 
 def test_request_detail_keeps_zero_stock_line_and_handles_seven_lines_without_n_plus_one(

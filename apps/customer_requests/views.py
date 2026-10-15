@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.contrib import messages
@@ -365,9 +366,9 @@ def _detail_context(
     availability = {part_id: 0 for part_id in part_ids}
     locations_by_part = {part_id: [] for part_id in part_ids}
     for stock_row in live_stock_rows(part_ids=part_ids):
-        availability[stock_row.part_type.pk] += stock_row.available
         if not stock_row.location.can_hold_stock():
             continue
+        availability[stock_row.part_type.pk] += stock_row.available
         if stock_row.available > 0:
             locations_by_part[stock_row.part_type.pk].append(
                 {"location": stock_row.location, "quantity": stock_row.available}
@@ -376,6 +377,9 @@ def _detail_context(
     for line in lines:
         line.current_available = availability[line.part_type_id]
         line.current_locations = locations_by_part[line.part_type_id]
+        line.current_shortage = max(
+            line.quantity_requested - line.current_available, Decimal("0")
+        )
         line.current_price = prices[line.part_type_id].price_rub
         line.line_total = (
             None if line.price_seen is None else line.price_seen * line.quantity_requested
