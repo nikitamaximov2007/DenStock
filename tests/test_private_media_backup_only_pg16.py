@@ -18,8 +18,10 @@ import psycopg
 import pytest
 from django.contrib.auth import get_user_model
 from django.db import connection
+from django.utils import timezone
 from psycopg import sql
 
+from apps.customer_requests.models import CustomerRequest, TelegramConversation, TelegramMessage
 from apps.operations import backup, restore
 from apps.operations.emergency_manifest import validate_manifest
 from apps.operations.manifest_signing import verify_manifest
@@ -111,6 +113,17 @@ def production_pg(tmp_path, settings):
 def test_full_path_backup_sign_upload_read_back_restore_into_new_targets(production_pg):
     tmp, settings = production_pg["tmp"], production_pg["settings"]
     get_user_model().objects.create(username="synthetic-rc-user")
+    request = CustomerRequest.objects.create(
+        customer_name="Synthetic", customer_phone="0", preferred_messenger="telegram",
+        privacy_policy_version="v", personal_data_consent_version="v",
+        consent_purpose="synthetic", consent_accepted_at=timezone.now(),
+        submission_key_hash="b" * 64,
+    )
+    conversation = TelegramConversation.objects.create(request=request)
+    TelegramMessage.objects.create(
+        conversation=conversation, direction=TelegramMessage.Direction.OPERATOR,
+        attachment="customer_requests/41/scan.pdf",
+    )
     source_db = connection.settings_dict["NAME"]
 
     run = backup.backup_all(
@@ -151,6 +164,13 @@ def test_full_path_backup_sign_upload_read_back_restore_into_new_targets(product
                     sql.Identifier(get_user_model()._meta.db_table)),
                 ("synthetic-rc-user",),
             ).fetchone()[0] == 1
+            attachment = restored.execute(
+                sql.SQL("SELECT attachment FROM {} WHERE conversation_id=%s").format(
+                    sql.Identifier(TelegramMessage._meta.db_table)
+                ),
+                (conversation.pk,),
+            ).fetchone()[0]
+            assert attachment == "customer_requests/41/scan.pdf"
     finally:
         _admin(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
             sql.Identifier(target_db)))
@@ -161,6 +181,9 @@ def test_full_path_backup_sign_upload_read_back_restore_into_new_targets(product
                     expected=restore._manifest_private_inventory(manifest))
     assert _tree(new_media) == _tree(production_pg["media"])
     assert _tree(new_private) == _tree(production_pg["private"])
+    assert (new_private / attachment).read_bytes() == (
+        production_pg["private"] / attachment
+    ).read_bytes()
 
 
 def test_clean_cluster_needs_the_public_catalog_role_before_restore(production_pg):

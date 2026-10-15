@@ -53,5 +53,12 @@ def test_backups_list_marks_copies_without_private_files(
     legacy_row = html[html.index(legacy.name):html.index(legacy.name) + 400]
     assert "без приватных файлов" in legacy_row
     assert current.name in html
-    assert "<th>Приватные</th>" in html
-    assert "—" not in html[html.index("Аварийное восстановление"):]
+    # Production never exposes online restore, even to an allowlisted owner.
+    assert "Аварийное восстановление" not in html
+    assert reverse("operations:backup_restore", args=[legacy.name]) not in html
+
+    # The legacy restore table remains available only in an isolated test mode.
+    settings.DENSTOCK_MODE = "test"
+    test_html = client.get(reverse("operations:backups")).content.decode()
+    assert "<th>Приватные</th>" in test_html
+    assert "—" not in test_html[test_html.index("Аварийное восстановление"):]

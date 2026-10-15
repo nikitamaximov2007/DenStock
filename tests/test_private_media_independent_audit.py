@@ -14,8 +14,15 @@ from django.core.files.storage import FileSystemStorage
 from django.db import close_old_connections, connection, transaction
 from django.utils import timezone
 
+from apps.customer_requests import max_bot, telegram_bot
 from apps.customer_requests.attachments import cleanup_attachment
-from apps.customer_requests.models import CustomerRequest, TelegramConversation, TelegramMessage
+from apps.customer_requests.models import (
+    CustomerRequest,
+    MaxConversation,
+    MaxMessage,
+    TelegramConversation,
+    TelegramMessage,
+)
 from apps.operations import backup, restore
 from apps.operations.private_media import create_archive
 from apps.operations.write_guard import acquire_failover_lock, lifecycle_write
@@ -95,20 +102,32 @@ def test_two_backup_publishers_cannot_reuse_the_same_generation_directory(tmp_pa
 
 @pytest.mark.postgresql
 @pytest.mark.django_db(transaction=True, serialized_rollback=True)
-def test_backup_lock_prevents_deletion_of_db_referenced_attachment(tmp_path, settings):
+@pytest.mark.parametrize(
+    ("conversation_model", "message_model", "bot_module"),
+    [
+        (TelegramConversation, TelegramMessage, telegram_bot),
+        (MaxConversation, MaxMessage, max_bot),
+    ],
+    ids=["telegram", "max"],
+)
+def test_backup_lock_prevents_deletion_of_db_referenced_attachment(
+    tmp_path, settings, conversation_model, message_model, bot_module,
+):
     if connection.vendor != "postgresql":
         pytest.skip("PostgreSQL 16 required")
+    assert bot_module.cleanup_attachment is cleanup_attachment
     request = CustomerRequest.objects.create(
         customer_name="Synthetic", customer_phone="0", preferred_messenger="telegram",
         privacy_policy_version="v", personal_data_consent_version="v",
         consent_purpose="synthetic", consent_accepted_at=timezone.now(),
         submission_key_hash="a" * 64,
     )
-    conversation = TelegramConversation.objects.create(request=request)
+    conversation = conversation_model.objects.create(request=request)
     name = "customer_requests/synthetic.txt"
-    row = TelegramMessage.objects.create(
-        conversation=conversation, direction=TelegramMessage.Direction.OPERATOR,
+    row = message_model.objects.create(
+        conversation=conversation, direction=message_model.Direction.OPERATOR,
         attachment=name,
+        **({"recipient_chat_id": 1} if message_model is MaxMessage else {}),
     )
     private = tmp_path / "private"
     (private / "customer_requests").mkdir(parents=True)
@@ -134,10 +153,10 @@ def test_backup_lock_prevents_deletion_of_db_referenced_attachment(tmp_path, set
                 assert started.wait(10)
                 time.sleep(0.25)
                 assert not future.done(), "the database update must wait for the backup lock"
-                db_value = TelegramMessage.objects.get(pk=row.pk).attachment.name
+                db_value = message_model.objects.get(pk=row.pk).attachment.name
                 assert not (db_value and not path.exists())
             future.result(timeout=10)
-        assert TelegramMessage.objects.get(pk=row.pk).attachment.name == ""
+        assert message_model.objects.get(pk=row.pk).attachment.name == ""
         assert not path.exists()
     finally:
         settings.DENSTOCK_MODE = "test"
