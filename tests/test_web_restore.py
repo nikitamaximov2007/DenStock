@@ -21,7 +21,12 @@ from apps.accounts import roles
 from apps.operations import backup as backup_mod
 from apps.operations import restore as restore_mod
 from apps.operations.models import RestoreJob
-from apps.operations.restore import CONFIRM_PHRASE, run_web_restore, verify_backup
+from apps.operations.restore import (
+    CONFIRM_PHRASE,
+    OnlineRestoreUnsafe,
+    run_web_restore,
+    verify_backup,
+)
 
 PASSWORD = "parol-12345"
 OWNER_EMAIL = "nikita.maximov2007@gmail.com"
@@ -136,6 +141,24 @@ def test_flag_off_hides_restore_even_for_owner(client, make_user, backups_root, 
     assert RESTORE_BLOCK not in html
     resp = client.get(reverse("operations:backup_restore", args=["2026-07-01_10-00-00"]))
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("mode", ["production", "emergency-local"])
+def test_online_restore_is_forbidden_in_live_modes_even_with_flag_and_owner(
+    client, make_user, backups_root, restore_enabled, monkeypatch, mode,
+):
+    user = _login_owner(client, make_user)
+    _make_run(backups_root)
+    restore_enabled.DENSTOCK_MODE = mode
+    monkeypatch.setattr(backup_mod, "backup_all", _boom)
+    monkeypatch.setattr(restore_mod, "verify_backup", _boom)
+    assert RESTORE_BLOCK not in client.get(reverse("operations:backups")).content.decode()
+    url = reverse("operations:backup_restore", args=["2026-07-01_10-00-00"])
+    status = client.post(url, {"confirm_phrase": CONFIRM_PHRASE, "accept_risk": "on"}).status_code
+    assert status == (403 if mode == "production" else 423)
+    with pytest.raises(OnlineRestoreUnsafe):
+        run_web_restore("2026-07-01_10-00-00", user=user)
+    assert RestoreJob.objects.count() == 0
 
 
 def test_username_allowlist_works(client, make_user, backups_root, restore_enabled):

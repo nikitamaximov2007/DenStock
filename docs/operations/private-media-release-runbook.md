@@ -1,10 +1,13 @@
 # Выпуск private_media в ночных копиях: пошаговый runbook
 
-Что меняется: только контейнер `web` (приложение, которое выполняет
-`backup_all`). Миграций нет. `catalog-web`, боты, PostgreSQL, Caddy, обёртка
-`/usr/local/sbin/denstock-backup-capped`, таймер и `.env*` НЕ меняются.
-Код приложения равен квалифицированному `041a285`. Выполняется только с
-отдельного разрешения владельца.
+Приложение меняется в `web`, `telegram-bot` и `max-bot`: оба бота используют
+обновлённый `cleanup_attachment` из `apps/customer_requests/attachments.py`.
+Оставить их на старом образе означает сохранить гонку удаления файла во время
+бэкапа. Миграций нет. `catalog-web`, PostgreSQL, Caddy, обёртка
+`/usr/local/sbin/denstock-backup-capped` и таймер НЕ меняются.
+Точный SHA нужно подтвердить перед выпуском. Выполняется только с отдельного
+разрешения владельца. В production и emergency-local web-restore запрещён
+даже при включённом `DENSTOCK_ENABLE_WEB_RESTORE`.
 
 Подробности и обоснования: `private-media-backup-only-release.md`.
 
@@ -48,20 +51,21 @@ python3 -c "import json;d=json.load(open('backups/offsite_status.json'));print(d
 
 Ожидается `ok` и новый ран. Если не `ok`: остановиться, выпуск не делать.
 
-## 3. Выпуск только web
+## 3. Выпуск web и обоих ботов
 
 ```bash
 docker tag denstock-web:latest denstock-web:rollback-f7b8086
-git fetch origin claude/private-media-backup-release
-git checkout --detach <SHA этого runbook>
+git fetch origin
+git checkout --detach <отдельно утверждённый SHA>
 sed -i "s/^DENSTOCK_APP_COMMIT=.*/DENSTOCK_APP_COMMIT=$(git rev-parse HEAD)/" .env
-docker compose build web
-docker compose up -d --no-deps --wait web
-docker compose logs --tail 50 web </dev/null | grep -E "No migrations to apply|Error" 
+docker compose build web telegram-bot max-bot
+docker compose up -d --no-deps --wait web telegram-bot max-bot
+docker compose logs --tail 50 web telegram-bot max-bot </dev/null | grep -E "No migrations to apply|Error"
 ```
 
 Не выполнять `docker compose up` без имени сервиса и без `--no-deps`: иначе
-пересоберутся `catalog-web` и боты из нового дерева.
+могут быть пересозданы `catalog-web` и PostgreSQL. До команды проверить
+отсутствие неожиданных миграций и сохранить отдельные образы отката ботов.
 
 ## 4. POST: первая полная копия новым кодом
 
@@ -90,10 +94,14 @@ Mac или в GitHub, и восстановление проверяется в�
 git checkout --detach f7b80861fc1d81f6be70c86e78be7f06418a82d2
 sed -i "s/^DENSTOCK_APP_COMMIT=.*/DENSTOCK_APP_COMMIT=f7b80861fc1d81f6be70c86e78be7f06418a82d2/" .env
 docker tag denstock-web:rollback-f7b8086 denstock-web:latest
-docker compose up -d --no-deps --no-build --wait web
 ```
+
+Это не полная команда отката: исходные образы `telegram-bot` и `max-bot`
+тоже нужно заранее сохранить и вернуть, затем пересоздать те же три сервиса
+без сборки. Если исходный образ любого сервиса не сохранён, остановиться и
+составить отдельный план по фактическим image ID. PostgreSQL не трогать.
 
 Данных откат не меняет (миграций нет). Раны, созданные новым кодом, остаются
 обычными ранами: база и public media в них прежнего формата, лишний файл
 `private_media.tar.gz` старый код игнорирует. Простой при выпуске и откате:
-перезапуск `web`, около минуты.
+перезапуск трёх сервисов; перед откатом сохранить их исходные образы.
