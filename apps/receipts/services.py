@@ -128,6 +128,8 @@ def post_receipt(receipt: Receipt, *, by=None) -> Receipt:
     """
     receipt = Receipt.objects.select_for_update().get(pk=receipt.pk)
     if receipt.status != Receipt.Status.DRAFT:
+        if receipt.status == Receipt.Status.CANCELLED:
+            raise ReceiptError("Это поступление отменено и не может быть проведено.")
         raise ReceiptError("Поступление уже проведено.")
     lines = list(receipt.lines.select_related("part_type", "location"))
     if not lines:

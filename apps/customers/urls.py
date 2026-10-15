@@ -11,5 +11,7 @@ urlpatterns = [
         name="legacy_customer_link",
     ),
     path("customers/<int:pk>/", views.customer_detail, name="customer_detail"),
+    path("customers/<int:pk>/archive/", views.customer_archive, name="customer_archive"),
+    path("customers/<int:pk>/restore/", views.customer_restore, name="customer_restore"),
     path("customers/<int:pk>/edit/", views.customer_edit, name="customer_edit"),
 ]

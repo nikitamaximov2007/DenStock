@@ -87,13 +87,14 @@
         {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
         {{ cell.quantity|quantity_int }}.
       </div>
-    {% else %}
+    {% elif session.status == "draft" or session.status == "converted" %}
       <div class="notice notice--warning">
         После начала этой инвентаризации остатки в ячейке менялись: движений
         {{ cell.changes_count }}. Посчитано в инвентаризации
         {{ counters.total_quantity|quantity_int }}, сейчас в ячейке по складу
         {{ cell.quantity|quantity_int }}. Подсчёт относится к прежнему
-        содержимому, поэтому провести его нельзя: пересчитайте ячейку заново.
+        содержимому, поэтому провести его нельзя.
+        <a href="{% url 'counting_cancel' session.pk %}?restart=1">Отменить и пересчитать заново</a>.
       </div>
     {% endif %}
   {% endif %}
@@ -166,12 +167,8 @@
         </form>
         <a class="btn btn--small btn--primary"
            href="{% url 'counting_convert' session.pk %}">Завершить пересчёт</a>
-        <form method="post"
-              action="{% url 'counting_cancel' session.pk %}"
-              class="inline-form">
-          {% csrf_token %}
-          <button type="submit" class="btn btn--small btn--danger">Отменить сессию</button>
-        </form>
+        <a class="btn btn--small btn--danger"
+           href="{% url 'counting_cancel' session.pk %}">Отменить пересчёт</a>
       </div>
     </div>
   {% elif session.status == "posted" %}
@@ -180,10 +177,29 @@
       <a href="{% url 'initial_inventory_detail' session.pk %}">{{ session.inventory_number|default:"открыть" }}</a>
       <span class="pill pill--success">проведено</span>
     </p>
+  {% elif session.status == "cancelled" %}
+    <div class="status-card status-card--warning">
+      <div class="status-card__body">
+        <p class="status-card__title">Пересчёт отменён</p>
+        <p class="status-card__meta">
+          {{ session.cancelled_at|ru_dt }} · {{ session.cancelled_by|default:"сотрудник не указан" }}
+          · Причина: {{ session.cancellation_reason|default:"не указана" }}
+          {% if session.replacement_recount_id %}
+            · <a href="{% url 'section_recount_detail' session.replacement_recount_id %}">Открыть сверочный пересчёт</a>
+          {% else %}
+            · <a href="{% url 'counting_cancel' session.pk %}?restart=1">Начать сверочный пересчёт этой ячейки</a>
+          {% endif %}
+        </p>
+      </div>
+    </div>
   {% elif session.converted_receipt %}
     <p>
       Черновик документа первичного ввода создан:
       <a href="{% url 'counting_convert' session.pk %}">завершите проведение</a>.
+    </p>
+    <p>
+      <a class="btn btn--small btn--danger"
+         href="{% url 'counting_cancel' session.pk %}">Отменить пересчёт</a>
     </p>
   {% endif %}
   <div class="card">

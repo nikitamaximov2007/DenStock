@@ -11,12 +11,13 @@
 	}
 
 	# Слой 25: статичная отдача загруженных media-файлов из общего тома (read-only).
-	@private_customer_media path /media/customer_requests/*
-	handle @private_customer_media {
-		respond 404
-	}
 	# /media/part-items/… → /srv/media/part-items/…
 	handle_path /media/* {
+		# Private customer attachments must never be served from public media:
+		# any path segment customer_requests, any case, plain or escaped slash.
+		# Scoped to /media/ on purpose: /admin/customer_requests/ is Django.
+		@private_attachments path_regexp private_attachments (?i)(^|/|%2f)customer_requests(/|%2f|$)
+		respond @private_attachments 404
 		root * /srv/media
 		file_server
 	}

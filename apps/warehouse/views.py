@@ -113,6 +113,12 @@ class LocationDetailView(LoginRequiredMixin, DetailView):
             and self.object.level == StorageLocation.Level.CELL
             and self.object.can_hold_stock()
         )
+        ctx["can_quick_write_off"] = (
+            self.request.user.can_manage_write_offs
+            and self.object.level == StorageLocation.Level.CELL
+            and self.object.is_active
+            and self.object.storage_allowed
+        )
         ctx["children"] = self.object.children.all()
         ctx["rename_history"] = self.object.rename_history.select_related("renamed_by")[:20]
         ctx["live_stock_rows"] = live_stock_rows(location_id=self.object.pk)

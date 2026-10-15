@@ -40,6 +40,13 @@ class WriteOffDocument(models.Model):
     reason = models.CharField("Причина", max_length=20, choices=Reason.choices)
     comment = models.CharField("Комментарий", max_length=255, blank=True)
     business_author = models.CharField("Автор списания", max_length=150, blank=True)
+    quick_request_token = models.CharField(
+        "Токен быстрого списания", max_length=80, null=True, blank=True, unique=True,
+        editable=False,
+    )
+    quick_request_digest = models.CharField(
+        "Контроль быстрого списания", max_length=64, blank=True, editable=False,
+    )
     cost_total = models.DecimalField(
         "Себестоимость списанного (₽)", max_digits=14, decimal_places=2, default=0
     )

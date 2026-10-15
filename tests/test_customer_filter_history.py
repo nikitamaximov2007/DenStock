@@ -100,6 +100,16 @@ const scenarios = {
     H.init(dom.doc, storage); search(dom, "иван");
     return { shown: dom.shown() };
   },
+  customerOptionsFilterWithSearch() {
+    const dom = makeDom("7");
+    dom.select.options = [
+      { hidden: false, dataset: { customerSearch: "" } },
+      { hidden: false, dataset: { customerSearch: "иванов +7 912" } },
+      { hidden: false, dataset: { customerSearch: "сидоров +7 495" } },
+    ];
+    H.init(dom.doc, memoryStorage()); type(dom, "иван");
+    return { hidden: dom.select.options.map((option) => option.hidden) };
+  },
   ownerExample() {
     const dom = makeDom("7"); const storage = memoryStorage();
     H.init(dom.doc, storage);
@@ -201,6 +211,10 @@ def test_first_search_is_shown():
     assert _run("firstQuery") == {"shown": ["иван"]}
 
 
+def test_customer_search_keeps_filtering_the_existing_sorted_options():
+    assert _run("customerOptionsFilterWithSearch") == {"hidden": [False, False, True]}
+
+
 def test_owner_example_newest_first_seventh_evicts_oldest_repeat_moves_up():
     result = _run("ownerExample")
     assert result["six"] == ["денис", "пя", "петр", "анна", "ш", "яру"]
@@ -252,6 +266,135 @@ def test_damaged_or_unavailable_storage_is_tolerated():
     assert result["mixed"] == ["a", "b", "c", "d", "e", "f"]
 
 
+def test_partial_navigation_binds_replaced_field_once():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node не установлен")
+    harness = r"""
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const store = {};
+const storage = {
+  getItem: (key) => (key in store ? store[key] : null),
+  setItem: (key, value) => { store[key] = String(value); },
+};
+let current = [];
+const byId = {};
+const listeners = {};
+function element(attrs) {
+  return {
+    attrs, value: "", handlers: {}, children: [],
+    getAttribute(name) { return this.attrs[name] || null; },
+    addEventListener(type, fn) { (this.handlers[type] ||= []).push(fn); },
+    dispatch(type, event = {}) {
+      (this.handlers[type] || []).forEach((fn) => fn({ preventDefault() {}, ...event }));
+    },
+    appendChild(child) { this.children.push(child); },
+    removeChild(child) { this.children.splice(this.children.indexOf(child), 1); },
+    get firstChild() { return this.children[0] || null; },
+  };
+}
+const document = {
+  readyState: "loading",
+  addEventListener(type, fn) { (listeners[type] ||= []).push(fn); },
+  fire(type, event = {}) { (listeners[type] || []).forEach((fn) => fn(event)); },
+  querySelectorAll() {
+    return current.filter((node) => node.attrs["data-customer-filter-history"]);
+  },
+  getElementById(id) { return byId[id] || null; },
+  createElement(tag) { return element({ tag }); },
+};
+function page() {
+  const input = element({ list: "history", "data-customer-filter": "select",
+    "data-customer-filter-history": "7" });
+  const list = element({});
+  const select = element({});
+  select.options = [
+    { hidden: false, dataset: { customerSearch: "" } },
+    { hidden: false, dataset: { customerSearch: "иванов +7 912" } },
+    { hidden: false, dataset: { customerSearch: "сидоров +7 495" } },
+  ];
+  byId.history = list; byId.select = select;
+  const root = { querySelectorAll: () => [input] };
+  return { input, list, select, root };
+}
+const window = { document, localStorage: storage };
+vm.runInNewContext(source, { window, WeakSet });
+const direct = page(); current = [direct.input];
+document.fire("DOMContentLoaded");
+const directBound = (direct.input.handlers.keydown || []).length;
+const replacement = page(); current = [replacement.input];
+document.fire("denstock:page-loaded", { detail: { root: replacement.root } });
+document.fire("denstock:page-loaded", { detail: { root: replacement.root } });
+replacement.input.value = "сидоров";
+replacement.input.dispatch("input", { inputType: "insertText" });
+const filtered = replacement.select.options.map((option) => option.hidden);
+replacement.input.value = "клиент через меню";
+replacement.input.dispatch("keydown", { key: "Enter" });
+// Back and forward each replace #content and emit the same navigation event.
+const backPage = page(); current = [backPage.input];
+document.fire("denstock:page-loaded", { detail: { root: backPage.root } });
+const backShown = backPage.list.children.map((option) => option.value);
+const forwardPage = page(); current = [forwardPage.input];
+document.fire("denstock:page-loaded", { detail: { root: forwardPage.root } });
+const forwardShown = forwardPage.list.children.map((option) => option.value);
+const deniedInput = element({ list: "history", "data-customer-filter": "select",
+  "data-customer-filter-history": "7" });
+const deniedList = element({});
+const deniedSelect = element({});
+deniedSelect.options = [
+  { hidden: false, dataset: { customerSearch: "" } },
+  { hidden: false, dataset: { customerSearch: "иванов" } },
+  { hidden: false, dataset: { customerSearch: "сидоров" } },
+];
+const deniedDocument = {
+  readyState: "complete",
+  addEventListener() {},
+  querySelectorAll: () => [deniedInput],
+  getElementById: (id) => id === "history" ? deniedList : deniedSelect,
+  createElement: (tag) => element({ tag }),
+};
+const deniedWindow = { document: deniedDocument };
+Object.defineProperty(deniedWindow, "localStorage", { get() { throw Error("denied"); } });
+vm.runInNewContext(source, { window: deniedWindow, WeakSet });
+deniedInput.value = "сидоров";
+deniedInput.dispatch("input", { inputType: "insertText" });
+process.stdout.write(JSON.stringify({
+  directBound,
+  replacementBound: (replacement.input.handlers.keydown || []).length,
+  filtered,
+  stored: JSON.parse(store["denstock:customer-filter-history:7"] || "[]"),
+  backBound: (backPage.input.handlers.keydown || []).length,
+  forwardBound: (forwardPage.input.handlers.keydown || []).length,
+  backShown,
+  forwardShown,
+  deniedBound: (deniedInput.handlers.keydown || []).length,
+  deniedFiltered: deniedSelect.options.map((option) => option.hidden),
+}));
+"""
+    result = subprocess.run(
+        [node, "-e", harness, str(JS_PATH)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "directBound": 1,
+        "replacementBound": 1,
+        "filtered": [False, True, False],
+        "stored": ["клиент через меню"],
+        "backBound": 1,
+        "forwardBound": 1,
+        "backShown": ["клиент через меню"],
+        "forwardShown": ["клиент через меню"],
+        "deniedBound": 1,
+        "deniedFiltered": [False, True, False],
+    }
+
+
 # --- Разметка и неизменность порядка клиентов -----------------------------------------
 
 
@@ -288,4 +431,6 @@ def test_name_and_phone_search_data_is_unchanged(client, make_user, env):  # noq
     _customer("Яковлев", phone="+7 912 000-00-02")
     html = _scan_page_with_a_cart(client, make_user, env)
     assert 'data-customer-search="яковлев +7 912 000-00-02"' in html
-    assert "option.dataset.customerSearch.includes(term)" in html
+    source = JS_PATH.read_text(encoding="utf-8")
+    assert 'option.dataset.customerSearch' in source
+    assert 'search.indexOf(term) === -1' in source

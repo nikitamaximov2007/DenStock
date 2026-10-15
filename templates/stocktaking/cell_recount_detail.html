@@ -7,6 +7,7 @@
       <div>
         <h1 class="page-title">Пересчёт ячейки {{ doc.section_code|short_address }}</h1>
         <p class="page-subtitle">{{ doc.get_status_display }} · документ #{{ doc.pk }}</p>
+        {% if doc.restart_reason %}<p class="muted">Начат после отмены первичного ввода: {{ doc.restart_reason }}</p>{% endif %}
       </div>
       <div class="page-header__actions">
         {% if cells.0 %}

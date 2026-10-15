@@ -322,7 +322,9 @@ def create_section_recount(*, section_code=SECTION_CODE, by=None) -> SectionReco
         raise SectionRecountError("Для участка уже есть незавершённый пересчёт.") from exc
 
 
-def create_cell_recount(*, location: StorageLocation, by=None) -> SectionRecount:
+def create_cell_recount(
+    *, location: StorageLocation, by=None, restart_reason=""
+) -> SectionRecount:
     """Создать, захватить и сразу запустить пересчёт одной ячейки."""
     try:
         with transaction.atomic():
@@ -337,6 +339,7 @@ def create_cell_recount(*, location: StorageLocation, by=None) -> SectionRecount
                 scope=SectionRecount.Scope.CELL,
                 operation_key=uuid4().hex,
                 created_by=by,
+                restart_reason=(restart_reason or "").strip()[:500],
             )
             SectionRecountCell.objects.create(recount=doc, location=location, sequence=1)
             return start_section_recount(doc)

@@ -461,17 +461,4 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="scan" title="Отсканируйте деталь" text="Поставьте курсор в поле сканера и отсканируйте номер. Система покажет остатки по ячейкам." compact=1 %}
   {% endif %}
-  <script defer src="{% static 'js/customer_filter_history.js' %}"></script>
-  <script>
-    document.querySelectorAll('[data-customer-filter]').forEach((input) => {
-      const select = document.getElementById(input.dataset.customerFilter);
-      input.addEventListener('input', () => {
-        const term = input.value.trim().toLowerCase();
-        Array.from(select.options).forEach((option, index) => {
-          if (!index) return;
-          option.hidden = Boolean(term) && !option.dataset.customerSearch.includes(term);
-        });
-      });
-    });
-  </script>
 {% endblock %}
