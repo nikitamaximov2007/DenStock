@@ -344,9 +344,12 @@ def test_i_failure_during_swap_puts_the_previous_files_back(production, tmp_path
 
 @sqlite_only
 def test_i_web_restore_aborts_before_the_database_when_private_media_fails(
-    production, django_user_model, monkeypatch,
+    production, django_user_model, monkeypatch, settings,
 ):
     run = production["make"]()
+    # The signed source backup is production-shaped; the legacy online path is
+    # exercised only in test mode, never in production or emergency-local.
+    settings.DENSTOCK_MODE = "test"
     user = django_user_model.objects.create_superuser("owner", "o@example.com", "x")
     database_touched = []
     monkeypatch.setattr(restore.backup, "backup_all", lambda **kw: run)
@@ -363,8 +366,9 @@ def test_i_web_restore_aborts_before_the_database_when_private_media_fails(
 
 @sqlite_only
 def test_web_restore_replaces_private_media_with_the_backup(production, django_user_model,
-                                                          monkeypatch):
+                                                          monkeypatch, settings):
     run = production["make"]()
+    settings.DENSTOCK_MODE = "test"
     expected = _tree(production["private"])
     (production["private"] / "created-after-backup.bin").write_bytes(b"newer")
     user = django_user_model.objects.create_superuser("owner", "o@example.com", "x")
