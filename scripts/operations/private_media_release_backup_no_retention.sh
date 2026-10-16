@@ -6,8 +6,10 @@ set +x
 umask 077
 
 phase="${1:-}"
-[[ "$phase" == pre || "$phase" == post ]] || {
-    echo "usage: private_media_release_backup_no_retention.sh pre|post" >&2
+release_target="${2:-}"
+[[ "$phase" == pre || "$phase" == post ]] &&
+    [[ -n "$release_target" && "$release_target" == *:* && "$release_target" != *$'\n'* ]] || {
+    echo "usage: private_media_release_backup_no_retention.sh pre|post <release-only-bucket-target>" >&2
     exit 2
 }
 
@@ -45,6 +47,29 @@ target="${BACKUP_OFFSITE_TARGET:-}"
     exit 1
 }
 target="${target%/}"
+release_target="${release_target%/}"
+
+# The scheduled wrapper runs purge on timestamp-shaped runs and then
+# cleanup-hidden on the complete BACKUP_OFFSITE_TARGET bucket. A different
+# prefix in that bucket is therefore not an isolation boundary. Require a
+# bucket-root target and a bucket name different from the regular target.
+bucket_name() {
+    local value="$1"
+    [[ "$value" =~ ^[^:]+:([^/]+)$ ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+}
+regular_bucket="$(bucket_name "$target")" || {
+    echo "regular backup target must resolve to a bucket root; STOP" >&2
+    exit 1
+}
+release_bucket="$(bucket_name "$release_target")" || {
+    echo "release target must be a bucket root, not a prefix; STOP" >&2
+    exit 1
+}
+[[ "$regular_bucket" != "$release_bucket" ]] || {
+    echo "release bucket must differ from the regular retention bucket; STOP" >&2
+    exit 1
+}
 
 if [[ "${DENSTOCK_RELEASE_SYNTHETIC:-0}" != 1 ]]; then
     [[ "$(git rev-parse HEAD)" == "$expected_sha" ]] || {
@@ -59,18 +84,28 @@ if [[ "${DENSTOCK_RELEASE_SYNTHETIC:-0}" != 1 ]]; then
     }
 fi
 
-remote_bytes() {
-    rclone size --s3-versions "$target" --json </dev/null |
-        python3 -c 'import json,sys; print(int(json.load(sys.stdin)["bytes"]))'
-}
-
 no_unfinished_uploads() {
     rclone backend list-multipart-uploads "$target" </dev/null |
         python3 -c 'import json,sys; x=json.load(sys.stdin); assert isinstance(x,dict); assert sum(len(v) for v in x.values()) == 0, "unfinished multipart uploads; STOP"'
 }
 
+release_remote_bytes() {
+    rclone size --s3-versions "$release_target" --json </dev/null |
+        python3 -c 'import json,sys; print(int(json.load(sys.stdin)["bytes"]))'
+}
+
+release_no_unfinished_uploads() {
+    rclone backend list-multipart-uploads "$release_target" </dev/null |
+        python3 -c 'import json,sys; x=json.load(sys.stdin); assert isinstance(x,dict); assert sum(len(v) for v in x.values()) == 0, "unfinished release-bucket multipart uploads; STOP"'
+}
+
 no_unfinished_uploads
-start_remote_bytes="$(remote_bytes)"
+release_no_unfinished_uploads
+[[ "$(rclone backend versioning "$release_target" </dev/null)" == Enabled ]] || {
+    echo "release bucket versioning must be Enabled; STOP" >&2
+    exit 1
+}
+start_remote_bytes="$(release_remote_bytes)"
 [[ "$start_remote_bytes" =~ ^[0-9]+$ ]] || exit 1
 
 # Require a conservative local buffer for a new run plus the later POST and
@@ -147,8 +182,8 @@ print(sum(p.stat().st_size for p in Path(sys.argv[1]).rglob("*") if p.is_file())
 PY
 )"
 [[ "$run_bytes" =~ ^[0-9]+$ ]] || exit 1
-no_unfinished_uploads
-current_remote_bytes="$(remote_bytes)"
+release_no_unfinished_uploads
+current_remote_bytes="$(release_remote_bytes)"
 # Published bucket cap is 921,600,000 bytes. Stay below its 800 MiB soft
 # threshold even with one duplicate upload and 128 MiB of versioning margin.
 (( current_remote_bytes + 2 * run_bytes + 134217728 <= 838860800 )) || {
@@ -156,16 +191,17 @@ current_remote_bytes="$(remote_bytes)"
     exit 1
 }
 
-remote_listing="$(rclone lsf "$target" --dirs-only --max-depth 1 </dev/null)"
+remote_listing="$(rclone lsf "$release_target" --dirs-only --max-depth 1 </dev/null)"
 if printf '%s\n' "$remote_listing" | grep -Fxq "$run_id/"; then
     echo "remote run prefix already exists; STOP" >&2
     exit 1
 fi
-destination="$target/$run_id"
-# No sync, purge, cleanup, delete or move. --immutable refuses overwrites.
+destination="$release_target/$run_id"
+# The release-only bucket is outside the nightly wrapper's deletion scope.
+# No sync, purge, cleanup, delete or move is used here.
 rclone copy --immutable "$run_path" "$destination" </dev/null
 rclone check --download "$run_path" "$destination" </dev/null
-no_unfinished_uploads
-final_remote_bytes="$(remote_bytes)"
+release_no_unfinished_uploads
+final_remote_bytes="$(release_remote_bytes)"
 (( final_remote_bytes <= 838860800 )) || { echo "offsite soft limit exceeded; STOP" >&2; exit 1; }
 echo "NO_RETENTION_RELEASE_BACKUP_PASS phase=$phase run_id=$run_id bytes=$run_bytes remote_before=$start_remote_bytes remote_after=$final_remote_bytes"

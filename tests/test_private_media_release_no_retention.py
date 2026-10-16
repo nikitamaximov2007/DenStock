@@ -94,8 +94,9 @@ remote = Path(os.environ["FAKE_REMOTE_ROOT"])
 args = sys.argv[1:]
 mode = os.environ.get("FAKE_RCLONE_MODE", "")
 def path(value):
-    if value.startswith("remote:denstock"):
-        return remote / value.removeprefix("remote:denstock").lstrip("/")
+    if value.startswith("remote:"):
+        bucket_path = value.removeprefix("remote:").split("/", 1)
+        return remote / bucket_path[0] / (bucket_path[1] if len(bucket_path) == 2 else "")
     return Path(value)
 def inventory(folder):
     return {p.relative_to(folder).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -103,14 +104,20 @@ def inventory(folder):
 if args[:2] == ["backend", "list-multipart-uploads"]:
     uploads = [{"UploadId": "synthetic"}] if os.environ.get("FAKE_RCLONE_MPU") == "1" else []
     print(json.dumps({"denstock": uploads}))
+elif args[:2] == ["backend", "versioning"]:
+    print(os.environ.get("FAKE_RCLONE_VERSIONING", "Enabled"))
 elif args[0] == "size":
     folder = path(args[-2] if args[-1] == "--json" else args[-1])
     files = [p for p in folder.rglob("*") if p.is_file()]
-    extra = int(os.environ.get("FAKE_REMOTE_EXTRA_BYTES", "0")) if folder == remote else 0
+    extra = (
+        int(os.environ.get("FAKE_REMOTE_EXTRA_BYTES", "0"))
+        if folder == remote / "denstock-release"
+        else 0
+    )
     print(json.dumps({"bytes": sum(p.stat().st_size for p in files) + extra, "count": len(files)}))
 elif args[0] == "lsf":
     if mode == "listing_error": raise SystemExit(19)
-    for p in sorted(remote.iterdir()):
+    for p in sorted(path(args[1]).iterdir()):
         if p.is_dir(): print(p.name + "/")
 elif args[:2] == ["copy", "--immutable"]:
     source, dest = path(args[2]), path(args[3])
@@ -151,7 +158,8 @@ def _inventory(root):
 @pytest.fixture
 def synthetic(tmp_path):
     root, remote, bin_dir = (tmp_path / name for name in ("app", "remote", "bin"))
-    for path in (root / "backups", remote, bin_dir):
+    primary, release = remote / "denstock", remote / "denstock-release"
+    for path in (root / "backups", primary, release, bin_dir):
         path.mkdir(parents=True)
     (root / ".env.backup").write_text(
         "BACKUP_OFFSITE_ENABLED=true\nBACKUP_OFFSITE_METHOD=rclone\n"
@@ -164,9 +172,12 @@ def synthetic(tmp_path):
         (run / "db.dump").write_bytes(f"old-{idx}".encode())
         if idx < 22:
             (run / "manifest.json").write_text('{"verification_status":"verified"}')
-    old_remote = remote / "old-verified"
+    old_remote = primary / "2026-10-10_03-00-00"
     old_remote.mkdir()
     (old_remote / "manifest.json").write_bytes(b"old-remote-verified")
+    old_release = release / "prior-release"
+    old_release.mkdir()
+    (old_release / "manifest.json").write_bytes(b"prior-release-verified")
     private = Ed25519PrivateKey.generate()
     key_path, pub_path = tmp_path / "test-private.pem", tmp_path / "test-public.pem"
     key_path.write_bytes(private.private_bytes(
@@ -194,14 +205,14 @@ def synthetic(tmp_path):
     return root, remote, env
 
 
-def _run(env, phase, run_id, **extra):
+def _run(env, phase, run_id, release_target="remote:denstock-release", **extra):
     values = {**env, **extra, "FAKE_PHASE": phase, "FAKE_RUN_ID": run_id}
     values["FAKE_EXPECTED_SHA"] = (
         "f7b80861fc1d81f6be70c86e78be7f06418a82d2" if phase == "pre"
         else "e35948804069b3fe8ffa3f499fefe0a775541b47"
     )
     return subprocess.run(
-        ["bash", "-s", "--", phase], input=SCRIPT.read_text(), env=values,
+        ["bash", "-s", "--", phase, release_target], input=SCRIPT.read_text(), env=values,
         capture_output=True, text=True,
     )
 
@@ -217,7 +228,7 @@ def test_pre_post_keep_22_complete_and_9_partial_and_remote_objects(synthetic):
     after_local, after_remote = _inventory(root / "backups"), _inventory(remote)
     assert all(after_local[name] == digest for name, digest in local_before.items())
     assert all(after_remote[name] == digest for name, digest in remote_before.items())
-    assert len([p for p in remote.iterdir() if p.is_dir()]) == 3
+    assert len([p for p in (remote / "denstock-release").iterdir() if p.is_dir()]) == 3
 
 
 @pytest.mark.parametrize("mode", ["interrupt", "corrupt"])
@@ -251,7 +262,7 @@ def test_nightly_wrapper_lock_blocks_concurrent_release_backup(synthetic):
         result = _run(env, "pre", "2026-10-16_12-04-00")
     assert result.returncode == 75
     assert len(list((root / "backups").iterdir())) == 31
-    assert len(list(remote.iterdir())) == 1
+    assert len(list((remote / "denstock-release").iterdir())) == 1
 
 
 def test_insufficient_local_space_stops_before_creation(synthetic):
@@ -259,7 +270,7 @@ def test_insufficient_local_space_stops_before_creation(synthetic):
     result = _run(env, "pre", "2026-10-16_12-05-00", DENSTOCK_RELEASE_SYNTHETIC_FREE_BYTES="1")
     assert result.returncode != 0
     assert len(list((root / "backups").iterdir())) == 31
-    assert len(list(remote.iterdir())) == 1
+    assert len(list((remote / "denstock-release").iterdir())) == 1
 
 
 def test_unfinished_multipart_upload_stops_before_creation(synthetic):
@@ -267,7 +278,7 @@ def test_unfinished_multipart_upload_stops_before_creation(synthetic):
     result = _run(env, "pre", "2026-10-16_12-06-00", FAKE_RCLONE_MPU="1")
     assert result.returncode != 0
     assert len(list((root / "backups").iterdir())) == 31
-    assert len(list(remote.iterdir())) == 1
+    assert len(list((remote / "denstock-release").iterdir())) == 1
 
 
 def test_invalid_signature_stops_before_remote_upload(synthetic):
@@ -275,7 +286,7 @@ def test_invalid_signature_stops_before_remote_upload(synthetic):
     result = _run(env, "pre", "2026-10-16_12-07-00", FAKE_BAD_SIGNATURE="1")
     assert result.returncode != 0
     assert len(list((root / "backups").iterdir())) == 32
-    assert len(list(remote.iterdir())) == 1
+    assert len(list((remote / "denstock-release").iterdir())) == 1
 
 
 def test_failed_remote_listing_stops_before_upload(synthetic):
@@ -286,9 +297,36 @@ def test_failed_remote_listing_stops_before_upload(synthetic):
     assert _inventory(remote) == remote_before
 
 
+@pytest.mark.parametrize("release_target", ["remote:denstock", "remote:denstock/release"])
+def test_release_target_must_be_a_distinct_bucket_root(synthetic, release_target):
+    root, remote, env = synthetic
+    before = _inventory(remote)
+    result = _run(env, "pre", "2026-10-16_12-09-00", release_target=release_target)
+    assert result.returncode != 0
+    assert "STOP" in result.stderr
+    assert len(list((root / "backups").iterdir())) == 31
+    assert _inventory(remote) == before
+
+
+def test_release_bucket_must_be_versioned(synthetic):
+    root, remote, env = synthetic
+    before = _inventory(remote)
+    result = _run(
+        env,
+        "pre",
+        "2026-10-16_12-10-00",
+        FAKE_RCLONE_VERSIONING="Suspended",
+    )
+    assert result.returncode != 0
+    assert "versioning must be Enabled" in result.stderr
+    assert len(list((root / "backups").iterdir())) == 31
+    assert _inventory(remote) == before
+
+
 def test_real_backup_all_without_keep_last_preserves_old_runs(tmp_path, db, settings, monkeypatch):
     """Exercise the actual candidate backup implementation, not the Docker fake."""
     configure_test_trust(tmp_path, settings, workstation_id=uuid.uuid4())
+    monkeypatch.setattr(backup.settings, "DENSTOCK_APP_COMMIT", "a" * 40, raising=False)
     source_db = tmp_path / "source.sqlite3"
     with sqlite3.connect(source_db) as connection:
         connection.execute("CREATE TABLE example (id INTEGER)")
