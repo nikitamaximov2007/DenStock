@@ -79,6 +79,21 @@ def test_run_directory_name_stays_plain_for_the_existing_wrapper(production):
     )
 
 
+@sqlite_only
+def test_backup_without_keep_last_preserves_existing_generations(production, monkeypatch):
+    """Release PRE/POST use the default and must not invoke local retention."""
+    _tick(monkeypatch)
+    previous = production["make"]()
+    previous_manifest = (previous / "manifest.json").read_bytes()
+
+    created = production["make"]()
+
+    assert created != previous
+    assert previous.is_dir()
+    assert (previous / "manifest.json").read_bytes() == previous_manifest
+    assert created.is_dir()
+
+
 @as_root
 def test_unprunable_old_run_does_not_make_backup_all_fail(production, monkeypatch):
     """Production has root-owned run dirs that UID 2001 cannot delete.

@@ -1,5 +1,10 @@
 # Минимальный выпуск полноты backup: private_media
 
+> **Операторская процедура для текущего дизайна заменена.** Для PRE/POST
+> используйте [один Yandex bucket и зашифрованные копии на Mac](private-media-single-bucket-mac-release.md).
+> Не выполняйте нижеописанные команды PRE/POST: они используют capped wrapper,
+> который удаляет старые поколения до проверки новой загрузки в Yandex.
+
 Этот runbook относится только к ветке `codex/infra-release-gate-web-restore`.
 Проверенный production baseline на 2026-10-15:
 `f7b80861fc1d81f6be70c86e78be7f06418a82d2`; исходное исправление

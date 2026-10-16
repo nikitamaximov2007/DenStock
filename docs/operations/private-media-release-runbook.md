@@ -1,8 +1,12 @@
 # Выпуск private_media в ночных копиях: пошаговый runbook
 
-> Для установки текущего минимального кандидата использовать
-> `private-media-minimal-install-gate.md`: он заменяет команды PRE/POST и отката
-> ниже обязательной проверкой удалённого read-back и сохранением трёх образов.
+> Для текущего выпуска этот документ сохранён как историческая справка.
+> Не запускайте команды PRE/POST из него. Используйте
+> [процедуру с одним Yandex bucket и зашифрованными копиями на Mac](private-media-single-bucket-mac-release.md).
+
+> `private-media-minimal-install-gate.md` также содержит устаревшие команды
+> создания PRE/POST. Сверяйте его только как историческую справку, не как
+> исполняемую release-процедуру.
 
 Приложение меняется в `web`, `telegram-bot` и `max-bot`: оба бота используют
 обновлённый `cleanup_attachment` из `apps/customer_requests/attachments.py`.
