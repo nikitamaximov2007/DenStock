@@ -19,6 +19,11 @@ holds DenisStock's PostgreSQL exclusive backup lock while it captures the
 database and both media trees. Do not use the old production backup wrapper:
 it purges remote generations before verifying the new upload. Do not pass
 `--keep-last` to `backup_all`; the default `None` disables local pruning.
+The exclusive lock blocks business-write transactions while the database and
+media are captured. The containers stay up, but receiving, sales, repairs,
+inventory, customer and other guarded writes may wait or time out. Arrange a
+quiet warehouse window and ask operators to pause starting write operations;
+do not promise zero write interruption.
 
 ## Read-only facts checked on 2026-10-17
 
@@ -65,6 +70,10 @@ approved release:
 - The nightly timer is enabled for 03:00 MSK. The local production filesystem
   had 8.3 GiB free and 31 backup directories. The current wrapper uses local
   `--keep-last 14` and can purge/clean hidden Yandex object versions.
+- The latest completed nightly job took about 87 seconds end to end. This is
+  only a planning reference, not a guaranteed PRE duration; the added private
+  media archive and restore checks may take longer. Do not overlap the 03:00
+  MSK timer, and pause warehouse writes for the measured backup-lock interval.
 - Current size estimate: DB plus public-media files are about 46.5 MB and the
   private-media tree is 51.3 MB before compression. Budget at least two actual
   full runs plus one restore scratch copy; measure each run before proceeding.
@@ -86,7 +95,8 @@ differs unexpectedly:
    bounded release can finish and verify by 22:00 MSK.
 4. On the Mac, recheck FileVault, age, PostgreSQL 16 tools and space. Create a
    unique release directory outside `~/DenisStock-Recovery`, with mode 700.
-   Preserve every older encrypted generation.
+   Preserve every older encrypted generation. Use the existing public
+   recipient at `~/DenisStock-Recovery/keys/recipient.txt`.
 5. Confirm the Yandex backup list before the release for later read-only
    comparison. Do not run the capped wrapper to create PRE or POST.
 
@@ -180,7 +190,7 @@ mkdir -m 700 -p "$DEST"
 python3 "$HOME/DenisStock-Recovery/tools/capture.py" \
     /opt/denstock/backups "$RUN_ID" \
     "$DEST/DenisStock-$PHASE-$RUN_ID.tar.age" \
-    "$HOME/DenisStock-Recovery/recipient.txt" tree \
+    "$HOME/DenisStock-Recovery/keys/recipient.txt" tree \
     > "$DEST/DenisStock-$PHASE-$RUN_ID.capture.json"
 test -s "$DEST/DenisStock-$PHASE-$RUN_ID.tar.age" && \
     test -s "$DEST/DenisStock-$PHASE-$RUN_ID.tar.age.inventory.age" && \
@@ -248,8 +258,8 @@ summary. The manifest and every inner component are therefore byte-identical
 to the signed, verified source run.
 
 Use a new uniquely named container for each phase. Its only published port is
-bound to loopback. The container has synthetic data, no production credentials
-and no persistent Docker volume:
+bound to loopback. The container holds only this isolated restored copy, has no
+production credentials and has no persistent Docker volume:
 
 ```sh
 PG_CONTAINER="denstock-release-restore-$PHASE-$RELEASE_ID"
