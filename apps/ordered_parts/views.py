@@ -32,7 +32,7 @@ def _require_access(request) -> None:
 
 def _customer_choices(query: str):
     """Тот же справочник и тот же поиск, что у продаж и ремонтов."""
-    return search_customers(query, limit=200) if query else Customer.objects.all()[:200]
+    return search_customers(query, limit=200)
 
 
 @login_required

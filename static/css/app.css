@@ -1065,9 +1065,12 @@ form.toolbar input:focus, form.toolbar select:focus {
 .cr-reply--blocked p { margin: 0 0 8px; }
 .cr-reply--blocked { color: var(--text); }
 .cr-order__table-wrap { overflow-x: auto; }
-.cr-order__table { margin: 0; }
+.cr-order__table { margin: 0; min-width: 680px; }
 .cr-order__table td, .cr-order__table th { vertical-align: top; }
 .cr-order__now { font-size: 12px; }
+.cr-order__locations { margin: 0; padding: 0; list-style: none; white-space: nowrap; }
+.cr-order__locations li + li { margin-top: 3px; }
+.cr-order__location-code { font-weight: 600; }
 .cr-order__comment { margin: 8px 0 0; }
 .cr-service { margin-top: 16px; }
 .cr-service > summary { cursor: pointer; list-style: none; }

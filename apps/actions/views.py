@@ -207,11 +207,32 @@ def actions_scan(request):
     # не попал в список недавних.
     listed = {customer.pk for customer in customers}
     saved = {int(panel["customer_id"]) for panel in cart_panels if panel["customer_id"]}
-    customers += list(Customer.objects.filter(pk__in=saved - listed).order_by("name"))
+    customers += list(
+        Customer.objects.filter(pk__in=saved - listed, archived_at__isnull=True).order_by("name")
+    )
     # Только что созданный клиент (?customer_id=) важнее сохранённого: скрипт
     # страницы сразу сохранит этот выбор в черновик.
+    requested_customer_id = request.GET.get("customer_id") or ""
+    if not (
+        requested_customer_id.isascii()
+        and requested_customer_id.isdigit()
+        and len(requested_customer_id) <= 18
+    ):
+        requested_customer_id = ""
+    if requested_customer_id and not Customer.objects.filter(
+        pk=requested_customer_id, archived_at__isnull=True
+    ).exists():
+        requested_customer_id = ""
     for panel in cart_panels:
-        panel["selected_customer_id"] = request.GET.get("customer_id") or panel["customer_id"]
+        saved_customer_id = panel["customer_id"]
+        saved_is_active = (
+            Customer.objects.filter(pk=saved_customer_id, archived_at__isnull=True).exists()
+            if saved_customer_id and int(saved_customer_id) not in listed
+            else bool(saved_customer_id)
+        )
+        if not saved_is_active:
+            saved_customer_id = ""
+        panel["selected_customer_id"] = requested_customer_id or saved_customer_id
     ctx = {
         "q": q,
         "searched": bool(q),
@@ -876,7 +897,11 @@ def _autosave_customer(request, kind: str) -> tuple[dict, dict]:
         _clear_rejected(request, key)
         return {}, {}
     valid_id = raw.isascii() and raw.isdigit() and len(raw) <= 18
-    customer = Customer.objects.filter(pk=int(raw)).first() if valid_id else None
+    customer = (
+        Customer.objects.filter(pk=int(raw), archived_at__isnull=True).first()
+        if valid_id
+        else None
+    )
     if customer is None:
         error = "Карточка клиента не найдена. Выберите клиента из списка."
         _mark_rejected(request, key, raw, error, "Клиент")
@@ -996,7 +1021,9 @@ def actions_cart_complete(request):
         rejected = _rejected_message(request, kind)
         if rejected:
             raise ActionError(rejected)
-        customer = Customer.objects.filter(pk=_draft_customer_id(request, kind)).first()
+        customer = Customer.objects.filter(
+            pk=_draft_customer_id(request, kind), archived_at__isnull=True
+        ).first()
         if customer is None:
             raise ActionError("Выберите карточку клиента.")
         actions = complete_cart(

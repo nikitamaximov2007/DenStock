@@ -5,6 +5,8 @@
 Hidden/query-параметры недоверенные: объект всегда перечитывается из БД,
 права/статус/резерв/доступность/количество проверяет сервис.
 """
+import secrets
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -171,8 +173,15 @@ def write_off_quick(request):
     )
     candidate = selected_candidate or (lookup.candidate if lookup and lookup.found else None)
     part = candidate.part if candidate else None
+    request_token = (
+        (request.POST.get("request_token") or "").strip()
+        if request.method == "POST"
+        else secrets.token_urlsafe(32)
+    )
     if request.method == "POST":
-        if part is None:
+        if not request_token:
+            messages.error(request, "Обновите страницу и повторите списание.")
+        elif part is None:
             messages.error(request, (lookup.message if lookup else "") or "Деталь не найдена.")
         else:
             try:
@@ -184,20 +193,40 @@ def write_off_quick(request):
                     quantity=request.POST.get("quantity", "1"),
                     location_id=request.POST.get("location_id") or None,
                     by=request.user,
+                    request_token=request_token,
                 )
             except WriteOffError as exc:
                 messages.error(request, str(exc))
             else:
-                messages.success(
-                    request,
-                    f"Деталь {candidate.exact_number} списана. "
-                    f"Причина: {doc.comment}. Автор: {doc.business_author}.",
-                )
+                if doc.status == WriteOffDocument.Status.COMPLETED:
+                    messages.success(
+                        request,
+                        f"Деталь {candidate.exact_number} списана. "
+                        f"Причина: {doc.comment}. Автор: {doc.business_author}.",
+                    )
+                else:
+                    messages.warning(
+                        request,
+                        f"Этот запрос уже обработан. Документ {doc.number}: "
+                        f"{doc.get_status_display()}.",
+                    )
                 return redirect("write_off_detail", pk=doc.pk)
     locations = (
         available_quantities_by_location(part)
         if part and part.tracking_mode == part.TrackingMode.BULK
         else []
+    )
+    requested_location_id = (
+        request.POST.get("location_id") if request.method == "POST"
+        else request.GET.get("location_id")
+    )
+    selected_location_id = next(
+        (
+            str(row["location"].pk)
+            for row in locations
+            if str(row["location"].pk) == str(requested_location_id)
+        ),
+        "",
     )
     return render(
         request,
@@ -210,6 +239,8 @@ def write_off_quick(request):
             "locations": locations,
             "not_found": bool(q and part is None and not lookup.candidates),
             "lookup_candidates": lookup.candidates if lookup and part is None else [],
+            "request_token": request_token,
+            "selected_location_id": selected_location_id,
         },
     )
 

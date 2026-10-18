@@ -13,6 +13,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
+from django.views.decorators.http import require_http_methods
 
 from apps.repairs.models import RepairOrder
 from apps.sales.models import Reservation, Sale
@@ -20,7 +21,14 @@ from apps.sales.models import Reservation, Sale
 from .forms import CustomerForm
 from .legacy_linking import legacy_group_summary, link_legacy_group, suggest_identity
 from .models import Customer
-from .services import create_customer_idempotently, search_customers
+from .services import (
+    CustomerArchiveError,
+    archive_customer,
+    create_customer_idempotently,
+    restore_customer,
+    search_customers,
+    update_active_customer,
+)
 
 PAGE_SIZE = 50
 
@@ -67,7 +75,11 @@ def _require_edit(request) -> None:
 def customer_list(request):
     _require_access(request)
     query = (request.GET.get("q") or "").strip()
-    customers = search_customers(query, limit=1000) if query else Customer.objects.all()
+    archived = request.GET.get("archived") == "1"
+    if query:
+        customers = search_customers(query, limit=1000, archived_only=archived)
+    else:
+        customers = Customer.objects.filter(archived_at__isnull=not archived)
     page_obj = Paginator(customers, PAGE_SIZE).get_page(request.GET.get("page"))
     return render(
         request,
@@ -76,6 +88,7 @@ def customer_list(request):
             "page_obj": page_obj,
             "is_paginated": page_obj.paginator.num_pages > 1,
             "q": query,
+            "show_archived": archived,
             "can_edit": (
                 request.user.can_manage_sales
                 or request.user.can_manage_repairs
@@ -144,11 +157,19 @@ def legacy_customer_link(request):
     if request.method == "POST":
         existing_id = (request.POST.get("existing_customer") or "").strip()
         if existing_id:
-            customer = Customer.objects.filter(pk=existing_id).first()
+            customer = Customer.objects.filter(
+                pk=existing_id, archived_at__isnull=True
+            ).first()
             if customer is None:
                 messages.error(request, "Выбранная карточка не найдена.")
                 return redirect(request.get_full_path())
-            result = link_legacy_group(legacy_name=legacy_name, customer=customer, by=request.user)
+            try:
+                result = link_legacy_group(
+                    legacy_name=legacy_name, customer=customer, by=request.user
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return redirect(request.get_full_path())
             messages.success(
                 request,
                 f"Документы записи «{legacy_name}» привязаны к карточке {customer.name}: "
@@ -187,11 +208,15 @@ def legacy_customer_link(request):
 @login_required
 def customer_edit(request, pk):
     _require_edit(request)
-    customer = get_object_or_404(Customer, pk=pk)
+    customer = get_object_or_404(Customer, pk=pk, archived_at__isnull=True)
     if request.method == "POST":
         form = CustomerForm(request.POST, instance=customer)
         if form.is_valid():
-            form.save()
+            try:
+                update_active_customer(form, customer_id=customer.pk)
+            except CustomerArchiveError as exc:
+                messages.error(request, str(exc))
+                return redirect("customer_detail", pk=customer.pk)
             messages.success(request, "Карточка клиента обновлена.")
             return redirect("customer_detail", pk=customer.pk)
     else:
@@ -223,6 +248,7 @@ def customer_detail(request, pk):
         "customers/customer_detail.html",
         {
             "customer": customer,
+            "lifecycle_events": customer.lifecycle_events.select_related("actor")[:20],
             "sales": sales,
             "repairs": repairs,
             "reservations": reservations,
@@ -233,4 +259,55 @@ def customer_detail(request, pk):
             ),
             "show_costs": request.user.can_view_purchase_cost,
         },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def customer_archive(request, pk):
+    return _customer_lifecycle_transition(request, pk, restore=False)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def customer_restore(request, pk):
+    return _customer_lifecycle_transition(request, pk, restore=True)
+
+
+def _customer_lifecycle_transition(request, pk, *, restore: bool):
+    _require_edit(request)
+    customer = get_object_or_404(Customer, pk=pk)
+    action_label = "Восстановить" if restore else "Архивировать"
+    is_currently_archived = customer.is_archived
+    can_transition = is_currently_archived if restore else not is_currently_archived
+    if request.method == "POST" and can_transition:
+        if request.POST.get("confirm_transition") != "yes":
+            messages.error(request, "Подтвердите действие.")
+        else:
+            try:
+                transition = restore_customer if restore else archive_customer
+                transition(
+                    customer_id=customer.pk,
+                    by=request.user,
+                    reason=request.POST.get("reason", ""),
+                )
+            except CustomerArchiveError as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f"Карточка клиента «{customer.name}» "
+                    f"{'восстановлена' if restore else 'перемещена в архив'}.",
+                )
+                return redirect("customer_detail", pk=customer.pk)
+    return render(
+        request,
+        "customers/customer_lifecycle_confirm.html",
+        {
+            "customer": customer,
+            "restore": restore,
+            "action_label": action_label,
+            "can_transition": can_transition,
+        },
+        status=200 if can_transition else 409,
     )

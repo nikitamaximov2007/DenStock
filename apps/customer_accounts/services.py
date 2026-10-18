@@ -28,6 +28,8 @@ from django.conf import settings
 from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
+from apps.customers.services import require_active_customer
+
 from . import tokens
 from .models import (
     CustomerAccount,
@@ -674,6 +676,10 @@ def linked_customer_id(account) -> int | None:
 def link_customer(account, customer, *, by_user) -> CustomerAccountCustomerLink:
     """An employee states this account is this DenisStock client. Explicit only."""
     with transaction.atomic():
+        try:
+            customer = require_active_customer(customer)
+        except ValueError as exc:
+            raise AccountError(str(exc)) from exc
         if CustomerAccountCustomerLink.objects.filter(
             customer=customer, unlinked_at__isnull=True
         ).exclude(account=account).exists():

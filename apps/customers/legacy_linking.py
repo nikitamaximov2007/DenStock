@@ -19,6 +19,7 @@ from django.db import transaction
 from django.db.models.functions import Trim
 
 from apps.core.phones import normalize_phone
+from apps.customers.services import require_active_customer
 from apps.repairs.models import RepairOrder
 from apps.sales.models import Sale
 
@@ -89,6 +90,7 @@ def link_legacy_group(*, legacy_name: str, customer, by=None) -> dict:
         raise ValueError("Историческая группа не указана.")
     if customer is None or not customer.pk:
         raise ValueError("Карточка клиента не указана.")
+    customer = require_active_customer(customer)
     sales, repairs = legacy_group(legacy_name)
     linked_sales = sales.select_for_update().update(customer=customer)
     linked_repairs = repairs.select_for_update().update(customer=customer)

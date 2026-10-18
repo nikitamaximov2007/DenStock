@@ -17,7 +17,7 @@ from django.db.models import Case, CharField, Count, DecimalField, F, IntegerFie
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods, require_POST
 
 from apps.catalog.models import normalize_number
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
@@ -48,6 +48,7 @@ from .services import (
     resolve_unknown_to_brp,
     resolve_unknown_to_part,
     resolve_unknown_to_polaris,
+    restart_session,
     set_line_quantity,
     start_session,
     undo_last_scan,
@@ -186,6 +187,8 @@ def counting_new(request):
                         location=location, comment=form.cleaned_data["comment"], by=request.user
                     )
             except StorageLocationCreateError as exc:
+                form.add_error(None, str(exc))
+            except CountingError as exc:
                 form.add_error(None, str(exc))
             except IntegrityError:
                 form.add_error(None, "Не удалось начать пересчёт. Повторите попытку.")
@@ -510,14 +513,62 @@ def counting_delete(request, pk):
 
 
 @login_required
-@require_POST
+@require_http_methods(["GET", "POST"])
 def counting_cancel(request, pk):
     _require_manage(request)
-    session = get_object_or_404(InventoryCountingSession, pk=pk)
-    try:
-        cancel_session(session)
-    except CountingError as exc:
-        messages.error(request, str(exc))
-    else:
-        messages.info(request, "Сессия отменена.")
-    return redirect("counting_list")
+    session = get_object_or_404(
+        InventoryCountingSession.objects.select_related(
+            "storage_location", "created_by", "cancelled_by", "replacement_recount"
+        ),
+        pk=pk,
+    )
+    restart = (
+        request.POST.get("restart") == "1"
+        if request.method == "POST"
+        else request.GET.get("restart") == "1"
+    )
+    if request.method == "POST":
+        if request.POST.get("confirm_cancel") != "yes":
+            messages.error(request, "Подтвердите отмену пересчёта.")
+        else:
+            reason = request.POST.get("reason", "")
+            try:
+                if restart:
+                    replacement = restart_session(session, by=request.user, reason=reason)
+                else:
+                    cancel_session(session, by=request.user, reason=reason)
+                    replacement = None
+            except CountingError as exc:
+                messages.error(request, str(exc))
+            else:
+                if replacement:
+                    messages.success(
+                        request,
+                        f"Запущен сверочный пересчёт ячейки {replacement.section_code}."
+                        if session.status == InventoryCountingSession.Status.CANCELLED
+                        else f"Первичный ввод отменён. Запущен сверочный пересчёт "
+                        f"ячейки {replacement.section_code}.",
+                    )
+                    return redirect("section_recount_detail", pk=replacement.pk)
+                messages.info(request, "Пересчёт отменён. Складские остатки не изменены.")
+                return redirect("counting_detail", pk=session.pk)
+    can_cancel = session.status in (
+        InventoryCountingSession.Status.DRAFT,
+        InventoryCountingSession.Status.CONVERTED,
+    )
+    can_restart_after_cancel = (
+        restart
+        and session.status == InventoryCountingSession.Status.CANCELLED
+        and not session.replacement_recount_id
+    )
+    return render(
+        request,
+        "counting/cancel.html",
+        {
+            "session": session,
+            "restart": restart,
+            "can_cancel": can_cancel,
+            "can_restart_after_cancel": can_restart_after_cancel,
+        },
+        status=200 if can_cancel or can_restart_after_cancel else 409,
+    )

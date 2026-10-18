@@ -19,6 +19,7 @@
 
   var LIMIT = 6;
   var KEY_PREFIX = "denstock:customer-filter-history:";
+  var boundInputs = new WeakSet();
 
   function normalize(value) {
     return String(value == null ? "" : value).replace(/\s+/g, " ").trim();
@@ -81,6 +82,8 @@
     var history = createHistory(options.storage, input.getAttribute("data-customer-filter-history"));
     var list = doc.getElementById(input.getAttribute("list"));
     var select = doc.getElementById(input.getAttribute("data-customer-filter"));
+    if (boundInputs.has(input)) return { history: history, commit: function () {}, render: function () {} };
+    boundInputs.add(input);
 
     function render(items) {
       if (!list) return;
@@ -97,6 +100,16 @@
       render(history.record(input.value));
     }
 
+    function filterCustomers() {
+      if (!select || !select.options) return;
+      var term = normalize(input.value).toLowerCase();
+      Array.prototype.forEach.call(select.options, function (option, index) {
+        if (!index) return;
+        var search = option.dataset && option.dataset.customerSearch || "";
+        option.hidden = Boolean(term) && search.indexOf(term) === -1;
+      });
+    }
+
     render(history.items());
     input.addEventListener("focus", function () { render(history.items()); });
     input.addEventListener("keydown", function (event) {
@@ -107,6 +120,7 @@
     });
     input.addEventListener("change", commit);
     input.addEventListener("input", function (event) {
+      filterCustomers();
       // Выбор строки из истории (datalist): браузер подставляет значение целиком.
       var picked = !event || !event.inputType || event.inputType === "insertReplacementText";
       var term = normalize(input.value);
@@ -118,9 +132,10 @@
     return { history: history, commit: commit, render: render };
   }
 
-  function init(doc, storage) {
+  function init(doc, storage, rootElement) {
     var bound = [];
-    doc.querySelectorAll("[data-customer-filter-history]").forEach(function (input) {
+    var rootNode = rootElement || doc;
+    rootNode.querySelectorAll("[data-customer-filter-history]").forEach(function (input) {
       bound.push(bind(input, { document: doc, storage: storage }));
     });
     return bound;
@@ -133,12 +148,23 @@
     module.exports = api;
   } else {
     root.DenisStockCustomerFilterHistory = api;
-    var start = function () {
-      var storage = null;
+    var storage = null;
+    var getStorage = function () {
+      if (storage) return storage;
       try { storage = root.localStorage; } catch (error) { storage = null; }
-      if (!storage) return;
-      init(root.document, storage);
+      if (!storage) {
+        // Поиск клиентов должен работать и при заблокированном localStorage.
+        storage = { getItem: function () { return null; }, setItem: function () {} };
+      }
+      return storage;
     };
+    var start = function () {
+      init(root.document, getStorage());
+    };
+    root.document.addEventListener("denstock:page-loaded", function (event) {
+      var target = event && event.detail && event.detail.root;
+      init(root.document, getStorage(), target || root.document);
+    });
     if (root.document.readyState === "loading") {
       root.document.addEventListener("DOMContentLoaded", start);
     } else {

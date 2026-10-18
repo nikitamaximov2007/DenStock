@@ -6,7 +6,8 @@
       После начала этой инвентаризации остатки в ячейке менялись: движений
       {{ cell.changes_count }}. Посчитано {{ counters.total_quantity|quantity_int }},
       сейчас в ячейке по складу {{ cell.quantity|quantity_int }}. Провести такой
-      подсчёт нельзя: он прибавился бы к новому остатку. Пересчитайте ячейку заново.
+      подсчёт нельзя: он прибавился бы к новому остатку.
+      <a href="{% url 'counting_cancel' session.pk %}?restart=1">Отменить и пересчитать заново</a>.
     </div>
   {% endif %}
   <div class="page-header">

@@ -66,9 +66,9 @@ def _legacy_phone_matches(normalized_phone: str) -> list[Customer]:
     if not normalized_phone:
         return []
     matches = []
-    for customer in Customer.objects.filter(phone_normalized="").exclude(phone="").only(
-        "pk", "name", "phone", "phone_normalized"
-    ):
+    for customer in Customer.objects.filter(
+        phone_normalized="", archived_at__isnull=True
+    ).exclude(phone="").only("pk", "name", "phone", "phone_normalized"):
         if normalize_phone(customer.phone) == normalized_phone:
             matches.append(customer)
     return matches
@@ -78,7 +78,9 @@ def match_request_customer(customer_request: CustomerRequest) -> CustomerMatch:
     """Resolve by exact normalized phone, including legacy raw phone values."""
     normalized = normalize_phone(customer_request.customer_phone)
     indexed = list(
-        Customer.objects.filter(phone_normalized=normalized).order_by("pk")
+        Customer.objects.filter(
+            phone_normalized=normalized, archived_at__isnull=True
+        ).order_by("pk")
         if normalized
         else Customer.objects.none()
     )
@@ -211,11 +213,14 @@ def prepare_request_sale(
     customer = _customer_from_selection(
         request, match, customer_id=customer_id, create_customer=create_customer
     )
-    sale = create_sale(
-        customer=customer,
-        comment=f"По заявке №{request.reference}",
-        by=by,
-    )
+    try:
+        sale = create_sale(
+            customer=customer,
+            comment=f"По заявке №{request.reference}",
+            by=by,
+        )
+    except SaleError as exc:
+        raise CustomerRequestSaleError(str(exc)) from exc
     _add_request_stock_lines(sale, request, by=by)
     request.customer = customer
     request.sale = sale

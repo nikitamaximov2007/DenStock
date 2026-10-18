@@ -18,6 +18,7 @@ class Receipt(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Черновик"
         POSTED = "posted", "Проведено"
+        CANCELLED = "cancelled", "Отменено"
 
     number = models.CharField("Номер", max_length=20, unique=True, editable=False)
     supplier = models.ForeignKey(

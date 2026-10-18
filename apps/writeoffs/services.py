@@ -11,6 +11,8 @@
 (`is_part_item_reserved`/`active_reserved_for_lot`). Авто-отмену брони не делаем —
 резерв снимают отдельно до списания.
 """
+import hashlib
+import json
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
@@ -117,7 +119,8 @@ def available_quantities_by_location(part):
 
 @transaction.atomic
 def quick_write_off(
-    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), location_id=None, by=None
+    *, part, scanned_code, reason, business_author, quantity=Decimal("1"), location_id=None,
+    by=None, request_token=None,
 ) -> WriteOffDocument:
     """Write off a scanned quantity without exposing lot internals.
 
@@ -138,6 +141,25 @@ def quick_write_off(
     if quantity <= 0:
         raise WriteOffError("Количество списания должно быть больше нуля.")
     code = (scanned_code or "").strip()
+    request_token = (request_token or "").strip()
+    if len(request_token) > 80:
+        raise WriteOffError("Обновите страницу и повторите списание.")
+    request_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "actor": getattr(by, "pk", None),
+                "part": part.pk,
+                "code": code,
+                "reason": reason,
+                "business_author": business_author,
+                "quantity": format(quantity.normalize(), "f"),
+                "location": str(location_id or ""),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     item = (
         PartItem.objects.select_for_update()
         .filter(part_type=part)
@@ -148,13 +170,25 @@ def quick_write_off(
         )
         .first()
     )
-    doc = WriteOffDocument.objects.create(
-        reason=WriteOffDocument.Reason.OTHER,
-        comment=reason,
-        business_author=business_author,
-        created_by=by,
-        status=WriteOffDocument.Status.DRAFT,
-    )
+    defaults = {
+        "reason": WriteOffDocument.Reason.OTHER,
+        "comment": reason,
+        "business_author": business_author,
+        "created_by": by,
+        "status": WriteOffDocument.Status.DRAFT,
+        "quick_request_digest": request_digest if request_token else "",
+    }
+    if request_token:
+        doc, created = WriteOffDocument.objects.get_or_create(
+            quick_request_token=request_token,
+            defaults=defaults,
+        )
+        if not created:
+            if doc.quick_request_digest != request_digest:
+                raise WriteOffError("Токен уже использован для другого списания.")
+            return doc
+    else:
+        doc = WriteOffDocument.objects.create(**defaults)
     if part.tracking_mode == part.TrackingMode.SERIAL:
         if quantity != Decimal("1"):
             raise WriteOffError("Поштучную деталь можно списать только в количестве 1.")
@@ -188,7 +222,13 @@ def quick_write_off(
                     break
         if remaining > 0:
             raise WriteOffError(f"Доступно только {quantity - remaining} шт.")
-    return complete_write_off(doc, by=by)
+    try:
+        return complete_write_off(doc, by=by)
+    except InventoryError as exc:
+        # A running cell recount intentionally blocks every stock movement.
+        # Keep that domain conflict inside the write-off workflow so the view
+        # can show it as an operator error instead of returning HTTP 500.
+        raise WriteOffError(str(exc)) from exc
 
 
 def _ensure_draft(doc: WriteOffDocument) -> None:
