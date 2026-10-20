@@ -142,6 +142,21 @@ def verify_image(image: dict, *, commit: str, archive_sha256: str) -> None:
 
 
 def verify_runtime(repo: Path, service: str, image_id: str, commit: str) -> None:
+    verify_release_env(repo, commit)
+
+    raw = checked(["docker", "compose", "ps", "-q", service], cwd=repo)
+    containers = [line.strip() for line in raw.decode().splitlines() if line.strip()]
+    if len(containers) != 1:
+        raise IdentityError(f"expected exactly one running container for {service}")
+    container = inspect_container(containers[0])
+    if container.get("Image") != image_id:
+        raise IdentityError(f"running {service} image ID differs from the verified image")
+    if _env_map(container.get("Config", {}).get("Env")).get("DENSTOCK_APP_COMMIT") != commit:
+        raise IdentityError(f"running {service} environment differs from the verified image SHA")
+
+
+def verify_release_env(repo: Path, commit: str) -> None:
+    """Reject Compose env overrides before an image can be started."""
     env_file = repo / ".env"
     if not env_file.is_file():
         raise IdentityError("runtime .env file is missing")
@@ -154,15 +169,6 @@ def verify_runtime(repo: Path, service: str, image_id: str, commit: str) -> None
         raise IdentityError("legacy DENSTOCK_APP_COMMIT override remains in .env")
     if configured.get("DENSTOCK_BUILD_REVISION") != commit:
         raise IdentityError(".env image selector does not match the verified release SHA")
-    raw = checked(["docker", "compose", "ps", "-q", service], cwd=repo)
-    containers = [line.strip() for line in raw.decode().splitlines() if line.strip()]
-    if len(containers) != 1:
-        raise IdentityError(f"expected exactly one running container for {service}")
-    container = inspect_container(containers[0])
-    if container.get("Image") != image_id:
-        raise IdentityError(f"running {service} image ID differs from the verified image")
-    if _env_map(container.get("Config", {}).get("Env")).get("DENSTOCK_APP_COMMIT") != commit:
-        raise IdentityError(f"running {service} environment differs from the verified image SHA")
 
 
 def _services(values: str) -> list[str]:
@@ -196,6 +202,9 @@ def build(repo: Path, requested: str, services: list[str]) -> None:
 
 def verify(repo: Path, requested: str, services: list[str], *, runtime: bool) -> None:
     commit = resolve_commit(repo, requested)
+    # Run this before inspecting the image or allowing the operator to proceed
+    # to `compose up`; env_file values override Dockerfile ENV at container start.
+    verify_release_env(repo, commit)
     with tempfile.TemporaryDirectory(prefix="denstock-release-source-check-") as temporary:
         archive_sha256 = source_archive(repo, commit, Path(temporary))
     image_ids = compose_images(repo, services, commit)

@@ -382,12 +382,15 @@ def test_plan_orders_the_release_so_no_step_outruns_its_dependency():
 
     order = [
         "preflight --expect-head",
-        "denstock-backup-capped",
+        "denstock-backup.lock",
+        "DENSTOCK_APP_COMMIT=" + BASE,
+        "python manage.py backup_all",
         "git checkout --detach " + CANDIDATE,
         "release_image_identity.py build --sha " + CANDIDATE,
-        "release_image_identity.py verify --sha " + CANDIDATE,
         "install-secrets",
         "max-bot max_bot_identity   #",
+        "sed -i '/^DENSTOCK_APP_COMMIT=",
+        "release_image_identity.py verify --sha " + CANDIDATE,
         "up -d --no-build --no-deps --wait web",
         "public-role --execute",
         "--wait telegram-bot",
@@ -398,15 +401,15 @@ def test_plan_orders_the_release_so_no_step_outruns_its_dependency():
         "set-username",
         "--wait catalog-web",
         "--services web,telegram-bot,max-bot,catalog-web --require-subscribed",
-        "POST backup",
+        "Signed POST:",
     ]
     positions = [at(fragment) for fragment in order]
     assert positions == sorted(positions)
     rollback = text[at("ROLLBACK"):]
-    steps = ["max_webhook unsubscribe", "stop max-bot", "unset-username", "edge-rollback",
-             "git checkout --detach " + BASE]
+    steps = ["max_webhook unsubscribe", "stop max-bot", "unset-username", "edge-rollback"]
     assert [rollback.find(step) for step in steps] == sorted(rollback.find(s) for s in steps)
     assert "restore the signed PRE backup" in rollback
+    assert "separately reviewed rollback procedure" in rollback
     for secret_word in ("MAX_BOT_TOKEN=", "MAX_WEBHOOK_SECRET="):
         assert secret_word not in text
 

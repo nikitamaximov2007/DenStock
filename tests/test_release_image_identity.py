@@ -57,7 +57,9 @@ def test_compose_builds_all_application_services_from_verified_context():
         assert build["args"]["DENSTOCK_BUILD_CONTEXT_SHA256"] == (
             "${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}"
         )
-        assert "DENSTOCK_APP_COMMIT" not in service["environment"]
+        assert service["environment"]["DENSTOCK_APP_COMMIT"] == (
+            "${DENSTOCK_BUILD_REVISION:-unverified}"
+        )
 
 
 def test_dockerfile_contains_only_public_revision_attestation_fields():
@@ -131,6 +133,21 @@ def test_runtime_gate_requires_new_selector_and_rejects_legacy_override(tmp_path
             identity.verify_runtime(tmp_path, "web", image_id, SHA)
     finally:
         identity.run = original
+
+
+def test_predeployment_verify_rejects_legacy_env_before_image_inspection(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text(
+        f"DENSTOCK_BUILD_REVISION={SHA}\nDENSTOCK_APP_COMMIT={'f' * 40}\n"
+    )
+    monkeypatch.setattr(identity, "resolve_commit", lambda repo, requested: SHA)
+    monkeypatch.setattr(
+        identity,
+        "checked",
+        lambda *args, **kwargs: pytest.fail("image inspection must not run with stale .env"),
+    )
+
+    with pytest.raises(identity.IdentityError, match="legacy"):
+        identity.verify(tmp_path, SHA, ["web"], runtime=False)
 
 
 def json_bytes(value):
