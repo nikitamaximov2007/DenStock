@@ -137,11 +137,11 @@ def _customer(name="Иванов Иван"):
     return Customer.objects.create(name=name, phone="+7 912 123-45-67")
 
 
-def _order(env, number, customer=None, prepayment="1000"):
+def _order(env, number, customer=None, prepayment="1000", quantity=1):
     candidate, _ = resolve_ordered_article(number)
     return create_ordered_part(
         candidate=candidate, customer=customer or _customer(),
-        prepayment=prepayment, by=env["admin"],
+        prepayment=prepayment, quantity=quantity, by=env["admin"],
     )
 
 
@@ -166,6 +166,64 @@ def test_an_ordered_original_part_appears_in_the_normal_customs_source(env):
     assert len(ordered) == 1
     assert ordered[0]["number"] == "219800345"
     assert ordered[0]["quantity"] == Decimal("1")
+
+
+def test_ordered_quantity_flows_into_customs_without_multiplying_prepayment(env):
+    _part(env, number="219800345", name="РЕМЕНЬ")
+    order = _order(env, "219800345", prepayment="1500", quantity=10)
+
+    rows = [row for row in customs_export_rows() if row["provenance"] == ORDERED_PROVENANCE]
+    recon = ordered_parts_reconciliation()
+
+    assert len(rows) == 1
+    assert rows[0]["quantity"] == Decimal("10")
+    assert recon["totals"]["quantity"] == Decimal("10")
+    assert recon["totals"]["prepayment_total"] == Decimal("1500")
+    assert order.prepayment_rub == Decimal("1500")
+
+
+def test_ordered_quantity_is_frozen_in_historical_customs_order(env):
+    from apps.brp.models import BrpPartLink
+    from apps.customs_orders.models import CustomsOrder
+    from apps.customs_orders.services import (
+        create_customs_order_from_boundary,
+        eligible_customs_sources,
+        finalize_customs_order,
+        selection_payload,
+    )
+    from apps.ordered_parts.services import OrderedPartError, update_ordered_part
+
+    part = _part(env, number="219800345", name="РЕМЕНЬ")
+    catalog = BrpCatalogPart.objects.create(
+        material_no="219800345", part_desc="DRIVE BELT",
+        wholesale_price_usd=Decimal("12.50"),
+    )
+    BrpPartLink.objects.create(
+        part=part, brp_part=catalog, usd_rate_used=Decimal("100"),
+        markup_percent_used=Decimal("0"),
+    )
+    ordered = _order(env, "219800345", prepayment="1500", quantity=10)
+    sources = eligible_customs_sources(CustomsOrder.OrderType.ORIGINAL)
+    assert len(sources) == 1
+
+    customs_order = create_customs_order_from_boundary(
+        number=1, boundary_source=("ordered", ordered.pk),
+        selection_token=selection_payload(
+            sources, order_type=CustomsOrder.OrderType.ORIGINAL
+        ),
+        order_type=CustomsOrder.OrderType.ORIGINAL, by=env["admin"],
+    )
+    finalize_customs_order(customs_order, user=env["admin"])
+
+    assert customs_order.total_quantity == Decimal("10")
+    assert customs_order.lines.get().quantity == Decimal("10")
+    assert ordered.prepayment_rub == Decimal("1500")
+    with pytest.raises(OrderedPartError, match="не может быть изменено"):
+        update_ordered_part(
+            ordered, customer=ordered.customer, prepayment="1500", quantity=2,
+            by=env["admin"],
+        )
+    assert customs_order.lines.get().quantity == Decimal("10")
 
 
 def test_an_analog_part_never_reaches_the_ordered_customs_source(env):

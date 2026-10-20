@@ -3,6 +3,8 @@
 Права те же, что у продаж: заказ детали клиенту это продажная работа, и
 отдельной модели доступа для неё заводить незачем. Аноним не проходит вовсе.
 """
+from uuid import uuid4
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
@@ -52,6 +54,8 @@ def ordered_part_create(request):
     article = (request.POST.get("article") or request.GET.get("article") or "").strip()
     customer_query = (request.POST.get("customer_q") or request.GET.get("customer_q") or "").strip()
     prepayment = request.POST.get("prepayment") or request.GET.get("prepayment") or ""
+    quantity = request.POST.get("quantity") if request.method == "POST" else "1"
+    request_token = request.POST.get("request_token") or str(uuid4())
     customer_id = request.POST.get("customer_id") or request.GET.get("customer_id") or ""
     part_id = request.POST.get("part_id") or request.GET.get("part_id") or ""
     candidate, options, error = None, [], ""
@@ -80,7 +84,8 @@ def ordered_part_create(request):
                 raise OrderedPartError(error or "Укажите артикул запчасти.")
             order = create_ordered_part(
                 candidate=candidate, customer=customer,
-                prepayment=prepayment, by=request.user,
+                prepayment=prepayment, quantity=quantity, by=request.user,
+                request_token=request_token,
             )
         except OrderedPartError as exc:
             error = str(exc)
@@ -102,6 +107,8 @@ def ordered_part_create(request):
             "customer_q": customer_query,
             "customer_id": customer_id,
             "prepayment": prepayment,
+            "quantity": quantity,
+            "request_token": request_token,
             "title": "Новая запчасть на заказ",
         },
     )
@@ -121,7 +128,8 @@ def ordered_part_edit(request, pk):
         try:
             update_ordered_part(
                 order, customer=customer,
-                prepayment=request.POST.get("prepayment"), by=request.user,
+                prepayment=request.POST.get("prepayment"),
+                quantity=request.POST.get("quantity"), by=request.user,
             )
         except OrderedPartError as exc:
             error = str(exc)
@@ -136,6 +144,13 @@ def ordered_part_edit(request, pk):
             "error": error,
             "customers": _customer_choices(customer_query),
             "customer_q": customer_query,
+            "quantity": (
+                request.POST.get("quantity") if request.method == "POST" else order.quantity
+            ),
+            "prepayment": (
+                request.POST.get("prepayment") if request.method == "POST"
+                else order.prepayment_rub
+            ),
             "title": f"Заказ на {order.article}",
         },
     )

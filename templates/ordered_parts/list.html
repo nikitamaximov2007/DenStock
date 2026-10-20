@@ -9,8 +9,8 @@
   </div>
   <p class="page-subtitle">
     Оригинальные детали, заказанные клиентом под предоплату. Склада они пока не
-    касаются: остаток появится только после закупки и приёмки. Одна строка это
-    одна заказанная единица.
+    касаются: остаток появится только после закупки и приёмки. Количество
+    указано отдельно для каждой заказанной детали.
   </p>
   {% if page_obj.object_list %}
     <table class="table">
@@ -21,6 +21,7 @@
           <th>Название</th>
           <th>Производитель</th>
           <th>Клиент</th>
+          <th>Количество, шт.</th>
           <th class="num--money">Предоплата (₽)</th>
           <th></th>
         </tr>
@@ -35,6 +36,7 @@
             <td>
               <a href="{% url 'customer_detail' order.customer_id %}">{{ order.customer.name }}</a>
             </td>
+            <td>{{ order.quantity }}</td>
             <td class="num--money">{{ order.prepayment_rub|money_int }}</td>
             <td>
               <a class="btn btn--small btn--secondary"

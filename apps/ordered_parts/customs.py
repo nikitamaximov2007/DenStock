@@ -9,7 +9,7 @@
 
 * заказ оформляется на ОРИГИНАЛЬНУЮ деталь, поэтому его строки идут в ОБЫЧНУЮ
   таможенную выгрузку, а не в выгрузку аналогов;
-* одна запись заказа - одна единица (V1 без поля количества);
+* одна запись заказа содержит указанное клиентом количество;
 * предоплата в таможню не уходит: цена берётся тем же каталожным резолвером,
   что и у обычных строк. Предоплата это деньги клиента за услугу, а не
   стоимость товара на границе;
@@ -24,9 +24,6 @@ from apps.catalog.models import PartNumber, PartType, normalize_number
 from .models import OrderedPart
 
 PROVENANCE = "ordered"
-# Одна запись раздела - одна заказанная единица. Поля количества в V1 нет:
-# пользователь его не просил, а придуманное поле потом дороже отсутствующего.
-UNIT_QUANTITY = Decimal("1")
 
 
 def _part_ids_for_number(part_number: str) -> list[int]:
@@ -71,7 +68,7 @@ def ordered_parts_for_customs(
 
 
 def ordered_parts_customs_lines(**filters) -> list[dict]:
-    """Канонические строки расхода по заказам: одна запись - одна единица."""
+    """Канонические строки расхода по заказам с фактическим количеством."""
     from apps.actions.customs_history import version_at
     from apps.actions.models import PartCustomsDataVersion
 
@@ -100,9 +97,9 @@ def ordered_parts_customs_lines(**filters) -> list[dict]:
             "part": parts[order.part_type_id],
             "part_id": order.part_type_id,
             "occurred_at": order.created_at,
-            "issued_quantity": UNIT_QUANTITY,
+            "issued_quantity": Decimal(order.quantity),
             "returned_quantity": Decimal("0"),
-            "quantity": UNIT_QUANTITY,
+            "quantity": Decimal(order.quantity),
             # Предоплата НЕ клиентская сумма расхода и не таможенная цена: она
             # не участвует ни в одной сверке денег.
             "amount": None,

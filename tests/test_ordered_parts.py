@@ -11,10 +11,13 @@
 продажи, ни таможенной стоимостью она не становится: на границе объявляют
 стоимость товара, а не то, сколько клиент успел перевести.
 """
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier
 
 import pytest
 from django.contrib.auth.models import Group
+from django.db import close_old_connections, connection
 from django.urls import reverse
 
 from apps.accounts import roles
@@ -58,7 +61,8 @@ def make_user(db, django_user_model):
 def env(db, make_user):
     admin = make_user("boss", is_superuser=True)
     category, _ = Category.objects.get_or_create(name="Двигатель", parent=None)
-    return {"admin": admin, "cat": category, "unit": Unit.objects.get(name="Штука")}
+    unit, _ = Unit.objects.get_or_create(name="Штука", defaults={"short_name": "шт"})
+    return {"admin": admin, "cat": category, "unit": unit}
 
 
 def _part(env, *, number, name="ДЕТАЛЬ", brand="BRP"):
@@ -376,6 +380,8 @@ def test_create_page_loads(client, env, make_user):
 
     assert response.status_code == 200
     assert "Артикул запчасти" in response.content.decode()
+    assert 'name="quantity"' in response.content.decode()
+    assert 'value="1"' in response.content.decode()
 
 
 def test_customer_search_filters_the_selectable_list(client, env, make_user):
@@ -400,7 +406,7 @@ def test_existing_customer_can_be_selected_and_order_created(client, env, make_u
         reverse("ordered_part_create"),
         {
             "action": "create", "article": "219800345",
-            "customer_id": str(customer.pk), "prepayment": "2500.50",
+            "customer_id": str(customer.pk), "prepayment": "2500.50", "quantity": "1",
         },
     )
 
@@ -408,6 +414,78 @@ def test_existing_customer_can_be_selected_and_order_created(client, env, make_u
     order = OrderedPart.objects.get()
     assert order.customer_id == customer.pk
     assert order.prepayment_rub == Decimal("2500.50")
+    assert order.quantity == 1
+
+
+@pytest.mark.parametrize("raw", ["", "0", "-1", "1.5", "abc", "10001", "999999999999999999"])
+def test_invalid_quantity_is_rejected_and_preserved(client, env, make_user, raw):
+    _part(env, number="219800345")
+    customer = _customer()
+    _login(client, make_user)
+    before_lots = StockLot.objects.count()
+    before_movements = StockMovement.objects.count()
+
+    response = client.post(reverse("ordered_part_create"), {
+        "action": "create", "article": "219800345", "customer_id": str(customer.pk),
+        "quantity": raw, "prepayment": "2500.50",
+        "request_token": "81eec188-2bba-4df1-9f55-1dfa94e74cad",
+    })
+
+    assert response.status_code == 200
+    assert "Количество" in response.content.decode()
+    assert f'value="{raw}"' in response.content.decode()
+    assert OrderedPart.objects.count() == 0
+    assert StockLot.objects.count() == before_lots
+    assert StockMovement.objects.count() == before_movements
+
+
+@pytest.mark.parametrize("quantity", [2, 10])
+def test_explicit_quantity_persists_in_list_and_customs(client, env, make_user, quantity):
+    from apps.ordered_parts.customs import ordered_parts_customs_lines
+
+    _part(env, number="219800345")
+    customer = _customer()
+    _login(client, make_user)
+    token = "81eec188-2bba-4df1-9f55-1dfa94e74cad"
+    payload = {
+        "action": "create", "article": "219800345", "customer_id": str(customer.pk),
+        "quantity": str(quantity), "prepayment": "2500.50", "request_token": token,
+    }
+    before_lots = StockLot.objects.count()
+    before_movements = StockMovement.objects.count()
+
+    assert client.post(reverse("ordered_part_create"), payload).status_code == 302
+    assert client.post(reverse("ordered_part_create"), payload).status_code == 302
+    order = OrderedPart.objects.get()
+    assert order.quantity == quantity
+    assert order.prepayment_rub == Decimal("2500.50")
+    assert ordered_parts_customs_lines()[0]["quantity"] == Decimal(quantity)
+    assert f">{quantity}</td>" in client.get(reverse("ordered_part_list")).content.decode()
+    assert f">{quantity}</td>" in client.get(
+        reverse("ordered_part_edit", args=[order.pk])
+    ).content.decode()
+    assert StockLot.objects.count() == before_lots
+    assert StockMovement.objects.count() == before_movements
+
+
+def test_reused_token_with_changed_quantity_does_not_reuse_another_submission(
+    client, env, make_user
+):
+    _part(env, number="219800345")
+    customer = _customer()
+    _login(client, make_user)
+    payload = {
+        "action": "create", "article": "219800345", "customer_id": str(customer.pk),
+        "quantity": "2", "prepayment": "2500.50",
+        "request_token": "81eec188-2bba-4df1-9f55-1dfa94e74cad",
+    }
+
+    assert client.post(reverse("ordered_part_create"), payload).status_code == 302
+    response = client.post(reverse("ordered_part_create"), {**payload, "quantity": "10"})
+
+    assert response.status_code == 200
+    assert "Ключ оформления уже использован" in response.content.decode()
+    assert list(OrderedPart.objects.values_list("quantity", flat=True)) == [2]
 
 
 def test_a_newly_created_customer_becomes_selectable(client, env, make_user):
@@ -467,6 +545,11 @@ def test_a_role_without_sales_rights_is_refused(client, env, make_user):
 
     assert client.get(reverse("ordered_part_list")).status_code == 403
     assert client.get(reverse("ordered_part_create")).status_code == 403
+    assert client.post(reverse("ordered_part_create"), {
+        "action": "create", "article": "219800345", "quantity": "2",
+        "customer_id": "1", "prepayment": "0",
+    }).status_code == 403
+    assert OrderedPart.objects.count() == 0
 
 
 def test_the_operator_can_fix_the_customer_and_the_prepayment(client, env, make_user):
@@ -486,6 +569,90 @@ def test_the_operator_can_fix_the_customer_and_the_prepayment(client, env, make_
     assert order.prepayment_rub == Decimal("999.99")
     # Деталь заказа правкой не подменяется.
     assert order.article == "219800345"
+
+
+def test_operator_can_correct_unassigned_quantity_without_changing_prepayment(
+    client, env, make_user
+):
+    _part(env, number="219800345")
+    order = _order(env, "219800345", _customer(), prepayment="900")
+    _login(client, make_user)
+    edit_url = reverse("ordered_part_edit", args=[order.pk])
+    assert 'value="900.00"' in client.get(edit_url).content.decode()
+
+    response = client.post(edit_url, {
+        "customer_id": str(order.customer_id), "quantity": "10", "prepayment": "900",
+    })
+
+    assert response.status_code == 302
+    order.refresh_from_db()
+    assert order.quantity == 10
+    assert order.prepayment_rub == Decimal("900")
+
+
+def test_quantity_cannot_change_after_customs_assignment(client, env, make_user):
+    from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
+
+    _part(env, number="219800345")
+    order = _order(env, "219800345", _customer(), prepayment="900")
+    customs = CustomsOrder.objects.create(
+        number=201, fx_rate=Decimal("100"), total_quantity=Decimal("1"),
+        total_rub=Decimal("1000"),
+    )
+    CustomsOrderLine.objects.create(
+        order=customs, source="ordered", source_id=order.pk, part_type=order.part_type,
+        article=order.article, quantity=Decimal("1"), wholesale_usd=Decimal("10"),
+        rub_amount=Decimal("1000"),
+    )
+    _login(client, make_user)
+
+    response = client.post(reverse("ordered_part_edit", args=[order.pk]), {
+        "customer_id": str(order.customer_id), "quantity": "2", "prepayment": "900",
+    })
+
+    assert response.status_code == 200
+    assert "Количество уже включено" in response.content.decode()
+    order.refresh_from_db()
+    assert order.quantity == 1
+    assert order.prepayment_rub == Decimal("900")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_duplicate_order_token_is_safe_under_postgres_concurrency(env, monkeypatch):
+    if connection.vendor != "postgresql":
+        pytest.skip("PostgreSQL transaction race")
+    import apps.ordered_parts.services as services
+
+    _part(env, number="219800345")
+    customer = _customer()
+    candidate, _ = resolve_ordered_article("219800345")
+    barrier = Barrier(2)
+    original = services._create_ordered_part_atomic
+
+    def synchronized_create(**kwargs):
+        barrier.wait(timeout=10)
+        return original(**kwargs)
+
+    monkeypatch.setattr(services, "_create_ordered_part_atomic", synchronized_create)
+
+    def submit():
+        close_old_connections()
+        try:
+            return create_ordered_part(
+                candidate=candidate, customer=customer, quantity=2,
+                prepayment="500", by=env["admin"],
+                request_token="81eec188-2bba-4df1-9f55-1dfa94e74cad",
+            ).pk
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        first, second = list(workers.map(lambda _index: submit(), range(2)))
+
+    assert first == second
+    assert OrderedPart.objects.count() == 1
+    assert OrderedPart.objects.get().quantity == 2
+    assert StockMovement.objects.count() == 0
 
 
 def test_the_analog_gate_defers_to_the_customs_classifier_when_it_exists(env, monkeypatch):

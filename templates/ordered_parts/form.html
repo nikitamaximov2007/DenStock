@@ -98,6 +98,7 @@
   <form method="post" class="form">
     {% csrf_token %}
     <input type="hidden" name="action" value="create">
+    <input type="hidden" name="request_token" value="{{ request_token }}">
     <input type="hidden" name="article" value="{{ article }}">
     <input type="hidden" name="customer_q" value="{{ customer_q }}">
     <p>
@@ -118,6 +119,18 @@
       и вернуться сюда.
     </p>
     <p>
+      <label for="id_quantity">Количество, шт.</label>
+      <input type="number"
+             name="quantity"
+             id="id_quantity"
+             step="1"
+             min="1"
+             max="10000"
+             inputmode="numeric"
+             value="{{ quantity }}"
+             required>
+    </p>
+    <p>
       <label for="id_prepayment">Предоплата (₽)</label>
       <input type="number"
              name="prepayment"
@@ -128,7 +141,7 @@
              placeholder="0.00">
     </p>
     <p class="muted">
-      Сколько клиент уже перевёл за эту деталь. Ноль допустим. На складскую
+      Сколько клиент уже перевёл за весь заказ. Ноль допустим. На складскую
       себестоимость и на таможенную стоимость предоплата не влияет.
     </p>
     <button type="submit"

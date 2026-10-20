@@ -13,8 +13,6 @@
 
 Чего здесь СОЗНАТЕЛЬНО нет:
 
-* количества. Пользователь его не просил: одна запись - одна заказанная
-  единица. Две одинаковые детали - две записи;
 * статусов жизненного цикла. «Оформлен / Заказан / Получен / Выдан» звучат
   логично, но не утверждены, а придуманный статус потом дороже, чем его
   отсутствие;
@@ -28,7 +26,7 @@
 from decimal import Decimal
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -52,6 +50,11 @@ class OrderedPart(models.Model):
     # Каким каталогом деталь доказана: этого достаточно, чтобы позже показать,
     # откуда она взялась, не копируя сюда весь каталог.
     catalog_source = models.CharField("Источник каталога (снимок)", max_length=40, blank=True)
+    quantity = models.PositiveIntegerField(
+        "Количество, шт.", default=1, db_default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(10000)],
+    )
+    request_token = models.UUIDField(null=True, blank=True, unique=True, editable=False)
     prepayment_rub = models.DecimalField(
         "Предоплата (₽)", max_digits=12, decimal_places=2,
         default=Decimal("0"), validators=[MinValueValidator(Decimal("0"))],
@@ -75,6 +78,10 @@ class OrderedPart(models.Model):
             models.CheckConstraint(
                 condition=models.Q(prepayment_rub__gte=Decimal("0")),
                 name="orderedpart_prepayment_not_negative",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1, quantity__lte=10000),
+                name="orderedpart_quantity_valid",
             ),
         ]
 

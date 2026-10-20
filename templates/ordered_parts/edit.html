@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load l10n %}
 {% block title %}{{ title }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -26,6 +27,10 @@
           <tr>
             <th>Производитель</th>
             <td>{{ order.manufacturer_name|default:"·" }}</td>
+          </tr>
+          <tr>
+            <th>Количество, шт.</th>
+            <td>{{ order.quantity }}</td>
           </tr>
           <tr>
             <th>Оформлен</th>
@@ -64,13 +69,25 @@
       </select>
     </p>
     <p>
+      <label for="id_quantity">Количество, шт.</label>
+      <input type="number"
+             name="quantity"
+             id="id_quantity"
+             step="1"
+             min="1"
+             max="10000"
+             inputmode="numeric"
+             value="{{ quantity }}"
+             required>
+    </p>
+    <p>
       <label for="id_prepayment">Предоплата (₽)</label>
       <input type="number"
              name="prepayment"
              id="id_prepayment"
              step="0.01"
              min="0"
-             value="{{ order.prepayment_rub }}">
+             value="{{ prepayment|unlocalize }}">
     </p>
     <button type="submit" class="btn btn--primary">Сохранить</button>
   </form>

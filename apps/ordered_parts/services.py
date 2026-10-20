@@ -15,8 +15,9 @@
 """
 from dataclasses import dataclass
 from decimal import Decimal
+from uuid import UUID
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 
 from apps.catalog.models import PartType, normalize_number
@@ -40,6 +41,17 @@ AMBIGUOUS_MESSAGE = "Найдено несколько деталей с так�
 
 class OrderedPartError(ValueError):
     """Заказ оформить нельзя: артикул, клиент или предоплата не проходят правило."""
+
+
+def parse_quantity(raw) -> int:
+    """Validate whole units before they reach the database."""
+    value = str(raw).strip() if raw is not None else ""
+    if not value or len(value) > 5 or not value.isascii() or not value.isdecimal():
+        raise OrderedPartError("Укажите количество целым числом от 1 до 10000.")
+    quantity = int(value)
+    if not 1 <= quantity <= 10000:
+        raise OrderedPartError("Количество должно быть от 1 до 10000 шт.")
+    return quantity
 
 
 @dataclass
@@ -283,13 +295,57 @@ def _has_relation(part, attribute) -> bool:
         return False
 
 
-@transaction.atomic
-def create_ordered_part(*, candidate, customer, prepayment, by=None) -> OrderedPart:
+def create_ordered_part(
+    *, candidate, customer, prepayment, quantity=1, by=None, request_token=None
+) -> OrderedPart:
     """Оформить заказ. Складских последствий нет и быть не должно.
 
     Ни лота, ни движения, ни продажи, ни приёмки здесь не создаётся: заказанной
     детали физически ещё нет.
     """
+    try:
+        token = UUID(str(request_token)) if request_token is not None else None
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise OrderedPartError("Недействительный ключ оформления заказа.") from exc
+    if token is not None:
+        existing = OrderedPart.objects.filter(request_token=token).first()
+        if existing is not None:
+            return _verified_retry(existing, candidate, customer, prepayment, quantity, by)
+    try:
+        return _create_ordered_part_atomic(
+            candidate=candidate, customer=customer, prepayment=prepayment,
+            quantity=quantity, by=by, request_token=token,
+        )
+    except IntegrityError:
+        if token is not None:
+            existing = OrderedPart.objects.filter(request_token=token).first()
+            if existing is not None:
+                return _verified_retry(existing, candidate, customer, prepayment, quantity, by)
+        raise
+
+
+def _verified_retry(existing, candidate, customer, prepayment, quantity, by):
+    """A repeated token can only replay the same operator's same submission."""
+    if (
+        candidate is None
+        or customer is None
+        or by is None
+        or existing.created_by_id != by.pk
+        or existing.customer_id != customer.pk
+        or normalize_number(existing.article) != normalize_number(candidate.exact_number)
+        or existing.manufacturer_name.strip().upper() != candidate.manufacturer.strip().upper()
+        or (candidate.part is not None and existing.part_type_id != candidate.part.pk)
+        or existing.quantity != parse_quantity(quantity)
+        or existing.prepayment_rub != parse_prepayment(prepayment)
+    ):
+        raise OrderedPartError("Ключ оформления уже использован для другого заказа.")
+    return existing
+
+
+@transaction.atomic
+def _create_ordered_part_atomic(
+    *, candidate, customer, prepayment, quantity, by, request_token
+) -> OrderedPart:
     if customer is None:
         raise OrderedPartError("Выберите клиента.")
     try:
@@ -298,6 +354,7 @@ def create_ordered_part(*, candidate, customer, prepayment, by=None) -> OrderedP
         raise OrderedPartError(str(exc)) from exc
     if candidate is None:
         raise OrderedPartError("Выберите деталь по артикулу.")
+    quantity = parse_quantity(quantity)
     part = _ensure_ordered_part_card(candidate, by=by)
     if is_aftermarket_part(part):
         raise OrderedPartError(ANALOG_REJECTED_MESSAGE)
@@ -309,14 +366,18 @@ def create_ordered_part(*, candidate, customer, prepayment, by=None) -> OrderedP
         part_name=part_name,
         manufacturer_name=candidate.manufacturer or "",
         catalog_source=_catalog_source(candidate),
+        quantity=quantity,
+        request_token=request_token,
         prepayment_rub=parse_prepayment(prepayment),
         created_by=by,
     )
 
 
 @transaction.atomic
-def update_ordered_part(order: OrderedPart, *, customer, prepayment, by=None) -> OrderedPart:
-    """Исправить ошибку оператора: клиент и предоплата.
+def update_ordered_part(
+    order: OrderedPart, *, customer, prepayment, quantity=None, by=None
+) -> OrderedPart:
+    """Исправить клиента, количество до таможенного заказа и предоплату.
 
     Снимок детали не правится: заказ оформлен на конкретную деталь, и подмена
     её задним числом переписала бы историю. Ошиблись деталью - нужен отдельный
@@ -328,10 +389,20 @@ def update_ordered_part(order: OrderedPart, *, customer, prepayment, by=None) ->
         customer = require_active_customer(customer)
     except ValueError as exc:
         raise OrderedPartError(str(exc)) from exc
+    order = OrderedPart.objects.select_for_update().get(pk=order.pk)
+    new_quantity = order.quantity if quantity is None else parse_quantity(quantity)
+    if new_quantity != order.quantity:
+        from apps.customs_orders.models import CustomsOrderLine
+
+        if CustomsOrderLine.objects.filter(source="ordered", source_id=order.pk).exists():
+            raise OrderedPartError(
+                "Количество уже включено в таможенный заказ и не может быть изменено."
+            )
     order.customer = customer
+    order.quantity = new_quantity
     order.prepayment_rub = parse_prepayment(prepayment)
     order.updated_by = by
-    order.save(update_fields=["customer", "prepayment_rub", "updated_by", "updated_at"])
+    order.save(update_fields=["customer", "quantity", "prepayment_rub", "updated_by", "updated_at"])
     return order
 
 
