@@ -56,6 +56,23 @@
    `--keep-last`. Передать только зашифрованный age-архив на Mac. Проверить
    Ed25519, SHA-256, состав, ссылки на файлы и восстановление в изолированной
    PostgreSQL 16. Сохранить прежние поколения и образы.
+   Проверенная процедура шифрования и передачи находится в
+   `docs/operations/private-media-single-bucket-mac-release.md` коммита
+   `12676dd852161dfe6f79c0d75f6eaac6e23e3306`; сам файл не подмешивать
+   из другой ветки в этот выпуск. Однократный запуск без ротации:
+
+   ```bash
+   (
+     exec 9>/run/lock/denstock-backup.lock
+     flock -n 9 || exit 75
+     docker compose exec -T -e DENSTOCK_APP_COMMIT=<проверенный-runtime-SHA> \
+       web python manage.py backup_all --trigger manual
+   )
+   ```
+
+   Эта команда не запускает entrypoint и миграции. Run ID сверить по выводу,
+   затем `docker compose exec -T web python manage.py verify_backup <RUN_ID>`.
+   Старые копии не очищать; обычный capped wrapper не вызывать.
 3. Остановиться. Получить отдельное разрешение владельца на точный целевой SHA,
    миграцию и обновление web.
 
@@ -93,6 +110,8 @@
 Mac и восстановить PostgreSQL 16, `media` и `private_media` в изоляции.
 Проверить подпись, хеши и ссылки. Только после успешного восстановления POST
 отчёт может иметь статус SUCCESS.
+Для POST использовать тот же lock и однократный `backup_all`, подставив уже
+проверенный новый runtime SHA; PRE и POST хранить раздельно и не перезаписывать.
 
 ## Ошибка и откат
 
