@@ -177,9 +177,10 @@ def preflight(ctx: Context, *, expect_head: str, candidate: str = "") -> dict:
     if unexpected:
         failures.append(f"working tree not clean: {unexpected}")
     env = env_values(ctx.root / ".env")
-    report["app_commit"] = env.get("DENSTOCK_APP_COMMIT", "")
-    if env.get("DENSTOCK_APP_COMMIT") != head:
-        failures.append("DENSTOCK_APP_COMMIT does not match HEAD")
+    report["app_commit_env"] = (
+        "matches HEAD" if env.get("DENSTOCK_APP_COMMIT") == head
+        else "stale or missing; image identity gate is authoritative"
+    )
     if SIGNING_OVERLAY not in env.get("COMPOSE_FILE", ""):
         failures.append("COMPOSE_FILE lost the signing overlay")
     if not (ctx.root / SIGNING_OVERLAY).is_file():
@@ -422,8 +423,15 @@ def verify(ctx: Context, *, candidate: str, services: list[str], require_subscri
     head = ctx.sh(["git", "rev-parse", "HEAD"]).stdout.strip()
     if head != candidate:
         failures.append(f"HEAD {head} is not the candidate")
-    if env_values(ctx.root / ".env").get("DENSTOCK_APP_COMMIT") != candidate:
-        failures.append("DENSTOCK_APP_COMMIT is not the candidate")
+    identity = ctx.sh(
+        ["python3", "scripts/operations/release_image_identity.py", "verify",
+         "--sha", candidate, "--services", ",".join(services), "--runtime"],
+        check=False,
+    )
+    if identity.returncode != 0:
+        failures.append("built image or runtime release identity does not match the candidate")
+    else:
+        ctx.say("release image and runtime identity: PASS")
     check = ctx.sh(compose("exec", "-T", "web", "python", "manage.py", "migrate", "--check"),
                    check=False)
     if check.returncode != 0:

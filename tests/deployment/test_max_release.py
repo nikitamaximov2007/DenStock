@@ -98,6 +98,15 @@ def test_preflight_passes_on_the_expected_production_state(site, capsys):
     assert "PREFLIGHT PASS" in capsys.readouterr().out
 
 
+def test_preflight_does_not_treat_stale_app_commit_env_as_runtime_identity(site):
+    (site["root"] / ".env").write_text(
+        f"DENSTOCK_APP_COMMIT={'9' * 40}\n"
+        "COMPOSE_FILE=docker-compose.yml:docker-compose.signing.yml\n"
+    )
+    report = release.preflight(ctx_for(site, Runner(git_ok())), expect_head=BASE)
+    assert report["app_commit_env"] == "stale or missing; image identity gate is authoritative"
+
+
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
@@ -125,10 +134,11 @@ def test_preflight_stops_on_files_and_edge_state(site, capsys):
         release.preflight(ctx_for(site, Runner(git_ok())), expect_head=BASE)
     out = capsys.readouterr().out
     for reason in (
-        "DENSTOCK_APP_COMMIT does not match", "signing overlay", "MAX_BOT_TOKEN must not",
+        "signing overlay", "MAX_BOT_TOKEN must not",
         "neither pre-max nor candidate", ".env.max must be mode 600",
     ):
         assert reason in out, reason
+    assert "stale or missing; image identity gate is authoritative" in out
 
 
 # --- install-secrets ---------------------------------------------------------------------
@@ -331,6 +341,9 @@ def test_verify_passes_for_a_complete_rollout(site, capsys):
                    require_subscribed=True)
     assert "VERIFY PASS" in capsys.readouterr().out
     joined = runner.joined()
+    assert any(
+        "release_image_identity.py verify" in call and "--runtime" in call for call in joined
+    )
     assert any("max_bot_health" in call for call in joined)
     assert any("max_webhook status --require-subscribed" in call for call in joined)
     assert sum("grep -q" in call for call in joined) == 4
@@ -371,10 +384,11 @@ def test_plan_orders_the_release_so_no_step_outruns_its_dependency():
         "preflight --expect-head",
         "denstock-backup-capped",
         "git checkout --detach " + CANDIDATE,
-        "build web catalog-web telegram-bot max-bot",
+        "release_image_identity.py build --sha " + CANDIDATE,
+        "release_image_identity.py verify --sha " + CANDIDATE,
         "install-secrets",
         "max-bot max_bot_identity   #",
-        "up -d --no-deps --wait web",
+        "up -d --no-build --no-deps --wait web",
         "public-role --execute",
         "--wait telegram-bot",
         "--wait max-bot",
