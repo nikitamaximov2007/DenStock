@@ -20,9 +20,13 @@ services:
         max-file: "5"
 
   web:
+    image: denstock-web:${DENSTOCK_BUILD_REVISION:-unverified}
     build:
-      context: .
+      context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
+      args:
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     # .env.max-webhook (root, mode 600) carries only MAX_WEBHOOK_ENABLED and
     # MAX_WEBHOOK_SECRET: web authenticates MAX's webhook and needs nothing more.
     # Absent file means the webhook answers 404 to everything.
@@ -58,9 +62,13 @@ services:
   # the internal .env, media volumes, backup directory or signing-key mount.
   catalog-web:
     profiles: ["public-catalog"]
+    image: denstock-catalog-web:${DENSTOCK_BUILD_REVISION:-unverified}
     build:
-      context: .
+      context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
+      args:
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     entrypoint: ["/public-entrypoint.sh"]
     # Threaded workers: a slow typo search must not block the whole process.
     # Measured locally on the 125k corpus: 2 sync workers saturate near
@@ -104,9 +112,13 @@ services:
   # never receive it.
   telegram-bot:
     profiles: ["telegram-bot"]
+    image: denstock-telegram-bot:${DENSTOCK_BUILD_REVISION:-unverified}
     build:
-      context: .
+      context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
+      args:
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     # Plain manage.py: migrations and collectstatic belong to the web release.
     entrypoint: ["python", "manage.py"]
     command: ["run_telegram_bot"]
@@ -161,9 +173,13 @@ services:
   # network, no AI proxy, no proxy environment.
   max-bot:
     profiles: ["max-bot"]
+    image: denstock-max-bot:${DENSTOCK_BUILD_REVISION:-unverified}
     build:
-      context: .
+      context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
+      args:
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     entrypoint: ["python", "manage.py"]
     command: ["run_max_bot"]
     env_file:

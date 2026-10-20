@@ -2,15 +2,27 @@
 # на UI-слоях). Один и тот же образ работает локально и на VPS.
 FROM python:3.12.13-slim
 
+ARG DENSTOCK_BUILD_REVISION=unverified
+ARG DENSTOCK_BUILD_CONTEXT_SHA256=unverified
+
 ARG DENSTOCK_WEB_UID=2001
 ARG DENSTOCK_WEB_GID=2001
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    DJANGO_SETTINGS_MODULE=config.settings.prod
+    DJANGO_SETTINGS_MODULE=config.settings.prod \
+    DENSTOCK_APP_COMMIT=${DENSTOCK_BUILD_REVISION}
+
+LABEL org.opencontainers.image.revision=${DENSTOCK_BUILD_REVISION} \
+    com.denstock.source-archive-sha256=${DENSTOCK_BUILD_CONTEXT_SHA256}
 
 WORKDIR /app
+
+# Local ad-hoc builds are explicitly unverified. Release builds provide these
+# values from the exact Git archive through the release identity tool.
+RUN python -c 'import re,sys; revision,context=sys.argv[1:]; assert revision == "unverified" or re.fullmatch(r"[0-9a-f]{40}", revision); assert context == "unverified" or re.fullmatch(r"[0-9a-f]{64}", context)' \
+    "$DENSTOCK_BUILD_REVISION" "$DENSTOCK_BUILD_CONTEXT_SHA256"
 
 # Клиенты PostgreSQL для резервного копирования (Слой 25, план 37, hotfix 2).
 # Ставим ОБА из официального PGDG-репозитория:
