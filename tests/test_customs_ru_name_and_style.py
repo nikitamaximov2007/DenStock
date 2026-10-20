@@ -57,4 +57,5 @@ def test_weight_columns_use_two_decimals_and_keep_blank_weights():
         assert sheet[f"{column}10"].number_format == "0.00"
     assert sheet["G10"].value is None
     assert sheet["H10"].value is None
-    assert sheet["I10"].value == "=J10*G10"
+    assert sheet["I10"].value is None
+    assert sheet["I150"].value is None

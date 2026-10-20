@@ -679,7 +679,7 @@ def test_all_rows_are_written_beyond_the_template_limit(count):
 def test_totals_row_survives_and_sums_every_row(count):
     sheet = openpyxl.load_workbook(export_customs_xlsx(rows=_rows(count)))[SHEET]
     last = DATA_ROW + count - 1
-    assert sheet[f"I{last + 1}"].value == f"=SUM(I7:I{last})"
+    assert sheet[f"I{last + 1}"].value == f"=SUM(I{DATA_ROW}:I{last})"
     assert "вес" in str(sheet[f"F{last + 1}"].value).lower()  # подпись итога уехала вниз
 
 

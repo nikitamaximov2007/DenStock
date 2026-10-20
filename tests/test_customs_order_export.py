@@ -2,12 +2,15 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from io import BytesIO
 
 import openpyxl
 import pytest
+from django.urls import reverse
 
 from apps.actions.services import TEMPLATE_PATH
 from apps.brp.models import BrpCatalogPart
+from apps.catalog.models import Category, Manufacturer, PartType, Unit
 from apps.customs_orders.export import export_customs_order_xlsx
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.warehouse.models import ValuationSettings
@@ -57,6 +60,185 @@ def _export_rows(order, sheet_name="Оригиналы"):
 
 def _occurred(day, hour=12):
     return datetime(2026, 9, day, hour, tzinfo=UTC)
+
+
+def _part(name, manufacturer):
+    category = Category.objects.create(name=f"customs-{name}")
+    unit = Unit.objects.get(name="Штука")
+    maker = Manufacturer.objects.get_or_create(name=manufacturer)[0]
+    return PartType.objects.create(
+        name=name, category=category, unit=unit, manufacturer=maker,
+        tracking_mode=PartType.TrackingMode.BULK,
+    )
+
+
+def test_order_export_fills_missing_names_from_stable_catalog_link(order):
+    from apps.brp.models import BrpPartLink
+
+    part = _part("Карточка детали", "BRP")
+    catalog = BrpCatalogPart.objects.create(
+        material_no="001.5600.000", part_desc="OIL SEAL", is_current=True,
+    )
+    BrpPartLink.objects.create(
+        part=part, brp_part=catalog, usd_rate_used=Decimal("100"),
+        markup_percent_used=Decimal("0"),
+    )
+    _line(
+        order, article="001.5600.000", manufacturer="BRP", name_ru="", name_en="",
+        part_type=part,
+    )
+    _line(
+        order, 2, article="001.5600.000", manufacturer="BRP", name_ru="", name_en="",
+        part_type=part, is_analog=True,
+    )
+
+    book = openpyxl.load_workbook(export_customs_order_xlsx(order))
+    sheet = book["Оригиналы"]
+    assert sheet["B10"].value == "001.5600.000"
+    assert sheet["C10"].value == "САЛЬНИК"
+    assert sheet["D10"].value == "OIL SEAL"
+    assert book["Аналоги"]["C10"].value == "САЛЬНИК"
+    assert book["Аналоги"]["D10"].value == "OIL SEAL"
+
+
+def test_order_export_uses_historical_customs_version_before_current_catalog():
+    from apps.actions.models import PartCustomsDataVersion
+
+    order = CustomsOrder.objects.create(
+        number=127, fx_rate=Decimal("105.0000"), total_quantity=Decimal("1"),
+        total_rub=Decimal("1050.00"),
+    )
+    part = _part("Historical card", "BRP")
+    PartCustomsDataVersion.objects.create(
+        part_type=part, version=1, effective_from=_occurred(1),
+        customs_name_ru="ИСТОРИЧЕСКОЕ ИМЯ", customs_name_ru_confirmed=True,
+        customs_name_en="HISTORICAL NAME",
+    )
+    PartCustomsDataVersion.objects.create(
+        part_type=part, version=2, effective_from=_occurred(20),
+        customs_name_ru="НОВОЕ ИМЯ", customs_name_ru_confirmed=True,
+        customs_name_en="NEW NAME",
+    )
+    BrpCatalogPart.objects.create(material_no="HIST-1", part_desc="CURRENT CATALOG NAME")
+    _line(order, article="HIST-1", manufacturer="BRP", name_ru="", name_en="",
+          part_type=part, occurred_at=_occurred(10))
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert sheet["C10"].value == "ИСТОРИЧЕСКОЕ ИМЯ"
+    assert sheet["D10"].value == "HISTORICAL NAME"
+
+
+def test_order_export_exact_article_fallback_is_manufacturer_qualified(order):
+    from apps.polaris.models import PolarisCatalogPart
+
+    brp_part = _part("BRP card", "BRP")
+    polaris_part = _part("Polaris card", "POLARIS")
+    BrpCatalogPart.objects.create(material_no="001234", part_desc="BRP SEAL")
+    PolarisCatalogPart.objects.create(part_number="001234", part_name="POLARIS GASKET")
+    _line(order, 1, article="001.234", manufacturer="BRP", name_ru="", name_en="",
+          part_type=brp_part)
+    _line(order, 2, article="001.234", manufacturer="POLARIS", name_ru="", name_en="",
+          part_type=polaris_part)
+    _line(order, 3, article="001.234", manufacturer="SPI", name_ru="", name_en="",
+          part_type=brp_part)
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert [sheet[f"B{row}"].value for row in (10, 11, 12)] == [
+        "001.234", "001.234", "001.234",
+    ]
+    assert [sheet[f"D{row}"].value for row in (10, 11, 12)] == [
+        "BRP SEAL", "POLARIS GASKET", None,
+    ]
+
+
+def test_order_export_does_not_guess_between_normalized_catalog_collisions(order):
+    part = _part("Ambiguous BRP card", "BRP")
+    BrpCatalogPart.objects.create(material_no="001234", part_desc="FIRST DESCRIPTION")
+    BrpCatalogPart.objects.create(material_no="00.1234", part_desc="SECOND DESCRIPTION")
+    _line(order, article="00-1234", manufacturer="BRP", name_ru="", name_en="",
+          part_type=part)
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert sheet["B10"].value == "00-1234"
+    assert sheet["D10"].value is None
+
+
+def test_order_export_preserves_existing_names_and_leaves_unknown_names_blank(order):
+    part = _part("Unmapped catalog card", "BRP")
+    BrpCatalogPart.objects.create(material_no="OTHER", part_desc="UNRELATED NAME")
+    _line(order, 1, article="001.234", manufacturer="BRP", name_ru="СНИМОК RU",
+          name_en="", part_type=part)
+    _line(order, 2, article="NO-MATCH", manufacturer="BRP", name_ru="", name_en="",
+          part_type=part)
+
+    book = openpyxl.load_workbook(export_customs_order_xlsx(order))
+    sheet = book["Оригиналы"]
+    assert sheet["C10"].value == "СНИМОК RU"
+    assert sheet["D10"].value is None
+    assert sheet["C11"].value is None
+    assert sheet["D11"].value is None
+    order.refresh_from_db()
+    assert list(order.lines.values_list("name_ru", "name_en")) == [
+        ("СНИМОК RU", ""), ("", ""),
+    ]
+
+
+def test_order_export_name_fallback_queries_are_bounded(order, django_assert_num_queries):
+    from apps.brp.models import BrpPartLink
+
+    for index in range(20):
+        article = f"BATCH-{index:02}"
+        part = _part(f"Batch part {index}", "BRP")
+        catalog = BrpCatalogPart.objects.create(material_no=article, part_desc=f"PART {index}")
+        BrpPartLink.objects.create(
+            part=part, brp_part=catalog, usd_rate_used=Decimal("100"),
+            markup_percent_used=Decimal("0"),
+        )
+        _line(order, index + 1, article=article, manufacturer="BRP", name_ru="", name_en="",
+              part_type=part)
+
+    # Lines, cards, current customs data, historical versions, and the three
+    # catalog families are loaded in batches instead of per-line queries.
+    with django_assert_num_queries(7):
+        book = openpyxl.load_workbook(export_customs_order_xlsx(order))
+    assert len(_article_rows(book["Оригиналы"])) == 20
+
+
+def test_download_fills_names_without_writing_order_or_customs_data(
+    order, client, django_user_model,
+):
+    from apps.actions.models import PartCustomsInfo
+    from apps.brp.models import BrpPartLink
+
+    part = _part("Download card", "BRP")
+    catalog = BrpCatalogPart.objects.create(material_no="DOWNLOAD-1", part_desc="OIL SEAL")
+    BrpPartLink.objects.create(
+        part=part, brp_part=catalog, usd_rate_used=Decimal("100"),
+        markup_percent_used=Decimal("0"),
+    )
+    line = _line(order, article="DOWNLOAD-1", manufacturer="BRP", name_ru="", name_en="",
+                 part_type=part)
+    order.status = CustomsOrder.Status.FINALIZED
+    order.save(update_fields=["status"])
+    client.force_login(django_user_model.objects.create_superuser(
+        username="customs-export", password="test",
+    ))
+    customs_count = PartCustomsInfo.objects.count()
+
+    response = client.get(reverse("customs_order_detail", args=[order.pk]), {"export": "1"})
+
+    assert response.status_code == 200
+    assert response["Content-Disposition"] == 'attachment; filename="customs_order_125.xlsx"'
+    sheet = openpyxl.load_workbook(BytesIO(response.content))["Оригиналы"]
+    assert sheet["C10"].value == "САЛЬНИК"
+    assert sheet["D10"].value == "OIL SEAL"
+    line.refresh_from_db()
+    order.refresh_from_db()
+    assert (line.name_ru, line.name_en) == ("", "")
+    assert PartCustomsInfo.objects.count() == customs_count
+    assert (order.fx_rate, order.total_quantity, order.total_rub) == (
+        Decimal("97.1250"), Decimal("6.500"), Decimal("37498.90"),
+    )
 
 
 def test_order_export_aggregates_identical_snapshots_and_keeps_analog_split(order):
@@ -244,7 +426,7 @@ def test_order_export_always_contains_both_sheets_even_when_one_is_empty(order, 
     assert len(_article_rows(book["Оригиналы"])) == int(classification is False)
     assert len(_article_rows(book["Аналоги"])) == int(classification is True)
     for sheet in book:
-        assert sheet["I150"].value == "=SUM(I7:I149)"
+        assert sheet["I150"].value is None
         assert sheet["B12"].value is None
 
 
@@ -273,6 +455,9 @@ def test_order_export_uses_all_frozen_fields_after_catalog_and_fx_change(
     assert sheet["J10"].value == 2.5
     assert sheet["K10"].value == 10.25
     assert sheet["M10"].value == "КВАДРОЦИКЛ"
+    assert sheet["I10"].value == "=J10*G10"
+    assert sheet["L10"].value == "=K10*J10"
+    assert sheet["I150"].value == "=SUM(I10:I149)"
     order.refresh_from_db()
     assert order.fx_rate == Decimal("97.1250")
     assert order.total_rub == Decimal("37498.90")
@@ -288,7 +473,18 @@ def test_both_sheets_keep_template_headers_dimensions_drawings_and_data_style(or
         for row in template.iter_rows(min_row=1, max_row=9):
             for original in row:
                 cell = sheet[original.coordinate]
-                assert cell.value == original.value
+                expected = original.value
+                if original.column == 9 and 7 <= original.row <= 9:
+                    expected = (
+                        f'=IF(AND(ISNUMBER(J{original.row}),ISNUMBER(G{original.row})),'
+                        f'J{original.row}*G{original.row},"")'
+                    )
+                elif original.column == 12 and 7 <= original.row <= 9:
+                    expected = (
+                        f'=IF(AND(ISNUMBER(K{original.row}),ISNUMBER(J{original.row})),'
+                        f'K{original.row}*J{original.row},"")'
+                    )
+                assert cell.value == expected
                 # This supplier template has no default style. openpyxl
                 # recreates style registries on every load, so object and
                 # style-id equality across workbooks are not meaningful.
@@ -318,7 +514,7 @@ def test_both_sheets_keep_template_headers_dimensions_drawings_and_data_style(or
             assert sheet[f"{column}10"].number_format == "0.00"
         assert sheet["G10"].value is None
         assert sheet["H10"].value is None
-        assert sheet["I10"].value == "=J10*G10"
+        assert sheet["I10"].value is None
         assert sheet["L10"].value == "=K10*J10"
 
 
@@ -329,9 +525,9 @@ def test_large_order_preserves_each_analog_row_and_moves_total_below_data(order)
     sheet = book["Аналоги"]
     assert len(_article_rows(sheet)) == 142
     assert sheet["B151"].value == "SPI-142"
-    assert sheet["I151"].value == "=J151*G151"
+    assert sheet["I151"].value is None
     assert sheet["L151"].value == "=K151*J151"
-    assert sheet["I152"].value == "=SUM(I7:I151)"
+    assert sheet["I152"].value is None
     assert "F152:H152" in sheet.merged_cells
     assert "F150:H150" not in sheet.merged_cells
     assert sheet["H150"].value is None

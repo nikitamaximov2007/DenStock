@@ -2033,10 +2033,10 @@ def export_customs_xlsx(actions=None, *, rows=None, sheet_rows=None) -> BytesIO:
     ниже последней реальной позиции не осталось ложных товарных данных и
     ложных «0,00». Стили, границы, заливка и ширины колонок сохраняются.
 
-    Формулы I (=J*G) и L (=K*J) проставляются только на фактических строках и
-    ссылаются на свою строку. Текстовые поля — в ВЕРХНЕМ регистре через
-    санитайзер. Пустые веса и отсутствующая оптовая цена остаются пустыми:
-    ничего не выдумывается.
+    Формулы строк данных I (=J*G) и L (=K*J) проставляются только на
+    фактических строках. Инструкционные формулы строк 7-9 безопасно остаются
+    пустыми, пока вместо чисел стоят текстовые подсказки. Текстовые поля — в
+    ВЕРХНЕМ регистре через санитайзер. Пустые веса и цены остаются пустыми.
     """
     from copy import deepcopy
 
@@ -2094,6 +2094,18 @@ def export_customs_xlsx(actions=None, *, rows=None, sheet_rows=None) -> BytesIO:
 def _fill_customs_sheet(sheet, rows) -> None:
     """Единый формат данных для обычного экспорта и сохранённых заказов."""
 
+    # Строки 7-9 шаблона показывают инструкции. Их исходные формулы
+    # перемножали слова «ОБЯЗАТЕЛЬНО» на пустые ячейки и выдавали #VALUE!.
+    # Сохраняем их оформление и формульные примеры, но вычисляем только при
+    # наличии двух числовых аргументов.
+    for row in range(7, TEMPLATE_DATA_START_ROW):
+        sheet[f"I{row}"] = (
+            f'=IF(AND(ISNUMBER(J{row}),ISNUMBER(G{row})),J{row}*G{row},"")'
+        )
+        sheet[f"L{row}"] = (
+            f'=IF(AND(ISNUMBER(K{row}),ISNUMBER(J{row})),K{row}*J{row},"")'
+        )
+
     # Раздвинуть шаблон ПЕРЕД строкой итога: ни одна историческая строка не
     # имеет права затереть итог или пропасть за пределами исходных 140 строк.
     capacity = TEMPLATE_DATA_END_ROW - TEMPLATE_DATA_START_ROW + 1
@@ -2146,17 +2158,23 @@ def _fill_customs_sheet(sheet, rows) -> None:
         # so a 12 g part never becomes a fictitious 30 g part in storage.
         sheet[f"G{r}"] = customs_export_weight_kg(row["gross_weight_kg"])
         sheet[f"H{r}"] = customs_export_weight_kg(row["net_weight_kg"])
-        sheet[f"I{r}"] = f"=J{r}*G{r}"  # вес брутто сумма = брутто/шт * количество
+        # Unknown gross weight stays unknown in Excel. A formula over a blank
+        # unit weight would display a misleading numeric zero.
+        sheet[f"I{r}"] = f"=J{r}*G{r}" if row["gross_weight_kg"] is not None else None
         for column in "GHI":
             sheet[f"{column}{r}"].number_format = "0.00"
         sheet[f"J{r}"] = row["quantity"]  # openpyxl пишет Decimal как число
         sheet[f"K{r}"] = row["usd_price"]  # оптовая цена прайса в USD
-        sheet[f"L{r}"] = f"=K{r}*J{r}"
+        sheet[f"L{r}"] = f"=K{r}*J{r}" if row["usd_price"] is not None else None
         sheet[f"M{r}"] = excel_safe_text(row["application_area"])
         _center_data_row(sheet, r)  # включая последнюю строку
         if row.get("provenance") == ORDERED_PROVENANCE:
             _mark_ordered_article(sheet, r)
 
-    # Итог по весу брутто. Диапазон начинается там же, где в самом шаблоне
-    # (строка 7), иначе после раздвижки суммировалась бы часть строк.
-    sheet[f"I{data_end_row + 1}"] = f"=SUM(I7:I{data_end_row})"
+    # Строки 7-9 шаблона содержат инструкции и демонстрационные формулы, а
+    # не позиции заказа. Итог суммирует только товарные строки. Если хотя бы
+    # один вес неизвестен, частичная сумма не должна выглядеть итоговым весом.
+    weights_complete = bool(rows) and all(row["gross_weight_kg"] is not None for row in rows)
+    sheet[f"I{data_end_row + 1}"] = (
+        f"=SUM(I{TEMPLATE_DATA_START_ROW}:I{data_end_row})" if weights_complete else None
+    )

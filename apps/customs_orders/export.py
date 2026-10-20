@@ -61,6 +61,134 @@ def _line_row(line) -> dict:
         }
 
 
+def _normalized_manufacturer(value) -> str:
+    return "".join((value or "").upper().replace("-", "").split())
+
+
+def _catalog_name_map(lines, parts):
+    """Resolve only exact, manufacturer-qualified catalog names in bounded queries."""
+    from apps.brp.models import BrpCatalogPart
+    from apps.catalog.models import normalize_number
+    from apps.catalog_import.models import AftermarketCatalogPart
+    from apps.polaris.models import PolarisCatalogPart
+
+    exact_keys = {
+        (normalize_number(line.article), _normalized_manufacturer(line.manufacturer))
+        for line in lines
+        if line.part_type_id and line.article and line.manufacturer
+    }
+    numbers = {number for number, _manufacturer in exact_keys if number}
+    candidates = defaultdict(list)
+    for row in BrpCatalogPart.objects.filter(material_no_norm__in=numbers, is_current=True):
+        candidates[(row.material_no_norm, "BRP")].append(row.part_desc.strip())
+    for row in PolarisCatalogPart.objects.filter(part_number_norm__in=numbers):
+        candidates[(row.part_number_norm, "POLARIS")].append(row.part_name.strip())
+    for row in AftermarketCatalogPart.objects.filter(
+        normalized_manufacturer_number__in=numbers
+    ).select_related("manufacturer"):
+        candidates[(row.normalized_manufacturer_number,
+                    _normalized_manufacturer(row.manufacturer.name))].append(
+            row.source_description.strip()
+        )
+    # Normalization removes punctuation. If that makes two catalog records
+    # collide for one maker, an unlinked row has no safe catalog identity.
+    by_key = {key: values[0] for key, values in candidates.items() if len(values) == 1}
+
+    result = {}
+    for line in lines:
+        part = parts.get(line.part_type_id)
+        if part is None:
+            continue
+        # A supplier link is the strongest identity. Do not fall through to an
+        # article match if the frozen manufacturer conflicts with that link.
+        linked = None
+        link_brand = ""
+        if hasattr(part, "brp_link"):
+            linked = part.brp_link.brp_part.part_desc
+            link_brand = "BRP"
+        elif hasattr(part, "polaris_link"):
+            linked = part.polaris_link.polaris_part.part_name
+            link_brand = "POLARIS"
+        elif hasattr(part, "aftermarket_catalog_entry"):
+            entry = part.aftermarket_catalog_entry
+            linked = entry.source_description
+            link_brand = _normalized_manufacturer(entry.manufacturer.name)
+        expected_brand = _normalized_manufacturer(line.manufacturer)
+        if linked is not None:
+            if not expected_brand or expected_brand == link_brand:
+                result[line.pk] = linked.strip()
+            continue
+        number = normalize_number(line.article)
+        if number and expected_brand:
+            result[line.pk] = (by_key.get((number, expected_brand)) or "").strip()
+    return result
+
+
+def _fallback_names(lines):
+    """Fill absent name snapshots from the same stable part and trusted sources.
+
+    Existing order snapshots always win. The fallback is read-only and only
+    applies when a historical line has no name; catalog matches use a stable
+    PartType link or exact article plus manufacturer, never a similar title.
+    """
+    from apps.actions.models import PartCustomsDataVersion, PartCustomsInfo
+    from apps.actions.services import MANUAL_CATEGORY_NAME, auto_customs_name_ru
+    from apps.catalog.models import PartType
+
+    missing = [line for line in lines if (not line.name_ru.strip() or not line.name_en.strip())]
+    part_ids = {line.part_type_id for line in missing if line.part_type_id}
+    if not part_ids:
+        return
+
+    parts = {
+        part.pk: part for part in PartType.objects.filter(pk__in=part_ids).select_related(
+            "category", "brp_link__brp_part", "polaris_link__polaris_part",
+            "aftermarket_catalog_entry__manufacturer",
+        )
+    }
+    customs = {
+        item.part_type_id: item
+        for item in PartCustomsInfo.objects.filter(part_type_id__in=part_ids)
+    }
+    versions = {part_id: [] for part_id in part_ids}
+    for version in PartCustomsDataVersion.objects.filter(part_type_id__in=part_ids).order_by(
+        "part_type_id", "effective_from", "version"
+    ):
+        versions[version.part_type_id].append(version)
+    catalog_names = _catalog_name_map(missing, parts)
+
+    for line in missing:
+        part = parts.get(line.part_type_id)
+        if part is None:
+            continue
+        history = versions.get(part.pk, [])
+        at = line.occurred_at
+        effective = [version for version in history if at is None or version.effective_from <= at]
+        version = effective[-1] if effective else (history[0] if history else None)
+        current = customs.get(part.pk)
+
+        english = (
+            (version.customs_name_en.strip() if version else "")
+            or (current.customs_name_en.strip() if current else "")
+            or catalog_names.get(line.pk, "")
+        )
+        russian = (version.customs_name_ru.strip() if version else "")
+        if not russian and current and current.customs_name_ru_confirmed:
+            russian = current.customs_name_ru.strip()
+        if not russian and english:
+            russian = auto_customs_name_ru(english)
+        if not russian and not (
+            hasattr(part, "brp_link") or hasattr(part, "polaris_link")
+            or hasattr(part, "aftermarket_catalog_entry")
+        ) and part.category.name == MANUAL_CATEGORY_NAME:
+            russian = part.name.strip()
+
+        if not line.name_ru.strip() and russian:
+            line.name_ru = russian.upper()
+        if not line.name_en.strip() and english:
+            line.name_en = english.upper()
+
+
 def _aggregate_lines(lines) -> list[dict]:
     """Aggregate identical frozen customs rows without changing their facts.
 
@@ -127,9 +255,11 @@ def _aggregate_lines(lines) -> list[dict]:
 
 
 def export_customs_order_xlsx(order) -> BytesIO:
-    """Create two aggregated sheets using only immutable order snapshots."""
+    """Create frozen order sheets, enriching only missing names at export time."""
     originals, analogs = [], []
-    for row in _aggregate_lines(order.lines.all()):
+    lines = list(order.lines.all())
+    _fallback_names(lines)
+    for row in _aggregate_lines(lines):
         (analogs if row.pop("is_analog", False) else originals).append(row)
     for section in (originals, analogs):
         section.sort(key=lambda row: row["_chronological_key"])
