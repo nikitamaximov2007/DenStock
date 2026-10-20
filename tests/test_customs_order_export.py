@@ -128,6 +128,45 @@ def test_order_export_uses_historical_customs_version_before_current_catalog():
     assert sheet["D10"].value == "HISTORICAL NAME"
 
 
+def test_order_export_does_not_use_a_future_customs_version():
+    from apps.actions.models import PartCustomsDataVersion
+
+    order = CustomsOrder.objects.create(
+        number=128, fx_rate=Decimal("105.0000"), total_quantity=Decimal("1"),
+        total_rub=Decimal("1050.00"),
+    )
+    part = _part("Historical card without a past version", "BRP")
+    PartCustomsDataVersion.objects.create(
+        part_type=part, version=1, effective_from=_occurred(20),
+        customs_name_ru="БУДУЩЕЕ ИМЯ", customs_name_ru_confirmed=True,
+        customs_name_en="FUTURE NAME",
+    )
+    _line(order, article="NO-SOURCE", manufacturer="BRP", name_ru="", name_en="",
+          part_type=part, occurred_at=_occurred(10))
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert sheet["C10"].value is None
+    assert sheet["D10"].value is None
+
+
+def test_order_export_does_not_apply_a_relinked_catalog_name_to_old_article(order):
+    from apps.brp.models import BrpPartLink
+
+    part = _part("Original catalog card", "BRP")
+    catalog = BrpCatalogPart.objects.create(material_no="NEW-ARTICLE", part_desc="NEW NAME")
+    BrpPartLink.objects.create(
+        part=part, brp_part=catalog, usd_rate_used=Decimal("100"),
+        markup_percent_used=Decimal("0"),
+    )
+    _line(order, article="OLD-ARTICLE", manufacturer="BRP", name_ru="", name_en="",
+          part_type=part)
+
+    sheet = openpyxl.load_workbook(export_customs_order_xlsx(order))["Оригиналы"]
+    assert sheet["B10"].value == "OLD-ARTICLE"
+    assert sheet["C10"].value is None
+    assert sheet["D10"].value is None
+
+
 def test_order_export_exact_article_fallback_is_manufacturer_qualified(order):
     from apps.polaris.models import PolarisCatalogPart
 

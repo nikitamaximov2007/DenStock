@@ -102,20 +102,26 @@ def _catalog_name_map(lines, parts):
         # A supplier link is the strongest identity. Do not fall through to an
         # article match if the frozen manufacturer conflicts with that link.
         linked = None
+        linked_number = ""
         link_brand = ""
         if hasattr(part, "brp_link"):
             linked = part.brp_link.brp_part.part_desc
+            linked_number = part.brp_link.brp_part.material_no
             link_brand = "BRP"
         elif hasattr(part, "polaris_link"):
             linked = part.polaris_link.polaris_part.part_name
+            linked_number = part.polaris_link.polaris_part.part_number
             link_brand = "POLARIS"
         elif hasattr(part, "aftermarket_catalog_entry"):
             entry = part.aftermarket_catalog_entry
             linked = entry.source_description
+            linked_number = entry.manufacturer_number
             link_brand = _normalized_manufacturer(entry.manufacturer.name)
         expected_brand = _normalized_manufacturer(line.manufacturer)
         if linked is not None:
-            if not expected_brand or expected_brand == link_brand:
+            if (not expected_brand or expected_brand == link_brand) and (
+                normalize_number(linked_number) == normalize_number(line.article)
+            ):
                 result[line.pk] = linked.strip()
             continue
         number = normalize_number(line.article)
@@ -164,7 +170,7 @@ def _fallback_names(lines):
         history = versions.get(part.pk, [])
         at = line.occurred_at
         effective = [version for version in history if at is None or version.effective_from <= at]
-        version = effective[-1] if effective else (history[0] if history else None)
+        version = effective[-1] if effective else None
         current = customs.get(part.pk)
 
         english = (
