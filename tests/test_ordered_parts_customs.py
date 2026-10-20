@@ -211,9 +211,11 @@ def test_green_marking_does_not_break_formulas_or_the_totals_row(env):
 
     sheet = _sheet(export_customs_xlsx(rows=customs_export_rows()))
 
-    assert sheet[f"I{DATA_ROW}"].value == f"=J{DATA_ROW}*G{DATA_ROW}"
-    assert sheet[f"L{DATA_ROW}"].value == f"=K{DATA_ROW}*J{DATA_ROW}"
-    assert sheet["I150"].value == "=SUM(I7:I149)"
+    # This source has no recorded gross weight; leave the computed weight
+    # blank rather than presenting zero as a known value.
+    assert sheet[f"I{DATA_ROW}"].value is None
+    assert sheet[f"L{DATA_ROW}"].value is None
+    assert sheet["I150"].value is None
     assert sheet[f"B{DATA_ROW}"].border is not None
 
 
