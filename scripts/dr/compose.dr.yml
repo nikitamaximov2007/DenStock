@@ -1,0 +1,103 @@
+# Isolated replacement-server stack for disaster recovery and recovery drills.
+#
+# Never used by production. Started only by scripts/dr/offline_restore.sh with a
+# project name that starts with "dr-". The application network is INTERNAL (no
+# route out): web and catalog-web cannot reach Telegram, MAX, AI or any other
+# service; only the proxy joins a second bridge to publish 127.0.0.1:$DR_PORT.
+# Bots, backup timers and webhooks are not part of this stack at all.
+name: ${DR_PROJECT:?DR_PROJECT is required}
+
+services:
+  db:
+    image: postgres:16
+    env_file: ${DR_ENV_DIR:?}/db.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  web:
+    build:
+      context: ${DR_SOURCE:?}
+      dockerfile: docker/Dockerfile
+    image: ${DR_PROJECT}-app:local
+    env_file: ${DR_ENV_DIR}/web.env
+    environment:
+      # Safety overrides win over whatever the restored env file carries.
+      DENSTOCK_INSTANCE_ID: ${DR_PROJECT}
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1,web,proxy"
+      DJANGO_CSRF_TRUSTED_ORIGINS: "http://127.0.0.1:${DR_PORT},http://localhost:${DR_PORT}"
+      DJANGO_SECURE_COOKIES: "false"
+      DJANGO_SUPERUSER_USERNAME: ""
+      DJANGO_SUPERUSER_PASSWORD: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_INTERNAL_BASE_URL: ""
+      MAX_BOT_TOKEN: ""
+      MAX_WEBHOOK_ENABLED: "false"
+      MAX_WEBHOOK_SECRET: ""
+      AI_SUPPORT_ENABLED: "false"
+      AI_SUPPORT_PROVIDER: disabled
+      DENSTOCK_MANIFEST_SIGNING_KEY_PATH: ""
+      DENSTOCK_ENABLE_WEB_RESTORE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - media:/app/mediafiles
+      - private_media:/app/private_media
+      - backups:/app/backups
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  catalog-web:
+    image: ${DR_PROJECT}-app:local
+    entrypoint: ["/public-entrypoint.sh"]
+    command: ["gunicorn", "config.wsgi:application", "--bind=0.0.0.0:8000",
+              "--worker-class=gthread", "--workers=2", "--threads=2", "--timeout=60"]
+    env_file: ${DR_ENV_DIR}/public.env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.public
+      DJANGO_PUBLIC_ALLOWED_HOSTS: "catalog.localhost,localhost,127.0.0.1"
+      PUBLIC_CATALOG_INDEXING: "false"
+      MAX_BOT_TOKEN: ""
+      MAX_WEBHOOK_SECRET: ""
+    depends_on:
+      web:
+        condition: service_healthy
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  proxy:
+    image: caddy:2
+    depends_on:
+      - web
+      - catalog-web
+    ports:
+      - "127.0.0.1:${DR_PORT:?}:80"
+    volumes:
+      - ${DR_TOOL_DIR:?}/Caddyfile.dr:/etc/caddy/Caddyfile:ro
+      - media:/srv/media:ro
+    networks: [backend, edge]
+
+volumes:
+  pgdata:
+  media:
+  private_media:
+  backups:
+
+networks:
+  backend:
+    internal: true
+  edge: {}

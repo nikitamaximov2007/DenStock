@@ -1,0 +1,12 @@
+# Public configuration example. Copy to /etc/denstock/github-backup.env on the
+# VPS only after production installation is separately approved.
+GHB_REPO=nikitamaximov2007/datamax
+GHB_FORBIDDEN_REPOS=nikitamaximov2007/DenStock
+GHB_TOKEN_FILE=/etc/denstock/github-backup.token
+GHB_RECIPIENT_FILE=/etc/denstock/github-backup-recipient.txt
+GHB_MANIFEST_PUBKEY=/etc/denstock/manifest-signing/production-ed25519.pub
+BACKUP_ROOT=/opt/denstock/backups
+GHB_BUDGET_BYTES=1073741824
+GHB_WATERMARK_BYTES=891289600
+GHB_MIN_KEEP=2
+GHB_RESERVE_FACTOR=1.1

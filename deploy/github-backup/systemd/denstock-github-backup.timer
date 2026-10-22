@@ -1,0 +1,10 @@
+[Unit]
+Description=DenisStock: daily GitHub Releases backup copy (after the 03:00 backup)
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 Europe/Moscow
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

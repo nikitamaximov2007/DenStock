@@ -1,0 +1,9 @@
+# Runs only when denstock-github-backup.service fails. The job itself already
+# wrote the reason to github_backup_status.json and, if GHB_NOTIFY_SCRIPT is set,
+# delivered it (message on stdin). This unit leaves a clear journal record.
+[Unit]
+Description=DenisStock: GitHub backup copy failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -t denstock-github-backup -p user.err "GitHub backup copy FAILED: see /opt/denstock/backups/github_backup_status.json"
