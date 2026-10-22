@@ -25,9 +25,9 @@
 сверку неисполнимой. Ни одной строки Excel они и раньше не давали - только
 блокировали выгрузку.
 
-Артикул по-прежнему доказывается снимком сканера и ничем другим: сегодняшний
-номер карточки историей не является. Но недоказанный артикул больше не
-уничтожает строку - ячейка остаётся пустой, а сама операция уходит в Excel.
+Артикул доказывается снимком сканера или снимком строки связанной клиентской
+заявки для продажи без сканера. Сегодняшний номер карточки историей не является.
+Недоказанный артикул не уничтожает строку - ячейка остаётся пустой.
 """
 import datetime
 from decimal import Decimal
@@ -38,6 +38,7 @@ from apps.actions.customs_provenance import (
     ARTICLE_MISSING,
     ARTICLE_PROVEN,
     article_numbers_by_document,
+    request_article_snapshots,
 )
 from apps.actions.models import PartCustomsDataVersion, WarehouseAction
 from apps.catalog.models import PartAnalog, PartNumber, PartType
@@ -296,6 +297,7 @@ def canonical_customs_lines(
         .prefetch_related("numbers")
     }
     numbers = article_numbers_by_document(sale_ids, repair_ids)
+    request_numbers = request_article_snapshots(sale_ids)
 
     analog_part_ids = set(PartAnalog.objects.values_list("analog_id", flat=True))
     original_part_ids = set(PartAnalog.objects.values_list("original_id", flat=True))
@@ -306,6 +308,7 @@ def canonical_customs_lines(
             kind=SALE, document_id=line.sale_id, document_number=line.sale.number,
             customer=line.sale.customer_name, line=line, parts=parts,
             versions_by_part=versions_by_part, numbers=numbers,
+            request_numbers=request_numbers,
             occurred_at=line.sale.sold_at, issued=line.quantity,
             returned=sale_returned.get(line.pk) or DEC0, remaining=remaining,
             amount=money(line.unit_price * remaining), amount_known=True,
@@ -325,6 +328,7 @@ def canonical_customs_lines(
             document_number=line.repair_order.number,
             customer=line.repair_order.customer_name, line=line, parts=parts,
             versions_by_part=versions_by_part, numbers=numbers,
+            request_numbers=request_numbers,
             occurred_at=line.repair_order.completed_at, issued=line.quantity,
             returned=repair_returned.get(line.pk) or DEC0, remaining=remaining,
             amount=amounts[line.pk] if known else None, amount_known=known,
@@ -379,11 +383,16 @@ def _repair_line_amounts(repair_lines):
 
 def _record(
     *, kind, document_id, document_number, customer, line, parts, versions_by_part,
-    numbers, occurred_at, issued, returned, remaining, amount, amount_known,
+    numbers, request_numbers, occurred_at, issued, returned, remaining, amount, amount_known,
 ):
     proven = numbers.get((kind, document_id, line.part_type_id), set())
     if len(proven) == 1:
         number, article_status = next(iter(proven)), ARTICLE_PROVEN
+    elif not proven and kind == SALE and len(
+        request_numbers.get((document_id, line.part_type_id), set())
+    ) == 1:
+        number = next(iter(request_numbers[(document_id, line.part_type_id)]))
+        article_status = ARTICLE_PROVEN
     else:
         # Ни одного снимка или сразу несколько - доказать нечего. Номер
         # остаётся пустым, но операция из выгрузки не исчезает.

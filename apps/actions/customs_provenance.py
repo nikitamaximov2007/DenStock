@@ -19,6 +19,11 @@
 исчезает: реальная продажа или ремонт обязаны попасть в Excel, и оператор
 дозаполнит артикул вручную. Выдуманный номер в декларации хуже пустой клетки,
 а потерянная строка хуже обоих.
+
+У продажи по клиентской заявке нет сканерного действия, но есть сохранённая
+строка заявки с точной ссылкой на PartType. Её артикул допускается только при
+однозначной связке sale + PartType и отсутствии противоречащего сканерного
+снимка. Снимок заявки не ищется по названию или текущему номеру карточки.
 """
 from apps.actions.models import WarehouseAction
 from apps.inventory.models import StockMovement
@@ -214,4 +219,25 @@ def article_numbers_by_document(sale_ids, repair_ids) -> dict[tuple, set[str]]:
         if row["repair_order_id"]:
             key = ("repair", row["repair_order_id"], row["part_type_id"])
             numbers.setdefault(key, set()).add(row["part_number"])
+    return numbers
+
+
+def request_article_snapshots(sale_ids) -> dict[tuple[int, int], set[str]]:
+    """Article saved with a request, keyed by its linked sale and exact PartType.
+
+    A request sale has no scanner action. Its immutable request line is the
+    historical article evidence; the current catalog number is not.
+    """
+    from apps.customer_requests.models import CustomerRequestLine
+
+    numbers: dict[tuple[int, int], set[str]] = {}
+    rows = CustomerRequestLine.objects.filter(
+        request__sale_id__in=sale_ids, is_supply_inquiry=False
+    ).exclude(article="").values("request__sale_id", "part_type_id", "article")
+    for row in rows:
+        article = row["article"].strip()
+        if not article:
+            continue
+        key = (row["request__sale_id"], row["part_type_id"])
+        numbers.setdefault(key, set()).add(article)
     return numbers
