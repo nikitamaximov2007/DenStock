@@ -50,7 +50,7 @@ services:
       - private_media:/app/private_media # приватные скриншоты ИИ; не подключать к proxy
       - ./backups:/app/backups         # бэкапы видны на хосте (Слой 25)
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
+      test: ["CMD", "python", "/app/docker/http_healthcheck.py"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -98,7 +98,7 @@ services:
     expose:
       - "8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz/').status==200 else 1)\""]
+      test: ["CMD", "python", "/app/docker/http_healthcheck.py"]
       interval: 15s
       timeout: 5s
       retries: 10
