@@ -1,7 +1,6 @@
 (function () {
   const root = document.querySelector('[data-workspace-realtime]');
   if (!window.fetch) return;
-  let cursor = Number(root.dataset.cursor || 0);
   let composing = false;
   let audioReady = false;
   let sounds = localStorage.getItem('denstock-request-sounds') !== 'off';
@@ -31,6 +30,7 @@
   document.addEventListener('keypress', submitOnEnter, true);
   document.addEventListener('keyup', submitOnEnter, true);
   if (!root) return;
+  let cursor = Number(root.dataset.cursor || 0);
   const composer = document.querySelector('[data-reply-form] textarea[name="text"]');
   const fileInput = document.querySelector('[data-attachment-input]');
   const fileName = document.querySelector('[data-attachment-name]');

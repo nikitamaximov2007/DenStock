@@ -151,3 +151,79 @@ test("delegated handler includes rows added after initialization", () => {
   assert.equal(ui.press(second.fields.application_area, "ArrowRight").defaultPrevented, true);
   assert.equal(ui.document.activeElement, second.fields.quantity);
 });
+
+test("customer search initializes only containers, including multiple cart panels", async () => {
+  const roots = ["sale", "reserve"].map((kind) => {
+    const handlers = {};
+    const input = {
+      dataset: { customerFilter: `customer-select-${kind}`, customerSearchUrl: "/customer-search/" },
+      value: "",
+      addEventListener(name, handler) { handlers[name] = handler; },
+      setAttribute() {},
+      removeAttribute() {},
+    };
+    const list = {
+      id: `customer-results-${kind}`,
+      hidden: true,
+      children: [],
+      replaceChildren() { this.children = []; },
+      append(item) { this.children.push(item); },
+    };
+    const root = {
+      querySelector(selector) { return selector === "[data-customer-filter]" ? input : list; },
+      contains(target) { return target === input; },
+    };
+    return { root, input, list, handlers };
+  });
+  const optionWithSameAttribute = { dataset: { customerSearch: "test" } };
+  const pending = [];
+  let searchResponse = async () => ({ ok: true, json: async () => ({ results: [{ id: 1, label: "Тестовый клиент" }] }) });
+  const document = {
+    activeElement: null,
+    addEventListener() {},
+    querySelectorAll(selector) {
+      const containers = roots.map(({ root }) => root);
+      if (selector === ".customer-search[data-customer-search]") return containers;
+      if (selector === "[data-customer-search]") return [...containers, optionWithSameAttribute];
+      throw new Error(`unexpected selector: ${selector}`);
+    },
+    getElementById(id) { return { id, options: [] }; },
+    createElement() {
+      return {
+        setAttribute() {},
+        addEventListener() {},
+      };
+    },
+  };
+  const window = { location: { href: "http://localhost:8002/inventory/actions/" } };
+  vm.runInNewContext(script, {
+    document, window, URL, AbortController,
+    setTimeout(callback) { pending.push(callback); return pending.length; },
+    clearTimeout() {},
+    fetch: (url) => searchResponse(url),
+  });
+  for (const item of roots) {
+    item.input.value = "Тест";
+    document.activeElement = item.input;
+    item.handlers.input();
+    await pending.shift()();
+    assert.equal(item.list.hidden, false);
+    assert.equal(item.list.children[0].textContent, "Тестовый клиент");
+  }
+
+  let resolveOld;
+  searchResponse = (url) => url.searchParams.get("q") === "Старый"
+    ? new Promise((resolve) => { resolveOld = resolve; })
+    : Promise.resolve({ ok: true, json: async () => ({ results: [{ id: 2, label: "Новый клиент" }] }) });
+  const item = roots[0];
+  document.activeElement = item.input;
+  item.input.value = "Старый";
+  item.handlers.input();
+  const oldRequest = pending.shift()();
+  item.input.value = "Новый";
+  item.handlers.input();
+  await pending.shift()();
+  resolveOld({ ok: true, json: async () => ({ results: [{ id: 3, label: "Устаревший ответ" }] }) });
+  await oldRequest;
+  assert.equal(item.list.children[0].textContent, "Новый клиент");
+});

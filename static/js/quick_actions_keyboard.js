@@ -46,7 +46,7 @@
     }
   });
 
-  document.querySelectorAll("[data-customer-search]").forEach(function (root) {
+  document.querySelectorAll(".customer-search[data-customer-search]").forEach(function (root) {
     var input = root.querySelector("[data-customer-filter]");
     var select = document.getElementById(input.dataset.customerFilter);
     var list = root.querySelector('[role="listbox"]');
