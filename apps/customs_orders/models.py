@@ -70,6 +70,27 @@ class CustomsOrder(FrozenSnapshot):
         return models.Model.save(self, *args, **kwargs)
 
 
+class CustomsOrderNumberChange(models.Model):
+    """Audit of the only permitted correction to a saved customs order."""
+
+    order = models.ForeignKey(
+        CustomsOrder, on_delete=models.PROTECT, related_name="number_changes"
+    )
+    old_number = models.PositiveIntegerField("Прежний номер")
+    new_number = models.PositiveIntegerField("Новый номер")
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+",
+    )
+    changed_at = models.DateTimeField("Изменено", auto_now_add=True)
+
+    class Meta:
+        ordering = ["-changed_at", "-pk"]
+
+    def __str__(self):
+        return f"Заказ {self.order_id}: №{self.old_number} → №{self.new_number}"
+
+
 class CustomsOrderLine(FrozenSnapshot):
     class Source(models.TextChoices):
         SALE = "sale", "Продажа"
