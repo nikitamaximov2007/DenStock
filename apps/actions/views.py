@@ -23,7 +23,7 @@ from apps.catalog.models import PartType
 from apps.core.part_lookup import resolve_part_lookup
 from apps.core.templatetags.number_format import money_int, quantity_int
 from apps.customers.models import Customer
-from apps.customers.services import customers_by_recent_activity
+from apps.customers.services import customers_by_recent_activity, search_customers
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
@@ -202,11 +202,14 @@ def actions_scan(request):
     if selected_action_kind not in {value for value, _label in allowed_actions}:
         selected_action_kind = ""
     cart_panels = _cart_panels(request)
-    customers = list(customers_by_recent_activity(limit=500))
+    customers = list(customers_by_recent_activity(limit=50))
     # Клиент, сохранённый в черновике, должен остаться выбранным, даже если он
     # не попал в список недавних.
     listed = {customer.pk for customer in customers}
     saved = {int(panel["customer_id"]) for panel in cart_panels if panel["customer_id"]}
+    selected_id = request.GET.get("customer_id", "")
+    if selected_id.isdigit():
+        saved.add(int(selected_id))
     customers += list(Customer.objects.filter(pk__in=saved - listed).order_by("name"))
     # Только что созданный клиент (?customer_id=) важнее сохранённого: скрипт
     # страницы сразу сохранит этот выбор в черновик.
@@ -250,6 +253,30 @@ def actions_scan(request):
             ctx["can_manage_images"] = request.user.can_manage_images
             ctx["request_token"] = secrets.token_urlsafe(32)
     return render(request, "actions/scan.html", ctx)
+
+
+@login_required
+def actions_customer_search(request):
+    """Bounded customer suggestions for Quick Actions; selection remains explicit."""
+    _require_access(request)
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    query = " ".join((request.GET.get("q") or "").split())[:100]
+    if not query:
+        return JsonResponse({"results": []})
+    customers = search_customers(query, limit=20)
+    return JsonResponse({
+        "results": [
+            {
+                "id": customer.pk,
+                "label": (
+                    f"{customer.name} · {customer.phone}"
+                    if customer.phone else f"{customer.name} · №{customer.pk}"
+                ),
+            }
+            for customer in customers
+        ],
+    })
 
 
 @login_required

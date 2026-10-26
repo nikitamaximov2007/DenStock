@@ -53,7 +53,9 @@ def search_customers(query: str, *, limit: int = SEARCH_LIMIT):
     queryset = Customer.objects.all()
     if not query:
         return queryset[:limit]
-    condition = Q(name__icontains=query)
+    # Короткий фрагмент сохранённого номера раньше находился в Quick Actions
+    # браузером. Оставляем этот путь наряду с нормализованным поиском.
+    condition = Q(name__icontains=query) | Q(phone__icontains=query)
     if looks_like_phone(query):
         normalized = normalize_phone(query)
         if normalized:

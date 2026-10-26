@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load l10n %}
+{% load l10n static %}
 {% block title %}Действия со склада · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
@@ -89,7 +89,7 @@
           </thead>
           <tbody>
             {% for item in panel.rows %}
-              <tr>
+              <tr data-cart-nav-row>
                 <td>{{ item.row.part.name }}</td>
                 <td>
                   {% if item.identity.exact_number %}
@@ -108,6 +108,7 @@
                          inputmode="decimal"
                          size="5"
                          data-autosave-group="customs"
+                         data-cart-nav="gross_weight_kg"
                          data-part-id="{{ item.row.part.pk }}"
                          {% if item.customs.rejected.gross_weight_kg %}value="{{ item.customs.rejected.gross_weight_kg.raw }}" aria-invalid="true"{% else %}value="{{ item.customs.gross_weight_kg|default_if_none:''|unlocalize }}"{% endif %}
                          aria-label="Вес брутто, кг">
@@ -120,6 +121,7 @@
                          inputmode="decimal"
                          size="5"
                          data-autosave-group="customs"
+                         data-cart-nav="net_weight_kg"
                          data-part-id="{{ item.row.part.pk }}"
                          {% if item.customs.rejected.net_weight_kg %}value="{{ item.customs.rejected.net_weight_kg.raw }}" aria-invalid="true"{% else %}value="{{ item.customs.net_weight_kg|default_if_none:''|unlocalize }}"{% endif %}
                          aria-label="Вес нетто, кг">
@@ -129,6 +131,7 @@
                   <select form="cart-row-{{ item.row.part.pk }}-{{ item.row.location.pk }}"
                           name="application_area"
                           data-autosave-group="customs"
+                          data-cart-nav="application_area"
                           data-part-id="{{ item.row.part.pk }}"
                           aria-label="Область применения">
                     <option value=""
@@ -155,6 +158,7 @@
                            inputmode="decimal"
                            size="4"
                            data-autosave-group="quantity"
+                           data-cart-nav="quantity"
                            data-row-key="{{ item.row.key }}"
                            {% if item.quantity_rejected %}value="{{ item.quantity_rejected.raw }}" aria-invalid="true"{% else %}value="{{ item.row.quantity|quantity_int }}"{% endif %}
                            aria-label="Количество">
@@ -226,15 +230,25 @@
           <input type="hidden" name="kind" value="{{ panel.kind }}">
           <input type="hidden" name="q" value="{{ q }}">
           <input type="hidden" name="request_token" value="{{ cart_token }}">
-          <p>
+          <div class="customer-search" data-customer-search>
             <label for="customer-filter-{{ panel.kind }}">Найти клиента</label>
             <br>
             <input id="customer-filter-{{ panel.kind }}"
                    type="search"
                    placeholder="Имя или телефон"
                    data-customer-filter="customer-select-{{ panel.kind }}"
+                   data-customer-search-url="{% url 'actions_customer_search' %}"
+                   role="combobox"
+                   aria-autocomplete="list"
+                   aria-controls="customer-results-{{ panel.kind }}"
+                   aria-expanded="false"
+                   autocomplete="off"
                    style="min-width: 280px">
-          </p>
+            <div id="customer-results-{{ panel.kind }}"
+                 class="customer-search__results"
+                 role="listbox"
+                 hidden></div>
+          </div>
           <p>
             <label for="customer-select-{{ panel.kind }}">Клиент</label>
             <br>
@@ -457,16 +471,5 @@
   {% else %}
     {% include "partials/_empty_state.html" with icon="scan" title="Отсканируйте деталь" text="Поставьте курсор в поле сканера и отсканируйте номер. Система покажет остатки по ячейкам." compact=1 %}
   {% endif %}
-  <script>
-    document.querySelectorAll('[data-customer-filter]').forEach((input) => {
-      const select = document.getElementById(input.dataset.customerFilter);
-      input.addEventListener('input', () => {
-        const term = input.value.trim().toLowerCase();
-        Array.from(select.options).forEach((option, index) => {
-          if (!index) return;
-          option.hidden = Boolean(term) && !option.dataset.customerSearch.includes(term);
-        });
-      });
-    });
-  </script>
+  <script defer src="{% static 'js/quick_actions_keyboard.js' %}"></script>
 {% endblock %}
