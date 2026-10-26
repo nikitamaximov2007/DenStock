@@ -7,12 +7,23 @@
   document.addEventListener("keydown", function (event) {
     if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     var input = event.target.closest && event.target.closest("[data-cart-nav]");
-    if (!input || input.tagName === "SELECT") return; // Стрелки select выбирают вариант.
+    if (!input) return;
     var row = input.closest("[data-cart-nav-row]");
     if (!row) return;
     var index = fields.indexOf(input.dataset.cartNav);
     var target = null;
-    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+    if (input.tagName === "SELECT") {
+      // Закрытый select: горизонтальные стрелки только переводят фокус.
+      // Открытый picker и все остальные клавиши оставляем браузеру.
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      try {
+        if (input.matches(":open")) return;
+      } catch (error) {
+        return; // Старый браузер без :open: не рискуем менять выбор в picker.
+      }
+      var neighbor = event.key === "ArrowRight" ? fields[index + 1] : fields[index - 1];
+      target = row.querySelector('[data-cart-nav="' + neighbor + '"]');
+    } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       // Пока курсор движется внутри текста, оставляем обычное редактирование.
       if (input.selectionStart !== input.selectionEnd) return;
       if (event.key === "ArrowRight" && input.selectionEnd === input.value.length) {
