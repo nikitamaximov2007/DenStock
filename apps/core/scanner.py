@@ -14,7 +14,8 @@ endpoint, не сервис), без действий (приёмка/перем
   5. заводской штрихкод (PartBarcode.value, глобально уникален)
   6. серийный номер (PartItem.serial_number, уникален в пределах вида → может быть
      несколько между видами → ambiguous)
-  7. OEM/артикул (PartNumber.normalized_value, не уникален → ambiguous)
+  7. OEM/артикул, затем внутренний справочный номер (PartNumber.normalized_value,
+     не уникален → ambiguous; совпадение у разных карточек → ambiguous)
   8. иначе — unknown
 """
 from dataclasses import dataclass, field
