@@ -2,7 +2,17 @@
 {% block title %}{{ order.get_order_type_display }} - заказ №{{ order.number }} · DenisStock{% endblock %}
 {% block content %}
   <div class="page-header">
-    <h1 class="page-title">{{ order.get_order_type_display }} - заказ №{{ order.number }}</h1>
+    <div class="customs-order-heading">
+      <h1 class="page-title">{{ order.get_order_type_display }} - заказ №{{ order.number }}</h1>
+      {% if can_change_number and not number_edit_open %}
+        <form method="get" class="inline-form">
+          <button class="btn btn--small btn--secondary"
+                  type="submit"
+                  name="edit_number"
+                  value="1">Изменить номер</button>
+        </form>
+      {% endif %}
+    </div>
     <div class="page-actions">
       <a class="btn btn--small btn--secondary"
          href="{% url 'customs_orders_list' %}">Все заказы</a>
@@ -21,6 +31,30 @@
       {% endif %}
     </div>
   </div>
+  {% if number_edit_open %}
+    <form method="post"
+          action="{% url 'customs_order_number' order.pk %}"
+          class="card customs-order-number-form">
+      {% csrf_token %}
+      <div class="card__body">
+        <label class="field__label field__label--required" for="customs-edit-number">Новый номер заказа</label>
+        <input id="customs-edit-number"
+               name="number"
+               type="text"
+               inputmode="numeric"
+               value="{{ number_input }}"
+               required
+               aria-invalid="{% if number_error %}true{% else %}false{% endif %}"
+               {% if number_error %}aria-describedby="customs-number-error"{% endif %}>
+        {% if number_error %}<p id="customs-number-error" class="field__error" role="alert">{{ number_error }}</p>{% endif %}
+        <div class="form-actions">
+          <button class="btn btn--small btn--primary" type="submit">Сохранить</button>
+          <a class="btn btn--small btn--secondary"
+             href="{% url 'customs_order_detail' order.pk %}">Отмена</a>
+        </div>
+      </div>
+    </form>
+  {% endif %}
   <p>Создан: {{ order.created_at|ru_dt }} · Кто создал: {{ order.created_by|default:"·" }}</p>
   <p>Курс USD/RUB: {{ order.fx_rate }} · Количество: {{ order.total_quantity|quantity_int }} · Сумма: {{ order.total_rub }} ₽</p>
   <p class="page-subtitle">Статус: {{ order.get_status_display }}. {% if order.status == "draft" %}Таможенные данные будут обновлены при фиксации.{% else %}Состав, цена и таможенные данные зафиксированы.{% endif %}</p>
@@ -52,4 +86,14 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if number_changes %}
+    <details class="customs-order-number-history">
+      <summary>История изменения номера</summary>
+      <ul>
+        {% for change in number_changes %}
+          <li>№{{ change.old_number }} → №{{ change.new_number }} · {{ change.changed_at|ru_dt }} · {{ change.changed_by|default:"Пользователь удалён" }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
 {% endblock %}

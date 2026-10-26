@@ -412,6 +412,13 @@ select:focus-visible, textarea:focus-visible {
 .page-header { display: flex; align-items: center; justify-content: space-between;
   gap: 12px; flex-wrap: wrap; margin: 0 0 16px; }
 .page-header__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.customs-order-heading { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.customs-order-heading .page-title { margin-bottom: 0; }
+.customs-order-heading .inline-form { margin-left: 0; }
+.customs-order-number-form { max-width: 360px; }
+.customs-order-number-form input { width: 100%; }
+.customs-order-number-form .form-actions { margin-top: 12px; }
+.customs-order-number-history { margin-top: 16px; }
 
 /* --- Статус-pill (готовим классы; шаблоны подключат позже) --- */
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px;

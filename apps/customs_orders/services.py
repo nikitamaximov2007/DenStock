@@ -4,6 +4,7 @@ import json
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.core import signing
+from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -11,7 +12,7 @@ from django.utils import timezone
 from apps.catalog.services import get_current_price_settings
 from apps.warehouse.models import ValuationSettings
 
-from .models import CustomsOrder, CustomsOrderLine
+from .models import CustomsOrder, CustomsOrderLine, CustomsOrderNumberChange
 
 CHANGED = "Состав изменился. Обновите список и повторите."
 TOKEN_SALT = "customs-orders.selection.v1"
@@ -25,6 +26,58 @@ SNAPSHOT_FIELDS = (
 
 class CustomsOrderError(ValueError):
     pass
+
+
+def _order_number(value):
+    if isinstance(value, bool):
+        raise CustomsOrderError("Номер заказа должен быть положительным целым числом.")
+    if isinstance(value, str):
+        value = value.strip()
+        if not value.isascii() or not value.isdecimal():
+            raise CustomsOrderError("Номер заказа должен быть положительным целым числом.")
+    elif not isinstance(value, int):
+        raise CustomsOrderError("Номер заказа должен быть положительным целым числом.")
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise CustomsOrderError("Номер заказа должен быть положительным целым числом.") from exc
+    if not 0 < number <= 2147483647:
+        raise CustomsOrderError(
+            "Номер заказа должен быть положительным целым числом до 2147483647."
+        )
+    return number
+
+
+def rename_customs_order_number(*, order_id, number, by):
+    """Correct only the visible number, with a durable audit in the same transaction."""
+    if not (by and by.is_authenticated and by.can_edit and by.can_view_purchase_cost):
+        raise PermissionDenied
+    number = _order_number(number)
+    order = None
+    try:
+        with transaction.atomic():
+            order = CustomsOrder.objects.select_for_update().get(pk=order_id)
+            if order.number == number:
+                return order
+            if CustomsOrder.objects.filter(
+                order_type=order.order_type, number=number
+            ).exclude(pk=order.pk).exists():
+                raise CustomsOrderError("Заказ с таким номером уже существует.")
+            # Finalized snapshots reject model.save(). This targeted update is
+            # deliberately limited to the display number, never to the PK or snapshots.
+            CustomsOrder.objects.filter(pk=order.pk).update(number=number)
+            CustomsOrderNumberChange.objects.create(
+                order=order, old_number=order.number, new_number=number, changed_by=by,
+            )
+            order.number = number
+            return order
+    except IntegrityError as exc:
+        # The unique (order_type, number) constraint also catches concurrent renames.
+        if order is not None and CustomsOrder.objects.filter(
+            order_type=order.order_type, number=number
+        ).exclude(pk=order_id).exists():
+            raise CustomsOrderError("Заказ с таким номером уже существует.") from exc
+        raise
 
 
 def current_fx_rate() -> Decimal:
@@ -259,14 +312,7 @@ def create_customs_order_from_boundary(
     order_type=CustomsOrder.OrderType.ORIGINAL,
     by=None,
 ):
-    try:
-        number = int(number)
-    except (ValueError, TypeError) as exc:
-        raise CustomsOrderError("Номер заказа должен быть положительным числом.") from exc
-    if not 0 < number <= 2147483647:
-        raise CustomsOrderError(
-            "Номер заказа должен быть положительным целым числом до 2147483647."
-        )
+    number = _order_number(number)
     if order_type not in CustomsOrder.OrderType.values:
         raise CustomsOrderError("Выберите тип таможенного заказа.")
     expected, displayed_rate = _selection(selection_token, boundary_source, order_type)
