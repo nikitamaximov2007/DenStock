@@ -40,6 +40,7 @@ class MatchSource:
     USE_REPLACEMENT = "use_replacement"
     ALIAS = "alias"
     INTERNAL = "internal_number"
+    INTERNAL_REF = "internal_reference"
     SERIAL = "serial_number"
     NUMBER_PARTIAL = "number_partial"
     NAME = "name"
@@ -54,6 +55,7 @@ SOURCE_LABELS = {
     MatchSource.USE_REPLACEMENT: "старому номеру USE",
     MatchSource.ALIAS: "вспомогательному номеру",
     MatchSource.INTERNAL: "внутреннему номеру",
+    MatchSource.INTERNAL_REF: "внутреннему справочному номеру",
     MatchSource.SERIAL: "серийному номеру",
     MatchSource.NUMBER_PARTIAL: "части артикула",
     MatchSource.NAME: "названию",
@@ -113,6 +115,8 @@ class PartLookupCandidate:
             return f"Найдено по superseded номеру: {self.matched_value}"
         if self.match_source == MatchSource.USE_REPLACEMENT:
             return f"Артикул {self.matched_value} заменён на {self.exact_number}"
+        if self.match_source == MatchSource.INTERNAL_REF:
+            return f"Найдено по внутреннему справочному номеру: {self.matched_value}"
         if self.is_alias:
             return f"Найдено по вспомогательному номеру: {self.matched_value}"
         return ""
@@ -139,7 +143,34 @@ class PartLookupResult:
         return self.candidates[0] if self.found else None
 
 
+def _internal_ref_ids(norm: str) -> list[int]:
+    if not norm:
+        return []
+    return list(
+        PartNumber.objects.filter(normalized_value=norm, kind=PartNumber.Kind.INTERNAL_REF)
+        .values_list("part_id", flat=True)
+        .distinct()[: RESULT_LIMIT + 1]
+    )
+
+
+def _identity_match(part_ids: list[int], source: str, internal_ids: list[int], raw: str):
+    """One identity tier, checked against internal reference numbers.
+
+    The same card found by its article and by its internal reference number is
+    one answer, not a conflict. A DIFFERENT card holding the scanned value as
+    its internal reference number makes the scan ambiguous: a stock operation
+    must never pick one of two cards on its own.
+    """
+    sources = {part_id: source for part_id in part_ids}
+    others = [part_id for part_id in internal_ids if part_id not in sources]
+    for part_id in others:
+        sources[part_id] = MatchSource.INTERNAL_REF
+    ids = part_ids + others
+    return ids, sources, raw, len(ids) > 1
+
+
 def _strong_match(norm: str, raw: str, *, allow_alias: bool):
+    internal_ids = _internal_ref_ids(norm)
     if norm:
         exact_ids = list(
             PartNumber.objects.filter(
@@ -149,8 +180,7 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
             .distinct()[: RESULT_LIMIT + 1]
         )
         if exact_ids:
-            sources = {part_id: MatchSource.EXACT for part_id in exact_ids}
-            return exact_ids, sources, raw, len(exact_ids) > 1
+            return _identity_match(exact_ids, MatchSource.EXACT, internal_ids, raw)
 
     barcode_ids = list(
         PartBarcode.objects.filter(value__iexact=raw)
@@ -158,8 +188,13 @@ def _strong_match(norm: str, raw: str, *, allow_alias: bool):
         .distinct()[: RESULT_LIMIT + 1]
     )
     if barcode_ids:
-        sources = {part_id: MatchSource.BARCODE for part_id in barcode_ids}
-        return barcode_ids, sources, raw, len(barcode_ids) > 1
+        return _identity_match(barcode_ids, MatchSource.BARCODE, internal_ids, raw)
+
+    # The internal reference number (for example an aftermarket supplier SKU
+    # printed on the package) identifies exactly one warehouse card, the same
+    # way the general search already finds it. It is never the card's article.
+    if internal_ids:
+        return _identity_match([], MatchSource.INTERNAL_REF, internal_ids, raw)
 
     if allow_alias and norm:
         alias_ids = list(
@@ -456,6 +491,10 @@ def resolve_part_lookup(
     include_price: bool = False,
 ) -> PartLookupResult:
     """Resolve warehouse identity with exact numbers taking absolute priority.
+
+    Strict identity tiers, in order: article (OEM/ARTICLE), factory barcode,
+    internal reference number. A value held by different cards across these
+    tiers is ambiguous, never resolved to one of them.
 
     Scanner and mutation callers use the strict default. Read-only catalog and
     search screens may opt into alias suggestions with ``allow_alias=True``.

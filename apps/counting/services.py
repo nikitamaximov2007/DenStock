@@ -353,6 +353,17 @@ def _record_scan_atomic(
             )
         else:
             source, part, brp, polaris, display, price = _match(norm, raw)
+        if part is not None:
+            # One card is one line: its article, factory barcode and internal
+            # reference number are the same part, so a scan by another of its
+            # identifiers counts on the line the card already has.
+            line = (
+                InventoryCountingLine.objects.select_for_update()
+                .filter(session=session, warehouse_part=part)
+                .order_by("pk")
+                .first()
+            )
+    if line is None:
         line = InventoryCountingLine.objects.create(
             session=session,
             scanned_value=raw,
