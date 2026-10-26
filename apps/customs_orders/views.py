@@ -1,12 +1,13 @@
-"""Read-only order pages and the signed boundary selection workflow."""
+"""Order pages, signed boundary selection, and audited number correction."""
 from decimal import ROUND_HALF_UP, Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
+from django.db import DatabaseError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.views.decorators.http import require_http_methods, require_safe
+from django.views.decorators.http import require_http_methods, require_POST, require_safe
 
 from apps.actions.views import _require_access
 
@@ -19,6 +20,7 @@ from .services import (
     eligible_customs_sources,
     finalize_customs_order,
     next_order_number,
+    rename_customs_order_number,
     selection_payload,
 )
 
@@ -27,6 +29,21 @@ def _require_customs_access(request):
     _require_access(request)
     if not request.user.can_view_purchase_cost:
         raise PermissionDenied
+
+
+def _detail_context(request, order, *, number_input=None, number_error=""):
+    can_change_number = request.user.can_edit and request.user.can_view_purchase_cost
+    editing = can_change_number and (
+        number_input is not None or request.GET.get("edit_number") == "1"
+    )
+    return {
+        "order": order,
+        "can_change_number": can_change_number,
+        "number_edit_open": editing,
+        "number_input": order.number if number_input is None else number_input,
+        "number_error": number_error,
+        "number_changes": order.number_changes.select_related("changed_by")[:10],
+    }
 
 
 @login_required
@@ -62,7 +79,31 @@ def customs_order_detail(request, pk):
             f'attachment; filename="customs_order_{order.number}.xlsx"'
         )
         return response
-    return render(request, "customs_orders/detail.html", {"order": order})
+    return render(request, "customs_orders/detail.html", _detail_context(request, order))
+
+
+@login_required
+@require_POST
+def customs_order_number(request, pk):
+    _require_customs_access(request)
+    if not request.user.can_edit:
+        raise PermissionDenied
+    order = get_object_or_404(CustomsOrder.objects.prefetch_related("lines"), pk=pk)
+    number_input = request.POST.get("number", "")
+    try:
+        rename_customs_order_number(order_id=pk, number=number_input, by=request.user)
+    except CustomsOrderError as exc:
+        error, status = str(exc), 400
+    except DatabaseError:
+        error, status = "Не удалось сохранить номер. Повторите попытку.", 503
+    else:
+        messages.success(request, "Номер таможенного заказа изменён.")
+        return redirect("customs_order_detail", pk=pk)
+    return render(
+        request, "customs_orders/detail.html",
+        _detail_context(request, order, number_input=number_input, number_error=error),
+        status=status,
+    )
 
 
 def _selection_previews(sources, rate):
