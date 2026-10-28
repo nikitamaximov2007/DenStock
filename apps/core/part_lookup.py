@@ -73,6 +73,17 @@ def number_identity_key(value: str) -> str:
     return "".join(char for char in value.upper() if char not in " \t\r\n_./")
 
 
+def number_identity_matches(raw: str, stored: str) -> bool:
+    """Accept legacy unhyphenated numbers, but distinguish two hyphen layouts."""
+    if normalize_number(raw) != normalize_number(stored):
+        return False
+    return (
+        "-" not in raw
+        or "-" not in stored
+        or number_identity_key(raw) == number_identity_key(stored)
+    )
+
+
 @dataclass
 class PartLookupCandidate:
     part: PartType
