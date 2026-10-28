@@ -23,7 +23,7 @@ from apps.catalog.models import PartType
 from apps.core.part_lookup import resolve_part_lookup
 from apps.core.templatetags.number_format import money_int, quantity_int
 from apps.customers.models import Customer
-from apps.customers.services import customers_by_recent_activity
+from apps.customers.services import customers_by_recent_activity, search_customers
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine
 from apps.customs_orders.services import customs_sources
 from apps.inventory.presentation import identity_for_part_ids
@@ -271,6 +271,30 @@ def actions_scan(request):
             ctx["can_manage_images"] = request.user.can_manage_images
             ctx["request_token"] = secrets.token_urlsafe(32)
     return render(request, "actions/scan.html", ctx)
+
+
+@login_required
+def actions_customer_search(request):
+    """Return bounded active-customer suggestions without changing a draft."""
+    _require_access(request)
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    query = " ".join((request.GET.get("q") or "").split())[:100]
+    if not query:
+        return JsonResponse({"results": []})
+    customers = search_customers(query, limit=20, include_phone_fragment=True)
+    return JsonResponse({
+        "results": [
+            {
+                "id": customer.pk,
+                "label": (
+                    f"{customer.name} · {customer.phone}"
+                    if customer.phone else f"{customer.name} · №{customer.pk}"
+                ),
+            }
+            for customer in customers
+        ],
+    })
 
 
 @login_required

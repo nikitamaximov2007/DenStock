@@ -411,6 +411,8 @@ def test_field_disables_native_autofill_and_uses_scoped_history(client, make_use
     assert re.search(r'data-customer-filter-history="\d+"', field)
     assert '<datalist id="customer-filter-history-sale"></datalist>' in html
     assert "js/customer_filter_history.js" in html
+    assert "js/quick_actions_keyboard.js" in html
+    assert html.index("js/customer_filter_history.js") < html.index("js/quick_actions_keyboard.js")
 
 
 def test_client_list_order_is_unchanged(client, make_user, env):  # noqa: F811

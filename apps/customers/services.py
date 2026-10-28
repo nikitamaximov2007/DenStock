@@ -125,7 +125,8 @@ def create_customer_idempotently(form, *, token):
 
 
 def search_customers(
-    query: str, *, limit: int = SEARCH_LIMIT, include_archived=False, archived_only=False
+    query: str, *, limit: int = SEARCH_LIMIT, include_archived=False,
+    archived_only=False, include_phone_fragment=False
 ):
     """Клиенты по имени (подстрока) или телефону в любом привычном формате."""
     query = (query or "").strip()
@@ -137,6 +138,8 @@ def search_customers(
     if not query:
         return queryset[:limit]
     condition = Q(name__icontains=query)
+    if include_phone_fragment:
+        condition |= Q(phone__icontains=query)
     if looks_like_phone(query):
         normalized = normalize_phone(query)
         if normalized:

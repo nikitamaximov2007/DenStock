@@ -4,6 +4,11 @@ from . import views
 
 urlpatterns = [
     path("actions/", views.actions_scan, name="actions_scan"),
+    path(
+        "actions/customers/search/",
+        views.actions_customer_search,
+        name="actions_customer_search",
+    ),
     path("actions/cart/scan/", views.actions_cart_scan, name="actions_cart_scan"),
     path("actions/perform/", views.actions_perform, name="actions_perform"),
     path("actions/cart/add/", views.actions_cart_add, name="actions_cart_add"),

@@ -39,6 +39,7 @@ from apps.actions.services import ActionError, cancel_warehouse_action, perform_
 from apps.actions.views import CART_SESSION_KEYS
 from apps.catalog.models import Category, PartBarcode, PartNumber, PartType, Unit
 from apps.customers.models import Customer
+from apps.customers.services import archive_customer
 from apps.inventory.models import StockLot, StockMovement
 from apps.inventory.services import create_stock_lot, receive_stock_lot
 from apps.procurement.models import Batch, BatchLine
@@ -666,6 +667,47 @@ def test_quick_cart_page_requires_card_selector_not_customer_comment(client, mak
     assert "Создать клиента" in html
     create_link = html.split("Создать клиента", 1)[0].rsplit("<a", 1)[1]
     assert 'class="btn btn--secondary btn--small"' in create_link
+
+
+def test_quick_actions_customer_search_finds_active_names_and_phone_without_writes(
+    client, make_user, data
+):
+    _login(client, make_user)
+    first = Customer.objects.create(name="Михаил Иванов", phone="+7 912 123-45-67")
+    second = Customer.objects.create(name="Михаил Петров")
+    archived = Customer.objects.create(name="Михаил Архивный")
+    archive_customer(customer_id=archived.pk, by=data["admin"], reason="Тест")
+    Customer.objects.create(name="Максим Сидоров")
+    before = (Customer.objects.count(), StockMovement.objects.count())
+    url = reverse("actions_customer_search")
+
+    broad = client.get(url, {"q": "Мих"}).json()["results"]
+    assert {item["id"] for item in broad} == {first.pk, second.pk}
+    if connection.vendor == "postgresql":
+        mixed_case = client.get(url, {"q": "мИх"}).json()["results"]
+        assert {item["id"] for item in mixed_case} == {first.pk, second.pk}
+    precise = client.get(url, {"q": "  Михаил   П  "}).json()["results"]
+    assert [item["id"] for item in precise] == [second.pk]
+    phone = client.get(url, {"q": "8 (912) 123-45-67"}).json()["results"]
+    assert [item["id"] for item in phone] == [first.pk]
+    short_phone = client.get(url, {"q": "912"}).json()["results"]
+    assert [item["id"] for item in short_phone] == [first.pk]
+    assert client.get(url, {"q": "Несуществующий"}).json() == {"results": []}
+    assert client.get(url).json() == {"results": []}
+    assert (Customer.objects.count(), StockMovement.objects.count()) == before
+
+
+def test_quick_actions_customer_search_is_bounded_and_requires_access(client, make_user, db):
+    url = reverse("actions_customer_search")
+    assert client.get(url, {"q": "Тест"}).status_code == 302
+    make_user("viewer")
+    client.login(username="viewer", password=PASSWORD)
+    assert client.get(url, {"q": "Тест"}).status_code == 403
+    client.logout()
+    _login(client, make_user)
+    Customer.objects.bulk_create([Customer(name=f"Тест {i:03d}") for i in range(25)])
+    assert len(client.get(url, {"q": "Тест"}).json()["results"]) == 20
+    assert client.post(url, {"q": "Тест"}).status_code == 405
 
 
 def test_completed_actions_keep_identity_snapshots(data):
