@@ -48,15 +48,20 @@ def _order_number(value):
     return number
 
 
-def rename_customs_order_number(*, order_id, number, by):
+def rename_customs_order_number(*, order_id, number, expected_number, by):
     """Correct only the visible number, with a durable audit in the same transaction."""
     if not (by and by.is_authenticated and by.can_edit and by.can_view_purchase_cost):
         raise PermissionDenied
     number = _order_number(number)
+    expected_number = _order_number(expected_number)
     order = None
     try:
         with transaction.atomic():
             order = CustomsOrder.objects.select_for_update().get(pk=order_id)
+            if order.number != expected_number:
+                raise CustomsOrderError(
+                    "Номер заказа уже изменён другим пользователем. Обновите страницу."
+                )
             if order.number == number:
                 return order
             if CustomsOrder.objects.filter(
