@@ -1,16 +1,26 @@
 """Correcting the visible customs number must not rewrite a saved order."""
 
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from io import BytesIO
+from threading import Barrier
 
 import openpyxl
 import pytest
 from django.contrib.auth.models import Group
-from django.db import DatabaseError, IntegrityError, connection
+from django.db import (
+    DatabaseError,
+    IntegrityError,
+    close_old_connections,
+    connection,
+    connections,
+    transaction,
+)
 from django.db.migrations.executor import MigrationExecutor
 from django.urls import reverse
 
 from apps.accounts import roles
+from apps.customs_orders import services
 from apps.customs_orders.models import CustomsOrder, CustomsOrderLine, CustomsOrderNumberChange
 
 pytestmark = pytest.mark.django_db
@@ -47,6 +57,15 @@ def _change(order):
     return reverse("customs_order_number", args=[order.pk])
 
 
+def _post(client, order, number, *, expected_number=None):
+    if expected_number is None:
+        order.refresh_from_db(fields=["number"])
+        expected_number = order.number
+    return client.post(
+        _change(order), {"number": number, "expected_number": expected_number},
+    )
+
+
 def test_renumber_finalized_order_preserves_pk_lines_and_every_other_header_field(
     client, admin, order,
 ):
@@ -55,7 +74,8 @@ def test_renumber_finalized_order_preserves_pk_lines_and_every_other_header_fiel
     client.force_login(admin)
 
     response = client.post(_change(order), {
-        "number": "130", "fx_rate": "1", "total_rub": "0", "status": "draft",
+        "number": "130", "expected_number": "129",
+        "fx_rate": "1", "total_rub": "0", "status": "draft",
         "article": "FORGED", "quantity": "99", "created_by": "0",
     })
 
@@ -79,17 +99,24 @@ def test_renumber_finalized_order_preserves_pk_lines_and_every_other_header_fiel
 
 
 def test_cancel_and_read_only_pages_do_not_change_number(client, admin, order):
+    header_before = CustomsOrder.objects.filter(pk=order.pk).values().get()
+    lines_before = list(CustomsOrderLine.objects.filter(order=order).values())
     client.force_login(admin)
     edit = client.get(_detail(order), {"edit_number": "1"})
     assert edit.status_code == 200
     assert 'value="129"' in edit.content.decode()
+    assert 'name="expected_number" value="129"' in edit.content.decode()
     assert f'href="{_detail(order)}">Отмена</a>' in edit.content.decode()
 
     cancel = client.get(_detail(order))
     assert cancel.status_code == 200
     assert "Новый номер заказа" not in cancel.content.decode()
+    assert client.get(reverse("customs_orders_list")).status_code == 200
+    assert client.get(_detail(order), {"export": "1"}).status_code == 200
     order.refresh_from_db()
     assert order.number == 129
+    assert CustomsOrder.objects.filter(pk=order.pk).values().get() == header_before
+    assert list(CustomsOrderLine.objects.filter(order=order).values()) == lines_before
     assert not CustomsOrderNumberChange.objects.exists()
 
 
@@ -99,12 +126,39 @@ def test_duplicate_is_rejected_with_entered_number_preserved(client, admin, orde
     )
     client.force_login(admin)
 
-    response = client.post(_change(order), {"number": "130"})
+    response = _post(client, order, "130")
 
     assert response.status_code == 400
     html = response.content.decode()
     assert "Заказ с таким номером уже существует" in html
     assert 'value="130"' in html
+    order.refresh_from_db()
+    assert order.number == 129
+    assert not CustomsOrderNumberChange.objects.exists()
+
+
+def test_stale_form_cannot_overwrite_another_users_correction(client, admin, order):
+    client.force_login(admin)
+    assert _post(client, order, "130", expected_number=129).status_code == 302
+
+    response = _post(client, order, "131", expected_number=129)
+
+    assert response.status_code == 400
+    body = response.content.decode()
+    assert "Номер заказа уже изменён другим пользователем" in body
+    assert 'name="expected_number" value="130"' in body
+    assert 'value="131"' in body
+    order.refresh_from_db()
+    assert order.number == 130
+    assert list(order.number_changes.values_list("old_number", "new_number")) == [(129, 130)]
+
+
+def test_missing_original_number_fails_closed(client, admin, order):
+    client.force_login(admin)
+
+    response = client.post(_change(order), {"number": "130"})
+
+    assert response.status_code == 400
     order.refresh_from_db()
     assert order.number == 129
     assert not CustomsOrderNumberChange.objects.exists()
@@ -116,7 +170,7 @@ def test_duplicate_is_rejected_with_entered_number_preserved(client, admin, orde
 def test_invalid_number_is_rejected_without_losing_input(client, admin, order, value):
     client.force_login(admin)
 
-    response = client.post(_change(order), {"number": value})
+    response = _post(client, order, value)
 
     assert response.status_code == 400
     assert f'value="{value}"' in response.content.decode()
@@ -131,9 +185,96 @@ def test_same_number_is_allowed_in_other_order_type(client, admin, order):
     )
     client.force_login(admin)
 
-    assert client.post(_change(order), {"number": "130"}).status_code == 302
+    assert _post(client, order, "130").status_code == 302
     order.refresh_from_db()
     assert order.number == 130
+
+
+def test_existing_database_constraint_rejects_duplicate_within_type(order):
+    CustomsOrder.objects.create(
+        number=130, order_type=order.order_type, fx_rate=Decimal("100"),
+    )
+
+    with pytest.raises(IntegrityError), transaction.atomic():
+        CustomsOrder.objects.filter(pk=order.pk).update(number=130)
+
+    order.refresh_from_db()
+    assert order.number == 129
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="Requires PostgreSQL row locks")
+@pytest.mark.django_db(transaction=True)
+def test_postgresql_simultaneous_edits_of_one_order_reject_stale_form(admin, order):
+    manager = type(admin).objects.create_user(username="second-customs-editor")
+    manager.groups.add(Group.objects.get_or_create(name=roles.MANAGER)[0])
+    barrier = Barrier(2)
+
+    def rename(number, actor_id):
+        close_old_connections()
+        try:
+            actor = type(admin).objects.get(pk=actor_id)
+            barrier.wait(timeout=5)
+            try:
+                services.rename_customs_order_number(
+                    order_id=order.pk, number=number, expected_number=129, by=actor,
+                )
+            except services.CustomsOrderError as exc:
+                return "error", str(exc)
+            return "saved", (actor_id, number)
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result(timeout=10) for future in (
+            pool.submit(rename, 130, admin.pk), pool.submit(rename, 131, manager.pk),
+        )]
+
+    assert sorted(result[0] for result in results) == ["error", "saved"]
+    assert "уже изменён" in next(result[1] for result in results if result[0] == "error")
+    order.refresh_from_db()
+    assert order.number in (130, 131)
+    audit = order.number_changes.get()
+    assert (audit.old_number, audit.new_number) == (129, order.number)
+    assert (audit.changed_by_id, audit.new_number) == next(
+        result[1] for result in results if result[0] == "saved"
+    )
+
+
+@pytest.mark.skipif(connection.vendor != "postgresql", reason="Requires PostgreSQL row locks")
+@pytest.mark.django_db(transaction=True)
+def test_postgresql_simultaneous_orders_cannot_claim_same_number(admin, order):
+    other = CustomsOrder.objects.create(
+        number=128, order_type=order.order_type, fx_rate=Decimal("100"),
+    )
+    manager = type(admin).objects.create_user(username="second-customs-claimant")
+    manager.groups.add(Group.objects.get_or_create(name=roles.MANAGER)[0])
+    barrier = Barrier(2)
+
+    def rename(order_id, old_number, actor_id):
+        close_old_connections()
+        try:
+            actor = type(admin).objects.get(pk=actor_id)
+            barrier.wait(timeout=5)
+            try:
+                services.rename_customs_order_number(
+                    order_id=order_id, number=130, expected_number=old_number, by=actor,
+                )
+            except services.CustomsOrderError as exc:
+                return "error", str(exc)
+            return "saved", order_id
+        finally:
+            connections.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [future.result(timeout=10) for future in (
+            pool.submit(rename, order.pk, 129, admin.pk),
+            pool.submit(rename, other.pk, 128, manager.pk),
+        )]
+
+    assert sorted(result[0] for result in results) == ["error", "saved"]
+    assert "уже существует" in next(result[1] for result in results if result[0] == "error")
+    assert CustomsOrder.objects.filter(order_type=order.order_type, number=130).count() == 1
+    assert CustomsOrderNumberChange.objects.count() == 1
 
 
 def test_saved_draft_can_be_renumbered_without_finalizing(client, admin):
@@ -144,7 +285,7 @@ def test_saved_draft_can_be_renumbered_without_finalizing(client, admin):
     original_pk = draft.pk
     client.force_login(admin)
 
-    assert client.post(_change(draft), {"number": "130"}).status_code == 302
+    assert _post(client, draft, "130").status_code == 302
     draft.refresh_from_db()
     assert (draft.pk, draft.number, draft.status) == (
         original_pk, 130, CustomsOrder.Status.DRAFT,
@@ -155,15 +296,15 @@ def test_saved_draft_can_be_renumbered_without_finalizing(client, admin):
 def test_unchanged_number_does_not_create_a_false_audit_event(client, admin, order):
     client.force_login(admin)
 
-    assert client.post(_change(order), {"number": "129"}).status_code == 302
+    assert _post(client, order, "129").status_code == 302
     assert not CustomsOrderNumberChange.objects.exists()
 
 
 def test_repeated_corrections_keep_the_number_chain(client, admin, order):
     client.force_login(admin)
 
-    assert client.post(_change(order), {"number": "130"}).status_code == 302
-    assert client.post(_change(order), {"number": "131"}).status_code == 302
+    assert _post(client, order, "130").status_code == 302
+    assert _post(client, order, "131").status_code == 302
 
     assert list(order.number_changes.values_list("old_number", "new_number")) == [
         (130, 131), (129, 130),
@@ -176,7 +317,7 @@ def test_manager_with_customs_access_can_edit_number(client, django_user_model, 
     client.force_login(manager)
 
     assert "Изменить номер" in client.get(_detail(order)).content.decode()
-    assert client.post(_change(order), {"number": "130"}).status_code == 302
+    assert _post(client, order, "130").status_code == 302
     assert CustomsOrderNumberChange.objects.get(order=order).changed_by_id == manager.pk
 
 
@@ -187,13 +328,13 @@ def test_viewer_cannot_edit_number(client, django_user_model, order):
 
     page = client.get(_detail(order), {"edit_number": "1"})
     assert page.status_code == 403
-    assert client.post(_change(order), {"number": "130"}).status_code == 403
+    assert _post(client, order, "130").status_code == 403
     order.refresh_from_db()
     assert order.number == 129
 
 
 def test_anonymous_user_cannot_edit_number(client, order):
-    assert client.post(_change(order), {"number": "130"}).status_code == 302
+    assert _post(client, order, "130").status_code == 302
     order.refresh_from_db()
     assert order.number == 129
 
@@ -207,7 +348,7 @@ def test_database_error_keeps_entered_number_and_leaves_order_intact(
         lambda **kwargs: (_ for _ in ()).throw(DatabaseError("synthetic failure")),
     )
 
-    response = client.post(_change(order), {"number": "130"})
+    response = _post(client, order, "130")
 
     assert response.status_code == 503
     assert "Не удалось сохранить номер" in response.content.decode()
@@ -224,7 +365,7 @@ def test_failed_audit_insert_rolls_back_number_change(client, admin, order, monk
 
     monkeypatch.setattr(CustomsOrderNumberChange.objects, "create", fail_audit)
 
-    response = client.post(_change(order), {"number": "130"})
+    response = _post(client, order, "130")
 
     assert response.status_code == 503
     assert 'value="130"' in response.content.decode()
@@ -241,7 +382,7 @@ def test_export_uses_corrected_filename_without_changing_frozen_rows(client, adm
     old_sheet = openpyxl.load_workbook(BytesIO(before.content))["Оригиналы"]
     old_row = [old_sheet[f"{column}10"].value for column in "BCDEFGHIJKLM"]
 
-    assert client.post(_change(order), {"number": "130"}).status_code == 302
+    assert _post(client, order, "130").status_code == 302
     after = client.get(_detail(order), {"export": "1"})
     assert after.status_code == 200
     assert after["Content-Disposition"] == 'attachment; filename="customs_order_130.xlsx"'
@@ -271,6 +412,7 @@ def test_additive_audit_migration_preserves_populated_order():
             rub_amount=Decimal("2100.00"),
         )
 
+        MigrationExecutor(connection).migrate(leaves)
         MigrationExecutor(connection).migrate(leaves)
 
         restored = CustomsOrder.objects.get(pk=order.pk)

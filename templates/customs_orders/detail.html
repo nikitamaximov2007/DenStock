@@ -37,6 +37,7 @@
           class="card customs-order-number-form">
       {% csrf_token %}
       <div class="card__body">
+        <input type="hidden" name="expected_number" value="{{ order.number }}">
         <label class="field__label field__label--required" for="customs-edit-number">Новый номер заказа</label>
         <input id="customs-edit-number"
                name="number"

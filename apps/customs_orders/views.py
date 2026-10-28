@@ -91,8 +91,12 @@ def customs_order_number(request, pk):
     order = get_object_or_404(CustomsOrder.objects.prefetch_related("lines"), pk=pk)
     number_input = request.POST.get("number", "")
     try:
-        rename_customs_order_number(order_id=pk, number=number_input, by=request.user)
+        rename_customs_order_number(
+            order_id=pk, number=number_input,
+            expected_number=request.POST.get("expected_number", ""), by=request.user,
+        )
     except CustomsOrderError as exc:
+        order.refresh_from_db()
         error, status = str(exc), 400
     except DatabaseError:
         error, status = "Не удалось сохранить номер. Повторите попытку.", 503
