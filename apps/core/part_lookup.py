@@ -68,6 +68,11 @@ def clean_lookup_value(raw) -> str:
     return str(raw or "").replace("\r", "").replace("\n", "").strip()
 
 
+def number_identity_key(value: str) -> str:
+    """Keep hyphen positions when a scanned number uses them as structure."""
+    return "".join(char for char in value.upper() if char not in " \t\r\n_./")
+
+
 @dataclass
 class PartLookupCandidate:
     part: PartType
@@ -143,58 +148,38 @@ class PartLookupResult:
         return self.candidates[0] if self.found else None
 
 
-def _internal_ref_ids(norm: str) -> list[int]:
+def _number_ids(norm: str, raw: str, kinds) -> list[int]:
     if not norm:
         return []
-    return list(
-        PartNumber.objects.filter(normalized_value=norm, kind=PartNumber.Kind.INTERNAL_REF)
-        .values_list("part_id", flat=True)
-        .distinct()[: RESULT_LIMIT + 1]
-    )
-
-
-def _identity_match(part_ids: list[int], source: str, internal_ids: list[int], raw: str):
-    """One identity tier, checked against internal reference numbers.
-
-    The same card found by its article and by its internal reference number is
-    one answer, not a conflict. A DIFFERENT card holding the scanned value as
-    its internal reference number makes the scan ambiguous: a stock operation
-    must never pick one of two cards on its own.
-    """
-    sources = {part_id: source for part_id in part_ids}
-    others = [part_id for part_id in internal_ids if part_id not in sources]
-    for part_id in others:
-        sources[part_id] = MatchSource.INTERNAL_REF
-    ids = part_ids + others
-    return ids, sources, raw, len(ids) > 1
+    numbers = PartNumber.objects.filter(normalized_value=norm, kind__in=kinds)
+    if "-" in raw:
+        key = number_identity_key(raw)
+        numbers = (
+            number for number in numbers.values_list("part_id", "value")
+            if "-" not in number[1] or number_identity_key(number[1]) == key
+        )
+        return list(dict.fromkeys(part_id for part_id, _ in numbers))[: RESULT_LIMIT + 1]
+    return list(numbers.values_list("part_id", flat=True).distinct()[: RESULT_LIMIT + 1])
 
 
 def _strong_match(norm: str, raw: str, *, allow_alias: bool):
-    internal_ids = _internal_ref_ids(norm)
-    if norm:
-        exact_ids = list(
-            PartNumber.objects.filter(
-                normalized_value=norm, kind__in=EXACT_NUMBER_KINDS
-            )
-            .values_list("part_id", flat=True)
-            .distinct()[: RESULT_LIMIT + 1]
-        )
-        if exact_ids:
-            return _identity_match(exact_ids, MatchSource.EXACT, internal_ids, raw)
-
+    exact_ids = _number_ids(norm, raw, EXACT_NUMBER_KINDS)
     barcode_ids = list(
         PartBarcode.objects.filter(value__iexact=raw)
         .values_list("part_id", flat=True)
         .distinct()[: RESULT_LIMIT + 1]
     )
-    if barcode_ids:
-        return _identity_match(barcode_ids, MatchSource.BARCODE, internal_ids, raw)
-
-    # The internal reference number (for example an aftermarket supplier SKU
-    # printed on the package) identifies exactly one warehouse card, the same
-    # way the general search already finds it. It is never the card's article.
-    if internal_ids:
-        return _identity_match([], MatchSource.INTERNAL_REF, internal_ids, raw)
+    internal_ids = _number_ids(norm, raw, [PartNumber.Kind.INTERNAL_REF])
+    if exact_ids or barcode_ids or internal_ids:
+        sources = {}
+        for ids, source in (
+            (exact_ids, MatchSource.EXACT),
+            (barcode_ids, MatchSource.BARCODE),
+            (internal_ids, MatchSource.INTERNAL_REF),
+        ):
+            for part_id in ids:
+                sources.setdefault(part_id, source)
+        return list(sources), sources, raw, len(sources) > 1
 
     if allow_alias and norm:
         alias_ids = list(
@@ -507,6 +492,14 @@ def resolve_part_lookup(
     matched = _strong_match(norm, query, allow_alias=allow_alias)
     strong = matched is not None
     if matched is None:
+        # A different hyphen layout may have the same search key. Keep exact
+        # serial/item/name checks, but do not promote the partial number tier
+        # to one "found" card for that structural mismatch.
+        if "-" in query and PartNumber.objects.filter(
+            normalized_value=norm,
+            kind__in=(*EXACT_NUMBER_KINDS, PartNumber.Kind.INTERNAL_REF),
+        ).exists():
+            allow_partial = False
         matched = _secondary_match(
             norm,
             query,

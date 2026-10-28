@@ -147,6 +147,38 @@ def test_leading_zeros_are_kept(category, unit):
     assert resolve_part_lookup("7123").status == "not_found"
 
 
+def test_hyphen_positions_keep_distinct_cards(category, unit):
+    first = _card("FIRST", category, unit, article="010-090")
+    second = _card("SECOND", category, unit, article="01-0090")
+    assert resolve_part_lookup("010-090").candidate.part == first
+    assert resolve_part_lookup("01-0090").candidate.part == second
+    assert resolve_part_lookup("010090").ambiguous
+
+
+def test_partial_lookup_does_not_promote_wrong_hyphen_layout(category, unit):
+    _card("SECOND", category, unit, article="01-0090")
+    result = resolve_part_lookup("010-090", allow_partial=True, allow_name=True)
+    assert result.status == "not_found"
+    assert not result.candidates
+
+
+def test_internal_refs_keep_hyphen_positions(category, unit):
+    first = _card("FIRST", category, unit, article="A-1", internal_ref="010-090")
+    second = _card("SECOND", category, unit, article="A-2", internal_ref="01-0090")
+    assert resolve_part_lookup("010-090").candidate.part == first
+    assert resolve_part_lookup("01-0090").candidate.part == second
+    assert resolve_part_lookup("010090").ambiguous
+
+
+def test_article_and_other_cards_barcode_are_ambiguous(category, unit):
+    first = _card("FIRST", category, unit, article="A-1")
+    second = _card("SECOND", category, unit, article="B-2")
+    PartBarcode.objects.create(part=second, value="A-1")
+    result = resolve_part_lookup("A-1")
+    assert result.ambiguous
+    assert {candidate.part for candidate in result.candidates} == {first, second}
+
+
 def test_unknown_number_stays_unknown(bronco):
     assert resolve_part_lookup("999999").status == "not_found"
     assert resolve_scan("999999").status == "unknown"
@@ -192,6 +224,21 @@ def test_counting_article_and_reference_count_on_one_line(bronco, location, admi
     assert line.quantity_counted == Decimal("2")
 
 
+def test_counting_separates_articles_with_different_hyphen_positions(
+    category, unit, location, admin
+):
+    first = _card("FIRST", category, unit, article="010-090")
+    second = _card("SECOND", category, unit, article="01-0090")
+    session = start_session(location=location, by=admin)
+    assert record_scan(session, "010-090", by=admin).warehouse_part == first
+    assert record_scan(session, "01-0090", by=admin).warehouse_part == second
+    assert session.lines.count() == 2
+    ambiguous = record_scan(session, "010090", by=admin)
+    assert ambiguous.warehouse_part is None
+    assert ambiguous.source == InventoryCountingLine.Source.UNKNOWN
+    assert session.lines.count() == 3
+
+
 def test_counting_ambiguous_reference_is_not_bound(bronco, location, admin, category, unit):
     _card("OTHER KIT", category, unit, article="ZZ-1", internal_ref="127388")
     session = start_session(location=location, by=admin)
@@ -199,6 +246,20 @@ def test_counting_ambiguous_reference_is_not_bound(bronco, location, admin, cate
     assert line.warehouse_part is None
     assert line.source == InventoryCountingLine.Source.UNKNOWN
     assert "нескольких складских карточек" in line.display_name
+
+
+def test_counting_does_not_increment_old_line_after_reference_becomes_ambiguous(
+    bronco, location, admin, category, unit
+):
+    session = start_session(location=location, by=admin)
+    original = record_scan(session, "127388", by=admin)
+    _card("OTHER KIT", category, unit, article="ZZ-1", internal_ref="127388")
+    later = record_scan(session, "127388", by=admin)
+    original.refresh_from_db()
+    assert original.quantity_counted == Decimal("1")
+    assert later.pk != original.pk
+    assert later.warehouse_part is None
+    assert later.source == InventoryCountingLine.Source.UNKNOWN
 
 
 def test_counting_unknown_number_keeps_unknown_flow(bronco, location, admin):
