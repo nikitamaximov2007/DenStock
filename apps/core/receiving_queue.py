@@ -26,7 +26,7 @@ from apps.warehouse.services import (
     resolve_storage_location,
 )
 
-from .part_lookup import clean_lookup_value, resolve_part_lookup
+from .part_lookup import clean_lookup_value, number_identity_matches, resolve_part_lookup
 from .templatetags.number_format import quantity_int
 
 QUEUE_SESSION_KEY = "batch_receiving_queue_v1"
@@ -140,9 +140,15 @@ def find_receiving_candidates(raw: str, *, warehouse_part_id: int | None = None)
 
     if norm:
         brp_parts = BrpCatalogPart.objects.filter(is_current=True, material_no_norm=norm)
-        candidates.extend(_brp_candidate(part, pricing) for part in brp_parts[:25])
+        matching_brp = [
+            part for part in brp_parts if number_identity_matches(raw, part.material_no)
+        ]
+        candidates.extend(_brp_candidate(part, pricing) for part in matching_brp[:25])
         polaris_parts = PolarisCatalogPart.objects.filter(part_number_norm=norm)
-        candidates.extend(_polaris_candidate(part, pricing) for part in polaris_parts[:25])
+        matching_polaris = [
+            part for part in polaris_parts if number_identity_matches(raw, part.part_number)
+        ]
+        candidates.extend(_polaris_candidate(part, pricing) for part in matching_polaris[:25])
 
     seen_parts = {candidate.part_id for candidate in candidates if candidate.part_id}
     warehouse_lookup = resolve_part_lookup(raw)
@@ -153,6 +159,7 @@ def find_receiving_candidates(raw: str, *, warehouse_part_id: int | None = None)
             normalized_value=norm,
             kind__in=(PartNumber.Kind.OEM, PartNumber.Kind.ARTICLE),
         ).order_by("-is_primary", "pk")
+        if number_identity_matches(raw, number.value)
     }
     for match in warehouse_lookup.candidates:
         if match.part.pk in seen_parts:

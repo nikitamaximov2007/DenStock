@@ -20,14 +20,13 @@ from apps.catalog_import.origin import (
     aftermarket_part_ids,
     has_physical_stock,
 )
-from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
+from apps.core.part_lookup import clean_lookup_value, number_identity_matches, resolve_part_lookup
 from apps.core.part_picker import looks_like_name_query, search_pickable_parts
 from apps.inventory.models import NumberSequence
 from apps.inventory.presentation import part_exact_number
 from apps.polaris.models import PolarisCatalogPart, PolarisPricingSettings
 from apps.polaris.pricing import customer_price_rub as polaris_customer_price_rub
 from apps.polaris.services import (
-    find_polaris_by_number,
     find_polaris_price_source,
 )
 from apps.polaris.services import (
@@ -80,6 +79,28 @@ def find_brp_by_number(norm: str) -> BrpCatalogPart | None:
         .order_by("pk")
         .first()
     )
+
+
+def _brp_identity_matches(raw: str, norm: str) -> list[BrpCatalogPart]:
+    return [
+        part
+        for part in BrpCatalogPart.objects.filter(is_current=True, material_no_norm=norm)
+        .order_by("pk")
+        if number_identity_matches(raw, part.material_no)
+    ]
+
+
+def _polaris_identity_matches(raw: str, norm: str) -> list[PolarisCatalogPart]:
+    return [
+        part
+        for part in PolarisCatalogPart.objects.filter(part_number_norm=norm).order_by("pk")
+        if number_identity_matches(raw, part.part_number)
+    ]
+
+
+def catalog_identity_matches(raw: str, norm: str):
+    """Catalog identities for a scan, keeping meaningful hyphen positions."""
+    return _brp_identity_matches(raw, norm), _polaris_identity_matches(raw, norm)
 
 
 def _can_price(part: BrpCatalogPart | None) -> bool:
@@ -265,21 +286,27 @@ def _match(norm: str, raw: str):
     if part is not None:
         return (_part_source(part), part, None, None, part.name, part.recommended_price)
 
-    brp = find_brp_by_number(norm)
-    polaris = find_polaris_by_number(norm)
-    if brp is not None and polaris is not None:
+    brp_matches, polaris_matches = catalog_identity_matches(raw, norm)
+    if len(brp_matches) + len(polaris_matches) > 1:
+        detail = (
+            "Номер найден в BRP и Polaris, выберите каталог вручную"
+            if brp_matches and polaris_matches
+            else "Номер найден у нескольких позиций каталога, выберите точную деталь"
+        )
         return (
             "unknown",
             None,
             None,
             None,
-            "Номер найден в BRP и Polaris, выберите каталог вручную",
+            detail,
             None,
         )
-    if brp is not None:
+    if brp_matches:
+        brp = brp_matches[0]
         price = _effective_brp_price(norm, brp)
         return ("brp_catalog", None, brp, None, brp.part_desc or brp.material_no, price)
-    if polaris is not None:
+    if polaris_matches:
+        polaris = polaris_matches[0]
         price = _effective_polaris_price(norm, polaris)
         return (
             "polaris_catalog",
@@ -531,7 +558,7 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
     Зачем: после починки каталога (реимпорт, приоритет точного номера) уже
     отпиканная ячейка должна показать правильные позиции и цены БЕЗ
     повторного сканирования. Для каждой строки с привязкой к BRP номер
-    строки заново прогоняется через find_brp_by_number (hotfix 32.3.1):
+    строки заново проверяется по точному номеру BRP (hotfix 32.3.1):
     если лучшая позиция изменилась (например, строка была привязана к
     старому номеру по замене, а точный номер существует), строка
     перепривязывается, название и цена обновляются. Количество и число
@@ -558,7 +585,8 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
         "brp_catalog_part"
     )
     for line in lines:
-        best = find_brp_by_number(line.normalized_value) or line.brp_catalog_part
+        matches = _brp_identity_matches(line.scanned_value, normalize_number(line.scanned_value))
+        best = matches[0] if len(matches) == 1 else line.brp_catalog_part
         price = _effective_brp_price(
             line.normalized_value,
             best,
@@ -586,7 +614,10 @@ def refresh_draft_prices(session: InventoryCountingSession) -> int:
         polaris_catalog_part__isnull=False
     ).select_related("polaris_catalog_part")
     for line in polaris_lines:
-        best = find_polaris_by_number(line.normalized_value) or line.polaris_catalog_part
+        matches = _polaris_identity_matches(
+            line.scanned_value, normalize_number(line.scanned_value)
+        )
+        best = matches[0] if len(matches) == 1 else line.polaris_catalog_part
         price = _effective_polaris_price(
             line.normalized_value,
             best,

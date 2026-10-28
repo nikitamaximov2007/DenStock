@@ -23,7 +23,6 @@ from apps.catalog.models import normalize_number
 from apps.core.part_lookup import clean_lookup_value, resolve_part_lookup
 from apps.core.part_picker import get_pickable_part, search_pickable_parts
 from apps.core.templatetags.number_format import quantity_int
-from apps.polaris.services import find_polaris_by_number
 from apps.warehouse.services import StorageLocationCreateError
 
 from .cell_state import cell_state
@@ -35,9 +34,9 @@ from .services import (
     CountingError,
     can_delete_session,
     cancel_session,
+    catalog_identity_matches,
     convert_to_receipt,
     delete_session,
-    find_brp_by_number,
     get_session_value_breakdown,
     name_pick_rows,
     post_session,
@@ -395,18 +394,22 @@ def counting_line_resolve(request, pk):
             resolve_unknown_to_part(line, lookup.candidate.part)
             messages.success(request, "Строка привязана к складской карточке.")
         else:
-            brp = find_brp_by_number(norm)
-            polaris = find_polaris_by_number(norm)
-            if brp and polaris:
+            brp_matches, polaris_matches = catalog_identity_matches(code, norm)
+            if len(brp_matches) + len(polaris_matches) > 1:
+                detail = (
+                    "Этот номер есть в BRP и Polaris. Откройте общий поиск и выберите каталог."
+                    if brp_matches and polaris_matches
+                    else "Номер найден у нескольких позиций каталога. Выберите точную деталь."
+                )
                 messages.error(
                     request,
-                    "Этот номер есть в BRP и Polaris. Откройте общий поиск и выберите каталог.",
+                    detail,
                 )
-            elif brp:
-                resolve_unknown_to_brp(line, brp)
+            elif brp_matches:
+                resolve_unknown_to_brp(line, brp_matches[0])
                 messages.success(request, "Строка привязана к BRP-каталогу.")
-            elif polaris:
-                resolve_unknown_to_polaris(line, polaris)
+            elif polaris_matches:
+                resolve_unknown_to_polaris(line, polaris_matches[0])
                 messages.success(request, "Строка привязана к Polaris-каталогу.")
             else:
                 messages.error(request, "По этому номеру ничего не найдено.")

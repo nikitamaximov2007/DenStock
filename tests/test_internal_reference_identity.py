@@ -13,6 +13,7 @@ from html import escape
 import pytest
 from django.urls import reverse
 
+from apps.brp.models import BrpCatalogPart
 from apps.catalog.models import (
     Category,
     Manufacturer,
@@ -34,6 +35,7 @@ from apps.counting.services import (
     undo_last_scan,
 )
 from apps.inventory.models import StockBalance, StockMovement
+from apps.polaris.models import PolarisCatalogPart
 from apps.warehouse.addresses import get_or_create_location
 
 NAME = "BRONCO A-ARM BEARING/BUSHING & SEAL KIT"
@@ -160,6 +162,55 @@ def test_partial_lookup_does_not_promote_wrong_hyphen_layout(category, unit):
     result = resolve_part_lookup("010-090", allow_partial=True, allow_name=True)
     assert result.status == "not_found"
     assert not result.candidates
+
+
+def test_catalog_fallback_does_not_choose_wrong_hyphen_layout(location, admin):
+    BrpCatalogPart.objects.create(material_no="01-0090", part_desc="BRP OTHER")
+    PolarisCatalogPart.objects.create(part_number="01-0090", part_name="POLARIS OTHER")
+    assert find_receiving_candidates("010-090") == []
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "010-090", by=admin)
+    assert line.source == InventoryCountingLine.Source.UNKNOWN
+    assert line.brp_catalog_part is None
+    assert line.polaris_catalog_part is None
+
+
+def test_manual_unknown_resolution_keeps_hyphen_layout(client, location, admin):
+    BrpCatalogPart.objects.create(material_no="01-0090", part_desc="BRP OTHER")
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "999", by=admin)
+    client.force_login(admin)
+    client.post(reverse("counting_line_resolve", args=[line.pk]), {"code": "010-090"})
+    line.refresh_from_db()
+    assert line.source == InventoryCountingLine.Source.UNKNOWN
+    assert line.brp_catalog_part is None
+
+
+def test_catalog_fallback_keeps_structural_identity_and_no_hyphen_ambiguity(
+    location, admin
+):
+    correct = BrpCatalogPart.objects.create(material_no="010-090", part_desc="BRP CORRECT")
+    BrpCatalogPart.objects.create(material_no="01-0090", part_desc="BRP OTHER")
+    candidates = find_receiving_candidates("010-090")
+    assert [(candidate.source, candidate.source_id) for candidate in candidates] == [
+        ("brp", correct.pk)
+    ]
+    session = start_session(location=location, by=admin)
+    line = record_scan(session, "010-090", by=admin)
+    assert line.brp_catalog_part == correct
+    ambiguous = record_scan(session, "010090", by=admin)
+    assert ambiguous.source == InventoryCountingLine.Source.UNKNOWN
+    assert ambiguous.brp_catalog_part is None
+    assert "нескольких позиций каталога" in ambiguous.display_name
+
+
+def test_receiving_shows_the_article_that_matched_its_hyphen_layout(category, unit):
+    part = _card("ONE CARD", category, unit, article="010-090")
+    PartNumber.objects.create(part=part, value="01-0090", kind=PartNumber.Kind.ARTICLE)
+    candidates = find_receiving_candidates("010-090")
+    assert len(candidates) == 1
+    assert candidates[0].part_id == part.pk
+    assert candidates[0].exact_number == "010-090"
 
 
 def test_internal_refs_keep_hyphen_positions(category, unit):
