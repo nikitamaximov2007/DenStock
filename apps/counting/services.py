@@ -332,6 +332,7 @@ def _record_scan_atomic(
     if not raw:
         raise CountingError("Пустой скан.")
     norm = raw if picked_part is not None else (normalize_number(raw) or raw.upper())
+    line_norm = norm
     token = _scan_request_token(request_token)
     if token:
         existing = InventoryScanEvent.objects.select_related("matched_line").filter(
@@ -340,34 +341,46 @@ def _record_scan_atomic(
         if existing:
             return _existing_scan_line(existing, session=session, raw=raw, by=by)
 
+    if picked_part is not None:
+        source, part, brp, polaris, display, price = (
+            _part_source(picked_part), picked_part, None, None,
+            picked_part.name, picked_part.recommended_price,
+        )
+    else:
+        source, part, brp, polaris, display, price = _match(norm, raw)
+    # Resolve every scan before grouping: a number that has become ambiguous
+    # must not increment a previously bound line for another card.
     line = (
         InventoryCountingLine.objects.select_for_update()
-        .filter(session=session, normalized_value=norm)
+        .filter(session=session, warehouse_part=part)
+        .order_by("pk")
         .first()
+        if part is not None else None
     )
     if line is None:
-        if picked_part is not None:
-            source, part, brp, polaris, display, price = (
-                _part_source(picked_part), picked_part, None, None,
-                picked_part.name, picked_part.recommended_price,
-            )
-        else:
-            source, part, brp, polaris, display, price = _match(norm, raw)
-        if part is not None:
-            # One card is one line: its article, factory barcode and internal
-            # reference number are the same part, so a scan by another of its
-            # identifiers counts on the line the card already has.
+        line = (
+            InventoryCountingLine.objects.select_for_update()
+            .filter(session=session, normalized_value=line_norm)
+            .first()
+        )
+        if line is not None and (
+            line.warehouse_part_id != (part.pk if part else None)
+            or line.source != source
+            or line.brp_catalog_part_id != (brp.pk if brp else None)
+            or line.polaris_catalog_part_id != (polaris.pk if polaris else None)
+        ):
+            suffix = f"~{part.pk}" if part is not None else "~unknown"
+            line_norm = f"{line_norm[:120 - len(suffix)]}{suffix}"
             line = (
                 InventoryCountingLine.objects.select_for_update()
-                .filter(session=session, warehouse_part=part)
-                .order_by("pk")
+                .filter(session=session, normalized_value=line_norm)
                 .first()
             )
     if line is None:
         line = InventoryCountingLine.objects.create(
             session=session,
             scanned_value=raw,
-            normalized_value=norm,
+            normalized_value=line_norm,
             warehouse_part=part,
             brp_catalog_part=brp,
             polaris_catalog_part=polaris,
