@@ -320,7 +320,9 @@ def selectors(repo: Path) -> int:
     rows = selector_report(repo)
     for row in rows:
         state = "OK" if not row["problems"] else "PROBLEM: " + "; ".join(row["problems"])
-        attested = "attested" if row["attested"] else "LEGACY-UNATTESTED"
+        attested = (
+            "attested" if row["attested"] else "LEGACY-UNATTESTED" if row["present"] else "-"
+        )
         print(f"{row['service']} {row['variable']}={row['selector']} image={row['image']} "
               f"present={'yes' if row['present'] else 'NO'} {attested} "
               f"running={row['running']} {state}")
