@@ -19,13 +19,17 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Every application image has its own selector (DENSTOCK_<SERVICE>_REVISION).
+  # Releasing one service changes only its own selector, so the others keep
+  # pointing at the images they run. The shared DENSTOCK_BUILD_REVISION is only
+  # a fallback for local and legacy setups; production sets all four explicitly.
   web:
-    image: denstock-web:${DENSTOCK_BUILD_REVISION:-unverified}
+    image: denstock-web:${DENSTOCK_WEB_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
     build:
       context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
       args:
-        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_WEB_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
         DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     # .env.max-webhook (root, mode 600) carries only MAX_WEBHOOK_ENABLED and
     # MAX_WEBHOOK_SECRET: web authenticates MAX's webhook and needs nothing more.
@@ -37,7 +41,7 @@ services:
     environment:
       # This explicit Compose value overrides any stale env_file/image value;
       # the release identity gate checks it against the verified image SHA.
-      DENSTOCK_APP_COMMIT: ${DENSTOCK_BUILD_REVISION:-unverified}
+      DENSTOCK_APP_COMMIT: ${DENSTOCK_WEB_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
       # Receiving a webhook needs no API call: web never holds the MAX token.
       MAX_BOT_TOKEN: ""
     depends_on:
@@ -65,12 +69,12 @@ services:
   # the internal .env, media volumes, backup directory or signing-key mount.
   catalog-web:
     profiles: ["public-catalog"]
-    image: denstock-catalog-web:${DENSTOCK_BUILD_REVISION:-unverified}
+    image: denstock-catalog-web:${DENSTOCK_CATALOG_WEB_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
     build:
       context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
       args:
-        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_CATALOG_WEB_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
         DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     entrypoint: ["/public-entrypoint.sh"]
     # Threaded workers: a slow typo search must not block the whole process.
@@ -89,7 +93,7 @@ services:
       - --timeout=60
     env_file: .env.public
     environment:
-      DENSTOCK_APP_COMMIT: ${DENSTOCK_BUILD_REVISION:-unverified}
+      DENSTOCK_APP_COMMIT: ${DENSTOCK_CATALOG_WEB_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
       DJANGO_SETTINGS_MODULE: config.settings.public
       # The deep link needs only MAX_BOT_USERNAME (in .env.public). Never a secret;
       # config/settings/public.py empties these again as a second line.
@@ -116,12 +120,12 @@ services:
   # never receive it.
   telegram-bot:
     profiles: ["telegram-bot"]
-    image: denstock-telegram-bot:${DENSTOCK_BUILD_REVISION:-unverified}
+    image: denstock-telegram-bot:${DENSTOCK_TELEGRAM_BOT_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
     build:
       context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
       args:
-        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_TELEGRAM_BOT_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
         DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     # Plain manage.py: migrations and collectstatic belong to the web release.
     entrypoint: ["python", "manage.py"]
@@ -131,7 +135,7 @@ services:
       - path: .env.telegram
         required: false
     environment:
-      DENSTOCK_APP_COMMIT: ${DENSTOCK_BUILD_REVISION:-unverified}
+      DENSTOCK_APP_COMMIT: ${DENSTOCK_TELEGRAM_BOT_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
       # The bot never uses AI support and has none of its mounts; the shared
       # .env enables AI support for web only.
       AI_SUPPORT_ENABLED: "false"
@@ -178,12 +182,12 @@ services:
   # network, no AI proxy, no proxy environment.
   max-bot:
     profiles: ["max-bot"]
-    image: denstock-max-bot:${DENSTOCK_BUILD_REVISION:-unverified}
+    image: denstock-max-bot:${DENSTOCK_MAX_BOT_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
     build:
       context: ${DENSTOCK_BUILD_CONTEXT:-.}
       dockerfile: docker/Dockerfile
       args:
-        DENSTOCK_BUILD_REVISION: ${DENSTOCK_BUILD_REVISION:-unverified}
+        DENSTOCK_BUILD_REVISION: ${DENSTOCK_MAX_BOT_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
         DENSTOCK_BUILD_CONTEXT_SHA256: ${DENSTOCK_BUILD_CONTEXT_SHA256:-unverified}
     entrypoint: ["python", "manage.py"]
     command: ["run_max_bot"]
@@ -192,7 +196,7 @@ services:
       - path: .env.max
         required: false
     environment:
-      DENSTOCK_APP_COMMIT: ${DENSTOCK_BUILD_REVISION:-unverified}
+      DENSTOCK_APP_COMMIT: ${DENSTOCK_MAX_BOT_REVISION:-${DENSTOCK_BUILD_REVISION:-unverified}}
       AI_SUPPORT_ENABLED: "false"
       # The webhook secret belongs to web; the Telegram secret to telegram-bot.
       MAX_WEBHOOK_ENABLED: "false"

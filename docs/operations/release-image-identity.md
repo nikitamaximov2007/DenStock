@@ -1,8 +1,21 @@
 # Release image identity
 
-`DENSTOCK_APP_COMMIT` in `.env` is not a release source of truth. Compose uses
-`DENSTOCK_BUILD_REVISION` to select the SHA-tagged image and pass the build
-revision. The Docker image records that SHA in `DENSTOCK_APP_COMMIT`, the OCI
+`DENSTOCK_APP_COMMIT` in `.env` is not a release source of truth. Each
+application service has its own Compose selector, which picks the SHA-tagged
+image and passes the build revision:
+
+| Service | Selector in `.env` |
+|---|---|
+| `web` | `DENSTOCK_WEB_REVISION` |
+| `catalog-web` | `DENSTOCK_CATALOG_WEB_REVISION` |
+| `telegram-bot` | `DENSTOCK_TELEGRAM_BOT_REVISION` |
+| `max-bot` | `DENSTOCK_MAX_BOT_REVISION` |
+
+Releasing one service changes only its own selector; the others keep pointing
+at the images they run. The shared `DENSTOCK_BUILD_REVISION` remains only as a
+fallback for local and legacy setups. The release gate rejects it in a
+production `.env` and requires all four selectors to be full SHAs (see
+`independent-service-releases.md`). The Docker image records that SHA in `DENSTOCK_APP_COMMIT`, the OCI
 `org.opencontainers.image.revision` label, and a label containing the SHA-256
 of the exact `git archive` source context. These fields contain public hashes,
 never secrets.
@@ -30,8 +43,8 @@ service:
 
 ```bash
 sed -i '/^DENSTOCK_APP_COMMIT=/d' .env
-sed -i '/^DENSTOCK_BUILD_REVISION=/d' .env
-printf 'DENSTOCK_BUILD_REVISION=%s\n' '<full-40-character-sha>' >> .env
+sed -i '/^DENSTOCK_WEB_REVISION=/d' .env
+printf 'DENSTOCK_WEB_REVISION=%s\n' '<full-40-character-sha>' >> .env
 python3 scripts/operations/release_image_identity.py verify \
   --sha <full-40-character-sha> --services web
 docker compose up -d --no-build --no-deps --wait web
@@ -39,12 +52,17 @@ python3 scripts/operations/release_image_identity.py verify \
   --sha <full-40-character-sha> --services web --runtime
 ```
 
-For multiple services, pass the same comma-separated list to build and verify.
-The configuration gate requires the old `.env` override to be absent and the
-image selector to equal the requested SHA. Runtime verification then checks
+For another service, edit only its own selector. For multiple services, pass
+the same comma-separated list to build and verify. The configuration gate
+requires the old `.env` override and the shared selector to be absent, every
+service to have its own full-SHA selector, and the requested services'
+selectors to equal the requested SHA.
+`python3 scripts/operations/release_image_identity.py selectors` is a read-only
+report of every selector, the image Compose resolves, whether that image exists
+and is attested, and whether the running container uses it. Runtime verification then checks
 the actual container image ID and `DENSTOCK_APP_COMMIT`; it never prints other
 environment values. The Compose service explicitly maps
-`DENSTOCK_APP_COMMIT` from `DENSTOCK_BUILD_REVISION`, which overrides Docker's
+`DENSTOCK_APP_COMMIT` from the service's own selector, which overrides Docker's
 image defaults and all `env_file` entries. Thus a stale `DENSTOCK_APP_COMMIT`
 cannot silently substitute an older application identity. Keep the `.env`
 edits within the separately approved deployment only.
