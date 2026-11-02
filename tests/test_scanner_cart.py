@@ -678,14 +678,16 @@ def test_quick_actions_customer_search_finds_active_names_and_phone_without_writ
     archived = Customer.objects.create(name="Михаил Архивный")
     archive_customer(customer_id=archived.pk, by=data["admin"], reason="Тест")
     Customer.objects.create(name="Максим Сидоров")
+    special = Customer.objects.create(name="Анна  (VIP)")
     before = (Customer.objects.count(), StockMovement.objects.count())
     url = reverse("actions_customer_search")
 
     broad = client.get(url, {"q": "Мих"}).json()["results"]
     assert {item["id"] for item in broad} == {first.pk, second.pk}
-    if connection.vendor == "postgresql":
-        mixed_case = client.get(url, {"q": "мИх"}).json()["results"]
-        assert {item["id"] for item in mixed_case} == {first.pk, second.pk}
+    mixed_case = client.get(url, {"q": "мИх"}).json()["results"]
+    assert {item["id"] for item in mixed_case} == {first.pk, second.pk}
+    literal = client.get(url, {"q": "анНа (vip)"}).json()["results"]
+    assert [item["id"] for item in literal] == [special.pk]
     precise = client.get(url, {"q": "  Михаил   П  "}).json()["results"]
     assert [item["id"] for item in precise] == [second.pk]
     phone = client.get(url, {"q": "8 (912) 123-45-67"}).json()["results"]

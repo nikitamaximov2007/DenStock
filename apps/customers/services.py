@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 
 from django.db import IntegrityError, transaction
 from django.db.models import DateTimeField, OuterRef, Q, Subquery, Value
@@ -32,6 +33,21 @@ class CustomerCreateIdempotencyError(RuntimeError):
 
 class CustomerArchiveError(ValueError):
     """The requested customer archive transition is not valid."""
+
+
+def _name_search_pattern(query: str) -> str:
+    """Literal substring with one-character case variants, independent of DB locale."""
+    pattern = []
+    for char in query:
+        if char == " ":
+            pattern.append(" +")
+            continue
+        variants = sorted({variant for variant in (
+            char, char.lower(), char.upper(), char.casefold()
+        ) if len(variant) == 1})
+        escaped = [re.escape(variant) for variant in variants]
+        pattern.append(escaped[0] if len(escaped) == 1 else f"[{''.join(escaped)}]")
+    return "".join(pattern)
 
 
 def require_active_customer(customer):
@@ -129,7 +145,7 @@ def search_customers(
     archived_only=False, include_phone_fragment=False
 ):
     """Клиенты по имени (подстрока) или телефону в любом привычном формате."""
-    query = (query or "").strip()
+    query = " ".join((query or "").split())
     queryset = Customer.objects.all()
     if archived_only:
         queryset = queryset.filter(archived_at__isnull=False)
@@ -137,7 +153,10 @@ def search_customers(
         queryset = queryset.filter(archived_at__isnull=True)
     if not query:
         return queryset[:limit]
-    condition = Q(name__icontains=query)
+    # PostgreSQL clusters with LC_CTYPE=C do not case-fold Cyrillic in ILIKE.
+    # Use a literal regex so the same name search works on PostgreSQL
+    # and SQLite without fetching the entire customer table into Python.
+    condition = Q(name__regex=_name_search_pattern(query))
     if include_phone_fragment:
         condition |= Q(phone__icontains=query)
     if looks_like_phone(query):
