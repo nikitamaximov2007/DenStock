@@ -4,10 +4,13 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from io import BytesIO
 
 from django.db import transaction
+from PIL import Image, UnidentifiedImageError
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_PHOTO_PIXELS = 16_000_000
 ALLOWED = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
 EXTENSIONS = {"png", "jpg", "jpeg", "webp", "pdf"}
 
@@ -35,6 +38,9 @@ def cleanup_attachment(message) -> None:
     """Remove bytes only after a terminal, non-retryable delivery outcome."""
     if not hasattr(message, "attachment") or not message.attachment:
         return
+    # Photos remain part of conversation history after delivery.
+    if str(getattr(message, "attachment_content_type", "")).startswith("image/"):
+        return
     storage = message.attachment.storage
     name = message.attachment.name
     with transaction.atomic():
@@ -44,6 +50,15 @@ def cleanup_attachment(message) -> None:
         # attachment; an orphaned file is recoverable, a missing reference is not.
         transaction.on_commit(lambda: storage.delete(name))
     message.attachment = ""
+
+
+def erase_conversation_attachments(messages) -> None:
+    """Remove private bytes when a request's personal data is anonymized."""
+    for message in messages.exclude(attachment="").iterator():
+        message.attachment.delete(save=False)
+        type(message).objects.filter(pk=message.pk).update(
+            attachment="", attachment_name="", attachment_content_type=""
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,3 +110,23 @@ def validate_attachment(upload) -> ValidatedAttachment:
     if expected != detected:
         raise AttachmentError("Расширение файла не соответствует его содержимому.")
     return ValidatedAttachment(content, filename, detected)
+
+
+def validate_photo(upload) -> ValidatedAttachment:
+    """Accept actual, decodable images only; never trust provider MIME or suffix."""
+    validated = validate_attachment(upload)
+    if not validated.content_type.startswith("image/"):
+        raise AttachmentError("Поддерживаются только фотографии PNG, JPEG и WEBP.")
+    try:
+        with Image.open(BytesIO(validated.content)) as image:
+            if image.width * image.height > MAX_PHOTO_PIXELS:
+                raise AttachmentError("Слишком большое изображение.")
+            image.load()
+            detected = Image.MIME.get(image.format)
+    except AttachmentError:
+        raise
+    except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError):
+        raise AttachmentError("Фотография повреждена или имеет неверный формат.") from None
+    if detected != validated.content_type:
+        raise AttachmentError("Содержимое фотографии не соответствует формату.")
+    return validated

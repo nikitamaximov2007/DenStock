@@ -8,6 +8,7 @@ arrived. No network beyond 127.0.0.1 and no real token.
 
 import logging
 import socket
+import urllib.request
 
 import pytest
 
@@ -16,6 +17,7 @@ from apps.customer_requests.max_api import (
     MaxApiError,
     MaxBotApi,
     MaxNetworkError,
+    SameHostRedirect,
     inline_keyboard,
     webhook_secret_is_well_formed,
 )
@@ -274,6 +276,29 @@ def test_download_url_rejects_declared_oversize_before_reading():
         _download_api(response).download_url("https://files.max.example/a")
     assert caught.value.status == 413
     assert response.offset == 0
+
+
+def test_download_url_rejects_untrusted_image_host_before_request():
+    response = _DownloadResponse(b"image", declared=None)
+    with pytest.raises(MaxApiError):
+        _download_api(response).download_url("https://example.org/other-user.jpg")
+    assert response.offset == 0
+
+
+def test_download_url_accepts_official_incoming_photo_host():
+    response = _DownloadResponse(b"image", declared=None)
+    assert _download_api(response).download_url("https://i.oneme.ru/temporary-photo") == b"image"
+
+
+def test_media_redirect_stays_on_the_same_verified_host():
+    handler = SameHostRedirect()
+    request = urllib.request.Request("https://i.oneme.ru/photo")
+    assert handler.redirect_request(
+        request, None, 302, "", {}, "https://example.org/elsewhere"
+    ) is None
+    assert handler.redirect_request(
+        request, None, 302, "", {}, "https://i.oneme.ru/next"
+    ).full_url == "https://i.oneme.ru/next"
 
 
 # Subscriptions and callbacks --------------------------------------------------------------

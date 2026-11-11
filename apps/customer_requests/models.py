@@ -1236,6 +1236,7 @@ class OperatorNotification(models.Model):
         NEW_REQUEST = "new_request", "Новая заявка"
         CUSTOMER_MESSAGE = "customer_message", "Сообщение клиента"
         OWNER_PANEL = "owner_panel", "Панель владельца"
+        REPLY_DELIVERY = "reply_delivery", "Результат отправки ответа"
 
     class Status(models.TextChoices):
         PENDING = "pending", "В очереди"
@@ -1261,6 +1262,15 @@ class OperatorNotification(models.Model):
     kind = models.CharField("Событие", max_length=24, choices=Kind.choices)
     dedupe_key = models.CharField("Ключ идемпотентности", max_length=180, unique=True)
     preview = models.CharField("Краткий текст", max_length=700, blank=True)
+    telegram_message = models.ForeignKey(
+        TelegramMessage, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="operator_notifications",
+    )
+    max_message = models.ForeignKey(
+        MaxMessage, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="operator_notifications",
+    )
+    max_attachment_token = models.CharField(max_length=512, blank=True)
     status = models.CharField(
         "Состояние", max_length=12, choices=Status.choices, default=Status.PENDING
     )

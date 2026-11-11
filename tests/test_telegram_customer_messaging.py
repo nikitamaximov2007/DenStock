@@ -850,8 +850,8 @@ def test_two_operators_get_one_copy_and_customer_one_confirmation(part, worker, 
 def test_unsupported_media_is_explained_and_not_stored(part, worker, api):
     request = _request(part, key="2" * 32)
     link(worker, api, request)
-    run(worker, api, message_update(CUSTOMER, photo=[{"file_id": "abc"}]))
-    assert "только текст" in api.texts_to(CUSTOMER)[-1]
+    run(worker, api, message_update(CUSTOMER, voice={"file_id": "abc"}))
+    assert "Голосовые, видео и документы" in api.texts_to(CUSTOMER)[-1]
     assert not TelegramMessage.objects.filter(direction=TelegramMessage.Direction.CUSTOMER).exists()
 
 

@@ -2,7 +2,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import timedelta
-from io import StringIO
+from io import BytesIO, StringIO
 
 import pytest
 from django.contrib.auth.models import Group
@@ -13,6 +13,7 @@ from django.db import close_old_connections, connection, connections
 from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
+from PIL import Image
 
 from apps.customer_requests import operator_console, operator_replies
 from apps.customer_requests.max_api import MaxApiError, MaxBotApi, MaxNetworkError
@@ -44,6 +45,12 @@ from .test_telegram_customer_messaging import (
     build_part,
     message_update,
 )
+
+
+def _image_bytes(format):
+    output = BytesIO()
+    Image.new("RGB", (16, 12), (20, 50, 90)).save(output, format=format)
+    return output.getvalue()
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
@@ -373,12 +380,12 @@ def test_nikita_reply_is_pro_store_to_customer_and_admin_in_audit(
         text="Ответ от администратора",
     )
 
-    assert reply[0] == "Ответ поставлен в очередь доставки клиенту."
+    assert reply == ("", None)
     message = TelegramMessage.objects.get(text="Ответ от администратора")
     assert message.operator_author_label == "NIKITA / ADMIN"
     assert message.operator_control_source == "telegram"
-    intro = TelegramMessage.objects.get(text="Вам отвечает PRO-STORE.")
-    assert intro.operator_author_label == "PRO-STORE"
+    intro = TelegramMessage.objects.get(text="Вам отвечает PRO-STOR.")
+    assert intro.operator_author_label == "PRO-STOR"
 
 
 @pytest.mark.parametrize(
@@ -406,7 +413,7 @@ def test_owner_panel_buttons_activate_console_for_both_providers(
         assert markup["is_persistent"] is False
         assert markup["one_time_keyboard"] is False
         return
-    assert text == "Панель администратора PRO-STORE"
+    assert text == "Панель администратора PRO-STOR"
     assert [row[0]["text"] for row in markup["inline_keyboard"]] == expected
     assert binding.operator_mode is False
 
@@ -600,7 +607,7 @@ def test_max_owner_panel_real_serializer_and_callback_round_trip(
         sent = server.sent[0]
         assert sent["chat_id"] == binding.delivery_chat_id
         assert sent["chat_id"] != binding.provider_user_id
-        assert sent["text"] == "Панель администратора PRO-STORE"
+        assert sent["text"] == "Панель администратора PRO-STOR"
         buttons = sent["attachments"][0]["payload"]["buttons"]
         assert [button["text"] for row in buttons for button in row] == [
             "Все заявки",
@@ -1076,7 +1083,7 @@ def test_revoked_max_binding_can_only_repair_to_same_employee(db, django_user_mo
 
 @pytest.mark.parametrize(
     ("provider", "provider_user_id", "provider_chat_id"),
-    [("telegram", 99041, None), ("max", 94041, 777777741)],
+    [("max", 94041, 777777741)],
 )
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
 def test_revoke_and_repair_starts_clean_for_both_providers(
@@ -1101,7 +1108,7 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         provider=provider, provider_user_id=provider_user_id,
         external_id="work-before-revoke", text="/work", **chat_kwargs
     )
-    old_callback = operator_console._callback(binding, "c", request_a.public_id.hex)
+    old_callback = operator_console._callback(binding, "r", request_a.public_id.hex)
     operator_console.handle_callback(
         provider=provider, provider_user_id=provider_user_id, payload=old_callback
     )
@@ -1110,7 +1117,7 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         external_id="reply-before-revoke", text="исторический ответ", **chat_kwargs
     )
     intro = MaxMessage.objects.get(
-        text="Вам отвечает Денис, владелец сервиса PRO-STORE."
+        text="Вам отвечает Денис, владелец сервиса PRO-STOR."
     )
     intro.delivery_status = MaxDeliveryStatus.SENT
     intro.save(update_fields=["delivery_status"])
@@ -1174,7 +1181,7 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
     assert refusal.startswith("Сначала выберите заявку")
     assert MaxMessage.objects.count() == before
 
-    fresh_a = operator_console._callback(repaired, "c", request_a.public_id.hex)
+    fresh_a = operator_console._callback(repaired, "r", request_a.public_id.hex)
     operator_console.handle_callback(
         provider=provider, provider_user_id=provider_user_id, payload=fresh_a
     )
@@ -1182,13 +1189,13 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         provider=provider, provider_user_id=provider_user_id,
         external_id="after-selection", text="ответ A", **chat_kwargs
     )
-    assert result.startswith("Ответ поставлен")
+    assert result == ""
     assert MaxMessage.objects.filter(text="ответ A", recipient_chat_id=99841).exists()
 
     request_b = _request(build_part(), key=f"B{provider_user_id}".ljust(32, "B"), messenger="max")
     customer = issue_max_link(request_id=request_b.pk).token
     consume_max_start(token=customer, chat_id=99851, user_id=99852)
-    fresh_b = operator_console._callback(repaired, "c", request_b.public_id.hex)
+    fresh_b = operator_console._callback(repaired, "r", request_b.public_id.hex)
     operator_console.handle_callback(
         provider=provider, provider_user_id=provider_user_id, payload=fresh_b
     )
@@ -1196,13 +1203,13 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         provider=provider, provider_user_id=provider_user_id,
         external_id="after-switch", text="ответ B", **chat_kwargs
     )
-    assert result.startswith("Ответ поставлен")
+    assert result == ""
     assert MaxMessage.objects.filter(text="ответ B", recipient_chat_id=99851).exists()
     assert not MaxMessage.objects.filter(text="ответ B", recipient_chat_id=99841).exists()
 
     intro_b = MaxMessage.objects.get(
         conversation__request=request_b,
-        text="Вам отвечает Денис, владелец сервиса PRO-STORE.",
+        text="Вам отвечает Денис, владелец сервиса PRO-STOR.",
     )
     intro_b.delivery_status = MaxDeliveryStatus.SENT
     intro_b.save(update_fields=["delivery_status"])
@@ -1212,59 +1219,29 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         external_id="after-file", text="",
         attachment=SimpleUploadedFile("after.pdf", b"%PDF-1.7\naccepted"), **chat_kwargs
     )
-    assert result.startswith("Ответ поставлен")
+    assert result == ""
     assert MaxMessage.objects.filter(
         conversation__request=request_b, attachment_name="after.pdf"
     ).exists()
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
-def test_telegram_operator_to_max_customer_uses_request_transport_and_dedupes(
-    db, django_user_model
-):
-    part = build_part()
-    request = _request(part, key="M" * 32, messenger=CustomerRequest.Messenger.MAX)
-    customer = issue_max_link(request_id=request.pk).token
-    consume_max_start(token=customer, chat_id=99801, user_id=99802)
+def test_telegram_operator_cannot_open_max_customer(db, django_user_model):
+    request = _request(build_part(), key="M" * 32, messenger=CustomerRequest.Messenger.MAX)
     user = _operator(django_user_model, 99005, username="cross").user
     binding = StaffMessengerBinding.objects.create(
         user=user, provider="telegram", provider_user_id=99005, customer_visible_label="Максим"
     )
-    operator_console.handle_text(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        external_id="work", text="/work"
-    )
-    result = operator_console.handle_callback(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        payload=operator_console._callback(binding, "c", request.public_id.hex)
-    )
-    assert result[0].startswith(f"Заявка №{request.reference}")
-    operator_console.handle_callback(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        payload=operator_console._callback(binding, "r", request.public_id.hex)
-    )
-    first = operator_console.handle_text(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        external_id="same-update", text="ответ из Telegram"
-    )
-    second = operator_console.handle_text(
-        provider="telegram", provider_user_id=binding.provider_user_id,
-        external_id="same-update", text="ответ из Telegram"
-    )
-    assert first[0].startswith("Ответ поставлен")
-    assert second[0].startswith("Ответ поставлен")
-    messages = MaxMessage.objects.filter(
-        conversation__request=request, direction=MaxMessage.Direction.OPERATOR
-    )
-    assert messages.count() == 2
-    assert list(messages.values_list("text", flat=True)) == [
-        "Вам отвечает Максим.",
-        "ответ из Telegram",
-    ]
-    reply = messages.get(text="ответ из Telegram")
-    assert reply.operator_control_source == "telegram"
-    assert reply.operator_author_label == "Максим"
-    assert reply.recipient_chat_id == 99801
+    for kind in ("c", "r", "h"):
+        value = request.public_id.hex + ("-0" if kind == "h" else "")
+        response = operator_console.handle_callback(
+            provider="telegram", provider_user_id=99005,
+            payload=operator_console._callback(binding, kind, value),
+        )
+        assert response[0] == "Заявка не найдена."
+    assert operator_console.set_context(binding=binding, request_id=request.pk)[0] is None
+    assert operator_console.current_request(binding) is None
+    assert not MaxMessage.objects.filter(conversation__request=request).exists()
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
@@ -1275,45 +1252,48 @@ def test_responder_is_confirmed_only_after_intro_delivery(db, django_user_model)
     consume_max_start(token=customer, chat_id=99831, user_id=99832)
     user = _operator(django_user_model, 99036, username="intro").user
     StaffMessengerBinding.objects.create(
-        user=user, provider="telegram", provider_user_id=99036, customer_visible_label="Денис"
+        user=user, provider="max", provider_user_id=99036, delivery_chat_id=99830,
+        customer_visible_label="Денис",
     )
     operator_console.handle_text(
-        provider="telegram", provider_user_id=99036, external_id="work", text="/work"
+        provider="max", provider_user_id=99036, provider_chat_id=99830,
+        external_id="work", text="/work"
     )
     operator_console.handle_callback(
-        provider="telegram", provider_user_id=99036,
+        provider="max", provider_user_id=99036,
         payload=operator_console._callback(
             StaffMessengerBinding.objects.get(user=user), "r", request.public_id.hex
         )
     )
     operator_console.handle_text(
-        provider="telegram", provider_user_id=99036, external_id="reply-1", text="первый"
+        provider="max", provider_user_id=99036, provider_chat_id=99830,
+        external_id="reply-1", text="первый"
     )
     request.refresh_from_db()
     assert request.current_responder_label == ""
-    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STORE"
+    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STOR"
     intro = MaxMessage.objects.get(
         conversation__request=request,
-        text="Вам отвечает Денис, владелец сервиса PRO-STORE.",
+        text="Вам отвечает Денис, владелец сервиса PRO-STOR.",
     )
     intro.delivery_status = MaxDeliveryStatus.FAILED
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
     request.refresh_from_db()
     assert request.current_responder_label == ""
-    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STORE"
+    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STOR"
     intro.delivery_status = MaxDeliveryStatus.SENT
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
     request.refresh_from_db()
-    assert request.current_responder_label == "Денис, владелец сервиса PRO-STORE"
+    assert request.current_responder_label == "Денис, владелец сервиса PRO-STOR"
     assert request.pending_responder_label == ""
 
 
 @override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
 def test_new_request_notification_is_one_per_binding(db, django_user_model):
     part = build_part()
-    request = _request(part, key="N" * 32, messenger=CustomerRequest.Messenger.TELEGRAM)
+    request = _request(part, key="N" * 32, messenger=CustomerRequest.Messenger.MAX)
     user = _operator(django_user_model, 99006, username="notify").user
     binding = StaffMessengerBinding.objects.create(
         user=user, provider="max", provider_user_id=99006, customer_visible_label="Владислав"
@@ -1336,7 +1316,7 @@ def test_max_operator_notification_uses_delivery_chat_not_provider_user_id(db, d
             return {"body": {"mid": "operator-notice-1"}}
 
     part = build_part()
-    request = _request(part, key="Q" * 32, messenger=CustomerRequest.Messenger.TELEGRAM)
+    request = _request(part, key="Q" * 32, messenger=CustomerRequest.Messenger.MAX)
     user = _operator(django_user_model, 99035, username="max-notify").user
     binding = StaffMessengerBinding.objects.create(
         user=user, provider="max", provider_user_id=94001, delivery_chat_id=777777777,
@@ -1526,13 +1506,13 @@ def test_admin_status_access_rules_remain_unchanged(client, db, django_user_mode
     [
         (
             "Денис",
-            "Вам отвечает Денис, владелец сервиса PRO-STORE.",
-            "К диалогу подключился Денис, владелец сервиса PRO-STORE.",
+            "Вам отвечает Денис, владелец сервиса PRO-STOR.",
+            "К диалогу подключился Денис, владелец сервиса PRO-STOR.",
         ),
         (
             "Рим",
-            "Вам отвечает Рим, владелец сервиса PRO-STORE.",
-            "К диалогу подключился Рим, владелец сервиса PRO-STORE.",
+            "Вам отвечает Рим, владелец сервиса PRO-STOR.",
+            "К диалогу подключился Рим, владелец сервиса PRO-STOR.",
         ),
     ],
 )
@@ -1625,9 +1605,9 @@ def test_readiness_check_redacts_provider_identity_and_never_changes_bindings(
 @pytest.mark.parametrize(
     ("filename", "content"),
     [
-        ("photo.png", b"\x89PNG\r\n\x1a\noperator"),
-        ("photo.jpg", b"\xff\xd8\xffoperator"),
-        ("photo.webp", b"RIFF0000WEBPoperator"),
+        ("photo.png", _image_bytes("PNG")),
+        ("photo.jpg", _image_bytes("JPEG")),
+        ("photo.webp", _image_bytes("WEBP")),
         ("manual.pdf", b"%PDF-1.7\noperator"),
     ],
 )
@@ -1643,34 +1623,189 @@ def test_operator_attachment_uses_the_same_private_reply_pipeline(
     consume_max_start(token=customer, chat_id=99811, user_id=99812)
     user = _operator(django_user_model, 99011, username="attachment").user
     binding = StaffMessengerBinding.objects.create(
-        user=user, provider="telegram", provider_user_id=99011, customer_visible_label="Денис"
+        user=user, provider="max", provider_user_id=99011, customer_visible_label="Денис"
     )
     _panel_text, panel = operator_console.owner_panel(binding)
-    assert "keyboard" in panel
+    assert "inline_keyboard" in panel
     _list_text, request_list = operator_console.handle_text(
-        provider="telegram",
+        provider="max",
         provider_user_id=binding.provider_user_id,
         external_id="attachment-list",
         text="Все заявки",
     )
     request_button = request_list["inline_keyboard"][0][0]["callback_data"]
     _card_text, card_buttons = operator_console.handle_callback(
-        provider="telegram",
+        provider="max",
         provider_user_id=binding.provider_user_id,
         payload=request_button,
     )
-    reply_button = card_buttons["inline_keyboard"][0][0]["callback_data"]
+    reply_button = next(button["callback_data"] for row in card_buttons["inline_keyboard"]
+                        for button in row if button["text"] == "Написать")
     operator_console.handle_callback(
-        provider="telegram", provider_user_id=binding.provider_user_id, payload=reply_button
+        provider="max", provider_user_id=binding.provider_user_id, payload=reply_button
     )
     result = operator_console.handle_text(
-        provider="telegram", provider_user_id=binding.provider_user_id,
+        provider="max", provider_user_id=binding.provider_user_id,
         external_id=filename, text="", attachment=SimpleUploadedFile(filename, content)
     )
-    assert result[0].startswith("Ответ поставлен")
+    assert result == ("", None)
     message = MaxMessage.objects.get(
         conversation__request=request, text="", direction=MaxMessage.Direction.OPERATOR
     )
     assert message.attachment_name == filename
     assert message.attachment_content_type
     assert message.attachment
+
+@pytest.mark.parametrize("provider,other", [("telegram", "max"), ("max", "telegram")])
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_operator_console_rejects_other_channel_everywhere(
+    db, django_user_model, provider, other
+):
+    part = build_part()
+    own = _request(part, key=(provider + "-own").ljust(32, "o"), messenger=provider)
+    foreign = _request(part, key=(provider + "-other").ljust(32, "f"), messenger=other)
+    user = _operator(django_user_model, 98101 if provider == "telegram" else 98102,
+                     username=f"isolated-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user, provider=provider, provider_user_id=98101 if provider == "telegram" else 98102,
+        delivery_chat_id=98103 if provider == "max" else None,
+        customer_visible_label="Сотрудник",
+    )
+    for new_only in (False, True):
+        text, markup = operator_console.request_page(new_only=new_only, binding=binding)
+        assert text
+        buttons = str(markup)
+        assert own.public_id.hex in buttons
+        assert foreign.public_id.hex not in buttons
+    for kind in ("c", "r", "h"):
+        value = foreign.public_id.hex + ("-0" if kind == "h" else "")
+        result = operator_console.handle_callback(
+            provider=provider, provider_user_id=binding.provider_user_id,
+            payload=operator_console._callback(binding, kind, value),
+        )
+        assert result[0] == "Заявка не найдена."
+    assert operator_console.set_context(binding=binding, request_id=foreign.pk)[0] is None
+    OperatorConversationContext.objects.update_or_create(
+        binding=binding, defaults={"request": foreign}
+    )
+    assert operator_console.current_request(binding) is None
+    assert operator_console.handle_text(
+        provider=provider, provider_user_id=binding.provider_user_id,
+        external_id="wrong-channel", text="не доставлять",
+    )[0].startswith("Сначала выберите заявку")
+    assert operator_console.notification_for(foreign, binding) is None
+    operator_console.queue_new_request_notifications(since=min(own.created_at, foreign.created_at))
+    assert OperatorNotification.objects.filter(binding=binding, request=own).exists()
+    assert not OperatorNotification.objects.filter(binding=binding, request=foreign).exists()
+
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_operator_history_and_reply_prompt_hide_technical_confirmations(db, django_user_model):
+    request = _request(build_part(), key="history-no-status".ljust(32, "h"))
+    consume_telegram_start(token=issue_telegram_link(request_id=request.pk).token,
+                           chat_id=98110, user_id=98110, username="customer")
+    user = _operator(django_user_model, 98111, username="history-clean").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user, provider="telegram", provider_user_id=98111, customer_visible_label="Сотрудник"
+    )
+    prompt, buttons = operator_console.reply_prompt(request, binding=binding)
+    assert prompt == f"Заявка №{request.reference}. Отправьте сообщение или фотографию."
+    assert "Отмена" in str(buttons) and "К заявкам" in str(buttons)
+    history, _ = operator_console.history_page(request, binding=binding)
+    assert "Отправлено" not in history and "Получено" not in history
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_customer_message_notifications_stay_in_their_staff_bot(db, django_user_model):
+    part = build_part()
+    telegram = _request(part, key="notify-telegram".ljust(32, "t"), messenger="telegram")
+    max_request = _request(part, key="notify-max".ljust(32, "m"), messenger="max")
+    consume_telegram_start(token=issue_telegram_link(request_id=telegram.pk).token,
+                           chat_id=98121, user_id=98121, username="customer")
+    consume_max_start(token=issue_max_link(request_id=max_request.pk).token,
+                      chat_id=98122, user_id=98122)
+    user = _operator(django_user_model, 98123, username="notice-isolation").user
+    bindings = {
+        channel: StaffMessengerBinding.objects.create(
+            user=user, provider=channel, provider_user_id=98123,
+            delivery_chat_id=98124 if channel == "max" else None,
+            customer_visible_label="Сотрудник",
+        ) for channel in ("telegram", "max")
+    }
+    messages = (
+        TelegramMessage.objects.create(conversation=telegram.telegram_conversation,
+                                       direction=TelegramMessage.Direction.CUSTOMER,
+                                       text="TG вопрос"),
+        MaxMessage.objects.create(conversation=max_request.max_conversation,
+                                  direction=MaxMessage.Direction.CUSTOMER,
+                                  text="MAX вопрос", external_message_id="notice-isolation-max"),
+    )
+    operator_console.queue_operator_notifications(since=min(m.created_at for m in messages))
+    for channel, request in (("telegram", telegram), ("max", max_request)):
+        assert OperatorNotification.objects.filter(
+            binding=bindings[channel], request=request,
+            kind=OperatorNotification.Kind.CUSTOMER_MESSAGE,
+        ).count() == 1
+        other = max_request if channel == "telegram" else telegram
+        assert not OperatorNotification.objects.filter(binding=bindings[channel], request=other)
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_legacy_telegram_operator_cannot_use_mixed_channel_menu(db, django_user_model):
+    _operator(django_user_model, 98131, username="legacy-mixed")
+    result = handle_update(message_update(98131, "Все заявки", update_id=98132))
+    assert len(result) == 1
+    assert result[0].text == "Недоступно."
+
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_web_request_list_keeps_both_customer_channels(client, db, django_user_model):
+    part = build_part()
+    telegram = _request(part, key="web-both-telegram".ljust(32, "t"), messenger="telegram")
+    max_request = _request(part, key="web-both-max".ljust(32, "m"), messenger="max")
+    user = _operator(django_user_model, 98141, username="web-both").user
+    client.force_login(user)
+    response = client.get(reverse("customer_request_list"))
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert str(telegram.reference) in body
+    assert str(max_request.reference) in body
+
+@pytest.mark.parametrize("provider", ["telegram", "max"])
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True)
+def test_old_request_button_survives_context_change_and_restart(
+    db, django_user_model, provider
+):
+    request = _request(build_part(), key=(provider + "-old-button").ljust(32, "b"),
+                       messenger=provider)
+    foreign = _request(build_part(), key=(provider + "-foreign").ljust(32, "f"),
+                       messenger="max" if provider == "telegram" else "telegram")
+    user_id = 98151 if provider == "telegram" else 98152
+    user = _operator(django_user_model, user_id, username=f"old-{provider}").user
+    binding = StaffMessengerBinding.objects.create(
+        user=user, provider=provider, provider_user_id=user_id,
+        customer_visible_label="Сотрудник",
+    )
+    old_open = operator_console._callback(binding, "c", request.public_id.hex)
+    old_history = operator_console._callback(binding, "h", f"{request.public_id.hex}-0")
+    old_foreign = operator_console._callback(binding, "c", foreign.public_id.hex)
+    old_reply = operator_console._callback(binding, "r", request.public_id.hex)
+    unresolvable = operator_console._callback(binding, "c", "missing-request")
+    operator_console.set_context(binding=binding, request_id=request.pk)
+    operator_console.invalidate_contexts(provider)
+    assert operator_console.handle_callback(
+        provider=provider, provider_user_id=user_id, payload=old_open
+    )[0].startswith(f"Заявка №{request.reference}")
+    assert "История" in operator_console.handle_callback(
+        provider=provider, provider_user_id=user_id, payload=old_history
+    )[0]
+    assert operator_console.handle_callback(
+        provider=provider, provider_user_id=user_id, payload=old_foreign
+    )[0] == "Заявка не найдена."
+    assert operator_console.handle_callback(
+        provider=provider, provider_user_id=user_id, payload=unresolvable
+    )[0] == "Заявка не найдена."
+    assert operator_console.handle_callback(
+        provider=provider, provider_user_id=user_id, payload=old_reply
+    )[0].startswith("Рабочая сессия устарела")
+    operator_console.revoke_binding(binding=binding)
+    assert operator_console.handle_callback(
+        provider=provider, provider_user_id=user_id, payload=old_open
+    )[0] == "Недоступно."

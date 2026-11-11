@@ -1082,6 +1082,9 @@ form.toolbar input:focus, form.toolbar select:focus {
   color: var(--muted); margin-bottom: 2px; }
 .cr-msg__author { font-weight: 700; color: var(--text); }
 .cr-msg__text { line-height: 1.45; }
+.cr-msg__photo-link { display: block; max-width: 100%; margin: 6px 0; }
+.cr-msg__photo { display: block; max-width: 100%; width: auto; height: auto; max-height: 360px; border-radius: 8px; object-fit: contain; }
+.cr-msg__bubble { min-width: 0; overflow-wrap: anywhere; }
 .cr-msg__delivery { margin-top: 4px; font-size: 12px; color: var(--muted); text-align: right; }
 .cr-msg__status--bad { color: var(--danger-fg); font-weight: 700; }
 .cr-msg__bot { max-width: 90%; font-size: 13px; color: var(--muted); }
@@ -1108,6 +1111,30 @@ form.toolbar input:focus, form.toolbar select:focus {
 .cr-order__locations li + li { margin-top: 3px; }
 .cr-order__location-code { font-weight: 600; }
 .cr-order__comment { margin: 8px 0 0; }
+@media (max-width: 600px) {
+  .cr-order__table, .cr-order__table tbody, .cr-order__table tfoot {
+    display: block; width: 100%; min-width: 0;
+  }
+  .cr-order__table thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  .cr-order__table tbody tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-bottom: 1px solid var(--line);
+  }
+  .cr-order__table tbody td {
+    display: block; min-width: 0; width: auto; text-align: left;
+    white-space: normal; border: 0; padding: 8px 12px;
+  }
+  .cr-order__table tbody td:first-child { grid-column: 1 / -1; padding-bottom: 0; }
+  .cr-order__table td[data-label]::before {
+    content: attr(data-label); display: block; color: var(--muted);
+    font-size: 12px; margin-bottom: 4px;
+  }
+  .cr-order__table tfoot tr { display: flex; justify-content: space-between; }
+  .cr-order__table tfoot th { min-width: 0; white-space: normal; }
+}
 .cr-service { margin-top: 16px; }
 .cr-service > summary { cursor: pointer; list-style: none; }
 .cr-service > summary::-webkit-details-marker { display: none; }

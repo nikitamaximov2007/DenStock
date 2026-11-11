@@ -36,7 +36,9 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
+
+from django.conf import settings
 
 from .attachments import MAX_ATTACHMENT_BYTES
 
@@ -144,10 +146,20 @@ def tls_context(ca_file: str = "", ca_sha256: str = "") -> ssl.SSLContext:
     return context
 
 
+class SameHostRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        source = urlsplit(request.full_url)
+        destination = urlsplit(newurl)
+        if destination.scheme != "https" or destination.hostname != source.hostname:
+            return None
+        return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+
 def direct_opener(context: ssl.SSLContext):
     """An opener that verifies with ``context`` and never uses an env proxy."""
     return urllib.request.build_opener(
-        urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context)
+        urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context),
+        SameHostRedirect(),
     ).open
 
 
@@ -348,7 +360,25 @@ class MaxBotApi:
 
     def download_url(self, url: str) -> bytes:
         """Download one provider-supplied attachment URL without logging it."""
-        if not isinstance(url, str) or not url.startswith("https://"):
+        try:
+            parsed = urlsplit(url) if isinstance(url, str) else None
+        except ValueError:
+            parsed = None
+        # MAX uploads use iu.oneme.ru, while incoming photo payloads currently
+        # provide a temporary download URL on i.oneme.ru.
+        allowed_hosts = {"iu.oneme.ru", "i.oneme.ru"}
+        if getattr(settings, "DENSTOCK_MODE", "") == "test":
+            allowed_hosts.add("files.max.example")
+        try:
+            valid = bool(
+                parsed is not None and parsed.scheme == "https"
+                and parsed.hostname in allowed_hosts
+                and not parsed.username and not parsed.password
+                and parsed.port in {None, 443}
+            )
+        except ValueError:
+            valid = False
+        if not valid:
             raise MaxApiError(400, "local.validation", "invalid attachment URL")
         request = urllib.request.Request(url, method="GET")
         try:
@@ -375,16 +405,18 @@ class MaxBotApi:
         return content
 
     def send_file_token(
-        self, *, chat_id: int, token: str, content_type: str, caption: str = ""
+        self, *, chat_id: int, token: str, content_type: str, caption: str = "", buttons=None
     ) -> dict:
         """Send a previously uploaded MAX token without creating another upload."""
         if not token:
             raise ValueError("MAX attachment token is required.")
         attachment_type = "image" if content_type.startswith("image/") else "file"
+        attachments = [{"type": attachment_type, "payload": {"token": token}}]
+        attachments.extend(inline_keyboard(buttons))
         result = self.call(
             "POST", "/messages", query={"chat_id": chat_id, "disable_link_preview": "true"},
             payload={"text": caption[:MAX_TEXT_CHARS] or " ", "notify": True,
-                     "attachments": [{"type": attachment_type, "payload": {"token": token}}]},
+                     "attachments": attachments},
             may_duplicate=True,
         )
         return result.get("message") or {}

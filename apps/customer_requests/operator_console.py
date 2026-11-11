@@ -57,13 +57,13 @@ INTERNAL_NAVIGATION_LABELS = (
     "Загрузка фото по продажам/ремонтам",
 )
 TELEGRAM_OPERATOR_HELP_TEXT = (
-    "Панель администратора PRO-STORE\n"
+    "Панель администратора PRO-STOR\n"
     "Доступно:\n"
     "- просмотр и общение по всем и новым заявкам;\n"
     "- загрузка фото по продажам/ремонтам.\n\n"
     "Кнопки находятся в меню рядом с полем ввода сообщения."
 )
-TELEGRAM_OPERATOR_PANEL_TITLE = "Панель администратора PRO-STORE"
+TELEGRAM_OPERATOR_PANEL_TITLE = "Панель администратора PRO-STOR"
 
 
 def enabled() -> bool:
@@ -72,6 +72,10 @@ def enabled() -> bool:
 
 def _valid_provider(value: str) -> str | None:
     return value if value in StaffMessengerBinding.Provider.values else None
+
+
+def _request_allowed(binding, request) -> bool:
+    return bool(binding and request and request.preferred_messenger == binding.provider)
 
 
 def _hash(value: str) -> str:
@@ -114,7 +118,7 @@ def internal_author_label(binding) -> str:
 
 def customer_responder_label(binding) -> str:
     """The service identity shown to customers for this binding's replies."""
-    return "PRO-STORE" if is_admin_binding(binding) else binding.customer_visible_label
+    return "PRO-STOR" if is_admin_binding(binding) else binding.customer_visible_label
 
 
 def _new_pairing_code() -> str:
@@ -272,12 +276,14 @@ def _callback(binding, kind: str, value: str = "") -> str:
 
 
 def menu(binding=None) -> tuple[str, dict]:
-    heading = "Панель администратора PRO-STORE"
+    heading = "Панель администратора PRO-STOR"
     if binding is not None:
         context = OperatorConversationContext.objects.select_related("request").filter(
             binding=binding
         ).first()
-        if context and context.request_id and _context_is_fresh(context):
+        if context and context.request_id and _context_is_fresh(context) and _request_allowed(
+            binding, context.request
+        ):
             request = context.request
             heading += (
                 f"\nСейчас открыт диалог: №{request.reference} - "
@@ -329,8 +335,10 @@ def buttons_for_provider(markup: dict | None, provider: str) -> dict | None:
     }
 
 
-def _query(*, new_only: bool):
+def _query(*, new_only: bool, binding=None):
     query = CustomerRequest.objects.all()
+    if binding is not None:
+        query = query.filter(preferred_messenger=binding.provider)
     if new_only:
         query = query.filter(status=CustomerRequest.Status.NEW)
     else:
@@ -339,7 +347,7 @@ def _query(*, new_only: bool):
 
 
 def request_page(page: int = 1, *, new_only: bool = False, binding=None) -> tuple[str, dict]:
-    query = _query(new_only=new_only)
+    query = _query(new_only=new_only, binding=binding)
     total = query.count()
     pages = max(1, (total + LIST_PAGE_SIZE - 1) // LIST_PAGE_SIZE)
     page = min(max(1, int(page or 1)), pages)
@@ -816,7 +824,7 @@ def set_context(*, binding, request_id: int):
     if binding is None:
         return None, "Доступ отозван."
     request = CustomerRequest.objects.select_for_update().filter(pk=request_id).first()
-    if request is None:
+    if request is None or not _request_allowed(binding, request):
         return None, "Заявка не найдена."
     context, _ = OperatorConversationContext.objects.select_for_update().get_or_create(
         binding=binding
@@ -835,7 +843,7 @@ def current_request(binding):
     )
     if not context or not context.request_id:
         return None
-    if not _context_is_fresh(context):
+    if not _context_is_fresh(context) or not _request_allowed(binding, context.request):
         context.request = None
         context.save(update_fields=["request", "updated_at"])
         return None
@@ -859,7 +867,7 @@ def invalidate_contexts(provider: str) -> int:
 
 
 def clear_context(*, binding):
-    OperatorConversationContext.objects.filter(binding=binding).update(
+    OperatorConversationContext.objects.filter(binding=binding, request__isnull=False).update(
         request=None, updated_at=timezone.now()
     )
 
@@ -881,6 +889,8 @@ def revoke_binding(*, binding):
 
 
 def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
+    if binding is not None and not _request_allowed(binding, request):
+        return "Заявка не найдена.", _top_level_markup(binding)
     lines = [
         f"Заявка №{request.reference} - {request.customer_name}",
         f"Телефон: {request.customer_phone}",
@@ -897,18 +907,113 @@ def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
     lines.extend([f"Итого: {total:.0f} ₽" if total else "Итого: цена уточняется",
                   "", f"Статус: {request.get_status_display()}"])
     return "\n".join(lines), {"inline_keyboard": [
+        [{"text": "История диалога", "callback_data": _callback(
+            binding, "h", f"{request.public_id.hex}-0")}],
         [{"text": "Ответить", "callback_data": _callback(binding, "r", request.public_id.hex)}],
         [{"text": "К заявкам", "callback_data": _callback(binding, "m")}],
     ]}
 
 
 def reply_prompt(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
-    return (f"Активна заявка №{request.reference}. Напишите ответ клиенту.\n"
-            "Получатель перепроверяется перед отправкой.",
+    if binding is not None and not _request_allowed(binding, request):
+        return "Заявка не найдена.", _top_level_markup(binding)
+    return (f"Заявка №{request.reference}. Отправьте сообщение или фотографию.",
             {"inline_keyboard": [[
                 {"text": "Отмена", "callback_data": _callback(binding, "x")},
                 {"text": "К заявкам", "callback_data": _callback(binding, "m")},
             ]]})
+
+
+def history_page(request, *, page=0, binding=None):
+    """The same persisted history as the warehouse, bounded for both APIs."""
+    if binding is not None and not _request_allowed(binding, request):
+        return "Заявка не найдена.", _top_level_markup(binding)
+    from .models import MaxMessage, TelegramMessage
+    from .workspace import ROLE_BY_DIRECTION, _author
+
+    messages = [*TelegramMessage.objects.filter(conversation__request=request).select_related(
+        "operator_user", "conversation__request"),
+        *MaxMessage.objects.filter(conversation__request=request).select_related(
+            "operator_user", "conversation__request")]
+    messages.sort(key=lambda row: (row.created_at, row.pk, type(row).__name__))
+    chunks = []
+    photo_refs = {}
+    for index, row in enumerate(messages, start=1):
+        role = ROLE_BY_DIRECTION.get(row.direction, "bot")
+        icon = {"customer": "👤", "operator": "👨‍💻", "bot": "🤖"}[role]
+        heading = f"{icon} {_author(row)} · {timezone.localtime(row.created_at):%d.%m %H:%M}"
+        is_photo = bool(row.attachment and row.attachment_content_type.startswith("image/"))
+        body = ("📷 Фотография\n" if is_photo else "") + (
+            row.text or (
+                f"Вложение: {row.attachment_name}" if row.attachment and not is_photo else ""
+            )
+        )
+        if is_photo:
+            photo_refs[index] = ("t" if isinstance(row, TelegramMessage) else "m", row.pk)
+        # Long individual messages span pages without dropping any text.
+        for start in range(0, max(len(body), 1), 2900):
+            chunks.append((index, f"{heading}\n{body[start:start + 2900]}"))
+    pages = []
+    current = []
+    size = 0
+    # Build backwards so the first view contains the last ten messages,
+    # even when the overall count is not divisible by ten.
+    for index, chunk in reversed(chunks):
+        if current and (len({number for number, _ in current} | {index}) > 10
+                        or size + len(chunk) + 2 > 3300):
+            pages.append(list(reversed(current)))
+            current, size = [], 0
+        current.append((index, chunk))
+        size += len(chunk) + 2
+    pages.append(list(reversed(current)))
+    pages.reverse()
+    page = max(1, min(page or len(pages), len(pages)))
+    selected = pages[page - 1]
+    body = "\n\n".join(chunk for _, chunk in selected) or "Сообщений пока нет."
+    interval = f"{selected[0][0]}–{selected[-1][0]} из {len(messages)}" if selected else "0 из 0"
+    nav = []
+    for text, number in (("Ранее", page - 1), ("Далее", page + 1)):
+        if 1 <= number <= len(pages):
+            nav.append({"text": text, "callback_data": _callback(
+                binding, "h", f"{request.public_id.hex}-{number}")})
+    rows = [nav] if nav else []
+    for index in sorted({number for number, _ in selected}):
+        if index in photo_refs:
+            channel, message_id = photo_refs[index]
+            rows.append([{"text": f"📷 Фото {index}", "callback_data": _callback(
+                binding, "v", f"{request.public_id.hex}-{channel}{message_id}")}])
+    rows += [[{"text": "Написать", "callback_data": _callback(
+        binding, "r", request.public_id.hex)}],
+        [{"text": "К заявкам", "callback_data": _callback(binding, "m")}]]
+    return (f"Заявка №{request.reference} · {request.customer_name[:80]}\n"
+            f"История {page}/{len(pages)} · {interval}\n\n{body}",
+            {"inline_keyboard": rows})
+
+
+def photo_for_callback(*, provider: str, provider_user_id: int, payload: str):
+    """Resolve a history photo against current employee rights and request channel."""
+    binding = binding_for(provider, provider_user_id)
+    parts = payload.split(":") if isinstance(payload, str) else []
+    if binding is None or len(parts) != 4 or parts[:2] != ["op", "v"]:
+        return None
+    request_hex, separator, photo_ref = parts[3].partition("-")
+    request = request_by_hex(request_hex) if separator else None
+    if not _request_allowed(binding, request) or len(photo_ref) < 2:
+        return None
+    model = {"t": TelegramMessage, "m": MaxMessage}.get(photo_ref[:1])
+    if model is None or not photo_ref[1:].isdigit():
+        return None
+    source = model.objects.filter(
+        pk=int(photo_ref[1:]), conversation__request=request,
+        attachment_content_type__startswith="image/",
+    ).first()
+    if source is None or not source.attachment:
+        return None
+    return source, request, {"inline_keyboard": [[{
+        "text": "История диалога", "callback_data": _callback(
+            binding, "h", f"{request.public_id.hex}-0"
+        )
+    }]]}
 
 
 def _key(provider: str, external_id: str) -> str:
@@ -932,7 +1037,7 @@ def submit_text(
     try:
         operator_replies.submit_reply(
             request_id=request.pk, user=binding.user, text=text,
-            key=_key(provider, external_id), channel=request.preferred_messenger,
+            key=_key(provider, external_id), channel=binding.provider,
             attachment=attachment,
             operator_control_source=provider,
             operator_author_label=internal_author_label(binding),
@@ -941,7 +1046,7 @@ def submit_text(
     except operator_replies.OperatorReplyError as exc:
         return str(exc), _top_level_markup(binding)
     touch_context(binding=binding)
-    return "Ответ поставлен в очередь доставки клиенту.", _top_level_markup(binding)
+    return "", None
 
 
 def handle_text(
@@ -985,6 +1090,7 @@ def handle_text(
         binding.save(update_fields=["operator_mode", "updated_at"])
         return navigation_panel(binding)
     if lower in {"все заявки", "новые заявки", "загрузка фото по продажам/ремонтам"}:
+        clear_context(binding=binding)
         # Reply-keyboard presses reuse the existing authorized handlers.
         if not binding.operator_mode:
             binding.operator_mode = True
@@ -1092,17 +1198,31 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
     if len(parts) not in {3, 4}:
         return "Рабочая сессия устарела. Откройте рабочую панель.", None
     kind, token = parts[1], parts[2]
-    if token != _session_token(binding):
+    # Old notification buttons contain the request UUID as well as a token
+    # derived from context.updated_at. Opening that UUID is durable; composing
+    # a reply or changing a photo still requires the current session.
+    if token != _session_token(binding) and kind not in {"c", "h", "m", "l", "n"}:
         return "Рабочая сессия устарела. Откройте рабочую панель.", None
-    if kind not in {"m", "l", "n", "x", "c", "r", "p", "o", "q", "pa", "pr", "pc", "ps", "pd"}:
+    if kind not in {"m", "l", "n", "x", "c", "r", "h", "p", "o", "q", "pa", "pr", "pc", "ps", "pd"}:
         return "Недоступно.", None
     if not binding.operator_mode:
         binding.operator_mode = True
         binding.save(update_fields=["operator_mode", "updated_at"])
     value = parts[3] if len(parts) == 4 else ""
     if kind == "m":
+        clear_context(binding=binding)
         return navigation_panel(binding)
+    if kind == "h":
+        reference, separator, number = value.rpartition("-")
+        request = request_by_hex(reference) if separator else None
+        if (not _request_allowed(binding, request) or not number.isdigit()
+                or len(number) > 6):
+            return "Заявка не найдена.", _top_level_markup(binding)
+        # Viewing a history cancels a pending answer to any previous request.
+        clear_context(binding=binding)
+        return history_page(request, page=int(number), binding=binding)
     if kind in {"l", "n"}:
+        clear_context(binding=binding)
         page = int(value) if value.isdigit() and len(value) < 6 else 1
         return request_page(page, new_only=kind == "n", binding=binding)
     if kind == "x":
@@ -1153,8 +1273,11 @@ def handle_callback(*, provider: str, provider_user_id: int, payload: str):
         )
     if kind in {"c", "r"}:
         request = request_by_hex(value)
-        if request is None:
+        if not _request_allowed(binding, request):
             return "Заявка не найдена.", _top_level_markup(binding)
+        if kind == "c":
+            clear_context(binding=binding)
+            return history_page(request, binding=binding)
         selected, error = set_context(binding=binding, request_id=request.pk)
         if error:
             return error, _top_level_markup(binding)
@@ -1180,14 +1303,18 @@ def navigation_panel(binding) -> tuple[str, dict]:
 
 
 def notification_for(request, binding, *, kind=OperatorNotification.Kind.NEW_REQUEST,
-                     preview="", identity=""):
-    if not enabled() or not binding.is_active:
+                     preview="", identity="", message=None):
+    if not enabled() or not binding.is_active or not _request_allowed(binding, request):
         return None
     digest = _hash(f"{identity}:{preview}")[:16]
     return OperatorNotification.objects.get_or_create(
         binding=binding, request=request, kind=kind,
         dedupe_key=f"{kind}:{request.pk}:{binding.pk}:{digest}",
-        defaults={"preview": preview[:700], "next_attempt_at": timezone.now()},
+        defaults={
+            "preview": preview[:700], "next_attempt_at": timezone.now(),
+            "telegram_message": message if isinstance(message, TelegramMessage) else None,
+            "max_message": message if isinstance(message, MaxMessage) else None,
+        },
     )[0]
 
 
@@ -1242,7 +1369,7 @@ def queue_new_request_notifications(*, since):
         status=CustomerRequest.Status.NEW, created_at__gte=since
     ).iterator():
         for binding in bindings:
-            if binding.user.can_manage_sales:
+            if binding.user.can_manage_sales and _request_allowed(binding, request):
                 notification_for(request, binding)
                 total += 1
     return total
@@ -1265,12 +1392,13 @@ def queue_operator_notifications(*, since):
             request = message.conversation.request
             preview = (message.text or "Вложение")[:700]
             for binding in bindings:
-                if binding.user.can_manage_sales:
+                if binding.user.can_manage_sales and _request_allowed(binding, request):
                     notification_for(
                         request, binding,
                         kind=OperatorNotification.Kind.CUSTOMER_MESSAGE,
                         preview=preview,
                         identity=f"{model.__name__}:{message.pk}",
+                        message=message,
                     )
                     total += 1
     return total
@@ -1292,15 +1420,29 @@ def notification_content(notification: OperatorNotification) -> tuple[str, dict]
         return navigation_panel(notification.binding)
     request = notification.request
     binding = notification.binding
+    if notification.kind == OperatorNotification.Kind.REPLY_DELIVERY:
+        return (notification.preview, {
+            "inline_keyboard": [[{"text": "История диалога", "callback_data": _callback(
+                binding, "h", f"{request.public_id.hex}-0")}]]})
     name = (request.customer_name or "Клиент")[:80]
     if notification.kind == OperatorNotification.Kind.CUSTOMER_MESSAGE and notification.preview:
-        text = f"Новое сообщение по заявке №{request.reference}\n{name}\n{notification.preview}"
+        has_photo = bool(
+            (notification.telegram_message and notification.telegram_message.attachment)
+            or (notification.max_message and notification.max_message.attachment)
+        )
+        photo_label = "\n👤 Клиент отправил фотографию." if has_photo else ""
+        text = (f"Новое сообщение по заявке №{request.reference}\n{name}"
+                f"{photo_label}\n{notification.preview}")
     else:
         text = f"Новая заявка №{request.reference}\n{name}\n{request.lines.count()} поз."
     return text, {"inline_keyboard": [
         [{"text": "Открыть заявку", "callback_data": _callback(
             binding, "c", request.public_id.hex
         )}],
+        [{"text": "История диалога", "callback_data": _callback(
+            binding, "h", f"{request.public_id.hex}-0")}],
+        [{"text": "Написать", "callback_data": _callback(
+            binding, "r", request.public_id.hex)}],
         [{"text": "Все заявки", "callback_data": _callback(binding, "l", "1")}],
     ]}
 
@@ -1314,6 +1456,7 @@ class PreparedNotificationDelivery:
     delivery_chat_id: int | None
     text: str
     buttons: dict
+    attachment: object = None
 
 
 def _finish_locked_notification(
@@ -1353,6 +1496,13 @@ def prepare_notification_delivery(*, notification_id: int, provider: str):
                 error="Сотрудник отключён или привязка изменилась",
             )
             return None
+        if notification.request_id and not _request_allowed(binding, notification.request):
+            _finish_locked_notification(
+                notification,
+                status=OperatorNotification.Status.FAILED,
+                error="Канал заявки не соответствует боту сотрудника",
+            )
+            return None
         delivery_chat_id = binding.delivery_chat_id
         if provider == StaffMessengerBinding.Provider.MAX and not delivery_chat_id:
             _finish_locked_notification(
@@ -1369,6 +1519,7 @@ def prepare_notification_delivery(*, notification_id: int, provider: str):
             delivery_chat_id=delivery_chat_id,
             text=text,
             buttons=buttons,
+            attachment=(notification.telegram_message or notification.max_message),
         )
 
 

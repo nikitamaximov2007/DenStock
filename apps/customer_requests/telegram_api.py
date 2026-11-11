@@ -19,6 +19,8 @@ import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from .attachments import MAX_ATTACHMENT_BYTES
+
 MAX_ERROR_TEXT = 200
 
 
@@ -198,13 +200,22 @@ class TelegramBotApi:
         )
         try:
             with self._opener(request, timeout=self._timeout) as response:
-                content = response.read()
+                declared = response.headers.get("Content-Length")
+                try:
+                    declared_size = int(declared) if declared is not None else 0
+                except ValueError:
+                    declared_size = 0
+                if declared_size > MAX_ATTACHMENT_BYTES:
+                    raise TelegramApiError(413, "file too large")
+                content = response.read(MAX_ATTACHMENT_BYTES + 1)
         except (TimeoutError, urllib.error.URLError, OSError) as exc:
             raise TelegramNetworkError(
                 _scrub(type(exc).__name__, self._token), ambiguous=False
             ) from None
         if not content:
             raise TelegramNetworkError("empty file response", ambiguous=False)
+        if len(content) > MAX_ATTACHMENT_BYTES:
+            raise TelegramApiError(413, "file too large")
         return content
 
     def _object_result(self, method: str) -> dict:

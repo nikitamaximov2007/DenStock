@@ -39,6 +39,7 @@ from .attachments import (
     cleanup_attachment,
     read_attachment,
     validate_attachment,
+    validate_photo,
 )
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
@@ -86,6 +87,7 @@ class Outgoing:
     callback_query_id: str = ""
     callback_text: str = ""
     edit_message_id: int | None = None
+    photo_payload: str = ""
 
 
 def _rerendered_selector(chat_id: int, message_id) -> Outgoing:
@@ -169,13 +171,22 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
     has_attachment = isinstance(message.get("document"), dict) or isinstance(
         message.get("photo"), list
     )
-    if has_attachment and operator_console.enabled() and operator_console.binding_for(
-        "telegram", user_id
-    ):
+    is_staff = operator_console.enabled() and operator_console.binding_for("telegram", user_id)
+    if has_attachment:
+        if not is_staff:
+            blocked = service.preflight_customer_photo(chat_id, update_id)
+            if blocked is not None:
+                return reply(blocked.reply, blocked.keyboard)
         if attachment_loader is None:
             return reply(service.MEDIA_NOT_SUPPORTED_TEXT)
         try:
             attachment = attachment_loader(message)
+            if not is_staff:
+                if not isinstance(message.get("photo"), list):
+                    return reply("Поддерживаются только фотографии.")
+                attachment = validate_photo(ContentFile(
+                    attachment.content, name=attachment.filename
+                ))
         except (AttachmentError, TelegramError):
             return reply("Не удалось прочитать вложение. Повторите отправку позже.")
         text = message.get("caption", "")
@@ -220,6 +231,10 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
         return []  # the confirmation is a stored message delivered by the outbox
 
     if service.authorized_operator(user_id) is not None:
+        # The new paired console owns staff routing in DEV. Never expose the
+        # legacy mixed-channel menu to an unpaired historical operator.
+        if operator_console.enabled():
+            return reply(service.NOT_AVAILABLE_TEXT)
         try:
             if text.lower() == "все заявки":
                 return reply(*service.operator_request_page(1))
@@ -262,7 +277,9 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
     if command:
         return customer(service.customer_greeting(chat_id))
     return customer(
-        service.record_customer_message(chat_id=chat_id, update_id=update_id, text=text)
+        service.record_customer_message(
+            chat_id=chat_id, update_id=update_id, text=text, attachment=attachment
+        )
     )
 
 
@@ -279,17 +296,36 @@ def _handle_callback(callback) -> list[Outgoing]:
 
     if data.startswith("op:"):
         message = callback.get("message") if isinstance(callback.get("message"), dict) else {}
-        callback_chat_id = (message.get("chat") or {}).get("id", user_id)
+        chat = message.get("chat") or {}
+        callback_chat_id = chat.get("id")
+        if chat.get("type") != "private" or callback_chat_id != user_id:
+            return denied
+        if data.startswith("op:v:"):
+            resolved = operator_console.photo_for_callback(
+                provider="telegram", provider_user_id=user_id, payload=data
+            )
+            if resolved is None:
+                return denied
+            return [answered, Outgoing(chat_id=callback_chat_id, photo_payload=data)]
         result = operator_console.handle_callback(
             provider="telegram", provider_user_id=user_id, payload=data
         )
         if result is None:
             return denied
         text, markup = result
-        return [answered, Outgoing(chat_id=callback_chat_id, text=text, reply_markup=markup)]
+        if text.startswith("Рабочая сессия устарела"):
+            return [Outgoing(callback_query_id=callback_id, callback_text=text)]
+        message_id = message.get("message_id")
+        editable_text = not any(key in message for key in ("photo", "document", "caption"))
+        edit_id = (message_id if data.startswith("op:h:") and _is_int(message_id)
+                   and editable_text else None)
+        return [answered, Outgoing(chat_id=callback_chat_id, text=text, reply_markup=markup,
+                                   edit_message_id=edit_id)]
 
     # An active staff identity never falls through to customer callbacks.
     if operator_console.enabled() and operator_console.binding_for("telegram", user_id):
+        return denied
+    if operator_console.enabled() and service.authorized_operator(user_id) is not None:
         return denied
 
     if kind == "s":
@@ -533,7 +569,21 @@ class TelegramBotWorker:
             raise AttachmentError("Вложение не распознано.")
         file_id, filename = descriptor
         metadata = self.api.get_file(file_id)
+        size = metadata.get("file_size")
+        if isinstance(size, int) and size > 10 * 1024 * 1024:
+            raise AttachmentError("Файл не должен быть больше 10 МБ.")
         content = self.api.download_file(metadata["file_path"])
+        # Telegram photo/document metadata does not guarantee a usable filename
+        # or an extension. Name trusted formats from the downloaded bytes, then
+        # let the shared validator inspect the entire image.
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            filename = "telegram-photo.png"
+        elif content.startswith(b"\xff\xd8\xff"):
+            filename = "telegram-photo.jpg"
+        elif content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+            filename = "telegram-photo.webp"
+        elif content.startswith(b"%PDF-"):
+            filename = "telegram-document.pdf"
         return validate_attachment(ContentFile(content, name=filename))
 
     def _send_ephemeral(self, outgoing: list[Outgoing]) -> None:
@@ -554,7 +604,22 @@ class TelegramBotWorker:
                     self.api.send_message(
                         chat_id=item.chat_id, text=item.text, reply_markup=item.reply_markup
                     )
-            except TelegramError as exc:
+                elif item.chat_id is not None and item.photo_payload:
+                    resolved = operator_console.photo_for_callback(
+                        provider="telegram", provider_user_id=item.chat_id,
+                        payload=item.photo_payload,
+                    )
+                    if resolved is not None:
+                        source, request, buttons = resolved
+                        self.api.send_file(
+                            chat_id=item.chat_id,
+                            content=read_attachment(source.attachment),
+                            filename=source.attachment_name or "photo.jpg",
+                            content_type=source.attachment_content_type,
+                            caption=f"Заявка №{request.reference}\n{source.text}"[:1024],
+                            reply_markup=buttons,
+                        )
+            except (TelegramError, AttachmentStorageError) as exc:
                 logger.warning("reply not sent: %s", exc)
 
     # Outbox ------------------------------------------------------------------------------
@@ -641,6 +706,7 @@ class TelegramBotWorker:
             setattr(row, field, value)
         update_fields = [*values, "updated_at"] if hasattr(row, "updated_at") else list(values)
         row.save(update_fields=update_fields)
+        operator_replies.queue_reply_delivery_notification(row)
         if status in (TelegramDeliveryStatus.SENT, TelegramDeliveryStatus.FAILED):
             cleanup_attachment(row)
 
@@ -666,6 +732,16 @@ class TelegramBotWorker:
         ids = self._claim(TelegramMessage, "delivery_status", outbound, limit)
         rows = TelegramMessage.objects.select_related("conversation__request").filter(pk__in=ids)
         for row in rows.order_by("pk"):
+            blocker = operator_replies.introduction_delivery_blocker(row)
+            if blocker:
+                self._finish(row, "delivery_status", blocker,
+                             error="Ожидается подтверждённое подключение сотрудника")
+                if blocker == "pending":
+                    type(row).objects.filter(pk=row.pk).update(
+                        next_attempt_at=timezone.now() + timedelta(seconds=5),
+                        attempts=F("attempts") - 1,
+                    )
+                continue
             conversation = row.conversation
             if not conversation.is_linked or not service.customer_contact_allowed(
                 conversation.request
@@ -777,12 +853,23 @@ class TelegramBotWorker:
             if delivery is None:
                 continue
             try:
-                result = self.api.send_message(
-                    chat_id=delivery.provider_user_id,
-                    text=delivery.text,
-                    reply_markup=delivery.buttons,
-                )
-            except TelegramError as exc:
+                if delivery.attachment and delivery.attachment.attachment:
+                    source = delivery.attachment
+                    result = self.api.send_file(
+                        chat_id=delivery.provider_user_id,
+                        content=read_attachment(source.attachment),
+                        filename=source.attachment_name or "photo.jpg",
+                        content_type=source.attachment_content_type,
+                        caption=delivery.text[:1024],
+                        reply_markup=delivery.buttons,
+                    )
+                else:
+                    result = self.api.send_message(
+                        chat_id=delivery.provider_user_id,
+                        text=delivery.text,
+                        reply_markup=delivery.buttons,
+                    )
+            except (TelegramError, AttachmentStorageError) as exc:
                 if isinstance(exc, TelegramNetworkError) and exc.ambiguous:
                     operator_console.finish_notification(
                         row, status=operator_console.OperatorNotification.Status.UNCERTAIN,

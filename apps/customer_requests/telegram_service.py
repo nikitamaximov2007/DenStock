@@ -13,10 +13,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.core.files.base import ContentFile
 from django.db import connection, transaction
 from django.utils import timezone
 
 from . import customer_ui, messaging, operator_bot, operator_console, operator_replies, workspace
+from .attachments import erase_conversation_attachments
 from .models import (
     CustomerRequest,
     MaxMessage,
@@ -40,8 +42,7 @@ LINK_INVALID_TEXT = (
 UNLINKED_GREETING = customer_ui.UNLINKED_TEXT
 LINKED_GREETING = customer_ui.LINKED_HINT
 MEDIA_NOT_SUPPORTED_TEXT = (
-    "Пока бот принимает только текст. Опишите деталь словами или отправьте фото в сервис PRO-STOR, "
-    "когда получите ответ."
+    "Поддерживаются текст и фотографии. Голосовые, видео и документы пока недоступны."
 )
 CUSTOMER_ACK_TEXT = messaging.CUSTOMER_ACK_TEXT
 OPERATOR_HELP_TEXT = operator_console.TELEGRAM_OPERATOR_HELP_TEXT
@@ -172,7 +173,9 @@ def anonymize_conversation(request: CustomerRequest) -> None:
     conversation = TelegramConversation.objects.filter(request=request).first()
     if conversation is None:
         return
-    TelegramMessage.objects.filter(conversation=conversation).update(text="")
+    messages = TelegramMessage.objects.filter(conversation=conversation)
+    erase_conversation_attachments(messages)
+    messages.update(text="")
     TelegramCustomerChat.objects.filter(active_conversation=conversation).update(
         active_conversation=None
     )
@@ -426,6 +429,29 @@ def _linked_conversations(chat_id: int) -> list[TelegramConversation]:
     )
 
 
+def preflight_customer_photo(chat_id: int, update_id: int) -> CustomerResult | None:
+    """Reject an unlinked or ambiguous image before fetching its private bytes."""
+    if TelegramMessage.objects.filter(telegram_update_id=update_id).exists():
+        return CustomerResult()
+    conversations = _linked_conversations(chat_id)
+    if not conversations:
+        return CustomerResult(UNLINKED_GREETING)
+    state = TelegramCustomerChat.objects.filter(chat_id=chat_id).first()
+    routing = messaging.route_open_request(
+        conversations, active_id=state.active_conversation_id if state else None
+    )
+    if routing.closed is not None:
+        return _closed_reply(routing.closed.request, routing.open)
+    if not routing.open:
+        return CustomerResult(messaging.NO_OPEN_REQUESTS_TEXT)
+    if routing.ambiguous:
+        return CustomerResult(
+            "У вас несколько заявок. Выберите нужную и отправьте сообщение ещё раз.",
+            _selector(routing.open),
+        )
+    return None
+
+
 # The customer's one control, always under the text field. It is not a command
 # and does not get in the way of typing an ordinary message.
 def customer_keyboard() -> dict:
@@ -665,7 +691,9 @@ def closed_selection(*, chat_id: int, conversation_hex: str) -> CustomerResult |
 
 
 @transaction.atomic
-def record_customer_message(*, chat_id: int, update_id: int, text: str) -> CustomerResult:
+def record_customer_message(
+    *, chat_id: int, update_id: int, text: str, attachment=None
+) -> CustomerResult:
     if TelegramMessage.objects.filter(telegram_update_id=update_id).exists():
         return CustomerResult()
     conversations = _linked_conversations(chat_id)
@@ -704,6 +732,13 @@ def record_customer_message(*, chat_id: int, update_id: int, text: str) -> Custo
         delivery_status=TelegramDeliveryStatus.RECEIVED,
         telegram_update_id=update_id,
     )
+    if attachment is not None:
+        message.attachment_name = attachment.filename
+        message.attachment_content_type = attachment.content_type
+        message.attachment.save(
+            attachment.filename, ContentFile(attachment.content), save=False
+        )
+        message.save(update_fields=["attachment", "attachment_name", "attachment_content_type"])
     active.last_message_at = now
     active.save(update_fields=["last_message_at", "updated_at"])
     TelegramOutboxEvent.objects.create(

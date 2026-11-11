@@ -28,7 +28,12 @@ from django.db import transaction
 from django.utils import timezone
 
 from . import messaging
-from .attachments import AttachmentError, validate_attachment
+from .attachments import (
+    AttachmentError,
+    ValidatedAttachment,
+    validate_attachment,
+    validate_photo,
+)
 from .max_api import MAX_TEXT_CHARS
 from .models import (
     CustomerRequest,
@@ -36,6 +41,8 @@ from .models import (
     MaxDeliveryStatus,
     MaxMessage,
     MaxOutboxEvent,
+    OperatorNotification,
+    StaffMessengerBinding,
     TelegramConversation,
     TelegramDeliveryStatus,
     TelegramMessage,
@@ -49,10 +56,10 @@ CHANNEL_LABELS = {
     CustomerRequest.Messenger.MAX: "MAX",
 }
 OWNER_LABELS = {
-    "Денис": "Денис, владелец сервиса PRO-STORE",
-    "Рим": "Рим, владелец сервиса PRO-STORE",
+    "Денис": "Денис, владелец сервиса PRO-STOR",
+    "Рим": "Рим, владелец сервиса PRO-STOR",
 }
-ADMIN_LABELS = {"NIKITA / ADMIN": "PRO-STORE"}
+ADMIN_LABELS = {"NIKITA / ADMIN": "PRO-STOR"}
 
 
 class OperatorReplyError(ValueError):
@@ -195,7 +202,13 @@ def submit_reply(
     validated = None
     if attachment is not None:
         try:
+            if isinstance(attachment, ValidatedAttachment):
+                attachment = ContentFile(attachment.content, name=attachment.filename)
             validated = validate_attachment(attachment)
+            if validated.content_type.startswith("image/"):
+                validated = validate_photo(ContentFile(
+                    validated.content, name=validated.filename
+                ))
         except AttachmentError as exc:
             raise OperatorReplyError(str(exc)) from None
     is_max = target.channel == CustomerRequest.Messenger.MAX
@@ -207,9 +220,11 @@ def submit_reply(
     if operator_control_source is None:
         operator_control_source = "telegram" if telegram_update_id is not None else "web"
     if not operator_author_label:
-        operator_author_label = "PRO-STORE" if operator_control_source == "web" else (
+        operator_author_label = "PRO-STOR" if operator_control_source == "web" else (
             getattr(user, "full_name", "") or user.get_username()
         )
+    if settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED:
+        operator_author_label = user.full_name or user.get_full_name() or user.get_username()
     stored_operator_author_label = operator_author_label
     if operator_control_source in {"telegram", "max"}:
         if customer_responder_label is None:
@@ -226,11 +241,14 @@ def submit_reply(
         operator_control_source = ""
         operator_author_label = ""
         stored_operator_author_label = ""
-    if operator_control_source in {"telegram", "max"}:
+    if settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED:
+        _ensure_staff_introduction(target, user=user, control_source=operator_control_source,
+                                   telegram_operator=telegram_operator)
+    elif operator_control_source in {"telegram", "max"}:
         _ensure_customer_visible_responder(
             target,
             user=user,
-            label=customer_responder_label or "PRO-STORE",
+            label=customer_responder_label or "PRO-STOR",
             control_source=operator_control_source,
             telegram_operator=telegram_operator,
         )
@@ -253,6 +271,75 @@ def submit_reply(
             operator_author_label=stored_operator_author_label,
         )
     return ReplyResult(message, target.channel, created=True)
+
+
+def _staff_intro_key(request_id, user_id):
+    return f"operator_reply:staff_intro:{request_id}:{user_id}"
+
+
+def _ensure_staff_introduction(target, *, user, control_source, telegram_operator=None):
+    """One introduction per verified Django identity, under the request lock."""
+    model = MaxMessage if target.channel == CustomerRequest.Messenger.MAX else TelegramMessage
+    key = _staff_intro_key(target.request.pk, user.pk)
+    existing = model.objects.filter(dedupe_key=key).first()
+    if existing is not None:
+        if existing.delivery_status == "uncertain":
+            raise OperatorReplyError("Подключение ожидает проверки доставки. Повтор не выполнен.")
+        if existing.delivery_status == "failed":
+            existing.delivery_status = "pending"
+            existing.next_attempt_at = timezone.now()
+            existing.attempts = 0
+            existing.last_error = ""
+            existing.save(update_fields=["delivery_status", "next_attempt_at", "attempts",
+                                         "last_error"])
+        return
+    label = (user.full_name or user.get_full_name() or user.get_username()).strip()[:80]
+    kwargs = dict(target=target, user=user, text=f"К диалогу подключился {label}",
+                  key=key.removeprefix("operator_reply:"), attachment=None,
+                  operator_control_source=control_source, operator_author_label=label)
+    if model is TelegramMessage:
+        intro = _queue_telegram_reply(**kwargs, telegram_operator=telegram_operator,
+                                      telegram_update_id=None)
+    else:
+        intro = _queue_max_reply(**kwargs)
+    intro.direction = model.Direction.SYSTEM
+    intro.save(update_fields=["direction"])
+
+
+def introduction_delivery_blocker(message):
+    """A reply cannot overtake its identity introduction, even after a restart."""
+    if (not settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED
+            or message.direction != type(message).Direction.OPERATOR
+            or not message.operator_user_id):
+        return ""
+    intro = type(message).objects.filter(
+        dedupe_key=_staff_intro_key(message.conversation.request_id, message.operator_user_id)
+    ).first()
+    if intro is None or intro.delivery_status == "sent":
+        return ""
+    return "failed" if intro.delivery_status in {"failed", "uncertain"} else "pending"
+
+
+def queue_reply_delivery_notification(message):
+    if (not settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED
+            or not isinstance(message, (TelegramMessage, MaxMessage))
+            or message.direction != type(message).Direction.OPERATOR
+            or message.operator_control_source not in {"telegram", "max"}
+            or message.delivery_status not in {"sent", "failed", "uncertain"}):
+        return
+    labels = {"sent": "Сообщение отправлено", "failed": "Сообщение не отправлено",
+              "uncertain": "Неизвестно, доставлено ли сообщение. Автоповтор отключён"}
+    for binding in StaffMessengerBinding.objects.filter(
+        user_id=message.operator_user_id, provider=message.operator_control_source, is_active=True
+    ):
+        OperatorNotification.objects.get_or_create(
+            dedupe_key=f"reply-result:{type(message).__name__}:{message.pk}:"
+            f"{message.delivery_status}:{binding.pk}",
+            defaults={"binding": binding, "request": message.conversation.request,
+                      "kind": OperatorNotification.Kind.REPLY_DELIVERY,
+                      "preview": labels[message.delivery_status],
+                      "next_attempt_at": timezone.now()},
+        )
 
 
 def _ensure_customer_visible_responder(

@@ -51,6 +51,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce
+from django.urls import reverse
 from django.utils import timezone
 
 from apps.core.phones import normalize_phone
@@ -411,6 +412,8 @@ class TimelineEntry:
     delivery_status: str
     delivery_label: str
     channel: str
+    attachment_url: str = ""
+    has_photo: bool = False
     date_separator: object = None
 
     @property
@@ -441,12 +444,12 @@ def _author(message) -> str:
         snapshot = getattr(message, "operator_author_label", "")
         source = getattr(message, "operator_control_source", "")
         if snapshot:
-            source_label = {"telegram": "Telegram", "max": "MAX", "web": "PRO-STORE"}.get(
+            source_label = {"telegram": "Telegram", "max": "MAX", "web": "PRO-STOR"}.get(
                 source, source
             )
             if snapshot.endswith(" / ADMIN"):
                 return snapshot
-            return snapshot if snapshot == "PRO-STORE" else (
+            return snapshot if snapshot == "PRO-STOR" else (
                 f"{snapshot} · {source_label}" if source_label else snapshot
             )
         user = message.operator_user
@@ -485,6 +488,20 @@ def timeline(request: CustomerRequest) -> list[TimelineEntry]:
                         delivery_status=message.delivery_status,
                         delivery_label=message.get_delivery_status_display(),
                         channel=channel,
+                        attachment_url=(
+                            reverse("customer_request_attachment", kwargs={
+                                "pk": request.pk,
+                                "channel": channel.lower(),
+                                "message_id": message.pk,
+                            })
+                            if (message.attachment
+                                and message.attachment_content_type.startswith("image/"))
+                            else ""
+                        ),
+                        has_photo=bool(
+                            message.attachment
+                            and message.attachment_content_type.startswith("image/")
+                        ),
                     ),
                 )
             )
@@ -503,6 +520,8 @@ def timeline(request: CustomerRequest) -> list[TimelineEntry]:
                 delivery_status=entry.delivery_status,
                 delivery_label=entry.delivery_label,
                 channel=entry.channel,
+                attachment_url=entry.attachment_url,
+                has_photo=entry.has_photo,
                 date_separator=separator,
             )
         )

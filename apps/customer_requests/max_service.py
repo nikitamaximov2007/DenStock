@@ -14,14 +14,17 @@ identities, the string ``mid`` of a message, and callback button payloads.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import uuid
 from datetime import timedelta
 
+from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from . import customer_ui, messaging, operator_bot, operator_replies, telegram_service
+from .attachments import erase_conversation_attachments
 from .max_api import MAX_TEXT_CHARS
 from .messengers import token_hash
 from .models import (
@@ -106,6 +109,7 @@ def queue_message(
     direction: str = MaxMessage.Direction.SYSTEM,
     operator_user=None,
     in_place: bool = False,
+    attachment_source=None,
 ) -> tuple[MaxMessage, bool]:
     """Store one outgoing message exactly once per ``dedupe_key``.
 
@@ -116,7 +120,7 @@ def queue_message(
     """
     if in_place:
         dedupe_key = f"{SELECTOR_DEDUPE_PREFIX}{dedupe_key}"
-    return MaxMessage.objects.get_or_create(
+    row, created = MaxMessage.objects.get_or_create(
         dedupe_key=dedupe_key,
         defaults={
             "conversation": conversation,
@@ -130,6 +134,12 @@ def queue_message(
             "operator_user": operator_user,
         },
     )
+    if created and attachment_source is not None:
+        row.attachment.name = attachment_source.attachment.name
+        row.attachment_name = attachment_source.attachment_name
+        row.attachment_content_type = attachment_source.attachment_content_type
+        row.save(update_fields=["attachment", "attachment_name", "attachment_content_type"])
+    return row, created
 
 
 # --- Linking ---------------------------------------------------------------------------
@@ -230,7 +240,9 @@ def anonymize_conversation(request: CustomerRequest) -> None:
     conversation = MaxConversation.objects.filter(request=request).first()
     if conversation is None:
         return
-    MaxMessage.objects.filter(conversation=conversation).update(text="", buttons=None)
+    messages = MaxMessage.objects.filter(conversation=conversation)
+    erase_conversation_attachments(messages)
+    messages.update(text="", buttons=None)
     MaxCustomerChat.objects.filter(active_conversation=conversation).update(
         active_conversation=None
     )
@@ -519,7 +531,8 @@ UNLINKED = "unlinked"
 CLOSED = "closed"
 
 
-def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str) -> str:
+def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str,
+                            attachments=None) -> str:
     """Store one plain customer message for the right request, exactly once.
 
     ``mid`` is MAX's own identity of the message. Every message of one MAX user
@@ -573,22 +586,32 @@ def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str) 
         conversation=active, direction=MaxMessage.Direction.CUSTOMER
     ).exists()
     now = timezone.now()
-    message = MaxMessage.objects.create(
-        conversation=active,
-        direction=MaxMessage.Direction.CUSTOMER,
-        text=(text or "").strip()[:MAX_TEXT_CHARS],
-        delivery_status=MaxDeliveryStatus.RECEIVED,
-        external_message_id=mid,
-    )
+    photos = attachments or [None]
+    for index, attachment in enumerate(photos):
+        message = MaxMessage.objects.create(
+            conversation=active,
+            direction=MaxMessage.Direction.CUSTOMER,
+            text=(text or "").strip()[:MAX_TEXT_CHARS] if index == 0 else "",
+            delivery_status=MaxDeliveryStatus.RECEIVED,
+            external_message_id=(mid if index == 0 else
+                                 f"album:{hashlib.sha256(mid.encode()).hexdigest()}:{index}"),
+        )
+        if attachment is not None:
+            message.attachment_name = attachment.filename
+            message.attachment_content_type = attachment.content_type
+            message.attachment.save(
+                attachment.filename, ContentFile(attachment.content), save=False
+            )
+            message.save(update_fields=["attachment", "attachment_name", "attachment_content_type"])
+        MaxOutboxEvent.objects.create(
+            kind=MaxOutboxEvent.Kind.CUSTOMER_MESSAGE,
+            request=active.request,
+            message=message,
+            dedupe_key=f"customer_message:{message.pk}",
+            next_attempt_at=now,
+        )
     active.last_message_at = now
     active.save(update_fields=["last_message_at", "updated_at"])
-    MaxOutboxEvent.objects.create(
-        kind=MaxOutboxEvent.Kind.CUSTOMER_MESSAGE,
-        request=active.request,
-        message=message,
-        dedupe_key=f"customer_message:{message.pk}",
-        next_attempt_at=now,
-    )
     acknowledgement = messaging.acknowledgement_for(
         is_first_customer_message=first_customer_message
     )
@@ -600,6 +623,35 @@ def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str) 
             conversation=active,
         )
     return RECORDED
+
+
+def preflight_customer_photo(*, user_id: int, chat_id: int, mid: str) -> str | None:
+    """Refuse ambiguous or unlinked photos before resolving MAX media URLs."""
+    if MaxMessage.objects.filter(
+        direction=MaxMessage.Direction.CUSTOMER, external_message_id=mid
+    ).exists():
+        return DUPLICATE
+    conversations = linked_conversations(user_id)
+    if not conversations:
+        queue_message(chat_id=chat_id, text=UNLINKED_GREETING, dedupe_key=f"reply:{mid}")
+        return UNLINKED
+    state = MaxCustomerChat.objects.filter(user_id=user_id).first()
+    routing = messaging.route_open_request(
+        conversations, active_id=state.active_conversation_id if state else None
+    )
+    if routing.closed is not None:
+        text, buttons = _closed_reply(routing.closed.request, routing.open)
+        queue_message(chat_id=chat_id, text=text, buttons=buttons, dedupe_key=f"reply:{mid}")
+        return CLOSED
+    if not routing.open:
+        queue_message(chat_id=chat_id, text=messaging.NO_OPEN_REQUESTS_TEXT,
+                      dedupe_key=f"reply:{mid}")
+        return CLOSED
+    if routing.ambiguous:
+        queue_message(chat_id=chat_id, text=AMBIGUOUS_TEXT,
+                      buttons=selector_buttons(routing.open), dedupe_key=f"reply:{mid}")
+        return AMBIGUOUS
+    return None
 
 
 # --- Operator side ---------------------------------------------------------------------

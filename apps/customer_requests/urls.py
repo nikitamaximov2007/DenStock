@@ -6,6 +6,8 @@ urlpatterns = [
     path("", views.customer_request_list, name="customer_request_list"),
     path("events/", views.customer_request_events, name="customer_request_events"),
     path("<int:pk>/", views.customer_request_detail, name="customer_request_detail"),
+    path("<int:pk>/attachment/<str:channel>/<int:message_id>/",
+         views.customer_request_attachment, name="customer_request_attachment"),
     path("<int:pk>/sale/", views.customer_request_sale, name="customer_request_sale"),
     path(
         "<int:pk>/sale/customs/",

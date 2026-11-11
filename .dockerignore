@@ -10,6 +10,7 @@ db.sqlite3-journal
 staticfiles
 mediafiles
 media
+private_media
 backups
 node_modules
 .env

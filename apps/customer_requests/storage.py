@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 from django.conf import settings
@@ -23,6 +24,15 @@ class PrivateAttachmentStorage(FileSystemStorage):
         private_root = Path(settings.PRIVATE_MEDIA_ROOT)
         super().__init__(location=private_root, base_url=None)
         self.legacy = FileSystemStorage(location=settings.MEDIA_ROOT)
+
+    def get_available_name(self, name, max_length=None):
+        # The original name is audit metadata only, never a filesystem path.
+        extension = Path(name).suffix.lower()
+        if extension not in {".png", ".jpg", ".jpeg", ".webp", ".pdf"}:
+            extension = ".bin"
+        return super().get_available_name(
+            f"customer_requests/{secrets.token_hex(20)}{extension}", max_length=max_length
+        )
 
     def open(self, name, mode="rb"):
         if super().exists(name):

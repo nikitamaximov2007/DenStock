@@ -47,6 +47,7 @@ from .attachments import (
     cleanup_attachment,
     read_attachment,
     validate_attachment,
+    validate_photo,
 )
 from .max_api import MaxApiError, MaxBotApi, MaxError, MaxNetworkError
 from .messengers import MessengerLinkError, consume_max_start
@@ -223,16 +224,13 @@ def _message_created(update, *, attachment_loader=None) -> str:
         return "duplicate"
     text = body.get("text")
     attachment = None
+    customer_photos = []
     has_attachment = isinstance(body.get("attachments"), list) and bool(body.get("attachments"))
-    if has_attachment and not (
-        operator_console.enabled() and operator_console.binding_for("max", user_id)
-    ):
-        # Telegram's rule: only a paired employee's attachment is read. A
-        # customer's photo, file or caption is refused as a whole, never stored
-        # as its text alone while the attachment silently disappears.
-        service.queue_message(chat_id=chat_id, text=service.MEDIA_NOT_SUPPORTED_TEXT,
-                              dedupe_key=reply_key)
-        return "media"
+    is_staff = operator_console.enabled() and operator_console.binding_for("max", user_id)
+    if has_attachment and not is_staff:
+        blocked = service.preflight_customer_photo(user_id=user_id, chat_id=chat_id, mid=mid)
+        if blocked is not None:
+            return blocked
     if has_attachment:
         if attachment_loader is None:
             service.queue_message(
@@ -242,7 +240,19 @@ def _message_created(update, *, attachment_loader=None) -> str:
             )
             return "media"
         try:
-            attachment = attachment_loader(body)
+            if is_staff:
+                attachment = attachment_loader(body)
+            else:
+                items = body["attachments"]
+                if len(items) > 12 or any(
+                    not isinstance(item, dict) or item.get("type") != "image" for item in items
+                ):
+                    raise AttachmentError("Поддерживаются только фотографии.")
+                for item in items:
+                    loaded = attachment_loader({"attachments": [item]})
+                    customer_photos.append(validate_photo(ContentFile(
+                        loaded.content, name=loaded.filename
+                    )))
         except (AttachmentError, MaxError):
             service.queue_message(
                 chat_id=chat_id,
@@ -258,19 +268,21 @@ def _message_created(update, *, attachment_loader=None) -> str:
     )
     if operator_reply is not None:
         reply_text, buttons = operator_reply
-        service.queue_message(
-            chat_id=chat_id,
-            text=reply_text,
-            buttons=_native_buttons(buttons),
-            dedupe_key=f"operator:{mid}",
-            callback_id="",
-        )
+        if reply_text:
+            service.queue_message(
+                chat_id=chat_id,
+                text=reply_text,
+                buttons=_native_buttons(buttons),
+                dedupe_key=f"operator:{mid}",
+                callback_id="",
+            )
         return "operator"
-    if (not isinstance(text, str) or not text.strip()) and attachment is None:
+    if ((not isinstance(text, str) or not text.strip())
+            and attachment is None and not customer_photos):
         service.queue_message(chat_id=chat_id, text=service.MEDIA_NOT_SUPPORTED_TEXT,
                               dedupe_key=reply_key)
         return "media"
-    text = text.strip()
+    text = text.strip() if isinstance(text, str) else ""
     if text.startswith("/"):
         head, _, argument = text.partition(" ")
         command, argument = head.lower(), argument.strip()
@@ -304,7 +316,10 @@ def _message_created(update, *, attachment_loader=None) -> str:
             chat_id=chat_id, text=purchases_text, buttons=buttons, dedupe_key=reply_key
         )
         return "purchases"
-    return service.record_customer_message(user_id=user_id, chat_id=chat_id, mid=mid, text=text)
+    return service.record_customer_message(
+        user_id=user_id, chat_id=chat_id, mid=mid, text=text,
+        attachments=customer_photos,
+    )
 
 
 def load_operator_attachment(api: MaxBotApi, body: dict):
@@ -379,9 +394,31 @@ def _message_callback(update) -> str:
         "message_callback", callback_id, user_id, payload, callback.get("timestamp")
     )
     if payload.startswith("op:"):
+        if recipient.get("chat_type") not in {None, "dialog"}:
+            return "denied"
         operator_key = f"operator-callback:{press_key}"
         if _staff_answer_stored(operator_key, f"{service.SELECTOR_DEDUPE_PREFIX}{operator_key}"):
             return "duplicate"
+        if payload.startswith("op:v:"):
+            resolved = operator_console.photo_for_callback(
+                provider="max", provider_user_id=user_id, payload=payload
+            )
+            if resolved is None:
+                service.queue_message(
+                    chat_id=chat_id, text="Фото недоступно.", callback_id=callback_id,
+                    dedupe_key=operator_key,
+                )
+            else:
+                source, request, buttons = resolved
+                service.queue_message(
+                    chat_id=chat_id,
+                    text=f"Заявка №{request.reference}\n{source.text}"[:4000],
+                    buttons=_native_buttons(buttons),
+                    callback_id=callback_id,
+                    dedupe_key=operator_key,
+                    attachment_source=source,
+                )
+            return "operator"
         result = operator_console.handle_callback(
             provider="max", provider_user_id=user_id, payload=payload
         )
@@ -701,6 +738,7 @@ class MaxBotWorker:
             setattr(row, field, value)
         update_fields = [*values, "updated_at"] if hasattr(row, "updated_at") else list(values)
         row.save(update_fields=update_fields)
+        operator_replies.queue_reply_delivery_notification(row)
         if status in (MaxDeliveryStatus.SENT, MaxDeliveryStatus.FAILED):
             cleanup_attachment(row)
 
@@ -741,6 +779,15 @@ class MaxBotWorker:
         rows = MaxMessage.objects.select_related("conversation__request").filter(pk__in=ids)
         held: dict[int, object] = {}
         for row in rows.order_by("pk"):
+            blocker = operator_replies.introduction_delivery_blocker(row)
+            if blocker:
+                self._finish(row, blocker, error="Ожидается подтверждённое подключение сотрудника")
+                if blocker == "pending":
+                    type(row).objects.filter(pk=row.pk).update(
+                        next_attempt_at=timezone.now() + timedelta(seconds=5),
+                        attempts=F("attempts") - 1,
+                    )
+                continue
             chat_id = row.recipient_chat_id
             if chat_id in held:
                 # An earlier message of this dialog must retry first: keep order.
@@ -771,6 +818,7 @@ class MaxBotWorker:
                             token=row.max_attachment_token,
                             content_type=row.attachment_content_type,
                             caption=row.text,
+                            buttons=row.buttons,
                         )
                     else:
                         content = read_attachment(row.attachment)
@@ -789,6 +837,7 @@ class MaxBotWorker:
                             token=token,
                             content_type=row.attachment_content_type,
                             caption=row.text,
+                            buttons=row.buttons,
                         )
                 else:
                     result = self.api.send_message(
@@ -872,12 +921,32 @@ class MaxBotWorker:
             self.pacer.wait(delivery.delivery_chat_id)
             try:
                 max_markup = operator_console.buttons_for_provider(delivery.buttons, "max")
-                result = self.api.send_message(
-                    chat_id=delivery.delivery_chat_id,
-                    text=delivery.text,
-                    buttons=(max_markup or {}).get("inline_keyboard", []),
-                )
-            except MaxError as exc:
+                buttons = (max_markup or {}).get("inline_keyboard", [])
+                if delivery.attachment and delivery.attachment.attachment:
+                    source = delivery.attachment
+                    token = row.max_attachment_token
+                    if not token:
+                        token = self.api.upload_file(
+                            content=read_attachment(source.attachment),
+                            filename=source.attachment_name or "photo.jpg",
+                            content_type=source.attachment_content_type,
+                        )
+                        row.max_attachment_token = token
+                        row.save(update_fields=["max_attachment_token"])
+                    result = self.api.send_file_token(
+                        chat_id=delivery.delivery_chat_id,
+                        token=token,
+                        content_type=source.attachment_content_type,
+                        caption=delivery.text,
+                        buttons=buttons,
+                    )
+                else:
+                    result = self.api.send_message(
+                        chat_id=delivery.delivery_chat_id,
+                        text=delivery.text,
+                        buttons=buttons,
+                    )
+            except (MaxError, AttachmentStorageError) as exc:
                 if isinstance(exc, MaxNetworkError) and exc.ambiguous:
                     operator_console.finish_notification(
                         row, status=operator_console.OperatorNotification.Status.UNCERTAIN,

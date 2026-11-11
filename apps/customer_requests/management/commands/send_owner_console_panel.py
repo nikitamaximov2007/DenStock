@@ -10,7 +10,7 @@ OWNER_LABELS = tuple(operator_console.OWNER_OPERATOR_KEYS)
 
 
 class Command(BaseCommand):
-    help = "Поставить панель владельца PRO-STORE в очереди Telegram и MAX."
+    help = "Поставить панель владельца PRO-STOR в очереди Telegram и MAX."
 
     def add_arguments(self, parser):
         parser.add_argument(

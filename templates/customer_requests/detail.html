@@ -184,21 +184,26 @@
                       <time>{{ entry.created_at|ru_time }}</time>
                     </div>
                     <div class="cr-msg__text">
+                      {% if entry.has_photo %}
+                        <a class="cr-msg__photo-link"
+                           href="{{ entry.attachment_url }}"
+                           target="_blank"
+                           rel="noopener">
+                          <img class="cr-msg__photo"
+                               src="{{ entry.attachment_url }}"
+                               alt="Фотография по заявке"
+                               loading="lazy">
+                        </a>
+                      {% endif %}
                       {% if entry.text %}
                         {{ entry.text|linebreaksbr }}
-                      {% else %}
+                      {% elif not entry.has_photo %}
                         <span class="muted">Текст удалён</span>
                       {% endif %}
                     </div>
-                    {% if entry.role == "operator" %}
+                    {% if entry.role == "operator" and not entry.delivered and not entry.in_flight %}
                       <div class="cr-msg__delivery" data-delivery="{{ entry.delivery_status }}">
-                        {% if entry.delivered %}
-                          Отправлено
-                        {% elif entry.in_flight %}
-                          Отправляется…
-                        {% else %}
-                          <span class="cr-msg__status cr-msg__status--bad">{{ entry.delivery_label }}</span>
-                        {% endif %}
+                        <span class="cr-msg__status cr-msg__status--bad">{{ entry.delivery_label }}</span>
                       </div>
                     {% endif %}
                   </div>
@@ -259,11 +264,11 @@
                       maxlength="4000"
                       onkeydown="if ((event.key === 'Enter' || event.key === 'Return') && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); this.form.querySelector('button[type=submit]').click(); }">{{ reply_text }}</textarea>
             <div class="cr-attachment">
-              <label class="btn btn--small btn--secondary" for="reply-attachment">Прикрепить файл</label>
+              <label class="btn btn--small btn--secondary" for="reply-attachment">Прикрепить фото</label>
               <input id="reply-attachment"
                      name="attachment"
                      type="file"
-                     accept="image/png,image/jpeg,image/webp,application/pdf"
+                     accept="image/png,image/jpeg,image/webp"
                      hidden
                      data-attachment-input>
               <span class="muted" data-attachment-name></span>
@@ -332,15 +337,15 @@
                     <span class="muted">Нет доступного места для сборки</span>
                   {% endif %}
                 </td>
-                <td class="num--qty">{{ line.quantity_requested|quantity_int }} {{ line.unit_short_name }}</td>
-                <td class="num--money" data-price-seen>
+                <td class="num--qty" data-label="Кол-во">{{ line.quantity_requested|quantity_int }} {{ line.unit_short_name }}</td>
+                <td class="num--money" data-label="Цена" data-price-seen>
                   {% if line.price_seen is not None %}
                     {{ line.price_seen|money_int }} ₽
                   {% else %}
                     Уточняется
                   {% endif %}
                 </td>
-                <td class="num--money" data-line-total>
+                <td class="num--money" data-label="Сумма" data-line-total>
                   {% if line.line_total is not None %}
                     {{ line.line_total|money_int }} ₽
                   {% else %}

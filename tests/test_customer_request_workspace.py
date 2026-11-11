@@ -409,7 +409,7 @@ def test_the_card_shows_one_chronological_conversation_with_roles(part, seller, 
     reply = html.index("Сегодня после 15:00.")
     assert html.index("Ваша заявка №") < customer < reply
     assert 'data-role="customer"' in html and 'data-role="operator"' in html
-    assert "Отправлено" in html
+    assert 'data-delivery="sent"' not in html
     assert "denis" in html  # the employee is named to employees
     for debug in ("callback_id", "dedupe", "mid.", "update_id"):
         assert debug not in html

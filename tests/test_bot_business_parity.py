@@ -38,12 +38,14 @@ from apps.customer_requests.messengers import (
 )
 from apps.customer_requests.models import (
     CustomerRequest,
+    MaxCustomerChat,
     MaxDeliveryStatus,
     MaxMessage,
     OperatorConversationContext,
     OwnerPhotoUploadContext,
     OwnerPhotoUploadReceipt,
     StaffMessengerBinding,
+    TelegramCustomerChat,
     TelegramMessage,
 )
 from apps.sales.models import Sale
@@ -553,25 +555,25 @@ def _outbound(request):
     )
 
 
-@pytest.mark.parametrize("channel", ["telegram", "max"])
 @pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
 def test_staff_reply_reaches_the_customer_with_the_same_attribution(
-    adapter_cls, channel, staff_world
+    adapter_cls, staff_world
 ):
+    channel = adapter_cls.name
     adapter, binding = staff_world["make"](adapter_cls)
     request = _linked_request(channel, key=f"{adapter.name}{channel}".ljust(32, "P"))
     listing = adapter.send("Все заявки")
     card = adapter.press(listing.buttons[next(
         label for label in listing.buttons if request.reference in label
     )])
-    adapter.press(card.buttons["Ответить"])
+    adapter.press(card.buttons["Написать"])
     adapter.send("Деталь есть, ждём вас.")
     # The responder introduction is still in flight: the same refusal in both.
     adapter.send("И ещё одно уточнение.")
-    label = "Денис, владелец сервиса PRO-STORE"
+    label = "Денис, владелец сервиса PRO-STOR"
     owner = staff_world["user"].pk
     assert _outbound(request) == [
-        {"text": "Вам отвечает Денис, владелец сервиса PRO-STORE.", "operator_user_id": owner,
+        {"text": "Вам отвечает Денис, владелец сервиса PRO-STOR.", "operator_user_id": owner,
          "operator_author_label": label},
         {"text": "Деталь есть, ждём вас.", "operator_user_id": owner,
          "operator_author_label": label},
@@ -648,7 +650,7 @@ def test_typed_my_requests_is_navigation_not_a_message(adapter_cls, db, settings
 
 
 @pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
-def test_customer_attachment_is_refused_as_a_whole(adapter_cls, db, settings):
+def test_customer_photo_is_stored_with_caption_once(adapter_cls, db, settings):
     settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
     channel = "telegram" if adapter_cls is TelegramAdapter else "max"
     request = _linked_request(channel, key=f"att{channel}".ljust(32, "T"))
@@ -659,8 +661,66 @@ def test_customer_attachment_is_refused_as_a_whole(adapter_cls, db, settings):
     else:
         event["message"]["body"]["text"] = "вот моя деталь"
     customer.adapter.deliver(event)
-    assert customer.stored_customer_messages(request) == 0
+    assert customer.stored_customer_messages(request) == 1
+    model = TelegramMessage if adapter_cls is TelegramAdapter else MaxMessage
+    message = model.objects.get(
+        conversation__request=request, direction=model.Direction.CUSTOMER
+    )
+    assert message.text == "вот моя деталь"
+    assert message.attachment_content_type == "image/jpeg"
+    assert message.attachment.read() == _jpeg()
+    customer.adapter.deliver(event)
+    assert customer.stored_customer_messages(request) == 1
     assert PartTypeImage.objects.count() == 0
+
+
+@pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
+def test_customer_photo_without_caption_is_kept(adapter_cls, db, settings):
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    channel = "telegram" if adapter_cls is TelegramAdapter else "max"
+    request = _linked_request(channel, key=f"plain{channel}".ljust(32, "P"))
+    customer = _Customer(adapter_cls, request)
+    customer.adapter.deliver(customer.adapter.photo_event(_jpeg()))
+    model = TelegramMessage if channel == "telegram" else MaxMessage
+    photo = model.objects.get(conversation__request=request,
+                              direction=model.Direction.CUSTOMER)
+    assert photo.text == ""
+    assert photo.attachment.read() == _jpeg()
+
+
+def test_max_customer_album_keeps_each_photo_once(db, settings):
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    request = _linked_request("max", key="max-album".ljust(32, "A"))
+    customer = _Customer(MaxAdapter, request)
+    event = customer.adapter.photo_event(_jpeg())
+    event["message"]["body"]["attachments"] *= 2
+    event["message"]["body"]["text"] = "Два ракурса"
+    customer.adapter.deliver(event)
+    photos = list(MaxMessage.objects.filter(conversation__request=request,
+                                             direction=MaxMessage.Direction.CUSTOMER).order_by("pk"))
+    assert len(photos) == 2
+    assert [photo.text for photo in photos] == ["Два ракурса", ""]
+    assert all(photo.attachment.read() == _jpeg() for photo in photos)
+    customer.adapter.deliver(event)
+    assert MaxMessage.objects.filter(conversation__request=request,
+                                     direction=MaxMessage.Direction.CUSTOMER).count() == 2
+
+
+@pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
+def test_ambiguous_customer_photo_is_not_downloaded_or_attached(adapter_cls, db, settings):
+    settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    channel = "telegram" if adapter_cls is TelegramAdapter else "max"
+    first = _linked_request(channel, key=f"amb-photo-a-{channel}".ljust(32, "a"))
+    second = _linked_request(channel, key=f"amb-photo-b-{channel}".ljust(32, "b"))
+    if channel == "telegram":
+        TelegramCustomerChat.objects.filter(chat_id=88_001).update(active_conversation=None)
+    else:
+        MaxCustomerChat.objects.filter(user_id=88_102).update(active_conversation=None)
+    customer = _Customer(adapter_cls, first)
+    customer.adapter.deliver(customer.adapter.photo_event(_jpeg()), fail_download=True)
+    model = TelegramMessage if channel == "telegram" else MaxMessage
+    assert not model.objects.filter(direction=model.Direction.CUSTOMER,
+                                    conversation__request__in=[first, second]).exists()
 
 
 def test_max_sticker_or_location_is_not_a_part_photo(staff_world):
@@ -684,7 +744,7 @@ def test_old_envelope_rows_already_queued_are_sent_and_the_sender_continues(db):
     old = MaxMessage.objects.create(
         dedupe_key="operator:legacy-envelope",
         direction=MaxMessage.Direction.SYSTEM,
-        text="Панель администратора PRO-STORE",
+        text="Панель администратора PRO-STOR",
         buttons={"inline_keyboard": [[{"text": "Все заявки", "payload": "op:l:abc:1"}]]},
         recipient_chat_id=55_001,
         delivery_status=MaxDeliveryStatus.PENDING,
@@ -734,7 +794,7 @@ def test_redelivered_staff_reply_event_creates_one_customer_message(adapter_cls,
     card = adapter.press(listing.buttons[next(
         label for label in listing.buttons if request.reference in label
     )])
-    adapter.press(card.buttons["Ответить"])
+    adapter.press(card.buttons["Написать"])
     event = adapter.text_event("Деталь отложена для вас.")
     adapter.deliver(event)
     adapter.deliver(event)  # the same messenger event again
@@ -745,7 +805,7 @@ def test_redelivered_staff_reply_event_creates_one_customer_message(adapter_cls,
 @pytest.mark.parametrize("adapter_cls", ADAPTERS, ids=lambda cls: cls.name)
 def test_same_staff_button_event_twice_has_one_effect(adapter_cls, staff_world):
     adapter, binding = staff_world["make"](adapter_cls)
-    request = _linked_request("telegram", key=f"twice{adapter.name}".ljust(32, "W"))
+    request = _linked_request(adapter.name, key=f"twice{adapter.name}".ljust(32, "W"))
     listing = adapter.send("Все заявки")
     press = adapter.press_event(listing.buttons[next(
         label for label in listing.buttons if request.reference in label
@@ -755,7 +815,7 @@ def test_same_staff_button_event_twice_has_one_effect(adapter_cls, staff_world):
     first_stamp = context.updated_at
     adapter.deliver(press)
     context.refresh_from_db()
-    assert context.request_id == request.pk
+    assert context.request_id is None  # Viewing a card never starts a reply.
     if adapter_cls is MaxAdapter:
         # A MAX redelivery is recognised and not applied a second time.
         assert context.updated_at == first_stamp

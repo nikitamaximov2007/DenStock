@@ -13,7 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import DatabaseError, transaction
-from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -39,6 +39,7 @@ from .messengers import (
 )
 from .models import (
     CustomerRequest,
+    MaxMessage,
     StaffMessengerBinding,
     TelegramConversation,
     TelegramDelivery,
@@ -721,6 +722,33 @@ def customer_request_reply(request, pk):
 
 # The MAX-only reply of the previous release posts here; it is the same reply now.
 customer_request_max_reply = customer_request_reply
+
+
+@login_required
+def customer_request_attachment(request, pk, channel, message_id):
+    """Serve one request-bound image to an authorized warehouse employee only."""
+    _require_access(request)
+    customer_request = get_object_or_404(CustomerRequest, pk=pk)
+    model = {"telegram": TelegramMessage, "max": MaxMessage}.get(channel)
+    if model is None:
+        raise Http404
+    message = get_object_or_404(
+        model, pk=message_id, conversation__request=customer_request
+    )
+    if not message.attachment or message.attachment_content_type not in {
+        "image/png", "image/jpeg", "image/webp"
+    }:
+        raise Http404
+    try:
+        attachment = message.attachment.open("rb")
+    except (OSError, ValueError):
+        raise Http404 from None
+    response = FileResponse(attachment, content_type=message.attachment_content_type)
+    response["Content-Disposition"] = "inline"
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    return response
 
 
 def max_webhook_secret_is_valid(value: str | None) -> bool:
