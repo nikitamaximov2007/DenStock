@@ -106,6 +106,7 @@ def _verified_runs(root: Path):
 
 def test_a_backup_includes_signed_private_media_and_restores_identically(production):
     run = production["make"]()
+    assert run.stat().st_mode & 0o777 == 0o700
     m = _manifest(run)
     assert m["private_media_status"] == "included"
     assert m["private_media_filename"] == "private_media.tar.gz"

@@ -55,7 +55,8 @@ def new_run_dir(root=None) -> Path:
     base = Path(root) if root else backup_root()
     run = base / timestamp()
     try:
-        run.mkdir(parents=True, exist_ok=False)
+        run.mkdir(mode=0o700, parents=True, exist_ok=False)
+        run.chmod(0o700)
     except FileExistsError as exc:
         raise OperationsError(f"Каталог backup уже существует: {run.name}") from exc
     return run
