@@ -220,7 +220,10 @@ def test_build_points_only_the_requested_service_at_the_new_commit(tmp_path, mon
     assert seen["env"]["DENSTOCK_WEB_REVISION"] == "e" * 40
     assert seen["env"]["COMPOSE_FILE"].startswith("docker-compose.yml" + os.pathsep)
     assert yaml.safe_load(seen["overlay"]) == {
-        "services": {"max-bot": {"platform": identity.RELEASE_PLATFORM}}
+        "services": {"max-bot": {
+            "platform": identity.RELEASE_PLATFORM,
+            "build": {"platforms": [identity.RELEASE_PLATFORM]},
+        }}
     }
 
 

@@ -223,7 +223,9 @@ def build(repo: Path, requested: str, services: list[str]) -> None:
         platform_overlay = staging / "release-platform.yaml"
         platform_overlay.write_text(
             "services:\n" + "".join(
-                f"  {service}:\n    platform: {RELEASE_PLATFORM}\n" for service in services
+                f"  {service}:\n    platform: {RELEASE_PLATFORM}\n"
+                f"    build:\n      platforms:\n        - {RELEASE_PLATFORM}\n"
+                for service in services
             ), encoding="utf-8",
         )
         env["COMPOSE_FILE"] = (
