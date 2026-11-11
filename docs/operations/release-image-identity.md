@@ -36,6 +36,9 @@ named services, then checks the immutable image ID, OCI revision, source
 archive digest, and image environment. It fails closed if any value differs.
 Its output omits environment contents and build logs. The temporary source
 archive is removed when the command exits.
+The builder adds a temporary Compose overlay forcing `linux/amd64` for every
+requested service; the identity check rejects images of another architecture.
+The overlay does not change the tracked or production Compose files.
 
 After explicit deployment approval, preserve the existing image IDs, update
 the selector, and run the image/config identity gate **before** starting any

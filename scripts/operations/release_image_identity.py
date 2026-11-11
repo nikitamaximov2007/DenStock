@@ -40,6 +40,7 @@ SELECTOR_VARS = {
 }
 SHARED_SELECTOR = "DENSTOCK_BUILD_REVISION"
 ALL_PROFILES = ("public-catalog", "telegram-bot", "max-bot")
+RELEASE_PLATFORM = "linux/amd64"
 CONTROL_FILES = ("docker-compose.yml", "docker/Dockerfile",
                  "scripts/operations/release_image_identity.py")
 
@@ -142,6 +143,8 @@ def _env_map(entries) -> dict[str, str]:
 
 
 def verify_image(image: dict, *, commit: str, archive_sha256: str) -> None:
+    if (image.get("Os"), image.get("Architecture")) != ("linux", "amd64"):
+        raise IdentityError(f"built image platform is not {RELEASE_PLATFORM}")
     labels = image.get("Config", {}).get("Labels") or {}
     if labels.get(REVISION_LABEL) != commit:
         raise IdentityError("built image OCI revision does not match requested Git SHA")
@@ -217,6 +220,15 @@ def build(repo: Path, requested: str, services: list[str]) -> None:
         staging = Path(temporary)
         archive_sha256 = source_archive(repo, commit, staging)
         env = os.environ.copy()
+        platform_overlay = staging / "release-platform.yaml"
+        platform_overlay.write_text(
+            "services:\n" + "".join(
+                f"  {service}:\n    platform: {RELEASE_PLATFORM}\n" for service in services
+            ), encoding="utf-8",
+        )
+        env["COMPOSE_FILE"] = (
+            env.get("COMPOSE_FILE") or "docker-compose.yml"
+        ) + os.pathsep + str(platform_overlay)
         env.update({
             "DENSTOCK_BUILD_CONTEXT": str(staging / "context"),
             "DENSTOCK_BUILD_CONTEXT_SHA256": archive_sha256,

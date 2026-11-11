@@ -23,6 +23,8 @@ ARCHIVE_SHA = "b" * 64
 def image_metadata(*, revision=SHA, archive_sha=ARCHIVE_SHA, env_sha=SHA):
     return {
         "Id": "sha256:" + "c" * 64,
+        "Os": "linux",
+        "Architecture": "amd64",
         "Config": {
             "Labels": {
                 identity.REVISION_LABEL: revision,
@@ -39,6 +41,7 @@ def test_image_identity_requires_revision_archive_and_environment_to_match():
         image_metadata(revision="d" * 40),
         image_metadata(archive_sha="e" * 64),
         image_metadata(env_sha="f" * 40),
+        {**image_metadata(), "Architecture": "arm64"},
     ):
         with pytest.raises(identity.IdentityError):
             identity.verify_image(candidate, commit=SHA, archive_sha256=ARCHIVE_SHA)
@@ -200,6 +203,7 @@ def test_build_points_only_the_requested_service_at_the_new_commit(tmp_path, mon
 
     def fake_checked(argv, *, cwd=ROOT, env=None):
         seen["argv"], seen["env"] = argv, env
+        seen["overlay"] = Path(env["COMPOSE_FILE"].split(os.pathsep)[-1]).read_text()
         return b""
 
     monkeypatch.setattr(identity, "checked", fake_checked)
@@ -214,6 +218,10 @@ def test_build_points_only_the_requested_service_at_the_new_commit(tmp_path, mon
     assert seen["env"]["DENSTOCK_MAX_BOT_REVISION"] == SHA
     assert "DENSTOCK_BUILD_REVISION" not in seen["env"]
     assert seen["env"]["DENSTOCK_WEB_REVISION"] == "e" * 40
+    assert seen["env"]["COMPOSE_FILE"].startswith("docker-compose.yml" + os.pathsep)
+    assert yaml.safe_load(seen["overlay"]) == {
+        "services": {"max-bot": {"platform": identity.RELEASE_PLATFORM}}
+    }
 
 
 def test_selector_report_flags_missing_images_and_marks_legacy_ones(tmp_path, monkeypatch):
