@@ -14,7 +14,9 @@ def main(port=8000):
     previous_handler = signal.signal(signal.SIGALRM, _deadline_expired)
     signal.setitimer(signal.ITIMER_REAL, 3)
     try:
-        connection.request("GET", "/healthz/")
+        # Public Django accepts localhost but intentionally rejects 127.0.0.1
+        # as an HTTP Host. Keep the TCP connection on loopback in both runtimes.
+        connection.request("GET", "/healthz/", headers={"Host": "localhost"})
         return 0 if connection.getresponse().status == 200 else 1
     except (OSError, http.client.HTTPException):
         return 1
