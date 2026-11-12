@@ -26,11 +26,11 @@ import threading
 import time
 import uuid
 from base64 import b64decode
+from contextlib import ExitStack
 from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.core.files.base import ContentFile
 from django.db import DatabaseError, connection, transaction
 from django.db.models import F
 from django.utils import timezone
@@ -46,8 +46,9 @@ from .attachments import (
     AttachmentStorageError,
     cleanup_attachment,
     read_attachment,
-    validate_attachment,
-    validate_photo,
+    spool_attachment,
+    validate_attachment_bytes,
+    validate_photo_attachment,
 )
 from .max_api import MaxApiError, MaxBotApi, MaxError, MaxNetworkError
 from .messengers import MessengerLinkError, consume_max_start
@@ -134,7 +135,10 @@ def handle_update(update, *, attachment_loader=None) -> str:
     if kind == "bot_started":
         return _bot_started(update)
     if kind == "message_created":
-        return _message_created(update, attachment_loader=attachment_loader)
+        with ExitStack() as attachment_stack:
+            return _message_created(
+                update, attachment_loader=attachment_loader, attachment_stack=attachment_stack
+            )
     if kind == "message_callback":
         return _message_callback(update)
     return "ignored"
@@ -203,7 +207,7 @@ def _bot_started(update) -> str:
     return "greeting"
 
 
-def _message_created(update, *, attachment_loader=None) -> str:
+def _message_created(update, *, attachment_loader=None, attachment_stack: ExitStack) -> str:
     message = update.get("message")
     if not isinstance(message, dict):
         return "ignored"
@@ -249,10 +253,11 @@ def _message_created(update, *, attachment_loader=None) -> str:
                 ):
                     raise AttachmentError("Поддерживаются только фотографии.")
                 for item in items:
-                    loaded = attachment_loader({"attachments": [item]})
-                    customer_photos.append(validate_photo(ContentFile(
-                        loaded.content, name=loaded.filename
-                    )))
+                    validated = validate_photo_attachment(
+                        attachment_loader({"attachments": [item]})
+                    )
+                    customer_photos.append(spool_attachment(validated, attachment_stack))
+                    del validated
         except (AttachmentError, MaxError):
             service.queue_message(
                 chat_id=chat_id,
@@ -359,7 +364,7 @@ def load_operator_attachment(api: MaxBotApi, body: dict):
             filename = "attachment.webp"
         else:
             filename = "document.pdf"
-    return validate_attachment(ContentFile(content, name=filename))
+    return validate_attachment_bytes(content, filename)
 
 
 def _message_callback(update) -> str:

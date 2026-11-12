@@ -85,6 +85,14 @@ def test_decompression_bomb_is_refused():
         build_renditions(BytesIO(buffer.getvalue()))
 
 
+def test_source_above_16_megapixels_is_refused_before_rendition():
+    image = Image.new("1", (5000, 4000))
+    buffer = BytesIO()
+    image.save(buffer, "PNG")
+    with pytest.raises(PublicPhotoError, match="Размер изображения"):
+        build_renditions(BytesIO(buffer.getvalue()))
+
+
 # --- Moderation rules ----------------------------------------------------------------
 
 

@@ -32,7 +32,7 @@ from .attachments import (
     AttachmentError,
     ValidatedAttachment,
     validate_attachment,
-    validate_photo,
+    validate_photo_attachment,
 )
 from .max_api import MAX_TEXT_CHARS
 from .models import (
@@ -202,13 +202,13 @@ def submit_reply(
     validated = None
     if attachment is not None:
         try:
-            if isinstance(attachment, ValidatedAttachment):
-                attachment = ContentFile(attachment.content, name=attachment.filename)
-            validated = validate_attachment(attachment)
+            validated = (
+                attachment
+                if isinstance(attachment, ValidatedAttachment)
+                else validate_attachment(attachment)
+            )
             if validated.content_type.startswith("image/"):
-                validated = validate_photo(ContentFile(
-                    validated.content, name=validated.filename
-                ))
+                validated = validate_photo_attachment(validated)
         except AttachmentError as exc:
             raise OperatorReplyError(str(exc)) from None
     is_max = target.channel == CustomerRequest.Messenger.MAX

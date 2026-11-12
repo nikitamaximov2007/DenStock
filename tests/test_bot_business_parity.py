@@ -688,8 +688,17 @@ def test_customer_photo_without_caption_is_kept(adapter_cls, db, settings):
     assert photo.attachment.read() == _jpeg()
 
 
-def test_max_customer_album_keeps_each_photo_once(db, settings):
+def test_max_customer_album_keeps_each_photo_once(db, settings, monkeypatch):
     settings.CUSTOMER_OPERATOR_CONSOLE_ENABLED = True
+    spooled = []
+    real_spool = max_bot.spool_attachment
+
+    def record_spool(validated, stack):
+        photo = real_spool(validated, stack)
+        spooled.append(photo)
+        return photo
+
+    monkeypatch.setattr(max_bot, "spool_attachment", record_spool)
     request = _linked_request("max", key="max-album".ljust(32, "A"))
     customer = _Customer(MaxAdapter, request)
     event = customer.adapter.photo_event(_jpeg())
@@ -701,7 +710,9 @@ def test_max_customer_album_keeps_each_photo_once(db, settings):
     assert len(photos) == 2
     assert [photo.text for photo in photos] == ["Два ракурса", ""]
     assert all(photo.attachment.read() == _jpeg() for photo in photos)
+    assert len(spooled) == 2 and all(photo.file.closed for photo in spooled)
     customer.adapter.deliver(event)
+    assert len(spooled) == 2
     assert MaxMessage.objects.filter(conversation__request=request,
                                      direction=MaxMessage.Direction.CUSTOMER).count() == 2
 

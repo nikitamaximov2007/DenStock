@@ -1,3 +1,6 @@
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+
 import pytest
 from django.core.files.base import ContentFile
 from django.core.files.storage import FileSystemStorage
@@ -62,7 +65,8 @@ def test_telegram_attachment_uses_correct_multipart_endpoint(content_type, metho
 
     def opener(request, timeout):
         seen["url"] = request.full_url
-        seen["body"] = request.data
+        seen["body"] = b"".join(request.data)
+        seen["length"] = len(request.data)
         seen["content_type"] = request.headers["Content-type"]
         return _Response(b'{"ok":true,"result":{"message_id":42}}')
 
@@ -77,7 +81,44 @@ def test_telegram_attachment_uses_correct_multipart_endpoint(content_type, metho
     assert f"/{method}" in seen["url"]
     assert f'name="{field}"' .encode() in seen["body"]
     assert b"file-bytes" in seen["body"]
+    assert seen["length"] == len(seen["body"])
     assert seen["content_type"].startswith("multipart/form-data; boundary=")
+
+
+def test_telegram_multipart_stream_has_exact_content_length():
+    received = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received["length"] = int(self.headers["Content-Length"])
+            received["transfer_encoding"] = self.headers.get("Transfer-Encoding")
+            received["body"] = self.rfile.read(received["length"])
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"ok":true,"result":{"message_id":42}}')
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = TelegramBotApi(
+            "synthetic-token", base_url=f"http://127.0.0.1:{server.server_port}"
+        ).send_file(
+            chat_id=7, content=b"synthetic-photo" * 100000,
+            filename="photo.jpg", content_type="image/jpeg",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    assert result["message_id"] == 42
+    assert received["transfer_encoding"] is None
+    assert received["length"] == len(received["body"])
+    assert b"synthetic-photo" in received["body"]
 
 
 @pytest.mark.parametrize(
@@ -91,7 +132,9 @@ def test_max_attachment_uses_upload_token_then_message(content_type, kind):
         if request.full_url.endswith(f"/uploads?type={kind}"):
             return _Response(b'{"url":"https://upload.invalid/file"}')
         if request.full_url == "https://upload.invalid/file":
-            assert b"file-bytes" in request.data
+            body = b"".join(request.data)
+            assert b"file-bytes" in body
+            assert len(request.data) == len(body)
             if kind == "image":
                 return _Response(b'{"photos":{"opaque-photo":{"token":"upload-token"}}}')
             return _Response(b'{"token":"upload-token"}')

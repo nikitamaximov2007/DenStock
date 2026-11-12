@@ -1300,6 +1300,24 @@ def test_database_error_mid_send_never_leaves_a_message_invisible_or_resent(
     assert api.texts_to(CUSTOMER).count("ответ при сбое базы") == sent_during_failure == 1
 
 
+def test_database_error_during_update_does_not_advance_offset(worker, api, monkeypatch):
+    update = message_update(CUSTOMER, "/start")
+    api.updates.append(update)
+    before = TelegramBotRuntime.objects.get().last_update_id
+
+    def database_down(*args, **kwargs):
+        raise DatabaseError("database unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr("apps.customer_requests.telegram_bot.handle_update", database_down)
+        with pytest.raises(DatabaseError):
+            worker.poll_once(0)
+    assert TelegramBotRuntime.objects.get().last_update_id == before
+
+    worker.poll_once(0)
+    assert TelegramBotRuntime.objects.get().last_update_id == update["update_id"]
+
+
 @pytest.mark.parametrize(
     ("body", "method", "ambiguous"),
     [

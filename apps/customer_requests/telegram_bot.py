@@ -22,7 +22,6 @@ from datetime import timedelta
 from pathlib import Path
 
 from django.conf import settings
-from django.core.files.base import ContentFile
 from django.db import DatabaseError, connection, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -38,8 +37,8 @@ from .attachments import (
     AttachmentStorageError,
     cleanup_attachment,
     read_attachment,
-    validate_attachment,
-    validate_photo,
+    validate_attachment_bytes,
+    validate_photo_attachment,
 )
 from .messengers import MessengerLinkError, consume_telegram_start
 from .models import (
@@ -184,9 +183,7 @@ def handle_update(update, *, attachment_loader=None) -> list[Outgoing]:
             if not is_staff:
                 if not isinstance(message.get("photo"), list):
                     return reply("Поддерживаются только фотографии.")
-                attachment = validate_photo(ContentFile(
-                    attachment.content, name=attachment.filename
-                ))
+                attachment = validate_photo_attachment(attachment)
         except (AttachmentError, TelegramError):
             return reply("Не удалось прочитать вложение. Повторите отправку позже.")
         text = message.get("caption", "")
@@ -547,6 +544,10 @@ class TelegramBotWorker:
                     self._advance(update_id)
             except BusinessWriteBlocked:
                 raise
+            except DatabaseError:
+                # A transient database failure (including the shared photo
+                # decode lock) must leave this update's offset untouched.
+                raise
             except Exception as exc:  # noqa: BLE001 - one poisoned update must not stop the bot
                 logger.error("update %s failed: %s", update_id, type(exc).__name__)
                 self.record_error(f"Обновление {update_id}: {type(exc).__name__}")
@@ -584,7 +585,7 @@ class TelegramBotWorker:
             filename = "telegram-photo.webp"
         elif content.startswith(b"%PDF-"):
             filename = "telegram-document.pdf"
-        return validate_attachment(ContentFile(content, name=filename))
+        return validate_attachment_bytes(content, filename)
 
     def _send_ephemeral(self, outgoing: list[Outgoing]) -> None:
         for item in outgoing:

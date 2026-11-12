@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from .attachments import MAX_ATTACHMENT_BYTES
+from .multipart import MultipartBody
 
 MAX_ERROR_TEXT = 200
 
@@ -276,12 +277,16 @@ class TelegramBotApi:
         parts.append(
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
             f"filename=\"{filename}\"\r\n"
-            f"Content-Type: {content_type}\r\n\r\n".encode() + content + b"\r\n"
+            f"Content-Type: {content_type}\r\n\r\n".encode()
         )
-        body = b"".join(parts) + f"--{boundary}--\r\n".encode()
+        parts.extend((content, b"\r\n"))
+        body = MultipartBody(*parts, f"--{boundary}--\r\n".encode())
         request = urllib.request.Request(
             f"{self._base_url}/bot{self._token}/{method}", data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}, method="POST"
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(len(body)),
+            }, method="POST"
         )
         try:
             with self._opener(request, timeout=self._timeout) as response:

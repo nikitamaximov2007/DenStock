@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from io import BytesIO
+from typing import BinaryIO
 
 from django.db import transaction
 from PIL import Image, UnidentifiedImageError
+
+from apps.core.photo_decode import photo_decode_slot
 
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_PHOTO_PIXELS = 16_000_000
@@ -68,16 +72,42 @@ class ValidatedAttachment:
     content_type: str
 
 
-def validate_attachment(upload) -> ValidatedAttachment:
-    if upload is None:
-        raise AttachmentError("Файл не выбран.")
-    filename = os.path.basename(str(getattr(upload, "name", "")))
+@dataclass(frozen=True, slots=True)
+class SpooledAttachment:
+    file: BinaryIO
+    filename: str
+    content_type: str
+    size: int
+
+
+def spool_attachment(validated: ValidatedAttachment, stack) -> SpooledAttachment:
+    """Move a checked album photo to an anonymous file until DB persistence."""
+    try:
+        file = stack.enter_context(tempfile.TemporaryFile(mode="w+b"))
+        if file.write(validated.content) != len(validated.content):
+            raise OSError("short temporary write")
+        file.seek(0)
+    except OSError:
+        raise AttachmentStorageError("Вложение недоступно для рабочего процесса.") from None
+    return SpooledAttachment(file, validated.filename, validated.content_type,
+                             len(validated.content))
+
+
+def _safe_filename(filename) -> tuple[str, str]:
+    filename = os.path.basename(str(filename))
     filename = re.sub(r"[^A-Za-z0-9А-Яа-я._ -]", "_", filename).strip(" .")[:180]
     if not filename or "." not in filename:
         raise AttachmentError("У файла должно быть безопасное имя и расширение.")
     extension = filename.rsplit(".", 1)[-1].lower()
     if extension not in EXTENSIONS:
         raise AttachmentError("Поддерживаются PNG, JPEG, WEBP и PDF.")
+    return filename, extension
+
+
+def validate_attachment(upload) -> ValidatedAttachment:
+    if upload is None:
+        raise AttachmentError("Файл не выбран.")
+    filename, _ = _safe_filename(getattr(upload, "name", ""))
     try:
         upload.seek(0)
         content = upload.read(MAX_ATTACHMENT_BYTES + 1)
@@ -88,6 +118,12 @@ def validate_attachment(upload) -> ValidatedAttachment:
             upload.seek(0)
         except (AttributeError, OSError):
             pass
+    return validate_attachment_bytes(content, filename)
+
+
+def validate_attachment_bytes(content: bytes, filename: str) -> ValidatedAttachment:
+    """Validate downloaded bytes without copying them into ContentFile."""
+    filename, extension = _safe_filename(filename)
     if len(content) > MAX_ATTACHMENT_BYTES:
         raise AttachmentError("Файл не должен быть больше 10 МБ.")
     if content.startswith(b"%PDF-"):
@@ -114,15 +150,20 @@ def validate_attachment(upload) -> ValidatedAttachment:
 
 def validate_photo(upload) -> ValidatedAttachment:
     """Accept actual, decodable images only; never trust provider MIME or suffix."""
-    validated = validate_attachment(upload)
+    return validate_photo_attachment(validate_attachment(upload))
+
+
+def validate_photo_attachment(validated: ValidatedAttachment) -> ValidatedAttachment:
+    """Fully decode an already validated attachment without reading it again."""
     if not validated.content_type.startswith("image/"):
         raise AttachmentError("Поддерживаются только фотографии PNG, JPEG и WEBP.")
     try:
-        with Image.open(BytesIO(validated.content)) as image:
-            if image.width * image.height > MAX_PHOTO_PIXELS:
-                raise AttachmentError("Слишком большое изображение.")
-            image.load()
-            detected = Image.MIME.get(image.format)
+        with photo_decode_slot():
+            with Image.open(BytesIO(validated.content)) as image:
+                if image.width * image.height > MAX_PHOTO_PIXELS:
+                    raise AttachmentError("Слишком большое изображение.")
+                image.load()
+                detected = Image.MIME.get(image.format)
     except AttachmentError:
         raise
     except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError):

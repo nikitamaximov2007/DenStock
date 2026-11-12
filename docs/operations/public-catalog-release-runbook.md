@@ -49,7 +49,8 @@ The public runtime can create a request, nothing more.
   entrypoint (owner role) migrates. `docker/public-entrypoint.sh` never
   migrates, never creates users and never collects static files.
 * Connection budget: `catalog-web` holds at most workers x threads
-  persistent connections (3 x 2 = 6 by default). PostgreSQL's default
+  persistent connections (1 x 4 = 4 by default in the 2 GiB candidate).
+  PostgreSQL's default
   `max_connections` is 100; the internal web holds a few more.
 * Blast radius: a runaway public query is cut at 5 s; a public process that
   misbehaves cannot open more than 20 connections; the public runtime can

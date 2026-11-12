@@ -41,6 +41,7 @@ from urllib.parse import urlencode, urlsplit
 from django.conf import settings
 
 from .attachments import MAX_ATTACHMENT_BYTES
+from .multipart import MultipartBody
 
 MAX_ERROR_TEXT = 200
 MAX_TEXT_CHARS = 4000
@@ -325,15 +326,19 @@ class MaxBotApi:
         if not isinstance(url, str) or not url.startswith("https://"):
             raise MaxNetworkError("invalid upload response", ambiguous=False)
         boundary = "----denstock-" + secrets.token_hex(12)
-        body = (
+        header = (
             f"--{boundary}\r\nContent-Disposition: form-data; name=\"data\"; "
             f"filename=\"{filename}\"\r\n"
             f"Content-Type: {content_type}\r\n\r\n"
-        ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+        ).encode()
+        body = MultipartBody(header, content, f"\r\n--{boundary}--\r\n".encode())
         request = urllib.request.Request(
             url,
             data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(len(body)),
+            },
             method="POST",
         )
         try:

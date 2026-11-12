@@ -19,12 +19,12 @@ import re
 import uuid
 from datetime import timedelta
 
-from django.core.files.base import ContentFile
+from django.core.files.base import ContentFile, File
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from . import customer_ui, messaging, operator_bot, operator_replies, telegram_service
-from .attachments import erase_conversation_attachments
+from .attachments import SpooledAttachment, erase_conversation_attachments
 from .max_api import MAX_TEXT_CHARS
 from .messengers import token_hash
 from .models import (
@@ -599,8 +599,13 @@ def record_customer_message(*, user_id: int, chat_id: int, mid: str, text: str,
         if attachment is not None:
             message.attachment_name = attachment.filename
             message.attachment_content_type = attachment.content_type
+            content = (
+                File(attachment.file, name=attachment.filename)
+                if isinstance(attachment, SpooledAttachment)
+                else ContentFile(attachment.content)
+            )
             message.attachment.save(
-                attachment.filename, ContentFile(attachment.content), save=False
+                attachment.filename, content, save=False
             )
             message.save(update_fields=["attachment", "attachment_name", "attachment_content_type"])
         MaxOutboxEvent.objects.create(

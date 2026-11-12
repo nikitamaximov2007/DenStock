@@ -28,13 +28,15 @@ from django.utils import timezone
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from apps.core.files import SUPPORTED_IMAGE_FORMATS
+from apps.core.photo_decode import photo_decode_slot
 
 from .models import PartType, PartTypeImage, PublicPartPhoto, PublicPartPhotoRendition
 
 MAX_PUBLISHED_PER_PART = 8
-# Source uploads are already capped at 10 MB. A pixel cap refuses a small
-# file that decodes into a huge bitmap before Pillow allocates it.
-MAX_SOURCE_PIXELS = 40_000_000
+# Public renditions top out at 1200 px. A 40 MP WEBP source consumed too much
+# RAM on the 2 GiB host even with exclusive decoding; 16 MP remains ample for
+# the output while bounding the intermediate bitmap and its copies.
+MAX_SOURCE_PIXELS = 16_000_000
 CARD_EDGE = 480
 DETAIL_EDGE = 1200
 MAX_RENDITION_BYTES = 900 * 1024
@@ -144,6 +146,11 @@ def _encode(image: Image.Image, quality: int) -> bytes:
 
 def build_renditions(fileobj) -> list[_Rendition]:
     """Decode an upload once and produce the bounded public renditions."""
+    with photo_decode_slot():
+        return _build_renditions(fileobj)
+
+
+def _build_renditions(fileobj) -> list[_Rendition]:
     try:
         with Image.open(fileobj) as source:
             if source.format not in _ALLOWED_FORMATS:
