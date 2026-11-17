@@ -1,11 +1,9 @@
 #!/usr/bin/python3
 """Render and install the dedicated Telegram Bot API egress proxy.
 
-The production host cannot reach api.telegram.org directly. The telegram-bot
-container reaches it through a second, separate sing-box process that shares
-only the installed sing-box binary, the proxy system user and the validated
-MAXINIK outbound with the AI proxy. The AI proxy itself (its config, its
-127.0.0.1 listener, its nftables table and its health contract) is untouched.
+The telegram-bot container reaches the host-only HTTP proxy. A dedicated Xray
+process routes only api.telegram.org:443 to the Turkey reverse-SSH SOCKS port;
+all other destinations are rejected. The unrelated AI proxy is untouched.
 
 This process:
 
@@ -18,6 +16,8 @@ Runtime needs only the rendered files and the installed binary; this script is
 run from the release checkout and never enables or starts a service.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -26,11 +26,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-AI_INSTALL_ROOT = Path("/usr/local/lib/denstock-ai")
 CONFIG_ROOT = Path("/etc/denstock-ai")
-MAXINIK_ENV_PATH = CONFIG_ROOT / "maxinik.env"
 EGRESS_CONFIG_PATH = CONFIG_ROOT / "telegram-egress.json"
 EGRESS_NFT_PATH = CONFIG_ROOT / "telegram-egress.nft"
+XRAY_BINARY = Path("/usr/local/lib/denstock-ai/bin/xray")
 UNIT_NAME = "denstock-telegram-egress.service"
 UNIT_SOURCE = Path(__file__).resolve().parents[2] / "deploy" / "telegram-egress" / UNIT_NAME
 UNIT_TARGET = Path("/etc/systemd/system") / UNIT_NAME
@@ -45,6 +44,10 @@ EGRESS_PORT = 2081
 ALLOWED_DOMAIN = "api.telegram.org"
 ALLOWED_PORT = 443
 INBOUND_TAG = "telegram-bot-http"
+OUTBOUND_TAG = "turkey-reverse"
+BLOCKED_TAG = "blocked"
+TURKEY_SOCKS_HOST = "127.0.0.1"
+TURKEY_SOCKS_PORT = 23082
 FIREWALL_TABLE = "denstock_telegram_egress"
 ALLOW_COMMENT = "telegram-egress:allow-bot"
 BLOCK_COMMENT = "telegram-egress:block-others"
@@ -59,43 +62,41 @@ class EgressError(RuntimeError):
     pass
 
 
-def _renderer():
-    """The installed, audited MAXINIK renderer: one validation, one outbound."""
-    if AI_INSTALL_ROOT.is_dir() and str(AI_INSTALL_ROOT) not in sys.path:
-        sys.path.insert(0, str(AI_INSTALL_ROOT))
-    from denstock_ai_network import renderer
-
-    return renderer
-
-
-def build_egress_config(values: dict[str, object]) -> dict[str, object]:
-    ai_config = _renderer().build_sing_box_config(values)
-    outbound = next(item for item in ai_config["outbounds"] if item["tag"] == "maxinik-vless")
+def build_egress_config() -> dict[str, object]:
+    """Build a secret-free Xray config for the fixed, Telegram-only Turkey route."""
     return {
-        "log": {"level": "warn", "timestamp": True},
+        "log": {"loglevel": "warning"},
         "inbounds": [
             {
-                "type": "http",
-                "tag": INBOUND_TAG,
                 "listen": BRIDGE_GATEWAY,
-                "listen_port": EGRESS_PORT,
-                "set_system_proxy": False,
+                "port": EGRESS_PORT,
+                "protocol": "http",
+                "tag": INBOUND_TAG,
+                "settings": {},
             }
         ],
-        "outbounds": [outbound],
-        "route": {
+        "outbounds": [
+            {
+                "protocol": "socks",
+                "tag": OUTBOUND_TAG,
+                "settings": {
+                    "servers": [{"address": TURKEY_SOCKS_HOST, "port": TURKEY_SOCKS_PORT}]
+                },
+            },
+            {"protocol": "blackhole", "tag": BLOCKED_TAG, "settings": {}},
+        ],
+        "routing": {
+            "domainStrategy": "AsIs",
             "rules": [
                 {
-                    "inbound": [INBOUND_TAG],
-                    "domain": [ALLOWED_DOMAIN],
-                    "port": [ALLOWED_PORT],
-                    "action": "route",
-                    "outbound": outbound["tag"],
+                    "type": "field",
+                    "inboundTag": [INBOUND_TAG],
+                    "domain": [f"full:{ALLOWED_DOMAIN}"],
+                    "port": str(ALLOWED_PORT),
+                    "outboundTag": OUTBOUND_TAG,
                 },
-                {"action": "reject"},
+                {"type": "field", "inboundTag": [INBOUND_TAG], "outboundTag": BLOCKED_TAG},
             ],
-            "final": outbound["tag"],
-            "auto_detect_interface": True,
         },
     }
 
@@ -144,9 +145,10 @@ def validate_nftables(text: str) -> None:
 def redacted_summary(config: dict[str, object]) -> dict[str, object]:
     inbound = config["inbounds"][0]
     return {
-        "client": "sing-box",
-        "listen": f"{inbound['listen']}:{inbound['listen_port']}",
+        "client": "xray",
+        "listen": f"{inbound['listen']}:{inbound['port']}",
         "allowed": f"{ALLOWED_DOMAIN}:{ALLOWED_PORT}",
+        "upstream": f"{TURKEY_SOCKS_HOST}:{TURKEY_SOCKS_PORT}",
         "client_address": BOT_ADDRESS,
         "bridge": BRIDGE_NAME,
         "firewall_table": FIREWALL_TABLE,
@@ -155,7 +157,7 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _write_root_private(path: Path, content: str) -> None:
+def _write_root_private(path: Path, content: str, *, owner=None) -> Path:
     if path.exists() and path.is_symlink():
         raise EgressError("output path must not be a symlink")
     temporary = ""
@@ -164,17 +166,17 @@ def _write_root_private(path: Path, content: str) -> None:
             mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
         ) as file:
             temporary = file.name
-            os.chmod(temporary, 0o600)
             file.write(content)
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, 0o600)
+        if owner is not None:
+            os.chown(temporary, *owner)
+        os.chmod(temporary, 0o600)
+        return Path(temporary)
     except OSError as exc:
-        raise EgressError("output could not be written") from exc
-    finally:
         if temporary:
             Path(temporary).unlink(missing_ok=True)
+        raise EgressError("output could not be written") from exc
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
@@ -187,14 +189,7 @@ def _require_root() -> None:
 
 
 def render(args, runner=_run) -> dict[str, object]:
-    renderer = _renderer()
-    try:
-        values = renderer.validate_values(
-            renderer.read_secret_source(None if args.stdin else args.env_file, sys.stdin)
-        )
-    except renderer.ConfigurationError as exc:
-        raise EgressError(str(exc)) from None
-    config = build_egress_config(values)
+    config = build_egress_config()
     policy = render_nftables()
     validate_nftables(policy)
     if args.apply:
@@ -205,16 +200,28 @@ def render(args, runner=_run) -> dict[str, object]:
             identity = pwd.getpwnam(PROXY_USER)
         except KeyError:
             raise EgressError("proxy user is unavailable") from None
+        config_tmp = None
+        nft_tmp = None
         try:
-            renderer.atomic_write_json(
-                EGRESS_CONFIG_PATH, config, owner=(identity.pw_uid, identity.pw_gid)
+            config_tmp = _write_root_private(
+                EGRESS_CONFIG_PATH,
+                json.dumps(config, indent=2) + "\n",
+                owner=(identity.pw_uid, identity.pw_gid),
             )
-        except renderer.ConfigurationError as exc:
-            raise EgressError(str(exc)) from None
-        _write_root_private(EGRESS_NFT_PATH, policy)
-        checked = runner(["/usr/sbin/nft", "--check", "--file", str(EGRESS_NFT_PATH)])
-        if checked.returncode != 0:
-            raise EgressError("nftables rejected the egress policy")
+            nft_tmp = _write_root_private(EGRESS_NFT_PATH, policy)
+            checked = runner([str(XRAY_BINARY), "run", "-test", "-config", str(config_tmp)])
+            if checked.returncode != 0:
+                raise EgressError("Xray rejected the Telegram egress configuration")
+            checked = runner(["/usr/sbin/nft", "--check", "--file", str(nft_tmp)])
+            if checked.returncode != 0:
+                raise EgressError("nftables rejected the egress policy")
+            os.replace(nft_tmp, EGRESS_NFT_PATH)
+            os.replace(config_tmp, EGRESS_CONFIG_PATH)
+        finally:
+            if config_tmp is not None:
+                config_tmp.unlink(missing_ok=True)
+            if nft_tmp is not None:
+                nft_tmp.unlink(missing_ok=True)
     return config
 
 
@@ -229,8 +236,12 @@ def install_unit(args, runner=_run) -> list[str]:
     _require_root()
     if UNIT_TARGET.is_symlink():
         raise EgressError("unit target must not be a symlink")
-    _write_root_private(UNIT_TARGET, UNIT_SOURCE.read_text(encoding="utf-8"))
-    os.chmod(UNIT_TARGET, 0o644)
+    unit_tmp = _write_root_private(UNIT_TARGET, UNIT_SOURCE.read_text(encoding="utf-8"))
+    try:
+        os.chmod(unit_tmp, 0o644)
+        os.replace(unit_tmp, UNIT_TARGET)
+    finally:
+        unit_tmp.unlink(missing_ok=True)
     if runner(["/usr/bin/systemctl", "daemon-reload"]).returncode != 0:
         raise EgressError("systemd daemon-reload failed")
     return plan
@@ -240,9 +251,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Telegram Bot API egress proxy (bot only)")
     commands = parser.add_subparsers(dest="command", required=True)
     render_parser = commands.add_parser("render")
-    source = render_parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--env-file", type=Path)
-    source.add_argument("--stdin", action="store_true")
     render_mode = render_parser.add_mutually_exclusive_group(required=True)
     render_mode.add_argument("--check", action="store_true")
     render_mode.add_argument("--apply", action="store_true")
@@ -258,15 +266,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "render":
-            if args.env_file is not None and args.env_file != MAXINIK_ENV_PATH:
-                raise EgressError("secret source must be /etc/denstock-ai/maxinik.env")
             config = render(args)
             if args.show_redacted:
                 print(json.dumps(redacted_summary(config), sort_keys=True))
             elif args.apply:
-                print("wrote telegram egress configuration and firewall policy; secrets redacted")
+                    print("wrote Telegram egress configuration and firewall policy")
             else:
-                print("telegram egress configuration valid; secrets redacted")
+                    print("Telegram egress configuration rendered; no secrets used")
         else:
             print(json.dumps(install_unit(args)))
         return 0

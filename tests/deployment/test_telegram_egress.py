@@ -1,87 +1,64 @@
 import json
-from io import StringIO
+import os
+import stat
+from types import SimpleNamespace
 
 import pytest
 import telegram_egress as egress
 from denstock_ai_network.constants import DEFAULT_PROXY_PORT, FIREWALL_TABLE
-from denstock_ai_network.firewall import render_nftables as render_ai_nftables
-from denstock_ai_network.renderer import build_sing_box_config, validate_values
-
-SECRET_UUID = "00000000-0000-4000-8000-000000000001"
-SECRET_KEY = "A" * 43
 
 
-@pytest.fixture
-def values():
-    return validate_values(
-        {
-            "MAXINIK_SERVER": "vpn.invalid",
-            "MAXINIK_PORT": "443",
-            "MAXINIK_UUID": SECRET_UUID,
-            "MAXINIK_FLOW": "xtls-rprx-vision",
-            "MAXINIK_REALITY_PUBLIC_KEY": SECRET_KEY,
-            "MAXINIK_REALITY_SHORT_ID": "0123456789abcdef",
-            "MAXINIK_REALITY_SNI": "cover.invalid",
-            "MAXINIK_FINGERPRINT": "chrome",
-            "MAXINIK_LOCAL_PROXY_HOST": "127.0.0.1",
-            "MAXINIK_LOCAL_PROXY_PORT": "2080",
-        }
-    )
-
-
-def _env_text(values):
-    raw = {
-        "MAXINIK_SERVER": "vpn.invalid",
-        "MAXINIK_PORT": "443",
-        "MAXINIK_UUID": SECRET_UUID,
-        "MAXINIK_FLOW": "xtls-rprx-vision",
-        "MAXINIK_REALITY_PUBLIC_KEY": SECRET_KEY,
-        "MAXINIK_REALITY_SHORT_ID": "0123456789abcdef",
-        "MAXINIK_REALITY_SNI": "cover.invalid",
-        "MAXINIK_FINGERPRINT": "chrome",
-        "MAXINIK_LOCAL_PROXY_HOST": "127.0.0.1",
-        "MAXINIK_LOCAL_PROXY_PORT": "2080",
-    }
-    return "\n".join(f"{key}={value}" for key, value in raw.items()) + "\n"
-
-
-def test_egress_accepts_only_api_telegram_org_through_the_same_outbound(values):
-    config = egress.build_egress_config(values)
+def test_egress_accepts_only_api_telegram_org_through_turkey_reverse_socks():
+    config = egress.build_egress_config()
 
     assert config["inbounds"] == [
         {
-            "type": "http",
-            "tag": egress.INBOUND_TAG,
             "listen": "10.231.0.1",
-            "listen_port": 2081,
-            "set_system_proxy": False,
+            "port": 2081,
+            "protocol": "http",
+            "tag": egress.INBOUND_TAG,
+            "settings": {},
         }
     ]
-    assert config["outbounds"] == build_sing_box_config(values)["outbounds"]
-    assert config["route"]["rules"] == [
+    assert config["outbounds"] == [
         {
-            "inbound": [egress.INBOUND_TAG],
-            "domain": ["api.telegram.org"],
-            "port": [443],
-            "action": "route",
-            "outbound": "maxinik-vless",
+            "protocol": "socks",
+            "tag": "turkey-reverse",
+            "settings": {"servers": [{"address": "127.0.0.1", "port": 23082}]},
         },
-        {"action": "reject"},
+        {"protocol": "blackhole", "tag": "blocked", "settings": {}},
     ]
-    inbound = json.dumps(config["inbounds"]).lower()
-    for forbidden in ('"mixed"', '"socks"', '"tun"', "0.0.0.0", "127.0.0.1", '"tls"'):
-        assert forbidden not in inbound
+    assert config["routing"]["rules"] == [
+        {
+            "type": "field",
+            "inboundTag": [egress.INBOUND_TAG],
+            "domain": ["full:api.telegram.org"],
+            "port": "443",
+            "outboundTag": "turkey-reverse",
+        },
+        {"type": "field", "inboundTag": [egress.INBOUND_TAG], "outboundTag": "blocked"},
+    ]
+    rendered = json.dumps(config).lower()
+    for forbidden in ("vless", "maxinik", "sing-box", "0.0.0.0", '"tls"'):
+        assert forbidden not in rendered
 
 
-def test_ai_proxy_configuration_and_firewall_are_unchanged(values):
-    ai = build_sing_box_config(values)
+def test_generated_route_is_fixed_to_reverse_listener_and_never_uses_vless():
+    config = egress.build_egress_config()
 
-    assert [(item["type"], item["listen"]) for item in ai["inbounds"]] == [("mixed", "127.0.0.1")]
-    assert "rules" not in ai["route"]
+    assert config["routing"]["domainStrategy"] == "AsIs"
+    assert config["outbounds"][0]["settings"]["servers"] == [
+        {"address": "127.0.0.1", "port": 23082}
+    ]
+    assert all(item["protocol"] != "vless" for item in config["outbounds"])
+
+
+def test_telegram_proxy_keeps_separate_listener_and_firewall_from_ai_proxy():
+    config = egress.build_egress_config()
+
     assert egress.EGRESS_PORT != DEFAULT_PROXY_PORT
     assert egress.FIREWALL_TABLE != FIREWALL_TABLE
-    assert egress.EGRESS_CONFIG_PATH.name != "sing-box.json"
-    assert egress.FIREWALL_TABLE not in render_ai_nftables(1201, 2080)
+    assert config["inbounds"][0]["listen"] == "10.231.0.1"
 
 
 def test_egress_firewall_allows_only_the_bot_on_its_bridge():
@@ -113,27 +90,79 @@ def test_egress_firewall_validator_rejects_global_or_foreign_rules(addition):
         egress.validate_nftables(egress.render_nftables() + f"\n{addition}\n")
 
 
-def test_check_prints_only_a_redacted_summary(values, monkeypatch, capsys):
-    monkeypatch.setattr("sys.stdin", StringIO(_env_text(values)))
-
-    assert egress.main(["render", "--stdin", "--check", "--show-redacted"]) == 0
+def test_check_prints_only_a_redacted_summary(capsys):
+    assert egress.main(["render", "--check", "--show-redacted"]) == 0
 
     out = capsys.readouterr().out
-    assert SECRET_UUID not in out and SECRET_KEY not in out and "vpn.invalid" not in out
     summary = json.loads(out)
+    assert summary["client"] == "xray"
     assert summary["listen"] == "10.231.0.1:2081"
     assert summary["allowed"] == "api.telegram.org:443"
+    assert summary["upstream"] == "127.0.0.1:23082"
     assert summary["tls_terminated"] is False
 
 
-def test_apply_requires_root_and_a_fixed_secret_source(values, monkeypatch, capsys):
+def test_apply_requires_root(monkeypatch, capsys):
     monkeypatch.setattr(egress.os, "geteuid", lambda: 1000)
-    monkeypatch.setattr("sys.stdin", StringIO(_env_text(values)))
-    assert egress.main(["render", "--stdin", "--apply"]) == 2
+    assert egress.main(["render", "--apply"]) == 2
     assert "root" in capsys.readouterr().err
 
-    assert egress.main(["render", "--env-file", "/tmp/other.env", "--check"]) == 2
-    assert "maxinik.env" in capsys.readouterr().err
+
+def test_apply_tests_xray_and_nft_before_atomically_replacing_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "telegram-egress.json"
+    nft_path = tmp_path / "telegram-egress.nft"
+    config_path.write_text("old-config")
+    nft_path.write_text("old-firewall")
+    monkeypatch.setattr(egress, "EGRESS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(egress, "EGRESS_NFT_PATH", nft_path)
+    monkeypatch.setattr(egress.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        egress.pwd,
+        "getpwnam",
+        lambda _: SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()),
+    )
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0)
+
+    egress.render(SimpleNamespace(apply=True), runner=runner)
+
+    assert calls[0][:4] == [
+        str(egress.XRAY_BINARY), "run", "-test", "-config"
+    ]
+    assert calls[1][:3] == ["/usr/sbin/nft", "--check", "--file"]
+    assert json.loads(config_path.read_text())["outbounds"][0]["protocol"] == "socks"
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(nft_path.stat().st_mode) == 0o600
+
+
+def test_apply_keeps_existing_files_when_xray_rejects_candidate(tmp_path, monkeypatch):
+    config_path = tmp_path / "telegram-egress.json"
+    nft_path = tmp_path / "telegram-egress.nft"
+    config_path.write_text("old-config")
+    nft_path.write_text("old-firewall")
+    monkeypatch.setattr(egress, "EGRESS_CONFIG_PATH", config_path)
+    monkeypatch.setattr(egress, "EGRESS_NFT_PATH", nft_path)
+    monkeypatch.setattr(egress.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        egress.pwd,
+        "getpwnam",
+        lambda _: SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()),
+    )
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        return SimpleNamespace(returncode=1)
+
+    with pytest.raises(egress.EgressError, match="Xray rejected"):
+        egress.render(SimpleNamespace(apply=True), runner=runner)
+
+    assert len(calls) == 1
+    assert config_path.read_text() == "old-config"
+    assert nft_path.read_text() == "old-firewall"
 
 
 def test_install_unit_dry_run_never_enables_or_starts(capsys):
@@ -157,16 +186,16 @@ def test_unit_is_hardened_and_bound_only_to_the_egress_files(project_root):
         "After=network-online.target docker.service",
         "PartOf=docker.service",
         "ExecStartPre=+/usr/sbin/nft --file /etc/denstock-ai/telegram-egress.nft",
-        "ExecStartPre=/usr/local/lib/denstock-ai/bin/sing-box check --config "
+        "ExecStartPre=/usr/local/lib/denstock-ai/bin/xray run -test -config "
         "/etc/denstock-ai/telegram-egress.json",
-        "ExecStart=/usr/local/lib/denstock-ai/bin/sing-box run --config "
+        "ExecStart=/usr/local/lib/denstock-ai/bin/xray run -config "
         "/etc/denstock-ai/telegram-egress.json",
         "ExecStopPost=-+/usr/sbin/nft delete table inet denstock_telegram_egress",
         "ReadOnlyPaths=/etc/denstock-ai/telegram-egress.json",
         "Restart=on-failure",
     ):
         assert directive in unit
-    for forbidden in ("sing-box.json", "0.0.0.0", "2080", "denstock-ai-launcher", "Before="):
+    for forbidden in ("sing-box", "0.0.0.0", "2080", "denstock-ai-launcher", "Before="):
         assert forbidden not in unit
 
 

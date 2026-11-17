@@ -1,5 +1,5 @@
 [Unit]
-Description=DenisStock Telegram Bot API egress proxy (telegram-bot container only)
+Description=DenisStock Telegram Bot API egress proxy through Turkey (telegram-bot only)
 Documentation=file:/opt/denstock/docs/operations/telegram-bot.md
 Wants=network-online.target
 After=network-online.target docker.service
@@ -14,8 +14,8 @@ UMask=0077
 # reach the listener. It is removed again when the proxy stops.
 ExecStartPre=+/usr/sbin/nft --check --file /etc/denstock-ai/telegram-egress.nft
 ExecStartPre=+/usr/sbin/nft --file /etc/denstock-ai/telegram-egress.nft
-ExecStartPre=/usr/local/lib/denstock-ai/bin/sing-box check --config /etc/denstock-ai/telegram-egress.json
-ExecStart=/usr/local/lib/denstock-ai/bin/sing-box run --config /etc/denstock-ai/telegram-egress.json
+ExecStartPre=/usr/local/lib/denstock-ai/bin/xray run -test -config /etc/denstock-ai/telegram-egress.json
+ExecStart=/usr/local/lib/denstock-ai/bin/xray run -config /etc/denstock-ai/telegram-egress.json
 ExecStopPost=-+/usr/sbin/nft delete table inet denstock_telegram_egress
 Restart=on-failure
 RestartSec=15s
