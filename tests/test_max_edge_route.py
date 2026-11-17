@@ -34,10 +34,24 @@ def test_pre_max_copy_is_exactly_what_production_serves():
 
 
 def test_only_the_public_catalog_block_changes():
-    for site in ("{$CADDY_SITE_ADDRESS::80}", "catalog.185-250-44-206.sslip.io", "www.pro-brp.ru"):
+    private_media_guard = (
+        "\t@private_customer_media path /media/customer_requests/*\n"
+        "\thandle @private_customer_media {\n"
+        "\t\trespond 404\n"
+        "\t}\n"
+    )
+    pre_web = _block(PRE, "{$CADDY_SITE_ADDRESS::80}")
+    post_web = _block(POST, "{$CADDY_SITE_ADDRESS::80}")
+    assert post_web.count(private_media_guard) == 1
+    assert post_web.replace(private_media_guard, "", 1) == pre_web
+    for site in ("catalog.185-250-44-206.sslip.io", "www.pro-brp.ru"):
         assert _block(PRE, site) == _block(POST, site), site
     outside_pre = re.sub(r"^pro-brp\.ru \{\n.*?^\}", "", PRE, flags=re.MULTILINE | re.DOTALL)
-    outside_post = re.sub(r"^pro-brp\.ru \{\n.*?^\}", "", POST, flags=re.MULTILINE | re.DOTALL)
+    post_without_media_guard = POST.replace(private_media_guard, "", 1)
+    outside_post = re.sub(
+        r"^pro-brp\.ru \{\n.*?^\}", "", post_without_media_guard,
+        flags=re.MULTILINE | re.DOTALL,
+    )
     changed = [
         line for line in difflib.unified_diff(
             outside_pre.splitlines(), outside_post.splitlines(), lineterm="", n=0

@@ -100,8 +100,17 @@ def test_max_bot_is_direct_no_egress_network_and_no_proxy():
     assert "denstock-ai" not in mounts and "launcher.sock" not in mounts
 
 
-def test_max_bot_mounts_only_the_public_ca_directory_read_only():
-    (volume,) = BOT["volumes"]
+def test_max_bot_mounts_message_media_and_public_ca_read_only():
+    volumes = BOT["volumes"]
+    bind_mounts = [volume for volume in volumes if isinstance(volume, dict)]
+    named_mounts = {
+        volume.split(":", 1)[1]
+        for volume in volumes
+        if isinstance(volume, str) and ":" in volume
+    }
+    assert named_mounts == {"/app/mediafiles", "/app/private_media"}
+    assert len(bind_mounts) == 1
+    (volume,) = bind_mounts
     assert volume["type"] == "bind"
     assert volume["target"] == "/etc/denstock/max"
     assert volume["read_only"] is True
