@@ -85,15 +85,20 @@ docker compose --profile telegram-bot logs --tail 50 telegram-bot
 
 ### 3a. Выход в Telegram через прокси
 
-С production-сервера `api.telegram.org` напрямую недоступен. Бот ходит в
-Telegram через отдельный процесс `denstock-telegram-egress.service`:
+Бот ходит в Telegram через отдельный Xray процесс
+`denstock-telegram-egress.service`. Схема исходящего соединения:
 
-- тот же установленный sing-box и тот же пользователь `denstock-ai-proxy`, что у
-  прокси AI-поддержки, и тот же выход MAXINIK; сам прокси AI-поддержки, его
-  `127.0.0.1:2080`, таблица `denstock_ai` и его проверка здоровья не меняются;
+`telegram-bot` → `10.231.0.1:2081` → Production Xray →
+`127.0.0.1:23082` (Turkey reverse SSH) → Turkey Xray `127.0.0.1:23081` →
+`api.telegram.org:443`.
+
+- Production Xray использует отдельный runtime JSON и пользователя
+  `denstock-ai-proxy`; прокси AI-поддержки, его `127.0.0.1:2080`, таблица
+  `denstock_ai` и его проверка здоровья не меняются;
 - слушает только `10.231.0.1:2081`, шлюз внутренней сети `telegram-egress`
   (мост `br-tg-egress`), в которую входит только `telegram-bot` (`10.231.0.2`);
-- пропускает только `CONNECT api.telegram.org:443`, остальное отклоняет;
+- Xray отправляет через Turkey только `api.telegram.org:443`, остальное
+  отклоняет;
 - отдельная таблица nftables `denstock_telegram_egress` пускает к порту 2081
   только адрес бота на этом мосту; ставится перед запуском и снимается после
   остановки;
@@ -105,8 +110,8 @@ Telegram через отдельный процесс `denstock-telegram-egress.
 Установка на сервере (из каталога выпуска, от root):
 
 ```
-python3 scripts/telegram-egress/telegram_egress.py render --env-file /etc/denstock-ai/maxinik.env --check --show-redacted
-python3 scripts/telegram-egress/telegram_egress.py render --env-file /etc/denstock-ai/maxinik.env --apply
+python3 scripts/telegram-egress/telegram_egress.py render --check --show-redacted
+python3 scripts/telegram-egress/telegram_egress.py render --apply
 python3 scripts/telegram-egress/telegram_egress.py install-unit --apply
 docker compose --profile telegram-bot create --no-recreate telegram-bot   # создаёт сеть telegram-egress
 systemctl enable --now denstock-telegram-egress.service
