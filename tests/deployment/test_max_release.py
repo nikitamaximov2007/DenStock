@@ -426,7 +426,7 @@ def test_plan_orders_the_release_so_no_step_outruns_its_dependency():
         "preflight --expect-head",
         "release_baseline.py > /root/bots-before.txt",
         "denstock-backup.lock",
-        "DENSTOCK_APP_COMMIT=" + BASE,
+        'DENSTOCK_APP_COMMIT="$PRE_APP_SHA"',
         "python manage.py backup_all",
         "git checkout --detach " + CANDIDATE,
         "release_image_identity.py build --sha " + CANDIDATE,

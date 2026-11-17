@@ -348,6 +348,12 @@ identity запрос успешен; подписка имеет правиль
 диска и 665 MiB доступной RAM. Production код, конфигурация, БД и контейнеры не
 менялись.
 
+Release identity clarification: repository HEAD is `e05ebe80` while the live
+web selector/runtime SHA is `01a0b7eb`; catalog is `34a65455` and both bots are
+`e3594880`. The PRE manifest must use the verified running web SHA
+`01a0b7eb4fb79b25bc6cbc7ae87ce4da8eb1bad6`, never repository HEAD `e05ebe80`.
+The candidate is a descendant of `e05ebe80` and retains its Turkey egress fix.
+
 **GO пока не принят.** Новый MAX handoff button обслуживает `catalog-web`, а
 явный список разрешённых production-компонентов содержит только `web`,
 `telegram-bot`, `max-bot` и миграции. Запрошено отдельное решение о включении

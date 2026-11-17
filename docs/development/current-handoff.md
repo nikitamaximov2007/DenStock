@@ -54,6 +54,11 @@ production Turkey reverse SSH исправления `e05ebe80d77673c5672d939679
 - Production Telegram container healthy, штатный heartbeat свежий, `getMe`
   через настроенный Turkey egress успешен. `denstock-telegram-egress.service`
   active. DB и остальные production сервисы healthy.
+- Различать production repository HEAD `e05ebe80` и реально запущенный web
+  image/runtime SHA `01a0b7eb`. Текущие selectors: web `01a0b7eb`, catalog
+  `34a65455`, Telegram/MAX `e3594880`. PRE backup manifest должен фиксировать
+  проверенный runtime SHA web `01a0b7eb4fb79b25bc6cbc7ae87ce4da8eb1bad6`, а не
+  repository HEAD. Кандидат включает `e05ebe80` в истории.
 - Целевые MAX/Telegram/media/workspace/release-tooling проверки: `378 passed,
   5 skipped`; Turkey egress набор отдельно `16 passed`. Полный pytest после production merge:
   `6743 passed, 298 skipped, 7 failed`; это семь ранее воспроизводимых

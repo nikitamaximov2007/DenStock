@@ -8,19 +8,23 @@ A. Read-only gates
      final SHA: production Turkey reverse-SSH egress fixes must be retained.
   2. python3 R preflight --expect-head {base} --candidate {candidate}
   3. docker compose exec -T web python manage.py shell < scripts/operations/release_baseline.py > /root/bots-before.txt
-  4. Record each current image ID, selector and image tag separately. Confirm
-     there is no active writer or backup and MAX uncertain records are untouched.
+  4. `runtime_sha` is the running web image SHA, not repository HEAD. For this
+     release it is 01a0b7eb4fb79b25bc6cbc7ae87ce4da8eb1bad6. Verify its image
+     identity/source, then set PRE_APP_SHA to that verified value. Record each
+     service image ID/selector separately; confirm no active writer/backup and
+     MAX uncertain records remain untouched.
   5. Read-only: verify PostgreSQL, Caddy, Turkey reverse SSH, Telegram API
      getMe, MAX identity/getMe and `max_webhook status --require-subscribed`.
      Keep the existing production MAX token, webhook secret, CA, callback URL
      {PUBLIC_WEBHOOK_URL} and subscription. Do not rotate or re-register them.
 
 B. Signed PRE backup: no rollout without all gates passing
-  6. Verify running source against {base}; do not infer it from a legacy label.
+  6. Verify the running web source against PRE_APP_SHA; do not substitute the
+     repository checkout HEAD {base} or infer source from an unattested label.
   7. Under /run/lock/denstock-backup.lock run
-     `docker compose exec -T -e DENSTOCK_APP_COMMIT={base} web python manage.py backup_all`
+     `docker compose exec -T -e DENSTOCK_APP_COMMIT="$PRE_APP_SHA" web python manage.py backup_all`
      without retention/pruning options.
-  8. Verify the signature, manifest identity, all hashes, DB/public/private
+  8. Verify the signature, manifest `app_commit=PRE_APP_SHA`, all hashes, DB/public/private
      media, isolated restore, and approved offsite upload/read-back of this
      exact run ID. Stop on any failure or insufficient disk.
 
