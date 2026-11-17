@@ -384,8 +384,8 @@ def test_nikita_reply_is_pro_store_to_customer_and_admin_in_audit(
     message = TelegramMessage.objects.get(text="Ответ от администратора")
     assert message.operator_author_label == "NIKITA / ADMIN"
     assert message.operator_control_source == "telegram"
-    intro = TelegramMessage.objects.get(text="Вам отвечает PRO-STOR.")
-    assert intro.operator_author_label == "PRO-STOR"
+    intro = TelegramMessage.objects.get(text="Вам отвечает Сервис PRO-STOR.")
+    assert intro.operator_author_label == "Сервис PRO-STOR"
 
 
 @pytest.mark.parametrize(
@@ -1116,9 +1116,7 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
         provider=provider, provider_user_id=provider_user_id,
         external_id="reply-before-revoke", text="исторический ответ", **chat_kwargs
     )
-    intro = MaxMessage.objects.get(
-        text="Вам отвечает Денис, владелец сервиса PRO-STOR."
-    )
+    intro = MaxMessage.objects.get(text="Вам отвечает Денис.")
     intro.delivery_status = MaxDeliveryStatus.SENT
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
@@ -1209,7 +1207,7 @@ def test_revoke_and_repair_starts_clean_for_both_providers(
 
     intro_b = MaxMessage.objects.get(
         conversation__request=request_b,
-        text="Вам отвечает Денис, владелец сервиса PRO-STOR.",
+        text="Вам отвечает Денис.",
     )
     intro_b.delivery_status = MaxDeliveryStatus.SENT
     intro_b.save(update_fields=["delivery_status"])
@@ -1271,22 +1269,22 @@ def test_responder_is_confirmed_only_after_intro_delivery(db, django_user_model)
     )
     request.refresh_from_db()
     assert request.current_responder_label == ""
-    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STOR"
+    assert request.pending_responder_label == "Денис"
     intro = MaxMessage.objects.get(
         conversation__request=request,
-        text="Вам отвечает Денис, владелец сервиса PRO-STOR.",
+        text="Вам отвечает Денис.",
     )
     intro.delivery_status = MaxDeliveryStatus.FAILED
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
     request.refresh_from_db()
     assert request.current_responder_label == ""
-    assert request.pending_responder_label == "Денис, владелец сервиса PRO-STOR"
+    assert request.pending_responder_label == "Денис"
     intro.delivery_status = MaxDeliveryStatus.SENT
     intro.save(update_fields=["delivery_status"])
     operator_replies.confirm_responder_transition(intro)
     request.refresh_from_db()
-    assert request.current_responder_label == "Денис, владелец сервиса PRO-STOR"
+    assert request.current_responder_label == "Денис"
     assert request.pending_responder_label == ""
 
 
@@ -1506,13 +1504,13 @@ def test_admin_status_access_rules_remain_unchanged(client, db, django_user_mode
     [
         (
             "Денис",
-            "Вам отвечает Денис, владелец сервиса PRO-STOR.",
-            "К диалогу подключился Денис, владелец сервиса PRO-STOR.",
+            "Вам отвечает Денис.",
+            "К диалогу подключился Денис.",
         ),
         (
             "Рим",
-            "Вам отвечает Рим, владелец сервиса PRO-STOR.",
-            "К диалогу подключился Рим, владелец сервиса PRO-STOR.",
+            "Вам отвечает Рим.",
+            "К диалогу подключился Рим.",
         ),
     ],
 )
@@ -1524,6 +1522,44 @@ def test_owner_customer_visible_wording_is_exact(label, first, takeover):
     )
     assert "сотрудник" not in first.lower()
     assert "менеджер" not in first.lower()
+
+
+@pytest.mark.django_db
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True,
+                   CUSTOMER_STAFF_INTRODUCTIONS_ENABLED=True)
+def test_web_reply_introduces_service_once_and_blocks_reply_until_sent(django_user_model):
+    request = _request(build_part(), key="W" * 32, messenger=CustomerRequest.Messenger.MAX)
+    customer = issue_max_link(request_id=request.pk).token
+    consume_max_start(token=customer, chat_id=99601, user_id=99601)
+    user = _operator(django_user_model, 99602, username="web-service-intro").user
+
+    first = operator_replies.submit_reply(
+        request_id=request.pk, user=user, text="Первый ответ", key="a" * 32,
+        channel="max", operator_control_source="web",
+    ).message
+    request.refresh_from_db()
+    assert request.pending_responder_label == "Сервис PRO-STOR"
+    intro = MaxMessage.objects.get(
+        conversation__request=request, text="Вам отвечает Сервис PRO-STOR."
+    )
+    assert operator_replies.introduction_delivery_blocker(first) == "pending"
+
+    intro.delivery_status = MaxDeliveryStatus.SENT
+    intro.save(update_fields=["delivery_status"])
+    operator_replies.confirm_responder_transition(intro)
+    first.refresh_from_db()
+    assert operator_replies.introduction_delivery_blocker(first) == ""
+
+    operator_replies.submit_reply(
+        request_id=request.pk, user=user, text="Второй ответ", key="b" * 32,
+        channel="max", operator_control_source="web",
+    )
+    assert MaxMessage.objects.filter(
+        conversation__request=request, text="Вам отвечает Сервис PRO-STOR."
+    ).count() == 1
+    assert not MaxMessage.objects.filter(
+        conversation__request=request, text__startswith="Сервис PRO-STOR:"
+    ).exists()
 
 
 def test_readiness_requires_only_denis_and_rim(db):

@@ -253,7 +253,8 @@ def test_anonymization_removes_private_photo_bytes(db, channel):
 
 
 @pytest.mark.parametrize("channel", ["telegram", "max"])
-@override_settings(CUSTOMER_STAFF_INTRODUCTIONS_ENABLED=True)
+@override_settings(CUSTOMER_OPERATOR_CONSOLE_ENABLED=True,
+                   CUSTOMER_STAFF_INTRODUCTIONS_ENABLED=True)
 def test_employee_photo_reply_keeps_intro_and_bytes(db, django_user_model, channel):
     request = _request(build_part(), key=("reply-photo-" + channel).ljust(32, "r"),
                        messenger=channel)
@@ -271,17 +272,24 @@ def test_employee_photo_reply_keeps_intro_and_bytes(db, django_user_model, chann
     )
     model = TelegramMessage if channel == "telegram" else MaxMessage
     rows = list(model.objects.filter(conversation__request=request).order_by("created_at", "pk"))
-    intro = next(row for row in rows if row.text.startswith("К диалогу подключился"))
+    intro = next(row for row in rows if row.dedupe_key.startswith("operator_reply:intro:"))
     assert intro.pk < result.message.pk
+    assert intro.text == "Вам отвечает Сервис PRO-STOR."
     assert result.message.attachment.read() == _photo()
     assert result.message.text == "Вот подходящая деталь"
+    intro.delivery_status = (
+        TelegramDeliveryStatus.SENT if channel == "telegram" else MaxDeliveryStatus.SENT
+    )
+    intro.save(update_fields=["delivery_status"])
+    operator_replies.confirm_responder_transition(intro)
     second = operator_replies.submit_reply(
         request_id=request.pk, user=user, text="Ещё раз", key=uuid.uuid4().hex,
         channel=channel,
     )
     assert second.created
-    assert model.objects.filter(conversation__request=request,
-                                text__startswith="К диалогу подключился").count() == 1
+    assert model.objects.filter(
+        conversation__request=request, dedupe_key__startswith="operator_reply:intro:"
+    ).count() == 1
 
 
 @pytest.mark.parametrize("channel", ["telegram", "max"])
@@ -346,13 +354,13 @@ def test_photo_reply_from_bot_or_web_reaches_customer_and_survives(
     if channel == "max":
         worker.pacer.wait = lambda _chat_id: None
     worker.send_customer_messages(limit=20)
+    model = TelegramMessage if channel == "telegram" else MaxMessage
     images = [kwargs for kind, kwargs in api.calls if kind == "image"]
     assert len(images) == 1
     assert images[0]["chat_id"] == 99331
     if channel == "telegram":
         assert images[0]["content"] == _photo()
     assert images[0]["caption"] == "Вот деталь"
-    model = TelegramMessage if channel == "telegram" else MaxMessage
     row = model.objects.get(conversation__request=request, text="Вот деталь")
     row.refresh_from_db()
     assert row.delivery_status == (

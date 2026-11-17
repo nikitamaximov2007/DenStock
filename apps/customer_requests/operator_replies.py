@@ -56,10 +56,12 @@ CHANNEL_LABELS = {
     CustomerRequest.Messenger.MAX: "MAX",
 }
 OWNER_LABELS = {
-    "Денис": "Денис, владелец сервиса PRO-STOR",
-    "Рим": "Рим, владелец сервиса PRO-STOR",
+    "Денис": "Денис",
+    "Рим": "Рим",
+    "Денис, владелец сервиса PRO-STOR": "Денис",
+    "Рим, владелец сервиса PRO-STOR": "Рим",
 }
-ADMIN_LABELS = {"NIKITA / ADMIN": "PRO-STOR"}
+ADMIN_LABELS = {"NIKITA / ADMIN": "Сервис PRO-STOR", "PRO-STOR": "Сервис PRO-STOR"}
 
 
 class OperatorReplyError(ValueError):
@@ -223,9 +225,9 @@ def submit_reply(
         operator_author_label = "PRO-STOR" if operator_control_source == "web" else (
             getattr(user, "full_name", "") or user.get_username()
         )
-    if settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED:
-        operator_author_label = user.full_name or user.get_full_name() or user.get_username()
-    stored_operator_author_label = operator_author_label
+    if operator_control_source == "web":
+        customer_responder_label = "Сервис PRO-STOR"
+        stored_operator_author_label = customer_responder_label
     if operator_control_source in {"telegram", "max"}:
         if customer_responder_label is None:
             customer_responder_label = customer_visible_operator_label(operator_author_label)
@@ -234,6 +236,8 @@ def submit_reply(
         stored_operator_author_label = OWNER_LABELS.get(
             (operator_author_label or "").strip(), operator_author_label
         )
+    if operator_control_source not in {"web", "telegram", "max"}:
+        stored_operator_author_label = operator_author_label
     # The operator console is an independently staged feature. Its compact
     # authorship metadata must not change the accepted workspace timeline
     # until the owner deliberately enables that feature flag.
@@ -242,13 +246,18 @@ def submit_reply(
         operator_author_label = ""
         stored_operator_author_label = ""
     if settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED:
-        _ensure_staff_introduction(target, user=user, control_source=operator_control_source,
-                                   telegram_operator=telegram_operator)
+        _ensure_customer_visible_responder(
+            target,
+            user=user,
+            label=customer_responder_label or "Сервис PRO-STOR",
+            control_source=operator_control_source,
+            telegram_operator=telegram_operator,
+        )
     elif operator_control_source in {"telegram", "max"}:
         _ensure_customer_visible_responder(
             target,
             user=user,
-            label=customer_responder_label or "PRO-STOR",
+            label=customer_responder_label or "Сервис PRO-STOR",
             control_source=operator_control_source,
             telegram_operator=telegram_operator,
         )
@@ -309,8 +318,26 @@ def _ensure_staff_introduction(target, *, user, control_source, telegram_operato
 def introduction_delivery_blocker(message):
     """A reply cannot overtake its identity introduction, even after a restart."""
     if (not settings.CUSTOMER_STAFF_INTRODUCTIONS_ENABLED
-            or message.direction != type(message).Direction.OPERATOR
-            or not message.operator_user_id):
+            or message.direction != type(message).Direction.OPERATOR):
+        return ""
+    request = message.conversation.request
+    responder_label = customer_visible_operator_label(message.operator_author_label)
+    if request.current_responder_label == responder_label:
+        return ""
+    if request.pending_responder_label == responder_label:
+        key = f"intro:{request.pk}:{_dedupe_key(responder_label)}"
+        intro = type(message).objects.filter(
+            dedupe_key__startswith=_dedupe_key(key)
+        ).order_by("-pk").first()
+        if intro is None:
+            return "pending"
+        if intro.delivery_status == "sent":
+            confirm_responder_transition(intro)
+            return ""
+        if intro.delivery_status in {"failed", "uncertain"}:
+            return "failed"
+        return "pending"
+    if not message.operator_user_id:
         return ""
     intro = type(message).objects.filter(
         dedupe_key=_staff_intro_key(message.conversation.request_id, message.operator_user_id)
@@ -359,7 +386,9 @@ def _ensure_customer_visible_responder(
             raise OperatorReplyError("Смена ответственного ещё не подтверждена доставкой.")
         intro_key = f"intro:{request.pk}:{_dedupe_key(label)}"
         model = MaxMessage if target.channel == CustomerRequest.Messenger.MAX else TelegramMessage
-        existing = model.objects.filter(dedupe_key=_dedupe_key(intro_key)).first()
+        existing = model.objects.filter(
+            dedupe_key__startswith=_dedupe_key(intro_key)
+        ).order_by("-pk").first()
         if existing is not None and existing.delivery_status == (
             MaxDeliveryStatus.UNCERTAIN if target.channel == CustomerRequest.Messenger.MAX
             else TelegramDeliveryStatus.UNCERTAIN
@@ -382,7 +411,7 @@ def _ensure_customer_visible_responder(
         if failed_model.objects.filter(dedupe_key=_dedupe_key(key)).exists():
             key = f"{key}:retry:{timezone.now().timestamp()}"
     if target.channel == CustomerRequest.Messenger.MAX:
-        _queue_max_reply(
+        intro = _queue_max_reply(
             target,
             user=user,
             text=text,
@@ -392,7 +421,7 @@ def _ensure_customer_visible_responder(
             operator_author_label=label,
         )
     else:
-        _queue_telegram_reply(
+        intro = _queue_telegram_reply(
             target,
             user=user,
             text=text,
@@ -403,6 +432,8 @@ def _ensure_customer_visible_responder(
             operator_control_source=control_source,
             operator_author_label=label,
         )
+    intro.direction = type(intro).Direction.SYSTEM
+    intro.save(update_fields=["direction"])
     request.pending_responder_label = label[:80]
     request.pending_responder_control_source = control_source[:12]
     request.save(update_fields=["pending_responder_label", "pending_responder_control_source"])

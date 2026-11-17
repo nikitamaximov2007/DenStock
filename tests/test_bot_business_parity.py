@@ -550,7 +550,9 @@ def _outbound(request):
     )
     return list(
         model.objects.filter(
-            conversation__request=request, direction=model.Direction.OPERATOR
+            conversation__request=request,
+            direction__in=[model.Direction.OPERATOR, model.Direction.SYSTEM],
+            operator_user__isnull=False,
         ).values("text", "operator_user_id", "operator_author_label")
     )
 
@@ -570,10 +572,10 @@ def test_staff_reply_reaches_the_customer_with_the_same_attribution(
     adapter.send("Деталь есть, ждём вас.")
     # The responder introduction is still in flight: the same refusal in both.
     adapter.send("И ещё одно уточнение.")
-    label = "Денис, владелец сервиса PRO-STOR"
+    label = "Денис"
     owner = staff_world["user"].pk
     assert _outbound(request) == [
-        {"text": "Вам отвечает Денис, владелец сервиса PRO-STOR.", "operator_user_id": owner,
+        {"text": "Вам отвечает Денис.", "operator_user_id": owner,
          "operator_author_label": label},
         {"text": "Деталь есть, ждём вас.", "operator_user_id": owner,
          "operator_author_label": label},
