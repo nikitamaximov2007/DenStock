@@ -91,9 +91,13 @@ def git_ok(head=BASE, status="?? docker-compose.signing.yml\n", ps="  1 /sbin/in
 
 
 def test_preflight_passes_on_the_expected_production_state(site, capsys):
+    site["caddy"].write_text(
+        (ROOT / "deploy/caddy/Caddyfile.production").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     report = release.preflight(ctx_for(site, Runner(git_ok())), expect_head=BASE,
                                candidate=CANDIDATE)
-    assert report["caddyfile"] == "pre-max"
+    assert report["caddyfile"] == "MAX webhook route configured"
     assert report[".env.max"] == "absent" and report["ca_file"] == "absent"
     assert "PREFLIGHT PASS" in capsys.readouterr().out
 
@@ -103,8 +107,35 @@ def test_preflight_does_not_treat_stale_app_commit_env_as_runtime_identity(site)
         f"DENSTOCK_APP_COMMIT={'9' * 40}\n"
         "COMPOSE_FILE=docker-compose.yml:docker-compose.signing.yml\n"
     )
+    site["caddy"].write_text(
+        (ROOT / "deploy/caddy/Caddyfile.production").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     report = release.preflight(ctx_for(site, Runner(git_ok())), expect_head=BASE)
     assert report["app_commit_env"] == "stale or missing; image identity gate is authoritative"
+
+
+def test_caddy_preflight_accepts_the_exact_bounded_webhook_route():
+    text = (ROOT / "deploy/caddy/Caddyfile.production").read_text(encoding="utf-8")
+    assert release._has_bounded_max_webhook_route(text)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("method POST", "method GET"),
+        ("path /customer-requests/max/webhook/", "path /customer-requests/"),
+        ("max_size 64KB", "max_size 1MB"),
+        ("reverse_proxy web:8000", "reverse_proxy web:8001"),
+    ],
+)
+def test_caddy_preflight_rejects_a_broadened_or_misdirected_webhook(old, new):
+    text = (ROOT / "deploy/caddy/Caddyfile.production").read_text(encoding="utf-8")
+    assert release._has_bounded_max_webhook_route(text)
+    if old == "reverse_proxy web:8000":
+        old = "\t\treverse_proxy web:8000 {\n\t\t\theader_up Host"
+        new = "\t\treverse_proxy web:8001 {\n\t\t\theader_up Host"
+    assert not release._has_bounded_max_webhook_route(text.replace(old, new, 1))
 
 
 @pytest.mark.parametrize(
@@ -135,7 +166,7 @@ def test_preflight_stops_on_files_and_edge_state(site, capsys):
     out = capsys.readouterr().out
     for reason in (
         "signing overlay", "MAX_BOT_TOKEN must not",
-        "neither pre-max nor candidate", ".env.max must be mode 600",
+        "bounded POST-only MAX webhook route", ".env.max must be mode 600",
     ):
         assert reason in out, reason
     assert "stale or missing; image identity gate is authoritative" in out
@@ -317,7 +348,10 @@ def test_public_role_runs_the_canonical_script_through_psql(site):
 # --- verify ------------------------------------------------------------------------------
 
 SHOWN = "\n".join(
-    [" [X] 0008_max_messaging", " [X] 0009_max_public_link_guard", " [X] 0006_max_messaging"]
+    [
+        " [X] 0029_alter_operatornotification_kind",
+        " [X] 0030_operatornotification_max_attachment_token_and_more",
+    ]
 )
 
 
@@ -354,7 +388,7 @@ def test_verify_names_every_failed_gate(site, capsys):
     runner = Runner({
         "git rev-parse HEAD": (0, BASE),
         "migrate --check": (1, ""),
-        "showmigrations": (0, " [ ] 0009_max_public_link_guard"),
+        "showmigrations": (0, " [ ] 0030_operatornotification_max_attachment_token_and_more"),
         "ps --format json": (0, _ps(["web"])),
         "grep -q": (1, ""),
         "max_webhook status": (1, ""),
@@ -363,10 +397,18 @@ def test_verify_names_every_failed_gate(site, capsys):
         release.verify(ctx_for(site, runner), candidate=CANDIDATE,
                        services=["web", "telegram-bot"], require_subscribed=True)
     out = capsys.readouterr().out
-    for reason in ("is not the candidate", "unapplied migrations", "0009_max_public_link_guard",
+    for reason in ("is not the candidate", "unapplied migrations",
+                   "0030_operatornotification_max_attachment_token_and_more",
                    "telegram-bot is None", "web does not run the candidate code",
                    "not subscribed"):
         assert reason in out, reason
+
+
+def test_verify_requires_only_the_candidate_schema_migrations():
+    assert release.EXPECTED_MIGRATIONS == (
+        ("customer_requests", "0029_alter_operatornotification_kind"),
+        ("customer_requests", "0030_operatornotification_max_attachment_token_and_more"),
+    )
 
 
 # --- plan --------------------------------------------------------------------------------
@@ -382,34 +424,31 @@ def test_plan_orders_the_release_so_no_step_outruns_its_dependency():
 
     order = [
         "preflight --expect-head",
+        "release_baseline.py > /root/bots-before.txt",
         "denstock-backup.lock",
         "DENSTOCK_APP_COMMIT=" + BASE,
         "python manage.py backup_all",
         "git checkout --detach " + CANDIDATE,
         "release_image_identity.py build --sha " + CANDIDATE,
-        "install-secrets",
-        "max-bot max_bot_identity   #",
-        "sed -i '/^DENSTOCK_APP_COMMIT=",
+        "migrate --plan",
+        "Change only approved DENSTOCK_<SERVICE>_REVISION selectors",
         "release_image_identity.py verify --sha " + CANDIDATE,
         "up -d --no-build --no-deps --wait web",
-        "public-role --execute",
         "--wait telegram-bot",
         "--wait max-bot",
-        "edge-install --execute",
-        "max_webhook subscribe --confirm",
-        "max_webhook status --require-subscribed",
-        "set-username",
-        "--wait catalog-web",
-        "--services web,telegram-bot,max-bot,catalog-web --require-subscribed",
-        "Signed POST:",
+        "max_bot_health",
+        "R verify --candidate " + CANDIDATE + " --services web,telegram-bot,max-bot",
+        "compare `/root/bots-before.txt`",
+        "create a signed POST backup",
     ]
     positions = [at(fragment) for fragment in order]
     assert positions == sorted(positions)
     rollback = text[at("ROLLBACK"):]
-    steps = ["max_webhook unsubscribe", "stop max-bot", "unset-username", "edge-rollback"]
+    steps = ["Stop the affected new worker", "Roll back web", "Leave MAX webhook"]
     assert [rollback.find(step) for step in steps] == sorted(rollback.find(s) for s in steps)
-    assert "restore the signed PRE backup" in rollback
-    assert "separately reviewed rollback procedure" in rollback
+    assert "Restore the signed PRE" in rollback
+    assert "catalog-web is a separate" in text
+    assert "Do not rotate or re-register" in text
     for secret_word in ("MAX_BOT_TOKEN=", "MAX_WEBHOOK_SECRET="):
         assert secret_word not in text
 

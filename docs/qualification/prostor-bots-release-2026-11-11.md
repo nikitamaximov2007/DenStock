@@ -323,3 +323,34 @@ DEV подтвердил одну реальную доставку MAX webhook 
 в обе стороны, второй клиент и сценарии после перезапуска остаются
 непроверенными. Production release gate не пройден; deployment и PRE-backup не
 начинались.
+
+## Production release re-check 2026-11-18
+
+Read-only сверка production установила, что текущий SHA
+`e05ebe80d77673c5672d93967972c0685cf91744` содержит Turkey reverse SSH/Xray
+исправление, отсутствовавшее в первоначальном RC `c0922c94`. Production commit
+слит в ветку кандидата, чтобы новый релиз не откатил восстановленный Telegram
+egress. После этого обновлён release health gate: он проверяет миграции
+`customer_requests.0029` и `.0030`, а не устаревшие `0008/0009` и
+`operations.0006`. Caddy preflight проверяет POST-only маршрут MAX, лимит 64 KB
+и upstream `web:8000`, не требуя заменить существующий production Caddyfile.
+
+Повторные профильные проверки MAX/Telegram/media/workspace/release tooling:
+`378 passed, 5 skipped`; отдельные Turkey egress тесты: `16 passed`. Ruff,
+djlint, Django check и `makemigrations --check` прошли. Полный pytest:
+`6743 passed, 298 skipped, 7 failed`; все семь ID совпадают с baseline
+`ba12a3d`, полный набор не считается зелёным.
+
+Read-only production re-check: web, catalog, PostgreSQL, MAX, Telegram и Caddy
+healthy; Turkey reverse SSH active; Telegram heartbeat свежий; read-only MAX
+identity запрос успешен; подписка имеет правильный путь; POST без секрета
+получает 404; Caddy конфигурация валидна. На хосте около 4 GiB свободного
+диска и 665 MiB доступной RAM. Production код, конфигурация, БД и контейнеры не
+менялись.
+
+**GO пока не принят.** Новый MAX handoff button обслуживает `catalog-web`, а
+явный список разрешённых production-компонентов содержит только `web`,
+`telegram-bot`, `max-bot` и миграции. Запрошено отдельное решение о включении
+`catalog-web`; до него production PRE-backup и rollout не выполняются. Точный
+внешний фото-приём владельцем не подтверждён; он остаётся ограничением даже
+при успешных интеграционных тестах и статусе `sent`.

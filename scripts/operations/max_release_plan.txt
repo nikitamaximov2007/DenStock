@@ -1,73 +1,87 @@
-MAX V1 release plan (base {base}, candidate {candidate})
-Every step stops the release on failure. Commands run in /opt/denstock as root.
-R = /root/max_release.py (the candidate's copy of scripts/operations/max_release.py).
+MAX + Telegram release plan (production base {base}, candidate {candidate})
+Every step stops on failure. No production mutation until all GO gates pass.
+Commands run as root in /opt/denstock. Do not build on the production VPS.
 
-A. Gates (read-only)
-  1. git fetch origin; for f in max_release.py max_release_plan.txt; do
-       git show {candidate}:scripts/operations/$f > /root/$f; done
+A. Read-only gates
+  1. Ensure the exact candidate commit is available to the release host and has
+     production base {base} in its history. The initial RC c0922c94 is not the
+     final SHA: production Turkey reverse-SSH egress fixes must be retained.
   2. python3 R preflight --expect-head {base} --candidate {candidate}
-  3. docker compose exec -T web python manage.py shell < scripts/operations/release_baseline.py > /root/max-before.txt
+  3. docker compose exec -T web python manage.py shell < scripts/operations/release_baseline.py > /root/bots-before.txt
+  4. Record each current image ID, selector and image tag separately. Confirm
+     there is no active writer or backup and MAX uncertain records are untouched.
+  5. Read-only: verify PostgreSQL, Caddy, Turkey reverse SSH, Telegram API
+     getMe, MAX identity/getMe and `max_webhook status --require-subscribed`.
+     Keep the existing production MAX token, webhook secret, CA, callback URL
+     {PUBLIC_WEBHOOK_URL} and subscription. Do not rotate or re-register them.
 
-B. Signed PRE backup: the first production write. NO DEPLOY unless every item passes.
-  4. Verify the running image's actual code equals {base}; a legacy image label or .env alone is insufficient.
-  5. (
-       exec 9>/run/lock/denstock-backup.lock; flock -n 9 || exit 75
-       docker compose exec -T -e DENSTOCK_APP_COMMIT={base} web python manage.py backup_all
-     )
-  6. Verify the generated run, Ed25519, all component hashes, private_media, isolated restore,
-     then use the approved non-deleting upload/read-back procedure for that run ID. No --keep-last.
-     If the approved upload path requires the capped wrapper and cannot preserve this override,
-     STOP and resolve the backup identity gap; do not create PRE with a stale app_commit.
+B. Signed PRE backup: no rollout without all gates passing
+  6. Verify running source against {base}; do not infer it from a legacy label.
+  7. Under /run/lock/denstock-backup.lock run
+     `docker compose exec -T -e DENSTOCK_APP_COMMIT={base} web python manage.py backup_all`
+     without retention/pruning options.
+  8. Verify the signature, manifest identity, all hashes, DB/public/private
+     media, isolated restore, and approved offsite upload/read-back of this
+     exact run ID. Stop on any failure or insufficient disk.
 
-C. Code and images (running containers keep their images until recreated)
-  7. git checkout --detach {candidate}
-  8. python3 scripts/operations/release_image_identity.py build --sha {candidate} --services web,catalog-web,telegram-bot,max-bot
-     Build itself inspects every image's ID, OCI revision, source archive hash, and embedded app SHA.
+C. Build and transfer
+  9. After PRE is verified, `git checkout --detach {candidate}`; verify clean
+     tree and release tooling.
+ 10. Build only the approved images on the build host, linux/amd64, using
+     `release_image_identity.py build --sha {candidate} --services web,telegram-bot,max-bot`.
+     Add catalog-web only if explicitly included in the approved component scope:
+     the new public “Continue in MAX” button is served by catalog-web.
+ 11. Preserve old image IDs/tags. Transfer archives, verify archive SHA-256,
+     load images and compare immutable image IDs, OCI revisions, source digest
+     and embedded SHA before changing selectors.
 
-D. Secrets and identity, before any database change
-  9. install /etc/denstock/max/{CA_NAME} (official Минцифры root; its SHA-256 from the official source)
- 10. python3 R install-secrets --ca-sha256 <official sha256> --execute     # hidden token prompt
- 11. docker compose --profile max-bot run --rm --no-deps max-bot max_bot_identity   # is_bot, user_id, username
-     Any failure here: rollback R6 needs no database step.
+D. Schema and bounded service rollout
+ 12. Read-only `migrate --plan`; proceed only if the entire pending plan is
+     exactly customer_requests.0029 and .0030. Both are additive/compatible;
+     do not run reverse migrations or broader deployment.
+ 13. Change only approved DENSTOCK_<SERVICE>_REVISION selectors. Keep the
+     production Telegram proxy, Telegram offset, MAX secrets, webhook
+     subscription, Caddyfile, database volumes and Turkey egress untouched.
+ 14. Run `release_image_identity.py verify --sha {candidate} --services
+     web,telegram-bot,max-bot` before starting services. Start web first; its
+     normal entrypoint applies only the verified pending migrations. Run
+     `docker compose up -d --no-build --no-deps --wait web`; wait healthy and
+     verify runtime identity.
+ 15. Replace telegram-bot with `docker compose --profile telegram-bot up -d
+     --no-build --no-deps --wait telegram-bot`. Ensure the old polling process stopped,
+     then verify one worker, heartbeat and read-only Telegram getMe through
+     the existing Turkey proxy.
+ 16. Replace max-bot with `docker compose --profile max-bot up -d --no-build
+     --no-deps --wait max-bot`. Verify runtime identity, `max_bot_health`, lease/heartbeat, API identity,
+     `max_webhook status --require-subscribed`, and existing callback path.
+     Never retry historical uncertain messages or send a production test.
+ 17. If catalog-web was approved, change only its selector, start it alone,
+     and verify the runtime identity and public MAX handoff. Otherwise leave its
+     image and configuration unchanged; public catalog MAX handoff remains out
+     of this release.
+ 18. Run `R verify --candidate {candidate} --services web,telegram-bot,max-bot`
+     (add catalog-web only if included); compare `/root/bots-before.txt` with a
+     new read-only baseline. Only the release SHA, runtime SHA and migration
+     count may differ. Check queues, uncertain records, errors, OOM, disk, RAM
+     and every unrelated service.
 
-E. Schema, grants and the services MAX depends on (MAX still unreachable: no route, no subscription)
- 12. sed -i '/^DENSTOCK_APP_COMMIT=/d; /^DENSTOCK_BUILD_REVISION=/d' .env; printf 'DENSTOCK_BUILD_REVISION=%s\n' '{candidate}' >> .env
- 13. python3 scripts/operations/release_image_identity.py verify --sha {candidate} --services web,catalog-web,telegram-bot,max-bot
-     STOP unless image metadata and the now-clean Compose selector both match before startup.
- 14. docker compose up -d --no-build --no-deps --wait web        # applies 0008, 0009, operations 0006; loads .env.max-webhook
- 15. python3 scripts/operations/release_image_identity.py verify --sha {candidate} --services web --runtime
- 16. python3 R public-role --execute
- 17. docker compose --profile telegram-bot up -d --no-build --no-deps --wait telegram-bot   # delivers MAX operator notifications
- 18. python3 R verify --candidate {candidate} --services web,telegram-bot
+E. Post-release evidence
+ 19. Without messaging customers, verify web/DB/catalog health, one Telegram
+     poller and heartbeat, MAX webhook/API/heartbeat, unchanged Turkey egress,
+     stable queue counts, no duplicate IDs and no new errors/OOM.
+ 20. After successful checks, create a signed POST backup using the same lock
+     with `DENSTOCK_APP_COMMIT={candidate}`; verify and upload/read back without
+     pruning. Preserve the PRE backup and rollback images.
 
-F. MAX live, the customer entry point last
- 19. docker compose --profile max-bot up -d --no-build --no-deps --wait max-bot
- 20. python3 scripts/operations/release_image_identity.py verify --sha {candidate} --services max-bot --runtime
- 21. python3 R edge-install --execute
- 22. curl -s -o /dev/null -w '%{{http_code}}\n' -X POST {PUBLIC_WEBHOOK_URL}     # 404: no secret
- 23. docker compose --profile max-bot run --rm --no-deps -v /opt/denstock/.env.max-webhook:/run/max-webhook.env:ro max-bot max_webhook subscribe --confirm --secret-file /run/max-webhook.env
- 24. docker compose --profile max-bot run --rm --no-deps max-bot max_webhook status --require-subscribed
- 25. python3 R set-username "$(docker compose --profile max-bot run --rm --no-deps max-bot max_bot_identity --env-line)" --execute
- 26. docker compose --profile public-catalog up -d --no-build --no-deps --wait catalog-web   # «Продолжить в MAX» appears
- 27. python3 scripts/operations/release_image_identity.py verify --sha {candidate} --services catalog-web --runtime
- 28. python3 R verify --candidate {candidate} --services web,telegram-bot,max-bot,catalog-web --require-subscribed
- 29. docker compose exec -T web python manage.py shell < scripts/operations/release_baseline.py > /root/max-after.txt; diff
+ROLLBACK
+  R1. Stop the affected new worker before restoring the exact old image ID and
+      that service's previous selector. For Telegram, verify only one poller.
+  R2. Roll back web only if required; keep additive migrations applied.
+  R3. Leave MAX webhook subscription, Caddy, secrets and Turkey egress intact.
+  R4. Never restore PostgreSQL for a code-only failure. Restore the signed PRE
+      database/media only for proven data corruption or an unusable schema.
 
-G. Acceptance (docs/operations/max-bot.md): first-time, returning, Telegram regression, forensics; cancel test requests.
-H. Signed POST: acquire the same host lock and run `docker compose exec -T -e DENSTOCK_APP_COMMIT={candidate} web python manage.py backup_all`;
-   verify manifest app_commit == {candidate}, signatures, hashes and full isolated restore; upload/read-back without retention.
-   Only after full acceptance may main be fast-forwarded to {candidate}, never force-pushed.
-
-ROLLBACK: stop MAX traffic first, then decide A (code) or B (database)
- R1. docker compose --profile max-bot run --rm --no-deps max-bot max_webhook unsubscribe --confirm
- R2. docker compose --profile max-bot stop max-bot
- R3. python3 R unset-username --execute; docker compose --profile public-catalog up -d --no-deps --wait catalog-web
- R4. python3 R edge-rollback --execute
- R5. mv .env.max-webhook /root/max-webhook.env.disabled; mv .env.max /root/max.env.disabled
- R6. A, code: STOP and use the separately reviewed rollback procedure for the
-     exact image IDs recorded before rollout. Do not rebuild an old SHA with
-     `DENSTOCK_APP_COMMIT={base}`: the identity-aware Dockerfile requires
-     `DENSTOCK_BUILD_REVISION` and a verified source-archive digest. Migrations
-     stay applied; do not run down-migrations.
- R7. B, database: only if business data is damaged or a migration left the schema unusable:
-     stop web, catalog-web, telegram-bot; restore the signed PRE backup by the restore runbook; then R6.
+Scope gate: production components authorized by this task are web,
+telegram-bot, max-bot and required migrations. catalog-web is a separate
+component and is blocked until explicitly authorized. Production deployment
+and any unrelated service update remain prohibited.

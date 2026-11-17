@@ -204,12 +204,13 @@ def preflight(ctx: Context, *, expect_head: str, candidate: str = "") -> dict:
     if ctx.caddyfile.is_file():
         live = sha256_file(ctx.caddyfile)
         report["caddyfile"] = (
-            "pre-max" if live == _pre_max_sha(ctx)
-            else "candidate" if live == sha256_file(_candidate_path(ctx))
-            else "unknown"
+            "MAX webhook route configured"
+            if _has_bounded_max_webhook_route(ctx.caddyfile.read_text(encoding="utf-8"))
+            else "MAX webhook route missing or unsafe"
         )
-        if report["caddyfile"] == "unknown":
-            failures.append(f"live Caddyfile {live} is neither pre-max nor candidate")
+        report["caddyfile_sha256"] = live
+        if report["caddyfile"] != "MAX webhook route configured":
+            failures.append("live Caddyfile lacks the bounded POST-only MAX webhook route")
     else:
         failures.append("live Caddyfile missing")
     for name in (".env.max", ".env.max-webhook"):
@@ -365,6 +366,40 @@ def _pre_max_sha(ctx: Context) -> str:
     return PRE_MAX_CADDY_SHA256
 
 
+def _caddy_block(text: str, marker: str) -> str | None:
+    """Return one Caddy block body using brace depth, without altering the file."""
+    start = text.find(marker)
+    if start < 0:
+        return None
+    opening = text.find("{", start + len(marker))
+    if opening < 0:
+        return None
+    depth = 0
+    for index in range(opening, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[opening + 1:index]
+    return None
+
+
+def _has_bounded_max_webhook_route(text: str) -> bool:
+    matcher = _caddy_block(text, "@max_webhook")
+    handler = _caddy_block(text, "handle @max_webhook")
+    if matcher is None or handler is None:
+        return False
+    return all(
+        (
+            re.search(r"(?m)^\s*method\s+POST\s*$", matcher),
+            re.search(r"(?m)^\s*path\s+/customer-requests/max/webhook/\s*$", matcher),
+            re.search(r"(?m)^\s*max_size\s+64KB\s*$", handler),
+            re.search(r"(?m)^\s*reverse_proxy\s+web:8000(?:\s|$)", handler),
+        )
+    )
+
+
 def edge_install(ctx: Context) -> None:
     text = _candidate_path(ctx).read_text(encoding="utf-8")
     _swap_caddyfile(ctx, text=text, expect_live={_pre_max_sha(ctx)}, label="max")
@@ -401,9 +436,8 @@ def public_role(ctx: Context, *, role: str = PUBLIC_ROLE) -> None:
 # --- verify ------------------------------------------------------------------------------
 
 EXPECTED_MIGRATIONS = (
-    ("customer_requests", "0008_max_messaging"),
-    ("customer_requests", "0009_max_public_link_guard"),
-    ("operations", "0006_max_messaging"),
+    ("customer_requests", "0029_alter_operatornotification_kind"),
+    ("customer_requests", "0030_operatornotification_max_attachment_token_and_more"),
 )
 CODE_MARKERS = {
     "web": ("/app/apps/customer_requests/views.py", "def max_webhook"),

@@ -1,8 +1,11 @@
 # Handoff: финальная приёмка Telegram/MAX и production release
 
 Ветка `codex/prostor-bots-integration`; текущий HEAD записан в `git log`.
-Runtime-код кандидата остаётся от `c0922c94c2bb20b4d9d79601d7356c5ea59b27a1`;
-коммиты после него меняют только проверки и документы. Production пока не
+Исходный RC был `c0922c94c2bb20b4d9d79601d7356c5ea59b27a1`. Для сохранения
+production Turkey reverse SSH исправления `e05ebe80d77673c5672d93967972c0685cf91744`
+оно влито в кандидата. Release-helper также обновлён на актуальные миграции
+0029/0030 и проверку существующего bounded Caddy webhook route. Эти правки
+требуют нового финального SHA и новой image identity сборки. Production пока не
 изменялась.
 
 ## Завершено
@@ -40,6 +43,34 @@ Runtime-код кандидата остаётся от `c0922c94c2bb20b4d9d7960
 - Временный sidecar для проверки introductions остановлен и удалён; его тома
   не затрагивались. Основные DEV-контейнеры продолжают работать.
 - Production и Telegram production не изменялись.
+
+## Продолжение 2026-11-18
+
+- Read-only production: MAX `max_bot_health` passed, `max_bot_identity` вызвал
+  успешный read-only API запрос, подписка требует и содержит правильный
+  webhook path, POST без секрета к loopback-Caddy получил 404. Live Caddy
+  configuration прошла `caddy validate`; существующий ограниченный маршрут
+  не менялся.
+- Production Telegram container healthy, штатный heartbeat свежий, `getMe`
+  через настроенный Turkey egress успешен. `denstock-telegram-egress.service`
+  active. DB и остальные production сервисы healthy.
+- Целевые MAX/Telegram/media/workspace/release-tooling проверки: `378 passed,
+  5 skipped`; Turkey egress набор отдельно `16 passed`. Полный pytest после production merge:
+  `6743 passed, 298 skipped, 7 failed`; это семь ранее воспроизводимых
+  baseline failures. Полный набор не объявлять успешным.
+- Исправлены migration expectations release-helper (0029/0030) и Caddy
+  preflight: он теперь проверяет метод, точный webhook path, 64 KB и
+  `web:8000`, не требуя заменить существующий production Caddyfile.
+- `catalog-web` нужен для новой MAX handoff-кнопки. Он отсутствует в явном
+  разрешённом списке production-компонентов; владельцу задан вопрос о включении.
+  До решения не создавать PRE-backup и не менять production.
+- Исходящая фотография в DEV имеет `sent` и внешний ID, но реальное получение
+  владельцем не подтверждено. Оставить это ограничение в отчёте.
+- Перед deployment повторить профильные/static gates, завершить commit, собрать
+  точные linux/amd64 образы из итогового SHA и проверить hash/image ID. Затем
+  только при GO выполнить свежий signed PRE, offsite read-back и isolated
+  restore. Не менять Caddy, production MAX subscription, secret files, catalog
+  или egress без отдельной согласованной области работ.
 
 ## Не завершено / блокеры
 
