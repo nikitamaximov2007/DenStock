@@ -2,7 +2,7 @@
   "schema_version": 1,
   "media_root": "~/Desktop/\u0420\u0438\u043b\u0441\u044b",
   "time_units": "seconds from start; end exclusive",
-  "current_status": "Use review_export_2026_11_18: rendered local drafts; owner approval and listening pending",
+  "current_status": "Use dialog_review_2026_11_18; draft, owner review pending",
   "historical_rework_v2": {
     "date": "2026-11-04",
     "status": "historical only",
@@ -1145,6 +1145,179 @@
     "sha256": {
       "R10_A_review.mp4": "6867701b620002c502571f7619dcd0fefa829236a7847c7e68f59863b3f5891b",
       "R10_B_review.mp4": "480ca608f339ed9afdfa031d420d07d0aa9c810f082efc024bd675059fb86205"
+    }
+  },
+  "dialog_review_2026_11_18": {
+    "status": "DRAFT, owner review pending",
+    "hook_a": {
+      "video": "r10/IMG_8416.MOV",
+      "source_start_s": 34.3,
+      "source_end_s": 37.7,
+      "source_audio": "same source",
+      "face_on_screen_s": [
+        0,
+        1.2
+      ],
+      "catalog_preview_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "catalog_preview_source_s": [
+        6,
+        8.2
+      ],
+      "catalog_preview_timeline_s": [
+        1.2,
+        3.4
+      ],
+      "duration_s": 3.4
+    },
+    "hook_b": {
+      "video": "r10/IMG_8417.MOV",
+      "source_start_s": 0.8,
+      "source_end_s": 7.9,
+      "source_audio": "same source",
+      "face_on_screen_s": [
+        0,
+        2.7
+      ],
+      "catalog_preview_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "catalog_preview_source_s": [
+        6,
+        10.4
+      ],
+      "catalog_preview_timeline_s": [
+        2.7,
+        7.1
+      ],
+      "duration_s": 7.1
+    },
+    "body_duration_s": 57.0,
+    "total_a_s": 60.4,
+    "total_b_s": 64.1,
+    "segments": [
+      {
+        "id": "problem_bridge_search_cart",
+        "note": "Same as review_export_2026_11_18 through end of cart",
+        "body_start_s": 0,
+        "body_end_s": 29.3
+      },
+      {
+        "id": "request",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+        "source_s": [
+          44.5,
+          47.5
+        ],
+        "body_s": [
+          29.3,
+          32.3
+        ]
+      },
+      {
+        "id": "client_telegram",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.18.41.mov",
+        "source_s": [
+          24.5,
+          28.1
+        ],
+        "body_s": [
+          32.3,
+          35.9
+        ]
+      },
+      {
+        "id": "operator_reply",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.26.43.mov",
+        "source_s": [
+          41.5,
+          45.5
+        ],
+        "body_s": [
+          35.9,
+          39.9
+        ]
+      },
+      {
+        "id": "client_received",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.28.54.mov",
+        "source_s": [
+          0,
+          4
+        ],
+        "body_s": [
+          39.9,
+          43.9
+        ]
+      },
+      {
+        "id": "message_history",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.26.43.mov",
+        "source_s": [
+          52,
+          55.7
+        ],
+        "body_s": [
+          43.9,
+          47.6
+        ]
+      },
+      {
+        "id": "cta",
+        "source": "r10/IMG_8448.MOV",
+        "source_s": [
+          0.7,
+          10.1
+        ],
+        "body_s": [
+          47.6,
+          57
+        ]
+      }
+    ],
+    "voiceovers": [
+      {
+        "source": "r10/3 2.m4a",
+        "source_s": [
+          0.9,
+          7.5
+        ],
+        "body_s": [
+          29.3,
+          35.9
+        ]
+      },
+      {
+        "source": "r10/4.m4a",
+        "source_s": [
+          2.2,
+          13.9
+        ],
+        "body_s": [
+          35.9,
+          47.6
+        ]
+      }
+    ],
+    "limitations": [
+      "direct listening unavailable",
+      "personal information masks require verification",
+      "some message text obscured by masks"
+    ],
+    "verification": {
+      "video_frames_A": 1812,
+      "video_frames_B": 1923,
+      "black_frames_A": 0,
+      "black_frames_B": 0,
+      "shared_body_frames_compared": 1710,
+      "shared_body_differences": 0,
+      "dialog_frames_ocr": 549,
+      "ocr_pattern_hits": 0,
+      "ocr_failures": 0,
+      "audio_correlation_delay_ms": 0,
+      "audio_points_per_version": 5,
+      "direct_listening": false
+    },
+    "sha256": {
+      "R10_A_dialog_review.mp4": "a972b71250662c90d78c8d7e621c39537b8b6dfa7d00e4667f20e54516727a61",
+      "R10_B_dialog_review.mp4": "04bd2319f04034cc1758cb074cabdc8e883c6721bf392d7b333155a656bea231"
     }
   }
 }
