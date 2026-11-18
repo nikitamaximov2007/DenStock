@@ -257,6 +257,17 @@ def test_operator_screens_permission_badge_and_status_post(client, part, admin, 
     assert customer_request.status == CustomerRequest.Status.IN_PROGRESS
 
 
+@pytest.mark.parametrize(("quantity", "expected"), [("1.000", "1 шт"), ("1.250", "1,25 шт")])
+def test_request_detail_uses_the_bot_quantity_format(client, part, admin, quantity, expected):
+    customer_request, _ = _create(part=part, quantity=quantity)
+    client.force_login(admin)
+
+    response = client.get(reverse("customer_request_detail", args=[customer_request.pk]))
+
+    assert response.status_code == 200
+    assert f'data-label="Кол-во">{expected}</td>' in response.content.decode()
+
+
 def test_a_refused_status_change_returns_to_the_request_with_the_reason(client, part, admin):
     """A stale page offering an old action must not fail with a server error."""
     customer_request, _ = _create(part=part)

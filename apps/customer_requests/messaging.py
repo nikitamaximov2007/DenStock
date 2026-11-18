@@ -14,7 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from apps.core.templatetags.number_format import money_int, quantity_int
+from apps.core.templatetags.number_format import money_int
+from apps.core.templatetags.number_format import request_quantity_text as _request_quantity_text
 
 from .models import CustomerRequest
 
@@ -44,7 +45,7 @@ class SummaryPolicy:
 
 def request_quantity_text(value) -> str:
     """Render a request line quantity without changing its stored value."""
-    return f"{quantity_int(value)} шт"
+    return _request_quantity_text(value)
 
 
 def summary_line(line) -> tuple[str, Decimal | None]:

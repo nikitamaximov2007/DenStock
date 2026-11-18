@@ -55,6 +55,17 @@ def quantity_int(value):
     return format(decimal.normalize(), "f").replace(".", ",")
 
 
+def request_quantity_text(value):
+    """Format a customer-request line quantity with its fixed piece label."""
+    return f"{quantity_int(value)} шт"
+
+
+@register.filter
+def request_quantity(value):
+    """Template filter for quantities on customer-request cards."""
+    return request_quantity_text(value)
+
+
 @register.filter
 def quantity_number(value):
     """Backward-compatible alias for the physical quantity formatter."""

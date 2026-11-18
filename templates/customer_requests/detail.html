@@ -337,7 +337,7 @@
                     <span class="muted">Нет доступного места для сборки</span>
                   {% endif %}
                 </td>
-                <td class="num--qty" data-label="Кол-во">{{ line.quantity_requested|quantity_int }} {{ line.unit_short_name }}</td>
+                <td class="num--qty" data-label="Кол-во">{{ line.quantity_requested|request_quantity }}</td>
                 <td class="num--money" data-label="Цена" data-price-seen>
                   {% if line.price_seen is not None %}
                     {{ line.price_seen|money_int }} ₽
