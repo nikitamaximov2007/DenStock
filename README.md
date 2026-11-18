@@ -164,3 +164,7 @@ tests/          — pytest
 эксплуатация. Проект готов к локальному использованию.
 
 Здоровье приложения: `GET /healthz/` → `{"status":"ok","db":"ok"}`.
+
+## Контекст проекта для AI
+
+Начните с [AI_PROJECT_CONTEXT](docs/AI_PROJECT_CONTEXT.md) и [ROADMAP](docs/ROADMAP.md).

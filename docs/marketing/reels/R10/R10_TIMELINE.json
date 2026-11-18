@@ -1,0 +1,1323 @@
+{
+  "schema_version": 1,
+  "media_root": "~/Desktop/\u0420\u0438\u043b\u0441\u044b",
+  "time_units": "seconds from start; end exclusive",
+  "current_status": "Use dialog_review_2026_11_18; draft, owner review pending",
+  "historical_rework_v2": {
+    "date": "2026-11-04",
+    "status": "historical only",
+    "fps": 30,
+    "duration_s": 42.3,
+    "video": [
+      {
+        "id": "OLD-H1",
+        "source": "\u0434\u043e\u043c\u0430\u0448\u043d\u044f\u044f \u0441\u044a\u0435\u043c\u043a\u0430 \u041d1 \u041d2 \u041d3 r10/IMG_8283.MOV",
+        "source_start_s": 70.133,
+        "source_end_s": 73.733,
+        "timeline_start_s": 0.0,
+        "timeline_end_s": 3.6,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-A",
+        "source": "6/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-10-26 \u0432\u00a013.28.02.MOV",
+        "source_start_s": 7.1,
+        "source_end_s": 10.7,
+        "timeline_start_s": 3.6,
+        "timeline_end_s": 7.2,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.55,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.25,
+            "zoom": 2.15,
+            "x": 0.67,
+            "y": 0.46
+          },
+          {
+            "at": 2,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          },
+          {
+            "at": 3.6,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-B",
+        "source": "6/IMG_8020.MOV",
+        "source_start_s": 3.4,
+        "source_end_s": 6,
+        "timeline_start_s": 7.2,
+        "timeline_end_s": 9.8,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-C",
+        "source": "6/60382C68-6395-4E31-B07C-93D880064544.MOV",
+        "source_start_s": 6.4,
+        "source_end_s": 9.8,
+        "timeline_start_s": 9.8,
+        "timeline_end_s": 13.2,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.3,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 3.4,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-D",
+        "source": "6/9EDFAEE0-F2D3-4CC6-974A-96BA6711D705.MOV",
+        "source_start_s": 53.5,
+        "source_end_s": 56.8,
+        "timeline_start_s": 13.2,
+        "timeline_end_s": 16.5,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.35,
+            "zoom": 2.15,
+            "x": 0.45,
+            "y": 0.5
+          },
+          {
+            "at": 3.3,
+            "zoom": 2.15,
+            "x": 0.45,
+            "y": 0.5
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-E",
+        "source": "6/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-10-26 \u0432\u00a013.08.14.MOV",
+        "source_start_s": 119.9,
+        "source_end_s": 124.1,
+        "timeline_start_s": 16.5,
+        "timeline_end_s": 20.7,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.35,
+            "zoom": 2.6,
+            "x": 0.43,
+            "y": 0.75
+          },
+          {
+            "at": 2.15,
+            "zoom": 2.6,
+            "x": 0.43,
+            "y": 0.75
+          },
+          {
+            "at": 2.95,
+            "zoom": 2.6,
+            "x": 0.46,
+            "y": 0.25
+          },
+          {
+            "at": 4.2,
+            "zoom": 2.6,
+            "x": 0.46,
+            "y": 0.25
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-F",
+        "source": "6/IMG_8140.MOV",
+        "source_start_s": 27.6,
+        "source_end_s": 29.8,
+        "timeline_start_s": 20.7,
+        "timeline_end_s": 22.9,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-G",
+        "source": "6/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-10-26 \u0432\u00a013.18.06.MOV",
+        "source_start_s": 6.4,
+        "source_end_s": 9.6,
+        "timeline_start_s": 22.9,
+        "timeline_end_s": 26.1,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.3,
+            "zoom": 2.6,
+            "x": 0.31,
+            "y": 0.47
+          },
+          {
+            "at": 1.65,
+            "zoom": 2.6,
+            "x": 0.31,
+            "y": 0.39
+          },
+          {
+            "at": 3.2,
+            "zoom": 2.6,
+            "x": 0.31,
+            "y": 0.39
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-H",
+        "source": "6/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-10-26 \u0432\u00a013.28.02.MOV",
+        "source_start_s": 11.4,
+        "source_end_s": 15.4,
+        "timeline_start_s": 26.1,
+        "timeline_end_s": 30.1,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.3,
+            "zoom": 2.1,
+            "x": 0.67,
+            "y": 0.46
+          },
+          {
+            "at": 2,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          },
+          {
+            "at": 4,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-I",
+        "source": "6/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-10-26 \u0432\u00a013.28.02.MOV",
+        "source_start_s": 27.0,
+        "source_end_s": 31.2,
+        "timeline_start_s": 30.1,
+        "timeline_end_s": 34.3,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.25,
+            "zoom": 2,
+            "x": 0.76,
+            "y": 0.4
+          },
+          {
+            "at": 1.6,
+            "zoom": 2,
+            "x": 0.76,
+            "y": 0.4
+          },
+          {
+            "at": 2.2,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 2.65,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 3.45,
+            "zoom": 1.65,
+            "x": 0.39,
+            "y": 0.49
+          },
+          {
+            "at": 4.2,
+            "zoom": 1.65,
+            "x": 0.39,
+            "y": 0.49
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-H2",
+        "source": "\u0434\u043e\u043c\u0430\u0448\u043d\u044f\u044f \u0441\u044a\u0435\u043c\u043a\u0430 \u041d1 \u041d2 \u041d3 r10/IMG_8284.MOV",
+        "source_start_s": 40.633,
+        "source_end_s": 45.433,
+        "timeline_start_s": 34.3,
+        "timeline_end_s": 39.1,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-H3",
+        "source": "\u0434\u043e\u043c\u0430\u0448\u043d\u044f\u044f \u0441\u044a\u0435\u043c\u043a\u0430 \u041d1 \u041d2 \u041d3 r10/IMG_8286.MOV",
+        "source_start_s": 110.6,
+        "source_end_s": 113.8,
+        "timeline_start_s": 39.1,
+        "timeline_end_s": 42.3,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      }
+    ]
+  },
+  "proposed_edit_2026_11_18": {
+    "status": "PROPOSED, NOT READY FOR PUBLICATION; clips local and unmasked",
+    "media_root": "~/Desktop/\u0420\u0438\u043b\u0441\u044b",
+    "review_directory": "\u0410\u043d\u0430\u043b\u0438\u0437/R10_review_2026-11-18",
+    "frame_rate": 30,
+    "hook_a": {
+      "id": "R10-01",
+      "variant": "A",
+      "source": "r10/IMG_8416.MOV",
+      "source_start_s": 34.3,
+      "source_end_s": 37.7,
+      "duration_s": 3.4,
+      "text_draft": "\u0412\u0430\u0448 \u0441\u0435\u0440\u0432\u0438\u0441 \u0442\u0440\u0430\u0442\u0438\u0442 \u0432\u0440\u0435\u043c\u044f \u043d\u0430 \u0440\u0430\u0431\u043e\u0442\u0443, \u043a\u043e\u0442\u043e\u0440\u0443\u044e \u043a\u043b\u0438\u0435\u043d\u0442 \u043c\u043e\u0436\u0435\u0442 \u0441\u0434\u0435\u043b\u0430\u0442\u044c \u0441\u0430\u043c.",
+      "clip": "01_hook_A.mp4",
+      "rationale": "\u0420\u0435\u0447\u044c \u043e\u0442\u0434\u0435\u043b\u0435\u043d\u0430 \u043f\u0430\u0443\u0437\u0430\u043c\u0438; \u043f\u043e \u0432\u044b\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u043c \u043a\u0430\u0434\u0440\u0430\u043c \u043b\u0438\u0446\u043e \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e \u043a \u043a\u0430\u043c\u0435\u0440\u0435. \u0418\u043d\u0442\u043e\u043d\u0430\u0446\u0438\u044f \u0438 \u0446\u0435\u043b\u043e\u0441\u0442\u043d\u043e\u0441\u0442\u044c \u0441\u043b\u043e\u0432 \u0442\u0440\u0435\u0431\u0443\u044e\u0442 \u043f\u0440\u043e\u0441\u043b\u0443\u0448\u0438\u0432\u0430\u043d\u0438\u044f."
+    },
+    "hook_b": {
+      "id": "R10-02",
+      "variant": "B",
+      "source": "r10/IMG_8417.MOV",
+      "source_start_s": 0.8,
+      "source_end_s": 7.9,
+      "duration_s": 7.1,
+      "text_draft": "\u041f\u0440\u0435\u0434\u0441\u0442\u0430\u0432\u044c: \u043a\u043b\u0438\u0435\u043d\u0442 \u0441\u0430\u043c \u043d\u0430\u0445\u043e\u0434\u0438\u0442 \u043d\u0443\u0436\u043d\u0443\u044e \u0437\u0430\u043f\u0447\u0430\u0441\u0442\u044c, \u0443\u0437\u043d\u0430\u0451\u0442 \u043d\u0430\u043b\u0438\u0447\u0438\u0435 \u0438 \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442 \u0437\u0430\u044f\u0432\u043a\u0443. \u0414\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u043d\u0435 \u043d\u0443\u0436\u043d\u043e \u0437\u0432\u043e\u043d\u0438\u0442\u044c \u0432 \u0441\u0435\u0440\u0432\u0438\u0441.",
+      "clip": "02_hook_B.mp4",
+      "rationale": "\u0414\u0440\u0443\u0433\u043e\u0439 \u0441\u043c\u044b\u0441\u043b\u043e\u0432\u043e\u0439 \u0445\u0443\u043a \u043e \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u0435; \u0432 \u0432\u044b\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u0445 \u043a\u0430\u0434\u0440\u0430\u0445 \u0432\u0438\u0434\u0435\u043d \u0430\u0432\u0442\u043e\u0440. \u0418\u043d\u0442\u043e\u043d\u0430\u0446\u0438\u044f \u0438 \u0442\u043e\u0447\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0442\u0440\u0435\u0431\u0443\u044e\u0442 \u043f\u0440\u043e\u0441\u043b\u0443\u0448\u0438\u0432\u0430\u043d\u0438\u044f."
+    },
+    "shared_body": [
+      {
+        "id": "R10-03",
+        "purpose": "\u041f\u0440\u043e\u0431\u043b\u0435\u043c\u0430 \u043f\u043e\u0432\u0442\u043e\u0440\u043d\u044b\u0445 \u0432\u043e\u043f\u0440\u043e\u0441\u043e\u0432",
+        "duration_s": 11.4,
+        "audio": {
+          "source": "original video audio",
+          "placement": "\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e \u0441 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u043c \u0432\u0438\u0434\u0435\u043e"
+        },
+        "subtitles_draft": "\u041a\u043b\u0438\u0435\u043d\u0442\u044b \u043f\u043e\u0441\u0442\u043e\u044f\u043d\u043d\u043e \u0437\u0432\u043e\u043d\u044f\u0442 \u0438 \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u044e\u0442: \u00ab\u0422\u0430\u043a\u0430\u044f \u0434\u0435\u0442\u0430\u043b\u044c \u0435\u0441\u0442\u044c? \u0421\u043a\u043e\u043b\u044c\u043a\u043e \u043e\u043d\u0430 \u0441\u0442\u043e\u0438\u0442?\u00bb \u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0430\u043c \u043f\u0440\u0438\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u043e\u0442\u0432\u043b\u0435\u043a\u0430\u0442\u044c\u0441\u044f \u043e\u0442 \u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 \u0440\u0430\u0431\u043e\u0442\u044b \u0438 \u0438\u0441\u043a\u0430\u0442\u044c \u0434\u0435\u0442\u0430\u043b\u044c. \u041f\u043e\u043a\u0430 \u043e\u043d\u0438 \u044d\u0442\u0438\u043c \u0437\u0430\u043d\u0438\u043c\u0430\u044e\u0442\u0441\u044f, \u043a\u043b\u0438\u0435\u043d\u0442\u044b \u0436\u0434\u0443\u0442 \u043e\u0442\u0432\u0435\u0442\u0430.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0446\u0435\u043b\u044c\u043d\u044b\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 \u043e \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0435 \u0441 \u0437\u0430\u043f\u0430\u0441\u043e\u043c \u043d\u0430 \u043f\u0430\u0443\u0437\u044b; \u0441\u043e\u043f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d \u0441 \u043c\u0430\u0448\u0438\u043d\u043d\u043e\u0439 \u0440\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u043e\u0439 \u0438 \u043a\u0430\u0434\u0440\u0430\u043c\u0438.",
+        "body_start_s": 0.0,
+        "body_end_s": 11.4,
+        "timeline_a_s": [
+          3.4,
+          14.8
+        ],
+        "timeline_b_s": [
+          7.1,
+          18.5
+        ],
+        "video": [
+          {
+            "source": "r10/IMG_8423.MOV",
+            "start_s": 0.3,
+            "end_s": 11.7,
+            "review_clip": "03_problems.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "portrait: maintain proportions; center face; subtitles away from face",
+        "privacy": "REVIEW REQUIRED: background and incidental identifiers"
+      },
+      {
+        "id": "R10-04",
+        "purpose": "\u041f\u0435\u0440\u0435\u0445\u043e\u0434 \u043a \u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u0438",
+        "duration_s": 2.5,
+        "audio": {
+          "source": "original video audio",
+          "placement": "\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e \u0441 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u043c \u0432\u0438\u0434\u0435\u043e"
+        },
+        "subtitles_draft": "\u041f\u043e\u043a\u0430\u0436\u0443, \u043a\u0430\u043a \u043c\u044b \u0440\u0435\u0448\u0438\u043b\u0438 \u044d\u0442\u0443 \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0443 \u0432 \u043e\u0434\u043d\u043e\u043c \u0438\u0437 \u0441\u0435\u0440\u0432\u0438\u0441\u043e\u0432.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u043a\u043e\u0440\u043e\u0442\u043a\u0438\u0439 \u043f\u043e\u0432\u0442\u043e\u0440; \u0440\u0435\u0447\u044c \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0430 \u043f\u0430\u0443\u0437\u043e\u0439 \u043f\u043e \u0430\u043d\u0430\u043b\u0438\u0437\u0443 \u0442\u0438\u0448\u0438\u043d\u044b.",
+        "body_start_s": 11.4,
+        "body_end_s": 13.9,
+        "timeline_a_s": [
+          14.8,
+          17.3
+        ],
+        "timeline_b_s": [
+          18.5,
+          21.0
+        ],
+        "video": [
+          {
+            "source": "r10/IMG_8427.MOV",
+            "start_s": 0.2,
+            "end_s": 2.7,
+            "review_clip": "04_transition.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "portrait: maintain proportions; center face; subtitles away from face",
+        "privacy": "REVIEW REQUIRED: background and incidental identifiers"
+      },
+      {
+        "id": "R10-05",
+        "purpose": "\u041f\u043e\u0438\u0441\u043a, \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b, \u043d\u0430\u043b\u0438\u0447\u0438\u0435 \u0438 \u0446\u0435\u043d\u0430",
+        "duration_s": 8.6,
+        "audio": {
+          "source": "r10/1.m4a",
+          "start_s": 1.8,
+          "end_s": 10.4,
+          "review_clip": "vo_1.wav",
+          "placement": "\u043d\u0430\u0447\u0430\u043b\u043e \u0441\u0446\u0435\u043d\u044b; \u0431\u0435\u0437 \u0443\u0441\u043a\u043e\u0440\u0435\u043d\u0438\u044f; \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430"
+        },
+        "subtitles_draft": "\u041a\u043b\u0438\u0435\u043d\u0442 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043a\u0430\u0442\u0430\u043b\u043e\u0433 \u0438 \u0432\u0432\u043e\u0434\u0438\u0442 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043d\u0443\u0436\u043d\u043e\u0439 \u0434\u0435\u0442\u0430\u043b\u0438, \u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440 \u0441\u0430\u043b\u044c\u043d\u0438\u043a. \u0421\u0438\u0441\u0442\u0435\u043c\u0430 \u0441\u0440\u0430\u0437\u0443 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0438\u0435 \u0437\u0430\u043f\u0447\u0430\u0441\u0442\u0438, \u0438\u0445 \u0441\u0442\u043e\u0438\u043c\u043e\u0441\u0442\u044c \u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0435 \u043d\u0430 \u0441\u043a\u043b\u0430\u0434\u0435.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 \u043e\u0437\u0432\u0443\u0447\u043a\u0438 \u0438 \u0437\u0430\u043f\u0438\u0441\u044c \u0441 \u043f\u043e\u0438\u0441\u043a\u043e\u043c \u0438 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u043c \u043f\u043e\u044f\u0432\u043b\u0435\u043d\u0438\u0435\u043c \u0441\u043f\u0438\u0441\u043a\u0430.",
+        "body_start_s": 13.9,
+        "body_end_s": 22.5,
+        "timeline_a_s": [
+          17.3,
+          25.9
+        ],
+        "timeline_b_s": [
+          21.0,
+          29.6
+        ],
+        "video": [
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 2,
+            "end_s": 10.6,
+            "review_clip": "05_catalog.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "fit full screen first; gentle zoom same recording; preserve aspect ratio",
+        "privacy": "REVIEW REQUIRED: mask personal identifiers, messages, browser/account details; check every frame"
+      },
+      {
+        "id": "R10-06",
+        "purpose": "\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u0432 \u043a\u043e\u0440\u0437\u0438\u043d\u0443 \u0438 \u043f\u0435\u0440\u0435\u0445\u043e\u0434 \u043a \u0437\u0430\u044f\u0432\u043a\u0435",
+        "duration_s": 6.8,
+        "audio": {
+          "source": "r10/2.m4a",
+          "start_s": 2.5,
+          "end_s": 9.3,
+          "review_clip": "vo_2.wav",
+          "placement": "\u043d\u0430\u0447\u0430\u043b\u043e \u0441\u0446\u0435\u043d\u044b; \u0431\u0435\u0437 \u0443\u0441\u043a\u043e\u0440\u0435\u043d\u0438\u044f; \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430"
+        },
+        "subtitles_draft": "\u0412\u044b\u0431\u0438\u0440\u0430\u0435\u043c \u0442\u0440\u0438 \u0434\u0435\u0442\u0430\u043b\u0438, \u0434\u043e\u0431\u0430\u0432\u043b\u044f\u0435\u043c \u0432 \u043a\u043e\u0440\u0437\u0438\u043d\u0443, \u043e\u0431\u0449\u0430\u044f \u0441\u0443\u043c\u043c\u0430 [\u041f\u0420\u041e\u0412\u0415\u0420\u0418\u0422\u042c]. \u0422\u0435\u043f\u0435\u0440\u044c \u043a\u043b\u0438\u0435\u043d\u0442 \u043f\u0440\u043e\u0441\u0442\u043e \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442 \u0437\u0430\u044f\u0432\u043a\u0443.",
+        "rationale": "\u041f\u043e\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0435 \u044d\u0442\u0430\u043f\u044b: \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u043a\u043e\u0440\u0437\u0438\u043d\u0430, \u0444\u043e\u0440\u043c\u0430; \u044d\u0442\u043e \u0442\u0440\u0438 \u0441\u043a\u043b\u0435\u0439\u043a\u0438, \u0442\u043e\u0447\u043d\u043e\u0441\u0442\u044c \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0439 \u0438 \u043f\u0440\u0438\u0432\u0430\u0442\u043d\u043e\u0441\u0442\u044c \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c.",
+        "body_start_s": 22.5,
+        "body_end_s": 29.3,
+        "timeline_a_s": [
+          25.9,
+          32.7
+        ],
+        "timeline_b_s": [
+          29.6,
+          36.4
+        ],
+        "video": [
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 10.5,
+            "end_s": 13.5,
+            "review_clip": "06a_add_v2.mp4"
+          },
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 21,
+            "end_s": 23,
+            "review_clip": "06b_cart_v2.mp4"
+          },
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 25.5,
+            "end_s": 27.3,
+            "review_clip": "07_form_v2.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "fit full screen first; gentle zoom same recording; preserve aspect ratio",
+        "privacy": "REVIEW REQUIRED: mask personal identifiers, messages, browser/account details; check every frame"
+      },
+      {
+        "id": "R10-07",
+        "purpose": "\u041a\u043b\u0438\u0435\u043d\u0442\u0441\u043a\u0438\u0439 Telegram",
+        "duration_s": 6.6,
+        "audio": {
+          "source": "r10/3 2.m4a",
+          "start_s": 0.9,
+          "end_s": 7.5,
+          "review_clip": "vo_3.wav",
+          "placement": "\u043d\u0430\u0447\u0430\u043b\u043e \u0441\u0446\u0435\u043d\u044b; \u0431\u0435\u0437 \u0443\u0441\u043a\u043e\u0440\u0435\u043d\u0438\u044f; \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430"
+        },
+        "subtitles_draft": "\u041f\u043e\u0441\u043b\u0435 \u043e\u0444\u043e\u0440\u043c\u043b\u0435\u043d\u0438\u044f \u0437\u0430\u044f\u0432\u043a\u0438 \u043e\u043d \u043c\u043e\u0436\u0435\u0442 \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0438\u0442\u044c \u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u0441 \u0441\u0435\u0440\u0432\u0438\u0441\u043e\u043c \u043f\u0440\u044f\u043c\u043e \u0432 Telegram, \u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440 \u0443\u0442\u043e\u0447\u043d\u0438\u0442\u044c, \u043a\u0430\u043a \u043e\u043f\u043b\u0430\u0442\u0438\u0442\u044c \u0437\u0430\u043a\u0430\u0437.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0440\u0435\u0447\u0435\u0432\u043e\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 \u0438 \u044d\u043a\u0440\u0430\u043d \u0434\u0438\u0430\u043b\u043e\u0433\u0430; \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0441\u043e\u0433\u043b\u0430\u0441\u043e\u0432\u0430\u043d\u043d\u043e\u0441\u0442\u044c \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u0438 \u0441\u043b\u043e\u0432, \u0437\u0430\u043a\u0440\u044b\u0442\u044c \u0441\u043f\u0438\u0441\u043e\u043a \u0447\u0430\u0442\u043e\u0432.",
+        "body_start_s": 29.3,
+        "body_end_s": 35.9,
+        "timeline_a_s": [
+          32.7,
+          39.3
+        ],
+        "timeline_b_s": [
+          36.4,
+          43.0
+        ],
+        "video": [
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.18.41.mov",
+            "start_s": 9,
+            "end_s": 15.6,
+            "review_clip": "08_telegram.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "fit full screen first; gentle zoom same recording; preserve aspect ratio",
+        "privacy": "REVIEW REQUIRED: mask personal identifiers, messages, browser/account details; check every frame"
+      },
+      {
+        "id": "R10-08",
+        "purpose": "\u041e\u0442\u0432\u0435\u0442 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0430, \u0438\u0441\u0442\u043e\u0440\u0438\u044f, \u0430\u0434\u043c\u0438\u043d-\u0431\u043e\u0442",
+        "duration_s": 11.7,
+        "audio": {
+          "source": "r10/4.m4a",
+          "start_s": 2.2,
+          "end_s": 13.9,
+          "review_clip": "vo_4.wav",
+          "placement": "\u043d\u0430\u0447\u0430\u043b\u043e \u0441\u0446\u0435\u043d\u044b; \u0431\u0435\u0437 \u0443\u0441\u043a\u043e\u0440\u0435\u043d\u0438\u044f; \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430"
+        },
+        "subtitles_draft": "\u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a \u043f\u043e\u043b\u0443\u0447\u0430\u0435\u0442 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435 \u043f\u0440\u044f\u043c\u043e \u0432 \u0441\u0438\u0441\u0442\u0435\u043c\u0435 \u0441\u043a\u043b\u0430\u0434\u0430 \u0438 \u043e\u0442\u0432\u0435\u0447\u0430\u0435\u0442 \u043a\u043b\u0438\u0435\u043d\u0442\u0443. \u041e\u0442\u0432\u0435\u0442 \u043f\u043e\u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f \u0432 Telegram, \u0430 \u043f\u0435\u0440\u0435\u043f\u0438\u0441\u043a\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u044f\u0435\u0442\u0441\u044f \u0432 \u0438\u0441\u0442\u043e\u0440\u0438\u0438 \u0437\u0430\u044f\u0432\u043a\u0438. \u041f\u0440\u0438 \u043d\u0435\u043e\u0431\u0445\u043e\u0434\u0438\u043c\u043e\u0441\u0442\u0438 \u0441\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a \u043c\u043e\u0436\u0435\u0442 \u043e\u0431\u0449\u0430\u0442\u044c\u0441\u044f \u0441 \u043a\u043b\u0438\u0435\u043d\u0442\u043e\u043c \u0447\u0435\u0440\u0435\u0437 Telegram-\u0431\u043e\u0442\u0430.",
+        "rationale": "\u0422\u0440\u0438 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0445 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0441 \u043e\u0434\u043d\u0438\u043c \u0433\u043e\u043b\u043e\u0441\u043e\u0432\u044b\u043c \u0431\u043b\u043e\u043a\u043e\u043c. \u0421\u043e\u043e\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u0435 \u0440\u0435\u043f\u043b\u0438\u043a \u0438 \u0441\u043e\u0431\u044b\u0442\u0438\u0439 \u0438 \u0440\u043e\u043b\u044c \u0431\u043e\u0442\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u044b \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e.",
+        "body_start_s": 35.9,
+        "body_end_s": 47.6,
+        "timeline_a_s": [
+          39.3,
+          51.0
+        ],
+        "timeline_b_s": [
+          43.0,
+          54.7
+        ],
+        "video": [
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.26.43.mov",
+            "start_s": 41.5,
+            "end_s": 45.4,
+            "review_clip": "09_operator_v2.mp4"
+          },
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.28.54.mov",
+            "start_s": 0,
+            "end_s": 3.9,
+            "review_clip": "10_reply.mp4"
+          },
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a022.04.23.mov",
+            "start_s": 0,
+            "end_s": 3.9,
+            "review_clip": "11_admin.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "fit full screen first; gentle zoom same recording; preserve aspect ratio",
+        "privacy": "REVIEW REQUIRED: mask personal identifiers, messages, browser/account details; check every frame"
+      },
+      {
+        "id": "R10-11",
+        "purpose": "\u0424\u0438\u043d\u0430\u043b \u0438 CTA",
+        "duration_s": 9.4,
+        "audio": {
+          "source": "original video audio",
+          "placement": "\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e \u0441 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u043c \u0432\u0438\u0434\u0435\u043e"
+        },
+        "subtitles_draft": "\u0412\u043e\u0442 \u0442\u0430\u043a \u043a\u043b\u0438\u0435\u043d\u0442 \u0441\u0430\u043c \u043d\u0430\u0445\u043e\u0434\u0438\u0442 \u043d\u0443\u0436\u043d\u0443\u044e \u0437\u0430\u043f\u0447\u0430\u0441\u0442\u044c, \u0443\u0437\u043d\u0430\u0451\u0442 \u0446\u0435\u043d\u0443 \u0438 \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442 \u0437\u0430\u044f\u0432\u043a\u0443. \u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0438 \u0440\u0430\u0431\u043e\u0442\u0430\u044e\u0442 \u0443\u0436\u0435 \u0441 \u0433\u043e\u0442\u043e\u0432\u044b\u043c\u0438 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u044f\u043c\u0438. \u0425\u043e\u0442\u0438\u0442\u0435 \u0442\u0430\u043a \u0436\u0435 \u0443 \u0441\u0435\u0431\u044f? \u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u00ab\u041a\u0410\u0422\u0410\u041b\u041e\u0413\u00bb \u0432 \u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u044f\u0445, \u0440\u0430\u0437\u0431\u0435\u0440\u0443 \u0432\u0430\u0448\u0443 \u0441\u0438\u0442\u0443\u0430\u0446\u0438\u044e.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u043f\u043e\u043b\u043d\u044b\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 CTA; \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f \u043f\u0440\u043e\u0441\u043b\u0443\u0448\u0430\u0442\u044c \u0438 \u043e\u0446\u0435\u043d\u0438\u0442\u044c \u0435\u0441\u0442\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0441\u0442\u044c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f.",
+        "body_start_s": 47.6,
+        "body_end_s": 57.0,
+        "timeline_a_s": [
+          51.0,
+          60.4
+        ],
+        "timeline_b_s": [
+          54.7,
+          64.1
+        ],
+        "video": [
+          {
+            "source": "r10/IMG_8448.MOV",
+            "start_s": 0.7,
+            "end_s": 10.1,
+            "review_clip": "12_cta.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "portrait: maintain proportions; center face; subtitles away from face",
+        "privacy": "REVIEW REQUIRED: background and incidental identifiers"
+      }
+    ],
+    "body_duration_s": 57.0,
+    "total_a_s": 60.4,
+    "total_b_s": 64.1,
+    "audio_listening": "not available; ASR and waveform silence analysis only",
+    "privacy": "unmasked review clips are private; never publish or upload"
+  },
+  "superseded_candidates_before_review": [
+    {
+      "id": "R10-01",
+      "purpose": "\u041a\u0430\u043d\u0434\u0438\u0434\u0430\u0442 \u0445\u0443\u043a\u0430: \u044d\u043a\u043e\u043d\u043e\u043c\u0438\u044f \u0432\u0440\u0435\u043c\u0435\u043d\u0438",
+      "candidate_source": "r10/IMG_8416.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-02",
+      "purpose": "\u041a\u0430\u043d\u0434\u0438\u0434\u0430\u0442 \u0445\u0443\u043a\u0430: \u043a\u043b\u0438\u0435\u043d\u0442 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 \u0441\u0430\u043c",
+      "candidate_source": "r10/IMG_8417.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-03",
+      "purpose": "\u0420\u0430\u0437\u0433\u043e\u0432\u043e\u0440 \u043e \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0430\u0445",
+      "candidate_source": "r10/IMG_8423.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-04",
+      "purpose": "\u041f\u0435\u0440\u0435\u0445\u043e\u0434 \u043a \u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u0438",
+      "candidate_source": "r10/IMG_8427.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-05",
+      "purpose": "\u041a\u0430\u0442\u0430\u043b\u043e\u0433, \u043a\u043e\u0440\u0437\u0438\u043d\u0430, \u0437\u0430\u044f\u0432\u043a\u0430",
+      "candidate_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-06",
+      "purpose": "\u041a\u043b\u0438\u0435\u043d\u0442\u0441\u043a\u0438\u0439 Telegram",
+      "candidate_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.18.41.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-07",
+      "purpose": "\u0420\u0430\u0431\u043e\u0442\u0430 \u0441 \u0437\u0430\u044f\u0432\u043a\u043e\u0439 \u0432 \u0441\u0438\u0441\u0442\u0435\u043c\u0435",
+      "candidate_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.26.43.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-08",
+      "purpose": "\u041e\u0442\u0432\u0435\u0442 \u0438 \u0438\u0441\u0442\u043e\u0440\u0438\u044f Telegram",
+      "candidate_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.28.54.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-09",
+      "purpose": "\u0418\u0441\u0442\u043e\u0440\u0438\u044f / \u043f\u0440\u043e\u0434\u043e\u043b\u0436\u0435\u043d\u0438\u0435",
+      "candidate_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.31.04.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-10",
+      "purpose": "\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u0438\u0432\u043d\u044b\u0439 Telegram",
+      "candidate_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a022.04.23.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-11",
+      "purpose": "\u0424\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439 CTA",
+      "candidate_source": "r10/IMG_8448.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    }
+  ],
+  "review_export_2026_11_18": {
+    "status": "DRAFT: rendered locally; not approved, no publication",
+    "files": [
+      "\u0410\u043d\u0430\u043b\u0438\u0437/R10_A_review.mp4",
+      "\u0410\u043d\u0430\u043b\u0438\u0437/R10_B_review.mp4",
+      "\u0410\u043d\u0430\u043b\u0438\u0437/R10_review_compare.html"
+    ],
+    "format": {
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "video": "H.264",
+      "audio": "AAC 48000 Hz stereo"
+    },
+    "hook_a": {
+      "video": "r10/IMG_8416.MOV",
+      "source_start_s": 34.3,
+      "source_end_s": 37.7,
+      "source_audio": "same source",
+      "face_on_screen_s": [
+        0,
+        1.2
+      ],
+      "catalog_preview_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "catalog_preview_source_s": [
+        6,
+        8.2
+      ],
+      "catalog_preview_timeline_s": [
+        1.2,
+        3.4
+      ],
+      "duration_s": 3.4
+    },
+    "hook_b": {
+      "video": "r10/IMG_8417.MOV",
+      "source_start_s": 0.8,
+      "source_end_s": 7.9,
+      "source_audio": "same source",
+      "face_on_screen_s": [
+        0,
+        2.7
+      ],
+      "catalog_preview_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "catalog_preview_source_s": [
+        6,
+        10.4
+      ],
+      "catalog_preview_timeline_s": [
+        2.7,
+        7.1
+      ],
+      "duration_s": 7.1
+    },
+    "body_duration_s": 38.7,
+    "total_a_s": 42.1,
+    "total_b_s": 45.8,
+    "body": [
+      {
+        "id": "R10-03",
+        "purpose": "\u041f\u0440\u043e\u0431\u043b\u0435\u043c\u0430 \u043f\u043e\u0432\u0442\u043e\u0440\u043d\u044b\u0445 \u0432\u043e\u043f\u0440\u043e\u0441\u043e\u0432",
+        "duration_s": 11.4,
+        "audio": {
+          "source": "original video audio",
+          "placement": "\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e \u0441 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u043c \u0432\u0438\u0434\u0435\u043e"
+        },
+        "subtitles_draft": "\u041a\u043b\u0438\u0435\u043d\u0442\u044b \u043f\u043e\u0441\u0442\u043e\u044f\u043d\u043d\u043e \u0437\u0432\u043e\u043d\u044f\u0442 \u0438 \u0441\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u044e\u0442: \u00ab\u0422\u0430\u043a\u0430\u044f \u0434\u0435\u0442\u0430\u043b\u044c \u0435\u0441\u0442\u044c? \u0421\u043a\u043e\u043b\u044c\u043a\u043e \u043e\u043d\u0430 \u0441\u0442\u043e\u0438\u0442?\u00bb \u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0430\u043c \u043f\u0440\u0438\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u043e\u0442\u0432\u043b\u0435\u043a\u0430\u0442\u044c\u0441\u044f \u043e\u0442 \u043e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 \u0440\u0430\u0431\u043e\u0442\u044b \u0438 \u0438\u0441\u043a\u0430\u0442\u044c \u0434\u0435\u0442\u0430\u043b\u044c. \u041f\u043e\u043a\u0430 \u043e\u043d\u0438 \u044d\u0442\u0438\u043c \u0437\u0430\u043d\u0438\u043c\u0430\u044e\u0442\u0441\u044f, \u043a\u043b\u0438\u0435\u043d\u0442\u044b \u0436\u0434\u0443\u0442 \u043e\u0442\u0432\u0435\u0442\u0430.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u0446\u0435\u043b\u044c\u043d\u044b\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 \u043e \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0435 \u0441 \u0437\u0430\u043f\u0430\u0441\u043e\u043c \u043d\u0430 \u043f\u0430\u0443\u0437\u044b; \u0441\u043e\u043f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d \u0441 \u043c\u0430\u0448\u0438\u043d\u043d\u043e\u0439 \u0440\u0430\u0441\u0448\u0438\u0444\u0440\u043e\u0432\u043a\u043e\u0439 \u0438 \u043a\u0430\u0434\u0440\u0430\u043c\u0438.",
+        "body_start_s": 0.0,
+        "body_end_s": 11.4,
+        "timeline_a_s": [
+          3.4,
+          14.8
+        ],
+        "timeline_b_s": [
+          7.1,
+          18.5
+        ],
+        "video": [
+          {
+            "source": "r10/IMG_8423.MOV",
+            "start_s": 0.3,
+            "end_s": 11.7,
+            "review_clip": "03_problems.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "portrait: maintain proportions; center face; subtitles away from face",
+        "privacy": "REVIEW REQUIRED: background and incidental identifiers"
+      },
+      {
+        "id": "R10-04",
+        "purpose": "\u041f\u0435\u0440\u0435\u0445\u043e\u0434 \u043a \u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u0438",
+        "duration_s": 2.5,
+        "audio": {
+          "source": "original video audio",
+          "placement": "\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e \u0441 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u043c \u0432\u0438\u0434\u0435\u043e"
+        },
+        "subtitles_draft": "\u041f\u043e\u043a\u0430\u0436\u0443, \u043a\u0430\u043a \u043c\u044b \u0440\u0435\u0448\u0438\u043b\u0438 \u044d\u0442\u0443 \u043f\u0440\u043e\u0431\u043b\u0435\u043c\u0443 \u0432 \u043e\u0434\u043d\u043e\u043c \u0438\u0437 \u0441\u0435\u0440\u0432\u0438\u0441\u043e\u0432.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u043a\u043e\u0440\u043e\u0442\u043a\u0438\u0439 \u043f\u043e\u0432\u0442\u043e\u0440; \u0440\u0435\u0447\u044c \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0430 \u043f\u0430\u0443\u0437\u043e\u0439 \u043f\u043e \u0430\u043d\u0430\u043b\u0438\u0437\u0443 \u0442\u0438\u0448\u0438\u043d\u044b.",
+        "body_start_s": 11.4,
+        "body_end_s": 13.9,
+        "timeline_a_s": [
+          14.8,
+          17.3
+        ],
+        "timeline_b_s": [
+          18.5,
+          21.0
+        ],
+        "video": [
+          {
+            "source": "r10/IMG_8427.MOV",
+            "start_s": 0.2,
+            "end_s": 2.7,
+            "review_clip": "04_transition.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "portrait: maintain proportions; center face; subtitles away from face",
+        "privacy": "REVIEW REQUIRED: background and incidental identifiers"
+      },
+      {
+        "id": "R10-05",
+        "purpose": "\u041f\u043e\u0438\u0441\u043a, \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u044b, \u043d\u0430\u043b\u0438\u0447\u0438\u0435 \u0438 \u0446\u0435\u043d\u0430",
+        "duration_s": 8.6,
+        "audio": {
+          "source": "r10/1.m4a",
+          "start_s": 1.8,
+          "end_s": 10.4,
+          "review_clip": "vo_1.wav",
+          "placement": "\u043d\u0430\u0447\u0430\u043b\u043e \u0441\u0446\u0435\u043d\u044b; \u0431\u0435\u0437 \u0443\u0441\u043a\u043e\u0440\u0435\u043d\u0438\u044f; \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430"
+        },
+        "subtitles_draft": "\u041a\u043b\u0438\u0435\u043d\u0442 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442 \u043a\u0430\u0442\u0430\u043b\u043e\u0433 \u0438 \u0432\u0432\u043e\u0434\u0438\u0442 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0435 \u043d\u0443\u0436\u043d\u043e\u0439 \u0434\u0435\u0442\u0430\u043b\u0438, \u043d\u0430\u043f\u0440\u0438\u043c\u0435\u0440 \u0441\u0430\u043b\u044c\u043d\u0438\u043a. \u0421\u0438\u0441\u0442\u0435\u043c\u0430 \u0441\u0440\u0430\u0437\u0443 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u043f\u043e\u0434\u0445\u043e\u0434\u044f\u0449\u0438\u0435 \u0437\u0430\u043f\u0447\u0430\u0441\u0442\u0438, \u0438\u0445 \u0441\u0442\u043e\u0438\u043c\u043e\u0441\u0442\u044c \u0438 \u043d\u0430\u043b\u0438\u0447\u0438\u0435 \u043d\u0430 \u0441\u043a\u043b\u0430\u0434\u0435.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 \u043e\u0437\u0432\u0443\u0447\u043a\u0438 \u0438 \u0437\u0430\u043f\u0438\u0441\u044c \u0441 \u043f\u043e\u0438\u0441\u043a\u043e\u043c \u0438 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u043c \u043f\u043e\u044f\u0432\u043b\u0435\u043d\u0438\u0435\u043c \u0441\u043f\u0438\u0441\u043a\u0430.",
+        "body_start_s": 13.9,
+        "body_end_s": 22.5,
+        "timeline_a_s": [
+          17.3,
+          25.9
+        ],
+        "timeline_b_s": [
+          21.0,
+          29.6
+        ],
+        "video": [
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 2,
+            "end_s": 10.6,
+            "review_clip": "05_catalog.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "fit full screen first; gentle zoom same recording; preserve aspect ratio",
+        "privacy": "REVIEW REQUIRED: mask personal identifiers, messages, browser/account details; check every frame"
+      },
+      {
+        "id": "R10-06",
+        "purpose": "\u0414\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u0432 \u043a\u043e\u0440\u0437\u0438\u043d\u0443 \u0438 \u043f\u0435\u0440\u0435\u0445\u043e\u0434 \u043a \u0437\u0430\u044f\u0432\u043a\u0435",
+        "duration_s": 6.8,
+        "audio": {
+          "source": "r10/2.m4a",
+          "start_s": 2.5,
+          "end_s": 9.3,
+          "review_clip": "vo_2.wav",
+          "placement": "\u043d\u0430\u0447\u0430\u043b\u043e \u0441\u0446\u0435\u043d\u044b; \u0431\u0435\u0437 \u0443\u0441\u043a\u043e\u0440\u0435\u043d\u0438\u044f; \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0430 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0438 \u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u0430"
+        },
+        "subtitles_draft": "\u0412\u044b\u0431\u0438\u0440\u0430\u0435\u043c \u0442\u0440\u0438 \u0434\u0435\u0442\u0430\u043b\u0438, \u0434\u043e\u0431\u0430\u0432\u043b\u044f\u0435\u043c \u0432 \u043a\u043e\u0440\u0437\u0438\u043d\u0443; \u0441\u0443\u043c\u043c\u0430 \u0438\u0437 \u0434\u0435\u043c\u043e\u043d\u0441\u0442\u0440\u0430\u0446\u0438\u0438; \u043a\u043b\u0438\u0435\u043d\u0442 \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442 \u0437\u0430\u044f\u0432\u043a\u0443.",
+        "rationale": "\u041f\u043e\u0441\u043b\u0435\u0434\u043e\u0432\u0430\u0442\u0435\u043b\u044c\u043d\u044b\u0435 \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0435 \u044d\u0442\u0430\u043f\u044b: \u0434\u043e\u0431\u0430\u0432\u043b\u0435\u043d\u0438\u0435, \u043a\u043e\u0440\u0437\u0438\u043d\u0430, \u0444\u043e\u0440\u043c\u0430; \u044d\u0442\u043e \u0442\u0440\u0438 \u0441\u043a\u043b\u0435\u0439\u043a\u0438, \u0442\u043e\u0447\u043d\u043e\u0441\u0442\u044c \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0439 \u0438 \u043f\u0440\u0438\u0432\u0430\u0442\u043d\u043e\u0441\u0442\u044c \u043f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c.",
+        "body_start_s": 22.5,
+        "body_end_s": 29.3,
+        "timeline_a_s": [
+          25.9,
+          32.7
+        ],
+        "timeline_b_s": [
+          29.6,
+          36.4
+        ],
+        "video": [
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 10.5,
+            "end_s": 13.5
+          },
+          {
+            "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+            "start_s": 21.0,
+            "end_s": 24.8
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "fit full screen first; gentle zoom same recording; preserve aspect ratio",
+        "privacy": "REVIEW REQUIRED: mask personal identifiers, messages, browser/account details; check every frame"
+      },
+      {
+        "id": "R10-11",
+        "purpose": "\u0424\u0438\u043d\u0430\u043b \u0438 CTA",
+        "duration_s": 9.4,
+        "audio": {
+          "source": "original video audio",
+          "placement": "\u0441\u0438\u043d\u0445\u0440\u043e\u043d\u043d\u043e \u0441 \u043e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u043c \u0432\u0438\u0434\u0435\u043e"
+        },
+        "subtitles_draft": "\u0412\u043e\u0442 \u0442\u0430\u043a \u043a\u043b\u0438\u0435\u043d\u0442 \u0441\u0430\u043c \u043d\u0430\u0445\u043e\u0434\u0438\u0442 \u043d\u0443\u0436\u043d\u0443\u044e \u0437\u0430\u043f\u0447\u0430\u0441\u0442\u044c, \u0443\u0437\u043d\u0430\u0451\u0442 \u0446\u0435\u043d\u0443 \u0438 \u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442 \u0437\u0430\u044f\u0432\u043a\u0443. \u0421\u043e\u0442\u0440\u0443\u0434\u043d\u0438\u043a\u0438 \u0440\u0430\u0431\u043e\u0442\u0430\u044e\u0442 \u0443\u0436\u0435 \u0441 \u0433\u043e\u0442\u043e\u0432\u044b\u043c\u0438 \u043e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u044f\u043c\u0438. \u0425\u043e\u0442\u0438\u0442\u0435 \u0442\u0430\u043a \u0436\u0435 \u0443 \u0441\u0435\u0431\u044f? \u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u00ab\u041a\u0410\u0422\u0410\u041b\u041e\u0413\u00bb \u0432 \u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u044f\u0445, \u0440\u0430\u0437\u0431\u0435\u0440\u0443 \u0432\u0430\u0448\u0443 \u0441\u0438\u0442\u0443\u0430\u0446\u0438\u044e.",
+        "rationale": "\u041f\u0435\u0440\u0432\u044b\u0439 \u043f\u043e\u043b\u043d\u044b\u0439 \u043f\u043e\u0432\u0442\u043e\u0440 CTA; \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f \u043f\u0440\u043e\u0441\u043b\u0443\u0448\u0430\u0442\u044c \u0438 \u043e\u0446\u0435\u043d\u0438\u0442\u044c \u0435\u0441\u0442\u0435\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0441\u0442\u044c \u0437\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u0438\u044f.",
+        "body_start_s": 29.3,
+        "body_end_s": 38.7,
+        "timeline_a_s": [
+          32.7,
+          42.1
+        ],
+        "timeline_b_s": [
+          36.4,
+          45.8
+        ],
+        "video": [
+          {
+            "source": "r10/IMG_8448.MOV",
+            "start_s": 0.7,
+            "end_s": 10.1,
+            "review_clip": "12_cta.mp4"
+          }
+        ],
+        "status": "PROPOSED; listening, spoken boundaries, text, privacy and owner approval TO VERIFY",
+        "sfx": "PROPOSED optional subtle click at observed action, timing TO VERIFY",
+        "music": "none proposed; licensed only if approved",
+        "crop": "portrait: maintain proportions; center face; subtitles away from face",
+        "privacy": "REVIEW REQUIRED: background and incidental identifiers"
+      }
+    ],
+    "cut_from_proposal": [
+      "R10-07 Telegram conversation",
+      "R10-08 operator messaging",
+      "completed request form"
+    ],
+    "audio_policy": "original voice; no time stretch; normalized; no music or SFX",
+    "privacy": "no chat screens or filled forms; browser status region masked; sampled OCR and visual check, review before distribution",
+    "limitations": [
+      "direct listening unavailable",
+      "caption correctness and spoken boundaries need owner review",
+      "visual privacy assessment and subtitle readability require human review"
+    ],
+    "sha256": {
+      "R10_A_review.mp4": "6867701b620002c502571f7619dcd0fefa829236a7847c7e68f59863b3f5891b",
+      "R10_B_review.mp4": "480ca608f339ed9afdfa031d420d07d0aa9c810f082efc024bd675059fb86205"
+    }
+  },
+  "dialog_review_2026_11_18": {
+    "status": "DRAFT, owner review pending",
+    "hook_a": {
+      "video": "r10/IMG_8416.MOV",
+      "source_start_s": 34.3,
+      "source_end_s": 37.7,
+      "source_audio": "same source",
+      "face_on_screen_s": [
+        0,
+        1.2
+      ],
+      "catalog_preview_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "catalog_preview_source_s": [
+        6,
+        8.2
+      ],
+      "catalog_preview_timeline_s": [
+        1.2,
+        3.4
+      ],
+      "duration_s": 3.4
+    },
+    "hook_b": {
+      "video": "r10/IMG_8417.MOV",
+      "source_start_s": 0.8,
+      "source_end_s": 7.9,
+      "source_audio": "same source",
+      "face_on_screen_s": [
+        0,
+        2.7
+      ],
+      "catalog_preview_source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+      "catalog_preview_source_s": [
+        6,
+        10.4
+      ],
+      "catalog_preview_timeline_s": [
+        2.7,
+        7.1
+      ],
+      "duration_s": 7.1
+    },
+    "body_duration_s": 57.0,
+    "total_a_s": 60.4,
+    "total_b_s": 64.1,
+    "segments": [
+      {
+        "id": "problem_bridge_search_cart",
+        "note": "Same as review_export_2026_11_18 through end of cart",
+        "body_start_s": 0,
+        "body_end_s": 29.3
+      },
+      {
+        "id": "request",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.14.20.mov",
+        "source_s": [
+          44.5,
+          47.5
+        ],
+        "body_s": [
+          29.3,
+          32.3
+        ]
+      },
+      {
+        "id": "client_telegram",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.18.41.mov",
+        "source_s": [
+          24.5,
+          28.1
+        ],
+        "body_s": [
+          32.3,
+          35.9
+        ]
+      },
+      {
+        "id": "operator_reply",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.26.43.mov",
+        "source_s": [
+          41.5,
+          45.5
+        ],
+        "body_s": [
+          35.9,
+          39.9
+        ]
+      },
+      {
+        "id": "client_received",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.28.54.mov",
+        "source_s": [
+          0,
+          4
+        ],
+        "body_s": [
+          39.9,
+          43.9
+        ]
+      },
+      {
+        "id": "message_history",
+        "source": "r10/\u0417\u0430\u043f\u0438\u0441\u044c \u044d\u043a\u0440\u0430\u043d\u0430\u00a0\u2014 2026-11-09 \u0432\u00a021.26.43.mov",
+        "source_s": [
+          52,
+          55.7
+        ],
+        "body_s": [
+          43.9,
+          47.6
+        ]
+      },
+      {
+        "id": "cta",
+        "source": "r10/IMG_8448.MOV",
+        "source_s": [
+          0.7,
+          10.1
+        ],
+        "body_s": [
+          47.6,
+          57
+        ]
+      }
+    ],
+    "voiceovers": [
+      {
+        "source": "r10/3 2.m4a",
+        "source_s": [
+          0.9,
+          7.5
+        ],
+        "body_s": [
+          29.3,
+          35.9
+        ]
+      },
+      {
+        "source": "r10/4.m4a",
+        "source_s": [
+          2.2,
+          13.9
+        ],
+        "body_s": [
+          35.9,
+          47.6
+        ]
+      }
+    ],
+    "limitations": [
+      "direct listening unavailable",
+      "personal information masks require verification",
+      "some message text obscured by masks"
+    ],
+    "verification": {
+      "video_frames_A": 1812,
+      "video_frames_B": 1923,
+      "black_frames_A": 0,
+      "black_frames_B": 0,
+      "shared_body_frames_compared": 1710,
+      "shared_body_differences": 0,
+      "dialog_frames_ocr": 549,
+      "ocr_pattern_hits": 0,
+      "ocr_failures": 0,
+      "audio_correlation_delay_ms": 0,
+      "audio_points_per_version": 5,
+      "direct_listening": false
+    },
+    "sha256": {
+      "R10_A_dialog_review.mp4": "a972b71250662c90d78c8d7e621c39537b8b6dfa7d00e4667f20e54516727a61",
+      "R10_B_dialog_review.mp4": "04bd2319f04034cc1758cb074cabdc8e883c6721bf392d7b333155a656bea231"
+    }
+  }
+}

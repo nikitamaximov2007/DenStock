@@ -129,3 +129,7 @@ Finish with a final report: changed files, tests run, known risks, and
 deploy commands. If the work is unfinished, write the handoff file
 instead (see the collaboration protocol) and say so explicitly: never
 present unfinished work as done.
+
+## Контекст проекта для AI
+
+Начните с [AI_PROJECT_CONTEXT](docs/AI_PROJECT_CONTEXT.md) и [ROADMAP](docs/ROADMAP.md).
