@@ -21,3 +21,11 @@
 
 Тесты и публикация указываются в отчёте PR и итоговом сообщении. Выпуск на
 production не относится к задаче; deploy-команд нет.
+
+Проверки 18.11.2026: Ruff, djlint templates, Django check,
+makemigrations --check, проверка внутренних ссылок, локальных путей сцен и
+`git diff --check` прошли. Полный `pytest -q` завершился с пятью ошибками:
+три проверки отображения нулевой цены, фильтр частичного ремонта и
+`tests/deployment/test_ai_support_renderer.py::test_check_mode_prints_only_redacted_status`.
+Первые четыре упомянуты в релизной записи подшипников, пятая упоминается в
+bot handoff как baseline failure. Отдельный повтор baseline здесь не запускался.
