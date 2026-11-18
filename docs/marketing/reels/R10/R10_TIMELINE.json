@@ -1,0 +1,585 @@
+{
+  "schema_version": 1,
+  "media_root": "~/Desktop/Рилсы",
+  "time_units": "seconds from start; end exclusive",
+  "current_status": "unfinished; candidate source mapping only; not renderable",
+  "current_scenes": [
+    {
+      "id": "R10-01",
+      "purpose": "Кандидат хука: экономия времени",
+      "candidate_source": "r10/IMG_8416.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-02",
+      "purpose": "Кандидат хука: клиент действует сам",
+      "candidate_source": "r10/IMG_8417.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-03",
+      "purpose": "Разговор о проблемах",
+      "candidate_source": "r10/IMG_8423.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-04",
+      "purpose": "Переход к демонстрации",
+      "candidate_source": "r10/IMG_8427.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-05",
+      "purpose": "Каталог, корзина, заявка",
+      "candidate_source": "r10/Запись экрана \u2014 2026-11-09 в 21.14.20.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-06",
+      "purpose": "Клиентский Telegram",
+      "candidate_source": "r10/Запись экрана \u2014 2026-11-09 в 21.18.41.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-07",
+      "purpose": "Работа с заявкой в системе",
+      "candidate_source": "r10/Запись экрана \u2014 2026-11-09 в 21.26.43.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-08",
+      "purpose": "Ответ и история Telegram",
+      "candidate_source": "r10/Запись экрана \u2014 2026-11-09 в 21.28.54.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-09",
+      "purpose": "История / продолжение",
+      "candidate_source": "r10/Запись экрана \u2014 2026-11-09 в 21.31.04.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-10",
+      "purpose": "Административный Telegram",
+      "candidate_source": "r10/Запись экрана \u2014 2026-11-09 в 22.04.23.mov",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    },
+    {
+      "id": "R10-11",
+      "purpose": "Финальный CTA",
+      "candidate_source": "r10/IMG_8448.MOV",
+      "source_start_s": null,
+      "source_end_s": null,
+      "timeline_start_s": null,
+      "timeline_end_s": null,
+      "audio_source": null,
+      "audio_start_s": null,
+      "audio_end_s": null,
+      "speech": null,
+      "captions": null,
+      "crop": null,
+      "zoom": null,
+      "transition": null,
+      "music": null,
+      "sfx": null,
+      "verification": "TO VERIFY"
+    }
+  ],
+  "historical_rework_v2": {
+    "date": "2026-11-04",
+    "status": "historical only",
+    "fps": 30,
+    "duration_s": 42.3,
+    "video": [
+      {
+        "id": "OLD-H1",
+        "source": "домашняя съемка Н1 Н2 Н3 r10/IMG_8283.MOV",
+        "source_start_s": 70.133,
+        "source_end_s": 73.733,
+        "timeline_start_s": 0.0,
+        "timeline_end_s": 3.6,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-A",
+        "source": "6/Запись экрана \u2014 2026-10-26 в 13.28.02.MOV",
+        "source_start_s": 7.1,
+        "source_end_s": 10.7,
+        "timeline_start_s": 3.6,
+        "timeline_end_s": 7.2,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.55,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.25,
+            "zoom": 2.15,
+            "x": 0.67,
+            "y": 0.46
+          },
+          {
+            "at": 2,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          },
+          {
+            "at": 3.6,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-B",
+        "source": "6/IMG_8020.MOV",
+        "source_start_s": 3.4,
+        "source_end_s": 6,
+        "timeline_start_s": 7.2,
+        "timeline_end_s": 9.8,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-C",
+        "source": "6/60382C68-6395-4E31-B07C-93D880064544.MOV",
+        "source_start_s": 6.4,
+        "source_end_s": 9.8,
+        "timeline_start_s": 9.8,
+        "timeline_end_s": 13.2,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.3,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 3.4,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-D",
+        "source": "6/9EDFAEE0-F2D3-4CC6-974A-96BA6711D705.MOV",
+        "source_start_s": 53.5,
+        "source_end_s": 56.8,
+        "timeline_start_s": 13.2,
+        "timeline_end_s": 16.5,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.35,
+            "zoom": 2.15,
+            "x": 0.45,
+            "y": 0.5
+          },
+          {
+            "at": 3.3,
+            "zoom": 2.15,
+            "x": 0.45,
+            "y": 0.5
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-E",
+        "source": "6/Запись экрана \u2014 2026-10-26 в 13.08.14.MOV",
+        "source_start_s": 119.9,
+        "source_end_s": 124.1,
+        "timeline_start_s": 16.5,
+        "timeline_end_s": 20.7,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.35,
+            "zoom": 2.6,
+            "x": 0.43,
+            "y": 0.75
+          },
+          {
+            "at": 2.15,
+            "zoom": 2.6,
+            "x": 0.43,
+            "y": 0.75
+          },
+          {
+            "at": 2.95,
+            "zoom": 2.6,
+            "x": 0.46,
+            "y": 0.25
+          },
+          {
+            "at": 4.2,
+            "zoom": 2.6,
+            "x": 0.46,
+            "y": 0.25
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-F",
+        "source": "6/IMG_8140.MOV",
+        "source_start_s": 27.6,
+        "source_end_s": 29.8,
+        "timeline_start_s": 20.7,
+        "timeline_end_s": 22.9,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-G",
+        "source": "6/Запись экрана \u2014 2026-10-26 в 13.18.06.MOV",
+        "source_start_s": 6.4,
+        "source_end_s": 9.6,
+        "timeline_start_s": 22.9,
+        "timeline_end_s": 26.1,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.3,
+            "zoom": 2.6,
+            "x": 0.31,
+            "y": 0.47
+          },
+          {
+            "at": 1.65,
+            "zoom": 2.6,
+            "x": 0.31,
+            "y": 0.39
+          },
+          {
+            "at": 3.2,
+            "zoom": 2.6,
+            "x": 0.31,
+            "y": 0.39
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-H",
+        "source": "6/Запись экрана \u2014 2026-10-26 в 13.28.02.MOV",
+        "source_start_s": 11.4,
+        "source_end_s": 15.4,
+        "timeline_start_s": 26.1,
+        "timeline_end_s": 30.1,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.3,
+            "zoom": 2.1,
+            "x": 0.67,
+            "y": 0.46
+          },
+          {
+            "at": 2,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          },
+          {
+            "at": 4,
+            "zoom": 2.65,
+            "x": 0.77,
+            "y": 0.4
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-I",
+        "source": "6/Запись экрана \u2014 2026-10-26 в 13.28.02.MOV",
+        "source_start_s": 27.0,
+        "source_end_s": 31.2,
+        "timeline_start_s": 30.1,
+        "timeline_end_s": 34.3,
+        "camera": [
+          {
+            "at": 0.0,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 0.6,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 1.25,
+            "zoom": 2,
+            "x": 0.76,
+            "y": 0.4
+          },
+          {
+            "at": 1.6,
+            "zoom": 2,
+            "x": 0.76,
+            "y": 0.4
+          },
+          {
+            "at": 2.2,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 2.65,
+            "zoom": 1,
+            "x": 0.5,
+            "y": 0.5
+          },
+          {
+            "at": 3.45,
+            "zoom": 1.65,
+            "x": 0.39,
+            "y": 0.49
+          },
+          {
+            "at": 4.2,
+            "zoom": 1.65,
+            "x": 0.39,
+            "y": 0.49
+          }
+        ],
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-H2",
+        "source": "домашняя съемка Н1 Н2 Н3 r10/IMG_8284.MOV",
+        "source_start_s": 40.633,
+        "source_end_s": 45.433,
+        "timeline_start_s": 34.3,
+        "timeline_end_s": 39.1,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      },
+      {
+        "id": "OLD-H3",
+        "source": "домашняя съемка Н1 Н2 Н3 r10/IMG_8286.MOV",
+        "source_start_s": 110.6,
+        "source_end_s": 113.8,
+        "timeline_start_s": 39.1,
+        "timeline_end_s": 42.3,
+        "camera": null,
+        "status": "historical EDL 2026-11-04; not approved for current edit"
+      }
+    ]
+  }
+}
