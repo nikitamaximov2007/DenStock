@@ -62,7 +62,8 @@ from .services import (
     cancel_warehouse_action,
     customs_export_rows,
     get_or_create_customs,
-    historical_analog_customs_rows,
+    historical_analog_export_rows,
+    historical_bearing_export_rows,
     historical_customs_rows,
     parse_application_area,
     parse_quantity,
@@ -1247,14 +1248,14 @@ def actions_export(request):
 
 @login_required
 def actions_analog_export(request):
-    """Скачать форму для заказа по аналогам: ручные детали и всё, что не BRP/PROX."""
+    """Скачать Excel по аналогам, кроме вручную заведённых подшипников."""
     _require_access(request)
     if not request.user.can_view_purchase_cost:
         raise PermissionDenied
     from .services import export_customs_xlsx
 
     filters = _report_filters(request)
-    rows = historical_analog_customs_rows(**filters, unassigned_only=True)
+    rows = historical_analog_export_rows(**filters, unassigned_only=True)
     if not rows:
         messages.info(request, "Нет аналогов, ещё не включённых в таможенный заказ.")
         return redirect("actions_report")
@@ -1267,6 +1268,34 @@ def actions_analog_export(request):
     )
     response["Content-Disposition"] = (
         f'attachment; filename="customs_analogs_{date_from}_{date_to}.xlsx"'
+    )
+    return response
+
+
+@login_required
+def actions_bearing_export(request):
+    """Скачать отдельную Excel-выгрузку вручную заведённых подшипников."""
+    _require_access(request)
+    if not request.user.can_view_purchase_cost:
+        raise PermissionDenied
+    from .services import export_customs_xlsx
+
+    filters = _report_filters(request)
+    rows = historical_bearing_export_rows(**filters, unassigned_only=True)
+    if not rows:
+        messages.info(
+            request, "Нет подшипников, ещё не включённых в таможенный заказ."
+        )
+        return redirect("actions_report")
+    buffer = export_customs_xlsx(rows=rows)
+    date_from = filters["date_from"] or datetime.date.today()
+    date_to = filters["date_to"] or datetime.date.today()
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = (
+        f'attachment; filename="customs_bearings_{date_from}_{date_to}.xlsx"'
     )
     return response
 

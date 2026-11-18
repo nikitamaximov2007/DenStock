@@ -1875,6 +1875,51 @@ def historical_analog_customs_rows(**filters) -> list[dict]:
     return customs_group_rows(CUSTOMS_ANALOG, **filters)
 
 
+def _manual_bearing_part_ids(rows: list[dict]) -> set[int]:
+    """Return manually maintained bearing cards with a structured name.
+
+    The title consists of ``Подшипник``, one brand token and an article. The
+    article may itself contain spaces, so split only twice. Supplier-catalog
+    links are the authoritative provenance signal: a matching imported card
+    is not treated as user-entered stock.
+    """
+    parts = {
+        row["part"].pk: row["part"]
+        for row in rows
+        if row.get("part") is not None
+    }
+    candidates = set()
+    for part_id, part in parts.items():
+        tokens = (part.name or "").split(maxsplit=2)
+        if (
+            len(tokens) == 3
+            and tokens[0].casefold() == "подшипник"
+            and any(character.isdigit() for character in tokens[2])
+        ):
+            candidates.add(part_id)
+    return candidates - imported_part_ids(candidates)
+
+
+def _split_manual_bearings(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split an analog export into bearings and all other analog rows."""
+    bearing_ids = _manual_bearing_part_ids(rows)
+    bearings = [row for row in rows if row.get("part") and row["part"].pk in bearing_ids]
+    analogs = [row for row in rows if not row.get("part") or row["part"].pk not in bearing_ids]
+    return analogs, bearings
+
+
+def historical_analog_export_rows(**filters) -> list[dict]:
+    """Excel analog export, excluding manually entered bearing cards."""
+    rows, _bearings = _split_manual_bearings(historical_analog_customs_rows(**filters))
+    return rows
+
+
+def historical_bearing_export_rows(**filters) -> list[dict]:
+    """Excel export containing only manually entered, named bearing cards."""
+    _analogs, bearings = _split_manual_bearings(historical_analog_customs_rows(**filters))
+    return bearings
+
+
 def _report_all_time_totals() -> dict:
     """Итоги «Продаж и ремонтов» за всё время: независимый ориентир сверки.
 

@@ -731,14 +731,17 @@ def test_permissions_are_still_enforced(client, env, make_user):
     _scanner_sale(env, part, quantity="1", number="PERM-1")
 
     assert client.get(reverse("actions_export")).status_code == 302  # аноним на логин
+    assert client.get(reverse("actions_bearing_export")).status_code == 302
 
     _login(client, make_user, role=roles.VIEWER, name="viewer")
     assert client.get(reverse("actions_export")).status_code == 403
+    assert client.get(reverse("actions_bearing_export")).status_code == 403
 
     client.logout()
     _login(client, make_user, role=roles.SELLER, name="seller")
     # Продавец проводит действия, но оптовую цену в USD видеть не вправе.
     assert client.get(reverse("actions_export")).status_code == 403
+    assert client.get(reverse("actions_bearing_export")).status_code == 403
 
 
 def test_the_workbook_opens_with_the_expected_headers_and_rows(client, env, make_user):

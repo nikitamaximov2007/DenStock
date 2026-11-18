@@ -90,16 +90,23 @@ def test_general_exports_request_only_unassigned_sources(
         calls.append(("analog", kwargs["unassigned_only"]))
         return []
 
+    def bearings(**kwargs):
+        calls.append(("bearings", kwargs["unassigned_only"]))
+        return []
+
     monkeypatch.setattr("apps.actions.views.historical_customs_rows", normal)
-    monkeypatch.setattr("apps.actions.views.historical_analog_customs_rows", analog)
+    monkeypatch.setattr("apps.actions.views.historical_analog_export_rows", analog)
+    monkeypatch.setattr("apps.actions.views.historical_bearing_export_rows", bearings)
     client.force_login(_user(django_user_model))
 
     normal_response = client.get(reverse("actions_export"))
     analog_response = client.get(reverse("actions_analog_export"))
+    bearing_response = client.get(reverse("actions_bearing_export"))
 
     assert normal_response.status_code == 302
     assert analog_response.status_code == 302
-    assert calls == [("normal", True), ("analog", True)]
+    assert bearing_response.status_code == 302
+    assert calls == [("normal", True), ("analog", True), ("bearings", True)]
 
 
 @pytest.mark.parametrize("preset", ("today", "week", "month", "all"))

@@ -5,9 +5,8 @@
   <div class="page-header">
     <h1 class="page-title">Отчёт действий со склада</h1>
     {% comment %}
-      Две группы - оригиналы (BRP, PROX) и аналоги (всё остальное). У каждой
-      выгрузка и отправка в заказ стоят столбиком и берут один и тот же набор
-      строк (apps.actions.services.customs_group).
+      Таможенные очереди остаются разделены на оригиналы и аналоги. Excel для
+      аналогов дополнительно выносит вручную заведённые подшипники в отдельный файл.
     {% endcomment %}
     <div class="page-actions customs-export-actions">
       <div class="customs-export-group" data-customs-group="original">
@@ -23,6 +22,9 @@
         <a class="btn btn--small btn--primary"
            data-full-navigation
            href="{% url 'actions_analog_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel аналоги</a>
+        <a class="btn btn--small btn--primary"
+           data-full-navigation
+           href="{% url 'actions_bearing_export' %}{% if export_query %}?{{ export_query }}{% endif %}">Экспорт в Excel подшипники</a>
         {% if user.can_view_purchase_cost %}
           <a class="btn btn--small btn--secondary"
              href="{% url 'customs_order_selection' %}?order_type=analog">Отправить в заказ аналоги</a>

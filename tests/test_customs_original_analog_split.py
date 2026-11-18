@@ -366,6 +366,93 @@ def test_downloaded_workbooks_match_the_groups(client, env):
     assert set(analog) == ANALOGS and len(analog) == len(ANALOGS)
 
 
+def test_bearing_excel_exports_split_only_manual_structured_bearings(client, env):
+    bearing_a = create_manual_part(
+        name="  пОдШиПнИк   FAG 6004-2RSR  ", article="6004-2RSR",
+        price="11554", manufacturer_name="FAG",
+    )
+    bearing_b = create_manual_part(
+        name="ПОДШИПНИК\tFAG 6010-2RSR", article="6010-2RSR",
+        price="1044", manufacturer_name="FAG",
+    )
+    bearing_c = create_manual_part(
+        name="Подшипник FAG 6205 2RS", article="6205 2RS", price="100",
+        manufacturer_name="FAG",
+    )
+    ordinary = create_manual_part(name="Втулка тестовая", article="BUSHING-1", price="100")
+    no_brand = create_manual_part(name="Подшипник", article="BEARING-UNKNOWN", price="100")
+    no_article = create_manual_part(
+        name="Подшипник FAG запас", article="FAG-SPARE", price="100",
+    )
+
+    imported = _import_aftermarket([("FAG", "IMPORTED-BEARING")])["IMPORTED-BEARING"]
+    imported.name = "Подшипник FAG 6204-2RS"
+    imported.save(update_fields=["name"])
+
+    original_bearing = _imported_brp(env, "BRP-BEARING")
+    original_bearing.name = "Подшипник BRP 6004-2RS"
+    original_bearing.save(update_fields=["name"])
+
+    exported_parts = [
+        bearing_a, bearing_b, bearing_c, ordinary, no_brand, no_article,
+        imported, original_bearing,
+    ]
+    for part in exported_parts:
+        _receive(env, part)
+        _card(part, manufacturer=part.manufacturer.name if part.manufacturer_id else "")
+        _sell(env, part, part.numbers.order_by("pk").first().value)
+
+    client.force_login(env["admin"])
+    analog_response = client.get(reverse("actions_analog_export"))
+    bearing_response = client.get(reverse("actions_bearing_export"))
+    original_response = client.get(reverse("actions_export"))
+    analog_sheet, analog_numbers = _sheet_numbers(analog_response.content)
+    bearing_sheet, bearing_numbers = _sheet_numbers(bearing_response.content)
+    _, original_numbers = _sheet_numbers(original_response.content)
+
+    assert "customs_analogs_" in analog_response["Content-Disposition"]
+    assert "customs_bearings_" in bearing_response["Content-Disposition"]
+    assert set(bearing_numbers) == {"6004-2RSR", "6010-2RSR", "6205 2RS"}
+    assert set(analog_numbers) == {
+        "BUSHING-1", "BEARING-UNKNOWN", "FAG-SPARE", "IMPORTED-BEARING",
+    }
+    assert set(original_numbers) == {"BRP-BEARING"}
+    assert not (set(analog_numbers) & set(bearing_numbers))
+    assert set(analog_numbers) | set(bearing_numbers) == {
+        "BUSHING-1", "BEARING-UNKNOWN", "FAG-SPARE", "IMPORTED-BEARING",
+        "6004-2RSR", "6010-2RSR", "6205 2RS",
+    }
+    assert _numbers(eligible_customs_sources(CustomsOrder.OrderType.ANALOG)) == (
+        set(analog_numbers) | set(bearing_numbers)
+    )
+
+    assert bearing_sheet[f"J{DATA_ROW}"].value == Decimal("1")
+    assert bearing_sheet[f"K{DATA_ROW}"].value == Decimal("10.00")
+    assert bearing_sheet[f"L{DATA_ROW}"].value == f"=K{DATA_ROW}*J{DATA_ROW}"
+    assert bearing_sheet[f"I{DATA_ROW}"].value == f"=J{DATA_ROW}*G{DATA_ROW}"
+    assert bearing_sheet[f"B{DATA_ROW}"].style_id > 0
+    assert bearing_sheet[f"B{DATA_ROW}"].style_id == analog_sheet[f"B{DATA_ROW}"].style_id
+    assert bearing_sheet[f"J{DATA_ROW}"].number_format == analog_sheet[f"J{DATA_ROW}"].number_format
+
+
+def test_bearing_export_preserves_filters_and_empty_behavior(client, env):
+    client.force_login(env["admin"])
+    empty = client.get(reverse("actions_bearing_export"), follow=True)
+    assert "Нет подшипников" in empty.content.decode()
+
+    bearing = create_manual_part(
+        name="Подшипник FAG ONLY-ME-6204", article="ONLY-ME-6204", price="100",
+    )
+    _receive(env, bearing)
+    _card(bearing, manufacturer="FAG")
+    _sell(env, bearing, "ONLY-ME-6204")
+    client.force_login(env["admin"])
+    response = client.get(reverse("actions_bearing_export") + "?part_number=ONLY-ME")
+    assert response.status_code == 200
+    _, numbers = _sheet_numbers(response.content)
+    assert numbers == ["ONLY-ME-6204"]
+
+
 def test_analog_order_freezes_only_analog_lines(env):
     _mixed_order(env)
     sources = eligible_customs_sources(CustomsOrder.OrderType.ANALOG)
@@ -478,14 +565,22 @@ def test_report_shows_the_two_by_two_customs_buttons(client, env):
     assert analog_block.index("Экспорт в Excel аналоги") < analog_block.index(
         "Отправить в заказ аналоги"
     )
+    assert analog_block.index("Экспорт в Excel аналоги") < analog_block.index(
+        "Экспорт в Excel подшипники"
+    )
+    assert analog_block.index("Экспорт в Excel подшипники") < analog_block.index(
+        "Отправить в заказ аналоги"
+    )
     assert reverse("actions_export") in original_block
     assert "order_type=original" in original_block
     assert reverse("actions_analog_export") in analog_block
+    assert reverse("actions_bearing_export") in analog_block
     assert "order_type=analog" in analog_block
     # Обе Excel-кнопки синие (primary).
     for block, label in (
         (original_block, "Экспорт в Excel оригинал"),
         (analog_block, "Экспорт в Excel аналоги"),
+        (analog_block, "Экспорт в Excel подшипники"),
     ):
         tag = block[block.rindex("<a", 0, block.index(label)):block.index(label)]
         assert "btn--primary" in tag

@@ -19,6 +19,7 @@ urlpatterns = [
     path("actions/report/", views.actions_report_view, name="actions_report"),
     path("actions/export/", views.actions_export, name="actions_export"),
     path("actions/export/analogs/", views.actions_analog_export, name="actions_analog_export"),
+    path("actions/export/bearings/", views.actions_bearing_export, name="actions_bearing_export"),
     path("actions/<int:pk>/cancel/", views.actions_cancel, name="actions_cancel"),
     path(
         "actions/customs/<int:part_id>/",
