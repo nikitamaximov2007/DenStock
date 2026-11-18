@@ -102,7 +102,7 @@ def test_a_new_request_is_greeted_by_name_with_its_own_summary(part, messenger):
     assert greeting.startswith(f"Добрый день! Ваша заявка №{request.reference} получена.")
     assert "Ваш заказ:" in greeting
     assert "448 - РЕМЕНЬ ПРИВОДНОЙ" in greeting
-    assert "2 шт. × 10 000 ₽ = 20 000 ₽" in greeting
+    assert "2 шт × 10 000 ₽ = 20 000 ₽" in greeting
     assert "Итого: 20 000 ₽" in greeting
     assert greeting.endswith(
         "Если у Вас есть вопросы по заявке, напишите нам здесь - сервис PRO-STOR ответит Вам."
@@ -111,6 +111,40 @@ def test_a_new_request_is_greeted_by_name_with_its_own_summary(part, messenger):
     conversation = getattr(request, f"{messenger}_conversation")
     for secret in ("принята", "token", "conversation", "callback", conversation.public_id.hex):
         assert secret not in greeting
+
+
+@pytest.mark.parametrize(
+    ("quantity", "quantity_text", "total_text"),
+    [
+        ("1.000", "1 шт", "10 000 ₽"),
+        ("2.000", "2 шт", "20 000 ₽"),
+        ("3.000", "3 шт", "30 000 ₽"),
+        ("10.000", "10 шт", "100 000 ₽"),
+        ("100.000", "100 шт", "1 000 000 ₽"),
+        ("1.250", "1,25 шт", "12 500 ₽"),
+    ],
+)
+@pytest.mark.parametrize(
+    "messenger", [CustomerRequest.Messenger.TELEGRAM, CustomerRequest.Messenger.MAX]
+)
+def test_customer_request_summary_formats_quantity_identically(
+    part, messenger, quantity, quantity_text, total_text
+):
+    request = make_request(part, messenger=messenger, quantity=quantity)
+    link(request)
+
+    if messenger == CustomerRequest.Messenger.MAX:
+        texts = MaxMessage.objects.filter(conversation__request=request).values_list(
+            "text", flat=True
+        )
+    else:
+        texts = TelegramMessage.objects.filter(conversation__request=request).values_list(
+            "text", flat=True
+        )
+    greeting = "\n".join(texts)
+
+    assert f"{quantity_text} × 10 000 ₽ = {total_text}" in greeting
+    assert "шт." not in greeting
 
 
 @pytest.mark.parametrize(

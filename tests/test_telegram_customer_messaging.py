@@ -364,6 +364,51 @@ def test_operator_card_matches_the_stored_request_without_n_plus_one(part, worke
     assert len(queries) <= 2
 
 
+@pytest.mark.parametrize(
+    ("quantity", "quantity_text", "total_text"),
+    [
+        ("1.000", "1 шт", "10 000 ₽"),
+        ("2.000", "2 шт", "20 000 ₽"),
+        ("3.000", "3 шт", "30 000 ₽"),
+        ("10.000", "10 шт", "100 000 ₽"),
+        ("100.000", "100 шт", "1 000 000 ₽"),
+        ("1.250", "1,25 шт", "12 500 ₽"),
+    ],
+)
+@pytest.mark.parametrize(
+    "messenger", [CustomerRequest.Messenger.TELEGRAM, CustomerRequest.Messenger.MAX]
+)
+def test_operator_request_cards_share_quantity_format(
+    part, quantity, quantity_text, total_text, messenger, monkeypatch
+):
+    from apps.customer_requests import operator_bot, operator_console
+
+    request = _request(part, key=f"{quantity:0<32}", messenger=messenger)
+    line = request.lines.get()
+    line.quantity_requested = Decimal(quantity)
+    line.unit_short_name = "шт."
+    line.is_supply_inquiry = False
+    line.save(update_fields=["quantity_requested", "unit_short_name", "is_supply_inquiry"])
+
+    telegram_max_card = operator_bot.card_text(request)
+    monkeypatch.setattr(
+        operator_console,
+        "_callback",
+        lambda _binding, kind, value="": f"op:{kind}:{value}",
+    )
+    staff_console_card, _buttons = operator_console.card(request)
+    expected_operator_line = (
+        f"448 · РЕМЕНЬ ПРИВОДНОЙ\n   {quantity_text} × 10 000 ₽ = {total_text}"
+    )
+    expected_console_line = f"РЕМЕНЬ ПРИВОДНОЙ · {quantity_text} × 10000 ₽"
+
+    assert expected_operator_line in telegram_max_card
+    assert expected_console_line in staff_console_card
+    assert total_text in telegram_max_card
+    assert total_text.replace(" ", "") in staff_console_card.replace(" ", "")
+    assert "Статус:" in telegram_max_card and "Телефон:" in telegram_max_card
+
+
 @override_settings(TELEGRAM_INTERNAL_BASE_URL="https://denisstock.example")
 def test_open_request_button_goes_to_the_internal_page_for_operators_only(
     part, worker, api, operators
@@ -511,7 +556,7 @@ def test_start_summary_uses_immutable_request_line_snapshots(part, worker, api):
     summary = "\n".join(api.texts_to(CUSTOMER))
     assert request.reference in summary
     assert "448 - РЕМЕНЬ ПРИВОДНОЙ" in summary
-    assert "2 шт. × 10 000 ₽ = 20 000 ₽" in summary
+    assert "2 шт × 10 000 ₽ = 20 000 ₽" in summary
     assert "Итого: 20 000 ₽" in summary
     assert str(line.price_seen) not in summary  # never Decimal(...) presentation
     assert "999 999" not in summary
@@ -545,9 +590,9 @@ def test_start_summary_is_honest_for_unknown_and_mixed_prices(part, worker, api)
     link(worker, api, request)
 
     summary = "\n".join(api.texts_to(CUSTOMER))
-    assert "448 - РЕМЕНЬ ПРИВОДНОЙ\n2 шт. - цена уточняется" in summary
+    assert "448 - РЕМЕНЬ ПРИВОДНОЙ\n2 шт - цена уточняется" in summary
     assert "421000667 - ВТОРАЯ ДЕТАЛЬ" in summary
-    assert "2 шт. × 45 000 ₽ = 90 000 ₽" in summary
+    assert "2 шт × 45 000 ₽ = 90 000 ₽" in summary
     assert "Итого по позициям с известной ценой: 90 000 ₽" in summary
     assert "Есть позиции, цена которых уточняется." in summary
     assert "Итого: 0 ₽" not in summary

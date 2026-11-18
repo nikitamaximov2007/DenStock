@@ -42,6 +42,11 @@ class SummaryPolicy:
     message_limit: int
 
 
+def request_quantity_text(value) -> str:
+    """Render a request line quantity without changing its stored value."""
+    return f"{quantity_int(value)} шт"
+
+
 def summary_line(line) -> tuple[str, Decimal | None]:
     """One complete order line from the request's own immutable snapshots.
 
@@ -51,10 +56,7 @@ def summary_line(line) -> tuple[str, Decimal | None]:
     """
     article = line.article or "Артикул уточняется"
     name = line.part_name or "Название уточняется"
-    unit = (line.unit_short_name or "").strip()
-    if unit == "шт":
-        unit = "шт."
-    quantity = f"{quantity_int(line.quantity_requested)} {unit}".strip()
+    quantity = request_quantity_text(line.quantity_requested)
     if line.price_seen is None:
         return f"{article} - {name}\n{quantity} - {UNKNOWN_PRICE_TEXT}", None
     total = line.quantity_requested * line.price_seen

@@ -29,7 +29,7 @@ from apps.inventory.presentation import part_exact_number
 from apps.repairs.models import RepairIssueLine, RepairOrder
 from apps.sales.models import Sale, SaleLine
 
-from . import operator_replies, workspace
+from . import messaging, operator_replies, workspace
 from .attachments import AttachmentError, ValidatedAttachment
 from .models import (
     CustomerRequest,
@@ -901,7 +901,8 @@ def card(request: CustomerRequest, *, binding=None) -> tuple[str, dict]:
     total = 0
     for line in request.lines.all():
         price = "цена уточняется" if line.price_seen is None else f"{line.price_seen:.0f} ₽"
-        lines.append(f"{line.part_name} · {line.quantity_requested:g} × {price}")
+        quantity = messaging.request_quantity_text(line.quantity_requested)
+        lines.append(f"{line.part_name} · {quantity} × {price}")
         if line.price_seen is not None:
             total += line.price_seen * line.quantity_requested
     lines.extend([f"Итого: {total:.0f} ₽" if total else "Итого: цена уточняется",

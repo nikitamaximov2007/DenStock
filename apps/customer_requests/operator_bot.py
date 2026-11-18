@@ -20,9 +20,9 @@ from django.conf import settings
 from django.db.models import Count, Q
 from django.urls import reverse
 
-from apps.core.templatetags.number_format import money_int, quantity_int
+from apps.core.templatetags.number_format import money_int
 
-from . import workspace
+from . import messaging, workspace
 from .models import CustomerRequest, TelegramConversation
 from .operator_replies import CHANNEL_LABELS, reply_target
 
@@ -123,7 +123,7 @@ def card_text(request: CustomerRequest, *, heading: str = "ЗАЯВКА", target
     priced = False
     rendered = []
     for number, line in enumerate(lines, start=1):
-        quantity = f"{quantity_int(line.quantity_requested)} {line.unit_short_name}".strip()
+        quantity = messaging.request_quantity_text(line.quantity_requested)
         head = f"{number}. {line.article or 'без артикула'} · {line.part_name}"
         if line.is_supply_inquiry:
             head += " · запрос о поставке"
